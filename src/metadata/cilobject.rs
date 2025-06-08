@@ -1,0 +1,811 @@
+//! High-level .NET assembly abstraction and metadata access.
+//!
+//! The [`CilObject`] struct is the main entry point for analyzing .NET assemblies. It provides
+//! access to all ECMA-335 metadata tables, streams, type system, resources, and more. This is the
+//! recommended API for most users who want to inspect, analyze, or transform .NET binaries.
+//!
+//! # Key Features
+//!
+//! - Access to all metadata tables, streams, and heaps
+//! - Type system and signature resolution
+//! - Resource, import, and export analysis
+//! - Disassembly and method body parsing
+//! - Parallelized metadata loading
+use ouroboros::self_referencing;
+use std::{path::Path, sync::Arc};
+
+use crate::{
+    file::File,
+    metadata::{
+        cor20header::Cor20Header,
+        exports::Exports,
+        imports::Imports,
+        loader::CilObjectData,
+        method::MethodMap,
+        resources::Resources,
+        root::Root,
+        streams::{
+            AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, Blob, Guid,
+            MemberRefMap, ModuleRc, ModuleRefMap, Strings, TablesHeader, UserStrings,
+        },
+        typesystem::TypeRegistry,
+    },
+    Result,
+};
+
+#[self_referencing]
+/// A fully parsed and loaded .NET assembly representation.
+///
+/// `CilObject` is the main entry point for analyzing .NET PE files, providing
+/// access to all metadata tables, streams, and assembly information. It uses
+/// efficient memory access techniques to handle large assemblies while
+/// maintaining memory safety through self-referencing data structures.
+///
+/// The object automatically handles the complex .NET metadata format including:
+/// - CLI header parsing and validation
+/// - Metadata root and stream directory processing  
+/// - All metadata tables (Type, Method, Field, Assembly, etc.)
+/// - String heaps, user string heaps, GUID heaps, and blob heaps
+/// - Cross-references between assemblies and modules
+/// - Type system construction and method disassembly integration
+///
+/// # Architecture
+///
+/// The implementation uses a self-referencing pattern to ensure that parsed
+/// metadata structures maintain valid references to the underlying file data
+/// without requiring expensive data copying. This enables efficient analysis
+/// of large assemblies while maintaining Rust's memory safety guarantees.
+///
+/// # Thread Safety
+///
+/// `CilObject` is designed to be thread-safe for concurrent read access.
+/// Internal caching and lazy loading use appropriate synchronization primitives
+/// to ensure correctness in multi-threaded scenarios.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use dotscope::CilObject;
+/// use std::path::Path;
+///
+/// // Load an assembly from file
+/// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+///
+/// // Access assembly metadata
+/// println!("Assembly name: {}", assembly.name());
+/// println!("Number of types: {}", assembly.types().len());
+///
+/// // Examine methods
+/// for method in assembly.methods() {
+///     println!("Method: {} (RVA: {:X})", method.name, method.rva.unwrap_or(0));
+/// }
+///
+/// // Load from memory buffer
+/// let file_data = std::fs::read("tests/samples/WindowsBase.dll")?;
+/// let assembly = CilObject::from_buffer(&file_data)?;
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+///
+/// # Performance Notes
+///
+/// - Metadata tables are parsed lazily on first access
+/// - String lookups are cached for improved performance
+/// - Large assemblies benefit from the efficient memory access design
+/// - Memory usage scales with the number of accessed metadata items
+pub struct CilObject {
+    // Holds the input data, either as memory buffer or mmaped file
+    file: Arc<File>,
+    #[borrows(file)]
+    #[not_covariant]
+    // Holds the references to the metadata inside the file, e.g. tables use reference-based access and are parsed lazily on access
+    data: CilObjectData<'this>,
+}
+
+impl CilObject {
+    /// Creates a new `CilObject` by loading and parsing a .NET assembly from disk.
+    ///
+    /// This method handles the complete loading process including file I/O,
+    /// PE header validation, and metadata parsing. The file is memory-mapped
+    /// for efficient access to large assemblies.
+    ///
+    /// # Arguments
+    ///
+    /// * `file` - Path to the .NET assembly file (.dll, .exe, or .netmodule)
+    ///
+    /// # Returns
+    ///
+    /// Returns a fully parsed `CilObject` or an error if:
+    /// - The file cannot be opened or read
+    /// - The file is not a valid PE format
+    /// - The PE file is not a valid .NET assembly
+    /// - Metadata streams are corrupted or invalid
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// println!("Loaded assembly: {}", assembly.assembly().unwrap().name);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be read or parsed as a valid .NET assembly.
+    pub fn from_file(file: &Path) -> Result<Self> {
+        let input = Arc::new(File::from_file(file)?);
+        Self::load(input)
+    }
+
+    /// Creates a new `CilObject` by parsing a .NET assembly from a memory buffer.
+    ///
+    /// This method is useful for analyzing assemblies that are already loaded
+    /// in memory, downloaded from network sources, or embedded as resources.
+    /// The data is copied internally to ensure proper lifetime management.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Raw bytes of the .NET assembly in PE format
+    ///
+    /// # Returns
+    ///
+    /// Returns a fully parsed `CilObject` or an error if:
+    /// - The data is not a valid PE format
+    /// - The PE data is not a valid .NET assembly  
+    /// - Metadata streams are corrupted or invalid
+    /// - Memory allocation fails during processing
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    ///
+    /// // Load assembly from network or embedded resource
+    /// //let assembly_bytes = download_assembly().await?;
+    /// //let assembly = CilObject::from_mem(assembly_bytes)?;
+    ///
+    /// // Or from file for comparison
+    /// let file_data = std::fs::read("tests/samples/WindowsBase.dll")?;
+    /// let assembly = CilObject::from_mem(file_data)?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the memory buffer cannot be parsed as a valid .NET assembly.
+    pub fn from_mem(data: Vec<u8>) -> Result<Self> {
+        let input = Arc::new(File::from_mem(data)?);
+        Self::load(input)
+    }
+
+    /// Creates a new instance of a `File` by parsing the provided memory and building internal
+    /// data structures which are needed to analyse this file properly
+    ///
+    /// # Arguments
+    /// * 'data' - A vector of bytes which will be parsed and loaded
+    fn load(file: Arc<File>) -> Result<Self> {
+        match CilObject::try_new(file, |file| {
+            match CilObjectData::from_file(file.clone(), file.data()) {
+                Ok(loaded) => Ok(loaded),
+                Err(error) => Err(error),
+            }
+        }) {
+            Ok(asm) => Ok(asm),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Returns the COR20 header containing .NET-specific PE information.
+    ///
+    /// The COR20 header (also known as CLI header) contains essential information
+    /// about the .NET assembly including metadata directory location, entry point,
+    /// and runtime flags. This header is always present in valid .NET assemblies.
+    ///
+    /// # Returns
+    ///
+    /// Reference to the parsed `Cor20Header` structure containing:
+    /// - Metadata directory RVA and size
+    /// - Entry point token (for executables)
+    /// - Runtime flags (`IL_ONLY`, `32BIT_REQUIRED`, etc.)
+    /// - Resources and strong name signature locations
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+    /// let header = assembly.cor20header();
+    ///
+    /// println!("Metadata RVA: 0x{:X}", header.meta_data_rva);
+    /// println!("Runtime flags: {:?}", header.flags);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn cor20header(&self) -> &Cor20Header {
+        self.with_data(|data| &data.header)
+    }
+
+    /// Returns the metadata root header containing stream directory information.
+    ///
+    /// The metadata root is the entry point to the .NET metadata system, containing
+    /// the version signature, stream count, and directory of all metadata streams
+    /// (#~, #Strings, #US, #GUID, #Blob). This structure is always present and
+    /// provides the foundation for accessing all assembly metadata.
+    ///
+    /// # Returns
+    ///
+    /// Reference to the parsed `Root` structure containing:
+    /// - Metadata format version and signature  
+    /// - Stream directory with names, offsets, and sizes
+    /// - Framework version string
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+    /// let root = assembly.metadata_root();
+    ///
+    /// println!("Metadata version: {}", root.version);
+    /// println!("Number of streams: {}", root.stream_headers.len());
+    /// for stream in &root.stream_headers {
+    ///     println!("Stream: {} at offset 0x{:X}", stream.name, stream.offset);
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn metadata_root(&self) -> &Root {
+        self.with_data(|data| &data.header_root)
+    }
+
+    /// Returns the metadata tables header from the #~ or #- stream.
+    ///
+    /// The tables header contains all metadata tables defined by ECMA-335,
+    /// including Type definitions, Method definitions, Field definitions,
+    /// Assembly references, and many others. This is the core of .NET metadata
+    /// and provides structured access to all assembly information.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(&TablesHeader)` if the #~ stream is present (compressed metadata)
+    /// - `None` if no tables stream is found (invalid or malformed assembly)
+    ///
+    /// The `TablesHeader` provides access to:
+    /// - All metadata table row counts and data
+    /// - String, GUID, and Blob heap indices
+    /// - Schema version and heap size information
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::{CilObject, metadata::streams::{TypeDefRaw, TableId}};
+    ///
+    /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+    ///
+    /// if let Some(tables) = assembly.tables() {
+    ///     println!("Schema version: {}.{}", tables.major_version, tables.minor_version);
+    ///     
+    ///     // Access individual tables
+    ///     if let Some(typedef_table) = &tables.table::<TypeDefRaw>(TableId::TypeDef) {
+    ///         println!("Number of types: {}", typedef_table.row_count());
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn tables(&self) -> Option<&TablesHeader> {
+        self.with_data(|data| data.meta.as_ref())
+    }
+
+    /// Returns the strings heap from the #Strings stream.
+    ///
+    /// The strings heap contains null-terminated UTF-8 strings used throughout
+    /// the metadata tables for names of types, members, parameters, and other
+    /// identifiers. String references in tables are indices into this heap.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(&Strings)` if the #Strings stream is present
+    /// - `None` if the stream is missing (malformed assembly)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+    ///
+    /// if let Some(strings) = assembly.strings() {
+    ///     // Look up string by index (from metadata table)
+    ///     if let Ok(name) = strings.get(0x123) {
+    ///         println!("String at index 0x123: {}", name);
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn strings(&self) -> Option<&Strings> {
+        self.with_data(|data| data.strings.as_ref())
+    }
+
+    /// Returns the user strings heap from the #US stream.
+    ///
+    /// The user strings heap contains length-prefixed Unicode strings that appear
+    /// as string literals in CIL code (e.g., from C# string literals). These are
+    /// accessed via the `ldstr` instruction and are distinct from metadata strings.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(&UserStrings)` if the #US stream is present
+    /// - `None` if the stream is missing (assembly has no string literals)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+    ///
+    /// if let Some(user_strings) = assembly.userstrings() {
+    ///     // Look up user string by token (from ldstr instruction)
+    ///     if let Ok(literal) = user_strings.get(0x70000001) {
+    ///         println!("String literal: {}", literal.to_string().unwrap());
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn userstrings(&self) -> Option<&UserStrings> {
+        self.with_data(|data| data.userstrings.as_ref())
+    }
+
+    /// Returns the GUID heap from the #GUID stream.
+    ///
+    /// The GUID heap contains 16-byte GUIDs referenced by metadata tables,
+    /// typically used for type library IDs, interface IDs, and other unique
+    /// identifiers in COM interop scenarios.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(&Guid)` if the #GUID stream is present
+    /// - `None` if the stream is missing (assembly has no GUID references)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+    ///
+    /// if let Some(guids) = assembly.guids() {
+    ///     // Look up GUID by index (from metadata table)
+    ///     if let Ok(guid) = guids.get(1) {
+    ///         println!("GUID: {}", guid);
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn guids(&self) -> Option<&Guid> {
+        self.with_data(|data| data.guids.as_ref())
+    }
+
+    /// Returns the blob heap from the #Blob stream.
+    ///
+    /// The blob heap contains variable-length binary data referenced by metadata
+    /// tables, including type signatures, method signatures, field signatures,
+    /// custom attribute values, and marshalling information.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(&Blob)` if the #Blob stream is present
+    /// - `None` if the stream is missing (malformed assembly)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+    ///
+    /// if let Some(blob) = assembly.blob() {
+    ///     // Look up blob by index (from metadata table)
+    ///     if let Ok(signature) = blob.get(0x456) {
+    ///         println!("Signature bytes: {:02X?}", signature);
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn blob(&self) -> Option<&Blob> {
+        self.with_data(|data| data.blobs.as_ref())
+    }
+
+    /// Returns all assembly references used by this assembly.
+    ///
+    /// Assembly references represent external .NET assemblies that this assembly
+    /// depends on, including version information, public key tokens, and culture
+    /// settings. These correspond to entries in the `AssemblyRef` metadata table.
+    ///
+    /// # Returns
+    ///
+    /// Reference to the `AssemblyRefMap` containing all external assembly dependencies.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+    /// let refs = assembly.refs_assembly();
+    ///
+    /// for entry in refs.iter() {
+    ///     let (token, assembly_ref) = (entry.key(), entry.value());
+    ///     println!("Dependency: {} v{}.{}.{}.{}",
+    ///         assembly_ref.name,
+    ///         assembly_ref.major_version,
+    ///         assembly_ref.minor_version,
+    ///         assembly_ref.build_number,
+    ///         assembly_ref.revision_number
+    ///     );
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn refs_assembly(&self) -> &AssemblyRefMap {
+        self.with_data(|data| &data.refs_assembly)
+    }
+
+    /// Returns all module references used by this assembly.
+    ///
+    /// Module references represent external unmanaged modules (native DLLs)
+    /// that this assembly imports functions from via P/Invoke declarations.
+    /// These correspond to entries in the `ModuleRef` metadata table.
+    ///
+    /// # Returns
+    ///
+    /// Reference to the `ModuleRefMap` containing all external module dependencies.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+    /// let refs = assembly.refs_module();
+    ///
+    /// for entry in refs.iter() {
+    ///     let (token, module_ref) = (entry.key(), entry.value());
+    ///     println!("Native module: {}", module_ref.name);
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn refs_module(&self) -> &ModuleRefMap {
+        self.with_data(|data| &data.refs_module)
+    }
+
+    /// Returns all member references used by this assembly.
+    ///
+    /// Member references represent external type members (methods, fields, properties)
+    /// from other assemblies that are referenced by this assembly's code.
+    /// These correspond to entries in the `MemberRef` metadata table.
+    ///
+    /// # Returns
+    ///
+    /// Reference to the `MemberRefMap` containing all external member references.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+    /// let refs = assembly.refs_members();
+    ///
+    /// for entry in refs.iter() {
+    ///     let (token, member_ref) = (entry.key(), entry.value());
+    ///     println!("External member: {}", member_ref.name);
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn refs_members(&self) -> &MemberRefMap {
+        self.with_data(|data| &data.refs_member)
+    }
+
+    /// Returns the primary module information for this assembly.
+    ///
+    /// The module represents the main file of the assembly, containing the
+    /// module's name, MVID (Module Version Identifier), and generation ID.
+    /// Multi-file assemblies can have additional modules, but there's always
+    /// one primary module.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(&ModuleRc)` if module information is present
+    /// - `None` if no module table entry exists (malformed assembly)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+    ///
+    /// if let Some(module) = assembly.module() {
+    ///     println!("Module name: {}", module.name);
+    ///     println!("Module GUID: {}", module.mvid);
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn module(&self) -> Option<&ModuleRc> {
+        self.with_data(|data| data.module.get())
+    }
+
+    /// Returns the assembly metadata for this .NET assembly.
+    ///
+    /// The assembly metadata contains the assembly's identity including name,
+    /// version, culture, public key information, and security attributes.
+    /// This corresponds to the Assembly metadata table entry.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(&AssemblyRc)` if assembly metadata is present
+    /// - `None` if this is a module-only file (no Assembly table entry)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+    ///
+    /// if let Some(assembly_info) = assembly.assembly() {
+    ///     println!("Assembly: {}", assembly_info.name);
+    ///     println!("Version: {}.{}.{}.{}",
+    ///         assembly_info.major_version,
+    ///         assembly_info.minor_version,
+    ///         assembly_info.build_number,
+    ///         assembly_info.revision_number
+    ///     );
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn assembly(&self) -> Option<&AssemblyRc> {
+        self.with_data(|data| data.assembly.get())
+    }
+
+    /// Returns assembly OS information if present.
+    ///
+    /// The `AssemblyOS` table contains operating system identification information
+    /// for the assembly. This table is rarely used in modern .NET assemblies
+    /// and is primarily for legacy compatibility.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(&AssemblyOsRc)` if OS information is present
+    /// - `None` if no `AssemblyOS` table entry exists (typical for most assemblies)
+    pub fn assembly_os(&self) -> Option<&AssemblyOsRc> {
+        self.with_data(|data| data.assembly_os.get())
+    }
+
+    /// Returns assembly processor information if present.
+    ///
+    /// The `AssemblyProcessor` table contains processor architecture identification
+    /// information for the assembly. This table is rarely used in modern .NET
+    /// assemblies and is primarily for legacy compatibility.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(&AssemblyProcessorRc)` if processor information is present  
+    /// - `None` if no `AssemblyProcessor` table entry exists (typical for most assemblies)
+    pub fn assembly_processor(&self) -> Option<&AssemblyProcessorRc> {
+        self.with_data(|data| data.assembly_processor.get())
+    }
+
+    /// Returns the imports container with all P/Invoke and COM import information.
+    ///
+    /// The imports container provides access to all external function imports
+    /// including P/Invoke declarations, COM method imports, and related
+    /// marshalling information. This data comes from `ImplMap` and related tables.
+    ///
+    /// # Returns
+    ///
+    /// Reference to the `Imports` container with all import declarations.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+    /// let imports = assembly.imports();
+    ///
+    /// for entry in imports.iter() {
+    ///     let (token, import) = (entry.key(), entry.value());
+    ///     println!("Import: {}.{} from {:?}", import.namespace, import.name, import.source_id);
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn imports(&self) -> &Imports {
+        self.with_data(|data| &data.imports)
+    }
+
+    /// Returns the exports container with all exported function information.
+    ///
+    /// The exports container provides access to all functions that this assembly
+    /// exports for use by other assemblies or native code. This includes both
+    /// managed exports and any native exports in mixed-mode assemblies.
+    ///
+    /// # Returns
+    ///
+    /// Reference to the `Exports` container with all export declarations.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+    /// let exports = assembly.exports();
+    ///
+    /// for entry in exports.iter() {
+    ///     let (token, export) = (entry.key(), entry.value());
+    ///     println!("Export: {} at offset 0x{:X} - Token 0x{:X}", export.name, export.offset, token.value());
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn exports(&self) -> &Exports {
+        self.with_data(|data| &data.exports)
+    }
+
+    /// Returns the methods container with all method definitions and metadata.
+    ///
+    /// The methods container provides access to all methods defined in this assembly,
+    /// including their signatures, IL code, exception handlers, and related metadata.
+    /// This integrates data from `MethodDef`, `Param`, and other method-related tables.
+    ///
+    /// # Returns
+    ///
+    /// Reference to the `MethodMap` containing all method definitions.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+    /// let methods = assembly.methods();
+    ///
+    /// for entry in methods.iter() {
+    ///     let (token, method) = (entry.key(), entry.value());
+    ///     println!("Method: {} (Token: 0x{:08X})", method.name, token.value());
+    ///     if let Some(rva) = method.rva {
+    ///         println!("  RVA: 0x{:X}", rva);
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn methods(&self) -> &MethodMap {
+        self.with_data(|data| &data.methods)
+    }
+
+    /// Returns the resources container with all embedded and linked resources.
+    ///
+    /// The resources container provides access to all resources associated with
+    /// this assembly, including embedded resources, linked files, and resource
+    /// metadata. This includes both .NET resources and Win32 resources.
+    ///
+    /// # Returns
+    ///
+    /// Reference to the `Resources` container with all resource information.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+    /// let resources = assembly.resources();
+    ///
+    /// for entry in resources.iter() {
+    ///     let (name, resource) = (entry.key(), entry.value());
+    ///     println!("Resource: {} (Size: {}, Offset: 0x{:X})", name, resource.data_offset, resource.data_size);
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn resources(&self) -> &Resources {
+        self.with_data(|data| &data.resources)
+    }
+
+    /// Returns the type registry containing all type definitions and references.
+    ///
+    /// The type registry provides centralized access to all types defined in and
+    /// referenced by this assembly. This includes `TypeDef` entries (types defined
+    /// in this assembly), `TypeRef` entries (types referenced from other assemblies),
+    /// `TypeSpec` entries (instantiated generic types), and primitive types.
+    ///
+    /// # Returns
+    ///
+    /// Reference to the `TypeRegistry` containing all type information.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+    /// let types = assembly.types();
+    ///
+    /// println!("Total types: {}", types.len());
+    ///
+    /// // Get all types
+    /// for type_info in types.all_types() {
+    ///     println!("Type: {}.{} (Token: 0x{:08X})",
+    ///         type_info.namespace, type_info.name, type_info.token.value());
+    /// }
+    ///
+    /// // Look up specific types
+    /// let string_types = types.get_by_name("String");
+    /// for string_type in string_types {
+    ///     println!("Found String type in namespace: {}", string_type.namespace);
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn types(&self) -> &TypeRegistry {
+        self.with_data(|data| &data.types)
+    }
+
+    /// Returns the underlying file representation of this assembly.
+    ///
+    /// The file object provides access to the raw PE file data, headers, and
+    /// file-level operations such as RVA-to-offset conversion, section access,
+    /// and memory-mapped or buffered file I/O. This is useful for low-level
+    /// analysis or when you need direct access to the PE file structure.
+    ///
+    /// # Returns
+    ///
+    /// Reference to the `Arc<File>` containing the PE file representation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+    /// let file = assembly.file();
+    ///
+    /// // Access file-level information
+    /// println!("File size: {} bytes", file.data().len());
+    ///
+    /// // Access PE headers
+    /// let dos_header = file.header_dos();
+    /// let nt_headers = file.header();
+    /// println!("PE signature: 0x{:X}", nt_headers.signature);
+    ///
+    /// // Convert RVA to file offset
+    /// let (clr_rva, _) = file.clr();
+    /// let offset = file.rva_to_offset(clr_rva)?;
+    /// println!("CLR header at file offset: 0x{:X}", offset);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn file(&self) -> &Arc<File> {
+        self.borrow_file()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{fs, path::PathBuf};
+
+    #[test]
+    fn from_file() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        let asm = CilObject::from_file(&path).unwrap();
+        crate::test::verify_windowsbasedll(&asm);
+    }
+
+    #[test]
+    fn from_buffer() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        let data = fs::read(path).unwrap();
+        let asm = CilObject::from_mem(data).unwrap();
+        crate::test::verify_windowsbasedll(&asm);
+    }
+}
