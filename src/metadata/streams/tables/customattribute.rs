@@ -1,0 +1,303 @@
+use crossbeam_skiplist::SkipMap;
+use std::sync::Arc;
+
+use crate::{
+    file::io::read_le_at_dyn,
+    metadata::{
+        streams::{CodedIndex, CodedIndexType, RowDefinition, TableInfoRef},
+        token::Token,
+        typesystem::CilTypeReference,
+    },
+    Result,
+};
+
+/// A map that holds the mapping of Token to parsed `CustomAttribute`
+pub type CustomAttributeMap = SkipMap<Token, CustomAttributeRc>;
+/// A vector that holds a list of `CustomAttribute`
+pub type CustomAttributeList = Arc<boxcar::Vec<CustomAttributeRc>>;
+/// A reference to a `CustomAttribute`
+pub type CustomAttributeRc = Arc<CustomAttribute>;
+
+/// The `CustomAttribute` table associates attributes with elements in various metadata tables. Similar to `CustomAttributeRaw` but
+/// with resolved indexes and owned data
+pub struct CustomAttribute {
+    /// `RowID`
+    pub rid: u32,
+    /// Token
+    pub token: Token,
+    /// Offset
+    pub offset: usize,
+    /// an index into a metadata table that has an associated `HasCustomAttribute` (§II.24.2.6) coded index
+    pub parent: CilTypeReference,
+    /// an index into the `MethodDef` or `MemberRef` table; more precisely, a `CustomAttributeType` (§II.24.2.6) coded index
+    pub constructor: CilTypeReference,
+    /// an index into the Blob heap
+    pub value: u32,
+}
+
+#[derive(Clone, Debug)]
+/// The `CustomAttribute` table associates attributes with elements in various metadata tables, `TableId` = 0x0C
+pub struct CustomAttributeRaw {
+    /// `RowID`
+    pub rid: u32,
+    /// Token
+    pub token: Token,
+    /// Offset
+    pub offset: usize,
+    /// an index into a metadata table that has an associated `HasCustomAttribute` (§II.24.2.6) coded index
+    pub parent: CodedIndex,
+    /// an index into the `MethodDef` or `MemberRef` table; more precisely, a `CustomAttributeType` (§II.24.2.6) coded index
+    pub constructor: CodedIndex,
+    /// an index into the Blob heap
+    pub value: u32,
+}
+
+/*
+impl CustomAttributeRaw {
+    /// Apply an `CustomAttributeRaw` to the relevant entries of types (e.g. fields, methods and parameters)
+    ///
+    /// ## Arguments
+    /// * 'value'               - The value to be applied
+    /// * 'blob'                - The #Blob heap,
+    /// * 'types'               - All parsed `TypeDef`, `TypeSpec` and `TypeRef` entries
+    /// * 'methods'             - All parsed `Method` entries
+    /// * 'fields'              - All parsed `Field` entries
+    /// * 'params'              - All parsed `Param` entries
+    /// * 'interface_impls'     - All parsed `InterfaceImpl` entries
+    /// * 'memberrefs'          - All parsed `MemberRef` entries
+    /// * 'modules'             - All parsed `Module` entries
+    /// * 'permissions'         - All parsed `DeclSecurity` entries
+    /// * 'properties'          - All parsed `Property` entries
+    /// * 'events'              - All parsed `Event` entries
+    /// * 'sigs'                - All parsed `StandAloneSig` entries
+    /// * 'modulerefs'          - All parsed `ModuleRef` entries
+    /// * 'assembly'            - All parsed `Assembly` entries
+    /// * 'assembly_refs'       - All parsed `AssemblyRef` entries
+    /// * 'file'                - All parsed `File` entries
+    /// * 'exports'             - All parsed `ExportedType` entries
+    /// * 'manifest'            - All parsed `ManifestResource` entries
+    /// * 'generic_param'       - All parsed `GenericParam` entries
+    /// * 'generic_constraint'  - All parsed `GenericParamConstraint` entries
+    /// * 'method_spec'         - All parsed `MethodSpec` entries
+    pub fn apply(
+        &self,
+        _blob: &Blob,
+        _types: &TypeRegistry,
+        _methods: &MethodMap,
+        _fields: &FieldMap,
+        _params: &ParamMap,
+        _interface_impls: &InterfaceImplMap,
+        _memberrefs: &MemberRefMap,
+        _modules: &ModuleMap,
+        _permissions: &DeclSecurityMap,
+        _properties: &PropertyMap,
+        _events: &EventMap,
+        _sigs: &StandAloneSigMap,
+        _modulerefs: &ModuleRefMap,
+        _assembly: &AssemblyMap,
+        _assembly_refs: &AssemblyRefMap,
+        _file: &FileMap,
+        _exports: &ExportedTypeMap,
+        _manifest: &ManifestResourceMap,
+        _generic_param: &GenericParamMap,
+        _generic_constraint: &GenericParamConstraintMap,
+        _method_spec: &MethodSpecMap,
+    ) -> Result<Self> {
+        unimplemented!()
+    }
+
+    /// Convert an `CustomAttributeRaw`, into a `CustomAttribute` which has indexes resolved and owns the referenced data
+    ///
+    /// ## Arguments
+    /// * 'blob'                - The #Blob heap,
+    /// * 'types'               - All parsed `TypeDef`, `TypeSpec` and `TypeRef` entries
+    /// * 'methods'             - All parsed `Method` entries
+    /// * 'fields'              - All parsed `Field` entries
+    /// * 'params'              - All parsed `Param` entries
+    /// * 'interface_impls'     - All parsed `InterfaceImpl` entries
+    /// * 'memberrefs'          - All parsed `MemberRef` entries
+    /// * 'modules'             - All parsed `Module` entries
+    /// * 'permissions'         - All parsed `DeclSecurity` entries
+    /// * 'properties'          - All parsed `Property` entries
+    /// * 'events'              - All parsed `Event` entries
+    /// * 'sigs'                - All parsed `StandAloneSig` entries
+    /// * 'modulerefs'          - All parsed `ModuleRef` entries
+    /// * 'assembly'            - All parsed `Assembly` entries
+    /// * 'assembly_refs'       - All parsed `AssemblyRef` entries
+    /// * 'file'                - All parsed `File` entries
+    /// * 'exports'             - All parsed `ExportedType` entries
+    /// * 'manifest'            - All parsed `ManifestResource` entries
+    /// * 'generic_param'       - All parsed `GenericParam` entries
+    /// * 'generic_constraint'  - All parsed `GenericParamConstraint` entries
+    /// * 'method_spec'         - All parsed `MethodSpec` entries
+    pub fn to_owned(
+        &self,
+        _blob: &Blob,
+        _types: &TypeRegistry,
+        _methods: &MethodMap,
+        _fields: &FieldMap,
+        _params: &ParamMap,
+        _interface_impls: &InterfaceImplMap,
+        _memberrefs: &MemberRefMap,
+        _modules: &ModuleMap,
+        _permissions: &DeclSecurityMap,
+        _properties: &PropertyMap,
+        _events: &EventMap,
+        _sigs: &StandAloneSigMap,
+        _modulerefs: &ModuleRefMap,
+        _assembly: &AssemblyMap,
+        _assembly_refs: &AssemblyRefMap,
+        _file: &FileMap,
+        _exports: &ExportedTypeMap,
+        _manifest: &ManifestResourceMap,
+        _generic_param: &GenericParamMap,
+        _generic_constraint: &GenericParamConstraintMap,
+        _method_spec: &MethodSpecMap,
+    ) -> Result<Self> {
+        unimplemented!()
+    }
+}
+*/
+
+impl<'a> RowDefinition<'a> for CustomAttributeRaw {
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* parent */    sizes.coded_index_bytes(CodedIndexType::HasCustomAttribute) +
+            /* type */     sizes.coded_index_bytes(CodedIndexType::CustomAttributeType) +
+            /* value */     sizes.blob_bytes()
+        )
+    }
+
+    fn read_row(
+        data: &'a [u8],
+        offset: &mut usize,
+        rid: u32,
+        sizes: &TableInfoRef,
+    ) -> Result<Self> {
+        Ok(CustomAttributeRaw {
+            rid,
+            token: Token::new(0x0C00_0000 + rid),
+            offset: *offset,
+            parent: CodedIndex::read(data, offset, sizes, CodedIndexType::HasCustomAttribute)?,
+            constructor: CodedIndex::read(
+                data,
+                offset,
+                sizes,
+                CodedIndexType::CustomAttributeType,
+            )?,
+            value: read_le_at_dyn(data, offset, sizes.is_large_blob())?,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::metadata::streams::tables::types::{MetadataTable, TableId, TableInfo};
+
+    use super::*;
+
+    #[test]
+    fn crafted_short() {
+        let data = vec![
+            0x02, 0x02, // parent
+            0x03, 0x03, // type
+            0x04, 0x04, // value
+        ];
+
+        let sizes = Arc::new(TableInfo::new_test(
+            &[(TableId::TypeDef, 1), (TableId::MethodDef, 1)],
+            false,
+            false,
+            false,
+        ));
+        let table = MetadataTable::<CustomAttributeRaw>::new(&data, 1, sizes).unwrap();
+
+        let eval = |row: CustomAttributeRaw| {
+            assert_eq!(row.rid, 1);
+            assert_eq!(row.token.value(), 0x0C000001);
+            assert_eq!(
+                row.parent,
+                CodedIndex {
+                    tag: TableId::TypeRef,
+                    row: 16,
+                    token: Token::new(16 | 0x01000000),
+                }
+            );
+            assert_eq!(
+                row.constructor,
+                CodedIndex {
+                    tag: TableId::MemberRef,
+                    row: 96,
+                    token: Token::new(96 | 0x0A000000),
+                }
+            );
+            assert_eq!(row.value, 0x404);
+        };
+
+        {
+            for row in table.iter() {
+                eval(row);
+            }
+        }
+
+        {
+            let row = table.get(1).unwrap();
+            eval(row);
+        }
+    }
+
+    #[test]
+    fn crafted_long() {
+        let data = vec![
+            0x02, 0x02, 0x02, 0x02, // parent
+            0x03, 0x03, 0x03, 0x03, // type
+            0x04, 0x04, 0x04, 0x04, // value
+        ];
+
+        let sizes = Arc::new(TableInfo::new_test(
+            &[
+                (TableId::TypeDef, u16::MAX as u32 + 3),
+                (TableId::MethodDef, u16::MAX as u32 + 3),
+            ],
+            true,
+            true,
+            true,
+        ));
+        let table =
+            MetadataTable::<CustomAttributeRaw>::new(&data, u16::MAX as u32 + 3, sizes).unwrap();
+
+        let eval = |row: CustomAttributeRaw| {
+            assert_eq!(row.rid, 1);
+            assert_eq!(row.token.value(), 0x0C000001);
+            assert_eq!(
+                row.parent,
+                CodedIndex {
+                    tag: TableId::TypeRef,
+                    row: 0x101010,
+                    token: Token::new(0x101010 | 0x01000000),
+                }
+            );
+            assert_eq!(
+                row.constructor,
+                CodedIndex {
+                    tag: TableId::MemberRef,
+                    row: 0x606060,
+                    token: Token::new(0x606060 | 0x0A000000),
+                }
+            );
+            assert_eq!(row.value, 0x4040404);
+        };
+
+        {
+            for row in table.iter() {
+                eval(row);
+            }
+        }
+
+        {
+            let row = table.get(1).unwrap();
+            eval(row);
+        }
+    }
+}
