@@ -96,12 +96,13 @@ fn print_heap_analysis(assembly: &CilObject) {
         let mut sample_strings = Vec::new();
 
         println!("  String heap analysis:");
-        for result in strings.iter().take(1000) { // Limit to avoid overwhelming output
+        for result in strings.iter().take(1000) {
+            // Limit to avoid overwhelming output
             match result {
                 Ok((offset, string)) => {
                     string_count += 1;
                     total_length += string.len();
-                    
+
                     // Collect interesting samples
                     if sample_strings.len() < 5 && !string.is_empty() && string.len() > 3 {
                         sample_strings.push((offset, string));
@@ -112,14 +113,19 @@ fn print_heap_analysis(assembly: &CilObject) {
         }
 
         println!("    Total strings analyzed: {}", string_count);
-        println!("    Average string length: {:.1} chars", 
-                total_length as f64 / string_count.max(1) as f64);
-        
+        println!(
+            "    Average string length: {:.1} chars",
+            total_length as f64 / string_count.max(1) as f64
+        );
+
         if !sample_strings.is_empty() {
             println!("    Sample strings:");
             for (offset, string) in sample_strings {
-                println!("      @{:04X}: \"{}\"", offset, 
-                        string.chars().take(40).collect::<String>());
+                println!(
+                    "      @{:04X}: \"{}\"",
+                    offset,
+                    string.chars().take(40).collect::<String>()
+                );
             }
         }
     }
@@ -128,8 +134,9 @@ fn print_heap_analysis(assembly: &CilObject) {
     if let Some(guids) = assembly.guids() {
         let mut guid_count = 0;
         println!("  GUID heap analysis:");
-        
-        for result in guids.iter().take(20) { // Limit to reasonable number
+
+        for result in guids.iter().take(20) {
+            // Limit to reasonable number
             match result {
                 Ok((index, guid)) => {
                     guid_count += 1;
@@ -140,7 +147,7 @@ fn print_heap_analysis(assembly: &CilObject) {
                 Err(_) => break,
             }
         }
-        
+
         if guid_count > 3 {
             println!("    ... and {} more GUIDs", guid_count - 3);
         }
@@ -154,32 +161,39 @@ fn print_heap_analysis(assembly: &CilObject) {
         let mut size_histogram: HashMap<String, usize> = HashMap::new();
 
         println!("  Blob heap analysis:");
-        for result in blob.iter().take(500) { // Limit to avoid overwhelming output
+        for result in blob.iter().take(500) {
+            // Limit to avoid overwhelming output
             match result {
                 Ok((offset, blob_data)) => {
                     blob_count += 1;
                     total_size += blob_data.len();
-                    
+
                     // Categorize by size
                     let size_category = match blob_data.len() {
                         0..=4 => "tiny (0-4 bytes)",
-                        5..=16 => "small (5-16 bytes)", 
+                        5..=16 => "small (5-16 bytes)",
                         17..=64 => "medium (17-64 bytes)",
                         65..=256 => "large (65-256 bytes)",
                         _ => "huge (>256 bytes)",
                     };
                     *size_histogram.entry(size_category.to_string()).or_insert(0) += 1;
-                    
+
                     // Show a sample of the first few blobs
                     if blob_count <= 3 && !blob_data.is_empty() {
-                        let preview = blob_data.iter()
+                        let preview = blob_data
+                            .iter()
                             .take(8)
                             .map(|b| format!("{:02X}", b))
                             .collect::<Vec<_>>()
                             .join(" ");
                         let suffix = if blob_data.len() > 8 { "..." } else { "" };
-                        println!("    Blob @{:04X}: {} bytes [{}{}]", 
-                                offset, blob_data.len(), preview, suffix);
+                        println!(
+                            "    Blob @{:04X}: {} bytes [{}{}]",
+                            offset,
+                            blob_data.len(),
+                            preview,
+                            suffix
+                        );
                     }
                 }
                 Err(_) => break,
@@ -188,8 +202,10 @@ fn print_heap_analysis(assembly: &CilObject) {
 
         println!("    Total blobs analyzed: {}", blob_count);
         if blob_count > 0 {
-            println!("    Average blob size: {:.1} bytes", 
-                    total_size as f64 / blob_count as f64);
+            println!(
+                "    Average blob size: {:.1} bytes",
+                total_size as f64 / blob_count as f64
+            );
             println!("    Size distribution:");
             for (category, count) in size_histogram {
                 println!("      {}: {} blobs", category, count);
@@ -197,17 +213,18 @@ fn print_heap_analysis(assembly: &CilObject) {
         }
     }
 
-    // User strings heap analysis with iterator demonstration  
+    // User strings heap analysis with iterator demonstration
     if let Some(user_strings) = assembly.userstrings() {
         let mut string_count = 0;
         let mut sample_user_strings = Vec::new();
 
         println!("  User strings heap analysis:");
-        for result in user_strings.iter().take(100) { // Limit for readability
+        for result in user_strings.iter().take(100) {
+            // Limit for readability
             match result {
                 Ok((offset, string)) => {
                     string_count += 1;
-                    
+
                     // Collect interesting samples
                     if sample_user_strings.len() < 3 {
                         let display_string = string.to_string_lossy();
