@@ -410,29 +410,35 @@ pub use metadata::cilobject::CilObject;
 /// - [`TablesHeader`] - Metadata tables header information
 /// - [`StreamHeader`] - Individual stream header information
 ///
+/// All heaps provide both indexed access via `get()` methods and iterator support
+/// for efficient sequential traversal of all entries.
+///
 /// # Example
 ///
 /// ```rust,no_run
-/// use dotscope::{CilObject, Blob, Strings};
+/// use dotscope::{CilObject, Strings};
 /// let assembly = CilObject::from_file(std::path::Path::new("tests/samples/WindowsBase.dll"))?;
 ///
-/// // Access metadata heaps directly
+/// // Access metadata heaps with indexed access and iteration
 /// if let Some(strings) = assembly.strings() {
-///     // Try to get a string at index 1
-///     if let Ok(name) = strings.get(1) {
-///         println!("String at index 1: {}", name);
-///     }
-/// }
-///
-/// if let Some(blob) = assembly.blob() {
-///     // Try to get a blob at index 1  
-///     if let Ok(data) = blob.get(1) {
-///         println!("Blob at index 1 has {} bytes", data.len());
+///     let name = strings.get(1)?; // Indexed access
+///     
+///     // Iterate through all entries
+///     for result in strings.iter() {
+///         match result {
+///             Ok((offset, string)) => println!("String at {}: '{}'", offset, string),
+///             Err(e) => eprintln!("Error: {}", e),
+///         }
 ///     }
 /// }
 /// # Ok::<(), dotscope::Error>(())
 /// ```
-pub use metadata::streams::{Blob, Guid, StreamHeader, Strings, TablesHeader, UserStrings};
+///
+/// See the [`metadata::streams`] module for comprehensive examples of all heap types and iterators.
+pub use metadata::streams::{
+    Blob, BlobIterator, Guid, GuidIterator, StreamHeader, Strings, StringsIterator, TablesHeader,
+    UserStrings, UserStringsIterator,
+};
 
 /// Provides access to low-level file and memory parsing utilities.
 ///

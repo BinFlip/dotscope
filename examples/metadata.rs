@@ -89,25 +89,149 @@ fn print_heap_analysis(assembly: &CilObject) {
         println!("  Blob heap size: {} bytes", heap_info.blob_bytes());
     }
 
-    // String heap analysis
-    if let Some(_strings) = assembly.strings() {
-        println!("  String heap contains metadata strings");
-        // Note: The Strings heap doesn't expose iteration in the public API
-        // This is intentional as it requires careful offset management
+    // String heap analysis with iterator demonstration
+    if let Some(strings) = assembly.strings() {
+        let mut string_count = 0;
+        let mut total_length = 0;
+        let mut sample_strings = Vec::new();
+
+        println!("  String heap analysis:");
+        for result in strings.iter().take(1000) { // Limit to avoid overwhelming output
+            match result {
+                Ok((offset, string)) => {
+                    string_count += 1;
+                    total_length += string.len();
+                    
+                    // Collect interesting samples
+                    if sample_strings.len() < 5 && !string.is_empty() && string.len() > 3 {
+                        sample_strings.push((offset, string));
+                    }
+                }
+                Err(_) => break, // Stop on error
+            }
+        }
+
+        println!("    Total strings analyzed: {}", string_count);
+        println!("    Average string length: {:.1} chars", 
+                total_length as f64 / string_count.max(1) as f64);
+        
+        if !sample_strings.is_empty() {
+            println!("    Sample strings:");
+            for (offset, string) in sample_strings {
+                println!("      @{:04X}: \"{}\"", offset, 
+                        string.chars().take(40).collect::<String>());
+            }
+        }
     }
 
-    // GUID heap analysis
-    if let Some(_guids) = assembly.guids() {
-        println!("  GUID heap contains module and type identifiers");
-        // Note: The Guid heap doesn't expose length in the public API
-        // Individual GUIDs can be accessed by index via guids.get(index)
+    // GUID heap analysis with iterator demonstration
+    if let Some(guids) = assembly.guids() {
+        let mut guid_count = 0;
+        println!("  GUID heap analysis:");
+        
+        for result in guids.iter().take(20) { // Limit to reasonable number
+            match result {
+                Ok((index, guid)) => {
+                    guid_count += 1;
+                    if guid_count <= 3 {
+                        println!("    GUID #{}: {}", index, guid);
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        
+        if guid_count > 3 {
+            println!("    ... and {} more GUIDs", guid_count - 3);
+        }
+        println!("    Total GUIDs: {}", guid_count);
     }
 
-    // Blob heap analysis
-    if let Some(_blob) = assembly.blob() {
-        println!("  Blob heap contains signatures, constants, and marshalling information");
-        // Note: Blob heap doesn't expose size() method in public API
-        // Individual blobs can be accessed by index via blob.get(index)
+    // Blob heap analysis with iterator demonstration
+    if let Some(blob) = assembly.blob() {
+        let mut blob_count = 0;
+        let mut total_size = 0;
+        let mut size_histogram: HashMap<String, usize> = HashMap::new();
+
+        println!("  Blob heap analysis:");
+        for result in blob.iter().take(500) { // Limit to avoid overwhelming output
+            match result {
+                Ok((offset, blob_data)) => {
+                    blob_count += 1;
+                    total_size += blob_data.len();
+                    
+                    // Categorize by size
+                    let size_category = match blob_data.len() {
+                        0..=4 => "tiny (0-4 bytes)",
+                        5..=16 => "small (5-16 bytes)", 
+                        17..=64 => "medium (17-64 bytes)",
+                        65..=256 => "large (65-256 bytes)",
+                        _ => "huge (>256 bytes)",
+                    };
+                    *size_histogram.entry(size_category.to_string()).or_insert(0) += 1;
+                    
+                    // Show a sample of the first few blobs
+                    if blob_count <= 3 && !blob_data.is_empty() {
+                        let preview = blob_data.iter()
+                            .take(8)
+                            .map(|b| format!("{:02X}", b))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        let suffix = if blob_data.len() > 8 { "..." } else { "" };
+                        println!("    Blob @{:04X}: {} bytes [{}{}]", 
+                                offset, blob_data.len(), preview, suffix);
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+
+        println!("    Total blobs analyzed: {}", blob_count);
+        if blob_count > 0 {
+            println!("    Average blob size: {:.1} bytes", 
+                    total_size as f64 / blob_count as f64);
+            println!("    Size distribution:");
+            for (category, count) in size_histogram {
+                println!("      {}: {} blobs", category, count);
+            }
+        }
+    }
+
+    // User strings heap analysis with iterator demonstration  
+    if let Some(user_strings) = assembly.userstrings() {
+        let mut string_count = 0;
+        let mut sample_user_strings = Vec::new();
+
+        println!("  User strings heap analysis:");
+        for result in user_strings.iter().take(100) { // Limit for readability
+            match result {
+                Ok((offset, string)) => {
+                    string_count += 1;
+                    
+                    // Collect interesting samples
+                    if sample_user_strings.len() < 3 {
+                        let display_string = string.to_string_lossy();
+                        if !display_string.trim().is_empty() && display_string.len() > 2 {
+                            sample_user_strings.push((offset, display_string.to_string()));
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+
+        println!("    Total user strings: {}", string_count);
+        if !sample_user_strings.is_empty() {
+            println!("    Sample user strings:");
+            for (offset, string) in sample_user_strings {
+                let truncated = if string.len() > 50 {
+                    format!("{}...", &string[..47])
+                } else {
+                    string
+                };
+                println!("      @{:04X}: \"{}\"", offset, truncated);
+            }
+        }
     }
 }
 

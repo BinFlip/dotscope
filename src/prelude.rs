@@ -170,6 +170,11 @@ pub use crate::metadata::{
 /// Metadata heap access
 pub use crate::metadata::streams::{Blob, Guid, Strings, UserStrings};
 
+/// Metadata heap iterators for efficient sequential traversal
+pub use crate::metadata::streams::{
+    BlobIterator, GuidIterator, StringsIterator, UserStringsIterator,
+};
+
 /// Metadata tables and stream headers
 pub use crate::metadata::streams::{StreamHeader, TablesHeader};
 

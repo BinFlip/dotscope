@@ -23,9 +23,15 @@
 //! - **`#~`** - Compressed metadata tables containing type definitions, method signatures,
 //!   field layouts, and all structural information about the assembly.
 //!
+//! # Iterator Support
+//!
+//! All heap types (Strings, UserStrings, Blob, Guid) provide both indexed access via `get()`
+//! methods and efficient iterator support for sequential traversal of all entries. Iterators
+//! provide efficient access and delegate to the parent heap's parsing logic for consistency.
+//!
 //! # Examples
 //!
-//! ```rust
+//! ```rust, no_run
 //! use dotscope::CilObject;
 //!
 //! let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
@@ -34,11 +40,53 @@
 //! // Access string heap
 //! if let Some(strings) = assembly.strings() {
 //!     let type_name = strings.get(0x123)?; // Get string at offset 0x123
+//!     
+//!     // Iterate through all strings in the heap
+//!     for result in strings.iter() {
+//!         match result {
+//!             Ok((offset, string)) => println!("String at {}: '{}'", offset, string),
+//!             Err(e) => eprintln!("Error: {}", e),
+//!         }
+//!     }
 //! }
 //!
 //! // Access blob heap for signatures
 //! if let Some(blob) = assembly.blob() {
 //!     let signature_data = blob.get(1)?; // Get blob at offset 1
+//!     
+//!     // Iterate through all blobs
+//!     for result in blob.iter() {
+//!         match result {
+//!             Ok((offset, blob_data)) => println!("Blob at {}: {} bytes", offset, blob_data.len()),
+//!             Err(e) => eprintln!("Error: {}", e),
+//!         }
+//!     }
+//! }
+//!
+//! // Access GUID heap for assembly identifiers
+//! if let Some(guid) = assembly.guids() {
+//!     let assembly_guid = guid.get(1)?; // Get GUID at index 1
+//!     
+//!     // Iterate through all GUIDs
+//!     for result in guid.iter() {
+//!         match result {
+//!             Ok((index, guid_bytes)) => println!("GUID at {}: {:?}", index, guid_bytes),
+//!             Err(e) => eprintln!("Error: {}", e),
+//!         }
+//!     }
+//! }
+//!
+//! // Access user strings heap for string literals
+//! if let Some(user_strings) = assembly.userstrings() {
+//!     let literal = user_strings.get(0x100)?; // Get user string at offset 0x100
+//!     
+//!     // Iterate through all user strings  
+//!     for result in user_strings.iter() {
+//!         match result {
+//!             Ok((offset, string)) => println!("User string at {}: '{}'", offset, string.to_string_lossy()),
+//!             Err(e) => eprintln!("Error: {}", e),
+//!         }
+//!     }
 //! }
 //!
 //! // Access metadata tables
@@ -66,11 +114,11 @@ pub use streamheader::StreamHeader;
 
 /// The '#String' heap implementation
 mod strings;
-pub use strings::Strings;
+pub use strings::{Strings, StringsIterator};
 
 /// The '#US' heap implementation
 mod userstrings;
-pub use userstrings::UserStrings;
+pub use userstrings::{UserStrings, UserStringsIterator};
 
 /// The '#~' implementation
 pub(crate) mod tables;
@@ -162,8 +210,8 @@ pub use tables::{
 
 /// The '#GUID' heap / array implementation
 mod guid;
-pub use guid::Guid;
+pub use guid::{Guid, GuidIterator};
 
 /// The '#Blob' heap implementation
 mod blob;
-pub use blob::Blob;
+pub use blob::{Blob, BlobIterator};

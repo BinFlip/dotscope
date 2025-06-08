@@ -67,6 +67,73 @@ impl<'a> Guid<'a> {
 
         Ok(uguid::Guid::from_bytes(buffer))
     }
+
+    /// Returns an iterator over all GUIDs in the heap
+    ///
+    /// Provides access to all 16-byte GUID entries in sequential order.
+    /// Each iteration yields a `Result<(usize, uguid::Guid)>` with the index and GUID value.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::streams::Guid;
+    ///
+    /// let data = &[0u8; 32]; // Two empty GUIDs
+    /// let guids = Guid::from(data).unwrap();
+    ///
+    /// for result in guids.iter() {
+    ///     match result {
+    ///         Ok((index, guid)) => println!("GUID {}: {}", index, guid),
+    ///         Err(e) => eprintln!("Error: {}", e),
+    ///     }
+    /// }
+    /// ```
+    #[must_use]
+    pub fn iter(&self) -> GuidIterator<'_> {
+        GuidIterator::new(self)
+    }
+}
+
+impl<'a> IntoIterator for &'a Guid<'a> {
+    type Item = std::result::Result<(usize, uguid::Guid), crate::error::Error>;
+    type IntoIter = GuidIterator<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+/// Iterator over entries in the `#GUID` heap
+///
+/// Provides access to 16-byte GUID entries in sequential order.
+/// Each iteration returns the index and GUID value.
+pub struct GuidIterator<'a> {
+    guid: &'a Guid<'a>,
+    index: usize,
+}
+
+impl<'a> GuidIterator<'a> {
+    pub(crate) fn new(guid: &'a Guid<'a>) -> Self {
+        Self {
+            guid,
+            index: 1, // GUID indices start at 1
+        }
+    }
+}
+
+impl Iterator for GuidIterator<'_> {
+    type Item = Result<(usize, uguid::Guid)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.guid.get(self.index) {
+            Ok(guid) => {
+                let current_index = self.index;
+                self.index += 1;
+                Some(Ok((current_index, guid)))
+            }
+            Err(_) => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -96,5 +163,118 @@ mod tests {
             guids.get(3).unwrap(),
             uguid::guid!("00000000-0000-0000-0000-000000000000")
         );
+    }
+
+    #[test]
+    fn test_guid_iterator_basic() {
+        let data = [0u8; 32]; // Two empty GUIDs
+        let guids = Guid::from(&data).unwrap();
+        let mut iter = guids.iter();
+
+        let first = iter.next().unwrap().unwrap();
+        assert_eq!(first.0, 1);
+        assert_eq!(
+            first.1,
+            uguid::guid!("00000000-0000-0000-0000-000000000000")
+        );
+
+        let second = iter.next().unwrap().unwrap();
+        assert_eq!(second.0, 2);
+        assert_eq!(
+            second.1,
+            uguid::guid!("00000000-0000-0000-0000-000000000000")
+        );
+
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn test_guid_iterator_single_guid() {
+        #[rustfmt::skip]
+        let data = [
+            0x8e, 0x90, 0x37, 0xd4, 0xe6, 0x65, 0x7c, 0x48, 
+            0x97, 0x35, 0x7b, 0xdf, 0xf6, 0x99, 0xbe, 0xa5,
+        ];
+
+        let guids = Guid::from(&data).unwrap();
+        let mut iter = guids.iter();
+
+        let first = iter.next().unwrap().unwrap();
+        assert_eq!(first.0, 1);
+        assert_eq!(
+            first.1,
+            uguid::guid!("d437908e-65e6-487c-9735-7bdff699bea5")
+        );
+
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn test_guid_iterator_multiple_guids() {
+        #[rustfmt::skip]
+        let data = [
+            // First GUID
+            0x8e, 0x90, 0x37, 0xd4, 0xe6, 0x65, 0x7c, 0x48, 
+            0x97, 0x35, 0x7b, 0xdf, 0xf6, 0x99, 0xbe, 0xa5,
+            // Second GUID (all AA)
+            0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 
+            0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+            // Third GUID (all zeros)
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+
+        let guids = Guid::from(&data).unwrap();
+        let mut iter = guids.iter();
+
+        let first = iter.next().unwrap().unwrap();
+        assert_eq!(first.0, 1);
+        assert_eq!(
+            first.1,
+            uguid::guid!("d437908e-65e6-487c-9735-7bdff699bea5")
+        );
+
+        let second = iter.next().unwrap().unwrap();
+        assert_eq!(second.0, 2);
+        assert_eq!(
+            second.1,
+            uguid::guid!("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")
+        );
+
+        let third = iter.next().unwrap().unwrap();
+        assert_eq!(third.0, 3);
+        assert_eq!(
+            third.1,
+            uguid::guid!("00000000-0000-0000-0000-000000000000")
+        );
+
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn test_guid_iterator_partial_guid() {
+        // Only 10 bytes - not enough for a complete GUID
+        let data = [0u8; 10];
+
+        // This should fail at creation because data is too small
+        assert!(Guid::from(&data).is_err());
+    }
+
+    #[test]
+    fn test_guid_iterator_exact_size() {
+        // Exactly 16 bytes - one complete GUID
+        let data = [0xFF; 16];
+
+        let guids = Guid::from(&data).unwrap();
+        let mut iter = guids.iter();
+
+        let first = iter.next().unwrap().unwrap();
+        assert_eq!(first.0, 1);
+        assert_eq!(
+            first.1,
+            uguid::guid!("FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
+        );
+
+        assert!(iter.next().is_none());
     }
 }

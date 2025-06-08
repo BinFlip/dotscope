@@ -224,11 +224,6 @@ impl<'a> InstructionIterator<'a> {
     /// * `blocks` - Reference to the collection of basic blocks to iterate over.
     ///   Can be any slice-like container (`&[BasicBlock]`, `&Vec<BasicBlock>`, etc.)
     ///
-    /// # Performance
-    ///
-    /// Creating the iterator is O(1) - no preprocessing or validation is performed.
-    /// The actual work happens during iteration.
-    ///
     /// # Examples
     ///
     /// ```rust,no_run
@@ -311,12 +306,6 @@ impl<'a> Iterator for InstructionIterator<'a> {
     /// A tuple `(lower_bound, Some(upper_bound))` where both bounds are equal,
     /// providing an exact count of remaining instructions. This enables efficient
     /// pre-allocation when collecting instructions into containers.
-    ///
-    /// # Performance
-    ///
-    /// This method is O(remaining_blocks) and scans through all remaining blocks
-    /// to count their instructions. For very large methods, consider caching the
-    /// result if calling multiple times.
     ///
     /// # Examples
     ///

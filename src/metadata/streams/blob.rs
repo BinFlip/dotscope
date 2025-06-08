@@ -6,7 +6,7 @@
 //! # Reference
 //! - [ECMA-335 II.24.2.4](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf)
 
-use crate::{Error::OutOfBounds, Result};
+use crate::{file::parser::Parser, Error::OutOfBounds, Result};
 
 /// '#Blob' points to streams of bytes. There are chunks, which may not be accessible in between of others that are.
 /// Each 'valid' blob is pointed to by another table / index, and each contains their size encoded into the first byte.
@@ -67,41 +67,9 @@ impl<'a> Blob<'a> {
             return Err(OutOfBounds);
         }
 
-        let (skip, len) = if (self.data[index] >> 7) & 1 == 0 {
-            if index > self.data.len() {
-                return Err(OutOfBounds);
-            }
-
-            (1, (self.data[index]) as usize)
-        } else if (self.data[index] >> 7) & 1 > 0 && (self.data[index] >> 6) & 1 == 0 {
-            if index + 1 > self.data.len() {
-                return Err(OutOfBounds);
-            }
-
-            let size_p_1 = (self.data[index] & 0b_01111111_u8) as usize;
-            let size_p_2 = self.data[index + 1] as usize;
-
-            (2, (size_p_1 << 8) + size_p_2)
-        } else if (self.data[index] >> 7) & 1 > 0
-            && (self.data[index] >> 6) & 1 > 0
-            && (self.data[index] >> 5) & 1 == 0
-        {
-            if index + 3 > self.data.len() {
-                return Err(OutOfBounds);
-            }
-
-            let size_p_1 = (self.data[index] & 0b_00111111_u8) as usize;
-            let size_p_2 = self.data[index + 1] as usize;
-            let size_p_3 = self.data[index + 2] as usize;
-            let size_p_4 = self.data[index + 3] as usize;
-
-            (
-                4,
-                (size_p_1 << 24) + (size_p_2 << 16) + (size_p_3 << 8) + size_p_4,
-            )
-        } else {
-            return Err(malformed_error!("Invalid blob index - {}", index));
-        };
+        let mut parser = Parser::new(&self.data[index..]);
+        let len = parser.read_compressed_uint()? as usize;
+        let skip = parser.pos();
 
         let Some(data_start) = index.checked_add(skip) else {
             return Err(OutOfBounds);
@@ -116,6 +84,86 @@ impl<'a> Blob<'a> {
         }
 
         Ok(&self.data[data_start..data_end])
+    }
+
+    /// Returns an iterator over all blobs in the heap
+    ///
+    /// Provides zero-copy access to all variable-length binary blobs.
+    /// Each iteration yields a `Result<(usize, &[u8])>` with the offset and blob data.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::streams::Blob;
+    ///
+    /// let data = &[0u8, 0x03, 0x41, 0x42, 0x43, 0x02, 0x44, 0x45];
+    /// let blob = Blob::from(data).unwrap();
+    ///
+    /// for result in blob.iter() {
+    ///     match result {
+    ///         Ok((offset, blob_data)) => println!("Blob at {}: {:02X?}", offset, blob_data),
+    ///         Err(e) => eprintln!("Error: {}", e),
+    ///     }
+    /// }
+    /// ```
+    #[must_use]
+    pub fn iter(&self) -> BlobIterator<'_> {
+        BlobIterator::new(self)
+    }
+}
+
+impl<'a> IntoIterator for &'a Blob<'a> {
+    type Item = std::result::Result<(usize, &'a [u8]), crate::error::Error>;
+    type IntoIter = BlobIterator<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+/// Iterator over entries in the `#Blob` heap
+///
+/// Provides zero-copy access to variable-length binary blobs.
+/// Each iteration returns the offset and blob data.
+pub struct BlobIterator<'a> {
+    blob: &'a Blob<'a>,
+    position: usize,
+}
+
+impl<'a> BlobIterator<'a> {
+    pub(crate) fn new(blob: &'a Blob<'a>) -> Self {
+        Self {
+            blob,
+            position: 1, // Skip the initial null byte at position 0
+        }
+    }
+}
+
+impl<'a> Iterator for BlobIterator<'a> {
+    type Item = Result<(usize, &'a [u8])>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.position >= self.blob.data.len() {
+            return None;
+        }
+
+        let start_position = self.position;
+        match self.blob.get(self.position) {
+            Ok(blob_data) => {
+                let mut parser = Parser::new(&self.blob.data[self.position..]);
+                if parser.read_compressed_uint().is_ok() {
+                    let length_bytes = parser.pos();
+                    self.position += length_bytes + blob_data.len();
+                    Some(Ok((start_position, blob_data)))
+                } else {
+                    Some(Err(malformed_error!(
+                        "Failed to parse blob length at position {}",
+                        start_position
+                    )))
+                }
+            }
+            Err(e) => Some(Err(e)),
+        }
     }
 }
 
@@ -186,5 +234,86 @@ mod tests {
             assert_eq!(indexed.len(), 65793);
             assert_eq!(indexed, &[0xBA; 65793]);
         }
+    }
+
+    #[test]
+    fn test_blob_iterator_basic() {
+        let data = [0x00, 0x02, 0x41, 0x42, 0x01, 0x43];
+        let blob = Blob::from(&data).unwrap();
+        let mut iter = blob.iter();
+
+        let first = iter.next().unwrap().unwrap();
+        assert_eq!(first.0, 1);
+        assert_eq!(first.1, &[0x41, 0x42]);
+
+        let second = iter.next().unwrap().unwrap();
+        assert_eq!(second.0, 4);
+        assert_eq!(second.1, &[0x43]);
+
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn test_blob_iterator_empty_blob() {
+        let data = [0x00, 0x00, 0x02, 0x41, 0x42];
+        let blob = Blob::from(&data).unwrap();
+        let mut iter = blob.iter();
+
+        let first = iter.next().unwrap().unwrap();
+        assert_eq!(first.0, 1);
+        assert_eq!(first.1, &[]);
+
+        let second = iter.next().unwrap().unwrap();
+        assert_eq!(second.0, 2);
+        assert_eq!(second.1, &[0x41, 0x42]);
+
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn test_blob_iterator_large_blob() {
+        // Test with two-byte length encoding
+        let mut data = vec![0x00, 0x81, 0x02]; // Length 258 (two-byte encoding)
+        data.extend(vec![0xFF; 258]);
+        data.push(0x01); // Single byte blob
+        data.push(0xAA);
+
+        let blob = Blob::from(&data).unwrap();
+        let mut iter = blob.iter();
+
+        let first = iter.next().unwrap().unwrap();
+        assert_eq!(first.0, 1);
+        assert_eq!(first.1.len(), 258);
+        assert_eq!(first.1, &vec![0xFF; 258]);
+
+        let second = iter.next().unwrap().unwrap();
+        assert_eq!(second.0, 261);
+        assert_eq!(second.1, &[0xAA]);
+
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn test_blob_iterator_truncated_data() {
+        // Blob claims length 5 but only 3 bytes available
+        let data = [0x00, 0x05, 0x41, 0x42, 0x43];
+        let blob = Blob::from(&data).unwrap();
+        let mut iter = blob.iter();
+
+        let result = iter.next().unwrap();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_blob_iterator_single_item() {
+        let data = [0x00, 0x03, 0x41, 0x42, 0x43];
+        let blob = Blob::from(&data).unwrap();
+        let mut iter = blob.iter();
+
+        let first = iter.next().unwrap().unwrap();
+        assert_eq!(first.0, 1);
+        assert_eq!(first.1, &[0x41, 0x42, 0x43]);
+
+        assert!(iter.next().is_none());
     }
 }
