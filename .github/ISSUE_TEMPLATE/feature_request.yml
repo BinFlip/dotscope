@@ -1,0 +1,122 @@
+name: Feature Request
+description: Suggest an idea for dotscope
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a new feature! Please provide as much detail as possible.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Description
+      description: Is your feature request related to a problem? Please describe.
+      placeholder: I'm always frustrated when...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the solution you'd like to see.
+      placeholder: I would like to be able to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternative Solutions
+      description: Describe any alternative solutions or features you've considered.
+      placeholder: Alternatively, we could...
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Feature Category
+      description: What category does this feature belong to?
+      options:
+        - API Enhancement
+        - Performance Improvement
+        - New Analysis Feature
+        - Disassembler Enhancement
+        - Metadata Parsing
+        - Error Handling
+        - Documentation
+        - Developer Experience
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: complexity
+    attributes:
+      label: Estimated Complexity
+      description: How complex do you think this feature would be to implement?
+      options:
+        - Low (Minor API addition)
+        - Medium (Moderate implementation)
+        - High (Major feature addition)
+        - Unknown
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Case
+      description: Describe your specific use case for this feature.
+      placeholder: I need this feature because...
+    validations:
+      required: true
+
+  - type: textarea
+    id: code-example
+    attributes:
+      label: Example Usage
+      description: Show how you'd like to use this feature with code examples.
+      render: rust
+      placeholder: |
+        use dotscope::CilObject;
+        
+        fn main() -> Result<(), Box<dyn std::error::Error>> {
+            let assembly = CilObject::from_file("sample.dll".as_ref())?;
+            // Example of how the new feature would be used
+            Ok(())
+        }
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this feature to you?
+      options:
+        - Low (Nice to have)
+        - Medium (Would be helpful)
+        - High (Need it for my project)
+        - Critical (Blocking my work)
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Add any other context, screenshots, or examples about the feature request here.
+      placeholder: Any additional information...
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Checklist
+      description: Please confirm the following
+      options:
+        - label: I have searched existing issues to make sure this feature hasn't been requested already
+          required: true
+        - label: I have provided a clear description of the problem and proposed solution
+          required: true
+        - label: I understand this is a feature request and not a bug report
+          required: true

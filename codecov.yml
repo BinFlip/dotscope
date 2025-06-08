@@ -1,0 +1,32 @@
+# Codecov configuration
+# https://docs.codecov.com/docs/codecov-yaml
+
+coverage:
+  status:
+    project:
+      default:
+        target: 90%
+        threshold: 2%
+        if_ci_failed: error
+    patch:
+      default:
+        target: 85%
+        threshold: 5%
+        if_ci_failed: error
+
+  ignore:
+    - "tests/**/*"
+    - "examples/**/*"
+    - "benches/**/*"
+    - "fuzz/**/*"
+    - "src/test/**/*"
+
+comment:
+  layout: "reach,diff,flags,files,footer"
+  behavior: default
+  require_changes: false
+  require_base: false
+  require_head: true
+
+github_checks:
+  annotations: true

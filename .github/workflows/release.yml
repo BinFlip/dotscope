@@ -1,0 +1,270 @@
+name: Release and Publish
+
+on:
+  push:
+    branches: [ main, master ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/**'
+      - '!.github/workflows/release.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # First ensure all tests pass
+  test:
+    name: Pre-Release Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+        
+    - name: Setup Rust cache
+      uses: Swatinem/rust-cache@v2
+      
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+      
+    - name: Run clippy
+      run: cargo clippy --all-features --all-targets -- -D warnings
+      env:
+        RUSTFLAGS: "-Dwarnings"
+      
+    - name: Run tests
+      run: cargo test --all-features --verbose
+      
+    - name: Run doc tests
+      run: cargo test --doc --all-features
+      
+    - name: Check documentation
+      run: cargo doc --all-features --no-deps
+
+  # Create GitHub release
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: test
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Get version from Cargo.toml
+      id: version
+      run: |
+        VERSION=$(grep '^version = ' Cargo.toml | head -1 | cut -d '"' -f 2)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Version: $VERSION"
+        
+    - name: Check if release exists
+      id: check_release
+      run: |
+        if gh release view "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+        fi
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Generate changelog
+      id: changelog
+      if: steps.check_release.outputs.exists == 'false'
+      run: |
+        # Get the latest tag
+        LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        
+        if [ -z "$LATEST_TAG" ]; then
+          # No previous tags, get all commits
+          CHANGELOG=$(git log --pretty=format:"- %s (%h)" --no-merges)
+        else
+          # Get commits since the latest tag
+          CHANGELOG=$(git log ${LATEST_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
+        fi
+        
+        if [ -z "$CHANGELOG" ]; then
+          CHANGELOG="- Initial release"
+        fi
+        
+        echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+        echo "$CHANGELOG" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        
+    - name: Create Release
+      id: create_release
+      if: steps.check_release.outputs.exists == 'false'
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ steps.version.outputs.version }}
+        release_name: Release v${{ steps.version.outputs.version }}
+        body: |
+          ## Changes in v${{ steps.version.outputs.version }}
+          
+          ${{ steps.changelog.outputs.CHANGELOG }}
+          
+          ## Installation
+          
+          Add this to your `Cargo.toml`:
+          
+          ```toml
+          [dependencies]
+          dotscope = "${{ steps.version.outputs.version }}"
+          ```
+          
+          Or install via cargo:
+          
+          ```bash
+          cargo add dotscope
+          ```
+        draft: false
+        prerelease: false
+
+  # Build release artifacts
+  build-release:
+    name: Build Release Artifacts
+    runs-on: ${{ matrix.os }}
+    needs: create-release
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: libdotscope
+            asset_name: dotscope-linux-x86_64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact_name: libdotscope
+            asset_name: dotscope-linux-aarch64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: dotscope
+            asset_name: dotscope-windows-x86_64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: libdotscope
+            asset_name: dotscope-macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: libdotscope
+            asset_name: dotscope-macos-aarch64
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+        
+    - name: Setup Rust cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: ${{ matrix.os }}-${{ matrix.target }}-release
+        
+    - name: Install cross-compilation tools (Linux ARM64)
+      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu
+        echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+        
+    - name: Build release
+      run: cargo build --release --target ${{ matrix.target }} --all-features
+      
+    - name: Create release archive
+      run: |
+        mkdir -p release-artifacts
+        if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }}.lib release-artifacts/
+          cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }}.pdb release-artifacts/ || true
+          cd release-artifacts && 7z a ${{ matrix.asset_name }}.zip *
+        else
+          cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }}.rlib release-artifacts/
+          cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }}.d release-artifacts/
+          cd release-artifacts && tar czf ${{ matrix.asset_name }}.tar.gz *
+        fi
+      shell: bash
+      
+    - name: Upload Release Asset (Windows)
+      if: matrix.os == 'windows-latest' && needs.create-release.outputs.upload_url
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: release-artifacts/${{ matrix.asset_name }}.zip
+        asset_name: ${{ matrix.asset_name }}.zip
+        asset_content_type: application/zip
+        
+    - name: Upload Release Asset (Unix)
+      if: matrix.os != 'windows-latest' && needs.create-release.outputs.upload_url
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: release-artifacts/${{ matrix.asset_name }}.tar.gz
+        asset_name: ${{ matrix.asset_name }}.tar.gz
+        asset_content_type: application/gzip
+
+  # Publish to crates.io
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs: [test, create-release]
+    if: needs.create-release.outputs.version != ''
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      
+    - name: Setup Rust cache
+      uses: Swatinem/rust-cache@v2
+      
+    - name: Verify package can be published
+      run: cargo publish --dry-run --all-features
+      
+    - name: Publish to crates.io
+      run: cargo publish --all-features
+      env:
+        CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # Verify documentation builds correctly
+  verify-docs:
+    name: Verify Documentation
+    runs-on: ubuntu-latest
+    needs: [test, create-release]
+    if: needs.create-release.outputs.version != ''
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      
+    - name: Setup Rust cache
+      uses: Swatinem/rust-cache@v2
+      
+    - name: Build documentation for docs.rs
+      run: |
+        cargo doc --all-features --no-deps --document-private-items
+        echo "✅ Documentation builds successfully"
+        echo "📚 Documentation will be automatically available at https://docs.rs/dotscope after publishing"

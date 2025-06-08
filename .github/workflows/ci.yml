@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, develop ]
+  pull_request:
+    branches: [ master, develop ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"
+
+jobs:
+  # Library testing and linting - no build artifacts needed
+  check:
+    name: Check & Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+        
+    - name: Setup Rust cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: ${{ matrix.os }}-check
+        
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+      
+    - name: Run clippy
+      run: cargo clippy --all-features --all-targets -- -D warnings
+      
+    - name: Check compilation
+      run: cargo check --all-features
+      
+    - name: Run tests
+      run: cargo test --all-features --verbose
+      
+    - name: Run doc tests
+      run: cargo test --doc --all-features
+      
+    - name: Check documentation
+      run: cargo doc --all-features --no-deps
+
+  # Optional fuzzing on main branch pushes only
+  fuzzing:
+    name: Quick Fuzzing
+    runs-on: ubuntu-latest
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/master') || contains(github.event.head_commit.message, '[fuzz]')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install Rust nightly
+      uses: dtolnay/rust-toolchain@nightly
+      
+    - name: Install cargo-fuzz
+      run: cargo install cargo-fuzz
+      
+    - name: Setup Rust cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: fuzz-quick
+        
+    - name: Run quick fuzz test
+      run: |
+        cd fuzz
+        timeout 60 cargo +nightly fuzz run cilobject --release -- -max_total_time=50 || true
+        
+    - name: Check for crashes
+      run: |
+        if [ -d "fuzz/artifacts/cilobject" ] && [ "$(ls -A fuzz/artifacts/cilobject)" ]; then
+          echo "Fuzzing found crashes!"
+          ls -la fuzz/artifacts/cilobject/
+          exit 1
+        fi
+
+  # Security audit
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      
+    - name: Install cargo-audit
+      run: cargo install cargo-audit
+      
+    - name: Run security audit
+      run: cargo audit

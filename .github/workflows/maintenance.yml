@@ -1,0 +1,195 @@
+name: Maintenance
+
+on:
+  schedule:
+    # Run every Sunday at 3 AM UTC
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+
+jobs:
+  dependency-updates:
+    name: Check Dependencies
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      
+    - name: Install cargo tools
+      run: |
+        cargo install cargo-audit cargo-outdated cargo-machete
+        
+    - name: Security audit
+      run: |
+        echo "## Security Audit Report" >> $GITHUB_STEP_SUMMARY
+        if cargo audit --json > audit.json; then
+          echo "✅ No security vulnerabilities found" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Security vulnerabilities detected:" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          cat audit.json >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        fi
+        
+    - name: Check outdated dependencies
+      run: |
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Outdated Dependencies" >> $GITHUB_STEP_SUMMARY
+        if cargo outdated --format json > outdated.json; then
+          OUTDATED_COUNT=$(jq '.dependencies | length' outdated.json)
+          if [ "$OUTDATED_COUNT" -gt 0 ]; then
+            echo "📦 Found $OUTDATED_COUNT outdated dependencies" >> $GITHUB_STEP_SUMMARY
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            cat outdated.json >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✅ All dependencies are up to date" >> $GITHUB_STEP_SUMMARY
+          fi
+        fi
+        
+    - name: Check unused dependencies
+      run: |
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Unused Dependencies Check" >> $GITHUB_STEP_SUMMARY
+        if cargo machete --with-metadata 2>&1 | tee machete.log; then
+          if grep -q "unused dependencies" machete.log; then
+            echo "⚠️ Found unused dependencies:" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat machete.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✅ No unused dependencies found" >> $GITHUB_STEP_SUMMARY
+          fi
+        fi
+        
+    - name: Upload reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: dependency-reports
+        path: |
+          audit.json
+          outdated.json
+          machete.log
+        retention-days: 30
+
+  code-metrics:
+    name: Code Metrics
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Install tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cloc
+        
+    - name: Generate code metrics
+      run: |
+        echo "## Code Metrics Report" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Lines of code
+        echo "### Lines of Code" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        cloc src/ --by-file --exclude-dir=target >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        
+        # File count
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### File Statistics" >> $GITHUB_STEP_SUMMARY
+        echo "- Rust source files: $(find src -name '*.rs' | wc -l)" >> $GITHUB_STEP_SUMMARY
+        echo "- Test files: $(find tests -name '*.rs' 2>/dev/null | wc -l || echo 0)" >> $GITHUB_STEP_SUMMARY
+        echo "- Example files: $(find examples -name '*.rs' 2>/dev/null | wc -l || echo 0)" >> $GITHUB_STEP_SUMMARY
+        echo "- Benchmark files: $(find benches -name '*.rs' 2>/dev/null | wc -l || echo 0)" >> $GITHUB_STEP_SUMMARY
+        
+        # Git statistics
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Git Statistics" >> $GITHUB_STEP_SUMMARY
+        echo "- Total commits: $(git rev-list --all --count)" >> $GITHUB_STEP_SUMMARY
+        echo "- Contributors: $(git log --format='%aN' | sort -u | wc -l)" >> $GITHUB_STEP_SUMMARY
+        echo "- Branches: $(git branch -r | wc -l)" >> $GITHUB_STEP_SUMMARY
+
+  performance-baseline:
+    name: Performance Baseline
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      
+    - name: Setup Rust cache
+      uses: Swatinem/rust-cache@v2
+      
+    - name: Run benchmarks
+      run: |
+        cargo bench --all-features -- --output-format json | tee benchmark-baseline.json
+        
+    - name: Store baseline
+      uses: actions/upload-artifact@v4
+      with:
+        name: performance-baseline-${{ github.run_number }}
+        path: benchmark-baseline.json
+        retention-days: 90
+        
+    - name: Generate performance report
+      run: |
+        echo "## Performance Baseline Report" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Benchmark baseline generated and stored for comparison." >> $GITHUB_STEP_SUMMARY
+        echo "Run number: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+        echo "Timestamp: $(date -u)" >> $GITHUB_STEP_SUMMARY
+
+  cleanup:
+    name: Cleanup Old Artifacts
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Delete old artifacts
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const owner = context.repo.owner;
+          const repo = context.repo.repo;
+          
+          // Get all artifacts
+          const artifacts = await github.rest.actions.listArtifactsForRepo({
+            owner: owner,
+            repo: repo,
+            per_page: 100
+          });
+          
+          // Delete artifacts older than 30 days
+          const thirtyDaysAgo = new Date();
+          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+          
+          let deletedCount = 0;
+          for (const artifact of artifacts.data.artifacts) {
+            const artifactDate = new Date(artifact.created_at);
+            if (artifactDate < thirtyDaysAgo) {
+              try {
+                await github.rest.actions.deleteArtifact({
+                  owner: owner,
+                  repo: repo,
+                  artifact_id: artifact.id
+                });
+                deletedCount++;
+                console.log(`Deleted artifact: ${artifact.name} (${artifact.created_at})`);
+              } catch (error) {
+                console.log(`Failed to delete artifact ${artifact.name}: ${error.message}`);
+              }
+            }
+          }
+          
+          core.summary.addHeading('Artifact Cleanup Report');
+          core.summary.addRaw(`Deleted ${deletedCount} old artifacts`);
+          await core.summary.write();

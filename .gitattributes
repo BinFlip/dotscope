@@ -1,0 +1,65 @@
+# Git attributes file
+# Controls how Git handles line endings and file types
+# https://git-scm.com/docs/gitattributes
+
+# Default behavior: normalize line endings on checkin, leave them unchanged on checkout
+* text=auto
+
+# Rust source files
+*.rs text
+*.toml text
+
+# Configuration files
+*.yml text
+*.yaml text
+*.json text
+*.xml text
+*.md text
+*.txt text
+
+# Shell scripts (enforce LF)
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Windows batch files (enforce CRLF)
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.a binary
+*.lib binary
+*.pdb binary
+
+# Images
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg text
+
+# Archives
+*.zip binary
+*.tar binary
+*.gz binary
+*.7z binary
+*.rar binary
+
+# Lock files should always use LF
+Cargo.lock text eol=lf
+package-lock.json text eol=lf
+yarn.lock text eol=lf
+
+# Documentation
+*.pdf binary
+
+# IDE files
+*.code-workspace text
+
+# Fuzz corpus and artifacts (treat as binary to avoid corruption)
+fuzz/corpus/** binary
+fuzz/artifacts/** binary

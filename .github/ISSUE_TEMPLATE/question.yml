@@ -1,0 +1,88 @@
+name: Question / Help
+description: Ask a question about using dotscope
+title: "[Question]: "
+labels: ["question", "help-wanted"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for your question! Please provide as much context as possible so we can help you effectively.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What would you like to know?
+      placeholder: How do I...?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What are you trying to accomplish? What have you tried so far?
+      placeholder: I'm trying to... I've already tried...
+    validations:
+      required: true
+
+  - type: textarea
+    id: code-sample
+    attributes:
+      label: Code Sample
+      description: If applicable, provide a code sample showing what you're trying to do.
+      render: rust
+      placeholder: |
+        use dotscope::CilObject;
+        
+        fn main() -> Result<(), Box<dyn std::error::Error>> {
+            // Your code here
+            Ok(())
+        }
+
+  - type: input
+    id: dotscope-version
+    attributes:
+      label: dotscope Version
+      description: What version of dotscope are you using?
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Topic Category
+      description: What area is your question about?
+      options:
+        - Getting Started
+        - API Usage
+        - Metadata Analysis
+        - Disassembly
+        - Performance
+        - Error Handling
+        - Best Practices
+        - Integration
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: documentation-checked
+    attributes:
+      label: Documentation
+      description: Have you checked the documentation? If so, what specifically was unclear?
+      placeholder: I checked the docs at... but I'm still confused about...
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Checklist
+      description: Please confirm the following
+      options:
+        - label: I have searched existing issues and discussions for similar questions
+          required: true
+        - label: I have checked the documentation and examples
+          required: true
+        - label: I have provided sufficient context about what I'm trying to accomplish
+          required: true

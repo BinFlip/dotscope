@@ -1,0 +1,8 @@
+/target
+fuzz/target/
+fuzz/corpus/*
+fuzz/artifacts/*
+fuzz/coverage/*
+fuzz-*.log
+.DS_Store
+lcov.info

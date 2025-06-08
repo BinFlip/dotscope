@@ -1,0 +1,97 @@
+default:
+  image: $CI_REGISTRY/homelab/rust-builder:${OS}-${ARCH}
+  tags:
+    - ${ARCH}
+
+stages:
+  - test
+  - generate
+  - publish
+
+tests:
+  stage: test
+  dependencies: []
+  script:
+    - cargo test
+  parallel:
+    matrix:
+    - OS: linux
+      ARCH: [x64, aarch64]
+  tags:
+    - ${OS}, ${ARCH}
+
+clippy:
+  stage: test
+  dependencies: []
+  variables:
+    RUSTFLAGS: "-Dwarnings"
+  script:
+    - rustup component add clippy
+    - cargo clippy --all-features
+  parallel:
+    matrix:
+    - OS: linux
+      ARCH: [x64, aarch64]
+  tags:
+    - ${OS}, ${ARCH}
+
+builds:
+  stage: generate
+  dependencies: []
+  script:
+    - cargo build --release
+    - mkdir -p public/${OS}-${ARCH}/
+    - mv target/release/libdotscope.d public/${OS}-${ARCH}/
+    - mv target/release/libdotscope.rlib public/${OS}-${ARCH}/    
+  parallel:
+    matrix:
+    - OS: linux
+      ARCH: [x64, aarch64]
+  tags:
+    - ${OS}, ${ARCH}
+  artifacts:
+   paths:
+    - public
+
+documentation:
+  stage: generate
+  dependencies: []
+  script:
+    - cargo doc --no-deps
+    - mkdir -p public/${OS}-${ARCH}/
+    - mv target/doc public/${OS}-${ARCH}/
+  parallel:
+    matrix:
+    - OS: linux
+      ARCH: [x64, aarch64]
+  tags:
+    - ${OS}, ${ARCH}    
+  artifacts:
+   paths:
+    - public
+
+pages:
+  stage: publish
+  dependencies:
+    - builds
+    - documentation
+  needs:
+    - job: builds
+      artifacts: true
+    - job: documentation
+      artifacts: true
+  script:
+    - ls -la public/
+  parallel:
+    matrix:
+    - OS: linux
+      ARCH: [x64, aarch64]
+  tags:
+    - ${OS}, ${ARCH}    
+  artifacts:
+    expose_as: 'dotscope'
+    paths:
+      - public
+  only:
+    - master
+    - develop
