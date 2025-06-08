@@ -400,12 +400,6 @@ impl Method {
     ///
     /// This method is thread-safe and handles the `OnceLock` access pattern internally.
     ///
-    /// # Performance
-    ///
-    /// This method has O(number_of_blocks) complexity, which is typically much faster
-    /// than iterating through all instructions. For methods with many instructions,
-    /// prefer this over `instructions().count()`.
-    ///
     /// # Examples
     ///
     /// ```rust,no_run

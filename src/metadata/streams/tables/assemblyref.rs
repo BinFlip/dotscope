@@ -1,7 +1,10 @@
 use crossbeam_skiplist::SkipMap;
 use md5::Md5;
 use sha1::{Digest, Sha1};
-use std::sync::{atomic::AtomicU32, Arc};
+use std::{
+    fmt::Write,
+    sync::{atomic::AtomicU32, Arc},
+};
 
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
@@ -21,7 +24,7 @@ use crate::{
 fn bytes_to_hex(bytes: &[u8]) -> String {
     let mut hex_string = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
-        hex_string.push_str(&format!("{:02x}", byte));
+        write!(&mut hex_string, "{:02x}", byte).unwrap();
     }
     hex_string
 }
@@ -114,7 +117,7 @@ impl AssemblyRefHash {
     ///
     /// ## Arguments
     /// * `file` - The file to verify against this hash
-    /// * `algorithm` - The hash algorithm to use (AssemblyHashAlgorithm::MD5 or AssemblyHashAlgorithm::SHA1)
+    /// * `algorithm` - The hash algorithm to use (`AssemblyHashAlgorithm::MD5` or `AssemblyHashAlgorithm::SHA1`)
     ///
     /// # Errors
     /// Returns an error if:
