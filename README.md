@@ -200,13 +200,6 @@ make check-all
 
 ## Roadmap
 
-### v0.1.x - Foundation
-
-- Metadata parsing
-- CIL instruction disassembly  
-- Easy to use API
-- Comprehensive testing and CI/CD
-
 ### v0.2.x
 
 - Improve correctness
