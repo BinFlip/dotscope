@@ -198,57 +198,54 @@ cd fuzz && cargo +nightly fuzz run cilobject --release -- -max_total_time=1800
 make check-all
 ```
 
-## Roadmap
+## Future Features
 
-### v0.2.x
+We're continuously working to improve `dotscope` and add new capabilities. Here are features we'd like to implement in the future:
 
-- Improve correctness
-- Improve API
-- Improve documentation
-- Add protections against large allocations (e.g. maliciously crafted files that aim to exhaust system memory to avoid analysis)
+### Core Improvements
+
+- Improve correctness and API design
+- Improve documentation and examples
+- Add protections against large allocations (e.g. maliciously crafted files that aim to exhaust system memory)
 - Improve type system hash calculations for deduplication
-- Proper CustomAttribute support
-- Method instruction access APIs
 - Standard trait implementations (Debug, Display, Clone, etc.)
 - Debug logging infrastructure
 - Ecosystem integration improvements
 
-### v0.3.x
+### Enhanced Parsing and Security
 
 - Enhanced XML security parsing
 - String/Blob caching infrastructure
-
-### v0.x.x - Pre - 1.0
-
+- Proper CustomAttribute support
 - PortablePDB support
 - Non-embedded resource support
+
+### Performance and Scalability
+
 - Parallel loading optimizations
 - Cross-assembly dependency resolution
-- Project-wide analysis
+- Project-wide analysis capabilities
 - Assembly linking and merging
-- Store and Load a full Assembly to/from json
+- Store and load full Assembly to/from JSON
 
-### v1.1.x - Modification
+### Assembly Modification
 
-- Assembly modification and generation
+- Assembly modification and generation capabilities
 - Instruction patching and injection
 - Metadata table manipulation
 
-### v1.2.x - Emulation
-
-- Emulation engine
-
-### v1.3.x - Advanced Analysis
+### Advanced Analysis
 
 - Control flow graph generation
 - Data flow analysis
 - Call graph construction
+- Emulation engine
 
-### v1.4.x - Deobfuscation
+### Deobfuscation
 
 - SSA (Static Single Assignment) generation
-- Applying compiler optimizations to IL (dead code, opaque predicates, ...)
-- String decryption
+- Compiler optimizations applied to IL (dead code elimination, opaque predicate removal, etc.)
+- String decryption capabilities
 
 ## Contributing
 
