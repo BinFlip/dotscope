@@ -283,7 +283,7 @@ dependencies = [
 [[package]]
 name = "goblin"
 version = "0.10.0"
-source = "git+https://github.com/BinFlip/goblin.git?branch=pe.relocation.parse_with_opts_crash#c2a76536b3fc2ac76bf800420182b9f056819a2b"
+source = "git+https://github.com/BinFlip/goblin.git?branch=pe.relocation.parse_with_opts_crash#8288cdec3591f3b4cdfb040172236c7642e13f4e"
 dependencies = [
  "log",
  "plain",
