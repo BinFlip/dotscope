@@ -86,6 +86,17 @@ impl FileRaw {
             hash_value: AssemblyRefHash::new(blob.get(self.hash_value as usize)?)?,
         }))
     }
+
+    /// Apply a `FileRaw` entry to update related metadata structures.
+    ///
+    /// File entries define files that are part of this assembly. They are primarily metadata
+    /// descriptors and don't require cross-table updates during the dual variant resolution phase.
+    ///
+    /// # Errors
+    /// Always returns `Ok(())` as File entries don't modify other tables.
+    pub fn apply(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl<'a> RowDefinition<'a> for FileRaw {

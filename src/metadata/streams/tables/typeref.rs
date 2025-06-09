@@ -31,6 +31,17 @@ pub struct TypeRefRaw {
 }
 
 impl TypeRefRaw {
+    /// Apply a `TypeRefRaw` - no-op for `TypeRef` as external type references don't modify other table entries
+    ///
+    /// `TypeRef` entries represent references to types defined in other modules or assemblies
+    /// and don't require cross-table application during loading.
+    ///
+    /// # Errors
+    /// This method currently returns Ok(()) as `TypeRef` entries don't require cross-table updates.
+    pub fn apply(&self) -> Result<()> {
+        Ok(())
+    }
+
     /// Convert an `TypeRefRaw`, into a `CilType` which has indexes resolved and owns the referenced data
     ///
     /// ## Arguments

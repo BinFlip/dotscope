@@ -91,6 +91,18 @@ impl PropertyRaw {
             fn_other: OnceLock::new(),
         }))
     }
+
+    /// Apply a `PropertyRaw` entry to update related metadata structures.
+    ///
+    /// Property entries define properties that types can expose. They are associated with types
+    /// but don't themselves modify other metadata during the dual variant resolution phase.
+    /// Property methods (getter, setter, etc.) are resolved separately through method resolution.
+    ///
+    /// # Errors
+    /// Always returns `Ok(())` as Property entries don't modify other tables directly.
+    pub fn apply(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl<'a> RowDefinition<'a> for PropertyRaw {

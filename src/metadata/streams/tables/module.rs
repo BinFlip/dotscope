@@ -95,6 +95,18 @@ impl ModuleRaw {
             imports: Vec::new(),
         }))
     }
+
+    /// Apply a `ModuleRaw` entry to update related metadata structures.
+    ///
+    /// Module entries define the module information for the current assembly. They are
+    /// self-contained metadata descriptors and don't require cross-table updates during
+    /// the dual variant resolution phase.
+    ///
+    /// # Errors
+    /// Always returns `Ok(())` as Module entries don't modify other tables.
+    pub fn apply(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl<'a> RowDefinition<'a> for ModuleRaw {

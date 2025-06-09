@@ -58,6 +58,18 @@ impl StandAloneSigRaw {
     pub fn to_owned(&self, _blob: &Blob) -> Result<StandAloneSigRc> {
         todo!("Implement StandAloneSig::from - solve storage / resolution of signature types")
     }
+
+    /// Apply a `StandAloneSigRaw` entry to update related metadata structures.
+    ///
+    /// `StandAloneSig` entries define standalone signatures that can be referenced by other
+    /// metadata elements. They are primarily signature definitions and don't require
+    /// cross-table updates during the dual variant resolution phase.
+    ///
+    /// # Errors
+    /// Always returns `Ok(())` as `StandAloneSig` entries don't modify other tables.
+    pub fn apply(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl<'a> RowDefinition<'a> for StandAloneSigRaw {

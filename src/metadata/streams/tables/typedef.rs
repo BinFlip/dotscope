@@ -198,6 +198,19 @@ impl TypeDefRaw {
             type_methods,
         )))
     }
+
+    /// Apply a `TypeDefRaw` entry to update related metadata structures.
+    ///
+    /// `TypeDef` entries define types within the current assembly. They are primary metadata
+    /// containers but don't themselves modify other metadata during the dual variant
+    /// resolution phase. Type-specific metadata (fields, methods, properties, events, etc.)
+    /// is resolved separately.
+    ///
+    /// # Errors
+    /// Always returns `Ok(())` as `TypeDef` entries don't modify other tables directly.
+    pub fn apply(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl<'a> RowDefinition<'a> for TypeDefRaw {

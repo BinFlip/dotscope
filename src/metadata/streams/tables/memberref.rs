@@ -69,6 +69,17 @@ pub struct MemberRefRaw {
 }
 
 impl MemberRefRaw {
+    /// Apply a `MemberRefRaw` - no-op for `MemberRef` as member references don't modify other table entries
+    ///
+    /// `MemberRef` entries represent references to members (fields, methods) defined in other types
+    /// and don't require cross-table application during loading.
+    ///
+    /// # Errors
+    /// This method currently returns Ok(()) as `MemberRef` entries don't require cross-table updates.
+    pub fn apply(&self) -> Result<()> {
+        Ok(())
+    }
+
     /// Convert an `MemberRefRaw`, into a `MemberRef` which has indexes resolved and owns the referenced data
     ///
     /// ## Arguments

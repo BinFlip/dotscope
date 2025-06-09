@@ -153,7 +153,7 @@ pub use tables::{
         DeclSecurity, DeclSecurityList, DeclSecurityMap, DeclSecurityRaw, DeclSecurityRc,
     },
     event::{Event, EventAttributes, EventList, EventMap, EventRaw, EventRc},
-    eventmap::EventMapRaw,
+    eventmap::{EventMapEntry, EventMapEntryList, EventMapEntryMap, EventMapEntryRc, EventMapRaw},
     exportedtype::{
         ExportedType, ExportedTypeList, ExportedTypeMap, ExportedTypeRaw, ExportedTypeRc,
     },
@@ -195,7 +195,10 @@ pub use tables::{
     nestedclass::{NestedClass, NestedClassList, NestedClassMap, NestedClassRaw, NestedClassRc},
     param::{Param, ParamAttributes, ParamList, ParamMap, ParamRaw, ParamRc},
     property::{Property, PropertyAttributes, PropertyList, PropertyMap, PropertyRaw, PropertyRc},
-    propertymap::PropertyMapRaw,
+    propertymap::{
+        PropertyMapEntry, PropertyMapEntryList, PropertyMapEntryMap, PropertyMapEntryRc,
+        PropertyMapRaw,
+    },
     standalonesig::{
         StandAloneSig, StandAloneSigList, StandAloneSigMap, StandAloneSigRaw, StandAloneSigRc,
     },
@@ -205,7 +208,7 @@ pub use tables::{
         CodedIndex, CodedIndexType, CodedIndexTypeIter, MetadataTable, RowDefinition, TableData,
         TableId, TableInfo, TableInfoRef, TableIterator, TableRowInfo, TablesHeader,
     },
-    typespec::TypeSpecRaw,
+    typespec::{TypeSpec, TypeSpecList, TypeSpecMap, TypeSpecRaw, TypeSpecRc},
 };
 
 /// The '#GUID' heap / array implementation

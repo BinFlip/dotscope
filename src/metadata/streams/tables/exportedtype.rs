@@ -115,6 +115,18 @@ impl ExportedTypeRaw {
             },
         }))
     }
+
+    /// Apply an `ExportedTypeRaw` entry to update related metadata structures.
+    ///
+    /// `ExportedType` entries define types that are exported from this assembly but may be
+    /// implemented in other files or assemblies. They are primarily metadata descriptors
+    /// and don't require cross-table updates during the dual variant resolution phase.
+    ///
+    /// # Errors
+    /// Always returns `Ok(())` as `ExportedType` entries don't modify other tables.
+    pub fn apply(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl<'a> RowDefinition<'a> for ExportedTypeRaw {

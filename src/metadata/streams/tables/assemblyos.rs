@@ -38,6 +38,31 @@ pub struct AssemblyOsRaw {
     pub os_minor_version: u32,
 }
 
+impl AssemblyOsRaw {
+    /// Convert an `AssemblyOsRaw` into an `AssemblyOs` which has indexes resolved and owns the referenced data.
+    ///
+    /// Since `AssemblyOs` is a type alias for `AssemblyOsRaw` (no resolution needed), this simply wraps
+    /// the raw data in an Arc for consistency with the dual variant pattern.
+    ///
+    /// # Errors
+    /// This method currently never fails and always returns `Ok`.
+    pub fn to_owned(&self) -> Result<AssemblyOsRc> {
+        Ok(Arc::new(self.clone()))
+    }
+
+    /// Apply an `AssemblyOsRaw` entry to update related metadata structures.
+    ///
+    /// `AssemblyOS` entries specify operating system information for the current assembly.
+    /// They are self-contained and don't require cross-table updates during the dual variant
+    /// resolution phase.
+    ///
+    /// # Errors
+    /// Always returns `Ok(())` as `AssemblyOS` entries don't modify other tables.
+    pub fn apply(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
 impl<'a> RowDefinition<'a> for AssemblyOsRaw {
     #[rustfmt::skip]
     fn row_size(_sizes: &TableInfoRef) -> u32 {

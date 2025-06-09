@@ -1,14 +1,37 @@
+use crossbeam_skiplist::SkipMap;
+use std::sync::Arc;
+
 use crate::{
     file::io::read_le_at_dyn,
     metadata::{
-        streams::{EventMap, MetadataTable, RowDefinition, TableId, TableInfoRef},
+        streams::{EventList, EventMap, MetadataTable, RowDefinition, TableId, TableInfoRef},
         token::Token,
-        typesystem::TypeRegistry,
+        typesystem::{CilTypeRef, TypeRegistry},
     },
     Result,
 };
 
-// This type doesn't need the 'regular' typedefs, as it's only ever directly applied (for now?)
+/// A map that holds the mapping of Token to parsed resolved `EventMapEntry`
+pub type EventMapEntryMap = SkipMap<Token, EventMapEntryRc>;
+/// A vector that holds a list of resolved `EventMapEntry`
+pub type EventMapEntryList = Arc<boxcar::Vec<EventMapEntryRc>>;
+/// A reference to a resolved `EventMapEntry`
+pub type EventMapEntryRc = Arc<EventMapEntry>;
+
+/// The resolved `EventMap` entry that maps events to their parent types. Similar to `EventMapRaw` but
+/// with resolved indexes and owned data.
+pub struct EventMapEntry {
+    /// `RowID`
+    pub rid: u32,
+    /// Token
+    pub token: Token,
+    /// Offset
+    pub offset: usize,
+    /// The parent type that owns these events
+    pub parent: CilTypeRef,
+    /// The list of events belonging to the parent type
+    pub events: EventList,
+}
 
 #[derive(Clone, Debug)]
 /// The `EventMap` table maps events to their parent types. `TableId` = 0x12
@@ -26,6 +49,104 @@ pub struct EventMapRaw {
 }
 
 impl EventMapRaw {
+    /// Helper method to resolve event list range and build the event vector
+    ///
+    /// This logic is shared between `apply()` and `to_owned()` methods to avoid duplication.
+    fn resolve_event_list(
+        &self,
+        events: &EventMap,
+        map: &MetadataTable<EventMapRaw>,
+    ) -> Result<Vec<crate::metadata::streams::EventRc>> {
+        if self.event_list == 0 || events.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let next_row_id = self.rid + 1;
+        let start = self.event_list as usize;
+        let end = if next_row_id > map.row_count() {
+            events.len() + 1
+        } else {
+            match map.get(next_row_id) {
+                Some(next_row) => next_row.event_list as usize,
+                None => {
+                    return Err(malformed_error!(
+                        "Failed to resolve event_end from next row - {}",
+                        next_row_id
+                    ))
+                }
+            }
+        };
+
+        if start > events.len() || end > (events.len() + 1) || end < start {
+            return Ok(Vec::new());
+        }
+
+        let mut event_list = Vec::with_capacity(end - start);
+        for counter in start..end {
+            let token_value = counter | 0x1400_0000;
+            let token =
+                Token::new(u32::try_from(token_value).map_err(|_| {
+                    malformed_error!("Token value {} exceeds u32 range", token_value)
+                })?);
+            match events.get(&token) {
+                Some(event) => event_list.push(event.value().clone()),
+                None => {
+                    return Err(malformed_error!(
+                        "Failed to resolve event - {}",
+                        counter | 0x1400_0000
+                    ))
+                }
+            }
+        }
+
+        Ok(event_list)
+    }
+
+    /// Convert an `EventMapRaw` into an `EventMapEntry` which has indexes resolved and owns the referenced data.
+    ///
+    /// The `EventMap` table maps types to their events. The resolved variant contains the parent type
+    /// reference and the actual list of resolved Event entries.
+    ///
+    /// ## Arguments
+    /// * 'types' - The type registry for resolving parent types
+    /// * 'events' - The event map for resolving event references
+    /// * 'map' - The `MetadataTable` for `EventMapRaw` entries (needed for list range resolution)
+    ///
+    /// # Errors
+    /// Returns an error if the referenced type or events cannot be resolved.
+    pub fn to_owned(
+        &self,
+        types: &TypeRegistry,
+        events: &EventMap,
+        map: &MetadataTable<EventMapRaw>,
+    ) -> Result<EventMapEntryRc> {
+        // Resolve parent type
+        let parent = match types.get(&Token::new(self.parent | 0x0200_0000)) {
+            Some(parent_type) => parent_type.into(),
+            None => {
+                return Err(malformed_error!(
+                    "Failed to resolve parent type - {}",
+                    self.parent | 0x0200_0000
+                ))
+            }
+        };
+
+        // Resolve event list using the helper method
+        let event_list_vec = self.resolve_event_list(events, map)?;
+        let event_list = Arc::new(boxcar::Vec::new());
+        for event in event_list_vec {
+            _ = event_list.push(event);
+        }
+
+        Ok(Arc::new(EventMapEntry {
+            rid: self.rid,
+            token: self.token,
+            offset: self.offset,
+            parent,
+            events: event_list,
+        }))
+    }
+
     /// Apply an `EventMapRaw` to the relevant entries of types (e.g. fields, methods and parameters)
     ///
     /// ## Arguments
@@ -41,49 +162,12 @@ impl EventMapRaw {
         events: &EventMap,
         map: &MetadataTable<EventMapRaw>,
     ) -> Result<()> {
-        let event_list = if self.event_list == 0 || events.is_empty() {
+        // Use the helper method to resolve event list
+        let event_list = self.resolve_event_list(events, map)?;
+
+        if event_list.is_empty() && (self.event_list != 0 && !events.is_empty()) {
             return Err(malformed_error!("Invalid event list"));
-        } else {
-            let next_row_id = self.rid + 1;
-
-            let start = self.event_list as usize;
-            let end = if next_row_id > map.row_count() {
-                events.len() + 1
-            } else {
-                match map.get(next_row_id) {
-                    Some(next_row) => next_row.event_list as usize,
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve event_end from next row - {}",
-                            next_row_id
-                        ))
-                    }
-                }
-            };
-
-            if start > events.len() || end > (events.len() + 1) || end < start {
-                Vec::new()
-            } else {
-                let mut event_list = Vec::with_capacity(end - start);
-                for counter in start..end {
-                    let token_value = counter | 0x1400_0000;
-                    let token = Token::new(u32::try_from(token_value).map_err(|_| {
-                        malformed_error!("Token value {} exceeds u32 range", token_value)
-                    })?);
-                    match events.get(&token) {
-                        Some(param) => event_list.push(param.value().clone()),
-                        None => {
-                            return Err(malformed_error!(
-                                "Failed to resolv event - {}",
-                                counter | 0x1400_0000
-                            ))
-                        }
-                    }
-                }
-
-                event_list
-            }
-        };
+        }
 
         match types.get(&Token::new(self.parent | 0x0200_0000)) {
             Some(event_parent) => {

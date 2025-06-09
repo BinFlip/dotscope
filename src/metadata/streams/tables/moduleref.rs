@@ -67,6 +67,18 @@ impl ModuleRefRaw {
             name: strings.get(self.name as usize)?.to_string(),
         }))
     }
+
+    /// Apply a `ModuleRefRaw` entry to update related metadata structures.
+    ///
+    /// `ModuleRef` entries represent external module references. They are primarily used
+    /// as targets by other tables but don't themselves modify other metadata during the
+    /// dual variant resolution phase.
+    ///
+    /// # Errors
+    /// Always returns `Ok(())` as `ModuleRef` entries don't modify other tables.
+    pub fn apply(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl<'a> RowDefinition<'a> for ModuleRefRaw {

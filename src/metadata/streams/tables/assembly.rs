@@ -136,6 +136,17 @@ impl AssemblyRaw {
             security: OnceLock::new(),
         }))
     }
+
+    /// Apply an `AssemblyRaw` entry to update related metadata structures.
+    ///
+    /// Assembly entries are self-contained and represent the current assembly metadata.
+    /// They don't require cross-table updates during the dual variant resolution phase.
+    ///
+    /// # Errors
+    /// Always returns `Ok(())` as Assembly entries don't modify other tables.
+    pub fn apply(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl<'a> RowDefinition<'a> for AssemblyRaw {

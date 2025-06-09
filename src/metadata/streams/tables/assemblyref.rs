@@ -306,6 +306,18 @@ impl AssemblyRefRaw {
             processor: AtomicU32::new(0),
         }))
     }
+
+    /// Apply an `AssemblyRefRaw` entry to update related metadata structures.
+    ///
+    /// `AssemblyRef` entries represent external assembly references. They are primarily used
+    /// as targets by other tables but don't themselves modify other metadata during the
+    /// dual variant resolution phase.
+    ///
+    /// # Errors
+    /// Always returns `Ok(())` as `AssemblyRef` entries don't modify other tables.
+    pub fn apply(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl<'a> RowDefinition<'a> for AssemblyRefRaw {

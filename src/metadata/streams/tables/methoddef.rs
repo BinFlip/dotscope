@@ -80,6 +80,18 @@ impl MethodDefRaw {
             // ssa: RwLock::new(None),
         })
     }
+
+    /// Apply a `MethodDefRaw` entry to update related metadata structures.
+    ///
+    /// `MethodDef` entries define methods within types. They are associated with their parent
+    /// types but don't themselves modify other metadata during the dual variant resolution phase.
+    /// Method-specific metadata (P/Invoke info, generic parameters, etc.) is resolved separately.
+    ///
+    /// # Errors
+    /// Always returns `Ok(())` as `MethodDef` entries don't modify other tables directly.
+    pub fn apply(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl<'a> RowDefinition<'a> for MethodDefRaw {

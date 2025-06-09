@@ -1,11 +1,35 @@
+use crossbeam_skiplist::SkipMap;
+use std::sync::Arc;
+
 use crate::{
     file::io::read_le_at_dyn,
     metadata::{
-        streams::tables::types::{RowDefinition, TableInfoRef},
+        signatures::{parse_type_spec_signature, SignatureTypeSpec},
+        streams::{Blob, RowDefinition, TableInfoRef},
         token::Token,
     },
     Result,
 };
+
+/// A map that holds the mapping of Token to parsed `TypeSpec`
+pub type TypeSpecMap = SkipMap<Token, TypeSpecRc>;
+/// A vector that holds a list of `TypeSpec`
+pub type TypeSpecList = Arc<boxcar::Vec<TypeSpecRc>>;
+/// A reference to a `TypeSpec`
+pub type TypeSpecRc = Arc<TypeSpec>;
+
+/// The `TypeSpec` table defines type specifications through signatures. Similar to `TypeSpecRaw` but
+/// with resolved indexes and owned data
+pub struct TypeSpec {
+    /// `RowID`
+    pub rid: u32,
+    /// Token
+    pub token: Token,
+    /// Offset
+    pub offset: usize,
+    /// The parsed type specification signature
+    pub signature: SignatureTypeSpec,
+}
 
 #[derive(Clone, Debug)]
 /// `TypeSpec`, ID = 0x1B
@@ -18,6 +42,39 @@ pub struct TypeSpecRaw {
     pub offset: usize,
     /// an index into the Blob heap
     pub signature: u32,
+}
+
+impl TypeSpecRaw {
+    /// Convert a `TypeSpecRaw` into a `TypeSpec` which has indexes resolved and owns the referenced data.
+    ///
+    /// ## Arguments
+    /// * 'blob' - The #Blob heap
+    ///
+    /// # Errors
+    /// Returns an error if the signature cannot be parsed from the blob heap.
+    pub fn to_owned(&self, blob: &Blob) -> Result<TypeSpecRc> {
+        let signature_data = blob.get(self.signature as usize)?;
+        let signature = parse_type_spec_signature(signature_data)?;
+
+        Ok(Arc::new(TypeSpec {
+            rid: self.rid,
+            token: self.token,
+            offset: self.offset,
+            signature,
+        }))
+    }
+
+    /// Apply a `TypeSpecRaw` entry to update related metadata structures.
+    ///
+    /// `TypeSpec` entries define type specifications through signatures. They are primarily
+    /// type definitions and don't require cross-table updates during the dual variant
+    /// resolution phase.
+    ///
+    /// # Errors
+    /// Always returns `Ok(())` as `TypeSpec` entries don't modify other tables.
+    pub fn apply(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl<'a> RowDefinition<'a> for TypeSpecRaw {

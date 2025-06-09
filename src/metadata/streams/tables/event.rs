@@ -100,6 +100,18 @@ impl EventRaw {
             fn_on_remove: OnceLock::new(),
         }))
     }
+
+    /// Apply an `EventRaw` entry to update related metadata structures.
+    ///
+    /// Event entries define events that types can expose. They are associated with types
+    /// but don't themselves modify other metadata during the dual variant resolution phase.
+    /// Event methods (add, remove, etc.) are resolved separately through method resolution.
+    ///
+    /// # Errors
+    /// Always returns `Ok(())` as Event entries don't modify other tables directly.
+    pub fn apply(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl<'a> RowDefinition<'a> for EventRaw {

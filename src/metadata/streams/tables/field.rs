@@ -128,6 +128,18 @@ impl FieldRaw {
             marshal: OnceLock::new(),
         }))
     }
+
+    /// Apply a `FieldRaw` entry to update related metadata structures.
+    ///
+    /// Field entries define the fields of types. They are associated with their parent types
+    /// but don't themselves modify other metadata during the dual variant resolution phase.
+    /// Field-specific metadata (defaults, RVA, layout, marshalling) is resolved separately.
+    ///
+    /// # Errors
+    /// Always returns `Ok(())` as Field entries don't modify other tables directly.
+    pub fn apply(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl<'a> RowDefinition<'a> for FieldRaw {

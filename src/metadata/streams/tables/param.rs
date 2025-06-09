@@ -131,6 +131,17 @@ pub struct ParamRaw {
 }
 
 impl ParamRaw {
+    /// Apply a `ParamRaw` - no-op for Param as it doesn't directly modify other table entries
+    ///
+    /// The `Param` table entries are primarily modified through method signature processing
+    /// and custom attribute application, not through inter-table dependencies.
+    ///
+    /// # Errors
+    /// This method currently returns Ok(()) as Param entries don't require cross-table updates.
+    pub fn apply(&self) -> Result<()> {
+        Ok(())
+    }
+
     /// Convert an `ParamRaw`, into a `Param` which has indexes resolved and owns the referenced data
     ///
     /// # Errors
