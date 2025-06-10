@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{
+        customattributes::CustomAttributeValueList,
         imports::{ImportContainer, ImportRc, Imports},
         streams::{AssemblyRefHash, Blob, RowDefinition, Strings, TableInfoRef},
         token::Token,
@@ -48,6 +49,8 @@ pub struct File {
     pub name: String,
     /// an index into the Blob heap
     pub hash_value: AssemblyRefHash,
+    /// Custom attributes applied to this `File`
+    pub custom_attributes: CustomAttributeValueList,
 }
 
 #[derive(Clone, Debug)]
@@ -84,6 +87,7 @@ impl FileRaw {
             flags: self.flags,
             name: strings.get(self.name as usize)?.to_string(),
             hash_value: AssemblyRefHash::new(blob.get(self.hash_value as usize)?)?,
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         }))
     }
 

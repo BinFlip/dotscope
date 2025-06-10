@@ -4,10 +4,7 @@ use std::sync::Arc;
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{
-        streams::{
-            Blob, CodedIndex, CodedIndexType, FieldMap, ParamMap, PropertyMap, RowDefinition,
-            TableId, TableInfoRef,
-        },
+        streams::{Blob, CodedIndex, CodedIndexType, RowDefinition, TableInfoRef},
         token::Token,
         typesystem::{CilPrimitive, CilTypeReference},
     },
@@ -90,60 +87,37 @@ impl ConstantRaw {
     /// Apply an `ConstantRaw` to the relevant entries of types (e.g. fields, methods and parameters)
     ///
     /// ## Arguments
-    /// * 'blob'        - The #Blob heap
-    /// * 'params'      - All parsed `Param` entries
-    /// * 'fields'      - All parsed `Field` entries
-    /// * 'properties'  - All parsed `Property` entries
+    /// * `get_ref` - A closure that resolves coded indices to `CilTypeReference`
+    /// * 'blob'    - The #Blob heap
     ///
     /// # Errors
     /// Returns an error if:
     /// - The blob heap lookup fails for the constant value
     /// - The primitive value cannot be constructed from the blob data
-    /// - The parent reference points to a non-existent entry in the respective table
-    pub fn apply(
-        &self,
-        blob: &Blob,
-        params: &ParamMap,
-        fields: &FieldMap,
-        properties: &PropertyMap,
-    ) -> Result<()> {
+    /// - The parent reference cannot be resolved to a valid type reference
+    /// - The default value is already set for the parent entity
+    pub fn apply<F>(&self, get_ref: F, blob: &Blob) -> Result<()>
+    where
+        F: Fn(&CodedIndex) -> CilTypeReference,
+    {
+        let parent = get_ref(&self.parent);
         let default = CilPrimitive::from_blob(self.base, blob.get(self.value as usize)?)?;
-        match self.parent.tag {
-            TableId::Field => match fields.get(&self.parent.token) {
-                Some(field) => field
-                    .value()
-                    .default
-                    .set(default)
-                    .map_err(|_| malformed_error!("Default value already set for field")),
-                None => Err(malformed_error!(
-                    "Failed to resolve field token - {}",
-                    self.parent.token.value()
-                )),
-            },
-            TableId::Param => match params.get(&self.parent.token) {
-                Some(param) => param
-                    .value()
-                    .default
-                    .set(default)
-                    .map_err(|_| malformed_error!("Default value already set for param")),
-                None => Err(malformed_error!(
-                    "Failed to resolve param token - {}",
-                    self.parent.token.value()
-                )),
-            },
-            TableId::Property => match properties.get(&self.parent.token) {
-                Some(property) => property
-                    .value()
-                    .default
-                    .set(default)
-                    .map_err(|_| malformed_error!("Default value already set for property")),
-                None => Err(malformed_error!(
-                    "Failed to resolve property token - {}",
-                    self.parent.token.value()
-                )),
-            },
+
+        match parent {
+            CilTypeReference::Field(field) => field
+                .default
+                .set(default)
+                .map_err(|_| malformed_error!("Default value already set for field")),
+            CilTypeReference::Param(param) => param
+                .default
+                .set(default)
+                .map_err(|_| malformed_error!("Default value already set for param")),
+            CilTypeReference::Property(property) => property
+                .default
+                .set(default)
+                .map_err(|_| malformed_error!("Default value already set for property")),
             _ => Err(malformed_error!(
-                "Invalid parent token - {}",
+                "Invalid parent type for constant - {}",
                 self.parent.token.value()
             )),
         }
@@ -152,63 +126,32 @@ impl ConstantRaw {
     /// Convert an `ConstantRaw`, into a `Constant` which has indexes resolved and owns the referenced data
     ///
     /// ## Arguments
-    /// * 'blob'        - The #Blob heap
-    /// * 'params'      - All parsed `Param` entries
-    /// * 'fields'      - All parsed `Field` entries
-    /// * 'properties'  - All parsed `Property` entries
+    /// * `get_ref` - A closure that resolves coded indices to `CilTypeReference`
+    /// * 'blob'    - The #Blob heap
     ///
     /// # Errors
     /// Returns an error if:
     /// - The blob heap lookup fails for the constant value
     /// - The primitive value cannot be constructed from the blob data
     /// - The parent reference cannot be resolved to a valid type reference
-    pub fn to_owned(
-        &self,
-        blob: &Blob,
-        params: &ParamMap,
-        fields: &FieldMap,
-        properties: &PropertyMap,
-    ) -> Result<ConstantRc> {
+    pub fn to_owned<F>(&self, get_ref: F, blob: &Blob) -> Result<ConstantRc>
+    where
+        F: Fn(&CodedIndex) -> CilTypeReference,
+    {
+        let parent = get_ref(&self.parent);
+        if matches!(parent, CilTypeReference::None) {
+            return Err(malformed_error!(
+                "Failed to resolve parent token - {}",
+                self.parent.token.value()
+            ));
+        }
+
         Ok(Arc::new(Constant {
             rid: self.rid,
             token: self.token,
             offset: self.offset,
             c_type: self.base,
-            parent: match self.parent.tag {
-                TableId::Param => match params.get(&self.parent.token) {
-                    Some(param) => CilTypeReference::Param(param.value().clone()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve param token - {}",
-                            self.parent.token.value()
-                        ))
-                    }
-                },
-                TableId::Field => match fields.get(&self.parent.token) {
-                    Some(field) => CilTypeReference::Field(field.value().clone()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve field token - {}",
-                            self.parent.token.value()
-                        ))
-                    }
-                },
-                TableId::Property => match properties.get(&self.parent.token) {
-                    Some(property) => CilTypeReference::Property(property.value().clone()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve property token - {}",
-                            self.parent.token.value()
-                        ))
-                    }
-                },
-                _ => {
-                    return Err(malformed_error!(
-                        "Invalid parent token - {}",
-                        self.parent.token.value()
-                    ))
-                }
-            },
+            parent,
             value: Arc::new(CilPrimitive::from_blob(
                 self.base,
                 blob.get(self.value as usize)?,

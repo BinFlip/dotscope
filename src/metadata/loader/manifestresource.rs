@@ -18,11 +18,10 @@ impl MetadataLoader for ManifestResourceLoader {
             if let Some(table) = header.table::<ManifestResourceRaw>(TableId::ManifestResource) {
                 table.par_iter().try_for_each(|row| {
                     let owned = row.to_owned(
+                        |coded_index| context.get_ref(coded_index),
                         &context.input,
                         context.header,
                         strings,
-                        context.file,
-                        context.assembly_ref,
                         table,
                     )?;
 

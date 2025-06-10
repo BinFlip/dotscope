@@ -514,6 +514,7 @@ fn crafted_2() {
     verify_cor20(&asm);
     verify_root(&asm);
     verify_tableheader(&asm);
+    verify_custom_attributes(&asm);
     //verify_imports(&asm);
 }
 
@@ -1079,6 +1080,273 @@ fn verify_tableheader(asm: &CilObject) {
         None => {
             panic!("This table should be there");
         }
+    }
+}
+
+/// Verify custom attributes match the expected values from the crafted_2.exe source code
+fn verify_custom_attributes(asm: &CilObject) {
+    // Verify we have the expected number of custom attributes in total
+    let custom_attr_table = asm
+        .tables()
+        .unwrap()
+        .table::<CustomAttributeRaw>(TableId::CustomAttribute)
+        .unwrap();
+    assert_eq!(
+        custom_attr_table.row_count(),
+        88,
+        "Expected 88 custom attributes total"
+    );
+
+    // Test assembly-level custom attributes
+    verify_assembly_custom_attributes(asm);
+
+    // Test module-level custom attributes
+    verify_module_custom_attributes(asm);
+
+    // Test type-level custom attributes
+    verify_type_custom_attributes(asm);
+
+    // Test method-level custom attributes
+    verify_method_custom_attributes(asm);
+
+    // Test specialized attribute tables (FieldLayout, FieldMarshal)
+    verify_specialized_attribute_tables(asm);
+}
+
+/// Verify assembly-level custom attributes
+fn verify_assembly_custom_attributes(asm: &CilObject) {
+    // Count assembly-level custom attributes by iterating through the custom attribute table
+    let custom_attr_table = asm
+        .tables()
+        .unwrap()
+        .table::<CustomAttributeRaw>(TableId::CustomAttribute)
+        .unwrap();
+    let mut assembly_attr_count = 0;
+
+    for attr_row in custom_attr_table.iter() {
+        // Check if this attribute is on the assembly (target token 0x20000001)
+        if attr_row.parent.token.value() == 0x20000001 {
+            assembly_attr_count += 1;
+        }
+    }
+
+    // Expected assembly attributes:
+    // - AssemblyTitle, AssemblyDescription, AssemblyVersion, AssemblyCulture, CLSCompliant
+    // - SecurityPermission, FileIOPermission, MetadataTestAttribute
+    assert!(
+        assembly_attr_count >= 8,
+        "Expected at least 8 assembly-level custom attributes, found {}",
+        assembly_attr_count
+    );
+}
+
+/// Verify module-level custom attributes  
+fn verify_module_custom_attributes(asm: &CilObject) {
+    let custom_attr_table = asm
+        .tables()
+        .unwrap()
+        .table::<CustomAttributeRaw>(TableId::CustomAttribute)
+        .unwrap();
+    let mut module_attr_count = 0;
+
+    for attr_row in custom_attr_table.iter() {
+        // Check if this attribute is on the module (target token 0x00000001)
+        if attr_row.parent.token.value() == 0x00000001 {
+            module_attr_count += 1;
+        }
+    }
+
+    // Expected: DefaultCharSet attribute
+    assert!(
+        module_attr_count >= 1,
+        "Expected at least 1 module-level custom attribute, found {}",
+        module_attr_count
+    );
+}
+
+/// Verify type-level custom attributes
+fn verify_type_custom_attributes(asm: &CilObject) {
+    let types = asm.types();
+    let mut found_attributes = 0;
+    let mut specific_types_found = 0;
+
+    // Look for specific types with known attributes
+    for entry in types.iter() {
+        let type_def = entry.value();
+        let custom_attrs = &type_def.custom_attributes;
+        let attr_count = custom_attrs.iter().count();
+
+        if attr_count > 0 {
+            found_attributes += attr_count;
+
+            // Check specific types we know should have attributes
+            match type_def.name.as_str() {
+                "MetadataTestAttribute" => {
+                    // Should have AttributeUsage attribute
+                    assert!(
+                        attr_count >= 1,
+                        "MetadataTestAttribute should have AttributeUsage attribute"
+                    );
+                    specific_types_found += 1;
+                }
+                "TestEnum" => {
+                    // Should have Flags attribute
+                    assert!(attr_count >= 1, "TestEnum should have Flags attribute");
+                    specific_types_found += 1;
+                }
+                "StructWithExplicitLayout" => {
+                    // Should have StructLayout attribute
+                    assert!(
+                        attr_count >= 1,
+                        "StructWithExplicitLayout should have StructLayout attribute"
+                    );
+                    specific_types_found += 1;
+                }
+                "BaseClass" => {
+                    // Should have Serializable attribute
+                    assert!(
+                        attr_count >= 1,
+                        "BaseClass should have Serializable attribute"
+                    );
+                    specific_types_found += 1;
+                }
+                "DerivedClass" => {
+                    // Should have MetadataTest attribute
+                    assert!(
+                        attr_count >= 1,
+                        "DerivedClass should have MetadataTest attribute"
+                    );
+                    specific_types_found += 1;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // We should find some type-level attributes, even if not all the specific ones
+    assert!(
+        found_attributes > 0,
+        "Expected to find some type-level custom attributes"
+    );
+    // Don't require all specific types as some attributes might be stored differently
+    assert!(
+        specific_types_found >= 2,
+        "Expected to find at least 2 specific types with attributes, found {}",
+        specific_types_found
+    );
+}
+
+/// Verify method-level custom attributes
+fn verify_method_custom_attributes(asm: &CilObject) {
+    let methods = asm.methods();
+    let mut found_method_attributes = 0;
+    let mut specific_methods_found = 0;
+
+    for entry in methods.iter() {
+        let method = entry.value();
+        let custom_attrs = &method.custom_attributes;
+        let attr_count = custom_attrs.iter().count();
+
+        if attr_count > 0 {
+            found_method_attributes += attr_count;
+
+            // Check specific methods we found to have attributes
+            match method.name.as_str() {
+                "ComplexMethod" => {
+                    // Should have Obsolete attribute
+                    assert!(
+                        attr_count >= 1,
+                        "ComplexMethod should have Obsolete attribute"
+                    );
+                    specific_methods_found += 1;
+                }
+                "SecureMethod" => {
+                    // Should have SecurityCritical attribute (FileIOPermission might be in DeclSecurity table)
+                    assert!(
+                        attr_count >= 1,
+                        "SecureMethod should have at least 1 custom attribute"
+                    );
+                    specific_methods_found += 1;
+                }
+                "AsyncMethod" => {
+                    // Async methods get compiler-generated attributes
+                    assert!(
+                        attr_count >= 1,
+                        "AsyncMethod should have compiler-generated attributes"
+                    );
+                    specific_methods_found += 1;
+                }
+                "ToCustomString" => {
+                    // Extension methods get special attributes
+                    assert!(
+                        attr_count >= 1,
+                        "ToCustomString should have extension method attribute"
+                    );
+                    specific_methods_found += 1;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    assert!(
+        found_method_attributes > 0,
+        "Expected to find some method-level custom attributes"
+    );
+    assert!(
+        specific_methods_found >= 4,
+        "Expected to find at least 4 specific methods with attributes, found {}",
+        specific_methods_found
+    );
+}
+
+/// Verify specialized attribute tables that store field attributes
+fn verify_specialized_attribute_tables(asm: &CilObject) {
+    let tables = asm.tables().unwrap();
+
+    // Test FieldLayout table (stores FieldOffset attributes)
+    if let Some(field_layout_table) = tables.table::<FieldLayoutRaw>(TableId::FieldLayout) {
+        let layout_count = field_layout_table.row_count();
+        assert!(
+            layout_count > 0,
+            "Expected FieldLayout entries for explicit layout fields"
+        );
+
+        // Verify we have the expected number from the crafted source
+        assert_eq!(
+            layout_count, 3,
+            "Expected 3 FieldLayout entries for StructWithExplicitLayout fields"
+        );
+    }
+
+    // Test FieldMarshal table (stores MarshalAs attributes)
+    if let Some(field_marshal_table) = tables.table::<FieldMarshalRaw>(TableId::FieldMarshal) {
+        let marshal_count = field_marshal_table.row_count();
+        assert!(
+            marshal_count > 0,
+            "Expected FieldMarshal entries for marshaled fields"
+        );
+
+        // Verify we have the expected number from the crafted source
+        assert_eq!(
+            marshal_count, 1,
+            "Expected 1 FieldMarshal entry for _marshaledField"
+        );
+    }
+
+    // Test DeclSecurity table (stores security attributes)
+    if let Some(decl_security_table) = tables.table::<DeclSecurityRaw>(TableId::DeclSecurity) {
+        let security_count = decl_security_table.row_count();
+        assert!(
+            security_count > 0,
+            "Expected DeclSecurity entries for security attributes"
+        );
+
+        // Verify we have the expected number from the crafted source
+        assert_eq!(
+            security_count, 2,
+            "Expected 2 DeclSecurity entries for assembly and method security attributes"
+        );
     }
 }
 

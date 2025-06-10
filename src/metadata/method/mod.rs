@@ -111,6 +111,7 @@ use crate::{
     disassembler::{self, BasicBlock},
     file::File,
     metadata::{
+        customattributes::CustomAttributeValueList,
         security::Security,
         signatures::{parse_local_var_signature, SignatureMethod},
         streams::{Blob, GenericParamList, MetadataTable, ParamList, StandAloneSigRaw},
@@ -239,6 +240,8 @@ pub struct Method {
     pub security: OnceLock<Security>,
     /// The basic blocks of this method, lazily initialized
     pub blocks: OnceLock<Vec<BasicBlock>>,
+    /// Custom attributes attached to this method
+    pub custom_attributes: CustomAttributeValueList,
     // /// The control flow graph of this method
     // pub cfg: RwLock<Option<ControlFlowGraph>>,
     // /// The SSA representation of this method
@@ -771,6 +774,7 @@ mod tests {
             interface_impls: Arc::new(boxcar::Vec::new()),
             security: OnceLock::new(),
             blocks: blocks_once_lock,
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         }
     }
 

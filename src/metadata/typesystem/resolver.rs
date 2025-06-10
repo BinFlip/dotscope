@@ -712,6 +712,7 @@ mod tests {
             constraints: Arc::new(boxcar::Vec::new()),
             rid: 1,
             offset: 1,
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         });
 
         list_type.generic_params.push(type_param);

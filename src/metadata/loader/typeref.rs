@@ -11,18 +11,11 @@ pub(crate) struct TypeRefLoader;
 
 impl MetadataLoader for TypeRefLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(strings), Some(module)) =
-            (context.meta, context.strings, context.module.get())
-        {
+        if let (Some(header), Some(strings)) = (context.meta, context.strings) {
             if let Some(table) = header.table::<TypeRefRaw>(TableId::TypeRef) {
                 for row in table {
-                    let new_entry = row.to_owned(
-                        strings,
-                        module,
-                        context.module_ref,
-                        context.assembly_ref,
-                        context.types,
-                    )?;
+                    let new_entry =
+                        row.to_owned(|coded_index| context.get_ref(coded_index), strings)?;
 
                     context.imports.add_type(&new_entry)?;
                     context.types.insert(new_entry);

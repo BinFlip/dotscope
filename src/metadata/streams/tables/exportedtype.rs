@@ -4,11 +4,8 @@ use std::sync::Arc;
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{
-        exports::Exports,
-        streams::{
-            AssemblyRefMap, CodedIndex, CodedIndexType, FileMap, RowDefinition, Strings, TableId,
-            TableInfoRef,
-        },
+        customattributes::CustomAttributeValueList,
+        streams::{CodedIndex, CodedIndexType, RowDefinition, Strings, TableInfoRef},
         token::Token,
         typesystem::CilTypeReference,
     },
@@ -43,6 +40,8 @@ pub struct ExportedType {
     pub namespace: Option<String>,
     /// A reference to the Implementation
     pub implementation: CilTypeReference,
+    /// Custom attributes applied to this `ExportedType`
+    pub custom_attributes: CustomAttributeValueList,
 }
 
 impl ExportedType {
@@ -86,20 +85,25 @@ impl ExportedTypeRaw {
     /// Convert an `ExportedTypeRaw`, into a `ExportedType` which has indexes resolved and owns the referenced data
     ///
     /// ## Arguments
-    /// * 'string'          - The #String heap
-    /// * 'files'           - All parsed `File` entries
-    /// * '`assembly_refs`'   - All parsed `AssemblyRef` entries
-    /// * 'exports'         - All parsed `ExportedType` entries
+    /// * `get_ref` - Closure to resolve coded indexes
+    /// * 'string'  - The #String heap
     ///
     /// # Errors
     /// Returns an error if string lookup fails or if implementation resolution fails
-    pub fn to_owned(
-        &self,
-        string: &Strings,
-        files: &FileMap,
-        assembly_refs: &AssemblyRefMap,
-        exports: &Exports,
-    ) -> Result<ExportedTypeRc> {
+    pub fn to_owned<F>(&self, get_ref: F, string: &Strings) -> Result<ExportedTypeRc>
+    where
+        F: Fn(&CodedIndex) -> CilTypeReference,
+    {
+        let implementation = match get_ref(&self.implementation) {
+            CilTypeReference::None => {
+                return Err(malformed_error!(
+                    "Failed to resolve implementation token - {}",
+                    self.implementation.token.value()
+                ))
+            }
+            resolved => resolved,
+        };
+
         Ok(Arc::new(ExportedType {
             rid: self.rid,
             token: self.token,
@@ -112,21 +116,8 @@ impl ExportedTypeRaw {
             } else {
                 Some(string.get(self.namespace as usize)?.to_string())
             },
-            implementation: match self.implementation.tag {
-                TableId::File => match files.get(&self.implementation.token) {
-                    Some(file) => CilTypeReference::File(file.value().clone()),
-                    None => return Err(malformed_error!("Failed to find FileRef")),
-                },
-                TableId::AssemblyRef => match assembly_refs.get(&self.implementation.token) {
-                    Some(file) => CilTypeReference::AssemblyRef(file.value().clone()),
-                    None => return Err(malformed_error!("Failed to find AssemblyRef")),
-                },
-                TableId::ExportedType => match exports.get(&self.implementation.token) {
-                    Some(file) => CilTypeReference::ExportedType(file.value().clone()),
-                    None => return Err(malformed_error!("Failed to find ExportedTypeRef")),
-                },
-                _ => return Err(malformed_error!("Invalid implementation reference")),
-            },
+            implementation,
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         }))
     }
 

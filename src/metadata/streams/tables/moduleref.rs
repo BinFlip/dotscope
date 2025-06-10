@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::{
     file::io::read_le_at_dyn,
     metadata::{
+        customattributes::CustomAttributeValueList,
         imports::{ImportContainer, ImportRc, Imports},
         streams::{RowDefinition, Strings, TableInfoRef},
         token::Token,
@@ -35,6 +36,8 @@ pub struct ModuleRef {
     pub offset: usize,
     /// The name of the imported module
     pub name: String,
+    /// Custom attributes applied to this `ModuleRef`
+    pub custom_attributes: CustomAttributeValueList,
 }
 
 #[derive(Clone, Debug)]
@@ -65,6 +68,7 @@ impl ModuleRefRaw {
             token: self.token,
             offset: self.offset,
             name: strings.get(self.name as usize)?.to_string(),
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         }))
     }
 

@@ -4,10 +4,10 @@ use std::sync::{Arc, OnceLock};
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{
-        method::MethodMap,
-        streams::{CodedIndex, CodedIndexType, RowDefinition, Strings, TableId, TableInfoRef},
+        customattributes::CustomAttributeValueList,
+        streams::{CodedIndex, CodedIndexType, RowDefinition, Strings, TableInfoRef},
         token::Token,
-        typesystem::{CilTypeRefList, CilTypeReference, TypeRegistry},
+        typesystem::{CilTypeRefList, CilTypeReference},
     },
     Result,
 };
@@ -57,6 +57,8 @@ pub struct GenericParam {
     pub constraints: CilTypeRefList,
     /// Name of the generic parameter
     pub name: String,
+    /// Custom attributes applied to this `GenericParam`
+    pub custom_attributes: CustomAttributeValueList,
 }
 
 impl GenericParam {
@@ -117,41 +119,20 @@ impl GenericParamRaw {
     ///
     /// # Errors
     /// Returns an error if string lookup fails or if owner resolution fails
-    pub fn to_owned(
-        &self,
-        strings: &Strings,
-        types: &TypeRegistry,
-        methods: &MethodMap,
-    ) -> Result<GenericParamRc> {
+    pub fn to_owned<F>(&self, get_ref: F, strings: &Strings) -> Result<GenericParamRc>
+    where
+        F: Fn(&CodedIndex) -> CilTypeReference,
+    {
+        let owner_ref = get_ref(&self.owner);
+        if matches!(owner_ref, CilTypeReference::None) {
+            return Err(malformed_error!(
+                "Failed to resolve owner token - {}",
+                self.owner.token.value()
+            ));
+        }
+
         let owner = OnceLock::new();
-        owner
-            .set(match self.owner.tag {
-                TableId::TypeDef => match types.get(&self.owner.token) {
-                    Some(cil_type) => CilTypeReference::TypeDef(cil_type.into()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve typedef owner token - {}",
-                            self.owner.token.value()
-                        ))
-                    }
-                },
-                TableId::MethodDef => match methods.get(&self.owner.token) {
-                    Some(cil_type) => CilTypeReference::MethodDef(cil_type.value().clone().into()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve methoddef owner token - {}",
-                            self.owner.token.value()
-                        ))
-                    }
-                },
-                _ => {
-                    return Err(malformed_error!(
-                        "Invalid owner token - {}",
-                        self.owner.token.value()
-                    ))
-                }
-            })
-            .ok();
+        owner.set(owner_ref).ok();
 
         Ok(Arc::new(GenericParam {
             rid: self.rid,
@@ -162,6 +143,7 @@ impl GenericParamRaw {
             owner,
             constraints: Arc::new(boxcar::Vec::new()),
             name: strings.get(self.name as usize)?.to_string(),
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         }))
     }
 }

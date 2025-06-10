@@ -3,12 +3,9 @@ use std::sync::Arc;
 use crate::{
     file::io::read_le_at_dyn,
     metadata::{
-        streams::{
-            AssemblyRefMap, CodedIndex, CodedIndexType, ModuleRc, ModuleRefMap, RowDefinition,
-            Strings, TableId, TableInfoRef,
-        },
+        streams::{CodedIndex, CodedIndexType, RowDefinition, Strings, TableInfoRef},
         token::Token,
-        typesystem::{CilFlavor, CilType, CilTypeRc, CilTypeReference, TypeRegistry},
+        typesystem::{CilFlavor, CilType, CilTypeRc, CilTypeReference},
     },
     Result,
 };
@@ -45,65 +42,31 @@ impl TypeRefRaw {
     /// Convert an `TypeRefRaw`, into a `CilType` which has indexes resolved and owns the referenced data
     ///
     /// ## Arguments
-    /// * 'strings'     - The #String heap
-    /// * 'module'      - All parsed `Module` entries
-    /// * 'modules'     - All parsed `ModuleRef` entries
-    /// * 'assemblies'  - All parsed `AssemblyRef` entries
-    /// * 'types'       - All parsed `CilType` entries
+    /// * `get_ref`  - Closure to resolve coded indexes
+    /// * 'strings'  - The #String heap
     ///
     /// # Errors
     /// Returns an error if string data cannot be retrieved from heaps or if resolution scope references are invalid
-    pub fn to_owned(
-        &self,
-        strings: &Strings,
-        module: &ModuleRc,
-        modules: &ModuleRefMap,
-        assemblies: &AssemblyRefMap,
-        types: &TypeRegistry,
-    ) -> Result<CilTypeRc> {
+    pub fn to_owned<F>(&self, get_ref: F, strings: &Strings) -> Result<CilTypeRc>
+    where
+        F: Fn(&CodedIndex) -> CilTypeReference,
+    {
+        let resolution_scope = match get_ref(&self.resolution_scope) {
+            CilTypeReference::None => {
+                return Err(malformed_error!(
+                    "Failed to resolve resolution scope - {}",
+                    self.resolution_scope.token.value()
+                ))
+            }
+            resolved => Some(resolved),
+        };
+
         Ok(Arc::new(CilType::new(
             self.token,
             CilFlavor::Unknown,
             strings.get(self.type_namespace as usize)?.to_string(),
             strings.get(self.type_name as usize)?.to_string(),
-            Some(match self.resolution_scope.tag {
-                TableId::Module => CilTypeReference::Module(module.clone()),
-                TableId::ModuleRef => match modules.get(&self.resolution_scope.token) {
-                    Some(module_ref) => CilTypeReference::ModuleRef(module_ref.value().clone()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve ModuleRef - {}",
-                            self.resolution_scope.token.value()
-                        ))
-                    }
-                },
-                TableId::AssemblyRef => match assemblies.get(&self.resolution_scope.token) {
-                    Some(assembly_ref) => {
-                        CilTypeReference::AssemblyRef(assembly_ref.value().clone())
-                    }
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve AssemblyRef - {}",
-                            self.resolution_scope.token.value()
-                        ))
-                    }
-                },
-                TableId::TypeRef => match types.get(&self.resolution_scope.token) {
-                    Some(cil_type) => CilTypeReference::TypeRef(cil_type.into()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve TypeRef - {}",
-                            self.resolution_scope.token.value()
-                        ))
-                    }
-                },
-                _ => {
-                    return Err(malformed_error!(
-                        "Invalid resolution scope - {}",
-                        self.resolution_scope.token
-                    ))
-                }
-            }),
+            resolution_scope,
             None,
             0,
             Arc::new(boxcar::Vec::new()),

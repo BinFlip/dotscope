@@ -4,6 +4,7 @@ use std::sync::{Arc, OnceLock};
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{
+        customattributes::CustomAttributeValueList,
         security::Security,
         streams::{Blob, RowDefinition, Strings, TableInfoRef},
         token::Token,
@@ -71,6 +72,8 @@ pub struct Assembly {
     pub culture: Option<String>,
     /// The .NET CIL Security Information (if present)
     pub security: OnceLock<Security>,
+    /// Custom attributes attached to this assembly
+    pub custom_attributes: CustomAttributeValueList,
 }
 
 #[derive(Clone, Debug)]
@@ -134,6 +137,7 @@ impl AssemblyRaw {
                 Some(strings.get(self.culture as usize)?.to_string())
             },
             security: OnceLock::new(),
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         }))
     }
 

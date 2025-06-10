@@ -1,17 +1,15 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use crossbeam_skiplist::SkipMap;
 
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{
-        method::MethodMap,
+        customattributes::CustomAttributeValueList,
         security::{PermissionSet, Security, SecurityAction},
-        streams::{
-            AssemblyRc, Blob, CodedIndex, CodedIndexType, RowDefinition, TableId, TableInfoRef,
-        },
+        streams::{Blob, CodedIndex, CodedIndexType, RowDefinition, TableInfoRef},
         token::Token,
-        typesystem::{CilTypeReference, TypeRegistry},
+        typesystem::CilTypeReference,
     },
     Result,
 };
@@ -62,6 +60,8 @@ pub struct DeclSecurity {
     pub parent: CilTypeReference,
     /// The parsed permission set containing the security permissions
     pub permission_set: Arc<PermissionSet>,
+    /// Custom attributes applied to this security declaration
+    pub custom_attributes: CustomAttributeValueList,
 }
 
 impl DeclSecurity {
@@ -211,81 +211,62 @@ impl DeclSecurityRaw {
     /// security context.
     ///
     /// ## Arguments
-    /// * 'blob'        - The #Blob heap
-    /// * 'types'       - All parsed `CilType` entries
-    /// * 'methods'     - All parsed `MethodDef` entries
-    /// * 'assembly'    - The parsed `Assembly` entry
+    /// * `get_ref` - A closure that resolves coded indices to `CilTypeReference`
+    /// * 'blob'    - The #Blob heap
     ///
     /// # Errors
     /// Returns an error if:
     /// - The blob heap lookup fails for the permission set
     /// - The permission set cannot be parsed from the blob data
-    /// - The parent reference points to a non-existent entry in the respective table
-    pub fn apply(
-        &self,
-        blob: &Blob,
-        types: &TypeRegistry,
-        methods: &MethodMap,
-        assembly: &Arc<OnceLock<AssemblyRc>>,
-    ) -> Result<()> {
+    /// - The parent reference cannot be resolved to a valid type reference
+    /// - The target entity has already been assigned security permissions
+    pub fn apply<F>(&self, get_ref: F, blob: &Blob) -> Result<()>
+    where
+        F: Fn(&CodedIndex) -> CilTypeReference,
+    {
         let blob_data = blob.get(self.permission_set as usize)?;
         let permission_set = Arc::new(PermissionSet::new(blob_data)?);
         let action = SecurityAction::from(self.action);
+        let parent = get_ref(&self.parent);
 
-        match self.parent.tag {
-            TableId::TypeDef => match types.get(&self.parent.token) {
-                Some(cil_type) => {
-                    cil_type
+        match parent {
+            CilTypeReference::TypeDef(typedef) => {
+                if let Some(strong_ref) = typedef.upgrade() {
+                    strong_ref
                         .security
                         .set(Security {
                             action,
                             permission_set,
                         })
                         .ok();
-
-                    Ok(())
                 }
-                None => Err(malformed_error!(
-                    "Failed to resolve typedef token - {}",
-                    self.parent.token.value()
-                )),
-            },
-            TableId::MethodDef => match methods.get(&self.parent.token) {
-                Some(method) => {
+                Ok(())
+            }
+            CilTypeReference::MethodDef(method) => {
+                if let Some(method) = method.upgrade() {
                     method
-                        .value()
                         .security
                         .set(Security {
                             action,
                             permission_set,
                         })
                         .ok();
-                    Ok(())
                 }
-                None => Err(malformed_error!(
-                    "Failed to resolve methoddef token - {}",
-                    self.parent.token.value()
-                )),
-            },
-            TableId::Assembly => match assembly.get() {
-                Some(assembly_ref) => {
-                    assembly_ref
-                        .security
-                        .set(Security {
-                            action,
-                            permission_set,
-                        })
-                        .ok();
-                    Ok(())
-                }
-                None => Err(malformed_error!(
-                    "Failed to resolve assembly token - {}",
-                    self.parent.token.value()
-                )),
-            },
+                Ok(())
+            }
+            CilTypeReference::Assembly(assembly) => {
+                assembly
+                    .security
+                    .set(Security {
+                        action,
+                        permission_set,
+                    })
+                    .ok();
+                Ok(())
+            }
             _ => Err(malformed_error!(
-                "Invalid parent token - {}",
-                self.parent.token.value()
+                "Invalid parent for {0}",
+                self.token.value()
             )),
         }
     }
@@ -293,62 +274,29 @@ impl DeclSecurityRaw {
     /// Convert an `DeclSecurityRaw`, into a `DeclSecurity` which has indexes resolved and owns the referenced data
     ///
     /// ## Arguments
-    /// * 'blob'        - The #Blob heap
-    /// * 'types'       - All parsed `CilType` entries
-    /// * 'methods'     - All parsed `MethodDef` entries
-    /// * 'assemblies'  - All parsed `Assembly` entries
+    /// * `get_ref` - A closure that resolves coded indices to `CilTypeReference`
+    /// * 'blob'    - The #Blob heap
     ///
     /// # Errors
     /// Returns an error if:
     /// - The blob heap lookup fails for the permission set
     /// - The permission set cannot be parsed from the blob data
     /// - The parent reference cannot be resolved to a valid type reference
-    pub fn to_owned(
-        &self,
-        blob: &Blob,
-        types: &TypeRegistry,
-        methods: &MethodMap,
-        assembly: &Arc<OnceLock<AssemblyRc>>,
-    ) -> Result<DeclSecurityRc> {
+    pub fn to_owned<F>(&self, get_ref: F, blob: &Blob) -> Result<DeclSecurityRc>
+    where
+        F: Fn(&CodedIndex) -> CilTypeReference,
+    {
         let blob_data = blob.get(self.permission_set as usize)?;
         let permission_set = Arc::new(PermissionSet::new(blob_data)?);
         let action = SecurityAction::from(self.action);
 
-        let parent = match self.parent.tag {
-            TableId::TypeDef => match types.get(&self.parent.token) {
-                Some(typedef) => CilTypeReference::TypeDef(typedef.clone().into()),
-                None => {
-                    return Err(malformed_error!(
-                        "Failed to resolve typedef token - {}",
-                        self.parent.token.value()
-                    ))
-                }
-            },
-            TableId::MethodDef => match methods.get(&self.parent.token) {
-                Some(methoddef) => CilTypeReference::MethodDef(methoddef.value().clone().into()),
-                None => {
-                    return Err(malformed_error!(
-                        "Failed to resolve methoddef token - {}",
-                        self.parent.token.value()
-                    ))
-                }
-            },
-            TableId::Assembly => match assembly.get() {
-                Some(assembly_ref) => CilTypeReference::Assembly(assembly_ref.clone()),
-                None => {
-                    return Err(malformed_error!(
-                        "Failed to resolve assembly token - {}",
-                        self.parent.token.value()
-                    ))
-                }
-            },
-            _ => {
-                return Err(malformed_error!(
-                    "Invalid parent token - {}",
-                    self.parent.token.value()
-                ))
-            }
-        };
+        let parent = get_ref(&self.parent);
+        if matches!(parent, CilTypeReference::None) {
+            return Err(malformed_error!(
+                "Failed to resolve parent token - {}",
+                self.parent.token.value()
+            ));
+        }
 
         Ok(Arc::new(DeclSecurity {
             rid: self.rid,
@@ -357,6 +305,7 @@ impl DeclSecurityRaw {
             action,
             parent,
             permission_set,
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         }))
     }
 }

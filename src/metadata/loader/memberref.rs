@@ -19,13 +19,9 @@ impl MetadataLoader for MemberRefLoader {
         {
             if let Some(table) = header.table::<MemberRefRaw>(TableId::MemberRef) {
                 table.par_iter().try_for_each(|row| {
-                    let res = row.to_owned(
-                        strings,
-                        blob,
-                        context.types,
-                        context.module_ref,
-                        context.method_def,
-                    )?;
+                    let res = row.to_owned(strings, blob, context.types, |coded_index| {
+                        context.get_ref(coded_index)
+                    })?;
 
                     context.member_ref.insert(row.token, res.clone());
                     Ok(())

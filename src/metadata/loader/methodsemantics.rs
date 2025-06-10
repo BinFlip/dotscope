@@ -17,8 +17,10 @@ impl MetadataLoader for MethodSemanticsLoader {
         if let Some(header) = context.meta {
             if let Some(table) = header.table::<MethodSemanticsRaw>(TableId::MethodSemantics) {
                 table.par_iter().try_for_each(|row| {
-                    let owned =
-                        row.to_owned(context.method_def, &context.event, &context.property)?;
+                    let owned = row.to_owned(
+                        |coded_index| context.get_ref(coded_index),
+                        context.method_def,
+                    )?;
                     owned.apply()?;
 
                     context.method_semantics.insert(row.token, owned);

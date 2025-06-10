@@ -18,7 +18,7 @@ impl MetadataLoader for MethodImplLoader {
             if let Some(table) = header.table::<MethodImplRaw>(TableId::MethodImpl) {
                 table.par_iter().try_for_each(|row| {
                     let owned =
-                        row.to_owned(context.types, context.member_ref, context.method_def)?;
+                        row.to_owned(|coded_index| context.get_ref(coded_index), context.types)?;
                     owned.apply()?;
 
                     context.method_impl.insert(row.token, owned);

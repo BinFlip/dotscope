@@ -10,8 +10,7 @@ use crate::{
     metadata::{
         cor20header::Cor20Header,
         streams::{
-            AssemblyRefMap, CodedIndex, CodedIndexType, FileMap, MetadataTable, RowDefinition,
-            Strings, TableId, TableInfoRef,
+            CodedIndex, CodedIndexType, MetadataTable, RowDefinition, Strings, TableInfoRef,
         },
         token::Token,
         typesystem::CilTypeReference,
@@ -106,59 +105,40 @@ impl ManifestResourceRaw {
     /// # Errors
     /// Returns an error if the resource name cannot be retrieved, if the implementation
     /// reference cannot be resolved, or if the resource data cannot be located.
-    pub fn to_owned(
+    pub fn to_owned<F>(
         &self,
+        get_ref: F,
         file: &File,
         cor20: &Cor20Header,
         strings: &Strings,
-        files: &FileMap,
-        assemblies: &AssemblyRefMap,
         table: &MetadataTable<ManifestResourceRaw>,
-    ) -> Result<ManifestResourceRc> {
+    ) -> Result<ManifestResourceRc>
+    where
+        F: Fn(&CodedIndex) -> CilTypeReference,
+    {
         let mut data_offset = self.offset_field as usize;
         let mut data_size = 0_usize;
 
-        let source = match self.implementation.tag {
-            TableId::File => {
-                if self.implementation.row == 0 {
-                    // Special case, this is actually 'NULL', means that the resource is embedded in the current assembly
-
-                    data_offset += file.rva_to_offset(cor20.resource_rva as usize)?;
-                    data_size = if let Some(next_res) = table.get(self.rid + 1) {
-                        next_res.offset_field as usize - self.offset_field as usize
-                    } else {
-                        // Last resource, use resource section size from CLR header
-                        cor20.resource_size as usize
-                    };
-
-                    None
-                } else {
-                    match files.get(&self.implementation.token) {
-                        Some(parent) => Some(CilTypeReference::File(parent.value().clone())),
-                        None => {
-                            return Err(malformed_error!(
-                                "Failed to resolve file implementation token - {}",
-                                self.implementation.token.value()
-                            ))
-                        }
-                    }
-                }
-            }
-            TableId::AssemblyRef => match assemblies.get(&self.implementation.token) {
-                Some(parent) => Some(CilTypeReference::AssemblyRef(parent.value().clone())),
-                None => {
-                    return Err(malformed_error!(
-                        "Failed to resolve assemblies implementation token - {}",
-                        self.implementation.token.value()
-                    ))
-                }
-            },
-            _ => {
+        let source = if self.implementation.row == 0 {
+            // Special case, this is actually 'NULL', means that the resource is embedded in the current assembly
+            data_offset += file.rva_to_offset(cor20.resource_rva as usize)?;
+            data_size = if let Some(next_res) = table.get(self.rid + 1) {
+                next_res.offset_field as usize - self.offset_field as usize
+            } else {
+                // Last resource, use resource section size from CLR header
+                cor20.resource_size as usize
+            };
+            None
+        } else {
+            let implementation = get_ref(&self.implementation);
+            if matches!(implementation, CilTypeReference::None) {
                 return Err(malformed_error!(
-                    "Invalid implementation token - {}",
+                    "Failed to resolve implementation token - {}",
                     self.implementation.token.value()
-                ))
+                ));
             }
+
+            Some(implementation)
         };
 
         Ok(Arc::new(ManifestResource {

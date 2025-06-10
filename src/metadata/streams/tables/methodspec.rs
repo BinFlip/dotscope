@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::{
     file::io::read_le_at_dyn,
     metadata::{
+        customattributes::CustomAttributeValueList,
         method::MethodMap,
         signatures::{parse_method_spec_signature, SignatureMethodSpec},
         streams::{
@@ -36,6 +37,8 @@ pub struct MethodSpec {
     pub method: CilTypeReference,
     /// an index into the Blob heap
     pub instantiation: SignatureMethodSpec,
+    /// Custom attributes applied to this `MethodSpec`
+    pub custom_attributes: CustomAttributeValueList,
 }
 
 impl MethodSpec {
@@ -182,43 +185,25 @@ impl MethodSpecRaw {
     /// * 'blob'        - The #Blob heap
     /// * 'methods'     - All parsed `MethodDef` entries
     /// * 'memberrefs'  - All parsed `MemberRef` entries
-    pub fn to_owned(
-        &self,
-        blob: &Blob,
-        methods: &MethodMap,
-        memberrefs: &MemberRefMap,
-    ) -> Result<MethodSpecRc> {
+    pub fn to_owned<F>(&self, get_ref: F, blob: &Blob) -> Result<MethodSpecRc>
+    where
+        F: Fn(&CodedIndex) -> CilTypeReference,
+    {
+        let method = get_ref(&self.method);
+        if matches!(method, CilTypeReference::None) {
+            return Err(malformed_error!(
+                "Failed to resolve method token - {}",
+                self.method.token.value()
+            ));
+        }
+
         Ok(Arc::new(MethodSpec {
             rid: self.rid,
             token: self.token,
             offset: self.offset,
-            method: match self.method.tag {
-                TableId::MethodDef => match methods.get(&self.method.token) {
-                    Some(method) => CilTypeReference::MethodDef(method.value().clone().into()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve methoddef - {}",
-                            self.method.token.value()
-                        ))
-                    }
-                },
-                TableId::MemberRef => match memberrefs.get(&self.method.token) {
-                    Some(memberref) => CilTypeReference::MemberRef(memberref.value().clone()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve memberref - {}",
-                            self.method.token.value()
-                        ))
-                    }
-                },
-                _ => {
-                    return Err(malformed_error!(
-                        "Invalid method token - {}",
-                        self.method.token.value()
-                    ))
-                }
-            },
+            method,
             instantiation: parse_method_spec_signature(blob.get(self.instantiation as usize)?)?,
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         }))
     }
 }

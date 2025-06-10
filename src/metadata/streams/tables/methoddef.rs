@@ -60,17 +60,29 @@ impl MethodDefRaw {
         params_map: &ParamMap,
         table: &MetadataTable<MethodDefRaw>,
     ) -> Result<MethodRc> {
+        let signature = parse_method_signature(blob.get(self.signature as usize)?)?;
+
         let type_params = if self.param_list == 0 || params_map.is_empty() {
             Arc::new(boxcar::Vec::new())
         } else {
             let next_row_id = self.rid + 1;
-
             let start = self.param_list as usize;
             let end = if next_row_id > table.row_count() {
                 params_map.len() + 1
             } else {
                 match table.get(next_row_id) {
-                    Some(next_row) => next_row.param_list as usize,
+                    Some(next_row) => {
+                        let calculated_end = next_row.param_list as usize;
+                        let expected_param_count = signature.params.len();
+
+                        // If the calculated range would be empty but we expect parameters,
+                        // use the signature to determine the correct end
+                        if calculated_end <= start && expected_param_count > 0 {
+                            start + expected_param_count
+                        } else {
+                            calculated_end
+                        }
+                    }
                     None => {
                         return Err(malformed_error!(
                             "Failed to resolve param_end from next row - {}",
@@ -118,7 +130,7 @@ impl MethodDefRaw {
             varargs: Arc::new(boxcar::Vec::new()),
             generic_params: Arc::new(boxcar::Vec::new()),
             generic_args: Arc::new(boxcar::Vec::new()),
-            signature: parse_method_signature(blob.get(self.signature as usize)?)?,
+            signature,
             rva: if self.rva == 0 { None } else { Some(self.rva) },
             body: OnceLock::new(),
             local_vars: Arc::new(boxcar::Vec::new()),
@@ -126,6 +138,7 @@ impl MethodDefRaw {
             interface_impls: Arc::new(boxcar::Vec::new()),
             security: OnceLock::new(),
             blocks: OnceLock::new(),
+            custom_attributes: Arc::new(boxcar::Vec::new()),
             // cfg: RwLock::new(None),
             // ssa: RwLock::new(None),
         }))

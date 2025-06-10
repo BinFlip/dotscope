@@ -17,8 +17,7 @@ impl MetadataLoader for DeclSecurityLoader {
         if let (Some(header), Some(blob)) = (context.meta, context.blobs) {
             if let Some(table) = header.table::<DeclSecurityRaw>(TableId::DeclSecurity) {
                 table.par_iter().try_for_each(|row| {
-                    let owned =
-                        row.to_owned(blob, context.types, context.method_def, context.assembly)?;
+                    let owned = row.to_owned(|coded_index| context.get_ref(coded_index), blob)?;
                     owned.apply()?;
 
                     context.decl_security.insert(row.token, owned);

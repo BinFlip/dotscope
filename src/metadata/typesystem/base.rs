@@ -598,6 +598,7 @@ mod tests {
             constraints: Arc::new(boxcar::Vec::new()),
             rid: 0,
             offset: 0,
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         });
 
         let int_type = Arc::new(CilType::new(

@@ -4,6 +4,7 @@ use std::sync::{Arc, OnceLock};
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{
+        customattributes::CustomAttributeValueList,
         marshalling::MarshallingInfo,
         signatures::{parse_field_signature, SignatureField},
         streams::{Blob, RowDefinition, Strings, TableInfoRef},
@@ -86,6 +87,8 @@ pub struct Field {
     pub layout: OnceLock<u32>,
     /// `FieldMarshal` (flags.HasFieldMarshal)
     pub marshal: OnceLock<MarshallingInfo>,
+    /// Custom attributes applied to this field
+    pub custom_attributes: CustomAttributeValueList,
 }
 
 #[derive(Clone, Debug)]
@@ -126,6 +129,7 @@ impl FieldRaw {
             rva: OnceLock::new(),
             layout: OnceLock::new(),
             marshal: OnceLock::new(),
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         }))
     }
 

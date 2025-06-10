@@ -148,12 +148,10 @@ impl MethodImplRaw {
     /// # Errors
     /// Returns an error if method tokens cannot be resolved, if the class type cannot be found,
     /// or if the method body or declaration references are invalid.
-    pub fn to_owned(
-        &self,
-        types: &TypeRegistry,
-        memberrefs: &MemberRefMap,
-        methods: &MethodMap,
-    ) -> Result<MethodImplRc> {
+    pub fn to_owned<F>(&self, get_ref: F, types: &TypeRegistry) -> Result<MethodImplRc>
+    where
+        F: Fn(&CodedIndex) -> CilTypeReference,
+    {
         Ok(Arc::new(MethodImpl {
             rid: self.rid,
             token: self.token,
@@ -167,57 +165,25 @@ impl MethodImplRaw {
                     ))
                 }
             },
-            method_body: match self.method_body.tag {
-                TableId::MethodDef => match methods.get(&self.method_body.token) {
-                    Some(method) => CilTypeReference::MethodDef(method.value().clone().into()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve methoddef method_body token - {}",
-                            self.method_body.token.value()
-                        ))
-                    }
-                },
-                TableId::MemberRef => match memberrefs.get(&self.method_body.token) {
-                    Some(memberref) => CilTypeReference::MemberRef(memberref.value().clone()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve memberref method_body token - {}",
-                            self.method_body.token.value()
-                        ))
-                    }
-                },
-                _ => {
+            method_body: {
+                let result = get_ref(&self.method_body);
+                if matches!(result, CilTypeReference::None) {
                     return Err(malformed_error!(
-                        "Invalid method_body token - {}",
+                        "Failed to resolve method_body token - {}",
                         self.method_body.token.value()
-                    ))
+                    ));
                 }
+                result
             },
-            method_declaration: match self.method_declaration.tag {
-                TableId::MethodDef => match methods.get(&self.method_declaration.token) {
-                    Some(method) => CilTypeReference::MethodDef(method.value().clone().into()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve methoddef method_declaration token - {}",
-                            self.method_declaration.token.value()
-                        ))
-                    }
-                },
-                TableId::MemberRef => match memberrefs.get(&self.method_declaration.token) {
-                    Some(memberref) => CilTypeReference::MemberRef(memberref.value().clone()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve memberref method_declaration token - {}",
-                            self.method_declaration.token.value()
-                        ))
-                    }
-                },
-                _ => {
+            method_declaration: {
+                let result = get_ref(&self.method_declaration);
+                if matches!(result, CilTypeReference::None) {
                     return Err(malformed_error!(
-                        "Invalid method_declaration token - {}",
+                        "Failed to resolve method_declaration token - {}",
                         self.method_declaration.token.value()
-                    ))
+                    ));
                 }
+                result
             },
         }))
     }

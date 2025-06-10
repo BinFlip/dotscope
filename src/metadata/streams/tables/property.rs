@@ -4,6 +4,7 @@ use std::sync::{Arc, OnceLock};
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{
+        customattributes::CustomAttributeValueList,
         method::MethodRef,
         signatures::{parse_property_signature, SignatureProperty},
         streams::{Blob, RowDefinition, Strings, TableInfoRef},
@@ -50,6 +51,8 @@ pub struct Property {
     pub fn_getter: OnceLock<MethodRef>,
     /// 'Other' associated method with this property
     pub fn_other: OnceLock<MethodRef>,
+    /// Custom attributes attached to this property
+    pub custom_attributes: CustomAttributeValueList,
 }
 
 #[derive(Clone, Debug)]
@@ -89,6 +92,7 @@ impl PropertyRaw {
             fn_setter: OnceLock::new(),
             fn_getter: OnceLock::new(),
             fn_other: OnceLock::new(),
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         }))
     }
 

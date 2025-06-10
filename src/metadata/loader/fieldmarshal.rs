@@ -17,7 +17,7 @@ impl MetadataLoader for FieldMarshalLoader {
         if let (Some(header), Some(blob)) = (context.meta, context.blobs) {
             if let Some(table) = header.table::<FieldMarshalRaw>(TableId::FieldMarshal) {
                 table.par_iter().try_for_each(|row| {
-                    let res = row.to_owned(blob, &context.param, &context.field)?;
+                    let res = row.to_owned(|coded_index| context.get_ref(coded_index), blob)?;
                     res.apply()?;
 
                     context.field_marshal.insert(row.token, res);

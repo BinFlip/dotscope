@@ -4,6 +4,7 @@ use std::sync::{Arc, OnceLock};
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{
+        customattributes::CustomAttributeValueList,
         method::MethodRef,
         streams::{CodedIndex, CodedIndexType, RowDefinition, Strings, TableInfoRef},
         token::Token,
@@ -50,6 +51,8 @@ pub struct Event {
     pub fn_on_raise: OnceLock<MethodRef>,
     /// The `Method` that triggers '`OnOther`'
     pub fn_on_other: OnceLock<MethodRef>,
+    /// Custom attributes attached to this event
+    pub custom_attributes: CustomAttributeValueList,
 }
 
 #[derive(Clone, Debug)]
@@ -98,6 +101,7 @@ impl EventRaw {
             fn_on_other: OnceLock::new(),
             fn_on_raise: OnceLock::new(),
             fn_on_remove: OnceLock::new(),
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         }))
     }
 

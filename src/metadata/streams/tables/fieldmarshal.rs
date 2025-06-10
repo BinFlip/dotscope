@@ -130,42 +130,23 @@ impl FieldMarshalRaw {
     ///
     /// # Errors
     /// Returns an error if blob lookup fails, marshalling descriptor parsing fails, or parent resolution fails
-    pub fn to_owned(
-        &self,
-        blob: &Blob,
-        params: &ParamMap,
-        fields: &FieldMap,
-    ) -> Result<FieldMarshalRc> {
+    pub fn to_owned<F>(&self, get_ref: F, blob: &Blob) -> Result<FieldMarshalRc>
+    where
+        F: Fn(&CodedIndex) -> CilTypeReference,
+    {
+        let parent = get_ref(&self.parent);
+        if matches!(parent, CilTypeReference::None) {
+            return Err(malformed_error!(
+                "Failed to resolve parent token - {}",
+                self.parent.token.value()
+            ));
+        }
+
         Ok(Arc::new(FieldMarshal {
             rid: self.rid,
             token: self.token,
             offset: self.offset,
-            parent: match self.parent.tag {
-                TableId::Param => match params.get(&self.parent.token) {
-                    Some(param) => CilTypeReference::Param(param.value().clone()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve param token - {}",
-                            self.parent.token.value()
-                        ))
-                    }
-                },
-                TableId::Field => match fields.get(&self.parent.token) {
-                    Some(field) => CilTypeReference::Field(field.value().clone()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve field token - {}",
-                            self.parent.token.value()
-                        ))
-                    }
-                },
-                _ => {
-                    return Err(malformed_error!(
-                        "Invalid parent token - {}",
-                        self.parent.token.value()
-                    ))
-                }
-            },
+            parent,
             native_type: Arc::new(parse_marshalling_descriptor(
                 blob.get(self.native_type as usize)?,
             )?),

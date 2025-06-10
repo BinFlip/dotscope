@@ -957,6 +957,7 @@ mod tests {
             generation: 0,
             encbaseid: None,
             imports: Vec::new(),
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         });
 
         let module_ref = Arc::new(ModuleRef {
@@ -964,6 +965,7 @@ mod tests {
             name: "ReferenceModule".to_string(),
             rid: 0,
             offset: 0,
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         });
 
         let assembly_ref = Arc::new(AssemblyRef {
@@ -983,6 +985,7 @@ mod tests {
             os_major_version: AtomicU32::new(0),
             os_minor_version: AtomicU32::new(0),
             processor: AtomicU32::new(0),
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         });
 
         let file = Arc::new(File {
@@ -992,6 +995,7 @@ mod tests {
             rid: 0,
             offset: 0,
             hash_value: AssemblyRefHash::new(&[0xCC, 0xCC]).unwrap(),
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         });
 
         let module_source = registry.register_source(&CilTypeReference::Module(module.clone()));

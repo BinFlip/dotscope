@@ -5,6 +5,7 @@ use crossbeam_skiplist::SkipMap;
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{
+        customattributes::CustomAttributeValueList,
         imports::ImportRc,
         streams::{Guid, RowDefinition, Strings, TableInfoRef},
         token::Token,
@@ -40,6 +41,8 @@ pub struct Module {
     pub encbaseid: Option<uguid::Guid>,
     /// All `CilType` and `MethodDef` entries that are imported from this module
     pub imports: Vec<ImportRc>,
+    /// Custom attributes attached to this module
+    pub custom_attributes: CustomAttributeValueList,
 }
 
 #[derive(Clone, Debug)]
@@ -93,6 +96,7 @@ impl ModuleRaw {
                 Some(guids.get(self.encbaseid as usize)?)
             },
             imports: Vec::new(),
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         }))
     }
 

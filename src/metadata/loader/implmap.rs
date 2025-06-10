@@ -15,7 +15,11 @@ impl MetadataLoader for ImplMapLoader {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
             if let Some(table) = header.table::<ImplMapRaw>(TableId::ImplMap) {
                 table.par_iter().try_for_each(|row| {
-                    let owned = row.to_owned(strings, context.module_ref, context.method_def)?;
+                    let owned = row.to_owned(
+                        |coded_index| context.get_ref(coded_index),
+                        strings,
+                        context.module_ref,
+                    )?;
                     owned.apply()?;
 
                     context.imports.add_method(

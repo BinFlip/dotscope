@@ -5,9 +5,7 @@ use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{
         method::{MethodMap, MethodRc},
-        streams::{
-            CodedIndex, CodedIndexType, EventMap, PropertyMap, RowDefinition, TableId, TableInfoRef,
-        },
+        streams::{CodedIndex, CodedIndexType, RowDefinition, TableId, TableInfoRef},
         token::Token,
         typesystem::CilTypeReference,
     },
@@ -125,19 +123,16 @@ impl MethodSemanticsRaw {
     /// Apply an `MethodSemanticsRaw` to the relevant entries of types (e.g. fields, methods and parameters)
     ///
     /// ## Arguments
-    /// * 'methods'     - All parsed `MethodDef` entries
-    /// * 'events'      - All parsed `Event` entries
-    /// * 'properties'  - All parsed `Property` entries
+    /// * `get_ref` - A closure that resolves coded indices to `CilTypeReference`
+    /// * 'methods' - All parsed `MethodDef` entries
     ///
     /// # Errors
     /// Returns an error if the method token cannot be resolved or if the association
     /// coded index cannot be parsed correctly.
-    pub fn apply(
-        &self,
-        methods: &MethodMap,
-        events: &EventMap,
-        properties: &PropertyMap,
-    ) -> Result<()> {
+    pub fn apply<F>(&self, get_ref: F, methods: &MethodMap) -> Result<()>
+    where
+        F: Fn(&CodedIndex) -> CilTypeReference,
+    {
         let Some(method) = methods.get(&Token::new(self.method | 0x0600_0000)) else {
             return Err(malformed_error!(
                 "Failed to resolve method token - {}",
@@ -145,80 +140,62 @@ impl MethodSemanticsRaw {
             ));
         };
 
-        match self.association.tag {
-            TableId::Property => match properties.get(&self.association.token) {
-                Some(found_type) => match self.semantics {
-                    MethodSemanticsAttributes::SETTER => {
-                        found_type
-                            .value()
-                            .fn_setter
-                            .set(method.value().clone().into())
-                            .map_err(|_| malformed_error!("Property `setter` already set"))?;
-                        Ok(())
-                    }
-                    MethodSemanticsAttributes::GETTER => {
-                        found_type
-                            .value()
-                            .fn_getter
-                            .set(method.value().clone().into())
-                            .map_err(|_| malformed_error!("Property `getter` already set"))?;
-                        Ok(())
-                    }
-                    MethodSemanticsAttributes::OTHER => {
-                        found_type
-                            .value()
-                            .fn_other
-                            .set(method.value().clone().into())
-                            .map_err(|_| malformed_error!("Property `other` method already set"))?;
-                        Ok(())
-                    }
-                    _ => Err(malformed_error!("Invalid property semantics")),
-                },
-                None => Err(malformed_error!(
-                    "Failed to resolve property association token - {}",
-                    self.association.token.value()
-                )),
+        let association = get_ref(&self.association);
+        match association {
+            CilTypeReference::Property(property) => match self.semantics {
+                MethodSemanticsAttributes::SETTER => {
+                    property
+                        .fn_setter
+                        .set(method.value().clone().into())
+                        .map_err(|_| malformed_error!("Property `setter` already set"))?;
+                    Ok(())
+                }
+                MethodSemanticsAttributes::GETTER => {
+                    property
+                        .fn_getter
+                        .set(method.value().clone().into())
+                        .map_err(|_| malformed_error!("Property `getter` already set"))?;
+                    Ok(())
+                }
+                MethodSemanticsAttributes::OTHER => {
+                    property
+                        .fn_other
+                        .set(method.value().clone().into())
+                        .map_err(|_| malformed_error!("Property `other` method already set"))?;
+                    Ok(())
+                }
+                _ => Err(malformed_error!("Invalid property semantics")),
             },
-            TableId::Event => match events.get(&self.association.token) {
-                Some(found_type) => match self.semantics {
-                    MethodSemanticsAttributes::ADD_ON => {
-                        found_type
-                            .value()
-                            .fn_on_add
-                            .set(method.value().clone().into())
-                            .map_err(|_| malformed_error!("Event `add` method already set"))?;
-                        Ok(())
-                    }
-                    MethodSemanticsAttributes::REMOVE_ON => {
-                        found_type
-                            .value()
-                            .fn_on_remove
-                            .set(method.value().clone().into())
-                            .map_err(|_| malformed_error!("Event `remove` method already set"))?;
-                        Ok(())
-                    }
-                    MethodSemanticsAttributes::FIRE => {
-                        found_type
-                            .value()
-                            .fn_on_raise
-                            .set(method.value().clone().into())
-                            .map_err(|_| malformed_error!("Event `raise` method already set"))?;
-                        Ok(())
-                    }
-                    MethodSemanticsAttributes::OTHER => {
-                        found_type
-                            .value()
-                            .fn_on_other
-                            .set(method.value().clone().into())
-                            .map_err(|_| malformed_error!("Event `other` method already set"))?;
-                        Ok(())
-                    }
-                    _ => Err(malformed_error!("Invalid event semantics")),
-                },
-                None => Err(malformed_error!(
-                    "Failed to resolve event association token - {}",
-                    self.association.token.value()
-                )),
+            CilTypeReference::Event(event) => match self.semantics {
+                MethodSemanticsAttributes::ADD_ON => {
+                    event
+                        .fn_on_add
+                        .set(method.value().clone().into())
+                        .map_err(|_| malformed_error!("Event `add` method already set"))?;
+                    Ok(())
+                }
+                MethodSemanticsAttributes::REMOVE_ON => {
+                    event
+                        .fn_on_remove
+                        .set(method.value().clone().into())
+                        .map_err(|_| malformed_error!("Event `remove` method already set"))?;
+                    Ok(())
+                }
+                MethodSemanticsAttributes::FIRE => {
+                    event
+                        .fn_on_raise
+                        .set(method.value().clone().into())
+                        .map_err(|_| malformed_error!("Event `raise` method already set"))?;
+                    Ok(())
+                }
+                MethodSemanticsAttributes::OTHER => {
+                    event
+                        .fn_on_other
+                        .set(method.value().clone().into())
+                        .map_err(|_| malformed_error!("Event `other` method already set"))?;
+                    Ok(())
+                }
+                _ => Err(malformed_error!("Invalid event semantics")),
             },
             _ => Err(malformed_error!(
                 "Invalid association token - {}",
@@ -230,59 +207,41 @@ impl MethodSemanticsRaw {
     /// Convert an `MethodSemanticsRaw`, into a `MethodSemantics` which has indexes resolved and owns the referenced data
     ///
     /// ## Arguments
-    /// * 'methods'     - All parsed `MethodDef` entries
-    /// * 'events'      - All parsed `Event` entries
-    /// * 'properties'  - All parsed `Property` entries
+    /// * `get_ref` - A closure that resolves coded indices to `CilTypeReference`
+    /// * 'methods' - All parsed `MethodDef` entries
     ///
     /// # Errors
     /// Returns an error if the method token cannot be resolved or if the association
     /// coded index cannot be parsed correctly.
-    pub fn to_owned(
-        &self,
-        methods: &MethodMap,
-        events: &EventMap,
-        properties: &PropertyMap,
-    ) -> Result<MethodSemanticsRc> {
+    pub fn to_owned<F>(&self, get_ref: F, methods: &MethodMap) -> Result<MethodSemanticsRc>
+    where
+        F: Fn(&CodedIndex) -> CilTypeReference,
+    {
+        let method = match methods.get(&Token::new(self.method | 0x0600_0000)) {
+            Some(method) => method.value().clone(),
+            None => {
+                return Err(malformed_error!(
+                    "Failed to resolve methoddef token - {}",
+                    self.method | 0x0600_0000
+                ))
+            }
+        };
+
+        let association = get_ref(&self.association);
+        if matches!(association, CilTypeReference::None) {
+            return Err(malformed_error!(
+                "Failed to resolve association token - {}",
+                self.association.token.value()
+            ));
+        }
+
         Ok(Arc::new(MethodSemantics {
             rid: self.rid,
             token: self.token,
             offset: self.offset,
             semantics: self.semantics,
-            method: match methods.get(&Token::new(self.method | 0x0600_0000)) {
-                Some(method) => method.value().clone(),
-                None => {
-                    return Err(malformed_error!(
-                        "Failed to resolve methoddef token - {}",
-                        self.method | 0x0600_0000
-                    ))
-                }
-            },
-            association: match self.association.tag {
-                TableId::Event => match events.get(&self.association.token) {
-                    Some(event) => CilTypeReference::Event(event.value().clone()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve event association token - {}",
-                            self.association.token.value()
-                        ))
-                    }
-                },
-                TableId::Property => match properties.get(&self.association.token) {
-                    Some(property) => CilTypeReference::Property(property.value().clone()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve property association token - {}",
-                            self.association.token.value()
-                        ))
-                    }
-                },
-                _ => {
-                    return Err(malformed_error!(
-                        "Invalid association token - {}",
-                        self.association.token.value()
-                    ))
-                }
-            },
+            method,
+            association,
         }))
     }
 }

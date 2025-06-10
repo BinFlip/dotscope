@@ -17,12 +17,8 @@ impl MetadataLoader for ExportedTypeLoader {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
             if let Some(table) = header.table::<ExportedTypeRaw>(TableId::ExportedType) {
                 for row in table {
-                    let owned = row.to_owned(
-                        strings,
-                        context.file,
-                        context.assembly_ref,
-                        context.exported_type,
-                    )?;
+                    let owned =
+                        row.to_owned(|coded_index| context.get_ref(coded_index), strings)?;
 
                     context.exported_type.insert(row.token, owned.clone())?;
                 }

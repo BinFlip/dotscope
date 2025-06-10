@@ -11,6 +11,7 @@ use crate::{
             TableInfoRef,
         },
         token::Token,
+        typesystem::CilTypeReference,
     },
     Result,
 };
@@ -184,48 +185,54 @@ impl ImplMapRaw {
     /// Convert an `ImplMapRaw`, into a `ImplMap` which has indexes resolved and owns the referenced data
     ///
     /// ## Arguments
+    /// * `get_ref` - Closure to resolve coded indexes
     /// * 'string'  - The #String heap
     /// * 'modules' - All parsed `ModuleRef` entries
-    /// * 'methods' - All parsed `MethodDef` entries
     ///
     /// # Errors
     /// Returns an error if the member forwarded reference cannot be resolved,
     /// if the import name cannot be retrieved, or if the import scope module cannot be found.
-    pub fn to_owned(
+    pub fn to_owned<F>(
         &self,
+        get_ref: F,
         strings: &Strings,
         modules: &ModuleRefMap,
-        methods: &MethodMap,
-    ) -> Result<ImplMapRc> {
+    ) -> Result<ImplMapRc>
+    where
+        F: Fn(&CodedIndex) -> CilTypeReference,
+    {
+        let member_forwarded = match get_ref(&self.member_forwarded) {
+            CilTypeReference::MethodDef(method_def) => {
+                // Convert from MethodDefWeak to MethodRc
+                match method_def.upgrade() {
+                    Some(method) => {
+                        method
+                            .flags_pinvoke
+                            .store(self.mapping_flags, Ordering::Relaxed);
+                        method
+                    }
+                    None => {
+                        return Err(malformed_error!(
+                            "Failed to upgrade MethodDef weak reference - {}",
+                            self.member_forwarded.token.value()
+                        ))
+                    }
+                }
+            }
+            _ => {
+                return Err(malformed_error!(
+                    "Invalid member_forwarded token - {}",
+                    self.member_forwarded.token.value()
+                ))
+            }
+        };
+
         Ok(Arc::new(ImplMap {
             rid: self.rid,
             token: self.token,
             offset: self.offset,
             mapping_flags: self.mapping_flags,
-            member_forwarded: match self.member_forwarded.tag {
-                TableId::MethodDef => match methods.get(&self.member_forwarded.token) {
-                    Some(method) => {
-                        method
-                            .value()
-                            .flags_pinvoke
-                            .store(self.mapping_flags, Ordering::Relaxed);
-                        method.value().clone()
-                    }
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve methoddef token - {}",
-                            self.member_forwarded.token.value()
-                        ))
-                    }
-                },
-                /* According to ECMA-355 'Field' is not supported and should not appear */
-                _ => {
-                    return Err(malformed_error!(
-                        "Invalid member_forwarded token - {}",
-                        self.member_forwarded.token.value()
-                    ))
-                }
-            },
+            member_forwarded,
             import_name: strings.get(self.import_name as usize)?.to_string(),
             import_scope: match modules.get(&Token::new(self.import_scope | 0x1A00_0000)) {
                 Some(module_ref) => module_ref.value().clone(),

@@ -9,6 +9,7 @@ use std::{
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{
+        customattributes::CustomAttributeValueList,
         identity::Identity,
         imports::{ImportContainer, ImportRc, Imports},
         streams::{
@@ -231,6 +232,8 @@ pub struct AssemblyRef {
     // --- from AssemblyRefProcessor ---
     /// a 4-byte constant
     pub processor: AtomicU32,
+    /// Custom attributes applied to this `AssemblyRef`
+    pub custom_attributes: CustomAttributeValueList,
 }
 
 #[derive(Clone, Debug)]
@@ -304,6 +307,7 @@ impl AssemblyRefRaw {
             os_major_version: AtomicU32::new(0),
             os_minor_version: AtomicU32::new(0),
             processor: AtomicU32::new(0),
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         }))
     }
 

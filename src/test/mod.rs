@@ -24,6 +24,7 @@ pub fn create_module_ref(rid: u32, name: &str) -> ModuleRefRc {
         offset: rid as usize,
         token: Token::new(0x1A000000 + rid),
         name: name.to_string(),
+        custom_attributes: Arc::new(boxcar::Vec::new()),
     })
 }
 
@@ -46,6 +47,7 @@ pub fn create_assembly_ref(rid: u32, name: &str) -> AssemblyRefRc {
         os_major_version: AtomicU32::new(0),
         os_minor_version: AtomicU32::new(0),
         processor: AtomicU32::new(0),
+        custom_attributes: Arc::new(boxcar::Vec::new()),
     })
 }
 
@@ -58,6 +60,7 @@ pub fn create_file(rid: u32, name: &str) -> FileRc {
         flags: 0,
         name: name.to_string(),
         hash_value: AssemblyRefHash::new(&[1, 2, 3, 4]).unwrap(),
+        custom_attributes: Arc::new(boxcar::Vec::new()),
     })
 }
 
@@ -105,6 +108,7 @@ pub fn create_method(name: &str) -> MethodRc {
         interface_impls: Arc::new(boxcar::Vec::new()),
         security: OnceLock::new(),
         blocks: OnceLock::new(),
+        custom_attributes: Arc::new(boxcar::Vec::new()),
     })
 }
 
@@ -139,5 +143,6 @@ pub fn create_exportedtype(dummy_type: CilTypeRc) -> ExportedTypeRc {
         name: "ExportedType".to_string(),
         namespace: Some("Test.Namespace".to_string()),
         implementation: CilTypeReference::File(create_file(1, "export_test")),
+        custom_attributes: Arc::new(boxcar::Vec::new()),
     })
 }

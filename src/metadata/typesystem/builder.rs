@@ -601,6 +601,7 @@ mod tests {
             constraints: Arc::new(boxcar::Vec::new()),
             rid: 0,
             offset: 0,
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         });
 
         list_type.generic_params.push(generic_param);
@@ -892,6 +893,7 @@ mod tests {
             constraints: Arc::new(boxcar::Vec::new()),
             rid: 0,
             offset: 0,
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         });
 
         let value_param = Arc::new(GenericParam {
@@ -903,6 +905,7 @@ mod tests {
             constraints: Arc::new(boxcar::Vec::new()),
             rid: 1,
             offset: 1,
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         });
 
         dict_type.generic_params.push(key_param);

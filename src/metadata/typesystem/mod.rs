@@ -55,9 +55,10 @@ pub use registry::{TypeRegistry, TypeSource};
 pub use resolver::TypeResolver;
 
 use crate::metadata::{
+    customattributes::CustomAttributeValueList,
     method::MethodRefList,
     security::Security,
-    streams::{CustomAttributeList, EventList, FieldList, GenericParamList, PropertyList},
+    streams::{EventList, FieldList, GenericParamList, PropertyList},
     token::Token,
 };
 
@@ -103,7 +104,7 @@ pub struct CilType {
     /// All generic arguments this type has (instantiated version)
     pub generic_args: Arc<boxcar::Vec<GenericArgument>>,
     /// All custom attributes this type has
-    pub custom_attributes: CustomAttributeList,
+    pub custom_attributes: CustomAttributeValueList,
     /// a 2-byte value, specifying the alignment of fields
     pub packing_size: OnceLock<u16>,
     /// a 4-byte value, specifying the size of the class

@@ -4,7 +4,10 @@ use std::sync::Arc;
 use crate::{
     file::io::read_le_at_dyn,
     metadata::{
-        streams::{CodedIndex, CodedIndexType, RowDefinition, TableInfoRef},
+        customattributes::{parse_custom_attribute_blob, CustomAttributeValue},
+        streams::{
+            Blob, CodedIndex, CodedIndexType, MemberRefSignature, RowDefinition, TableInfoRef,
+        },
         token::Token,
         typesystem::CilTypeReference,
     },
@@ -14,7 +17,7 @@ use crate::{
 /// A map that holds the mapping of Token to parsed `CustomAttribute`
 pub type CustomAttributeMap = SkipMap<Token, CustomAttributeRc>;
 /// A vector that holds a list of `CustomAttribute`
-pub type CustomAttributeList = Arc<boxcar::Vec<CustomAttributeRc>>;
+pub type CustomAttributeList = Arc<boxcar::Vec<Arc<CustomAttributeRc>>>;
 /// A reference to a `CustomAttribute`
 pub type CustomAttributeRc = Arc<CustomAttribute>;
 
@@ -27,12 +30,121 @@ pub struct CustomAttribute {
     pub token: Token,
     /// Offset
     pub offset: usize,
-    /// an index into a metadata table that has an associated `HasCustomAttribute` (§II.24.2.6) coded index
+    /// Resolved parent object that has this custom attribute attached
     pub parent: CilTypeReference,
-    /// an index into the `MethodDef` or `MemberRef` table; more precisely, a `CustomAttributeType` (§II.24.2.6) coded index
+    /// Resolved constructor (`MethodDef` or `MemberRef`) for this custom attribute
     pub constructor: CilTypeReference,
-    /// an index into the Blob heap
-    pub value: u32,
+    /// Parsed custom attribute value
+    pub value: CustomAttributeValue,
+}
+
+impl CustomAttribute {
+    /// Apply a `CustomAttribute` to attach it to its parent metadata element
+    ///
+    /// This method attaches the custom attribute value to its resolved parent object by adding it
+    /// to the parent's custom attribute collection. The custom attribute value is stored as an
+    /// `Arc<CustomAttributeValue>` for efficient memory usage and sharing.
+    ///
+    /// # Errors
+    /// Returns an error if the parent type is not supported for custom attributes
+    /// or if custom attribute storage is not implemented for the parent type.
+    pub fn apply(&self) -> Result<()> {
+        let attribute_value = Arc::new(self.value.clone());
+
+        match &self.parent {
+            CilTypeReference::TypeDef(entry)
+            | CilTypeReference::TypeSpec(entry)
+            | CilTypeReference::TypeRef(entry) => {
+                if let Some(type_ref) = entry.upgrade() {
+                    type_ref.custom_attributes.push(attribute_value);
+                    Ok(())
+                } else {
+                    Err(malformed_error!("Type reference is no longer valid"))
+                }
+            }
+            CilTypeReference::MethodDef(entry) => {
+                if let Some(method) = entry.upgrade() {
+                    method.custom_attributes.push(attribute_value);
+                    Ok(())
+                } else {
+                    Err(malformed_error!("Method reference is no longer valid"))
+                }
+            }
+            CilTypeReference::Field(entry) => {
+                entry.custom_attributes.push(attribute_value);
+                Ok(())
+            }
+            CilTypeReference::Param(entry) => {
+                entry.custom_attributes.push(attribute_value);
+                Ok(())
+            }
+            CilTypeReference::Property(entry) => {
+                entry.custom_attributes.push(attribute_value);
+                Ok(())
+            }
+            CilTypeReference::Event(entry) => {
+                entry.custom_attributes.push(attribute_value);
+                Ok(())
+            }
+            CilTypeReference::Assembly(entry) => {
+                entry.custom_attributes.push(attribute_value);
+                Ok(())
+            }
+            CilTypeReference::Module(entry) => {
+                entry.custom_attributes.push(attribute_value);
+                Ok(())
+            }
+            CilTypeReference::InterfaceImpl(entry) => {
+                entry.custom_attributes.push(attribute_value);
+                Ok(())
+            }
+            CilTypeReference::MemberRef(entry) => {
+                entry.custom_attributes.push(attribute_value);
+                Ok(())
+            }
+            CilTypeReference::DeclSecurity(entry) => {
+                entry.custom_attributes.push(attribute_value);
+                Ok(())
+            }
+            CilTypeReference::StandAloneSig(entry) => {
+                entry.custom_attributes.push(attribute_value);
+                Ok(())
+            }
+            CilTypeReference::ModuleRef(entry) => {
+                entry.custom_attributes.push(attribute_value);
+                Ok(())
+            }
+            CilTypeReference::AssemblyRef(entry) => {
+                entry.custom_attributes.push(attribute_value);
+                Ok(())
+            }
+            CilTypeReference::File(entry) => {
+                entry.custom_attributes.push(attribute_value);
+                Ok(())
+            }
+            CilTypeReference::ExportedType(entry) => {
+                entry.custom_attributes.push(attribute_value);
+                Ok(())
+            }
+            CilTypeReference::GenericParam(entry) => {
+                entry.custom_attributes.push(attribute_value);
+                Ok(())
+            }
+            CilTypeReference::GenericParamConstraint(entry) => {
+                entry.custom_attributes.push(attribute_value);
+                Ok(())
+            }
+            CilTypeReference::MethodSpec(entry) => {
+                entry.custom_attributes.push(attribute_value);
+                Ok(())
+            }
+            //CilTypeReference::ManifestResource(entry) => {},
+            CilTypeReference::None => {
+                // For now, just return Ok() for unsupported parent types
+                Ok(())
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -52,112 +164,75 @@ pub struct CustomAttributeRaw {
     pub value: u32,
 }
 
-/*
 impl CustomAttributeRaw {
-    /// Apply an `CustomAttributeRaw` to the relevant entries of types (e.g. fields, methods and parameters)
+    /// Convert a `CustomAttributeRaw` into a `CustomAttribute` which has indexes resolved and owns the referenced data
+    ///
+    /// This method uses the unified coded index resolution system from `LoaderContext`,
+    /// providing proper resolution of parent and constructor references to concrete objects.
+    /// In Phase 4, it extracts constructor parameter information from the resolved Method reference to enable
+    /// type-aware blob parsing using the already-parsed parameter types.
     ///
     /// ## Arguments
-    /// * 'value'               - The value to be applied
-    /// * 'blob'                - The #Blob heap,
-    /// * 'types'               - All parsed `TypeDef`, `TypeSpec` and `TypeRef` entries
-    /// * 'methods'             - All parsed `Method` entries
-    /// * 'fields'              - All parsed `Field` entries
-    /// * 'params'              - All parsed `Param` entries
-    /// * 'interface_impls'     - All parsed `InterfaceImpl` entries
-    /// * 'memberrefs'          - All parsed `MemberRef` entries
-    /// * 'modules'             - All parsed `Module` entries
-    /// * 'permissions'         - All parsed `DeclSecurity` entries
-    /// * 'properties'          - All parsed `Property` entries
-    /// * 'events'              - All parsed `Event` entries
-    /// * 'sigs'                - All parsed `StandAloneSig` entries
-    /// * 'modulerefs'          - All parsed `ModuleRef` entries
-    /// * 'assembly'            - All parsed `Assembly` entries
-    /// * 'assembly_refs'       - All parsed `AssemblyRef` entries
-    /// * 'file'                - All parsed `File` entries
-    /// * 'exports'             - All parsed `ExportedType` entries
-    /// * 'manifest'            - All parsed `ManifestResource` entries
-    /// * 'generic_param'       - All parsed `GenericParam` entries
-    /// * 'generic_constraint'  - All parsed `GenericParamConstraint` entries
-    /// * 'method_spec'         - All parsed `MethodSpec` entries
-    pub fn apply(
-        &self,
-        _blob: &Blob,
-        _types: &TypeRegistry,
-        _methods: &MethodMap,
-        _fields: &FieldMap,
-        _params: &ParamMap,
-        _interface_impls: &InterfaceImplMap,
-        _memberrefs: &MemberRefMap,
-        _modules: &ModuleMap,
-        _permissions: &DeclSecurityMap,
-        _properties: &PropertyMap,
-        _events: &EventMap,
-        _sigs: &StandAloneSigMap,
-        _modulerefs: &ModuleRefMap,
-        _assembly: &AssemblyMap,
-        _assembly_refs: &AssemblyRefMap,
-        _file: &FileMap,
-        _exports: &ExportedTypeMap,
-        _manifest: &ManifestResourceMap,
-        _generic_param: &GenericParamMap,
-        _generic_constraint: &GenericParamConstraintMap,
-        _method_spec: &MethodSpecMap,
-    ) -> Result<Self> {
-        unimplemented!()
-    }
+    /// * `get_ref` - A closure that resolves coded indices to `CilTypeReference`
+    /// * `blob` - The blob heap for parsing custom attribute value data
+    ///
+    /// # Errors
+    /// Returns an error if coded index resolution fails for parent or constructor references,
+    /// or if blob parsing fails.
+    pub fn to_owned<F>(&self, get_ref: F, blob: &Blob) -> Result<CustomAttributeRc>
+    where
+        F: Fn(&CodedIndex) -> CilTypeReference,
+    {
+        let constructor_ref = get_ref(&self.constructor);
 
-    /// Convert an `CustomAttributeRaw`, into a `CustomAttribute` which has indexes resolved and owns the referenced data
-    ///
-    /// ## Arguments
-    /// * 'blob'                - The #Blob heap,
-    /// * 'types'               - All parsed `TypeDef`, `TypeSpec` and `TypeRef` entries
-    /// * 'methods'             - All parsed `Method` entries
-    /// * 'fields'              - All parsed `Field` entries
-    /// * 'params'              - All parsed `Param` entries
-    /// * 'interface_impls'     - All parsed `InterfaceImpl` entries
-    /// * 'memberrefs'          - All parsed `MemberRef` entries
-    /// * 'modules'             - All parsed `Module` entries
-    /// * 'permissions'         - All parsed `DeclSecurity` entries
-    /// * 'properties'          - All parsed `Property` entries
-    /// * 'events'              - All parsed `Event` entries
-    /// * 'sigs'                - All parsed `StandAloneSig` entries
-    /// * 'modulerefs'          - All parsed `ModuleRef` entries
-    /// * 'assembly'            - All parsed `Assembly` entries
-    /// * 'assembly_refs'       - All parsed `AssemblyRef` entries
-    /// * 'file'                - All parsed `File` entries
-    /// * 'exports'             - All parsed `ExportedType` entries
-    /// * 'manifest'            - All parsed `ManifestResource` entries
-    /// * 'generic_param'       - All parsed `GenericParam` entries
-    /// * 'generic_constraint'  - All parsed `GenericParamConstraint` entries
-    /// * 'method_spec'         - All parsed `MethodSpec` entries
-    pub fn to_owned(
-        &self,
-        _blob: &Blob,
-        _types: &TypeRegistry,
-        _methods: &MethodMap,
-        _fields: &FieldMap,
-        _params: &ParamMap,
-        _interface_impls: &InterfaceImplMap,
-        _memberrefs: &MemberRefMap,
-        _modules: &ModuleMap,
-        _permissions: &DeclSecurityMap,
-        _properties: &PropertyMap,
-        _events: &EventMap,
-        _sigs: &StandAloneSigMap,
-        _modulerefs: &ModuleRefMap,
-        _assembly: &AssemblyMap,
-        _assembly_refs: &AssemblyRefMap,
-        _file: &FileMap,
-        _exports: &ExportedTypeMap,
-        _manifest: &ManifestResourceMap,
-        _generic_param: &GenericParamMap,
-        _generic_constraint: &GenericParamConstraintMap,
-        _method_spec: &MethodSpecMap,
-    ) -> Result<Self> {
-        unimplemented!()
+        let value = if self.value == 0 {
+            CustomAttributeValue {
+                fixed_args: vec![],
+                named_args: vec![],
+            }
+        } else {
+            match &constructor_ref {
+                CilTypeReference::MethodDef(method_ref) => match method_ref.upgrade() {
+                    Some(constructor) => {
+                        // Pass the Arc directly to avoid unnecessary vector allocation
+                        parse_custom_attribute_blob(blob, self.value, &constructor.params)?
+                    }
+                    None => CustomAttributeValue {
+                        fixed_args: vec![],
+                        named_args: vec![],
+                    },
+                },
+                CilTypeReference::MemberRef(member_ref) => {
+                    match &member_ref.signature {
+                        MemberRefSignature::Method(_method_sig) => {
+                            // Pass the Arc directly to avoid unnecessary vector allocation
+                            parse_custom_attribute_blob(blob, self.value, &member_ref.params)?
+                        }
+                        MemberRefSignature::Field(_) => CustomAttributeValue {
+                            fixed_args: vec![],
+                            named_args: vec![],
+                        },
+                    }
+                }
+                _ => CustomAttributeValue {
+                    fixed_args: vec![],
+                    named_args: vec![],
+                },
+            }
+        };
+
+        let custom_attribute = CustomAttribute {
+            rid: self.rid,
+            token: self.token,
+            offset: self.offset,
+            parent: get_ref(&self.parent),
+            constructor: constructor_ref,
+            value,
+        };
+
+        Ok(Arc::new(custom_attribute))
     }
 }
-*/
 
 impl<'a> RowDefinition<'a> for CustomAttributeRaw {
     #[rustfmt::skip]
@@ -193,9 +268,8 @@ impl<'a> RowDefinition<'a> for CustomAttributeRaw {
 
 #[cfg(test)]
 mod tests {
-    use crate::metadata::streams::tables::types::{MetadataTable, TableId, TableInfo};
-
     use super::*;
+    use crate::metadata::streams::tables::types::{MetadataTable, TableId, TableInfo};
 
     #[test]
     fn crafted_short() {

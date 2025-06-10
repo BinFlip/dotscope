@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crate::{
     file::io::read_le_at_dyn,
     metadata::{
+        customattributes::CustomAttributeValueList,
         streams::{Blob, RowDefinition, TableInfoRef},
         token::Token,
     },
@@ -31,6 +32,8 @@ pub struct StandAloneSig {
     pub offset: usize,
     /// an index into the Blob heap
     pub signature: u32,
+    /// Custom attributes applied to this standalone signature
+    pub custom_attributes: CustomAttributeValueList,
 }
 
 #[derive(Clone, Debug)]

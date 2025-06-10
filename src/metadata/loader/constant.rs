@@ -17,8 +17,7 @@ impl MetadataLoader for ConstantLoader {
         if let (Some(header), Some(blob)) = (context.meta, context.blobs) {
             if let Some(table) = header.table::<ConstantRaw>(TableId::Constant) {
                 table.par_iter().try_for_each(|row| {
-                    let owned =
-                        row.to_owned(blob, &context.param, &context.field, &context.property)?;
+                    let owned = row.to_owned(|coded_index| context.get_ref(coded_index), blob)?;
                     owned.apply()?;
 
                     context.constant.insert(row.token, owned);

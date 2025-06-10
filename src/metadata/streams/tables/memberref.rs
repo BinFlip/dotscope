@@ -1,17 +1,17 @@
-use std::sync::Arc;
+use std::sync::{atomic::AtomicBool, Arc, OnceLock, RwLock};
 
 use crossbeam_skiplist::SkipMap;
 
 use crate::{
     file::io::read_le_at_dyn,
     metadata::{
-        method::MethodMap,
+        customattributes::CustomAttributeValueList,
         signatures::{
             parse_field_signature, parse_method_signature, SignatureField, SignatureMethod,
         },
         streams::{
-            Blob, CodedIndex, CodedIndexType, ModuleRefMap, RowDefinition, Strings, TableId,
-            TableInfoRef,
+            tables::param::Param, Blob, CodedIndex, CodedIndexType, ParamRc, RowDefinition,
+            Strings, TableInfoRef,
         },
         token::Token,
         typesystem::{CilTypeReference, TypeRegistry},
@@ -49,6 +49,10 @@ pub struct MemberRef {
     pub name: String,
     /// The signature (could be method signature or field signature)
     pub signature: MemberRefSignature,
+    /// Parameter information for method signatures (empty for field signatures)
+    pub params: Arc<boxcar::Vec<ParamRc>>,
+    /// Custom attributes applied to this member reference
+    pub custom_attributes: CustomAttributeValueList,
 }
 
 #[derive(Clone, Debug)]
@@ -69,6 +73,63 @@ pub struct MemberRefRaw {
 }
 
 impl MemberRefRaw {
+    /// Create Param structures from a method signature
+    ///
+    /// This creates parameter objects similar to how `MethodDef` entries work,
+    /// enabling unified parameter handling across `MethodDef` and `MemberRef` constructors.
+    ///
+    /// # Arguments
+    /// * `method_sig` - The parsed method signature
+    /// * `strings` - The strings heap for parameter names (will be None for `MemberRef` params)
+    ///
+    /// # Errors
+    /// Returns an error if parameter creation fails
+    fn create_params_from_signature(
+        method_sig: &SignatureMethod,
+        _strings: &Strings,
+    ) -> Arc<boxcar::Vec<ParamRc>> {
+        let params = Arc::new(boxcar::Vec::with_capacity(method_sig.params.len() + 1));
+
+        // Create return parameter (sequence 0)
+        let return_param = Arc::new(Param {
+            rid: 0,               // No actual row ID for MemberRef params
+            token: Token::new(0), // Placeholder token
+            offset: 0,
+            flags: 0,
+            sequence: 0, // Return parameter
+            name: None,  // MemberRef parameters don't have names from metadata
+            default: OnceLock::new(),
+            marshal: OnceLock::new(),
+            modifiers: RwLock::new(Vec::new()),
+            base: OnceLock::new(),
+            is_by_ref: AtomicBool::new(method_sig.return_type.by_ref),
+            custom_attributes: Arc::new(boxcar::Vec::new()),
+        });
+        params.push(return_param);
+
+        // Create parameters for each method parameter
+        for (index, param_sig) in method_sig.params.iter().enumerate() {
+            let param = Arc::new(Param {
+                rid: 0,               // No actual row ID for MemberRef params
+                token: Token::new(0), // Placeholder token
+                offset: 0,
+                flags: 0,
+                #[allow(clippy::cast_possible_truncation)]
+                sequence: (index + 1) as u32, // Parameter sequence starts at 1
+                name: None, // MemberRef parameters don't have names from metadata
+                default: OnceLock::new(),
+                marshal: OnceLock::new(),
+                modifiers: RwLock::new(Vec::new()),
+                base: OnceLock::new(),
+                is_by_ref: AtomicBool::new(param_sig.by_ref),
+                custom_attributes: Arc::new(boxcar::Vec::new()),
+            });
+            params.push(param);
+        }
+
+        params
+    }
+
     /// Apply a `MemberRefRaw` - no-op for `MemberRef` as member references don't modify other table entries
     ///
     /// `MemberRef` entries represent references to members (fields, methods) defined in other types
@@ -86,89 +147,72 @@ impl MemberRefRaw {
     /// * 'strings'     - The #String heap
     /// * 'blob'        - The #Blob heap
     /// * 'types'       - All parsed `CilType` entries
-    /// * 'modules'     - All parsed `ModuleRef` entries
-    /// * 'methods'     - All parsed `MethodDef` entries
+    /// * `get_ref`     - Closure for resolving coded indexes to type references
     ///
     /// # Errors
     /// Returns an error if the signature data is invalid, if the type cannot be resolved,
     /// or if the signature cannot be parsed correctly.
-    pub fn to_owned(
+    pub fn to_owned<F>(
         &self,
         strings: &Strings,
         blob: &Blob,
-        types: &TypeRegistry,
-        modules: &ModuleRefMap,
-        methods: &MethodMap,
-    ) -> Result<MemberRefRc> {
+        types: &Arc<TypeRegistry>,
+        get_ref: F,
+    ) -> Result<MemberRefRc>
+    where
+        F: Fn(&CodedIndex) -> CilTypeReference,
+    {
         let signature_data = blob.get(self.signature as usize)?;
         if signature_data.is_empty() {
             return Err(malformed_error!("Invalid signature data"));
         }
 
-        Ok(Arc::new(MemberRef {
+        let (signature, params) = if signature_data[0] == 0x6 {
+            (
+                MemberRefSignature::Field(parse_field_signature(signature_data)?),
+                Arc::new(boxcar::Vec::new()),
+            )
+        } else {
+            let method_sig = parse_method_signature(signature_data)?;
+            let params = Self::create_params_from_signature(&method_sig, strings);
+
+            for (_, param) in params.iter() {
+                if param.sequence == 0 {
+                    // Return parameter
+                    param.apply_signature(&method_sig.return_type, types.clone())?;
+                } else {
+                    // Regular parameter
+                    let index = (param.sequence - 1) as usize;
+                    if let Some(param_signature) = method_sig.params.get(index) {
+                        param.apply_signature(param_signature, types.clone())?;
+                    }
+                }
+            }
+
+            (MemberRefSignature::Method(method_sig), params)
+        };
+
+        let member_ref = Arc::new(MemberRef {
             rid: self.rid,
             token: self.token,
             offset: self.offset,
-            declaredby: match self.class.tag {
-                TableId::MethodDef => match methods.get(&self.class.token) {
-                    Some(method) => CilTypeReference::MethodDef(method.value().clone().into()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve methoddef class token - {}",
-                            self.class.token.value()
-                        ))
-                    }
-                },
-                TableId::ModuleRef => match modules.get(&self.class.token) {
-                    Some(module_ref) => CilTypeReference::ModuleRef(module_ref.value().clone()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve moduleref class token - {}",
-                            self.class.token.value()
-                        ))
-                    }
-                },
-                TableId::TypeDef => match types.get(&self.class.token) {
-                    Some(cil_type) => CilTypeReference::TypeDef(cil_type.into()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve typedef class token - {}",
-                            self.class.token.value()
-                        ))
-                    }
-                },
-                TableId::TypeRef => match types.get(&self.class.token) {
-                    Some(cil_type) => CilTypeReference::TypeRef(cil_type.into()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve typeref class token - {}",
-                            self.class.token.value()
-                        ))
-                    }
-                },
-                TableId::TypeSpec => match types.get(&self.class.token) {
-                    Some(cil_type) => CilTypeReference::TypeSpec(cil_type.into()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve typespec class token - {}",
-                            self.class.token.value()
-                        ))
-                    }
-                },
-                _ => {
+            declaredby: {
+                let type_ref = get_ref(&self.class);
+                if matches!(type_ref, CilTypeReference::None) {
                     return Err(malformed_error!(
-                        "Invalid class token - {}",
+                        "Failed to resolve class token - {}",
                         self.class.token.value()
-                    ))
+                    ));
                 }
+                type_ref
             },
             name: strings.get(self.name as usize)?.to_string(),
-            signature: if signature_data[0] == 0x6 {
-                MemberRefSignature::Field(parse_field_signature(signature_data)?)
-            } else {
-                MemberRefSignature::Method(parse_method_signature(signature_data)?)
-            },
-        }))
+            signature,
+            params,
+            custom_attributes: Arc::new(boxcar::Vec::new()),
+        });
+
+        Ok(member_ref)
     }
 }
 

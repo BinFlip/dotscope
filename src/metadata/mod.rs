@@ -36,6 +36,8 @@
 pub mod cilobject;
 /// Implementation of the Header of CIL
 pub mod cor20header;
+/// Implementation of custom attribute parsing and representation
+pub mod customattributes;
 /// Implementation of 'Exports' by the loaded binary
 pub mod exports;
 /// Implementation of the verification mechanism of an `Assembly`

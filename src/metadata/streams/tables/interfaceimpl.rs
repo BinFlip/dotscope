@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::{
     file::io::read_le_at_dyn,
     metadata::{
+        customattributes::CustomAttributeValueList,
         streams::{CodedIndex, CodedIndexType, RowDefinition, TableId, TableInfoRef},
         token::Token,
         typesystem::{CilFlavor, CilTypeRc, TypeRegistry},
@@ -31,6 +32,8 @@ pub struct InterfaceImpl {
     pub class: CilTypeRc,
     /// The interface base type
     pub interface: CilTypeRc,
+    /// Custom attributes applied to this interface implementation
+    pub custom_attributes: CustomAttributeValueList,
 }
 
 impl InterfaceImpl {
@@ -120,6 +123,7 @@ impl InterfaceImplRaw {
                     ))
                 }
             },
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         }))
     }
 }

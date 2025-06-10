@@ -18,6 +18,7 @@
 //! - Familiarity with ECMA-335 specification
 //! - Experience with basic dotscope operations
 
+use dotscope::metadata::customattributes::CustomAttributeValueRc;
 use dotscope::prelude::*;
 use std::{collections::HashMap, env, path::Path};
 
@@ -47,6 +48,9 @@ fn main() -> Result<()> {
 
     // === Type System Deep Dive ===
     print_type_system_analysis(&assembly);
+
+    // === Custom Attributes Analysis ===
+    print_custom_attributes_analysis(&assembly);
 
     // === Assembly Dependencies ===
     print_dependency_analysis(&assembly);
@@ -298,6 +302,116 @@ fn print_type_system_analysis(assembly: &CilObject) {
     println!("  Type categories:");
     for (kind, count) in &type_kind_stats {
         println!("    {}: {} types", kind, count);
+    }
+}
+
+fn print_custom_attributes_analysis(assembly: &CilObject) {
+    println!("\n🏷️  Custom Attributes Examples:");
+
+    // Show custom attributes from Types
+    println!("  Custom attributes on Types:");
+    let types = assembly.types();
+    let mut type_count = 0;
+    for entry in types.iter().take(20) {
+        let type_def = entry.value();
+        let custom_attrs = &type_def.custom_attributes;
+
+        let attr_count = custom_attrs.count();
+
+        if attr_count > 0 && type_count < 2 {
+            println!("    Type: {}", type_def.fullname());
+            for (i, attr) in custom_attrs.iter().take(5) {
+                print_custom_attribute_info(i + 1, attr);
+            }
+            type_count += 1;
+            if attr_count > 5 {
+                println!("      ... and {} more attributes", attr_count - 5);
+            }
+        }
+    }
+
+    // Show custom attributes from Methods
+    println!("  Custom attributes on Methods:");
+    let methods = assembly.methods();
+    let mut method_count = 0;
+    for entry in methods.iter().take(50) {
+        let method = entry.value();
+        let custom_attrs = &method.custom_attributes;
+
+        let attr_count = custom_attrs.count();
+
+        if attr_count > 0 && method_count < 2 {
+            println!("    Method: {}", method.name);
+            for (i, attr) in custom_attrs.iter().take(5) {
+                print_custom_attribute_info(i + 1, attr);
+            }
+            method_count += 1;
+            if attr_count > 5 {
+                println!("      ... and {} more attributes", attr_count - 5);
+            }
+        }
+    }
+
+    // Show custom attributes from Events
+    println!("  Custom attributes on Events:");
+    let mut event_count = 0;
+    for entry in types.iter().take(20) {
+        let type_def = entry.value();
+        let events = &type_def.events;
+        for (_, event) in events.iter().take(10) {
+            let custom_attrs = &event.custom_attributes;
+
+            let attr_count = custom_attrs.count();
+
+            if attr_count > 0 && event_count < 2 {
+                println!("    Event: {}", event.name);
+                for (i, attr) in custom_attrs.iter().take(5) {
+                    print_custom_attribute_info(i + 1, attr);
+                }
+                event_count += 1;
+                if attr_count > 5 {
+                    println!("      ... and {} more attributes", attr_count - 5);
+                }
+            }
+        }
+        if event_count >= 2 {
+            break;
+        }
+    }
+
+    if type_count == 0 && method_count == 0 && event_count == 0 {
+        println!("  No custom attributes found in the analyzed types, methods, or events.");
+    }
+}
+
+fn print_custom_attribute_info(index: usize, attr: &CustomAttributeValueRc) {
+    println!("      {}. Custom Attribute:", index);
+
+    // Show argument summary
+    let fixed_count = attr.fixed_args.len();
+    let named_count = attr.named_args.len();
+
+    if fixed_count > 0 || named_count > 0 {
+        println!(
+            "         Arguments: {} fixed, {} named",
+            fixed_count, named_count
+        );
+
+        // Show first 2 fixed args
+        for (i, arg) in attr.fixed_args.iter().take(2).enumerate() {
+            println!("           Fixed[{}]: {:?}", i, arg);
+        }
+
+        // Show first 2 named args
+        for (i, arg) in attr.named_args.iter().take(2).enumerate() {
+            let kind = if arg.is_field { "field" } else { "property" };
+            println!(
+                "           Named[{}]: {} '{}' = {:?}",
+                i, kind, arg.name, arg.value
+            );
+        }
+    } else {
+        println!("         No arguments");
     }
 }
 

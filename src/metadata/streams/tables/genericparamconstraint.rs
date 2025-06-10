@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::{
     file::io::read_le_at_dyn,
     metadata::{
+        customattributes::CustomAttributeValueList,
         streams::{
             CodedIndex, CodedIndexType, GenericParamMap, GenericParamRc, RowDefinition, TableId,
             TableInfoRef,
@@ -34,8 +35,8 @@ pub struct GenericParamConstraint {
     pub owner: GenericParamRc,
     /// an index into the `TypeDefOrRef` coding index
     pub constraint: CilTypeRc,
-    // Custom attributes on this constraint
-    // pub custom_attributes: Vec<CustomAttributes>,
+    /// Custom attributes applied to this `GenericParamConstraint`
+    pub custom_attributes: CustomAttributeValueList,
 }
 
 impl GenericParamConstraint {
@@ -128,6 +129,7 @@ impl GenericParamConstraintRaw {
                     ))
                 }
             },
+            custom_attributes: Arc::new(boxcar::Vec::new()),
         }))
     }
 }

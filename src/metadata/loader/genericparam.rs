@@ -17,7 +17,8 @@ impl MetadataLoader for GenericParamLoader {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
             if let Some(generics) = header.table::<GenericParamRaw>(TableId::GenericParam) {
                 generics.par_iter().try_for_each(|row| {
-                    let owned = row.to_owned(strings, context.types, context.method_def)?;
+                    let owned =
+                        row.to_owned(|coded_index| context.get_ref(coded_index), strings)?;
                     owned.apply()?;
 
                     context.generic_param.insert(row.token, owned.clone());

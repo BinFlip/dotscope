@@ -17,14 +17,15 @@ use crate::{
         root::Root,
         streams::{
             AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, AssemblyRefOsMap,
-            AssemblyRefProcessorMap, Blob, ClassLayoutMap, ConstantMap, CustomAttributeMap,
-            DeclSecurityMap, EventMap, EventMapEntryMap, FieldLayoutMap, FieldMap, FieldMarshalMap,
-            FieldRVAMap, FileMap, GenericParamConstraintMap, GenericParamMap, Guid,
-            InterfaceImplMap, MemberRefMap, MethodImplMap, MethodSemanticsMap, MethodSpecMap,
-            ModuleRc, ModuleRefMap, NestedClassMap, ParamMap, PropertyMap, PropertyMapEntryMap,
-            StandAloneSigMap, Strings, TablesHeader, TypeSpecMap, UserStrings,
+            AssemblyRefProcessorMap, Blob, ClassLayoutMap, CodedIndex, ConstantMap,
+            CustomAttributeMap, DeclSecurityMap, EventMap, EventMapEntryMap, FieldLayoutMap,
+            FieldMap, FieldMarshalMap, FieldRVAMap, FileMap, GenericParamConstraintMap,
+            GenericParamMap, Guid, InterfaceImplMap, MemberRefMap, MethodImplMap,
+            MethodSemanticsMap, MethodSpecMap, ModuleRc, ModuleRefMap, NestedClassMap, ParamMap,
+            PropertyMap, PropertyMapEntryMap, StandAloneSigMap, Strings, TableId, TablesHeader,
+            TypeSpecMap, UserStrings,
         },
-        typesystem::TypeRegistry,
+        typesystem::{CilTypeReference, TypeRegistry},
     },
 };
 
@@ -85,4 +86,183 @@ pub(crate) struct LoaderContext<'a> {
     pub imports: &'a Imports,
     pub resources: &'a Resources,
     pub types: &'a Arc<TypeRegistry>,
+}
+
+impl LoaderContext<'_> {
+    /// Resolve a coded index to a `CilTypeReference`
+    ///
+    /// This method provides unified coded index resolution across all metadata tables.
+    /// It uses the `CodedIndex`'s table ID (.tag) and token (.token) to look up the
+    /// corresponding object in the appropriate map, then converts it to the correct
+    /// `CilTypeReference` variant.
+    ///
+    /// # Arguments
+    /// * `coded_index` - The coded index containing table ID and token to resolve
+    ///
+    /// # Returns
+    /// Returns the corresponding `CilTypeReference` variant or `CilTypeReference::None`
+    /// if the coded index cannot be resolved.
+    ///
+    /// # Examples
+    /// ```rust, ignore
+    /// // Resolve a TypeDef coded index
+    /// let type_ref = context.get_ref(&some_coded_index);
+    ///
+    /// // The method automatically handles the table lookup based on coded_index.tag
+    /// ```
+    pub fn get_ref(&self, coded_index: &CodedIndex) -> CilTypeReference {
+        use crate::metadata::typesystem::CilTypeReference;
+
+        // ToDo: Migrate all the other lookups in loaders to this method
+        match coded_index.tag {
+            TableId::TypeDef => {
+                if let Some(type_def) = self.types.get(&coded_index.token) {
+                    CilTypeReference::TypeDef(type_def.into())
+                } else {
+                    CilTypeReference::None
+                }
+            }
+            TableId::TypeRef => {
+                if let Some(type_ref) = self.types.get(&coded_index.token) {
+                    CilTypeReference::TypeRef(type_ref.into())
+                } else {
+                    CilTypeReference::None
+                }
+            }
+            TableId::TypeSpec => {
+                if let Some(type_spec) = self.types.get(&coded_index.token) {
+                    CilTypeReference::TypeSpec(type_spec.into())
+                } else {
+                    CilTypeReference::None
+                }
+            }
+            TableId::MethodDef => {
+                if let Some(method_def) = self.method_def.get(&coded_index.token) {
+                    CilTypeReference::MethodDef(method_def.value().clone().into())
+                } else {
+                    CilTypeReference::None
+                }
+            }
+            TableId::MemberRef => {
+                if let Some(member_ref) = self.member_ref.get(&coded_index.token) {
+                    CilTypeReference::MemberRef(member_ref.value().clone())
+                } else {
+                    CilTypeReference::None
+                }
+            }
+            TableId::Field => {
+                if let Some(field) = self.field.get(&coded_index.token) {
+                    CilTypeReference::Field(field.value().clone())
+                } else {
+                    CilTypeReference::None
+                }
+            }
+            TableId::Param => {
+                if let Some(param) = self.param.get(&coded_index.token) {
+                    CilTypeReference::Param(param.value().clone())
+                } else {
+                    CilTypeReference::None
+                }
+            }
+            TableId::Property => {
+                if let Some(property) = self.property.get(&coded_index.token) {
+                    CilTypeReference::Property(property.value().clone())
+                } else {
+                    CilTypeReference::None
+                }
+            }
+            TableId::Event => {
+                if let Some(event) = self.event.get(&coded_index.token) {
+                    CilTypeReference::Event(event.value().clone())
+                } else {
+                    CilTypeReference::None
+                }
+            }
+            TableId::InterfaceImpl => {
+                if let Some(interface_impl) = self.interface_impl.get(&coded_index.token) {
+                    CilTypeReference::InterfaceImpl(interface_impl.value().clone())
+                } else {
+                    CilTypeReference::None
+                }
+            }
+            TableId::Module => {
+                if let Some(module) = self.module.get() {
+                    CilTypeReference::Module(module.clone())
+                } else {
+                    CilTypeReference::None
+                }
+            }
+            TableId::ModuleRef => {
+                if let Some(module_ref) = self.module_ref.get(&coded_index.token) {
+                    CilTypeReference::ModuleRef(module_ref.value().clone())
+                } else {
+                    CilTypeReference::None
+                }
+            }
+            TableId::Assembly => {
+                if let Some(assembly) = self.assembly.get() {
+                    CilTypeReference::Assembly(assembly.clone())
+                } else {
+                    CilTypeReference::None
+                }
+            }
+            TableId::AssemblyRef => {
+                if let Some(assembly_ref) = self.assembly_ref.get(&coded_index.token) {
+                    CilTypeReference::AssemblyRef(assembly_ref.value().clone())
+                } else {
+                    CilTypeReference::None
+                }
+            }
+            TableId::File => {
+                if let Some(file) = self.file.get(&coded_index.token) {
+                    CilTypeReference::File(file.value().clone())
+                } else {
+                    CilTypeReference::None
+                }
+            }
+            TableId::ExportedType => {
+                if let Some(exported_type) = self.exported_type.get(&coded_index.token) {
+                    CilTypeReference::ExportedType(exported_type.value().clone())
+                } else {
+                    CilTypeReference::None
+                }
+            }
+            TableId::GenericParam => {
+                if let Some(generic_param) = self.generic_param.get(&coded_index.token) {
+                    CilTypeReference::GenericParam(generic_param.value().clone())
+                } else {
+                    CilTypeReference::None
+                }
+            }
+            TableId::GenericParamConstraint => {
+                if let Some(constraint) = self.generic_param_constraint.get(&coded_index.token) {
+                    CilTypeReference::GenericParamConstraint(constraint.value().clone())
+                } else {
+                    CilTypeReference::None
+                }
+            }
+            TableId::MethodSpec => {
+                if let Some(method_spec) = self.method_spec.get(&coded_index.token) {
+                    CilTypeReference::MethodSpec(method_spec.value().clone())
+                } else {
+                    CilTypeReference::None
+                }
+            }
+            TableId::DeclSecurity => {
+                if let Some(decl_security) = self.decl_security.get(&coded_index.token) {
+                    CilTypeReference::DeclSecurity(decl_security.value().clone())
+                } else {
+                    CilTypeReference::None
+                }
+            }
+            TableId::StandAloneSig => {
+                if let Some(standalone_sig) = self.standalone_sig.get(&coded_index.token) {
+                    CilTypeReference::StandAloneSig(standalone_sig.value().clone())
+                } else {
+                    CilTypeReference::None
+                }
+            }
+            _ => CilTypeReference::None,
+        }
+    }
 }
