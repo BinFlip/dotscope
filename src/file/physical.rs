@@ -8,6 +8,7 @@ use memmap2::Mmap;
 use std::{fs, path::Path};
 
 /// Input file backed by a physical file on disk
+#[derive(Debug)]
 pub struct Physical {
     data: Mmap,
 }
@@ -85,5 +86,87 @@ mod tests {
         if physical.data_slice(0, 4 * 1024 * 1024).is_ok() {
             panic!("This should not work!")
         }
+    }
+
+    #[test]
+    fn test_physical_invalid_file_path() {
+        let result = Physical::new(&PathBuf::from("/nonexistent/path/to/file.dll"));
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            FileError(io_error) => {
+                assert_eq!(io_error.kind(), std::io::ErrorKind::NotFound);
+            }
+            _ => panic!("Expected FileError"),
+        }
+    }
+
+    #[test]
+    fn test_physical_empty_file() {
+        // Create a temporary empty file to test with
+        let temp_dir = std::env::temp_dir();
+        let temp_path = temp_dir.join("empty_test_file.bin");
+        std::fs::write(&temp_path, b"").unwrap();
+        
+        let physical = Physical::new(&temp_path).unwrap();
+        assert_eq!(physical.len(), 0);
+        assert_eq!(physical.data().len(), 0);
+        
+        // Test edge cases with empty file
+        assert!(physical.data_slice(0, 1).is_err());
+        assert!(physical.data_slice(1, 0).is_err());
+        let empty_slice: &[u8] = &[];
+        assert_eq!(physical.data_slice(0, 0).unwrap(), empty_slice);
+        
+        // Cleanup
+        std::fs::remove_file(&temp_path).unwrap();
+    }
+
+    #[test] 
+    fn test_physical_large_offset_overflow() {
+        let physical = Physical::new(
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll"),
+        )
+        .unwrap();
+
+        // Test offset + len overflow
+        let result = physical.data_slice(usize::MAX, 1);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), OutOfBounds));
+
+        // Test offset exactly at length
+        let len = physical.len();
+        let result = physical.data_slice(len, 1);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), OutOfBounds));
+
+        // Test offset + len exceeds length by 1
+        let result = physical.data_slice(len - 1, 2);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), OutOfBounds));
+    }
+
+    #[test]
+    fn test_physical_boundary_conditions() {
+        let physical = Physical::new(
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll"),
+        )
+        .unwrap();
+
+        let len = physical.len();
+        
+        // Test reading exactly at the boundary (should work)
+        let result = physical.data_slice(len - 1, 1);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 1);
+
+        // Test reading the entire file
+        let result = physical.data_slice(0, len);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), len);
+
+        // Test zero-length read at end
+        let result = physical.data_slice(len, 0);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
     }
 }
