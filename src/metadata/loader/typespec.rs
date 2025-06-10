@@ -1,10 +1,7 @@
 //! `TypeSpec` loader implementation
 
 use crate::{
-    metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
-        signatures::parse_type_spec_signature,
-    },
+    metadata::loader::{LoaderContext, MetadataLoader},
     prelude::{TableId, TypeResolver, TypeSpecRaw},
     Result,
 };
@@ -13,15 +10,18 @@ use crate::{
 pub(crate) struct TypeSpecLoader;
 
 impl MetadataLoader for TypeSpecLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let (Some(header), Some(blobs)) = (data.meta.as_ref(), data.blobs.as_ref()) {
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let (Some(header), Some(blobs)) = (context.meta, context.blobs) {
             if let Some(table) = header.table::<TypeSpecRaw>(TableId::TypeSpec) {
                 table.par_iter().try_for_each(|row| {
-                    let type_spec_sig =
-                        parse_type_spec_signature(blobs.get(row.signature as usize)?)?;
+                    let owned = row.to_owned(blobs)?;
+                    owned.apply()?;
+
                     let mut resolver =
-                        TypeResolver::new(data.types.clone()).with_token_init(row.token);
-                    resolver.resolve(&type_spec_sig.base)?;
+                        TypeResolver::new(context.types.clone()).with_token_init(row.token);
+                    resolver.resolve(&owned.signature.base)?;
+
+                    context.type_spec.insert(row.token, owned);
                     Ok(())
                 })?;
             }

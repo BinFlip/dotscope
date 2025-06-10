@@ -86,6 +86,23 @@ pub struct ImplMap {
     pub import_scope: ModuleRefRc,
 }
 
+impl ImplMap {
+    /// Apply an `ImplMap` to update method flags and add import information.
+    ///
+    /// Since this is the owned structure, all references are already resolved, so we can
+    /// efficiently update the method and imports without re-resolving anything.
+    ///
+    /// # Errors
+    /// Returns an error if adding the import fails.
+    pub fn apply(&self) -> Result<()> {
+        self.member_forwarded
+            .flags_pinvoke
+            .store(self.mapping_flags, Ordering::Relaxed);
+
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug)]
 /// The `ImplMap` table holds information about platform invoke (P/Invoke) methods. `TableId` = 0x1C
 pub struct ImplMapRaw {

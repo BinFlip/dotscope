@@ -267,7 +267,7 @@ impl MethodSemanticsRaw {
                         ))
                     }
                 },
-                TableId::Field => match properties.get(&self.association.token) {
+                TableId::Property => match properties.get(&self.association.token) {
                     Some(property) => CilTypeReference::Property(property.value().clone()),
                     None => {
                         return Err(malformed_error!(

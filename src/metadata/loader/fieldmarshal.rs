@@ -2,7 +2,7 @@
 
 use crate::{
     metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
+        loader::{LoaderContext, MetadataLoader},
         streams::FieldMarshalRaw,
     },
     prelude::TableId,
@@ -13,11 +13,14 @@ use crate::{
 pub(crate) struct FieldMarshalLoader;
 
 impl MetadataLoader for FieldMarshalLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let (Some(header), Some(blob)) = (&data.meta, &data.blobs) {
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let (Some(header), Some(blob)) = (context.meta, context.blobs) {
             if let Some(table) = header.table::<FieldMarshalRaw>(TableId::FieldMarshal) {
                 table.par_iter().try_for_each(|row| {
-                    row.apply(blob, &data.params, &data.fields)?;
+                    let res = row.to_owned(blob, &context.param, &context.field)?;
+                    res.apply()?;
+
+                    context.field_marshal.insert(row.token, res);
                     Ok(())
                 })?;
             }

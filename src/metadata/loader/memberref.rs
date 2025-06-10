@@ -2,7 +2,7 @@
 
 use crate::{
     metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
+        loader::{LoaderContext, MetadataLoader},
         streams::MemberRefRaw,
     },
     prelude::TableId,
@@ -13,14 +13,21 @@ use crate::{
 pub(crate) struct MemberRefLoader;
 
 impl MetadataLoader for MemberRefLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let (Some(header), Some(strings), Some(blob)) = (&data.meta, &data.strings, &data.blobs)
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let (Some(header), Some(strings), Some(blob)) =
+            (context.meta, context.strings, context.blobs)
         {
             if let Some(table) = header.table::<MemberRefRaw>(TableId::MemberRef) {
                 table.par_iter().try_for_each(|row| {
-                    let res =
-                        row.to_owned(strings, blob, &data.types, &data.refs_module, &data.methods)?;
-                    data.refs_member.insert(row.token, res);
+                    let res = row.to_owned(
+                        strings,
+                        blob,
+                        context.types,
+                        context.module_ref,
+                        context.method_def,
+                    )?;
+
+                    context.member_ref.insert(row.token, res.clone());
                     Ok(())
                 })?;
             }

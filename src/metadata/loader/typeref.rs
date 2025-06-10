@@ -1,7 +1,7 @@
 //! `TypeRef` loader implementation
 
 use crate::{
-    metadata::loader::{data::CilObjectData, MetadataLoader},
+    metadata::loader::{LoaderContext, MetadataLoader},
     prelude::{TableId, TypeRefRaw},
     Result,
 };
@@ -10,25 +10,22 @@ use crate::{
 pub(crate) struct TypeRefLoader;
 
 impl MetadataLoader for TypeRefLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let (Some(header), Some(strings)) = (&data.meta, &data.strings) {
-            let Some(module) = data.module.get() else {
-                return Err(malformed_error!(
-                    "Module is missing, and required to load TypeRefs"
-                ));
-            };
-
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let (Some(header), Some(strings), Some(module)) =
+            (context.meta, context.strings, context.module.get())
+        {
             if let Some(table) = header.table::<TypeRefRaw>(TableId::TypeRef) {
                 for row in table {
                     let new_entry = row.to_owned(
                         strings,
                         module,
-                        &data.refs_module,
-                        &data.refs_assembly,
-                        &data.types,
+                        context.module_ref,
+                        context.assembly_ref,
+                        context.types,
                     )?;
-                    data.imports.add_type(&new_entry)?;
-                    data.types.insert(new_entry);
+
+                    context.imports.add_type(&new_entry)?;
+                    context.types.insert(new_entry);
                 }
             }
         }

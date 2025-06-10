@@ -2,7 +2,7 @@
 
 use crate::{
     metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
+        loader::{LoaderContext, MetadataLoader},
         streams::MethodSemanticsRaw,
     },
     prelude::TableId,
@@ -13,11 +13,15 @@ use crate::{
 pub(crate) struct MethodSemanticsLoader;
 
 impl MetadataLoader for MethodSemanticsLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let Some(header) = data.meta.as_ref() {
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let Some(header) = context.meta {
             if let Some(table) = header.table::<MethodSemanticsRaw>(TableId::MethodSemantics) {
                 table.par_iter().try_for_each(|row| {
-                    row.apply(&data.methods, &data.events, &data.properties)?;
+                    let owned =
+                        row.to_owned(context.method_def, &context.event, &context.property)?;
+                    owned.apply()?;
+
+                    context.method_semantics.insert(row.token, owned);
                     Ok(())
                 })?;
             }

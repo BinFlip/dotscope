@@ -5,15 +5,16 @@ use crate::{
     metadata::{
         method::{
             Method, MethodAccessFlags, MethodImplCodeType, MethodImplManagement, MethodImplOptions,
-            MethodModifiers, MethodVtableFlags,
+            MethodModifiers, MethodRc, MethodVtableFlags,
         },
         signatures::parse_method_signature,
         streams::{
             tables::types::{RowDefinition, TableId, TableInfoRef},
-            Blob, ParamList, Strings,
+            Blob, ParamMap, Strings,
         },
         token::Token,
     },
+    prelude::MetadataTable,
     Result,
 };
 
@@ -46,13 +47,62 @@ impl MethodDefRaw {
     /// ## Arguments
     /// * 'strings' - The processed Strings
     /// * 'blob'    - The processed Blobs
-    /// * 'params'  - The `Param` for this method
+    /// * '`params_map`'  - All parsed `Param` entries for param resolution
+    /// * 'table'   - The `MethodDef` table for getting next row's `param_list`
     ///
     /// # Errors
     /// Returns an error if the method name cannot be retrieved from the strings heap,
     /// or if the method signature cannot be parsed from the blob heap.
-    pub fn to_owned(&self, strings: &Strings, blob: &Blob, params: ParamList) -> Result<Method> {
-        Ok(Method {
+    pub fn to_owned(
+        &self,
+        strings: &Strings,
+        blob: &Blob,
+        params_map: &ParamMap,
+        table: &MetadataTable<MethodDefRaw>,
+    ) -> Result<MethodRc> {
+        let type_params = if self.param_list == 0 || params_map.is_empty() {
+            Arc::new(boxcar::Vec::new())
+        } else {
+            let next_row_id = self.rid + 1;
+
+            let start = self.param_list as usize;
+            let end = if next_row_id > table.row_count() {
+                params_map.len() + 1
+            } else {
+                match table.get(next_row_id) {
+                    Some(next_row) => next_row.param_list as usize,
+                    None => {
+                        return Err(malformed_error!(
+                            "Failed to resolve param_end from next row - {}",
+                            next_row_id
+                        ))
+                    }
+                }
+            };
+
+            if start > params_map.len() || end > (params_map.len() + 1) || end < start {
+                Arc::new(boxcar::Vec::new())
+            } else {
+                let type_params = Arc::new(boxcar::Vec::with_capacity(end - start));
+                for counter in start..end {
+                    let token_value = u32::try_from(counter | 0x0800_0000).map_err(|_| {
+                        malformed_error!("Token value too large: {}", counter | 0x0800_0000)
+                    })?;
+                    match params_map.get(&Token::new(token_value)) {
+                        Some(param) => _ = type_params.push(param.value().clone()),
+                        None => {
+                            return Err(malformed_error!(
+                                "Failed to resolve param - {}",
+                                counter | 0x0800_0000
+                            ))
+                        }
+                    }
+                }
+
+                type_params
+            }
+        };
+        Ok(Arc::new(Method {
             rid: self.rid,
             token: self.token,
             meta_offset: self.offset,
@@ -64,7 +114,7 @@ impl MethodDefRaw {
             flags_vtable: MethodVtableFlags::from_method_flags(self.flags),
             flags_modifiers: MethodModifiers::from_method_flags(self.flags),
             flags_pinvoke: AtomicU32::new(0),
-            params,
+            params: type_params,
             varargs: Arc::new(boxcar::Vec::new()),
             generic_params: Arc::new(boxcar::Vec::new()),
             generic_args: Arc::new(boxcar::Vec::new()),
@@ -78,7 +128,7 @@ impl MethodDefRaw {
             blocks: OnceLock::new(),
             // cfg: RwLock::new(None),
             // ssa: RwLock::new(None),
-        })
+        }))
     }
 
     /// Apply a `MethodDefRaw` entry to update related metadata structures.

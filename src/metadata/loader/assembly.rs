@@ -2,7 +2,7 @@
 
 use crate::{
     metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
+        loader::{LoaderContext, MetadataLoader},
         streams::{tables::assembly::AssemblyRaw, TableId},
     },
     Result,
@@ -12,19 +12,19 @@ use crate::{
 pub(crate) struct AssemblyLoader;
 
 impl MetadataLoader for AssemblyLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let (Some(header), Some(strings), Some(blob)) = (
-            data.meta.as_ref(),
-            data.strings.as_ref(),
-            data.blobs.as_ref(),
-        ) {
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let (Some(header), Some(strings), Some(blob)) =
+            (context.meta, context.strings, context.blobs)
+        {
             if let Some(table) = header.table::<AssemblyRaw>(TableId::Assembly) {
-                match table.get(1) {
-                    Some(first_assembly) => {
-                        let res = first_assembly.to_owned(strings, blob)?;
-                        let _ = data.assembly.set(res);
-                    }
-                    None => return Err(malformed_error!("First assembly doesn't exist")),
+                if let Some(row) = table.get(1) {
+                    let owned = row.to_owned(strings, blob)?;
+
+                    context
+                        .assembly
+                        .set(owned)
+                        .map_err(|_| malformed_error!("Assembly has already been set"))?;
+                    return Ok(());
                 }
             }
         }

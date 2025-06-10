@@ -21,6 +21,7 @@ mod assemblyrefos;
 mod assemblyrefprocessor;
 mod classlayout;
 mod constant;
+mod context;
 mod customattribute;
 mod data;
 mod declsecurity;
@@ -54,6 +55,7 @@ mod typedef;
 mod typeref;
 mod typespec;
 
+pub(crate) use context::LoaderContext;
 pub(crate) use data::CilObjectData;
 
 static LOADERS: [&'static dyn MetadataLoader; 38] = [
@@ -105,14 +107,14 @@ use rayon::prelude::*;
 /// Implement this trait for each loader that processes a specific metadata table.
 /// The loader must declare its dependencies and provide a loading implementation.
 trait MetadataLoader: Send + Sync {
-    /// Load this metadata table using the provided `CilObjectData`.
+    /// Load this metadata table using the provided `CilObjectData` and `LoaderContext`.
     ///
     /// # Arguments
-    /// * `data` - The `CilObjectData` containing shared state and metadata.
+    /// * `context` - The `LoaderContext` containing all table maps for cross-references.
     ///
     /// # Returns
     /// * `Result<()>` - Returns `Ok(())` if loading succeeds, or an error otherwise.
-    fn load(&self, data: &CilObjectData) -> Result<()>;
+    fn load(&self, context: &LoaderContext) -> Result<()>;
 
     /// Get the ID of the table this loader processes.
     ///
@@ -153,17 +155,20 @@ fn build_dependency_graph(
 /// If any loader fails, the process is aborted and the error is returned.
 ///
 /// # Arguments
-/// * `data` - The CIL object data shared by all loaders.
+/// * `context` - The loader context containing all table maps for cross-references.
 ///
 /// # Returns
 /// * `Result<()>` - Returns `Ok(())` if all loaders succeed, or the first error encountered.
-pub(crate) fn execute_loaders_in_parallel(data: &CilObjectData) -> Result<()> {
+pub(crate) fn execute_loaders_in_parallel(context: &LoaderContext) -> Result<()> {
     // Build and execute the dependency graph
     let graph = build_dependency_graph(&LOADERS)?;
     let levels = graph.topological_levels()?;
 
     for level in levels {
-        let results: Vec<Result<()>> = level.par_iter().map(|loader| loader.load(data)).collect();
+        let results: Vec<Result<()>> = level
+            .par_iter()
+            .map(|loader| loader.load(context))
+            .collect();
 
         // Check for any errors
         for result in results {

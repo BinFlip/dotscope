@@ -13,14 +13,13 @@ use crate::{
         cor20header::Cor20Header,
         exports::Exports,
         imports::Imports,
-        loader::execute_loaders_in_parallel,
+        loader::{execute_loaders_in_parallel, LoaderContext},
         method::MethodMap,
         resources::Resources,
         root::Root,
         streams::{
-            AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, Blob, EventMap,
-            FieldMap, FileMap, GenericParamMap, Guid, MemberRefMap, ModuleRc, ModuleRefMap,
-            ParamMap, PropertyMap, Strings, TablesHeader, UserStrings,
+            AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, Blob, FileMap, Guid,
+            MemberRefMap, ModuleRc, ModuleRefMap, Strings, TablesHeader, UserStrings,
         },
         typesystem::TypeRegistry,
     },
@@ -32,7 +31,6 @@ use crate::{
 ///
 /// This struct contains all loaded metadata, headers, and parsed tables for a single assembly.
 /// It is used internally by the loader system and should not be exposed to external users.
-#[allow(missing_docs)]
 pub(crate) struct CilObjectData<'a> {
     pub file: Arc<File>,
     pub data: &'a [u8],
@@ -55,11 +53,6 @@ pub(crate) struct CilObjectData<'a> {
     pub imports: Imports,
     pub exports: Exports,
     pub methods: MethodMap,
-    pub params: ParamMap,
-    pub params_generic: GenericParamMap,
-    pub fields: FieldMap,
-    pub properties: PropertyMap,
-    pub events: EventMap,
     pub resources: Resources,
 }
 
@@ -102,11 +95,6 @@ impl<'a> CilObjectData<'a> {
             imports: Imports::new(),
             exports: Exports::new(),
             methods: SkipMap::default(),
-            params: SkipMap::default(),
-            params_generic: SkipMap::default(),
-            fields: SkipMap::default(),
-            properties: SkipMap::default(),
-            events: SkipMap::default(),
             resources: Resources::new(file),
         };
 
@@ -119,7 +107,58 @@ impl<'a> CilObjectData<'a> {
                     - needs HasCustomAttributes for lookup, needs 'MethodDef' and 'MemberRef' for constructor
          */
 
-        execute_loaders_in_parallel(&cil_object)?;
+        {
+            let context = LoaderContext {
+                input: cil_object.file.clone(),
+                data,
+                header: &cil_object.header,
+                header_root: &cil_object.header_root,
+                meta: &cil_object.meta,
+                strings: &cil_object.strings,
+                userstrings: &cil_object.userstrings,
+                guids: &cil_object.guids,
+                blobs: &cil_object.blobs,
+                assembly: &cil_object.assembly,
+                assembly_os: &cil_object.assembly_os,
+                assembly_processor: &cil_object.assembly_processor,
+                assembly_ref: &cil_object.refs_assembly,
+                assembly_ref_os: SkipMap::default(),
+                assembly_ref_processor: SkipMap::default(),
+                module: &cil_object.module,
+                module_ref: &cil_object.refs_module,
+                type_spec: SkipMap::default(),
+                method_def: &cil_object.methods,
+                method_impl: SkipMap::default(),
+                method_semantics: SkipMap::default(),
+                method_spec: SkipMap::default(),
+                field: SkipMap::default(),
+                field_layout: SkipMap::default(),
+                field_marshal: SkipMap::default(),
+                field_rva: SkipMap::default(),
+                param: SkipMap::default(),
+                generic_param: SkipMap::default(),
+                generic_param_constraint: SkipMap::default(),
+                property: SkipMap::default(),
+                property_map: SkipMap::default(),
+                event: SkipMap::default(),
+                event_map: SkipMap::default(),
+                member_ref: &cil_object.refs_member,
+                class_layout: SkipMap::default(),
+                nested_class: SkipMap::default(),
+                interface_impl: SkipMap::default(),
+                constant: SkipMap::default(),
+                custom_attribute: SkipMap::default(),
+                decl_security: SkipMap::default(),
+                file: &cil_object.refs_file,
+                exported_type: &cil_object.exports,
+                standalone_sig: SkipMap::default(),
+                imports: &cil_object.imports,
+                resources: &cil_object.resources,
+                types: &cil_object.types,
+            };
+
+            execute_loaders_in_parallel(&context)?;
+        };
 
         Ok(cil_object)
     }

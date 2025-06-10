@@ -33,6 +33,29 @@ pub struct NestedClass {
     pub enclosing_class: CilTypeRc,
 }
 
+impl NestedClass {
+    /// Apply a `NestedClass` to update the enclosing type with the nested type reference.
+    ///
+    /// Since this is the owned structure, all references are already resolved, so we can
+    /// efficiently update the enclosing type without re-resolving anything.
+    ///
+    /// # Errors
+    /// Returns an error if the enclosing class and nested class are the same type.
+    pub fn apply(&self) -> Result<()> {
+        if self.enclosing_class.token == self.nested_class.token {
+            return Err(malformed_error!(
+                "enclosing_class and nested_class cannot be the same - {}",
+                self.enclosing_class.token.value()
+            ));
+        }
+
+        self.enclosing_class
+            .nested_types
+            .push(self.nested_class.clone().into());
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug)]
 /// The `NestedClass` table defines the relationship between nested types and their enclosing types. `TableId` = 0x29
 pub struct NestedClassRaw {

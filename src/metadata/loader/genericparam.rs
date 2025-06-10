@@ -2,10 +2,10 @@
 
 use crate::{
     metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
+        loader::{LoaderContext, MetadataLoader},
         streams::GenericParamRaw,
     },
-    prelude::{GenericParam, TableId},
+    prelude::TableId,
     Result,
 };
 
@@ -13,13 +13,14 @@ use crate::{
 pub(crate) struct GenericParamLoader;
 
 impl MetadataLoader for GenericParamLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let (Some(header), Some(strings)) = (data.meta.as_ref(), data.strings.as_ref()) {
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let (Some(header), Some(strings)) = (context.meta, context.strings) {
             if let Some(generics) = header.table::<GenericParamRaw>(TableId::GenericParam) {
                 generics.par_iter().try_for_each(|row| {
-                    let res = row.to_owned(strings, &data.types, &data.methods)?;
-                    GenericParam::apply(&res)?;
-                    data.params_generic.insert(row.token, res);
+                    let owned = row.to_owned(strings, context.types, context.method_def)?;
+                    owned.apply()?;
+
+                    context.generic_param.insert(row.token, owned.clone());
                     Ok(())
                 })?;
             }

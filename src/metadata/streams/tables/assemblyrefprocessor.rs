@@ -32,6 +32,22 @@ pub struct AssemblyRefProcessor {
     pub assembly_ref: AssemblyRefRc,
 }
 
+impl AssemblyRefProcessor {
+    /// Apply an `AssemblyRefProcessor` to update the referenced assembly with processor information.
+    ///
+    /// Since this is the owned structure, the assembly reference is already resolved,
+    /// so we can efficiently update the assembly without re-resolving.
+    ///
+    /// # Errors
+    /// Always returns `Ok(())` as this operation doesn't fail.
+    pub fn apply(&self) -> Result<()> {
+        self.assembly_ref
+            .processor
+            .store(self.processor, Ordering::Relaxed);
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug)]
 /// The `AssemblyRefProcessor` table specifies which processors a referenced assembly is targeted for, `TableId` = 0x24
 pub struct AssemblyRefProcessorRaw {

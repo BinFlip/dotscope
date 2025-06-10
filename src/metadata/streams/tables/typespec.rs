@@ -31,6 +31,20 @@ pub struct TypeSpec {
     pub signature: SignatureTypeSpec,
 }
 
+impl TypeSpec {
+    /// Apply a `TypeSpec` entry to update related metadata structures.
+    ///
+    /// `TypeSpec` entries define type specifications through signatures. They are primarily
+    /// type definitions and don't require cross-table updates during the dual variant
+    /// resolution phase.
+    ///
+    /// # Errors
+    /// Always returns `Ok(())` as `TypeSpec` entries don't modify other tables.
+    pub fn apply(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug)]
 /// `TypeSpec`, ID = 0x1B
 pub struct TypeSpecRaw {

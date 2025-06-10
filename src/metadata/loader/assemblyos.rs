@@ -1,10 +1,8 @@
 //! `AssemblyOS` table loader implementation.
 
-use std::sync::Arc;
-
 use crate::{
     metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
+        loader::{LoaderContext, MetadataLoader},
         streams::{tables::assemblyos::AssemblyOsRaw, TableId},
     },
     Result,
@@ -14,14 +12,17 @@ use crate::{
 pub(crate) struct AssemblyOsLoader;
 
 impl MetadataLoader for AssemblyOsLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let Some(header) = &data.meta {
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let Some(header) = context.meta {
             if let Some(table) = header.table::<AssemblyOsRaw>(TableId::AssemblyOS) {
-                match table.get(1) {
-                    Some(entry) => {
-                        let _ = data.assembly_os.set(Arc::new(entry));
-                    }
-                    None => return Err(malformed_error!("Failed to find main AssemblyOS entry")),
+                if let Some(row) = table.get(1) {
+                    let owned = row.to_owned()?;
+
+                    context
+                        .assembly_os
+                        .set(owned)
+                        .map_err(|_| malformed_error!("AssemblyOs has already been set"))?;
+                    return Ok(());
                 }
             }
         }

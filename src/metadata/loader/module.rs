@@ -2,7 +2,7 @@
 
 use crate::{
     metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
+        loader::{LoaderContext, MetadataLoader},
         streams::{tables::module::ModuleRaw, TableId},
     },
     Result,
@@ -12,19 +12,17 @@ use crate::{
 pub(crate) struct ModuleLoader;
 
 impl MetadataLoader for ModuleLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        // ToDo: According to ECMA-335, this should ever only hold one module. But the standard does have references to
-        //       cases where one assembly may contain more than one?
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let (Some(tables_header), Some(strings), Some(guids)) =
+            (context.meta, context.strings, context.guids)
+        {
+            if let Some(table) = tables_header.table::<ModuleRaw>(TableId::Module) {
+                if let Some(row) = table.get(1) {
+                    let owned = row.to_owned(strings, guids)?;
 
-        if let (Some(tables_header), Some(strings), Some(guids)) = (
-            data.meta.as_ref(),
-            data.strings.as_ref(),
-            data.guids.as_ref(),
-        ) {
-            if let Some(module_table) = tables_header.table::<ModuleRaw>(TableId::Module) {
-                if let Some(table) = module_table.get(1) {
-                    data.module
-                        .set(table.to_owned(strings, guids)?)
+                    context
+                        .module
+                        .set(owned)
                         .map_err(|_| malformed_error!("Module has already been set"))?;
                     return Ok(());
                 }

@@ -36,6 +36,20 @@ pub struct MethodImpl {
     pub method_declaration: CilTypeReference,
 }
 
+impl MethodImpl {
+    /// Apply a `MethodImpl` to update the class with interface implementation information.
+    ///
+    /// Since this is the owned structure, all references are already resolved, so we can
+    /// efficiently update the class without re-resolving anything.
+    ///
+    /// # Errors
+    /// Returns an error if updating the class overwrite information fails.
+    pub fn apply(&self) -> Result<()> {
+        self.class.overwrites.push(self.method_body.clone());
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug)]
 /// The `MethodImpl` table specifies which methods implement which methods for a class. `TableId` = 0x19
 pub struct MethodImplRaw {

@@ -2,7 +2,7 @@
 
 use crate::{
     metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
+        loader::{LoaderContext, MetadataLoader},
         streams::GenericParamConstraintRaw,
     },
     prelude::TableId,
@@ -13,13 +13,16 @@ use crate::{
 pub(crate) struct GenericParamConstraintLoader;
 
 impl MetadataLoader for GenericParamConstraintLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let Some(header) = data.meta.as_ref() {
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let Some(header) = context.meta {
             if let Some(table) =
                 header.table::<GenericParamConstraintRaw>(TableId::GenericParamConstraint)
             {
                 table.par_iter().try_for_each(|row| {
-                    row.apply(&data.params_generic, &data.types)?;
+                    let res = row.to_owned(&context.generic_param, context.types)?;
+                    res.apply()?;
+
+                    context.generic_param_constraint.insert(row.token, res);
                     Ok(())
                 })?;
             }

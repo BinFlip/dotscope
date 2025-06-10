@@ -35,6 +35,26 @@ pub struct ClassLayout {
     pub parent: CilTypeRc,
 }
 
+impl ClassLayout {
+    /// Apply a `ClassLayout` to update the parent type with class size and packing size.
+    ///
+    /// Since this is the owned structure, all references are already resolved, so we can
+    /// efficiently update the parent type without re-resolving anything.
+    ///
+    /// # Errors
+    /// Returns an error if the class size or packing size is already set on the target type.
+    pub fn apply(&self) -> Result<()> {
+        self.parent
+            .class_size
+            .set(self.class_size)
+            .map_err(|_| malformed_error!("Class size already set"))?;
+        self.parent
+            .packing_size
+            .set(self.packing_size)
+            .map_err(|_| malformed_error!("Packing size already set"))
+    }
+}
+
 #[derive(Clone, Debug)]
 /// The `ClassLayout` table specifies the layout of fields within a class (explicit layout), `TableId` = 0x0F
 pub struct ClassLayoutRaw {

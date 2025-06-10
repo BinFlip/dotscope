@@ -2,7 +2,7 @@
 
 use crate::{
     metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
+        loader::{LoaderContext, MetadataLoader},
         streams::MethodImplRaw,
     },
     prelude::TableId,
@@ -13,11 +13,15 @@ use crate::{
 pub(crate) struct MethodImplLoader;
 
 impl MetadataLoader for MethodImplLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let Some(header) = data.meta.as_ref() {
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let Some(header) = context.meta {
             if let Some(table) = header.table::<MethodImplRaw>(TableId::MethodImpl) {
                 table.par_iter().try_for_each(|row| {
-                    row.apply(&data.types, &data.refs_member, &data.methods)?;
+                    let owned =
+                        row.to_owned(context.types, context.member_ref, context.method_def)?;
+                    owned.apply()?;
+
+                    context.method_impl.insert(row.token, owned);
                     Ok(())
                 })?;
             }

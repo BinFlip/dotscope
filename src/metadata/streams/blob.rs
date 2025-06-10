@@ -261,7 +261,7 @@ mod tests {
 
         let first = iter.next().unwrap().unwrap();
         assert_eq!(first.0, 1);
-        assert_eq!(first.1, &[]);
+        assert_eq!(first.1, &[] as &[u8]);
 
         let second = iter.next().unwrap().unwrap();
         assert_eq!(second.0, 2);

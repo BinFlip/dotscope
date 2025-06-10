@@ -2,7 +2,7 @@
 
 use crate::{
     metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
+        loader::{LoaderContext, MetadataLoader},
         streams::PropertyRaw,
     },
     prelude::TableId,
@@ -13,16 +13,15 @@ use crate::{
 pub(crate) struct PropertyLoader;
 
 impl MetadataLoader for PropertyLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let (Some(header), Some(strings), Some(blob)) = (
-            data.meta.as_ref(),
-            data.strings.as_ref(),
-            data.blobs.as_ref(),
-        ) {
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let (Some(header), Some(strings), Some(blob)) =
+            (context.meta, context.strings, context.blobs)
+        {
             if let Some(table) = header.table::<PropertyRaw>(TableId::Property) {
                 table.par_iter().try_for_each(|row| {
                     let res = row.to_owned(strings, blob)?;
-                    data.properties.insert(row.token, res);
+
+                    context.property.insert(row.token, res.clone());
                     Ok(())
                 })?;
             }

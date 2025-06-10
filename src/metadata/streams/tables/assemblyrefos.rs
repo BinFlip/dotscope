@@ -36,6 +36,28 @@ pub struct AssemblyRefOs {
     pub assembly_ref: AssemblyRefRc,
 }
 
+impl AssemblyRefOs {
+    /// Apply an `AssemblyRefOs` to update the referenced assembly with OS information.
+    ///
+    /// Since this is the owned structure, the assembly reference is already resolved,
+    /// so we can efficiently update the assembly without re-resolving.
+    ///
+    /// # Errors
+    /// Always returns `Ok(())` as this operation doesn't fail.
+    pub fn apply(&self) -> Result<()> {
+        self.assembly_ref
+            .os_major_version
+            .store(self.os_major_version, Ordering::Relaxed);
+        self.assembly_ref
+            .os_minor_version
+            .store(self.os_minor_version, Ordering::Relaxed);
+        self.assembly_ref
+            .os_platform_id
+            .store(self.os_platform_id, Ordering::Relaxed);
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug)]
 /// The `AssemblyRefOS` table specifies which operating systems a referenced assembly is targeted for, `TableId` = 0x25
 pub struct AssemblyRefOsRaw {

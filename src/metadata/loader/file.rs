@@ -2,7 +2,7 @@
 
 use crate::{
     metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
+        loader::{LoaderContext, MetadataLoader},
         streams::FileRaw,
     },
     prelude::TableId,
@@ -13,14 +13,15 @@ use crate::{
 pub(crate) struct FileLoader;
 
 impl MetadataLoader for FileLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let (Some(header), Some(blob), Some(strings)) = (&data.meta, &data.blobs, &data.strings)
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let (Some(header), Some(blob), Some(strings)) =
+            (context.meta, context.blobs, context.strings)
         {
             if let Some(table) = header.table::<FileRaw>(TableId::File) {
                 table.par_iter().try_for_each(|row| {
                     let res = row.to_owned(blob, strings)?;
-                    data.refs_file.insert(row.token, res);
 
+                    context.file.insert(row.token, res.clone());
                     Ok(())
                 })?;
             }

@@ -1,7 +1,7 @@
 //! `CustomAttribute` loader implementation
 
 use crate::{
-    metadata::loader::{data::CilObjectData, MetadataLoader},
+    metadata::loader::{LoaderContext, MetadataLoader},
     prelude::TableId,
     Result,
 };
@@ -10,7 +10,7 @@ use crate::{
 pub(crate) struct CustomAttributeLoader;
 
 impl MetadataLoader for CustomAttributeLoader {
-    fn load(&self, _data: &CilObjectData) -> Result<()> {
+    fn load(&self, _context: &LoaderContext) -> Result<()> {
         // if let Some(header) = data.meta {
         //     if let Some(table) = header.table::<CustomAttributeRaw>(TableId::CustomAttribute) {
         //         table.par_iter().try_for_each(|row| {

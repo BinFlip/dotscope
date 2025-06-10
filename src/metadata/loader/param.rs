@@ -2,7 +2,7 @@
 
 use crate::{
     metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
+        loader::{LoaderContext, MetadataLoader},
         streams::ParamRaw,
     },
     prelude::TableId,
@@ -13,12 +13,13 @@ use crate::{
 pub(crate) struct ParamLoader;
 
 impl MetadataLoader for ParamLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let (Some(header), Some(strings)) = (&data.meta, &data.strings) {
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let (Some(header), Some(strings)) = (context.meta, context.strings) {
             if let Some(table) = header.table::<ParamRaw>(TableId::Param) {
                 table.par_iter().try_for_each(|row| {
                     let res = row.to_owned(strings)?;
-                    data.params.insert(row.token, res);
+
+                    context.param.insert(row.token, res.clone());
                     Ok(())
                 })?;
             }

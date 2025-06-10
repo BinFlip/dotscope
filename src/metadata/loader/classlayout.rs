@@ -2,7 +2,7 @@
 
 use crate::{
     metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
+        loader::{LoaderContext, MetadataLoader},
         streams::ClassLayoutRaw,
     },
     prelude::TableId,
@@ -13,11 +13,14 @@ use crate::{
 pub(crate) struct ClassLayoutLoader;
 
 impl MetadataLoader for ClassLayoutLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let Some(header) = &data.meta {
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let Some(header) = context.meta {
             if let Some(table) = header.table::<ClassLayoutRaw>(TableId::ClassLayout) {
                 table.par_iter().try_for_each(|row| {
-                    row.apply(&data.types)?;
+                    let owned = row.to_owned(context.types)?;
+                    owned.apply()?;
+
+                    context.class_layout.insert(row.token, owned);
                     Ok(())
                 })?;
             }

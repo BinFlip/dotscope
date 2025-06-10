@@ -2,7 +2,7 @@
 
 use crate::{
     metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
+        loader::{LoaderContext, MetadataLoader},
         streams::NestedClassRaw,
     },
     prelude::TableId,
@@ -13,10 +13,16 @@ use crate::{
 pub(crate) struct NestedClassLoader;
 
 impl MetadataLoader for NestedClassLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let Some(header) = data.meta.as_ref() {
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let Some(header) = context.meta.as_ref() {
             if let Some(table) = header.table::<NestedClassRaw>(TableId::NestedClass) {
-                NestedClassRaw::apply(table, &data.types)?;
+                table.par_iter().try_for_each(|row| {
+                    let owned = row.to_owned(context.types)?;
+                    owned.apply()?;
+
+                    context.nested_class.insert(row.token, owned);
+                    Ok(())
+                })?;
             }
         }
 

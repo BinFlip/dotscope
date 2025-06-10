@@ -32,6 +32,22 @@ pub struct FieldLayout {
     pub field: FieldRc,
 }
 
+impl FieldLayout {
+    /// Apply a `FieldLayout` to update the parent field with layout offset.
+    ///
+    /// Since this is the owned structure, all references are already resolved, so we can
+    /// efficiently update the parent field without re-resolving anything.
+    ///
+    /// # Errors
+    /// Returns an error if the field layout is already set on the target field.
+    pub fn apply(&self) -> Result<()> {
+        self.field
+            .layout
+            .set(self.field_offset)
+            .map_err(|_| malformed_error!("Field layout already set"))
+    }
+}
+
 #[derive(Clone, Debug)]
 /// The `FieldLayout` table specifies the offset of fields within a type with explicit layout. `TableId` = 0x10
 pub struct FieldLayoutRaw {

@@ -2,7 +2,7 @@
 
 use crate::{
     metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
+        loader::{LoaderContext, MetadataLoader},
         streams::ConstantRaw,
     },
     prelude::TableId,
@@ -13,11 +13,15 @@ use crate::{
 pub(crate) struct ConstantLoader;
 
 impl MetadataLoader for ConstantLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let (Some(header), Some(blob)) = (data.meta.as_ref(), data.blobs.as_ref()) {
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let (Some(header), Some(blob)) = (context.meta, context.blobs) {
             if let Some(table) = header.table::<ConstantRaw>(TableId::Constant) {
                 table.par_iter().try_for_each(|row| {
-                    row.apply(blob, &data.params, &data.fields, &data.properties)?;
+                    let owned =
+                        row.to_owned(blob, &context.param, &context.field, &context.property)?;
+                    owned.apply()?;
+
+                    context.constant.insert(row.token, owned);
                     Ok(())
                 })?;
             }

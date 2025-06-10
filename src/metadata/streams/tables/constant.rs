@@ -40,6 +40,33 @@ pub struct Constant {
     pub value: Arc<CilPrimitive>,
 }
 
+impl Constant {
+    /// Apply a `Constant` to set the default value on the parent entity (field, parameter, or property)
+    ///
+    /// # Errors
+    /// Returns an error if the default value is already set for the parent entity
+    pub fn apply(&self) -> Result<()> {
+        match &self.parent {
+            CilTypeReference::Field(field) => field
+                .default
+                .set(self.value.as_ref().clone())
+                .map_err(|_| malformed_error!("Default value already set for field")),
+            CilTypeReference::Param(param) => param
+                .default
+                .set(self.value.as_ref().clone())
+                .map_err(|_| malformed_error!("Default value already set for param")),
+            CilTypeReference::Property(property) => property
+                .default
+                .set(self.value.as_ref().clone())
+                .map_err(|_| malformed_error!("Default value already set for property")),
+            _ => Err(malformed_error!(
+                "Invalid parent type for constant - {}",
+                self.token.value()
+            )),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 /// The Constant table stores constant values for fields, parameters, and properties. `TableId` = 0x0B
 pub struct ConstantRaw {

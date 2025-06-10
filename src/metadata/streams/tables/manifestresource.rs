@@ -60,6 +60,20 @@ pub struct ManifestResource {
     pub source: Option<CilTypeReference>,
 }
 
+impl ManifestResource {
+    /// Apply a `ManifestResource` entry to update related metadata structures.
+    ///
+    /// `ManifestResource` entries define resources that are part of this assembly. They are
+    /// primarily metadata descriptors for resource data and don't require cross-table
+    /// updates during the dual variant resolution phase.
+    ///
+    /// # Errors
+    /// Always returns `Ok(())` as `ManifestResource` entries don't modify other tables.
+    pub fn apply(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug)]
 /// The `ManifestResource` table lists the resources for the assembly. `TableId` = 0x28
 pub struct ManifestResourceRaw {

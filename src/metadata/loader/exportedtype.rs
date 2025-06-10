@@ -2,7 +2,7 @@
 
 use crate::{
     metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
+        loader::{LoaderContext, MetadataLoader},
         streams::ExportedTypeRaw,
     },
     prelude::TableId,
@@ -13,13 +13,18 @@ use crate::{
 pub(crate) struct ExportedTypeLoader;
 
 impl MetadataLoader for ExportedTypeLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let (Some(header), Some(strings)) = (&data.meta, &data.strings) {
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let (Some(header), Some(strings)) = (context.meta, context.strings) {
             if let Some(table) = header.table::<ExportedTypeRaw>(TableId::ExportedType) {
                 for row in table {
-                    let exported_type =
-                        row.to_owned(strings, &data.refs_file, &data.refs_assembly, &data.exports)?;
-                    data.exports.insert(row.token, exported_type)?;
+                    let owned = row.to_owned(
+                        strings,
+                        context.file,
+                        context.assembly_ref,
+                        context.exported_type,
+                    )?;
+
+                    context.exported_type.insert(row.token, owned.clone())?;
                 }
             }
         }

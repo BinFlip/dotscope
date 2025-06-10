@@ -16,9 +16,9 @@ use crate::{
 };
 
 /// A map that holds the mapping of Token to parsed `FieldMarshal`
-pub type FieldMarshalMap = SkipMap<Token, FieldMarshal>;
+pub type FieldMarshalMap = SkipMap<Token, FieldMarshalRc>;
 /// A vector that holds a list of `FieldMarshal`
-pub type FieldMarshalList = Arc<boxcar::Vec<FieldMarshal>>;
+pub type FieldMarshalList = Arc<boxcar::Vec<FieldMarshalRc>>;
 /// A reference to a `FieldMarshal`
 pub type FieldMarshalRc = Arc<FieldMarshal>;
 
@@ -35,6 +35,32 @@ pub struct FieldMarshal {
     pub parent: CilTypeReference,
     /// The `MarshallingDescriptor` for a specific field
     pub native_type: Arc<MarshallingInfo>,
+}
+
+impl FieldMarshal {
+    /// Apply a `FieldMarshal` to set the marshalling information on the parent entity (field or parameter)
+    ///
+    /// Since this is the owned structure, all references are already resolved, so we can
+    /// efficiently update the parent without re-resolving anything.
+    ///
+    /// # Errors
+    /// Returns an error if the marshal information is already set for the parent entity
+    pub fn apply(&self) -> Result<()> {
+        match &self.parent {
+            CilTypeReference::Field(field) => field
+                .marshal
+                .set(self.native_type.as_ref().clone())
+                .map_err(|_| malformed_error!("Marshal info already set for field")),
+            CilTypeReference::Param(param) => param
+                .marshal
+                .set(self.native_type.as_ref().clone())
+                .map_err(|_| malformed_error!("Marshal info already set for param")),
+            _ => Err(malformed_error!(
+                "Invalid parent type for field marshal - {}",
+                self.token.value()
+            )),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

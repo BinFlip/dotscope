@@ -2,7 +2,7 @@
 
 use crate::{
     metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
+        loader::{LoaderContext, MetadataLoader},
         streams::{tables::implmap::ImplMapRaw, TableId},
     },
     Result,
@@ -11,11 +11,19 @@ use crate::{
 pub(crate) struct ImplMapLoader;
 
 impl MetadataLoader for ImplMapLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let (Some(header), Some(strings)) = (data.meta.as_ref(), data.strings.as_ref()) {
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let (Some(header), Some(strings)) = (context.meta, context.strings) {
             if let Some(table) = header.table::<ImplMapRaw>(TableId::ImplMap) {
                 table.par_iter().try_for_each(|row| {
-                    row.apply(strings, &data.refs_module, &data.methods, &data.imports)?;
+                    let owned = row.to_owned(strings, context.module_ref, context.method_def)?;
+                    owned.apply()?;
+
+                    context.imports.add_method(
+                        owned.import_name.clone(),
+                        &owned.token,
+                        owned.member_forwarded.clone(),
+                        &owned.import_scope,
+                    )?;
                     Ok(())
                 })?;
             }

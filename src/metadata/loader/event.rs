@@ -2,7 +2,7 @@
 
 use crate::{
     metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
+        loader::{LoaderContext, MetadataLoader},
         streams::EventRaw,
     },
     prelude::TableId,
@@ -13,12 +13,13 @@ use crate::{
 pub(crate) struct EventLoader;
 
 impl MetadataLoader for EventLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let (Some(header), Some(strings)) = (data.meta.as_ref(), data.strings.as_ref()) {
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let (Some(header), Some(strings)) = (context.meta, context.strings) {
             if let Some(table) = header.table::<EventRaw>(TableId::Event) {
                 table.par_iter().try_for_each(|row| {
-                    data.events
-                        .insert(row.token, row.to_owned(strings, &data.types)?);
+                    let owned = row.to_owned(strings, context.types)?;
+
+                    context.event.insert(row.token, owned.clone());
                     Ok(())
                 })?;
             }

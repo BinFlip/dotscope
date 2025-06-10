@@ -16,17 +16,7 @@ pub use types::*;
 
 use std::sync::Arc;
 
-use crate::{
-    file::File,
-    metadata::{
-        cor20header::Cor20Header,
-        streams::{
-            AssemblyRefMap, FileMap, ManifestResourceRaw, ManifestResourceRc, Strings, TableId,
-            TablesHeader,
-        },
-    },
-    Result,
-};
+use crate::{file::File, metadata::streams::ManifestResourceRc};
 
 /// Container for all resources in the assembly.
 ///
@@ -84,35 +74,15 @@ impl Resources {
         }
     }
 
-    /// Loads resources from the `ManifestResource` table.
+    /// Inserts a manifest resource into the collection.
+    ///
+    /// This method is typically called by the `ManifestResource` loader during
+    /// the metadata loading process.
     ///
     /// # Arguments
-    /// * `file`        - The mapped raw data of the loaded binary
-    /// * `cor20`       - The cor20 header of the loaded binary
-    /// * `strings`     - The #String heap
-    /// * `tables`      - The table header of the metadata
-    /// * `assemblies`  - The loaded `AssemblyRef` information
-    /// * `files`       - The loaded `File` information
-    ///
-    /// # Errors
-    /// Returns an error if the resource data cannot be read or parsed.
-    pub fn load(
-        &self,
-        cor20: &Cor20Header,
-        strings: &Strings,
-        tables: &TablesHeader,
-        assemblies: &AssemblyRefMap,
-        files: &FileMap,
-    ) -> Result<()> {
-        if let Some(table) = tables.table::<ManifestResourceRaw>(TableId::ManifestResource) {
-            for row in table {
-                let manifest_resource =
-                    row.to_owned(&self.file, cor20, strings, files, assemblies, table)?;
-                self.data
-                    .insert(manifest_resource.name.clone(), manifest_resource.clone());
-            }
-        }
-        Ok(())
+    /// * `resource` - The manifest resource to insert
+    pub fn insert(&self, resource: ManifestResourceRc) {
+        self.data.insert(resource.name.clone(), resource);
     }
 
     /// Returns the number of resources.

@@ -2,7 +2,7 @@
 
 use crate::{
     metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
+        loader::{LoaderContext, MetadataLoader},
         streams::AssemblyRefOsRaw,
     },
     prelude::TableId,
@@ -13,11 +13,14 @@ use crate::{
 pub(crate) struct AssemblyRefOsLoader;
 
 impl MetadataLoader for AssemblyRefOsLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let Some(ref header) = data.meta {
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let Some(ref header) = context.meta {
             if let Some(table) = header.table::<AssemblyRefOsRaw>(TableId::AssemblyRefOS) {
                 table.par_iter().try_for_each(|row| {
-                    row.apply(&data.refs_assembly)?;
+                    let owned = row.to_owned(context.assembly_ref)?;
+                    owned.apply()?;
+
+                    context.assembly_ref_os.insert(row.token, owned);
                     Ok(())
                 })?;
             }

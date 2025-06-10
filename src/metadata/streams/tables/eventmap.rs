@@ -33,6 +33,28 @@ pub struct EventMapEntry {
     pub events: EventList,
 }
 
+impl EventMapEntry {
+    /// Apply an `EventMapEntry` to update the parent type with its events.
+    ///
+    /// Since this is the owned structure, all references are already resolved, so we can
+    /// efficiently update the parent type without re-resolving anything.
+    ///
+    /// # Errors
+    /// Returns an error if the parent type reference is invalid or if event assignment fails.
+    pub fn apply(&self) -> Result<()> {
+        if let Some(parent_type) = self.parent.upgrade() {
+            for (_, event) in self.events.iter() {
+                _ = parent_type.events.push(event.clone());
+            }
+            Ok(())
+        } else {
+            Err(malformed_error!(
+                "EventMapEntry parent type reference is no longer valid"
+            ))
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 /// The `EventMap` table maps events to their parent types. `TableId` = 0x12
 pub struct EventMapRaw {

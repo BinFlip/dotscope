@@ -1,7 +1,7 @@
 //! `MethodSpec` loader implementation
 use crate::{
     metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
+        loader::{LoaderContext, MetadataLoader},
         streams::MethodSpecRaw,
     },
     prelude::TableId,
@@ -12,11 +12,16 @@ use crate::{
 pub(crate) struct MethodSpecLoader;
 
 impl MetadataLoader for MethodSpecLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let (Some(header), Some(blob)) = (data.meta.as_ref(), data.blobs.as_ref()) {
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let (Some(header), Some(blob)) = (context.meta, context.blobs) {
             if let Some(table) = header.table::<MethodSpecRaw>(TableId::MethodSpec) {
                 table.par_iter().try_for_each(|row| {
-                    row.apply(blob, &data.types, &data.methods, &data.refs_member)?;
+                    let owned = row.to_owned(blob, context.method_def, context.member_ref)?;
+
+                    // ToDo: Implement MethodSpec apply
+                    //owned.apply()?;
+
+                    context.method_spec.insert(row.token, owned);
                     Ok(())
                 })?;
             }

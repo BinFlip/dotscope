@@ -33,6 +33,28 @@ pub struct PropertyMapEntry {
     pub properties: PropertyList,
 }
 
+impl PropertyMapEntry {
+    /// Apply a `PropertyMapEntry` to update the parent type with its properties.
+    ///
+    /// Since this is the owned structure, all references are already resolved, so we can
+    /// efficiently update the parent type without re-resolving anything.
+    ///
+    /// # Errors
+    /// Returns an error if the parent type reference is invalid or if property assignment fails.
+    pub fn apply(&self) -> Result<()> {
+        if let Some(parent_type) = self.parent.upgrade() {
+            for (_, property) in self.properties.iter() {
+                _ = parent_type.properties.push(property.clone());
+            }
+            Ok(())
+        } else {
+            Err(malformed_error!(
+                "PropertyMapEntry parent type reference is no longer valid"
+            ))
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 /// The `PropertyMap` table maps properties to their parent types. `TableId` = 0x15
 pub struct PropertyMapRaw {

@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::{
     metadata::{
-        loader::{data::CilObjectData, MetadataLoader},
+        loader::{LoaderContext, MetadataLoader},
         streams::StandAloneSigRaw,
     },
     prelude::TableId,
@@ -16,18 +16,18 @@ use rayon::iter::{ParallelBridge, ParallelIterator};
 pub(crate) struct StandAloneSigLoader;
 
 impl MetadataLoader for StandAloneSigLoader {
-    fn load(&self, data: &CilObjectData) -> Result<()> {
-        if let (Some(header), Some(blobs)) = (&data.meta, &data.blobs) {
+    fn load(&self, context: &LoaderContext) -> Result<()> {
+        if let (Some(header), Some(blobs)) = (context.meta, context.blobs) {
             if let Some(table) = header.table::<StandAloneSigRaw>(TableId::StandAloneSig) {
                 let error = Arc::new(Mutex::new(None));
 
-                data.methods.iter().par_bridge().for_each(|row| {
+                context.method_def.iter().par_bridge().for_each(|row| {
                     if lock!(error).is_some() {
                         return;
                     }
 
                     let method = row.value();
-                    if let Err(err) = method.parse(&data.file, blobs, table, &data.types) {
+                    if let Err(err) = method.parse(&context.input, blobs, table, context.types) {
                         let mut guard = lock!(error);
                         if guard.is_none() {
                             *guard = Some(err);

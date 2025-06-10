@@ -64,19 +64,19 @@ impl GenericParam {
     ///
     /// # Errors
     /// Returns an error if the owner type reference is invalid or not set
-    pub fn apply(entry: &GenericParamRc) -> Result<()> {
-        match entry.owner.get() {
+    pub fn apply(self: &Arc<Self>) -> Result<()> {
+        match self.owner.get() {
             Some(owner) => match owner {
                 CilTypeReference::TypeDef(cil_type) => {
                     if let Some(generic_params) = cil_type.generic_params() {
-                        generic_params.push(entry.clone());
+                        generic_params.push(self.clone());
                     }
 
                     Ok(())
                 }
                 CilTypeReference::MethodDef(method) => {
                     if let Some(method) = method.upgrade() {
-                        method.generic_params.push(entry.clone());
+                        method.generic_params.push(self.clone());
                     }
 
                     Ok(())
