@@ -153,8 +153,14 @@ impl PermissionSet {
             let blob_length = parser.read_compressed_uint()? as usize;
             let mut named_arguments = Vec::new();
             if blob_length > 0 {
-                // ToDo: Validate that parser.pos() + blob_length does not cause a overflow
-                let blob_end = parser.pos() + blob_length;
+                let Some(blob_end) = blob_length.checked_add(parser.pos()) else {
+                    return Err(malformed_error!(
+                        "Blob end overflow - {} + {}",
+                        blob_length,
+                        parser.pos()
+                    ));
+                };
+
                 if blob_end > data.len() {
                     return Err(malformed_error!(
                         "Blob end position {} exceeds data length {}",
@@ -164,7 +170,7 @@ impl PermissionSet {
                 }
 
                 let property_count = parser.read_compressed_uint()? as usize;
-                for _i in 0..property_count {
+                for _ in 0..property_count {
                     // Read the field/property marker
                     let _ = parser.read_le::<u8>()?;
 

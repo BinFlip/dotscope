@@ -106,22 +106,22 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let temp_path = temp_dir.join("empty_test_file.bin");
         std::fs::write(&temp_path, b"").unwrap();
-        
+
         let physical = Physical::new(&temp_path).unwrap();
         assert_eq!(physical.len(), 0);
         assert_eq!(physical.data().len(), 0);
-        
+
         // Test edge cases with empty file
         assert!(physical.data_slice(0, 1).is_err());
         assert!(physical.data_slice(1, 0).is_err());
         let empty_slice: &[u8] = &[];
         assert_eq!(physical.data_slice(0, 0).unwrap(), empty_slice);
-        
+
         // Cleanup
         std::fs::remove_file(&temp_path).unwrap();
     }
 
-    #[test] 
+    #[test]
     fn test_physical_large_offset_overflow() {
         let physical = Physical::new(
             &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll"),
@@ -153,7 +153,7 @@ mod tests {
         .unwrap();
 
         let len = physical.len();
-        
+
         // Test reading exactly at the boundary (should work)
         let result = physical.data_slice(len - 1, 1);
         assert!(result.is_ok());

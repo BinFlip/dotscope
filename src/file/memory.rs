@@ -77,10 +77,10 @@ mod tests {
     #[test]
     fn test_memory_empty_buffer() {
         let memory = Memory::new(vec![]);
-        
+
         assert_eq!(memory.len(), 0);
         assert_eq!(memory.data().len(), 0);
-        
+
         // Test edge cases with empty buffer
         assert!(memory.data_slice(0, 1).is_err());
         assert!(memory.data_slice(1, 0).is_err());
@@ -91,10 +91,10 @@ mod tests {
     #[test]
     fn test_memory_single_byte() {
         let memory = Memory::new(vec![0x42]);
-        
+
         assert_eq!(memory.len(), 1);
         assert_eq!(memory.data()[0], 0x42);
-        
+
         // Test boundary conditions
         assert_eq!(memory.data_slice(0, 1).unwrap(), &[0x42]);
         assert!(memory.data_slice(0, 2).is_err());
@@ -106,17 +106,17 @@ mod tests {
     #[test]
     fn test_memory_offset_overflow() {
         let memory = Memory::new(vec![0x00; 100]);
-        
+
         // Test offset + len overflow
         let result = memory.data_slice(usize::MAX, 1);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), OutOfBounds));
-        
-        // Test offset exactly at length  
+
+        // Test offset exactly at length
         let result = memory.data_slice(100, 1);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), OutOfBounds));
-        
+
         // Test offset + len exceeds length by 1
         let result = memory.data_slice(99, 2);
         assert!(result.is_err());
@@ -128,13 +128,13 @@ mod tests {
         let size = 10_000;
         let mut data = vec![0x00; size];
         data[size - 1] = 0xFF;
-        
+
         let memory = Memory::new(data);
         assert_eq!(memory.len(), size);
-        
+
         // Test reading at the end
         assert_eq!(memory.data_slice(size - 1, 1).unwrap(), &[0xFF]);
-        
+
         // Test reading entire buffer
         let full_data = memory.data_slice(0, size).unwrap();
         assert_eq!(full_data.len(), size);

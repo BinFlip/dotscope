@@ -100,13 +100,6 @@ impl<'a> CilObjectData<'a> {
 
         cil_object.load_streams(meta_root_offset)?;
 
-        /*
-        ToDo:
-            - Tables
-                - CustomAttributes
-                    - needs HasCustomAttributes for lookup, needs 'MethodDef' and 'MemberRef' for constructor
-         */
-
         {
             let context = LoaderContext {
                 input: cil_object.file.clone(),

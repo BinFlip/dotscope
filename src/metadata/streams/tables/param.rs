@@ -1,6 +1,6 @@
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, OnceLock, RwLock,
+    Arc, OnceLock,
 };
 
 use crossbeam_skiplist::SkipMap;
@@ -13,7 +13,7 @@ use crate::{
         signatures::SignatureParameter,
         streams::{RowDefinition, Strings, TableInfoRef},
         token::Token,
-        typesystem::{CilPrimitive, CilTypeRef, TypeRegistry, TypeResolver},
+        typesystem::{CilPrimitive, CilTypeRef, CilTypeRefList, TypeRegistry, TypeResolver},
     },
     Result,
 };
@@ -62,8 +62,7 @@ pub struct Param {
     /// `flags.HAS_MARSHAL` -> The marshal instructions for `PInvoke`
     pub marshal: OnceLock<MarshallingInfo>,
     /// Custom modifiers that are applied to this `Param`
-    // ToDo: We can change this RwLock to a boxcar Vec
-    pub modifiers: RwLock<Vec<CilTypeRef>>,
+    pub modifiers: CilTypeRefList,
     /// The underlaying type of this `Param`
     pub base: OnceLock<CilTypeRef>,
     /// Is the parameter passed by reference
@@ -90,17 +89,16 @@ impl Param {
     ) -> Result<()> {
         self.is_by_ref.store(signature.by_ref, Ordering::Relaxed);
 
-        {
-            let mut modifiers_rw = write_lock!(self.modifiers);
-            for modifier in &signature.modifiers {
-                match types.get(modifier) {
-                    Some(new_mod) => modifiers_rw.push(new_mod.into()),
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve modifier type - {}",
-                            modifier.value()
-                        ))
-                    }
+        for modifier in &signature.modifiers {
+            match types.get(modifier) {
+                Some(new_mod) => {
+                    self.modifiers.push(new_mod.into());
+                }
+                None => {
+                    return Err(malformed_error!(
+                        "Failed to resolve modifier type - {}",
+                        modifier.value()
+                    ))
                 }
             }
         }
@@ -171,7 +169,7 @@ impl ParamRaw {
             },
             default: OnceLock::new(),
             marshal: OnceLock::new(),
-            modifiers: RwLock::new(Vec::new()),
+            modifiers: Arc::new(boxcar::Vec::new()),
             base: OnceLock::new(),
             is_by_ref: AtomicBool::new(false),
             custom_attributes: Arc::new(boxcar::Vec::new()),

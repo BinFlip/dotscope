@@ -1,4 +1,4 @@
-use std::sync::{atomic::AtomicBool, Arc, OnceLock, RwLock};
+use std::sync::{atomic::AtomicBool, Arc, OnceLock};
 
 use crossbeam_skiplist::SkipMap;
 
@@ -100,7 +100,7 @@ impl MemberRefRaw {
             name: None,  // MemberRef parameters don't have names from metadata
             default: OnceLock::new(),
             marshal: OnceLock::new(),
-            modifiers: RwLock::new(Vec::new()),
+            modifiers: Arc::new(boxcar::Vec::new()),
             base: OnceLock::new(),
             is_by_ref: AtomicBool::new(method_sig.return_type.by_ref),
             custom_attributes: Arc::new(boxcar::Vec::new()),
@@ -119,7 +119,7 @@ impl MemberRefRaw {
                 name: None, // MemberRef parameters don't have names from metadata
                 default: OnceLock::new(),
                 marshal: OnceLock::new(),
-                modifiers: RwLock::new(Vec::new()),
+                modifiers: Arc::new(boxcar::Vec::new()),
                 base: OnceLock::new(),
                 is_by_ref: AtomicBool::new(param_sig.by_ref),
                 custom_attributes: Arc::new(boxcar::Vec::new()),
