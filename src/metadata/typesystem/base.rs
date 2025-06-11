@@ -586,7 +586,6 @@ mod tests {
 
         let type_rc = Arc::new(CilType::new(
             Token::new(0x01000001),
-            CilFlavor::I4,
             "System".to_string(),
             "Int32".to_string(),
             None,
@@ -594,6 +593,7 @@ mod tests {
             0,
             Arc::new(boxcar::Vec::new()),
             Arc::new(boxcar::Vec::new()),
+            Some(CilFlavor::I4),
         ));
 
         let type_ref = CilTypeReference::TypeDef(CilTypeRef::from(type_rc.clone()));
@@ -657,7 +657,6 @@ mod tests {
     fn test_cil_modifier() {
         let type_rc = Arc::new(CilType::new(
             Token::new(0x01000001),
-            CilFlavor::Class,
             "System.Runtime.InteropServices".to_string(),
             "InAttribute".to_string(),
             None,
@@ -665,6 +664,7 @@ mod tests {
             0,
             Arc::new(boxcar::Vec::new()),
             Arc::new(boxcar::Vec::new()),
+            Some(CilFlavor::Class),
         ));
 
         let required_modifier = CilModifier {

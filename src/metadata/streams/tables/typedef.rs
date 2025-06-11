@@ -169,7 +169,7 @@ impl TypeDefRaw {
             Arc::new(boxcar::Vec::new())
         } else {
             let type_methods = Arc::new(boxcar::Vec::with_capacity(end_methods - start_methods));
-            for counter in start_methods..end_fields {
+            for counter in start_methods..end_methods {
                 match methods.get(&Token::new(u32::try_from(counter | 0x0600_0000).map_err(
                     |_| malformed_error!("Method token overflow: {}", counter | 0x0600_0000),
                 )?)) {
@@ -188,7 +188,6 @@ impl TypeDefRaw {
 
         Ok(Arc::new(CilType::new(
             self.token,
-            CilFlavor::Object,
             strings.get(self.type_namespace as usize)?.to_string(),
             strings.get(self.type_name as usize)?.to_string(),
             None,
@@ -196,6 +195,7 @@ impl TypeDefRaw {
             self.flags,
             type_fields,
             type_methods,
+            None,
         )))
     }
 

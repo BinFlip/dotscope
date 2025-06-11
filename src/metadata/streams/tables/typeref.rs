@@ -5,7 +5,7 @@ use crate::{
     metadata::{
         streams::{CodedIndex, CodedIndexType, RowDefinition, Strings, TableInfoRef},
         token::Token,
-        typesystem::{CilFlavor, CilType, CilTypeRc, CilTypeReference},
+        typesystem::{CilType, CilTypeRc, CilTypeReference},
     },
     Result,
 };
@@ -63,7 +63,6 @@ impl TypeRefRaw {
 
         Ok(Arc::new(CilType::new(
             self.token,
-            CilFlavor::Unknown,
             strings.get(self.type_namespace as usize)?.to_string(),
             strings.get(self.type_name as usize)?.to_string(),
             resolution_scope,
@@ -71,6 +70,7 @@ impl TypeRefRaw {
             0,
             Arc::new(boxcar::Vec::new()),
             Arc::new(boxcar::Vec::new()),
+            None,
         )))
     }
 }
