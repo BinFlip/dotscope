@@ -7,7 +7,7 @@ use crate::{
         customattributes::CustomAttributeValueList,
         streams::{CodedIndex, CodedIndexType, RowDefinition, TableId, TableInfoRef},
         token::Token,
-        typesystem::{CilFlavor, CilTypeRc, TypeRegistry},
+        typesystem::{CilTypeRc, TypeRegistry},
     },
     Result,
 };
@@ -78,11 +78,8 @@ impl InterfaceImplRaw {
             ));
         };
 
-        *write_lock!(interface.flavor) = CilFlavor::Interface;
-
         match types.get(&Token::new(self.class | 0x0200_0000)) {
             Some(class) => {
-                *write_lock!(class.flavor) = CilFlavor::Class;
                 class.interfaces.push(interface.into());
                 Ok(())
             }

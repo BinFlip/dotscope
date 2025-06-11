@@ -118,7 +118,6 @@ impl TypeResolver {
             TypeSignature::String => self.registry.get_primitive(CilPrimitiveKind::String),
             TypeSignature::Class(token) => {
                 if let Some(class_type) = self.registry.get(token) {
-                    Self::update_flavor_if_unknown(&class_type, CilFlavor::Class);
                     Ok(class_type)
                 } else {
                     Err(TypeNotFound(*token))
@@ -126,7 +125,6 @@ impl TypeResolver {
             }
             TypeSignature::ValueType(token) => {
                 if let Some(value_type) = self.registry.get(token) {
-                    Self::update_flavor_if_unknown(&value_type, CilFlavor::ValueType);
                     Ok(value_type)
                 } else {
                     Err(TypeNotFound(*token))
@@ -441,18 +439,6 @@ impl TypeResolver {
             _ => Err(TypeError("TypeSignature not supported!".to_string())),
         }
     }
-
-    /// Update the flavor of a type if it's currently unknown
-    ///
-    /// ## Arguments
-    /// * '`type_rc`' - The type to update
-    /// * 'flavor'  - The flavor to set
-    fn update_flavor_if_unknown(type_rc: &CilTypeRc, flavor: CilFlavor) {
-        let mut flavor_rw = write_lock!(type_rc.flavor);
-        if matches!(*flavor_rw, CilFlavor::Unknown) {
-            *flavor_rw = flavor;
-        }
-    }
 }
 
 #[cfg(test)]
@@ -567,7 +553,7 @@ mod tests {
         let int_3d_array = resolver.resolve(&int_3d_array_sig).unwrap();
         assert_eq!(int_3d_array.name, "Int32[,,]");
         assert!(matches!(
-            *read_lock!(int_3d_array.flavor),
+            *int_3d_array.flavor(),
             CilFlavor::Array { rank: 3, .. }
         ));
     }
@@ -595,7 +581,7 @@ mod tests {
         let int_ptr = resolver.resolve(&int_ptr_sig).unwrap();
         assert_eq!(int_ptr.name, "Int32*");
         assert_eq!(int_ptr.namespace, "System");
-        assert!(matches!(*read_lock!(int_ptr.flavor), CilFlavor::Pointer));
+        assert!(matches!(*int_ptr.flavor(), CilFlavor::Pointer));
 
         let pointed_type = int_ptr.base.get().unwrap().upgrade().unwrap();
         assert_eq!(pointed_type.name, "Int32");
@@ -619,10 +605,7 @@ mod tests {
 
         let int_ptr_ptr = resolver.resolve(&int_ptr_ptr_sig).unwrap();
         assert_eq!(int_ptr_ptr.name, "Int32**");
-        assert!(matches!(
-            *read_lock!(int_ptr_ptr.flavor),
-            CilFlavor::Pointer
-        ));
+        assert!(matches!(*int_ptr_ptr.flavor(), CilFlavor::Pointer));
 
         let inner_ptr = int_ptr_ptr.base.get().unwrap().upgrade().unwrap();
         assert_eq!(inner_ptr.name, "Int32*");
@@ -637,7 +620,7 @@ mod tests {
         let int_ref = resolver.resolve(&int_ref_sig).unwrap();
         assert_eq!(int_ref.name, "Int32&");
         assert_eq!(int_ref.namespace, "System");
-        assert!(matches!(*read_lock!(int_ref.flavor), CilFlavor::ByRef));
+        assert!(matches!(*int_ref.flavor(), CilFlavor::ByRef));
 
         let ref_type = int_ref.base.get().unwrap().upgrade().unwrap();
         assert_eq!(ref_type.name, "Int32");
@@ -650,7 +633,7 @@ mod tests {
 
         let array_ref = resolver.resolve(&array_ref_sig).unwrap();
         assert_eq!(array_ref.name, "Int32[]&");
-        assert!(matches!(*read_lock!(array_ref.flavor), CilFlavor::ByRef));
+        assert!(matches!(*array_ref.flavor(), CilFlavor::ByRef));
     }
 
     #[test]
@@ -682,10 +665,7 @@ mod tests {
         let fn_ptr = resolver.resolve(&fn_ptr_sig).unwrap();
         assert!(fn_ptr.name.starts_with("FunctionPointer_"));
         assert_eq!(fn_ptr.namespace, "");
-        assert!(matches!(
-            *read_lock!(fn_ptr.flavor),
-            CilFlavor::FnPtr { .. }
-        ));
+        assert!(matches!(*fn_ptr.flavor(), CilFlavor::FnPtr { .. }));
     }
 
     #[test]
@@ -698,7 +678,7 @@ mod tests {
         let pinned = resolver.resolve(&pinned_sig).unwrap();
         assert_eq!(pinned.name, "pinned Object");
         assert_eq!(pinned.namespace, "System");
-        assert!(matches!(*read_lock!(pinned.flavor), CilFlavor::Pinned));
+        assert!(matches!(*pinned.flavor(), CilFlavor::Pinned));
 
         let base_type = pinned.base.get().unwrap().upgrade().unwrap();
         assert_eq!(base_type.name, "Object");
@@ -743,10 +723,7 @@ mod tests {
         let list_int = resolver.resolve(&generic_sig).unwrap();
         assert_eq!(list_int.name, "List`1");
         assert_eq!(list_int.namespace, "System.Collections.Generic");
-        assert!(matches!(
-            *read_lock!(list_int.flavor),
-            CilFlavor::GenericInstance
-        ));
+        assert!(matches!(*list_int.flavor(), CilFlavor::GenericInstance));
 
         assert_eq!(list_int.generic_args.count(), 1);
         assert_eq!(
@@ -765,7 +742,7 @@ mod tests {
         let type_param = resolver.resolve(&type_param_sig).unwrap();
         assert_eq!(type_param.name, "T0");
         assert_eq!(type_param.namespace, "");
-        if let CilFlavor::GenericParameter { index, method } = *read_lock!(type_param.flavor) {
+        if let CilFlavor::GenericParameter { index, method } = *type_param.flavor() {
             assert_eq!(index, 0);
             assert!(!method);
         } else {
@@ -777,7 +754,7 @@ mod tests {
         let method_param = resolver.resolve(&method_param_sig).unwrap();
         assert_eq!(method_param.name, "TM0");
         assert_eq!(method_param.namespace, "");
-        if let CilFlavor::GenericParameter { index, method } = *read_lock!(method_param.flavor) {
+        if let CilFlavor::GenericParameter { index, method } = *method_param.flavor() {
             assert_eq!(index, 0);
             assert!(method);
         } else {
@@ -818,16 +795,13 @@ mod tests {
         let class_type = resolver.resolve(&class_sig).unwrap();
         assert_eq!(class_type.name, "String");
         assert_eq!(class_type.namespace, "System");
-        assert!(matches!(*read_lock!(class_type.flavor), CilFlavor::Class));
+        assert!(matches!(*class_type.flavor(), CilFlavor::Class));
 
         let value_sig = TypeSignature::ValueType(value_token);
         let value_type = resolver.resolve(&value_sig).unwrap();
         assert_eq!(value_type.name, "DateTime");
         assert_eq!(value_type.namespace, "System");
-        assert!(matches!(
-            *read_lock!(value_type.flavor),
-            CilFlavor::ValueType
-        ));
+        assert!(matches!(*value_type.flavor(), CilFlavor::ValueType));
     }
 
     #[test]

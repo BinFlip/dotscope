@@ -221,7 +221,6 @@ mod tests {
     fn create_type_with_flavor(flavor: CilFlavor) -> CilTypeRc {
         Arc::new(CilType::new(
             Token::new(0x01000001),
-            flavor,
             "System".to_string(),
             "TestType".to_string(),
             None,
@@ -229,6 +228,7 @@ mod tests {
             0,
             Arc::new(boxcar::Vec::new()),
             Arc::new(boxcar::Vec::new()),
+            Some(flavor),
         ))
     }
 
@@ -481,6 +481,139 @@ mod tests {
         match &result.fixed_args[0] {
             CustomAttributeArgument::Type(val) => assert_eq!(val, "System.Int32"),
             _ => panic!("Expected Type argument"),
+        }
+    }
+
+    #[test]
+    fn test_parse_class_argument_scenarios() {
+        // Test scenarios we encountered in the debug output
+        
+        // Scenario 1: Class with compressed length 0 (null/empty string)
+        let method1 = create_method_with_params(vec![CilFlavor::Class]);
+        let blob_data1 = &[
+            0x01, 0x00, // Prolog
+            0x00,       // Compressed length: 0 (empty string)
+            0x00, 0x00, // NumNamed = 0
+        ];
+        
+        let result1 = parse_custom_attribute_data(blob_data1, get_params_from_method(&method1));
+        match result1 {
+            Ok(attr) => {
+                assert_eq!(attr.fixed_args.len(), 1);
+                match &attr.fixed_args[0] {
+                    CustomAttributeArgument::String(s) => assert_eq!(s, ""),
+                    _ => panic!("Expected empty string argument"),
+                }
+            }
+            Err(e) => panic!("Expected success for empty string, got: {}", e),
+        }
+
+        // Scenario 2: Class with compressed length 3 but contains null bytes (invalid UTF-8)
+        let method2 = create_method_with_params(vec![CilFlavor::Class]);
+        let blob_data2 = &[
+            0x01, 0x00, // Prolog
+            0x03,       // Compressed length: 3
+            0x00, 0x00, 0x00, // 3 null bytes
+            0x00, 0x00, // NumNamed = 0
+        ];
+        
+        let result2 = parse_custom_attribute_data(blob_data2, get_params_from_method(&method2));
+        match result2 {
+            Ok(attr) => {
+                assert_eq!(attr.fixed_args.len(), 1);
+                // Debug: see what we actually get
+                println!("DEBUG: Actual argument type: {:?}", &attr.fixed_args[0]);
+                // Should handle invalid UTF-8 gracefully
+                match &attr.fixed_args[0] {
+                    CustomAttributeArgument::String(_) => (), // Lossy conversion is fine
+                    CustomAttributeArgument::Type(_) => (), // Type argument is also acceptable
+                    _ => panic!("Expected string or type argument (lossy conversion), got: {:?}", &attr.fixed_args[0]),
+                }
+            }
+            Err(e) => panic!("Expected graceful handling of null bytes, got: {}", e),
+        }
+
+        // Scenario 3: Class with compressed length 7 but only 5 bytes remaining (exceeds available data)
+        let method3 = create_method_with_params(vec![CilFlavor::Class]);
+        let blob_data3 = &[
+            0x01, 0x00, // Prolog
+            0x07,       // Compressed length: 7 (but only 5 bytes follow)
+            0x01, 0x02, 0x03, 0x04, 0x05, // Only 5 bytes available
+        ];
+        
+        let result3 = parse_custom_attribute_data(blob_data3, get_params_from_method(&method3));
+        assert!(result3.is_err());
+        if let Err(e) = result3 {
+            assert!(e.to_string().contains("length") || e.to_string().contains("exceeds"));
+        }
+
+        // Scenario 4: Valid System.Type argument 
+        let method4 = create_method_with_params(vec![CilFlavor::Class]);
+        let blob_data4 = &[
+            0x01, 0x00, // Prolog
+            0x0C,       // Compressed length: 12 for "System.Int32"
+            0x53, 0x79, 0x73, 0x74, 0x65, 0x6D, 0x2E, 0x49, 0x6E, 0x74, 0x33, 0x32, // "System.Int32"
+            0x00, 0x00, // NumNamed = 0
+        ];
+        
+        let result4 = parse_custom_attribute_data(blob_data4, get_params_from_method(&method4));
+        match result4 {
+            Ok(attr) => {
+                assert_eq!(attr.fixed_args.len(), 1);
+                match &attr.fixed_args[0] {
+                    CustomAttributeArgument::Type(type_name) => assert_eq!(type_name, "System.Int32"),
+                    _ => panic!("Expected Type argument"),
+                }
+            }
+            Err(e) => panic!("Expected success for valid type name, got: {}", e),
+        }
+    }
+
+    #[test]
+    fn test_class_argument_edge_cases() {
+        // Test edge cases that might occur in real assemblies
+        
+        // Case 1: Class argument with very small valid string
+        let method = create_method_with_params(vec![CilFlavor::Class]);
+        let blob_data = &[
+            0x01, 0x00, // Prolog  
+            0x01,       // Compressed length: 1
+            0x41,       // Single ASCII character 'A'
+            0x00, 0x00, // NumNamed = 0
+        ];
+        
+        let result = parse_custom_attribute_data(blob_data, get_params_from_method(&method));
+        match result {
+            Ok(attr) => {
+                assert_eq!(attr.fixed_args.len(), 1);
+                match &attr.fixed_args[0] {
+                    CustomAttributeArgument::Type(s) => assert_eq!(s, "A"),
+                    _ => panic!("Expected Type argument"),
+                }
+            }
+            Err(e) => panic!("Expected success for single character, got: {}", e),
+        }
+
+        // Case 2: Class argument with mixed ASCII and invalid UTF-8
+        let method2 = create_method_with_params(vec![CilFlavor::Class]);
+        let blob_data2 = &[
+            0x01, 0x00, // Prolog
+            0x04,       // Compressed length: 4
+            0x41, 0xFF, 0x42, 0x43, // 'A', invalid byte, 'B', 'C'
+            0x00, 0x00, // NumNamed = 0  
+        ];
+        
+        let result2 = parse_custom_attribute_data(blob_data2, get_params_from_method(&method2));
+        match result2 {
+            Ok(attr) => {
+                assert_eq!(attr.fixed_args.len(), 1);
+                // Should handle gracefully with lossy conversion
+                match &attr.fixed_args[0] {
+                    CustomAttributeArgument::String(_) => (), // Lossy conversion is acceptable
+                    _ => panic!("Expected String argument after lossy conversion"),
+                }
+            }
+            Err(e) => panic!("Expected graceful handling of invalid UTF-8, got: {}", e),
         }
     }
 
@@ -905,6 +1038,127 @@ mod tests {
             assert!(e
                 .to_string()
                 .contains("Unsupported named argument type: 0xFF"));
+        }
+    }
+
+    #[test]
+    fn test_realistic_class_argument_parsing_issue() {
+        // This reproduces the exact scenario from the crafted_2 assembly:
+        // - Compressed length reads as 7
+        // - But only 5 bytes remaining 
+        // - This should gracefully handle the issue
+
+        let method = create_method_with_params(vec![CilFlavor::Class]);
+        
+        // Create test data that matches the real scenario
+        let blob_data = &[
+            0x01, 0x00, // Prolog
+            0x07,       // Compressed length: 7 
+            0x01, 0x02, 0x03, 0x04, 0x05, // Only 5 bytes available (not 7)
+            // No NumNamed because we run out of data
+        ];
+        
+        let result = parse_custom_attribute_data(blob_data, get_params_from_method(&method));
+        
+        // This should fail gracefully with a clear error message
+        match result {
+            Ok(attr) => {
+                // Debug: Let's see what we actually parsed
+                println!("DEBUG: Unexpectedly succeeded! Got {} fixed args, {} named args", 
+                         attr.fixed_args.len(), attr.named_args.len());
+                for (i, arg) in attr.fixed_args.iter().enumerate() {
+                    println!("DEBUG: Fixed arg {}: {:?}", i, arg);
+                }
+                for (i, arg) in attr.named_args.iter().enumerate() {
+                    println!("DEBUG: Named arg {}: {:?}", i, arg);
+                }
+                panic!("Expected failure due to insufficient data");
+            }
+            Err(e) => {
+                let error_msg = e.to_string();
+                println!("DEBUG: Error message: {}", error_msg);
+                // Should mention length or data availability
+                assert!(
+                    error_msg.contains("length") || 
+                    error_msg.contains("exceeds") || 
+                    error_msg.contains("available") ||
+                    error_msg.contains("data"),
+                    "Error message should mention data availability issue: {}", error_msg
+                );
+            }
+        }
+    }
+
+    #[test] 
+    fn test_class_argument_with_insufficient_data_for_named_args() {
+        // This test reproduces a scenario where class argument parsing succeeds
+        // but then we don't have enough data for the expected named arguments section
+        
+        let method = create_method_with_params(vec![CilFlavor::Class]);
+        
+        let blob_data = &[
+            0x01, 0x00, // Prolog
+            0x00,       // Compressed length: 0 (valid empty string)
+            // Missing NumNamed field - this should be handled gracefully
+        ];
+        
+        let result = parse_custom_attribute_data(blob_data, get_params_from_method(&method));
+        
+        match result {
+            Ok(attr) => {
+                // Should succeed with empty string argument and no named arguments
+                assert_eq!(attr.fixed_args.len(), 1);
+                assert_eq!(attr.named_args.len(), 0);
+                match &attr.fixed_args[0] {
+                    CustomAttributeArgument::String(s) => assert_eq!(s, ""),
+                    _ => panic!("Expected empty string"),
+                }
+            }
+            Err(e) => {
+                // Alternatively, it might fail gracefully due to insufficient data
+                println!("DEBUG: Graceful failure for insufficient data: {}", e);
+                assert!(e.to_string().contains("data") || e.to_string().contains("length"));
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_ff_7f_pattern() {
+        // Test the problematic pattern: [01, 00, FF, 7F, 00, 00, ...]
+        // This should be parsed as:
+        // - 01 00 = prolog
+        // - FF = null marker (should consume 1 byte and return null/empty string)
+        // - 7F 00 = should be read as NumNamed (not as part of class argument)
+        let method = create_method_with_params(vec![CilFlavor::Class]);
+
+        let blob_data = vec![
+            0x01, 0x00, // prolog 
+            0xFF,       // null marker for class argument
+            0x7F, 0x00, // NumNamed = 127 (this should NOT be part of class argument parsing)
+        ];
+
+        println!("Testing FF 7F pattern: {:02X?}", blob_data);
+        match parse_custom_attribute_data(&blob_data, get_params_from_method(&method)) {
+            Ok(result) => {
+                println!("Parse result: {:?}", result);
+                // Should have 1 fixed argument (the null class argument)
+                assert_eq!(result.fixed_args.len(), 1);
+                // The argument should be a null/empty string due to FF marker
+                match &result.fixed_args[0] {
+                    CustomAttributeArgument::String(s) if s.is_empty() => {
+                        println!("✓ Correctly parsed FF as null string");
+                    }
+                    other => {
+                        panic!("Expected empty string for FF marker, got: {:?}", other);
+                    }
+                }
+                // NumNamed should be 127 (0x7F 0x00 read as little-endian u16)
+                // We don't expect to parse the named arguments in this simple test
+                println!("✓ Test passed - FF byte correctly consumed as null marker");
+            }
+            Err(e) => {
+                panic!("Failed to parse FF 7F pattern: {}", e);
+            }
         }
     }
 }
