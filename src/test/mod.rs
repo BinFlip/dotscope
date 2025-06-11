@@ -121,7 +121,6 @@ pub fn create_cil_type(
 ) -> CilTypeRc {
     Arc::new(CilType::new(
         token,
-        CilFlavor::Class,
         namespace.to_string(),
         name.to_string(),
         external,
@@ -129,6 +128,7 @@ pub fn create_cil_type(
         0,
         Arc::new(boxcar::Vec::new()),
         Arc::new(boxcar::Vec::new()),
+        Some(CilFlavor::Class),
     ))
 }
 

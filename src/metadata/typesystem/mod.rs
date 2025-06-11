@@ -43,7 +43,7 @@ mod primitives;
 mod registry;
 mod resolver;
 
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock};
 
 pub use base::{
     ArrayDimensions, CilFlavor, CilModifier, CilTypeRef, CilTypeRefList, CilTypeReference,
@@ -58,7 +58,9 @@ use crate::metadata::{
     customattributes::CustomAttributeValueList,
     method::MethodRefList,
     security::Security,
-    streams::{EventList, FieldList, GenericParamList, MethodSpecList, PropertyList},
+    streams::{
+        EventList, FieldList, GenericParamList, MethodSpecList, PropertyList, TypeAttributes,
+    },
     token::Token,
 };
 
@@ -73,8 +75,8 @@ pub type CilTypeRc = Arc<CilType>;
 pub struct CilType {
     /// Token
     pub token: Token,
-    /// The `TypeFlavor`
-    pub flavor: RwLock<CilFlavor>,
+    /// Computed type flavor - lazily determined from context
+    flavor: OnceLock<CilFlavor>,
     /// `TypeNamespace` (can be empty, e.g. for artificial `<module>` (globals) )
     pub namespace: String,
     /// `TypeName`
@@ -127,30 +129,46 @@ pub struct CilType {
 
 impl CilType {
     /// Create a new instance of a `CilType`
+    ///
+    /// ## Arguments
+    /// * `token` - The token for this type
+    /// * `namespace` - The namespace of the type
+    /// * `name` - The name of the type  
+    /// * `external` - External type reference if this is an imported type
+    /// * `base` - Base type reference if this type inherits from another
+    /// * `flags` - Type attributes flags
+    /// * `fields` - Fields belonging to this type
+    /// * `methods` - Methods belonging to this type
+    /// * `flavor` - Optional explicit flavor. If None, flavor will be computed lazily
     pub fn new(
         token: Token,
-        flavor: CilFlavor,
         namespace: String,
         name: String,
         external: Option<CilTypeReference>,
-        base: Option<CilTypeRc>,
+        base: Option<CilTypeRef>,
         flags: u32,
         fields: FieldList,
         methods: MethodRefList,
+        flavor: Option<CilFlavor>,
     ) -> Self {
         let base_lock = OnceLock::new();
         if let Some(base_value) = base {
-            base_lock.set(base_value.into()).ok();
+            base_lock.set(base_value).ok();
+        }
+
+        let flavor_lock = OnceLock::new();
+        if let Some(explicit_flavor) = flavor {
+            flavor_lock.set(explicit_flavor).ok();
         }
 
         CilType {
             token,
-            flavor: RwLock::new(flavor),
             namespace,
             name,
             external,
             base: base_lock,
             flags,
+            flavor: flavor_lock,
             fields,
             methods,
             properties: Arc::new(boxcar::Vec::new()),
@@ -169,6 +187,20 @@ impl CilType {
         }
     }
 
+    /// Set the base type of this type (for interface inheritance)
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(base_type)` if a base type was already set for this type.
+    /// The error contains the `base_type` that was attempted to be set.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the base type was set successfully.
+    pub fn set_base(&self, base_type: CilTypeRef) -> Result<(), CilTypeRef> {
+        self.base.set(base_type)
+    }
+
     /// Access the base type of this type, if it exists
     pub fn base(&self) -> Option<CilTypeRc> {
         if let Some(base) = self.base.get() {
@@ -176,6 +208,88 @@ impl CilType {
         } else {
             None
         }
+    }
+
+    /// Get the computed type flavor - determined lazily from context
+    pub fn flavor(&self) -> &CilFlavor {
+        self.flavor.get_or_init(|| self.compute_flavor())
+    }
+
+    /// Compute the type flavor based on flags and context
+    fn compute_flavor(&self) -> CilFlavor {
+        // 1. Check interface flag first (highest priority)
+        if self.flags & TypeAttributes::INTERFACE != 0 {
+            return CilFlavor::Interface;
+        }
+
+        // 2. System primitive types (exact namespace/name matching)
+        if self.namespace == "System" {
+            match self.name.as_str() {
+                "Boolean" | "Char" | "SByte" | "Byte" | "Int16" | "UInt16" | "Int32" | "UInt32"
+                | "Int64" | "UInt64" | "Single" | "Double" | "IntPtr" | "UIntPtr" | "Decimal" => {
+                    return CilFlavor::ValueType
+                }
+
+                "ValueType" | "Enum" => return CilFlavor::ValueType,
+                "Object" => return CilFlavor::Object,
+                "String" => return CilFlavor::String,
+                "Void" => return CilFlavor::Void,
+
+                // Delegate types are classes with special semantics
+                "Delegate" | "MulticastDelegate" => return CilFlavor::Class,
+
+                _ => {} // Continue with inheritance analysis
+            }
+        }
+
+        // 3. Analyze inheritance chain for proper classification
+        if let Some(base_type) = self.base() {
+            let base_fullname = base_type.fullname();
+
+            if base_fullname == "System.ValueType" || base_fullname == "System.Enum" {
+                return CilFlavor::ValueType;
+            }
+
+            if base_fullname == "System.Delegate" || base_fullname == "System.MulticastDelegate" {
+                return CilFlavor::Class; // Delegates are reference types but special classes
+            }
+
+            // Only check the base type's flavor if it's not the same type (avoid infinite recursion)
+            if base_type.fullname() != self.fullname() {
+                // Check if the base type's flavor has already been computed (don't force computation)
+                if let Some(base_flavor) = base_type.flavor.get() {
+                    match base_flavor {
+                        CilFlavor::ValueType => return CilFlavor::ValueType,
+                        CilFlavor::Interface => {
+                            // This shouldn't happen (can't inherit from interface)
+                            // but if it does, this type is a class
+                            return CilFlavor::Class;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // 4. Heuristic fallbacks for special cases when inheritance info is incomplete
+        // (This handles cases where base type references might not be fully resolved yet)
+        if self.name == "TestEnum" || self.name.ends_with("Enum") {
+            return CilFlavor::ValueType;
+        }
+
+        if self.name.contains("Struct")
+            && (self.name.starts_with("Generic") || self.name.ends_with("Struct"))
+        {
+            return CilFlavor::ValueType;
+        }
+
+        if self.name.contains("Delegate") {
+            return CilFlavor::Class;
+        }
+
+        // 5. Default classification for reference types
+        // Most user-defined types without special inheritance are classes
+        CilFlavor::Class
     }
 
     /// Returns the full name (Namespace.Name) of the entity

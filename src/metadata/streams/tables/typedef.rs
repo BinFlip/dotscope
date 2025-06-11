@@ -9,7 +9,7 @@ use crate::{
             TableInfoRef,
         },
         token::Token,
-        typesystem::{CilFlavor, CilType, CilTypeRc},
+        typesystem::{CilType, CilTypeRc, CilTypeReference},
     },
     Result,
 };
@@ -104,6 +104,7 @@ impl TypeDefRaw {
     /// Convert an `TypeDefRaw`, into a `CilType` which has indexes resolved and owns the referenced data
     ///
     /// ## Arguments
+    /// * `get_ref` - Closure to resolve coded indexes
     /// * 'strings'     - The #String heap
     /// * 'fields'  - All processed `Field` elements
     /// * 'methods' - All processed `Method` elements
@@ -111,13 +112,17 @@ impl TypeDefRaw {
     /// # Errors
     /// Returns an error if the type name or namespace cannot be resolved from the strings heap,
     /// if the next row in the `TypeDef` table cannot be found, or if field/method tokens cannot be resolved.
-    pub fn to_owned(
+    pub fn to_owned<F>(
         &self,
+        get_ref: F,
         strings: &Strings,
         fields: &FieldMap,
         methods: &MethodMap,
         defs: &MetadataTable<TypeDefRaw>,
-    ) -> Result<CilTypeRc> {
+    ) -> Result<CilTypeRc>
+    where
+        F: Fn(&CodedIndex) -> CilTypeReference,
+    {
         let (end_fields, end_methods) = if self.rid + 1 > defs.row_count() {
             (fields.len() + 1, methods.len() + 1)
         } else {
@@ -169,7 +174,7 @@ impl TypeDefRaw {
             Arc::new(boxcar::Vec::new())
         } else {
             let type_methods = Arc::new(boxcar::Vec::with_capacity(end_methods - start_methods));
-            for counter in start_methods..end_fields {
+            for counter in start_methods..end_methods {
                 match methods.get(&Token::new(u32::try_from(counter | 0x0600_0000).map_err(
                     |_| malformed_error!("Method token overflow: {}", counter | 0x0600_0000),
                 )?)) {
@@ -186,16 +191,27 @@ impl TypeDefRaw {
             type_methods
         };
 
+        let base_type = if self.extends.row == 0 {
+            None
+        } else {
+            match get_ref(&self.extends) {
+                CilTypeReference::TypeDef(type_ref)
+                | CilTypeReference::TypeRef(type_ref)
+                | CilTypeReference::TypeSpec(type_ref) => Some(type_ref),
+                _ => None,
+            }
+        };
+
         Ok(Arc::new(CilType::new(
             self.token,
-            CilFlavor::Object,
             strings.get(self.type_namespace as usize)?.to_string(),
             strings.get(self.type_name as usize)?.to_string(),
             None,
-            None,
+            base_type,
             self.flags,
             type_fields,
             type_methods,
+            None,
         )))
     }
 

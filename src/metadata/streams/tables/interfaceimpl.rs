@@ -7,7 +7,7 @@ use crate::{
         customattributes::CustomAttributeValueList,
         streams::{CodedIndex, CodedIndexType, RowDefinition, TableId, TableInfoRef},
         token::Token,
-        typesystem::{CilFlavor, CilTypeRc, TypeRegistry},
+        typesystem::{CilTypeRc, TypeRegistry},
     },
     Result,
 };
@@ -42,7 +42,20 @@ impl InterfaceImpl {
     /// # Errors
     /// Returns an error if the interface cannot be added to the class.
     pub fn apply(&self) -> Result<()> {
-        self.class.interfaces.push(self.interface.clone().into());
+        // Check if this is interface inheritance (both class and interface are interfaces)
+        // The .NET compiler incorrectly puts interface inheritance in InterfaceImpl table
+        let class_is_interface =
+            self.class.flags & crate::metadata::streams::TypeAttributes::INTERFACE != 0;
+        let interface_is_interface =
+            self.interface.flags & crate::metadata::streams::TypeAttributes::INTERFACE != 0;
+
+        if class_is_interface && interface_is_interface {
+            if self.class.base().is_none() {
+                let _ = self.class.set_base(self.interface.clone().into());
+            }
+        } else {
+            self.class.interfaces.push(self.interface.clone().into());
+        }
         Ok(())
     }
 }
@@ -78,12 +91,22 @@ impl InterfaceImplRaw {
             ));
         };
 
-        *write_lock!(interface.flavor) = CilFlavor::Interface;
-
         match types.get(&Token::new(self.class | 0x0200_0000)) {
             Some(class) => {
-                *write_lock!(class.flavor) = CilFlavor::Class;
-                class.interfaces.push(interface.into());
+                // Check if this is interface inheritance (both class and interface are interfaces)
+                // The .NET compiler incorrectly puts interface inheritance in InterfaceImpl table
+                let class_is_interface =
+                    class.flags & crate::metadata::streams::TypeAttributes::INTERFACE != 0;
+                let interface_is_interface =
+                    interface.flags & crate::metadata::streams::TypeAttributes::INTERFACE != 0;
+
+                if class_is_interface && interface_is_interface {
+                    if class.base().is_none() {
+                        let _ = class.set_base(interface.clone().into());
+                    }
+                } else {
+                    class.interfaces.push(interface.into());
+                }
                 Ok(())
             }
             None => Err(malformed_error!(

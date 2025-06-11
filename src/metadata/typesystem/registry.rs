@@ -333,7 +333,6 @@ impl TypeRegistry {
 
             let new_type = Arc::new(CilType::new(
                 token,
-                flavor,
                 primitive.namespace().to_string(),
                 primitive.name().to_string(),
                 None,
@@ -341,6 +340,7 @@ impl TypeRegistry {
                 0,
                 Arc::new(boxcar::Vec::new()),
                 Arc::new(boxcar::Vec::new()),
+                Some(flavor),
             ));
 
             self.register_type_internal(new_type, TypeSource::Primitive);
@@ -483,7 +483,6 @@ impl TypeRegistry {
 
         let new_type = Arc::new(CilType::new(
             token,
-            CilFlavor::Unknown,
             String::new(),
             String::new(),
             None,
@@ -491,6 +490,7 @@ impl TypeRegistry {
             0,
             Arc::new(boxcar::Vec::new()),
             Arc::new(boxcar::Vec::new()),
+            None,
         ));
 
         self.types.insert(token, new_type.clone());
@@ -505,8 +505,21 @@ impl TypeRegistry {
     /// # Errors
     /// Returns an error if the type cannot be created or inserted into the registry.
     pub fn create_type_with_flavor(&self, flavor: CilFlavor) -> Result<CilTypeRc> {
-        let new_type = self.create_type_empty()?;
-        *write_lock!(new_type.flavor) = flavor;
+        let token = self.next_token();
+
+        let new_type = Arc::new(CilType::new(
+            token,
+            String::new(),
+            String::new(),
+            None,
+            None,
+            0,
+            Arc::new(boxcar::Vec::new()),
+            Arc::new(boxcar::Vec::new()),
+            Some(flavor),
+        ));
+
+        self.types.insert(token, new_type.clone());
         Ok(new_type)
     }
 
@@ -675,7 +688,6 @@ impl TypeRegistry {
 
         let new_type = Arc::new(CilType::new(
             token,
-            flavor,
             namespace.to_string(),
             name.to_string(),
             self.get_source_reference(source),
@@ -683,6 +695,7 @@ impl TypeRegistry {
             0,
             Arc::new(boxcar::Vec::new()),
             Arc::new(boxcar::Vec::new()),
+            Some(flavor),
         ));
 
         self.register_type_internal(new_type.clone(), source);
@@ -900,7 +913,7 @@ mod tests {
 
         assert_eq!(empty_type.namespace, "");
         assert_eq!(empty_type.name, "");
-        assert!(matches!(*read_lock!(empty_type.flavor), CilFlavor::Unknown));
+        assert!(matches!(*empty_type.flavor(), CilFlavor::Class)); // Empty types default to Class with lazy evaluation
     }
 
     #[test]
@@ -911,7 +924,7 @@ mod tests {
 
         assert_eq!(class_type.namespace, "");
         assert_eq!(class_type.name, "");
-        assert!(matches!(*read_lock!(class_type.flavor), CilFlavor::Class));
+        assert!(matches!(*class_type.flavor(), CilFlavor::Class));
     }
 
     #[test]
@@ -921,7 +934,6 @@ mod tests {
         let token = Token::new(0x01000123);
         let new_type = Arc::new(CilType::new(
             token,
-            CilFlavor::Class,
             "MyNamespace".to_string(),
             "MyClass".to_string(),
             None,
@@ -929,6 +941,7 @@ mod tests {
             0,
             Arc::new(boxcar::Vec::new()),
             Arc::new(boxcar::Vec::new()),
+            Some(CilFlavor::Class),
         ));
 
         registry.insert(new_type.clone());

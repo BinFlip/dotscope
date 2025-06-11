@@ -484,7 +484,7 @@ mod tests {
 
         assert_eq!(int_type.name, "Int32");
         assert_eq!(int_type.namespace, "System");
-        assert!(matches!(*read_lock!(int_type.flavor), CilFlavor::I4));
+        assert!(matches!(*int_type.flavor(), CilFlavor::I4));
     }
 
     #[test]
@@ -500,7 +500,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(int_ptr.name, "Int32*");
-        assert!(matches!(*read_lock!(int_ptr.flavor), CilFlavor::Pointer));
+        assert!(matches!(*int_ptr.flavor(), CilFlavor::Pointer));
 
         let base_type = int_ptr.base.get().unwrap().upgrade().unwrap();
         assert_eq!(base_type.name, "Int32");
@@ -519,10 +519,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(string_array.name, "String[]");
-        assert!(matches!(
-            *read_lock!(string_array.flavor),
-            CilFlavor::Array { .. }
-        ));
+        assert!(matches!(*string_array.flavor(), CilFlavor::Array { .. }));
 
         let base_type = string_array.base.get().unwrap().upgrade().unwrap();
         assert_eq!(base_type.name, "String");
@@ -542,7 +539,7 @@ mod tests {
 
         assert_eq!(int_2d_array.name, "Int32[,]");
 
-        if let CilFlavor::Array { rank, .. } = *read_lock!(int_2d_array.flavor) {
+        if let CilFlavor::Array { rank, .. } = *int_2d_array.flavor() {
             assert_eq!(rank, 2);
         } else {
             panic!("Expected Array flavor");
@@ -561,7 +558,7 @@ mod tests {
 
         assert_eq!(list_type.name, "List`1");
         assert_eq!(list_type.namespace, "System.Collections.Generic");
-        assert!(matches!(*read_lock!(list_type.flavor), CilFlavor::Class));
+        assert!(matches!(*list_type.flavor(), CilFlavor::Class));
     }
 
     #[test]
@@ -576,10 +573,7 @@ mod tests {
 
         assert_eq!(struct_type.name, "DateTime");
         assert_eq!(struct_type.namespace, "System");
-        assert!(matches!(
-            *read_lock!(struct_type.flavor),
-            CilFlavor::ValueType
-        ));
+        assert!(matches!(*struct_type.flavor(), CilFlavor::ValueType));
     }
 
     #[test]
@@ -594,10 +588,7 @@ mod tests {
 
         assert_eq!(interface_type.name, "IList`1");
         assert_eq!(interface_type.namespace, "System.Collections.Generic");
-        assert!(matches!(
-            *read_lock!(interface_type.flavor),
-            CilFlavor::Interface
-        ));
+        assert!(matches!(*interface_type.flavor(), CilFlavor::Interface));
     }
 
     #[test]
@@ -639,7 +630,7 @@ mod tests {
 
         assert_eq!(list_int_instance.name, "List`1");
         assert!(matches!(
-            *read_lock!(list_int_instance.flavor),
+            *list_int_instance.flavor(),
             CilFlavor::GenericInstance
         ));
 
@@ -665,7 +656,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(byref_type.name, "Int32&");
-        assert!(matches!(*read_lock!(byref_type.flavor), CilFlavor::ByRef));
+        assert!(matches!(*byref_type.flavor(), CilFlavor::ByRef));
 
         let base_type = byref_type.base.get().unwrap().upgrade().unwrap();
         assert_eq!(base_type.name, "Int32");
@@ -684,7 +675,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(pinned_type.name, "pinned Object");
-        assert!(matches!(*read_lock!(pinned_type.flavor), CilFlavor::Pinned));
+        assert!(matches!(*pinned_type.flavor(), CilFlavor::Pinned));
 
         let base_type = pinned_type.base.get().unwrap().upgrade().unwrap();
         assert_eq!(base_type.name, "Object");
@@ -721,7 +712,7 @@ mod tests {
             .unwrap();
 
         assert!(fn_ptr.name.starts_with("FunctionPointer_"));
-        if let CilFlavor::FnPtr { signature: sig } = &*read_lock!(fn_ptr.flavor) {
+        if let CilFlavor::FnPtr { signature: sig } = fn_ptr.flavor() {
             assert!(!sig.has_this);
             assert_eq!(sig.params.len(), 0);
         } else {
@@ -759,7 +750,7 @@ mod tests {
         assert_eq!(list_type.name, "List`1");
         assert_eq!(list_type.namespace, "System.Collections.Generic");
         assert_eq!(list_type.token, token);
-        assert!(matches!(*read_lock!(list_type.flavor), CilFlavor::Class));
+        assert!(matches!(*list_type.flavor(), CilFlavor::Class));
     }
 
     #[test]
@@ -866,14 +857,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(complex_type.name, "String[][]*&");
-        assert!(matches!(*read_lock!(complex_type.flavor), CilFlavor::ByRef));
+        assert!(matches!(*complex_type.flavor(), CilFlavor::ByRef));
 
         let pointer_type = complex_type.base.get().unwrap().upgrade().unwrap();
         assert_eq!(pointer_type.name, "String[][]*");
-        assert!(matches!(
-            *read_lock!(pointer_type.flavor),
-            CilFlavor::Pointer
-        ));
+        assert!(matches!(*pointer_type.flavor(), CilFlavor::Pointer));
 
         let array2d_type = pointer_type.base.get().unwrap().upgrade().unwrap();
         assert_eq!(array2d_type.name, "String[][]");
@@ -945,7 +933,7 @@ mod tests {
 
         assert_eq!(dict_instance.name, "Dictionary`2");
         assert!(matches!(
-            *read_lock!(dict_instance.flavor),
+            *dict_instance.flavor(),
             CilFlavor::GenericInstance
         ));
 

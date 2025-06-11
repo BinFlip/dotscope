@@ -143,6 +143,12 @@ impl<'a> Parser<'a> {
         self.position
     }
 
+    /// Get access to the underlying data
+    #[must_use]
+    pub fn data(&self) -> &[u8] {
+        self.data
+    }
+
     /// Peak a single byte without moving
     ///
     /// # Errors
