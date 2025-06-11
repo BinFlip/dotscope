@@ -24,8 +24,7 @@ use crate::{
         signatures::SignatureMethod,
         token::Token,
         typesystem::{
-            CilFlavor, CilModifier, CilPrimitiveKind, CilTypeRc, GenericArgument, TypeRegistry,
-            TypeSource,
+            CilFlavor, CilModifier, CilPrimitiveKind, CilTypeRc, TypeRegistry, TypeSource,
         },
     },
     Error::TypeError,
@@ -404,17 +403,36 @@ impl TypeBuilder {
 
             let args = arg_builder(self.registry.clone())?;
             if !args.is_empty() {
-                for (i, arg) in args.iter().enumerate() {
-                    let param = base_type
-                        .generic_params
-                        .iter()
-                        .find(|p| p.1.number as usize == i)
-                        .map(|entry| entry.1.clone());
+                // For type-level generic instances, create MethodSpec instances that wrap the resolved types
+                for (index, arg) in args.iter().enumerate() {
+                    // Create a dummy method specification for the type argument
+                    let rid = u32::try_from(index)
+                        .map_err(|_| malformed_error!("Generic argument index too large"))?
+                        + 1;
+                    let token_value =
+                        0x2B00_0000_u32
+                            .checked_add(u32::try_from(index).map_err(|_| {
+                                malformed_error!("Generic argument index too large")
+                            })?)
+                            .and_then(|v| v.checked_add(1))
+                            .ok_or_else(|| malformed_error!("Token value overflow"))?;
 
-                    generic_type.generic_args.push(GenericArgument {
-                        parameter: param,
-                        argument_type: arg.clone().into(),
+                    let method_spec = Arc::new(crate::metadata::streams::MethodSpec {
+                        rid,
+                        token: Token::new(token_value),
+                        offset: 0,
+                        method: crate::metadata::typesystem::CilTypeReference::None,
+                        instantiation: crate::metadata::signatures::SignatureMethodSpec {
+                            generic_args: vec![],
+                        },
+                        custom_attributes: Arc::new(boxcar::Vec::new()),
+                        generic_args: {
+                            let type_ref_list = Arc::new(boxcar::Vec::with_capacity(1));
+                            type_ref_list.push(arg.clone().into());
+                            type_ref_list
+                        },
                     });
+                    generic_type.generic_args.push(method_spec);
                 }
             }
 
@@ -627,8 +645,7 @@ mod tests {
 
         assert_eq!(list_int_instance.generic_args.count(), 1);
         assert_eq!(
-            list_int_instance.generic_args[0]
-                .argument_type
+            list_int_instance.generic_args[0].generic_args[0]
                 .name()
                 .unwrap(),
             "Int32"
@@ -934,31 +951,31 @@ mod tests {
 
         assert_eq!(dict_instance.generic_args.count(), 2);
         assert_eq!(
-            dict_instance.generic_args[0].argument_type.name().unwrap(),
+            dict_instance.generic_args[0].generic_args[0]
+                .name()
+                .unwrap(),
             "String"
         );
         assert_eq!(
-            dict_instance.generic_args[1].argument_type.name().unwrap(),
+            dict_instance.generic_args[1].generic_args[0]
+                .name()
+                .unwrap(),
             "Int32"
         );
 
-        assert!(dict_instance.generic_args[0].parameter.is_some());
+        // With the simplified approach, we only store the resolved types
+        // The order corresponds to the generic parameter order (0=TKey, 1=TValue)
         assert_eq!(
-            dict_instance.generic_args[0]
-                .parameter
-                .as_ref()
-                .unwrap()
-                .name,
-            "TKey"
-        );
-        assert!(dict_instance.generic_args[1].parameter.is_some());
+            dict_instance.generic_args[0].generic_args[0]
+                .name()
+                .unwrap(),
+            "String"
+        ); // TKey -> String
         assert_eq!(
-            dict_instance.generic_args[1]
-                .parameter
-                .as_ref()
-                .unwrap()
-                .name,
-            "TValue"
-        );
+            dict_instance.generic_args[1].generic_args[0]
+                .name()
+                .unwrap(),
+            "Int32"
+        ); // TValue -> Int32
     }
 }

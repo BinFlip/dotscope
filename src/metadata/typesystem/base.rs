@@ -6,8 +6,8 @@ use crate::{
         signatures::SignatureMethod,
         streams::{
             AssemblyRc, AssemblyRefRc, DeclSecurityRc, EventRc, ExportedTypeRc, FieldRc, FileRc,
-            GenericParamConstraintRc, GenericParamRc, InterfaceImplRc, MemberRefRc, MethodSpecRc,
-            ModuleRc, ModuleRefRc, ParamRc, PropertyRc, StandAloneSigRc,
+            GenericParamConstraintRc, GenericParamRc, InterfaceImplRc, MemberRefRc, MethodSpecList,
+            MethodSpecRc, ModuleRc, ModuleRefRc, ParamRc, PropertyRc, StandAloneSigRc,
         },
         typesystem::{CilPrimitive, CilPrimitiveKind, CilType, CilTypeRc},
     },
@@ -87,7 +87,7 @@ impl CilTypeRef {
 
     /// Get the `generic_args` collection of the referenced type (if still alive)
     #[must_use]
-    pub fn generic_args(&self) -> Option<Arc<boxcar::Vec<GenericArgument>>> {
+    pub fn generic_args(&self) -> Option<MethodSpecList> {
         self.upgrade().map(|t| t.generic_args.clone())
     }
 }
@@ -105,14 +105,6 @@ pub struct ArrayDimensions {
     pub size: Option<u32>,
     /// The lower bound of this dimension (lowest index that can be used to access an element)
     pub lower_bound: Option<u32>,
-}
-
-/// An instantiated generic parameter
-pub struct GenericArgument {
-    /// The parameter this argument is for (contains the constrains as well)
-    pub parameter: Option<GenericParamRc>,
-    /// The concrete type for this argument
-    pub argument_type: CilTypeRef,
 }
 
 #[allow(missing_docs)]
@@ -367,9 +359,9 @@ impl From<CilPrimitive> for CilFlavor {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, OnceLock};
+    use std::sync::Arc;
 
-    use crate::metadata::{streams::GenericParam, token::Token, typesystem::CilType};
+    use crate::metadata::{token::Token, typesystem::CilType};
 
     use super::*;
 
@@ -585,45 +577,6 @@ mod tests {
                 method: false
             }
         ));
-    }
-
-    #[test]
-    fn test_generic_argument() {
-        let param = Arc::new(GenericParam {
-            token: Token::new(0x2A000001),
-            number: 0,
-            flags: 0,
-            owner: OnceLock::new(),
-            name: "T".to_string(),
-            constraints: Arc::new(boxcar::Vec::new()),
-            rid: 0,
-            offset: 0,
-            custom_attributes: Arc::new(boxcar::Vec::new()),
-        });
-
-        let int_type = Arc::new(CilType::new(
-            Token::new(0x01000001),
-            CilFlavor::I4,
-            "System".to_string(),
-            "Int32".to_string(),
-            None,
-            None,
-            0,
-            Arc::new(boxcar::Vec::new()),
-            Arc::new(boxcar::Vec::new()),
-        ));
-
-        let generic_arg = GenericArgument {
-            parameter: Some(param),
-            argument_type: CilTypeRef::from(int_type.clone()),
-        };
-
-        assert!(generic_arg.parameter.is_some());
-        assert_eq!(generic_arg.parameter.as_ref().unwrap().name, "T");
-        assert_eq!(generic_arg.argument_type.name(), Some("Int32".to_string()));
-
-        // Keep the strong reference alive to prevent the weak reference from becoming invalid
-        drop(int_type);
     }
 
     #[test]

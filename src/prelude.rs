@@ -31,6 +31,12 @@ pub use crate::{File, Parser};
 /// Metadata token type for referencing table entries
 pub use crate::metadata::token::Token;
 
+/// Metadata root constants
+pub use crate::metadata::root::CIL_HEADER_MAGIC;
+
+/// Import types for external references
+pub use crate::metadata::imports::ImportType;
+
 // ================================================================================================
 // Type System
 // ================================================================================================
@@ -139,8 +145,8 @@ pub use crate::metadata::streams::MemberRefSignature;
 /// Method body and IL analysis
 pub use crate::metadata::method::{
     ExceptionHandler, ExceptionHandlerFlags, InstructionIterator, Method, MethodBody,
-    MethodImplCodeType, MethodImplManagement, MethodImplOptions, MethodList, MethodMap, MethodRc,
-    MethodRef, MethodRefList,
+    MethodImplCodeType, MethodImplManagement, MethodImplOptions, MethodList, MethodMap,
+    MethodModifiers, MethodRc, MethodRef, MethodRefList,
 };
 
 // ================================================================================================

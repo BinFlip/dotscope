@@ -5,14 +5,10 @@ use crate::{
     file::io::read_le_at_dyn,
     metadata::{
         customattributes::CustomAttributeValueList,
-        method::MethodMap,
         signatures::{parse_method_spec_signature, SignatureMethodSpec},
-        streams::{
-            Blob, CodedIndex, CodedIndexType, GenericParamRc, MemberRefMap, RowDefinition, TableId,
-            TableInfoRef,
-        },
+        streams::{Blob, CodedIndex, CodedIndexType, RowDefinition, TableInfoRef},
         token::Token,
-        typesystem::{CilTypeReference, GenericArgument, TypeRegistry, TypeResolver},
+        typesystem::{CilTypeRefList, CilTypeReference, TypeRegistry, TypeResolver},
     },
     Result,
 };
@@ -39,25 +35,8 @@ pub struct MethodSpec {
     pub instantiation: SignatureMethodSpec,
     /// Custom attributes applied to this `MethodSpec`
     pub custom_attributes: CustomAttributeValueList,
-}
-
-impl MethodSpec {
-    /// Apply a `MethodSemantics` entry - The associated type fill be updated to have it's getter/setter set
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the method type reference is invalid or if handling is not yet implemented.
-    pub fn apply(&self) -> Result<()> {
-        match &self.method {
-            CilTypeReference::MethodDef(_method) => {
-                todo!("Implement handling of MethodDef updates for MethodSpec");
-            }
-            CilTypeReference::MemberRef(_memberref) => {
-                todo!("Implement handling of MemberRef updates for MethodSpec");
-            }
-            _ => Err(malformed_error!("Invalid method type reference")),
-        }
-    }
+    /// Resolved generic arguments for this method specification
+    pub generic_args: CilTypeRefList,
 }
 
 #[derive(Clone, Debug)]
@@ -76,104 +55,10 @@ pub struct MethodSpecRaw {
 }
 
 impl MethodSpecRaw {
-    /// Convert an `MethodSpecRaw`, into a `MethodSpec` which has indexes resolved and owns the referenced data
+    /// Convert an `MethodSpecRaw` into a `MethodSpec` and apply it to the target method
     ///
-    /// # Errors
-    ///
-    /// Returns an error if the method token is invalid, if the referenced method cannot be resolved,
-    /// or if there are issues parsing the method specification signature.
-    ///
-    /// ## Arguments
-    /// * 'value'       - The value to be converted
-    /// * 'blob'        - The #Blob heap
-    /// * 'methods'     - All parsed `MethodDef` entries
-    /// * 'memberrefs'  - All parsed `MemberRef` entries
-    pub fn apply(
-        &self,
-        blob: &Blob,
-        types: &Arc<TypeRegistry>,
-        methods: &MethodMap,
-        memberrefs: &MemberRefMap,
-    ) -> Result<()> {
-        // ToDo: Fix implementation
-        //          - Don't update existing types, these are the underlaying Def/Ref/.
-        //          - Create new Method, that uses existing type as base
-        //          - Update new method, to contain information
-
-        let mut resolver = TypeResolver::new(types.clone());
-        let sig = parse_method_spec_signature(blob.get(self.instantiation as usize)?)?;
-
-        let generic_arg_types = boxcar::Vec::with_capacity(sig.generic_args.len());
-        for generic_arg in sig.generic_args {
-            generic_arg_types.push(resolver.resolve(&generic_arg)?);
-        }
-
-        let generate_arguments =
-            |params: &boxcar::Vec<GenericParamRc>, args: &boxcar::Vec<GenericArgument>| {
-                for (i, arg_type) in &generic_arg_types {
-                    let param = params
-                        .iter()
-                        .find(|(_, e)| e.number as usize == i)
-                        .map(|entry| entry.1.clone());
-
-                    args.push(GenericArgument {
-                        parameter: param,
-                        argument_type: arg_type.clone().into(),
-                    });
-                }
-            };
-
-        match self.method.tag {
-            TableId::MethodDef => match methods.get(&self.method.token) {
-                Some(method) => {
-                    generate_arguments(
-                        &method.value().generic_params,
-                        &method.value().generic_args,
-                    );
-                    Ok(())
-                }
-                None => Err(malformed_error!(
-                    "Failed to resolve method - {}",
-                    self.method.token.value()
-                )),
-            },
-            TableId::MemberRef => match memberrefs.get(&self.method.token) {
-                Some(memberref) => match &memberref.value().declaredby {
-                    CilTypeReference::TypeRef(typeref)
-                    | CilTypeReference::TypeDef(typeref)
-                    | CilTypeReference::TypeSpec(typeref) => {
-                        if let (Some(generic_params), Some(generic_args)) =
-                            (typeref.generic_params(), typeref.generic_args())
-                        {
-                            generate_arguments(&generic_params, &generic_args);
-                        }
-                        Ok(())
-                    }
-                    CilTypeReference::MethodDef(method) => {
-                        if let Some(method) = method.upgrade() {
-                            generate_arguments(&method.generic_params, &method.generic_args);
-                        }
-
-                        Ok(())
-                    }
-                    CilTypeReference::ModuleRef(_module) => {
-                        unimplemented!()
-                    }
-                    _ => Err(malformed_error!("Invalid type reference")),
-                },
-                None => Err(malformed_error!(
-                    "Failed to resolve memberref reference - {}",
-                    self.method.token.value()
-                )),
-            },
-            _ => Err(malformed_error!(
-                "Invalid method token - {}",
-                self.method.token.value()
-            )),
-        }
-    }
-
-    /// Convert an `MethodSpecRaw`, into a `MethodSpec` which has indexes resolved and owns the referenced data
+    /// This method combines the functionality of resolving indexes, parsing the signature,
+    /// resolving generic arguments, and applying them to the target method all in one step.
     ///
     /// # Errors
     ///
@@ -181,11 +66,17 @@ impl MethodSpecRaw {
     /// cannot be resolved, or if there are issues parsing the method specification signature.
     ///
     /// ## Arguments
-    /// * 'value'       - The value to be converted
+    /// * `get_ref`     - Function to resolve coded index to type reference
     /// * 'blob'        - The #Blob heap
-    /// * 'methods'     - All parsed `MethodDef` entries
+    /// * `types`       - The `TypeRegistry` for resolving generic argument types
+    /// * 'methods'     - All parsed `MethodDef` entries  
     /// * 'memberrefs'  - All parsed `MemberRef` entries
-    pub fn to_owned<F>(&self, get_ref: F, blob: &Blob) -> Result<MethodSpecRc>
+    pub fn to_owned_and_apply<F>(
+        &self,
+        get_ref: F,
+        blob: &Blob,
+        types: &Arc<TypeRegistry>,
+    ) -> Result<MethodSpecRc>
     where
         F: Fn(&CodedIndex) -> CilTypeReference,
     {
@@ -197,14 +88,64 @@ impl MethodSpecRaw {
             ));
         }
 
-        Ok(Arc::new(MethodSpec {
+        let instantiation = parse_method_spec_signature(blob.get(self.instantiation as usize)?)?;
+        let generic_args = Arc::new(boxcar::Vec::with_capacity(instantiation.generic_args.len()));
+
+        let mut resolver = TypeResolver::new(types.clone());
+        for type_sig in &instantiation.generic_args {
+            let resolved_type = resolver.resolve(type_sig)?;
+            generic_args.push(resolved_type.into());
+        }
+
+        let method_spec = Arc::new(MethodSpec {
             rid: self.rid,
             token: self.token,
             offset: self.offset,
-            method,
-            instantiation: parse_method_spec_signature(blob.get(self.instantiation as usize)?)?,
+            method: method.clone(),
+            instantiation,
             custom_attributes: Arc::new(boxcar::Vec::new()),
-        }))
+            generic_args,
+        });
+
+        match &method {
+            CilTypeReference::MethodDef(method_ref) => {
+                if let Some(method_def) = method_ref.upgrade() {
+                    method_def.generic_args.push(method_spec.clone());
+                } else {
+                    return Err(malformed_error!(
+                        "Failed to resolve method - {}",
+                        self.method.token.value()
+                    ));
+                }
+            }
+            CilTypeReference::MemberRef(member_ref) => {
+                match &member_ref.declaredby {
+                    CilTypeReference::TypeRef(ciltype)
+                    | CilTypeReference::TypeDef(ciltype)
+                    | CilTypeReference::TypeSpec(ciltype) => {
+                        if let Some(args) = ciltype.generic_args() {
+                            args.push(method_spec.clone());
+                        }
+                    }
+                    CilTypeReference::MethodDef(target_method) => {
+                        if let Some(target_method) = target_method.upgrade() {
+                            target_method.generic_args.push(method_spec.clone());
+                        }
+                    }
+                    CilTypeReference::ModuleRef(_module) => {
+                        // ToDo: ModuleRef case is not yet implemented
+                    }
+                    _ => {
+                        return Err(malformed_error!("Invalid memberref type reference"));
+                    }
+                }
+            }
+            _ => {
+                return Err(malformed_error!("Invalid method type reference"));
+            }
+        }
+
+        Ok(method_spec)
     }
 }
 

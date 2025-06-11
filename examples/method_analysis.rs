@@ -387,9 +387,42 @@ fn print_generic_information(method: &Method) {
 
     let generic_arg_count = method.generic_args.count();
     if generic_arg_count > 0 {
-        println!("\n   Generic Arguments:");
-        for (i, _generic_arg) in method.generic_args.iter().enumerate() {
-            println!("   Generic Argument [{}]: Generic argument", i);
+        println!("\n   Generic Arguments (Method Specifications):");
+        for (i, (_, method_spec)) in method.generic_args.iter().enumerate() {
+            println!("   MethodSpec [{}]:", i);
+            println!("     Token: 0x{:08X}", method_spec.token.value());
+            println!("     RID: {}", method_spec.rid);
+
+            // Print the resolved generic arguments within the MethodSpec
+            if method_spec.generic_args.count() > 0 {
+                println!("     Resolved Types:");
+                for (j, (_, resolved_type)) in method_spec.generic_args.iter().enumerate() {
+                    if let Some(type_name) = resolved_type.name() {
+                        println!("       [{}]: {}", j, type_name);
+                        if let Some(namespace) = resolved_type.namespace() {
+                            if !namespace.is_empty() {
+                                println!("           Namespace: {}", namespace);
+                            }
+                        }
+                        if let Some(token) = resolved_type.token() {
+                            println!("           Token: 0x{:08X}", token.value());
+                        }
+                    } else {
+                        println!("       [{}]: <Unknown Type>", j);
+                    }
+                }
+            }
+
+            // Print signature information
+            if !method_spec.instantiation.generic_args.is_empty() {
+                println!(
+                    "     Signature Arguments: {} type(s)",
+                    method_spec.instantiation.generic_args.len()
+                );
+                for (j, sig_arg) in method_spec.instantiation.generic_args.iter().enumerate() {
+                    println!("       [{}]: {:?}", j, sig_arg);
+                }
+            }
         }
     }
 }

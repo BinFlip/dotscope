@@ -58,7 +58,7 @@ pub(crate) struct LoaderContext<'a> {
     pub method_def: &'a MethodMap,
     pub method_impl: MethodImplMap,
     pub method_semantics: MethodSemanticsMap,
-    pub method_spec: MethodSpecMap,
+    pub method_spec: &'a MethodSpecMap,
     pub field: FieldMap,
     pub field_layout: FieldLayoutMap,
     pub field_marshal: FieldMarshalMap,
@@ -111,9 +111,6 @@ impl LoaderContext<'_> {
     /// // The method automatically handles the table lookup based on coded_index.tag
     /// ```
     pub fn get_ref(&self, coded_index: &CodedIndex) -> CilTypeReference {
-        use crate::metadata::typesystem::CilTypeReference;
-
-        // ToDo: Migrate all the other lookups in loaders to this method
         match coded_index.tag {
             TableId::TypeDef => {
                 if let Some(type_def) = self.types.get(&coded_index.token) {

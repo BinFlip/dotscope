@@ -16,10 +16,11 @@ impl MetadataLoader for MethodSpecLoader {
         if let (Some(header), Some(blob)) = (context.meta, context.blobs) {
             if let Some(table) = header.table::<MethodSpecRaw>(TableId::MethodSpec) {
                 table.par_iter().try_for_each(|row| {
-                    let owned = row.to_owned(|coded_index| context.get_ref(coded_index), blob)?;
-
-                    // ToDo: Implement MethodSpec apply
-                    //owned.apply()?;
+                    let owned = row.to_owned_and_apply(
+                        |coded_index| context.get_ref(coded_index),
+                        blob,
+                        context.types,
+                    )?;
 
                     context.method_spec.insert(row.token, owned);
                     Ok(())

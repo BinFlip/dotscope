@@ -114,9 +114,11 @@ use crate::{
         customattributes::CustomAttributeValueList,
         security::Security,
         signatures::{parse_local_var_signature, SignatureMethod},
-        streams::{Blob, GenericParamList, MetadataTable, ParamList, StandAloneSigRaw},
+        streams::{
+            Blob, GenericParamList, MetadataTable, MethodSpecList, ParamList, StandAloneSigRaw,
+        },
         token::Token,
-        typesystem::{GenericArgument, TypeRegistry, TypeResolver},
+        typesystem::{TypeRegistry, TypeResolver},
     },
     Result,
 };
@@ -220,8 +222,8 @@ pub struct Method {
     pub varargs: Arc<boxcar::Vec<VarArg>>,
     /// All generic parameters this type has (type information, not the instantiated version)
     pub generic_params: GenericParamList,
-    /// All generic arguments this type has (instantiated version)
-    pub generic_args: Arc<boxcar::Vec<GenericArgument>>,
+    /// `MethodSpec` instances that provide generic instantiations for this method
+    pub generic_args: MethodSpecList,
     /// The signature of this method
     pub signature: SignatureMethod,
     /// The RVA of this method

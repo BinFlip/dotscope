@@ -19,7 +19,8 @@ use crate::{
         root::Root,
         streams::{
             AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, Blob, FileMap, Guid,
-            MemberRefMap, ModuleRc, ModuleRefMap, Strings, TablesHeader, UserStrings,
+            MemberRefMap, MethodSpecMap, ModuleRc, ModuleRefMap, Strings, TablesHeader,
+            UserStrings,
         },
         typesystem::TypeRegistry,
     },
@@ -53,6 +54,7 @@ pub(crate) struct CilObjectData<'a> {
     pub imports: Imports,
     pub exports: Exports,
     pub methods: MethodMap,
+    pub method_specs: MethodSpecMap,
     pub resources: Resources,
 }
 
@@ -95,6 +97,7 @@ impl<'a> CilObjectData<'a> {
             imports: Imports::new(),
             exports: Exports::new(),
             methods: SkipMap::default(),
+            method_specs: SkipMap::default(),
             resources: Resources::new(file),
         };
 
@@ -123,7 +126,7 @@ impl<'a> CilObjectData<'a> {
                 method_def: &cil_object.methods,
                 method_impl: SkipMap::default(),
                 method_semantics: SkipMap::default(),
-                method_spec: SkipMap::default(),
+                method_spec: &cil_object.method_specs,
                 field: SkipMap::default(),
                 field_layout: SkipMap::default(),
                 field_marshal: SkipMap::default(),

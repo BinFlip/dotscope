@@ -47,7 +47,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 
 pub use base::{
     ArrayDimensions, CilFlavor, CilModifier, CilTypeRef, CilTypeRefList, CilTypeReference,
-    GenericArgument, ELEMENT_TYPE,
+    ELEMENT_TYPE,
 };
 pub use builder::TypeBuilder;
 pub use primitives::{CilPrimitive, CilPrimitiveData, CilPrimitiveKind};
@@ -58,7 +58,7 @@ use crate::metadata::{
     customattributes::CustomAttributeValueList,
     method::MethodRefList,
     security::Security,
-    streams::{EventList, FieldList, GenericParamList, PropertyList},
+    streams::{EventList, FieldList, GenericParamList, MethodSpecList, PropertyList},
     token::Token,
 };
 
@@ -102,7 +102,7 @@ pub struct CilType {
     /// All generic parameters this type has (type information, not the instantiated version)
     pub generic_params: GenericParamList,
     /// All generic arguments this type has (instantiated version)
-    pub generic_args: Arc<boxcar::Vec<GenericArgument>>,
+    pub generic_args: MethodSpecList,
     /// All custom attributes this type has
     pub custom_attributes: CustomAttributeValueList,
     /// a 2-byte value, specifying the alignment of fields

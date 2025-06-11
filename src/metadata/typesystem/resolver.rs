@@ -2,10 +2,11 @@ use std::sync::Arc;
 
 use crate::{
     metadata::{
-        signatures::TypeSignature,
+        signatures::{SignatureMethodSpec, TypeSignature},
+        streams::MethodSpec,
         token::Token,
         typesystem::{
-            ArrayDimensions, CilFlavor, CilModifier, CilPrimitiveKind, CilTypeRc, GenericArgument,
+            ArrayDimensions, CilFlavor, CilModifier, CilPrimitiveKind, CilTypeRc, CilTypeReference,
             TypeRegistry, TypeSource,
         },
     },
@@ -369,19 +370,34 @@ impl TypeResolver {
                     generic_args.push(arg_type);
                 }
 
-                for (i, arg_sig) in type_args.iter().enumerate() {
-                    let arg_type = self.resolve_with_depth(arg_sig, depth + 1)?;
+                for (index, arg_type) in generic_args.into_iter().enumerate() {
+                    let rid = u32::try_from(index)
+                        .map_err(|_| malformed_error!("Generic argument index too large"))?
+                        + 1;
+                    let token_value =
+                        0x2B00_0000_u32
+                            .checked_add(u32::try_from(index).map_err(|_| {
+                                malformed_error!("Generic argument index too large")
+                            })?)
+                            .and_then(|v| v.checked_add(1))
+                            .ok_or_else(|| malformed_error!("Token value overflow"))?;
 
-                    let param = base_type
-                        .generic_params
-                        .iter()
-                        .find(|p| p.1.number as usize == i)
-                        .map(|entry| entry.1.clone());
-
-                    generic_inst.generic_args.push(GenericArgument {
-                        parameter: param,
-                        argument_type: arg_type.into(),
+                    let method_spec = Arc::new(MethodSpec {
+                        rid,
+                        token: Token::new(token_value),
+                        offset: 0,
+                        method: CilTypeReference::None,
+                        instantiation: SignatureMethodSpec {
+                            generic_args: vec![],
+                        },
+                        custom_attributes: Arc::new(boxcar::Vec::new()),
+                        generic_args: {
+                            let type_ref_list = Arc::new(boxcar::Vec::with_capacity(1));
+                            type_ref_list.push(arg_type.into());
+                            type_ref_list
+                        },
                     });
+                    generic_inst.generic_args.push(method_spec);
                 }
 
                 generic_inst
@@ -734,13 +750,8 @@ mod tests {
 
         assert_eq!(list_int.generic_args.count(), 1);
         assert_eq!(
-            list_int.generic_args[0].argument_type.name().unwrap(),
+            list_int.generic_args[0].generic_args[0].name().unwrap(),
             "Int32"
-        );
-        assert!(list_int.generic_args[0].parameter.is_some());
-        assert_eq!(
-            list_int.generic_args[0].parameter.as_ref().unwrap().name,
-            "T"
         );
     }
 

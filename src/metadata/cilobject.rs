@@ -26,7 +26,8 @@ use crate::{
         root::Root,
         streams::{
             AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, Blob, Guid,
-            MemberRefMap, ModuleRc, ModuleRefMap, Strings, TablesHeader, UserStrings,
+            MemberRefMap, MethodSpecMap, ModuleRc, ModuleRefMap, Strings, TablesHeader,
+            UserStrings,
         },
         typesystem::TypeRegistry,
     },
@@ -683,6 +684,35 @@ impl CilObject {
     /// ```
     pub fn methods(&self) -> &MethodMap {
         self.with_data(|data| &data.methods)
+    }
+
+    /// Returns the method specifications container with all generic method instantiations.
+    ///
+    /// The method specifications container provides access to all generic method instantiations
+    /// defined in this assembly. `MethodSpec` entries represent calls to generic methods with
+    /// specific type arguments, enabling IL instructions to reference these instantiations.
+    ///
+    /// # Returns
+    ///
+    /// Reference to the `MethodSpecMap` containing all method specifications.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+    /// let method_specs = assembly.method_specs();
+    ///
+    /// for entry in method_specs.iter() {
+    ///     let (token, method_spec) = (entry.key(), entry.value());
+    ///     println!("MethodSpec: Token 0x{:08X}", token.value());
+    ///     println!("  Generic args count: {}", method_spec.generic_args.count());
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn method_specs(&self) -> &MethodSpecMap {
+        self.with_data(|data| &data.method_specs)
     }
 
     /// Returns the resources container with all embedded and linked resources.
