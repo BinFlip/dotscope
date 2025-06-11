@@ -195,10 +195,9 @@ impl TypeDefRaw {
             None
         } else {
             match get_ref(&self.extends) {
-                CilTypeReference::None => None,
-                CilTypeReference::TypeDef(type_ref) => Some(type_ref),
-                CilTypeReference::TypeRef(type_ref) => Some(type_ref),
-                CilTypeReference::TypeSpec(type_ref) => Some(type_ref),
+                CilTypeReference::TypeDef(type_ref)
+                | CilTypeReference::TypeRef(type_ref)
+                | CilTypeReference::TypeSpec(type_ref) => Some(type_ref),
                 _ => None,
             }
         };

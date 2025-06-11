@@ -135,7 +135,7 @@ impl CilType {
     /// * `namespace` - The namespace of the type
     /// * `name` - The name of the type  
     /// * `external` - External type reference if this is an imported type
-    /// * `base` - Base type if this type inherits from another
+    /// * `base` - Base type reference if this type inherits from another
     /// * `flags` - Type attributes flags
     /// * `fields` - Fields belonging to this type
     /// * `methods` - Methods belonging to this type
@@ -145,7 +145,7 @@ impl CilType {
         namespace: String,
         name: String,
         external: Option<CilTypeReference>,
-        base: Option<CilTypeRc>,
+        base: Option<CilTypeRef>,
         flags: u32,
         fields: FieldList,
         methods: MethodRefList,
@@ -153,7 +153,7 @@ impl CilType {
     ) -> Self {
         let base_lock = OnceLock::new();
         if let Some(base_value) = base {
-            base_lock.set(base_value.into()).ok();
+            base_lock.set(base_value).ok();
         }
 
         let flavor_lock = OnceLock::new();
