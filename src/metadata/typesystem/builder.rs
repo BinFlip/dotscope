@@ -712,7 +712,7 @@ mod tests {
             .unwrap();
 
         assert!(fn_ptr.name.starts_with("FunctionPointer_"));
-        if let CilFlavor::FnPtr { signature: sig } = &*fn_ptr.flavor() {
+        if let CilFlavor::FnPtr { signature: sig } = fn_ptr.flavor() {
             assert!(!sig.has_this);
             assert_eq!(sig.params.len(), 0);
         } else {

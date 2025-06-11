@@ -75,3 +75,25 @@ pub struct CustomAttributeNamedArgument {
     /// Value of the argument
     pub value: CustomAttributeArgument,
 }
+
+/// .NET `CorSerializationType` constants as defined in corhdr.h
+#[allow(non_snake_case, missing_docs)]
+pub mod SERIALIZATION_TYPE {
+    pub const BOOLEAN: u8 = 0x02;
+    pub const CHAR: u8 = 0x03;
+    pub const I1: u8 = 0x04;
+    pub const U1: u8 = 0x05;
+    pub const I2: u8 = 0x06;
+    pub const U2: u8 = 0x07;
+    pub const I4: u8 = 0x08;
+    pub const U4: u8 = 0x09;
+    pub const I8: u8 = 0x0A;
+    pub const U8: u8 = 0x0B;
+    pub const R4: u8 = 0x0C;
+    pub const R8: u8 = 0x0D;
+    pub const STRING: u8 = 0x0E;
+    pub const TYPE: u8 = 0x50;
+    pub const TAGGED_OBJECT: u8 = 0x51;
+    pub const ENUM: u8 = 0x55;
+    pub const SZARRAY: u8 = 0x1D;
+}

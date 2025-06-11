@@ -116,16 +116,9 @@ impl TypeResolver {
             TypeSignature::U => self.registry.get_primitive(CilPrimitiveKind::U),
             TypeSignature::Object => self.registry.get_primitive(CilPrimitiveKind::Object),
             TypeSignature::String => self.registry.get_primitive(CilPrimitiveKind::String),
-            TypeSignature::Class(token) => {
+            TypeSignature::Class(token) | TypeSignature::ValueType(token) => {
                 if let Some(class_type) = self.registry.get(token) {
                     Ok(class_type)
-                } else {
-                    Err(TypeNotFound(*token))
-                }
-            }
-            TypeSignature::ValueType(token) => {
-                if let Some(value_type) = self.registry.get(token) {
-                    Ok(value_type)
                 } else {
                     Err(TypeNotFound(*token))
                 }
