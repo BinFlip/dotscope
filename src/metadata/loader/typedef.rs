@@ -14,15 +14,19 @@ impl MetadataLoader for TypeDefLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
             if let Some(table) = header.table::<TypeDefRaw>(TableId::TypeDef) {
-                table.par_iter().try_for_each(|row| {
-                    let res = row.to_owned(strings, &context.field, context.method_def, table)?;
+                for row in table {
+                    let res = row.to_owned(
+                        |coded_index| context.get_ref(coded_index),
+                        strings,
+                        &context.field,
+                        context.method_def,
+                        table,
+                    )?;
 
                     // ToDo: Verify this
                     //data.imports.add_type(&res)?;
                     context.types.insert(res);
-
-                    Ok(())
-                })?;
+                }
             }
         }
         Ok(())
@@ -33,6 +37,6 @@ impl MetadataLoader for TypeDefLoader {
     }
 
     fn dependencies(&self) -> &'static [TableId] {
-        &[TableId::Field, TableId::MethodDef]
+        &[TableId::Field, TableId::MethodDef, TableId::TypeRef]
     }
 }
