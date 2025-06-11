@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2025-06-10
+
+### Added
+
+- **Custom Attribute System**: Complete implementation with constructor/property resolution and support for complex parameter types
+- **Enhanced Generic Type System**: Improved MethodSpec handling, corrected generic parameter resolution (`T -> System.Int32`), improved type builder and resolver
+- **Method Analysis Framework**: Improved IL disassembly + API
+
+### Fixed
+
+- **Type Safety**: Replaced unsafe casting with proper bounds checking and overflow detection
+- **Memory Management**: Improved method-to-type associations and type flavor classification
+- **Dependencies**: Updated all dependencies to address security advisories #4, #5, #6
+
+### Changed
+
+- **Breaking**: MethodSpec architecture - `CilType.generic_args` now contains MethodSpec instances instead of direct CilTypeRc
+- **Performance**: Replaced RwLock with `boxcar::Vec` for better lock-free concurrency
+- **Security**: Enhanced input validation and overflow protection for malformed assemblies
+
 ## [0.1.0] - 2025-06-08
 
 ### Added
