@@ -187,6 +187,20 @@ impl CilType {
         }
     }
 
+    /// Set the base type of this type (for interface inheritance)
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(base_type)` if a base type was already set for this type.
+    /// The error contains the `base_type` that was attempted to be set.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the base type was set successfully.
+    pub fn set_base(&self, base_type: CilTypeRef) -> Result<(), CilTypeRef> {
+        self.base.set(base_type)
+    }
+
     /// Access the base type of this type, if it exists
     pub fn base(&self) -> Option<CilTypeRc> {
         if let Some(base) = self.base.get() {
