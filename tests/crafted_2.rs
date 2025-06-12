@@ -2976,7 +2976,7 @@ fn test_assembly_metadata_validation(asm: &CilObject) {
 
         // Try accessing some string indices to validate heap accessibility
         for i in 1..10 {
-            if let Ok(_) = string_heap.get(i) {
+            if string_heap.get(i).is_ok() {
                 found_strings += 1;
             }
         }
@@ -2993,7 +2993,7 @@ fn test_assembly_metadata_validation(asm: &CilObject) {
     let blob = asm.blob();
     if let Some(blob_heap) = blob {
         // Try to access blob entries to validate heap structure
-        if let Ok(_) = blob_heap.get(1) {
+        if blob_heap.get(1).is_ok() {
             println!("  ✓ Blob heap accessible");
         }
     }
