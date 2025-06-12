@@ -7,6 +7,10 @@ use crate::{
     Error::OutOfBounds,
     Result,
 };
+use quick_xml::{
+    events::{attributes::Attributes, Event},
+    Reader,
+};
 use std::fmt;
 
 /// `DeclSecurity` entries represent declarative security attributes that define the security requirements,
@@ -214,26 +218,170 @@ impl PermissionSet {
     /// Parse an XML format permission set
     ///
     /// XML format starts with '<' (0x3C) and contains an XML document
-    /// representing the permission set. This method performs basic detection
-    /// but doesn't fully parse the XML - that would be handled by an XML parser.
+    /// representing the permission set. This format is used in .NET Framework
+    /// and follows the structure:
+    /// ```xml
+    /// <PermissionSet class="System.Security.PermissionSet" version="1">
+    ///   <IPermission class="System.Security.Permissions.SecurityPermission"
+    ///                version="1"
+    ///                Flags="SkipVerification"/>
+    ///   <IPermission class="System.Security.Permissions.FileIOPermission"
+    ///                version="1"
+    ///                Read="C:\temp"/>
+    /// </PermissionSet>
+    /// ```
     ///
     /// ## Arguments
     /// * 'data' - The data slice to parse
     fn parse_xml_format(data: &[u8]) -> Result<(PermissionSetFormat, Vec<Permission>)> {
-        // XML format starts with '<' (0x3C)
-        // ToDo: Use XML crate do to full parsing
-
         if data.len() < 5 {
             return Err(malformed_error!("XML data too short"));
         }
 
-        // Very basic validation that it looks like XML
         let xml_start = b"<Perm";
         if &data[0..5] != xml_start {
             return Err(malformed_error!("Invalid XML permission set format"));
         }
 
-        Ok((PermissionSetFormat::Xml, Vec::new()))
+        let mut reader = Reader::from_reader(std::io::Cursor::new(data));
+        reader.config_mut().trim_text(true);
+
+        let mut permissions = Vec::new();
+        let mut buf = Vec::new();
+        let mut in_permission_set = false;
+
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(ref e)) => match e.name().as_ref() {
+                    b"PermissionSet" => {
+                        in_permission_set = true;
+                    }
+                    b"IPermission" => {
+                        if in_permission_set {
+                            match Self::parse_permission_from_xml_attributes(e.attributes()) {
+                                Ok(permission) => permissions.push(permission),
+                                Err(e) => return Err(e),
+                            }
+                        }
+                    }
+                    _ => {}
+                },
+                Ok(Event::Empty(ref e)) => {
+                    // Handle self-closing tags like <IPermission ... />
+                    if e.name().as_ref() == b"IPermission" && in_permission_set {
+                        match Self::parse_permission_from_xml_attributes(e.attributes()) {
+                            Ok(permission) => permissions.push(permission),
+                            Err(e) => return Err(e),
+                        }
+                    }
+                }
+                Ok(Event::End(ref e)) => {
+                    if e.name().as_ref() == b"PermissionSet" {
+                        in_permission_set = false;
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Err(e) => return Err(malformed_error!("XML parsing error: {}", e)),
+                _ => {}
+            }
+            buf.clear();
+        }
+
+        Ok((PermissionSetFormat::Xml, permissions))
+    }
+
+    /// Parse a permission from XML attributes
+    ///
+    /// Extracts class name, version, and all other attributes as named arguments
+    fn parse_permission_from_xml_attributes(attributes: Attributes) -> Result<Permission> {
+        let mut class_name = String::new();
+        let mut _version = String::new();
+        let mut named_arguments = Vec::new();
+
+        for attr_result in attributes {
+            let attr = attr_result.map_err(|e| malformed_error!("Invalid XML attribute: {}", e))?;
+
+            let key = std::str::from_utf8(attr.key.as_ref())
+                .map_err(|_| malformed_error!("Invalid UTF-8 in XML attribute key"))?;
+            let value = std::str::from_utf8(&attr.value)
+                .map_err(|_| malformed_error!("Invalid UTF-8 in XML attribute value"))?;
+
+            match key {
+                "class" => class_name = value.to_string(),
+                "version" => _version = value.to_string(),
+                _ => {
+                    // Convert XML attribute to NamedArgument
+                    let (arg_type, arg_value) = Self::infer_argument_type_from_xml_value(value);
+                    named_arguments.push(NamedArgument {
+                        name: key.to_string(),
+                        arg_type,
+                        value: arg_value,
+                    });
+                }
+            }
+        }
+
+        if class_name.is_empty() {
+            return Err(malformed_error!(
+                "Missing class attribute in IPermission element"
+            ));
+        }
+
+        let assembly_name = Self::resolve_assembly_name_from_class(&class_name);
+
+        Ok(Permission {
+            class_name,
+            assembly_name,
+            named_arguments,
+        })
+    }
+
+    /// Infer argument type and value from XML string value
+    ///
+    /// This tries to parse the string as different types in order:
+    /// 1. Boolean (true/false, case-insensitive)
+    /// 2. Integer (signed 32-bit)
+    /// 3. String (fallback)
+    fn infer_argument_type_from_xml_value(value: &str) -> (ArgumentType, ArgumentValue) {
+        // Try boolean first (case-insensitive)
+        if let Ok(bool_val) = value.to_lowercase().parse::<bool>() {
+            return (ArgumentType::Boolean, ArgumentValue::Boolean(bool_val));
+        }
+
+        // Try integer
+        if let Ok(int_val) = value.parse::<i32>() {
+            return (ArgumentType::Int32, ArgumentValue::Int32(int_val));
+        }
+
+        // Default to string
+        (
+            ArgumentType::String,
+            ArgumentValue::String(value.to_string()),
+        )
+    }
+
+    /// Resolve assembly name from permission class name
+    ///
+    /// Maps common .NET permission classes to their containing assemblies
+    fn resolve_assembly_name_from_class(class_name: &str) -> String {
+        if class_name.starts_with("System.Security.Permissions.")
+            || class_name.starts_with("System.Security.")
+            || class_name.starts_with("System.Net.")
+        {
+            "mscorlib".to_string() // For .NET Framework
+        } else if class_name.starts_with("System.Data.") {
+            "System.Data".to_string()
+        } else if class_name.starts_with("System.Xml.") {
+            "System.Xml".to_string()
+        } else if class_name.starts_with("System.Web.") {
+            "System.Web".to_string()
+        } else if class_name.starts_with("System.Drawing.") {
+            "System.Drawing".to_string()
+        } else if class_name.starts_with("System.Windows.Forms.") {
+            "System.Windows.Forms".to_string()
+        } else {
+            "Unknown".to_string()
+        }
     }
 
     /// Parse an argument value from the parser based on its type
@@ -452,6 +600,254 @@ mod tests {
 
         let permission_set = PermissionSet::new(xml).unwrap();
         assert!(matches!(permission_set.format, PermissionSetFormat::Xml));
+        assert_eq!(permission_set.permissions.len(), 1);
+        assert_eq!(
+            permission_set.permissions[0].class_name,
+            "System.Security.Permissions.SecurityPermission"
+        );
+    }
+
+    #[test]
+    fn test_xml_format_with_attributes() {
+        let xml = br#"<PermissionSet class="System.Security.PermissionSet" version="1">
+            <IPermission class="System.Security.Permissions.SecurityPermission" 
+                         version="1" 
+                         Flags="SkipVerification"/>
+            <IPermission class="System.Security.Permissions.FileIOPermission" 
+                         version="1" 
+                         Read="C:\temp" 
+                         Unrestricted="false"/>
+        </PermissionSet>"#;
+
+        let permission_set = PermissionSet::new(xml).unwrap();
+        assert!(matches!(permission_set.format, PermissionSetFormat::Xml));
+        assert_eq!(permission_set.permissions.len(), 2);
+
+        // Check SecurityPermission
+        let security_perm = &permission_set.permissions[0];
+        assert_eq!(
+            security_perm.class_name,
+            "System.Security.Permissions.SecurityPermission"
+        );
+        assert_eq!(security_perm.assembly_name, "mscorlib");
+        assert_eq!(security_perm.named_arguments.len(), 1);
+        assert_eq!(security_perm.named_arguments[0].name, "Flags");
+        assert!(matches!(
+            security_perm.named_arguments[0].value,
+            ArgumentValue::String(ref s) if s == "SkipVerification"
+        ));
+
+        // Check FileIOPermission
+        let fileio_perm = &permission_set.permissions[1];
+        assert_eq!(
+            fileio_perm.class_name,
+            "System.Security.Permissions.FileIOPermission"
+        );
+        assert_eq!(fileio_perm.assembly_name, "mscorlib");
+        assert_eq!(fileio_perm.named_arguments.len(), 2);
+
+        // Find Read argument
+        let read_arg = fileio_perm
+            .named_arguments
+            .iter()
+            .find(|arg| arg.name == "Read")
+            .unwrap();
+        assert!(matches!(
+            read_arg.value,
+            ArgumentValue::String(ref s) if s == "C:\\temp"
+        ));
+
+        // Find Unrestricted argument
+        let unrestricted_arg = fileio_perm
+            .named_arguments
+            .iter()
+            .find(|arg| arg.name == "Unrestricted")
+            .unwrap();
+        assert!(matches!(
+            unrestricted_arg.value,
+            ArgumentValue::Boolean(false)
+        ));
+    }
+
+    #[test]
+    fn test_xml_format_boolean_parsing() {
+        let xml = br#"<PermissionSet class="System.Security.PermissionSet">
+            <IPermission class="System.Security.Permissions.SecurityPermission" 
+                         Unrestricted="true" 
+                         Flag1="false"
+                         Flag2="True"
+                         Flag3="FALSE"/>
+        </PermissionSet>"#;
+
+        let permission_set = PermissionSet::new(xml).unwrap();
+        let permission = &permission_set.permissions[0];
+        assert_eq!(permission.named_arguments.len(), 4);
+
+        // Check all boolean values
+        let unrestricted = permission
+            .named_arguments
+            .iter()
+            .find(|arg| arg.name == "Unrestricted")
+            .unwrap();
+        assert!(matches!(unrestricted.value, ArgumentValue::Boolean(true)));
+
+        let flag1 = permission
+            .named_arguments
+            .iter()
+            .find(|arg| arg.name == "Flag1")
+            .unwrap();
+        assert!(matches!(flag1.value, ArgumentValue::Boolean(false)));
+
+        let flag2 = permission
+            .named_arguments
+            .iter()
+            .find(|arg| arg.name == "Flag2")
+            .unwrap();
+        assert!(matches!(flag2.value, ArgumentValue::Boolean(true)));
+
+        let flag3 = permission
+            .named_arguments
+            .iter()
+            .find(|arg| arg.name == "Flag3")
+            .unwrap();
+        assert!(matches!(flag3.value, ArgumentValue::Boolean(false)));
+    }
+
+    #[test]
+    fn test_xml_format_integer_parsing() {
+        let xml = br#"<PermissionSet class="System.Security.PermissionSet">
+            <IPermission class="System.Security.Permissions.SecurityPermission" 
+                         Flags="7" 
+                         NegativeFlag="-1"
+                         ZeroFlag="0"/>
+        </PermissionSet>"#;
+
+        let permission_set = PermissionSet::new(xml).unwrap();
+        let permission = &permission_set.permissions[0];
+        assert_eq!(permission.named_arguments.len(), 3);
+
+        let flags = permission
+            .named_arguments
+            .iter()
+            .find(|arg| arg.name == "Flags")
+            .unwrap();
+        assert!(matches!(flags.value, ArgumentValue::Int32(7)));
+
+        let negative = permission
+            .named_arguments
+            .iter()
+            .find(|arg| arg.name == "NegativeFlag")
+            .unwrap();
+        assert!(matches!(negative.value, ArgumentValue::Int32(-1)));
+
+        let zero = permission
+            .named_arguments
+            .iter()
+            .find(|arg| arg.name == "ZeroFlag")
+            .unwrap();
+        assert!(matches!(zero.value, ArgumentValue::Int32(0)));
+    }
+
+    #[test]
+    fn test_xml_format_assembly_name_resolution() {
+        let xml = br#"<PermissionSet class="System.Security.PermissionSet">
+            <IPermission class="System.Security.Permissions.SecurityPermission"/>
+            <IPermission class="System.Data.SqlClient.SqlPermission"/>
+            <IPermission class="System.Xml.XmlPermission"/>
+            <IPermission class="System.Web.AspNetHostingPermission"/>
+            <IPermission class="System.Drawing.Printing.PrintingPermission"/>
+            <IPermission class="System.Windows.Forms.FileDialogPermission"/>
+            <IPermission class="Custom.Unknown.Permission"/>
+        </PermissionSet>"#;
+
+        let permission_set = PermissionSet::new(xml).unwrap();
+        assert_eq!(permission_set.permissions.len(), 7);
+
+        assert_eq!(permission_set.permissions[0].assembly_name, "mscorlib");
+        assert_eq!(permission_set.permissions[1].assembly_name, "System.Data");
+        assert_eq!(permission_set.permissions[2].assembly_name, "System.Xml");
+        assert_eq!(permission_set.permissions[3].assembly_name, "System.Web");
+        assert_eq!(
+            permission_set.permissions[4].assembly_name,
+            "System.Drawing"
+        );
+        assert_eq!(
+            permission_set.permissions[5].assembly_name,
+            "System.Windows.Forms"
+        );
+        assert_eq!(permission_set.permissions[6].assembly_name, "Unknown");
+    }
+
+    #[test]
+    fn test_xml_format_empty_permission_set() {
+        let xml = br#"<PermissionSet class="System.Security.PermissionSet" version="1">
+        </PermissionSet>"#;
+
+        let permission_set = PermissionSet::new(xml).unwrap();
+        assert!(matches!(permission_set.format, PermissionSetFormat::Xml));
+        assert_eq!(permission_set.permissions.len(), 0);
+    }
+
+    #[test]
+    fn test_xml_format_missing_class_attribute() {
+        let xml = br#"<PermissionSet class="System.Security.PermissionSet">
+            <IPermission version="1" Flags="SkipVerification"/>
+        </PermissionSet>"#;
+
+        let result = PermissionSet::new(xml);
+        assert!(result.is_err());
+        let error_msg = format!("{}", result.unwrap_err());
+        assert!(error_msg.contains("Missing class attribute"));
+    }
+
+    #[test]
+    fn test_xml_format_malformed_xml() {
+        let xml = b"<PermissionSet><IPermission class=unclosed";
+
+        let result = PermissionSet::new(xml);
+        assert!(result.is_err());
+        let error_msg = format!("{}", result.unwrap_err());
+        assert!(error_msg.contains("XML parsing error"));
+    }
+
+    #[test]
+    fn test_xml_format_complex_permission_set() {
+        let xml = br#"<PermissionSet class="System.Security.PermissionSet" version="1" Unrestricted="false">
+            <IPermission class="System.Security.Permissions.SecurityPermission" 
+                         version="1" 
+                         Flags="Assertion, Execution, SkipVerification"/>
+            <IPermission class="System.Security.Permissions.FileIOPermission" 
+                         version="1" 
+                         Read="C:\Program Files;C:\Windows\System32" 
+                         Write="C:\temp;C:\logs"
+                         Append="C:\logs"/>
+            <IPermission class="System.Security.Permissions.RegistryPermission" 
+                         version="1" 
+                         Read="HKEY_LOCAL_MACHINE\SOFTWARE"/>
+            <IPermission class="System.Security.Permissions.EnvironmentPermission" 
+                         version="1" 
+                         Read="PATH;TEMP;TMP"/>
+        </PermissionSet>"#;
+
+        let permission_set = PermissionSet::new(xml).unwrap();
+        assert_eq!(permission_set.permissions.len(), 4);
+
+        // Test specific permission existence
+        assert!(
+            permission_set.contains_permission("System.Security.Permissions.SecurityPermission")
+        );
+        assert!(permission_set.contains_permission("System.Security.Permissions.FileIOPermission"));
+        assert!(
+            permission_set.contains_permission("System.Security.Permissions.RegistryPermission")
+        );
+        assert!(
+            permission_set.contains_permission("System.Security.Permissions.EnvironmentPermission")
+        );
+
+        // Test convenience methods
+        assert!(permission_set.has_file_io());
+        assert!(permission_set.has_registry());
+        assert!(permission_set.has_environment());
     }
 
     #[test]
@@ -1059,6 +1455,7 @@ mod tests {
 
     #[test]
     fn test_binary_format_zero_property_name_length() {
+        // Binary format with permission with zero-length property name
         let mut data = vec![b'.', 0x01]; // '.' + 1 permission
 
         let class_name = b"TestPermission";

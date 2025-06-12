@@ -256,6 +256,7 @@ dependencies = [
  "md-5",
  "memmap2",
  "ouroboros",
+ "quick-xml",
  "rayon",
  "sha1",
  "strum",
@@ -511,6 +512,15 @@ dependencies = [
  "syn",
  "version_check",
  "yansi",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.37.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]

@@ -23,8 +23,6 @@ impl MetadataLoader for TypeDefLoader {
                         table,
                     )?;
 
-                    // ToDo: Verify this
-                    //data.imports.add_type(&res)?;
                     context.types.insert(res);
                 }
             }
