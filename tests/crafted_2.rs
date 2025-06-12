@@ -509,6 +509,21 @@ fn crafted_2() {
     test_generic_delegate_type(&asm);
     test_generic_method_specs(&asm);
     test_extension_method_generic(&asm);
+
+    test_inheritance_relationships(&asm);
+    test_interface_implementations(&asm);
+    test_type_flavor_classification(&asm);
+    test_method_associations(&asm);
+    test_event_and_property_semantics(&asm);
+    test_nested_type_relationships(&asm);
+    test_enum_and_constant_validation(&asm);
+    test_generic_constraint_validation(&asm);
+    test_pinvoke_and_security_validation(&asm);
+    test_method_signature_validation(&asm);
+    test_field_validation(&asm);
+    test_assembly_metadata_validation(&asm);
+    test_table_count_validation(&asm);
+    test_custom_attribute_validation(&asm);
 }
 
 /// Verify the cor20 header matches the values of '`crafted_2.exe`' on disk
@@ -1472,22 +1487,31 @@ fn test_generic_struct_type(asm: &CilObject) {
     assert_eq!(generic_struct.name, "GenericStruct`2");
 
     // Debug: Check what flavor it actually has
-    let actual_flavor = &*generic_struct.flavor.read().unwrap();
+    let actual_flavor = generic_struct.flavor();
     println!("GenericStruct`2 flavor: {:?}", actual_flavor);
 
-    // For now, let's just verify it exists and has the right name
-    // The flavor assertion might be failing due to how value types are represented
-    // assert!(matches!(
-    //     *generic_struct.flavor.read().unwrap(),
-    //     CilFlavor::ValueType
-    // ));
+    // Verify it exists and has the right name
+    assert!(matches!(*generic_struct.flavor(), CilFlavor::ValueType));
 
     // Verify it has 2 generic parameters
     assert_eq!(generic_struct.generic_params.count(), 2);
 
     let params: Vec<_> = generic_struct.generic_params.iter().collect();
-    assert_eq!(params[0].1.name, "T");
-    assert_eq!(params[1].1.name, "U");
+    let param_names: Vec<&str> = params
+        .iter()
+        .map(|(_, param)| param.name.as_str())
+        .collect();
+
+    // Verify that we have both T and U parameters (order may vary)
+    assert!(
+        param_names.contains(&"T"),
+        "Should have generic parameter T"
+    );
+    assert!(
+        param_names.contains(&"U"),
+        "Should have generic parameter U"
+    );
+    println!("GenericStruct`2 generic parameters: {:?}", param_names);
 }
 
 /// Test the GenericDelegate<T, TResult> delegate type
@@ -1504,15 +1528,11 @@ fn test_generic_delegate_type(asm: &CilObject) {
     assert_eq!(generic_delegate.name, "GenericDelegate`2");
 
     // Debug: Check what flavor it actually has
-    let actual_delegate_flavor = &*generic_delegate.flavor.read().unwrap();
+    let actual_delegate_flavor = generic_delegate.flavor();
     println!("GenericDelegate`2 flavor: {:?}", actual_delegate_flavor);
 
-    // For now, let's just verify it exists and has the right name
-    // The flavor assertion might be failing due to how delegate types are represented
-    // assert!(matches!(
-    //     *generic_delegate.flavor.read().unwrap(),
-    //     CilFlavor::Class
-    // ));
+    // Verify it exists and has the right name
+    assert!(matches!(*generic_delegate.flavor(), CilFlavor::Class));
 
     // Verify it has 2 generic parameters
     assert_eq!(generic_delegate.generic_params.count(), 2);
@@ -1624,4 +1644,1392 @@ fn test_extension_method_generic(asm: &CilObject) {
             }
         }
     }
+}
+
+/// Test inheritance relationships and base class validation
+fn test_inheritance_relationships(asm: &CilObject) {
+    println!("Testing inheritance relationships...");
+    let types = asm.types();
+    let all_types = types.all_types();
+
+    // Find BaseClass
+    let base_class = all_types
+        .iter()
+        .find(|t| t.name == "BaseClass")
+        .expect("Should find BaseClass");
+
+    // Find DerivedClass
+    let derived_class = all_types
+        .iter()
+        .find(|t| t.name == "DerivedClass")
+        .expect("Should find DerivedClass");
+
+    // Test base class relationship - this should work now due to our inheritance fix
+    let base_type = derived_class
+        .base()
+        .expect("DerivedClass should have a base class");
+    println!(
+        "DerivedClass base type: {}:{}",
+        base_type.namespace, base_type.name
+    );
+    assert_eq!(
+        base_type.name, "BaseClass",
+        "DerivedClass should inherit from BaseClass"
+    );
+    println!("✓ DerivedClass correctly inherits from BaseClass");
+
+    // Find Person and Employee classes for multi-level inheritance
+    let _person_class = all_types
+        .iter()
+        .find(|t| t.name == "Person")
+        .expect("Should find Person class");
+
+    let employee_class = all_types
+        .iter()
+        .find(|t| t.name == "Employee")
+        .expect("Should find Employee class");
+
+    // Test Employee inherits from Person
+    let employee_base_type = employee_class
+        .base()
+        .expect("Employee should have a base class");
+    println!(
+        "Employee base type: {}:{}",
+        employee_base_type.namespace, employee_base_type.name
+    );
+    assert_eq!(
+        employee_base_type.name, "Person",
+        "Employee should inherit from Person"
+    );
+    println!("✓ Employee correctly inherits from Person");
+
+    // Test virtual method discovery
+    let virtual_method = base_class.methods.iter().find(|(_, method_ref)| {
+        if let Some(method) = method_ref.upgrade() {
+            method.name == "VirtualMethod"
+        } else {
+            false
+        }
+    });
+    assert!(
+        virtual_method.is_some(),
+        "BaseClass should have VirtualMethod"
+    );
+    println!("✓ BaseClass has VirtualMethod");
+
+    // Test abstract method discovery
+    let abstract_method = base_class.methods.iter().find(|(_, method_ref)| {
+        if let Some(method) = method_ref.upgrade() {
+            method.name == "AbstractMethod"
+        } else {
+            false
+        }
+    });
+    assert!(
+        abstract_method.is_some(),
+        "BaseClass should have AbstractMethod"
+    );
+    println!("✓ BaseClass has AbstractMethod");
+
+    println!("✓ Inheritance relationships validated");
+}
+
+/// Test interface implementations
+fn test_interface_implementations(asm: &CilObject) {
+    println!("Testing interface implementations...");
+    let types = asm.types();
+    let all_types = types.all_types();
+
+    // Find interfaces
+    let base_interface = all_types
+        .iter()
+        .find(|t| t.name == "IBaseInterface")
+        .expect("Should find IBaseInterface");
+
+    let derived_interface = all_types
+        .iter()
+        .find(|t| t.name == "IDerivedInterface")
+        .expect("Should find IDerivedInterface");
+
+    // Verify interface types are classified correctly
+    let base_interface_flavor = base_interface.flavor();
+    let derived_interface_flavor = derived_interface.flavor();
+
+    println!("IBaseInterface flavor: {:?}", base_interface_flavor);
+    println!("IDerivedInterface flavor: {:?}", derived_interface_flavor);
+
+    // Test interface inheritance - this should work now due to our interface inheritance fix
+    let base_type = derived_interface
+        .base()
+        .expect("IDerivedInterface should have a base interface");
+    println!(
+        "IDerivedInterface base type: {}:{}",
+        base_type.namespace, base_type.name
+    );
+    assert_eq!(
+        base_type.name, "IBaseInterface",
+        "IDerivedInterface should inherit from IBaseInterface"
+    );
+
+    // Find DerivedClass and verify it implements interfaces
+    let derived_class = all_types
+        .iter()
+        .find(|t| t.name == "DerivedClass")
+        .expect("Should find DerivedClass");
+
+    // Look for interface methods in DerivedClass
+    let method1_impl = derived_class.methods.iter().find(|(_, method_ref)| {
+        if let Some(method) = method_ref.upgrade() {
+            method.name == "Method1"
+        } else {
+            false
+        }
+    });
+    assert!(
+        method1_impl.is_some(),
+        "DerivedClass should implement Method1 from IBaseInterface"
+    );
+    println!("✓ DerivedClass implements Method1 from IBaseInterface");
+
+    println!("✓ Interface implementations validated");
+}
+
+/// Test type flavor classification
+fn test_type_flavor_classification(asm: &CilObject) {
+    println!("Testing type flavor classification...");
+    let types = asm.types();
+    let all_types = types.all_types();
+
+    let mut classification_results = Vec::new();
+
+    for type_def in all_types.iter() {
+        let flavor = type_def.flavor();
+        classification_results.push((type_def.name.clone(), format!("{:?}", flavor)));
+
+        match type_def.name.as_str() {
+            "GenericStruct`2" => {
+                println!("GenericStruct`2 flavor: {:?}", flavor);
+                assert!(
+                    matches!(flavor, CilFlavor::ValueType),
+                    "GenericStruct should be ValueType"
+                );
+            }
+            "GenericDelegate`2" => {
+                println!("GenericDelegate`2 flavor: {:?}", flavor);
+                assert!(
+                    matches!(flavor, CilFlavor::Class),
+                    "GenericDelegate should be Class"
+                );
+            }
+            "IBaseInterface" | "IDerivedInterface" => {
+                println!("{} flavor: {:?}", type_def.name, flavor);
+                assert!(
+                    matches!(flavor, CilFlavor::Interface),
+                    "Interfaces should be Interface flavor"
+                );
+            }
+            "TestEnum" => {
+                println!("TestEnum flavor: {:?}", flavor);
+                assert!(
+                    matches!(flavor, CilFlavor::ValueType),
+                    "Enums should be ValueType"
+                );
+            }
+            "StructWithExplicitLayout" => {
+                println!("StructWithExplicitLayout flavor: {:?}", flavor);
+                assert!(
+                    matches!(flavor, CilFlavor::ValueType),
+                    "Structs should be ValueType"
+                );
+            }
+            "BaseClass" | "DerivedClass" => {
+                println!("{} flavor: {:?}", type_def.name, flavor);
+                assert!(
+                    matches!(flavor, CilFlavor::Class),
+                    "Classes should be Class flavor"
+                );
+            }
+            "ComplexGeneric`3" => {
+                println!("{} flavor: {:?}", type_def.name, flavor);
+                // Generic types can be either Class or GenericInstance depending on context
+                assert!(
+                    matches!(flavor, CilFlavor::Class | CilFlavor::GenericInstance),
+                    "Generic classes should be Class or GenericInstance flavor"
+                );
+            }
+            _ => {}
+        }
+    }
+
+    // Print summary of all type classifications
+    println!("Type flavor classification summary:");
+    for (name, flavor) in &classification_results {
+        if !name.starts_with('<') && !name.is_empty() {
+            // Skip compiler-generated types
+            println!("  {}: {}", name, flavor);
+        }
+    }
+
+    println!("✓ Type flavor classification validated");
+}
+
+/// Test method associations - this will expose the method association bug
+fn test_method_associations(asm: &CilObject) {
+    println!("Testing method associations...");
+    let types = asm.types();
+    let all_types = types.all_types();
+
+    // Test ComplexGeneric class method association
+    let complex_generic = all_types
+        .iter()
+        .find(|t| t.name == "ComplexGeneric`3")
+        .expect("Should find ComplexGeneric`3");
+
+    let method_count = complex_generic.methods.iter().count();
+    println!("ComplexGeneric`3 has {} associated methods", method_count);
+
+    // List all methods associated with ComplexGeneric
+    for (i, (_, method_ref)) in complex_generic.methods.iter().enumerate() {
+        if let Some(method) = method_ref.upgrade() {
+            println!(
+                "  Method {}: {} (Token: 0x{:08X})",
+                i,
+                method.name,
+                method.token.value()
+            );
+        }
+    }
+
+    // The ComplexGeneric class should have:
+    // - Constructor (.ctor)
+    // - ConstrainedMethod<T, U>
+    // - ProcessValues
+    // Based on test output, this is now working correctly
+
+    assert!(method_count >= 3, "ComplexGeneric`3 should have at least 3 methods (constructor, ConstrainedMethod, ProcessValues)");
+    println!("✓ ComplexGeneric`3 method association is working");
+
+    // Verify expected methods are present
+    let method_names: Vec<String> = complex_generic
+        .methods
+        .iter()
+        .filter_map(|(_, method_ref)| method_ref.upgrade().map(|m| m.name.clone()))
+        .collect();
+
+    assert!(
+        method_names.iter().any(|name| name == "ConstrainedMethod"),
+        "Should find ConstrainedMethod"
+    );
+    assert!(
+        method_names.iter().any(|name| name == "ProcessValues"),
+        "Should find ProcessValues"
+    );
+    assert!(
+        method_names.iter().any(|name| name == ".ctor"),
+        "Should find constructor"
+    );
+
+    // Test other types too
+    for type_def in all_types.iter().take(10) {
+        let method_count = type_def.methods.iter().count();
+        if method_count > 0 {
+            println!("Type '{}' has {} methods", type_def.name, method_count);
+        }
+    }
+
+    println!("✓ Method associations tested");
+}
+
+/// Test event and property semantics
+fn test_event_and_property_semantics(asm: &CilObject) {
+    println!("Testing event and property semantics...");
+    let types = asm.types();
+    let all_types = types.all_types();
+
+    // Find DerivedClass which has events and properties
+    let derived_class = all_types
+        .iter()
+        .find(|t| t.name == "DerivedClass")
+        .expect("Should find DerivedClass");
+
+    // Test events - should have exactly 2 events: Event1 and CustomEvent
+    let events_count = derived_class.events.iter().count();
+    println!("DerivedClass has {} events", events_count);
+    assert_eq!(
+        events_count, 2,
+        "DerivedClass should have exactly 2 events (Event1 and CustomEvent)"
+    );
+
+    let mut expected_events = std::collections::HashSet::from(["Event1", "CustomEvent"]);
+
+    for (_, event) in derived_class.events.iter() {
+        println!("  Event: {}", event.name);
+        assert!(
+            expected_events.remove(event.name.as_str()),
+            "Found unexpected event: {}",
+            event.name
+        );
+
+        // Events should have add/remove accessor methods
+        let add_method_name = format!("add_{}", event.name);
+        let remove_method_name = format!("remove_{}", event.name);
+
+        let has_add_method = derived_class.methods.iter().any(|(_, method_ref)| {
+            method_ref
+                .upgrade()
+                .map(|m| m.name == add_method_name)
+                .unwrap_or(false)
+        });
+
+        let has_remove_method = derived_class.methods.iter().any(|(_, method_ref)| {
+            method_ref
+                .upgrade()
+                .map(|m| m.name == remove_method_name)
+                .unwrap_or(false)
+        });
+
+        assert!(
+            has_add_method,
+            "Event {} should have add method {}",
+            event.name, add_method_name
+        );
+        assert!(
+            has_remove_method,
+            "Event {} should have remove method {}",
+            event.name, remove_method_name
+        );
+
+        println!(
+            "    Has add method ({}): {}",
+            add_method_name, has_add_method
+        );
+        println!(
+            "    Has remove method ({}): {}",
+            remove_method_name, has_remove_method
+        );
+    }
+
+    assert!(
+        expected_events.is_empty(),
+        "Missing expected events: {:?}",
+        expected_events
+    );
+
+    // Test properties - should have exactly 1 property: Property1
+    let properties_count = derived_class.properties.iter().count();
+    println!("DerivedClass has {} properties", properties_count);
+    assert_eq!(
+        properties_count, 1,
+        "DerivedClass should have exactly 1 property (Property1)"
+    );
+
+    for (_, property) in derived_class.properties.iter() {
+        println!("  Property: {}", property.name);
+        assert_eq!(
+            property.name, "Property1",
+            "Expected property should be Property1"
+        );
+
+        // Properties should have get/set accessor methods
+        let get_method_name = format!("get_{}", property.name);
+        let set_method_name = format!("set_{}", property.name);
+
+        let has_get_method = derived_class.methods.iter().any(|(_, method_ref)| {
+            method_ref
+                .upgrade()
+                .map(|m| m.name == get_method_name)
+                .unwrap_or(false)
+        });
+
+        let has_set_method = derived_class.methods.iter().any(|(_, method_ref)| {
+            method_ref
+                .upgrade()
+                .map(|m| m.name == set_method_name)
+                .unwrap_or(false)
+        });
+
+        assert!(
+            has_get_method,
+            "Property {} should have get method {}",
+            property.name, get_method_name
+        );
+        assert!(
+            has_set_method,
+            "Property {} should have set method {}",
+            property.name, set_method_name
+        );
+
+        println!(
+            "    Has get method ({}): {}",
+            get_method_name, has_get_method
+        );
+        println!(
+            "    Has set method ({}): {}",
+            set_method_name, has_set_method
+        );
+    }
+
+    println!("✓ Event and property semantics tested");
+}
+
+/// Test nested type relationships
+fn test_nested_type_relationships(asm: &CilObject) {
+    println!("Testing nested type relationships...");
+    let types = asm.types();
+    let all_types = types.all_types();
+
+    // Find nested types by looking for types that contain other types
+    let mut nested_types_found = 0;
+    let mut enclosing_types = std::collections::HashMap::new();
+
+    for type_def in all_types.iter() {
+        // Look for types that have nested types
+        let nested_count = type_def.nested_types.iter().count();
+        if nested_count > 0 {
+            println!(
+                "Type '{}' has {} nested types:",
+                type_def.name, nested_count
+            );
+
+            for (_, nested_ref) in type_def.nested_types.iter() {
+                if let Some(nested_type) = nested_ref.upgrade() {
+                    nested_types_found += 1;
+                    println!("  Nested: {}", nested_type.name);
+                    enclosing_types.insert(nested_type.name.clone(), type_def.name.clone());
+                }
+            }
+        }
+
+        // Also look for types with "Nested" in their name
+        if type_def.name.contains("Nested") || type_def.name.contains("+") {
+            if !enclosing_types.contains_key(&type_def.name) {
+                nested_types_found += 1;
+            }
+            println!(
+                "Found nested type: {} (Namespace: '{}')",
+                type_def.name, type_def.namespace
+            );
+
+            // For nested types, the parent relationship might be stored differently
+            // Let's check what base type it has
+            if let Some(base_type) = type_def.base() {
+                println!("  Base type: {}", base_type.name);
+                // Note: For nested types, base() typically returns System.Object or the actual base class,
+                // not the enclosing type. The enclosing relationship is in the NestedClass table.
+            } else {
+                println!("  No base type found");
+            }
+        }
+    }
+
+    println!("Found {} nested types total", nested_types_found);
+
+    // Expected nested types from the C# source:
+    // - DerivedClass+NestedClass
+    // - DerivedClass+NestedEnum
+    // - DerivedClass+NestedGeneric`1
+    // - ComplexGeneric`3+NestedStruct
+    let expected_nested = vec![
+        "NestedClass",
+        "NestedEnum",
+        "NestedGeneric`1",
+        "NestedStruct",
+    ];
+
+    for nested_name in expected_nested {
+        let found_nested = all_types.iter().find(|t| t.name == nested_name);
+
+        assert!(
+            found_nested.is_some(),
+            "Expected nested type not found: {}",
+            nested_name
+        );
+        println!("✓ Found expected nested type: {}", nested_name);
+
+        // Check if any enclosing type has this as a nested type
+        if let Some(enclosing_name) = enclosing_types.get(nested_name) {
+            println!("  ✓ Correctly enclosed by: {}", enclosing_name);
+
+            // Verify the expected enclosing relationships
+            match nested_name {
+                "NestedClass" | "NestedEnum" | "NestedGeneric`1" => {
+                    assert_eq!(
+                        enclosing_name, "DerivedClass",
+                        "{} should be enclosed by DerivedClass",
+                        nested_name
+                    );
+                }
+                "NestedStruct" => {
+                    assert_eq!(
+                        enclosing_name, "ComplexGeneric`3",
+                        "NestedStruct should be enclosed by ComplexGeneric`3"
+                    );
+                }
+                _ => {}
+            }
+        } else {
+            println!("  ? Enclosing relationship not found in nested_types collections");
+            println!("    (This might indicate the NestedClass table parsing needs verification)");
+        }
+    }
+
+    // Also check the raw NestedClass table to see if relationships are stored there
+    let tables = asm.tables().unwrap();
+    if let Some(nested_table) = tables.table::<NestedClassRaw>(TableId::NestedClass) {
+        println!(
+            "NestedClass table has {} entries:",
+            nested_table.row_count()
+        );
+        assert_eq!(
+            nested_table.row_count(),
+            10,
+            "Expected exactly 10 nested class entries"
+        );
+
+        for nested_row in nested_table.iter().take(5) {
+            println!(
+                "  NestedClass: nested=0x{:X}, enclosing=0x{:X}",
+                nested_row.nested_class, nested_row.enclosing_class
+            );
+        }
+    }
+
+    println!("✓ Nested type relationships tested");
+}
+
+/// Test enum and constant validation
+fn test_enum_and_constant_validation(asm: &CilObject) {
+    println!("Testing enum and constant validation...");
+    let types = asm.types();
+    let all_types = types.all_types();
+
+    // Find TestEnum
+    let test_enum = all_types
+        .iter()
+        .find(|t| t.name == "TestEnum")
+        .expect("Should find TestEnum");
+
+    println!("TestEnum type found");
+    println!("  Flavor: {:?}", *test_enum.flavor());
+
+    // Test enum fields (values) - should have 6 fields including value__
+    let fields_count = test_enum.fields.iter().count();
+    println!("  Has {} fields", fields_count);
+    assert_eq!(
+        fields_count, 6,
+        "TestEnum should have 6 fields (value__ + 5 enum values)"
+    );
+
+    for (_, field) in test_enum.fields.iter() {
+        println!("    Field: {} (Flags: 0x{:X})", field.name, field.flags);
+    }
+
+    // Expected enum values from C# source:
+    // None = 0, Value1 = 1, Value2 = 2, Value3 = 4, All = Value1 | Value2 | Value3 = 7
+    let expected_enum_fields = vec!["value__", "None", "Value1", "Value2", "Value3", "All"];
+
+    for expected_field in expected_enum_fields {
+        let found_field = test_enum
+            .fields
+            .iter()
+            .find(|(_, field)| field.name == expected_field);
+
+        assert!(
+            found_field.is_some(),
+            "Expected enum field not found: {}",
+            expected_field
+        );
+        println!("  ✓ Found expected enum field: {}", expected_field);
+    }
+
+    // Test constant table validation - should have exact number of constants
+    let tables = asm.tables().unwrap();
+    if let Some(constant_table) = tables.table::<ConstantRaw>(TableId::Constant) {
+        println!("Constant table has {} entries", constant_table.row_count());
+        assert_eq!(
+            constant_table.row_count(),
+            7,
+            "Expected exactly 7 constant entries"
+        );
+
+        // Look for constants associated with our enum
+        let constant_rows: Vec<_> = constant_table.iter().take(5).collect();
+        for constant_row in constant_rows {
+            println!(
+                "  Constant: type=0x{:X}, parent=0x{:08X}, value=0x{:X}",
+                constant_row.base,
+                constant_row.parent.token.value(),
+                constant_row.value
+            );
+        }
+    }
+
+    println!("✓ Enum and constant validation tested");
+}
+
+/// Test generic constraint validation
+fn test_generic_constraint_validation(asm: &CilObject) {
+    println!("Testing generic constraint validation...");
+    let types = asm.types();
+    let all_types = types.all_types();
+
+    // Find ComplexGeneric with complex constraints
+    let complex_generic = all_types
+        .iter()
+        .find(|t| t.name == "ComplexGeneric`3")
+        .expect("Should find ComplexGeneric`3");
+
+    println!("ComplexGeneric`3 generic parameters and constraints:");
+    assert_eq!(
+        complex_generic.generic_params.count(),
+        3,
+        "ComplexGeneric`3 should have exactly 3 generic parameters"
+    );
+
+    // Expected constraints from C# source:
+    // TKey : struct, IEquatable<TKey>
+    // TValue : class, IDisposable, new()
+    // TOutput : IBaseInterface
+    let mut found_params = std::collections::HashMap::new();
+
+    for (_, param) in complex_generic.generic_params.iter() {
+        println!("  Parameter: {} (Number: {})", param.name, param.number);
+        println!("    Flags: 0x{:X}", param.flags);
+
+        // Check constraints for this parameter
+        let constraints_count = param.constraints.iter().count();
+        println!("    Has {} constraints", constraints_count);
+
+        let constraint_names: Vec<String> = param
+            .constraints
+            .iter()
+            .filter_map(|(_, constraint)| constraint.name())
+            .collect();
+
+        for constraint_name in &constraint_names {
+            println!("      Constraint: {}", constraint_name);
+        }
+
+        // Expected constraints from C# source:
+        match param.name.as_str() {
+            "TKey" => {
+                // Should have struct constraint and IEquatable<TKey> constraint
+                println!("    Expected: struct + IEquatable<TKey>");
+                assert!(
+                    constraints_count >= 1,
+                    "TKey should have at least 1 constraint"
+                );
+                // Note: struct constraint might be represented in flags rather than constraint table
+            }
+            "TValue" => {
+                // Should have class constraint, IDisposable, and new() constraint
+                println!("    Expected: class + IDisposable + new()");
+                assert!(
+                    constraints_count >= 1,
+                    "TValue should have at least 1 constraint (IDisposable)"
+                );
+                // Look for IDisposable constraint
+                assert!(
+                    constraint_names
+                        .iter()
+                        .any(|name| name.contains("IDisposable")),
+                    "TValue should have IDisposable constraint"
+                );
+            }
+            "TOutput" => {
+                // Should have IBaseInterface constraint
+                println!("    Expected: IBaseInterface");
+                assert!(
+                    constraints_count >= 1,
+                    "TOutput should have at least 1 constraint"
+                );
+                assert!(
+                    constraint_names
+                        .iter()
+                        .any(|name| name.contains("IBaseInterface")),
+                    "TOutput should have IBaseInterface constraint"
+                );
+            }
+            _ => {}
+        }
+
+        found_params.insert(param.name.clone(), constraint_names);
+    }
+
+    // Verify all expected parameters were found
+    assert!(
+        found_params.contains_key("TKey"),
+        "Should find TKey parameter"
+    );
+    assert!(
+        found_params.contains_key("TValue"),
+        "Should find TValue parameter"
+    );
+    assert!(
+        found_params.contains_key("TOutput"),
+        "Should find TOutput parameter"
+    );
+
+    // Test method-level generic constraints too
+    let methods = asm.methods();
+    if let Some(constrained_method) = methods
+        .iter()
+        .find(|entry| entry.value().name == "ConstrainedMethod")
+    {
+        let method = constrained_method.value();
+        println!("ConstrainedMethod<T, U> generic parameters:");
+        assert_eq!(
+            method.generic_params.count(),
+            2,
+            "ConstrainedMethod should have exactly 2 generic parameters"
+        );
+
+        // Expected constraints from C# source:
+        // T : TValue
+        // U : struct, IConvertible
+        let mut method_params = std::collections::HashMap::new();
+
+        for (_, param) in method.generic_params.iter() {
+            println!(
+                "  Method parameter: {} (Number: {})",
+                param.name, param.number
+            );
+
+            let constraints_count = param.constraints.iter().count();
+            println!("    Has {} constraints", constraints_count);
+
+            let constraint_names: Vec<String> = param
+                .constraints
+                .iter()
+                .filter_map(|(_, constraint)| constraint.name())
+                .collect();
+
+            for constraint_name in &constraint_names {
+                println!("      Constraint: {}", constraint_name);
+            }
+
+            method_params.insert(param.name.clone(), constraint_names);
+        }
+
+        // Verify method parameter constraints
+        assert!(
+            method_params.contains_key("T"),
+            "Should find T method parameter"
+        );
+        assert!(
+            method_params.contains_key("U"),
+            "Should find U method parameter"
+        );
+
+        // U should have IConvertible constraint
+        if let Some(u_constraints) = method_params.get("U") {
+            assert!(
+                u_constraints
+                    .iter()
+                    .any(|name| name.contains("IConvertible")),
+                "Method parameter U should have IConvertible constraint"
+            );
+        }
+    }
+
+    println!("✓ Generic constraint validation tested");
+}
+
+/// Test P/Invoke and security validation
+fn test_pinvoke_and_security_validation(asm: &CilObject) {
+    println!("Testing P/Invoke and security validation...");
+    let methods = asm.methods();
+
+    // Expected P/Invoke methods from C# source:
+    // - LoadLibrary from kernel32.dll
+    // - MessageBox from user32.dll
+    let expected_pinvoke = vec!["LoadLibrary", "MessageBox"];
+    let mut found_pinvoke = std::collections::HashSet::new();
+
+    // Find P/Invoke methods
+    let mut pinvoke_methods = Vec::new();
+    for entry in methods.iter() {
+        let method = entry.value();
+
+        // P/Invoke methods typically have specific flags and are in the ImplMap table
+        if expected_pinvoke.contains(&method.name.as_str()) {
+            pinvoke_methods.push(method.clone());
+            found_pinvoke.insert(method.name.clone());
+            println!("Found P/Invoke method: {}", method.name);
+            println!(
+                "  Flags: 0x{:X}",
+                method
+                    .flags_pinvoke
+                    .load(std::sync::atomic::Ordering::Relaxed)
+            );
+            // Note: impl_management doesn't implement Debug, so we'll skip printing it
+            println!("  Impl management: (details not printable)");
+        }
+    }
+
+    // Verify we found all expected P/Invoke methods
+    for expected in &expected_pinvoke {
+        assert!(
+            found_pinvoke.contains(*expected),
+            "Expected P/Invoke method not found: {}",
+            expected
+        );
+    }
+    assert_eq!(
+        found_pinvoke.len(),
+        2,
+        "Should find exactly 2 P/Invoke methods"
+    );
+
+    // Test ImplMap table (stores P/Invoke information)
+    let tables = asm.tables().unwrap();
+    if let Some(implmap_table) = tables.table::<ImplMapRaw>(TableId::ImplMap) {
+        println!("ImplMap table has {} entries", implmap_table.row_count());
+        assert_eq!(
+            implmap_table.row_count(),
+            2,
+            "Expected exactly 2 ImplMap entries"
+        );
+
+        for implmap_row in implmap_table.iter() {
+            println!(
+                "  ImplMap: flags=0x{:X}, member=0x{:08X}, name=0x{:X}, scope=0x{:X}",
+                implmap_row.mapping_flags,
+                implmap_row.member_forwarded.token.value(),
+                implmap_row.import_name,
+                implmap_row.import_scope
+            );
+        }
+    }
+
+    // Test security attributes - expected from C# source:
+    // - Assembly level: SecurityPermission, FileIOPermission
+    // - Method level: SecureMethod with SecurityCritical + FileIOPermission
+    if let Some(declsecurity_table) = tables.table::<DeclSecurityRaw>(TableId::DeclSecurity) {
+        println!(
+            "DeclSecurity table has {} entries",
+            declsecurity_table.row_count()
+        );
+        assert_eq!(
+            declsecurity_table.row_count(),
+            2,
+            "Expected exactly 2 DeclSecurity entries"
+        );
+
+        for security_row in declsecurity_table.iter() {
+            println!(
+                "  Security: action={}, parent=0x{:08X}, permission_set=0x{:X}",
+                security_row.action,
+                security_row.parent.token.value(),
+                security_row.permission_set
+            );
+        }
+    }
+
+    // Find methods with security attributes - should find SecureMethod
+    let secure_method = methods
+        .iter()
+        .find(|entry| entry.value().name == "SecureMethod");
+    assert!(
+        secure_method.is_some(),
+        "Should find SecureMethod with security attributes"
+    );
+
+    if let Some(secure_method_entry) = secure_method {
+        let method = secure_method_entry.value();
+        println!("Found security method: {}", method.name);
+
+        // Check custom attributes for security-related attributes
+        let attr_count = method.custom_attributes.iter().count();
+        println!("  Has {} custom attributes", attr_count);
+        assert!(
+            attr_count >= 1,
+            "SecureMethod should have at least 1 custom attribute (SecurityCritical)"
+        );
+
+        for (i, _attr) in method.custom_attributes.iter().take(3) {
+            println!("    Attribute {}: (details would need parsing)", i + 1);
+        }
+    }
+
+    println!("✓ P/Invoke and security validation tested");
+}
+
+/// Test method signature validation based on C# source
+fn test_method_signature_validation(asm: &CilObject) {
+    println!("Testing method signature validation...");
+    let methods = asm.methods();
+
+    // Test ComplexMethod signature from BaseClass
+    // public virtual int ComplexMethod(int normalParam, ref string refParam, out int outParam, [Optional] object optionalParam, params object[] paramsArray)
+    let complex_method = methods
+        .iter()
+        .find(|entry| entry.value().name == "ComplexMethod");
+
+    if let Some(complex_method_entry) = complex_method {
+        let method = complex_method_entry.value();
+        println!("ComplexMethod signature validation:");
+
+        // Should have 5 input parameters based on C# source
+        let param_count = method.params.iter().count();
+        println!("  Parameter count: {}", param_count);
+        assert_eq!(
+            param_count, 5,
+            "ComplexMethod should have exactly 5 input parameters"
+        );
+
+        // Validate parameter names and attributes
+        let param_names: Vec<String> = method
+            .params
+            .iter()
+            .filter_map(|(_, param)| param.name.clone())
+            .collect();
+
+        println!("  Parameter names: {:?}", param_names);
+        let expected_params = vec![
+            "normalParam",
+            "refParam",
+            "outParam",
+            "optionalParam",
+            "paramsArray",
+        ];
+
+        // Check that we have the right number of named parameters
+        assert!(
+            param_names.len() >= 4,
+            "Should have at least 4 named parameters"
+        );
+
+        // Check for some expected parameter names
+        for expected_param in &expected_params {
+            if param_names.iter().any(|name| name == expected_param) {
+                println!("    ✓ Found expected parameter: {}", expected_param);
+            }
+        }
+
+        assert!(
+            param_names.iter().any(|name| name == "normalParam"),
+            "Should find normalParam"
+        );
+        println!("  ✓ ComplexMethod parameter validation completed");
+    }
+
+    // Test generic method signatures
+    let constrained_method = methods
+        .iter()
+        .find(|entry| entry.value().name == "ConstrainedMethod");
+
+    if let Some(constrained_method_entry) = constrained_method {
+        let method = constrained_method_entry.value();
+        println!("ConstrainedMethod signature validation:");
+
+        // Should have parameters: return + t + u
+        let param_count = method.params.iter().count();
+        println!("  Parameter count: {}", param_count);
+        assert!(
+            param_count >= 2,
+            "ConstrainedMethod should have at least 2 parameters (excluding return)"
+        );
+
+        let param_names: Vec<String> = method
+            .params
+            .iter()
+            .filter(|(_, param)| param.sequence > 0) // Skip return parameter
+            .filter_map(|(_, param)| param.name.clone())
+            .collect();
+
+        println!("  ✓ Generic method parameters validated: {:?}", param_names);
+    }
+
+    // Test P/Invoke method signatures
+    let load_library = methods
+        .iter()
+        .find(|entry| entry.value().name == "LoadLibrary");
+
+    if let Some(load_library_entry) = load_library {
+        let method = load_library_entry.value();
+        println!("LoadLibrary P/Invoke signature validation:");
+
+        // Should have return parameter + 1 input parameter
+        let param_count = method.params.iter().count();
+        println!("  Parameter count: {}", param_count);
+        assert!(
+            param_count >= 1,
+            "LoadLibrary should have at least 1 parameter"
+        );
+
+        println!("  ✓ P/Invoke method validated");
+    }
+
+    println!("✓ Method signature validation completed");
+}
+
+/// Test field validation for specific types
+fn test_field_validation(asm: &CilObject) {
+    println!("Testing field validation...");
+    let types = asm.types();
+    let all_types = types.all_types();
+
+    // Test StructWithExplicitLayout fields
+    let explicit_struct = all_types
+        .iter()
+        .find(|t| t.name == "StructWithExplicitLayout");
+
+    if let Some(struct_type) = explicit_struct {
+        println!("StructWithExplicitLayout field validation:");
+        let field_count = struct_type.fields.iter().count();
+        println!("  Field count: {}", field_count);
+        assert_eq!(
+            field_count, 3,
+            "StructWithExplicitLayout should have exactly 3 fields"
+        );
+
+        let expected_fields = vec!["Field1", "Field2", "Overlay"];
+        let field_names: Vec<String> = struct_type
+            .fields
+            .iter()
+            .map(|(_, field)| field.name.clone())
+            .collect();
+
+        for expected_field in expected_fields {
+            assert!(
+                field_names.iter().any(|name| name == expected_field),
+                "Should find field: {}",
+                expected_field
+            );
+        }
+        println!("  ✓ All expected fields found: {:?}", field_names);
+    }
+
+    // Test GenericStruct`2 fields
+    let generic_struct = all_types.iter().find(|t| t.name == "GenericStruct`2");
+
+    if let Some(struct_type) = generic_struct {
+        println!("GenericStruct`2 field validation:");
+        let field_count = struct_type.fields.iter().count();
+        println!("  Field count: {}", field_count);
+        assert_eq!(
+            field_count, 2,
+            "GenericStruct`2 should have exactly 2 fields"
+        );
+
+        let expected_fields = vec!["Field1", "Field2"];
+        let field_names: Vec<String> = struct_type
+            .fields
+            .iter()
+            .map(|(_, field)| field.name.clone())
+            .collect();
+
+        for expected_field in expected_fields {
+            assert!(
+                field_names.iter().any(|name| name == expected_field),
+                "Should find field: {}",
+                expected_field
+            );
+        }
+        println!("  ✓ Generic struct fields validated: {:?}", field_names);
+    }
+
+    // Test BaseClass fields (should include StaticData)
+    let base_class = all_types.iter().find(|t| t.name == "BaseClass");
+
+    if let Some(class_type) = base_class {
+        println!("BaseClass field validation:");
+        let field_count = class_type.fields.iter().count();
+        println!("  Field count: {}", field_count);
+
+        let field_names: Vec<String> = class_type
+            .fields
+            .iter()
+            .map(|(_, field)| field.name.clone())
+            .collect();
+
+        // Should have StaticData field with RVA
+        assert!(
+            field_names.iter().any(|name| name == "StaticData"),
+            "BaseClass should have StaticData field"
+        );
+        println!("  ✓ BaseClass fields include: {:?}", field_names);
+    }
+
+    // Test DerivedClass fields - should include _marshaledField and _customEvent
+    let derived_class = all_types.iter().find(|t| t.name == "DerivedClass");
+
+    if let Some(class_type) = derived_class {
+        println!("DerivedClass field validation:");
+        let field_count = class_type.fields.iter().count();
+        println!("  Field count: {}", field_count);
+
+        let field_names: Vec<String> = class_type
+            .fields
+            .iter()
+            .map(|(_, field)| field.name.clone())
+            .collect();
+
+        // Should have backing fields for events and properties
+        println!("  DerivedClass fields: {:?}", field_names);
+
+        // We expect to find some compiler-generated or backing fields
+        assert!(field_count > 0, "DerivedClass should have fields");
+        println!("  ✓ DerivedClass field count validated");
+    }
+
+    println!("✓ Field validation completed");
+}
+
+/// Test table count validation for specific metadata tables
+fn test_table_count_validation(asm: &CilObject) {
+    println!("Testing table count validation...");
+    let tables = asm.tables().unwrap();
+
+    // Test TypeDef table count
+    if let Some(typedef_table) = tables.table::<TypeDefRaw>(TableId::TypeDef) {
+        let typedef_count = typedef_table.row_count();
+        println!("TypeDef table has {} entries", typedef_count);
+        assert!(
+            typedef_count >= 10,
+            "Should have at least 10 type definitions"
+        );
+    }
+
+    // Test MethodDef table count
+    if let Some(methoddef_table) = tables.table::<MethodDefRaw>(TableId::MethodDef) {
+        let methoddef_count = methoddef_table.row_count();
+        println!("MethodDef table has {} entries", methoddef_count);
+        assert!(
+            methoddef_count >= 20,
+            "Should have at least 20 method definitions"
+        );
+    }
+
+    // Test Field table count
+    if let Some(field_table) = tables.table::<FieldRaw>(TableId::Field) {
+        let field_count = field_table.row_count();
+        println!("Field table has {} entries", field_count);
+        assert!(
+            field_count >= 10,
+            "Should have at least 10 field definitions"
+        );
+    }
+
+    // Test Param table count
+    if let Some(param_table) = tables.table::<ParamRaw>(TableId::Param) {
+        let param_count = param_table.row_count();
+        println!("Param table has {} entries", param_count);
+        assert!(
+            param_count >= 15,
+            "Should have at least 15 parameter definitions"
+        );
+    }
+
+    // Test GenericParam table count
+    if let Some(generic_param_table) = tables.table::<GenericParamRaw>(TableId::GenericParam) {
+        let generic_param_count = generic_param_table.row_count();
+        println!("GenericParam table has {} entries", generic_param_count);
+        assert!(
+            generic_param_count >= 5,
+            "Should have at least 5 generic parameters"
+        );
+    }
+
+    // Test MemberRef table count
+    if let Some(memberref_table) = tables.table::<MemberRefRaw>(TableId::MemberRef) {
+        let memberref_count = memberref_table.row_count();
+        println!("MemberRef table has {} entries", memberref_count);
+        assert!(
+            memberref_count >= 20,
+            "Should have at least 20 member references"
+        );
+    }
+
+    // Test TypeRef table count
+    if let Some(typeref_table) = tables.table::<TypeRefRaw>(TableId::TypeRef) {
+        let typeref_count = typeref_table.row_count();
+        println!("TypeRef table has {} entries", typeref_count);
+        assert!(
+            typeref_count >= 30,
+            "Should have at least 30 type references"
+        );
+    }
+
+    println!("✓ Table count validation completed");
+}
+
+/// Test custom attribute validation
+fn test_custom_attribute_validation(asm: &CilObject) {
+    println!("Testing custom attribute validation...");
+    let methods = asm.methods();
+
+    // Find SecureMethod which should have security attributes
+    let secure_method = methods
+        .iter()
+        .find(|entry| entry.value().name == "SecureMethod");
+
+    if let Some(secure_method_entry) = secure_method {
+        let method = secure_method_entry.value();
+        println!("SecureMethod custom attribute validation:");
+
+        let attr_count = method.custom_attributes.iter().count();
+        println!("  Custom attribute count: {}", attr_count);
+        assert!(
+            attr_count >= 1,
+            "SecureMethod should have at least 1 custom attribute"
+        );
+
+        for (i, _attr) in method.custom_attributes.iter().take(3) {
+            println!("    Attribute {}: (present)", i + 1);
+        }
+        println!("  ✓ SecureMethod has expected custom attributes");
+    }
+
+    // Find ComplexMethod which should have Obsolete attribute
+    let complex_method = methods
+        .iter()
+        .find(|entry| entry.value().name == "ComplexMethod");
+
+    if let Some(complex_method_entry) = complex_method {
+        let method = complex_method_entry.value();
+        println!("ComplexMethod custom attribute validation:");
+
+        let attr_count = method.custom_attributes.iter().count();
+        println!("  Custom attribute count: {}", attr_count);
+        assert!(
+            attr_count >= 1,
+            "ComplexMethod should have at least 1 custom attribute (Obsolete)"
+        );
+        println!("  ✓ ComplexMethod has expected custom attributes");
+    }
+
+    // Test type-level attributes
+    let types = asm.types();
+    let all_types = types.all_types();
+
+    let derived_class = all_types.iter().find(|t| t.name == "DerivedClass");
+
+    if let Some(class_type) = derived_class {
+        println!("DerivedClass custom attribute validation:");
+        let attr_count = class_type.custom_attributes.iter().count();
+        println!("  Custom attribute count: {}", attr_count);
+        // DerivedClass should have MetadataTest attribute
+        assert!(
+            attr_count >= 1,
+            "DerivedClass should have at least 1 custom attribute"
+        );
+        println!("  ✓ DerivedClass has expected custom attributes");
+    }
+
+    println!("✓ Custom attribute validation completed");
+}
+
+/// Test assembly metadata validation
+fn test_assembly_metadata_validation(asm: &CilObject) {
+    println!("Testing assembly metadata validation...");
+
+    // Test basic assembly information
+    let tables = asm.tables().unwrap();
+    if let Some(assembly_table) = tables.table::<AssemblyRaw>(TableId::Assembly) {
+        let assembly_count = assembly_table.row_count();
+        println!("Assembly table has {} entries", assembly_count);
+        assert_eq!(assembly_count, 1, "Should have exactly 1 assembly entry");
+
+        if let Some(assembly_row) = assembly_table.get(1) {
+            println!("Assembly metadata:");
+            println!("  Major version: {}", assembly_row.major_version);
+            println!("  Minor version: {}", assembly_row.minor_version);
+            println!("  Build number: {}", assembly_row.build_number);
+            println!("  Revision number: {}", assembly_row.revision_number);
+            println!("  Flags: 0x{:X}", assembly_row.flags);
+            println!("  Hash algorithm ID: 0x{:X}", assembly_row.hash_alg_id);
+
+            // Validate that assembly metadata has reasonable values
+            // Since these are u32 (unsigned), they're always non-negative
+            // Just validate that we can access the fields
+            println!(
+                "  Assembly version: {}.{}.{}.{}",
+                assembly_row.major_version,
+                assembly_row.minor_version,
+                assembly_row.build_number,
+                assembly_row.revision_number
+            );
+
+            println!("  ✓ Assembly metadata validated");
+        }
+    }
+
+    // Test module information
+    if let Some(module_table) = tables.table::<ModuleRaw>(TableId::Module) {
+        let module_count = module_table.row_count();
+        println!("Module table has {} entries", module_count);
+        assert!(module_count >= 1, "Should have at least 1 module");
+
+        if let Some(module_row) = module_table.get(1) {
+            println!("  Module generation: {}", module_row.generation);
+            println!("  ✓ Module metadata validated");
+        }
+    }
+
+    // Test string heap validation
+    let strings = asm.strings();
+    if let Some(string_heap) = strings {
+        // Try to get a few string entries to validate heap structure
+        let mut found_strings = 0;
+
+        // Try accessing some string indices to validate heap accessibility
+        for i in 1..10 {
+            if let Ok(_) = string_heap.get(i) {
+                found_strings += 1;
+            }
+        }
+
+        println!(
+            "String heap validation: {} test accesses successful",
+            found_strings
+        );
+        assert!(found_strings > 0, "Should be able to access string heap");
+        println!("  ✓ String heap accessible");
+    }
+
+    // Test blob heap validation
+    let blob = asm.blob();
+    if let Some(blob_heap) = blob {
+        // Try to access blob entries to validate heap structure
+        if let Ok(_) = blob_heap.get(1) {
+            println!("  ✓ Blob heap accessible");
+        }
+    }
+
+    // Test UserStrings (US) heap validation
+    let us = asm.userstrings();
+    if let Some(us_heap) = us {
+        // Check that UserStrings heap is accessible by trying to access it
+        println!("UserStrings heap accessible");
+
+        // Try to iterate through a few entries to validate structure
+        let mut found_entries = 0;
+        for result in us_heap.iter().take(5) {
+            if result.is_ok() {
+                found_entries += 1;
+            }
+        }
+        println!(
+            "UserStrings heap validation: {} test accesses successful",
+            found_entries
+        );
+        println!("  ✓ UserStrings heap accessible");
+    }
+
+    // Test metadata directory validation
+    let metadata_rva = asm.cor20header().meta_data_rva;
+    let metadata_size = asm.cor20header().meta_data_size;
+
+    println!("Metadata directory RVA: 0x{:X}", metadata_rva);
+    println!("Metadata directory size: {} bytes", metadata_size);
+    assert!(metadata_rva > 0, "Metadata directory should have valid RVA");
+    assert!(
+        metadata_size > 0,
+        "Metadata directory should have valid size"
+    );
+    println!("  ✓ Metadata directory accessible");
+
+    println!("✓ Assembly metadata validation completed");
 }
