@@ -490,6 +490,7 @@ public struct BufferStruct
 }
 */
 
+use dotscope::metadata::marshalling::{parse_marshalling_descriptor, NativeType};
 use dotscope::metadata::security::{ArgumentValue, PermissionSet, PermissionSetFormat};
 use dotscope::prelude::*;
 use std::path::PathBuf;
@@ -1341,6 +1342,34 @@ fn verify_specialized_attribute_tables(asm: &CilObject) {
             marshal_count, 1,
             "Expected 1 FieldMarshal entry for _marshaledField"
         );
+
+        // Test marshalling descriptor parsing - this verifies our marshalling implementation
+        // against real .NET assembly data
+        let row = field_marshal_table.get(1).unwrap();
+        let blob_heap = asm.blob().expect("Expected blob heap to be present");
+        let descriptor_blob = blob_heap.get(row.native_type as usize).unwrap();
+
+        // Parse the marshalling descriptor using our implementation
+        let marshalling_info = parse_marshalling_descriptor(descriptor_blob).unwrap();
+
+        // The C# source has: [MarshalAs(UnmanagedType.LPWStr)] private string _marshaledField;
+        // This should parse as LPWStr native type
+        match &marshalling_info.primary_type {
+            NativeType::LPWStr { size_param_index } => {
+                assert_eq!(
+                    size_param_index, &None,
+                    "Expected no size parameter for simple LPWStr"
+                );
+                println!(
+                    "✓ Marshalling descriptor parsed successfully: {:?}",
+                    marshalling_info
+                );
+            }
+            _ => panic!(
+                "Expected LPWStr marshalling for _marshaledField, got {:?}",
+                marshalling_info.primary_type
+            ),
+        }
     }
 
     // Test DeclSecurity table (stores security attributes)
