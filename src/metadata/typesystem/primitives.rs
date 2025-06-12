@@ -756,6 +756,22 @@ impl CilPrimitive {
         }
     }
 
+    /// Check if this primitive is compatible with a target flavor
+    ///
+    /// This is a convenience method that converts the primitive to a flavor
+    /// and checks compatibility with the target flavor.
+    ///
+    /// # Arguments
+    /// * `target_flavor` - The target flavor to check compatibility against
+    ///
+    /// # Returns
+    /// `true` if this primitive value can be assigned to the target flavor
+    #[must_use]
+    pub fn is_compatible_with(&self, target_flavor: &CilFlavor) -> bool {
+        let this_flavor = self.to_flavor();
+        this_flavor.is_compatible_with(target_flavor)
+    }
+
     /// Is this a value type
     #[must_use]
     pub fn is_value_type(&self) -> bool {

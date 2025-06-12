@@ -180,6 +180,16 @@ impl MethodRef {
     pub fn name(&self) -> Option<String> {
         self.upgrade().map(|m| m.name.clone())
     }
+
+    /// Check if the referenced method is a constructor (.ctor or .cctor)
+    #[must_use]
+    pub fn is_constructor(&self) -> bool {
+        if let Some(method) = self.upgrade() {
+            method.is_constructor()
+        } else {
+            false
+        }
+    }
 }
 
 impl From<MethodRc> for MethodRef {
@@ -488,6 +498,12 @@ impl Method {
     pub fn is_forarded_pinvoke(&self) -> bool {
         self.impl_options
             .contains(MethodImplOptions::MAX_METHOD_IMPL_VAL)
+    }
+
+    /// Returns true if the method is a constructor (.ctor or .cctor).
+    #[must_use]
+    pub fn is_constructor(&self) -> bool {
+        self.name.starts_with(".ctor") || self.name.starts_with(".cctor")
     }
 
     /// Parse provided data, and extract additional information from the binary. e.g. Disassembly,

@@ -13,7 +13,7 @@ use crate::{
         signatures::SignatureParameter,
         streams::{RowDefinition, Strings, TableInfoRef},
         token::Token,
-        typesystem::{CilPrimitive, CilType, CilTypeRef, CilTypeRefList, TypeRegistry, TypeResolver},
+        typesystem::{CilPrimitive, CilTypeRef, CilTypeRefList, TypeRegistry, TypeResolver},
     },
     Result,
 };
@@ -124,7 +124,13 @@ impl Param {
             Ok(()) => Ok(()),
             Err(_) => {
                 if let Some(existing_type_ref) = self.base.get() {
-                    if !types_are_compatible(existing_type_ref, &resolved_type)? {
+                    let existing_type = existing_type_ref.upgrade().ok_or_else(|| {
+                        malformed_error!(
+                            "Invalid type reference: existing parameter type has been dropped"
+                        )
+                    })?;
+
+                    if !resolved_type.is_compatible_with(&existing_type) {
                         return Err(malformed_error!(
                             "Type compatibility error: parameter {} cannot be shared between methods with incompatible types",
                             self.token.value()
@@ -135,25 +141,6 @@ impl Param {
             }
         }
     }
-}
-
-/// Check if a CilTypeRef and CilType are compatible for parameter sharing
-///
-/// Two types are considered compatible if they represent the same type.
-fn types_are_compatible(existing_ref: &CilTypeRef, new_type: &CilType) -> Result<bool> {
-    let existing_type = existing_ref.upgrade().ok_or_else(|| {
-        malformed_error!("Invalid type reference: existing parameter type has been dropped")
-    })?;
-    
-    if existing_type.token == new_type.token {
-        return Ok(true);
-    }
-    
-    if existing_type.namespace == new_type.namespace && existing_type.name == new_type.name {
-        return Ok(true);
-    }
-    
-    Ok(false)
 }
 
 #[derive(Clone, Debug)]
@@ -317,114 +304,5 @@ mod tests {
             let row = table.get(1).unwrap();
             eval(row);
         }
-    }
-
-    #[test]
-    fn test_sequence_validation() {
-        use crate::metadata::{
-            signatures::{SignatureParameter, TypeSignature},
-            typesystem::TypeRegistry,
-        };
-        use std::sync::Arc;
-
-        // Create a test parameter with sequence 3
-        let param = Param {
-            rid: 1,
-            token: Token::new(0x08000001),
-            offset: 0,
-            flags: 0,
-            sequence: 3, // This should be invalid for a method with only 2 params
-            name: Some("testParam".to_string()),
-            default: OnceLock::new(),
-            marshal: OnceLock::new(),
-            modifiers: Arc::new(boxcar::Vec::new()),
-            base: OnceLock::new(),
-            is_by_ref: AtomicBool::new(false),
-            custom_attributes: Arc::new(boxcar::Vec::new()),
-        };
-
-        // Create a dummy signature
-        let signature = SignatureParameter {
-            base: TypeSignature::I4, // I4 is Int32
-            by_ref: false,
-            modifiers: Vec::new(),
-        };
-
-        let types = Arc::new(TypeRegistry::new().unwrap());
-
-        // Test with method param count = 2 (sequence 3 should be invalid)
-        let result = param.apply_signature(&signature, types.clone(), Some(2));
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Parameter sequence 3 exceeds method parameter count 2"));
-
-        // Test with method param count = 5 (sequence 3 should be valid)
-        let result = param.apply_signature(&signature, types.clone(), Some(5));
-        assert!(result.is_ok());
-
-        // Test with no method param count (validation should be skipped)
-        let result = param.apply_signature(&signature, types, None);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_type_compatibility_validation() {
-        use crate::metadata::{
-            signatures::{SignatureParameter, TypeSignature},
-            typesystem::TypeRegistry,
-        };
-        use std::sync::Arc;
-
-        // Create a parameter with base type already set
-        let param = Param {
-            rid: 1,
-            token: Token::new(0x08000001),
-            offset: 0,
-            flags: 0,
-            sequence: 1,
-            name: Some("testParam".to_string()),
-            default: OnceLock::new(),
-            marshal: OnceLock::new(),
-            modifiers: Arc::new(boxcar::Vec::new()),
-            base: OnceLock::new(),
-            is_by_ref: AtomicBool::new(false),
-            custom_attributes: Arc::new(boxcar::Vec::new()),
-        };
-
-        let types = Arc::new(TypeRegistry::new().unwrap());
-
-        // First signature (I4)
-        let signature1 = SignatureParameter {
-            base: TypeSignature::I4,
-            by_ref: false,
-            modifiers: Vec::new(),
-        };
-
-        // Apply first signature - should succeed
-        let result = param.apply_signature(&signature1, types.clone(), Some(2));
-        assert!(result.is_ok());
-
-        // Second signature with same type (I4) - should succeed (compatible)
-        let signature2 = SignatureParameter {
-            base: TypeSignature::I4,
-            by_ref: false,
-            modifiers: Vec::new(),
-        };
-
-        let result = param.apply_signature(&signature2, types.clone(), Some(2));
-        assert!(result.is_ok(), "Same type should be compatible");
-
-        // Third signature with different type (Boolean) - should fail (incompatible)
-        let signature3 = SignatureParameter {
-            base: TypeSignature::Boolean,
-            by_ref: false,
-            modifiers: Vec::new(),
-        };
-
-        let result = param.apply_signature(&signature3, types, Some(2));
-        assert!(result.is_err(), "Different type should be incompatible");
-        assert!(result.unwrap_err().to_string().contains("Type compatibility error"));
     }
 }

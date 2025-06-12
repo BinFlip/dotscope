@@ -41,21 +41,59 @@ impl Constant {
     /// Apply a `Constant` to set the default value on the parent entity (field, parameter, or property)
     ///
     /// # Errors
-    /// Returns an error if the default value is already set for the parent entity
+    /// Returns an error if the default value is already set for the parent entity,
+    /// or if the constant value is not compatible with the target type
     pub fn apply(&self) -> Result<()> {
         match &self.parent {
-            CilTypeReference::Field(field) => field
-                .default
-                .set(self.value.as_ref().clone())
-                .map_err(|_| malformed_error!("Default value already set for field")),
-            CilTypeReference::Param(param) => param
-                .default
-                .set(self.value.as_ref().clone())
-                .map_err(|_| malformed_error!("Default value already set for param")),
-            CilTypeReference::Property(property) => property
-                .default
-                .set(self.value.as_ref().clone())
-                .map_err(|_| malformed_error!("Default value already set for property")),
+            CilTypeReference::Field(field) => {
+                if !field.signature.base.accepts_constant(&self.value) {
+                    return Err(malformed_error!(
+                        "Constant type {:?} is not compatible with field type: {:?} (token: {})",
+                        self.value.kind,
+                        field.signature.base,
+                        self.token.value()
+                    ));
+                }
+
+                field
+                    .default
+                    .set(self.value.as_ref().clone())
+                    .map_err(|_| malformed_error!("Default value already set for field"))
+            }
+            CilTypeReference::Param(param) => {
+                if let Some(param_type) = param.base.get() {
+                    if let Some(param_type_strong) = param_type.upgrade() {
+                        if !param_type_strong.accepts_constant(&self.value) {
+                            return Err(malformed_error!(
+                                "Constant type {:?} is not compatible with parameter type {} (token: {})",
+                                self.value.kind,
+                                param_type_strong.fullname(),
+                                self.token.value()
+                            ));
+                        }
+                    }
+                }
+
+                param
+                    .default
+                    .set(self.value.as_ref().clone())
+                    .map_err(|_| malformed_error!("Default value already set for param"))
+            }
+            CilTypeReference::Property(property) => {
+                if !property.signature.base.accepts_constant(&self.value) {
+                    return Err(malformed_error!(
+                        "Constant type {:?} is not compatible with property type: {:?} (token: {})",
+                        self.value.kind,
+                        property.signature.base,
+                        self.token.value()
+                    ));
+                }
+
+                property
+                    .default
+                    .set(self.value.as_ref().clone())
+                    .map_err(|_| malformed_error!("Default value already set for property"))
+            }
             _ => Err(malformed_error!(
                 "Invalid parent type for constant - {}",
                 self.token.value()
@@ -103,19 +141,56 @@ impl ConstantRaw {
         let parent = get_ref(&self.parent);
         let default = CilPrimitive::from_blob(self.base, blob.get(self.value as usize)?)?;
 
-        match parent {
-            CilTypeReference::Field(field) => field
-                .default
-                .set(default)
-                .map_err(|_| malformed_error!("Default value already set for field")),
-            CilTypeReference::Param(param) => param
-                .default
-                .set(default)
-                .map_err(|_| malformed_error!("Default value already set for param")),
-            CilTypeReference::Property(property) => property
-                .default
-                .set(default)
-                .map_err(|_| malformed_error!("Default value already set for property")),
+        match &parent {
+            CilTypeReference::Field(field) => {
+                if !field.signature.base.accepts_constant(&default) {
+                    return Err(malformed_error!(
+                        "Constant type {:?} is not compatible with field type: {:?} (token: {})",
+                        default.kind,
+                        field.signature.base,
+                        self.token.value()
+                    ));
+                }
+
+                field
+                    .default
+                    .set(default)
+                    .map_err(|_| malformed_error!("Default value already set for field"))
+            }
+            CilTypeReference::Param(param) => {
+                if let Some(param_type) = param.base.get() {
+                    if let Some(param_type_strong) = param_type.upgrade() {
+                        if !param_type_strong.accepts_constant(&default) {
+                            return Err(malformed_error!(
+                                "Constant type {:?} is not compatible with parameter type {} (token: {})",
+                                default.kind,
+                                param_type_strong.fullname(),
+                                self.token.value()
+                            ));
+                        }
+                    }
+                }
+
+                param
+                    .default
+                    .set(default)
+                    .map_err(|_| malformed_error!("Default value already set for param"))
+            }
+            CilTypeReference::Property(property) => {
+                if !property.signature.base.accepts_constant(&default) {
+                    return Err(malformed_error!(
+                        "Constant type {:?} is not compatible with property type: {:?} (token: {})",
+                        default.kind,
+                        property.signature.base,
+                        self.token.value()
+                    ));
+                }
+
+                property
+                    .default
+                    .set(default)
+                    .map_err(|_| malformed_error!("Default value already set for property"))
+            }
             _ => Err(malformed_error!(
                 "Invalid parent type for constant - {}",
                 self.parent.token.value()

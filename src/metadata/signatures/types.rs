@@ -217,3 +217,91 @@ pub struct SignatureMethodSpec {
     /// Types of the generic arguments
     pub generic_args: Vec<TypeSignature>,
 }
+
+impl TypeSignature {
+    /// Check if a constant primitive value is compatible with this type signature
+    ///
+    /// This implements .NET type compatibility rules for constants including:
+    /// - Exact type matching for primitives
+    /// - Safe widening conversions (e.g., int32 constant to int64 type)
+    /// - String constants to Object types
+    ///
+    /// # Arguments
+    /// * `constant` - The constant primitive value to check
+    ///
+    /// # Returns
+    /// `true` if the constant can be assigned to this type signature
+    #[must_use]
+    pub fn accepts_constant(&self, constant: &crate::metadata::typesystem::CilPrimitive) -> bool {
+        use crate::metadata::typesystem::CilPrimitiveKind;
+
+        match (constant.kind, self) {
+            // Exact primitive matches
+            (CilPrimitiveKind::Void, TypeSignature::Void) => true,
+            (CilPrimitiveKind::Boolean, TypeSignature::Boolean) => true,
+            (CilPrimitiveKind::Char, TypeSignature::Char) => true,
+            (CilPrimitiveKind::I1, TypeSignature::I1) => true,
+            (CilPrimitiveKind::U1, TypeSignature::U1) => true,
+            (CilPrimitiveKind::I2, TypeSignature::I2) => true,
+            (CilPrimitiveKind::U2, TypeSignature::U2) => true,
+            (CilPrimitiveKind::I4, TypeSignature::I4) => true,
+            (CilPrimitiveKind::U4, TypeSignature::U4) => true,
+            (CilPrimitiveKind::I8, TypeSignature::I8) => true,
+            (CilPrimitiveKind::U8, TypeSignature::U8) => true,
+            (CilPrimitiveKind::R4, TypeSignature::R4) => true,
+            (CilPrimitiveKind::R8, TypeSignature::R8) => true,
+            (CilPrimitiveKind::I, TypeSignature::I) => true,
+            (CilPrimitiveKind::U, TypeSignature::U) => true,
+            (CilPrimitiveKind::String, TypeSignature::String) => true,
+            (CilPrimitiveKind::Object, TypeSignature::Object) => true,
+
+            // Safe widening conversions for signed integers
+            (CilPrimitiveKind::I1, TypeSignature::I2 | TypeSignature::I4 | TypeSignature::I8) => {
+                true
+            }
+            (CilPrimitiveKind::I2, TypeSignature::I4 | TypeSignature::I8) => true,
+            (CilPrimitiveKind::I4, TypeSignature::I8) => true,
+
+            // Safe widening conversions for unsigned integers
+            (CilPrimitiveKind::U1, TypeSignature::U2 | TypeSignature::U4 | TypeSignature::U8) => {
+                true
+            }
+            (CilPrimitiveKind::U2, TypeSignature::U4 | TypeSignature::U8) => true,
+            (CilPrimitiveKind::U4, TypeSignature::U8) => true,
+
+            // Float widening
+            (CilPrimitiveKind::R4, TypeSignature::R8) => true,
+
+            // Integer to float (with potential precision loss, but allowed for constants)
+            (
+                CilPrimitiveKind::I1
+                | CilPrimitiveKind::U1
+                | CilPrimitiveKind::I2
+                | CilPrimitiveKind::U2
+                | CilPrimitiveKind::I4,
+                TypeSignature::R4 | TypeSignature::R8,
+            ) => true,
+            (
+                CilPrimitiveKind::I8 | CilPrimitiveKind::U4 | CilPrimitiveKind::U8,
+                TypeSignature::R8,
+            ) => true,
+
+            // String constants to Object
+            (CilPrimitiveKind::String, TypeSignature::Object) => true,
+
+            // Null and Class constants can be assigned to any reference type
+            (
+                CilPrimitiveKind::Null | CilPrimitiveKind::Class,
+                TypeSignature::String | TypeSignature::Object,
+            ) => true,
+
+            // For complex types (Class, ValueType, etc.), we can't easily validate without
+            // full type resolution, so we allow them (conservative approach)
+            // Note: This also covers Null and Class constants to complex types
+            (_, TypeSignature::Class(_) | TypeSignature::ValueType(_)) => true,
+
+            // All other combinations are incompatible
+            _ => false,
+        }
+    }
+}

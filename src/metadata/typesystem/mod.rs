@@ -296,4 +296,104 @@ impl CilType {
     pub fn fullname(&self) -> String {
         format!("{0}.{1}", self.namespace, self.name)
     }
+
+    /// Check if this type is compatible with (assignable to) another type
+    ///
+    /// This implements .NET type compatibility rules including:
+    /// - Exact type matching
+    /// - Inheritance compatibility  
+    /// - Interface implementation
+    /// - Primitive type widening
+    /// - Reference type to System.Object
+    ///
+    /// # Arguments
+    /// * `target` - The target type to check compatibility against
+    ///
+    /// # Returns
+    /// `true` if this type can be assigned to the target type
+    pub fn is_compatible_with(&self, target: &CilType) -> bool {
+        if self.token == target.token {
+            return true;
+        }
+
+        if self.namespace == target.namespace && self.name == target.name {
+            return true;
+        }
+
+        self.is_assignable_to(target)
+    }
+
+    /// Check if this type is assignable to the target type according to .NET rules
+    fn is_assignable_to(&self, target: &CilType) -> bool {
+        // Handle primitive type compatibility
+        if self.flavor().is_primitive() && target.flavor().is_primitive() {
+            return self.flavor().is_compatible_with(target.flavor());
+        }
+
+        // Handle System.Object (can accept any reference type)
+        if target.namespace == "System"
+            && target.name == "Object"
+            && self.flavor().is_reference_type()
+        {
+            return true;
+        }
+
+        // Handle inheritance compatibility
+        if self.is_subtype_of(target) {
+            return true;
+        }
+
+        // Handle interface implementation
+        if target.flavor() == &CilFlavor::Interface && self.implements_interface(target) {
+            return true;
+        }
+
+        false
+    }
+
+    /// Check if this type is a subtype of (inherits from) the target type
+    fn is_subtype_of(&self, target: &CilType) -> bool {
+        let mut current = self.base();
+        while let Some(base_type) = current {
+            if base_type.token == target.token
+                || (base_type.namespace == target.namespace && base_type.name == target.name)
+            {
+                return true;
+            }
+            current = base_type.base();
+        }
+        false
+    }
+
+    /// Check if this type implements the specified interface
+    fn implements_interface(&self, interface: &CilType) -> bool {
+        for (_, interface_impl) in self.interfaces.iter() {
+            if let Some(impl_type) = interface_impl.upgrade() {
+                if impl_type.token == interface.token
+                    || (impl_type.namespace == interface.namespace
+                        && impl_type.name == interface.name)
+                {
+                    return true;
+                }
+            }
+        }
+
+        if let Some(base_type) = self.base() {
+            return base_type.implements_interface(interface);
+        }
+
+        false
+    }
+
+    /// Check if a constant value is compatible with this type
+    ///
+    /// # Arguments  
+    /// * `constant` - The constant primitive value to check
+    ///
+    /// # Returns
+    /// `true` if the constant can be assigned to this type
+    pub fn accepts_constant(&self, constant: &CilPrimitive) -> bool {
+        let constant_flavor = constant.to_flavor();
+        self.flavor().accepts_constant(&constant_flavor)
+    }
 }
