@@ -45,7 +45,6 @@ impl StreamHeader {
             return Err(OutOfBounds);
         }
 
-        // ToDo: This can be better solved using str
         let mut name = String::with_capacity(32);
         for counter in 0..std::cmp::min(32, data.len() - 8) {
             let name_char = read_le::<u8>(&data[8 + counter..])?;
@@ -56,7 +55,7 @@ impl StreamHeader {
             name.push(char::from(name_char));
         }
 
-        if !["#Strings", "#US", "#Blob", "#GUID", "#~"]
+        if !["#Strings", "#US", "#Blob", "#GUID", "#~", "#-"]
             .iter()
             .any(|valid_name| name == *valid_name)
         {

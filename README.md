@@ -214,9 +214,7 @@ We're continuously working to improve `dotscope` and add new capabilities. Here 
 
 ### Enhanced Parsing and Security
 
-- Enhanced XML security parsing
 - String/Blob caching infrastructure
-- Proper CustomAttribute support
 - PortablePDB support
 - Non-embedded resource support
 

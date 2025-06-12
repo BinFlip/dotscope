@@ -167,13 +167,15 @@ impl Root {
         }
 
         let stream_count = read_le_at::<u16>(data, &mut (version_string.len() + 18))?;
-        if stream_count == 0 || stream_count > 5 || (stream_count * 9) as usize > data.len() {
-            // 9 - min size that a valid StreamHeader can be; Must have streams, no duplicates, no more than 5 possible
+        if stream_count == 0 || stream_count > 6 || (stream_count * 9) as usize > data.len() {
+            // 9 - min size that a valid StreamHeader can be; Must have streams, no duplicates, no more than 6 possible
             return Err(malformed_error!("Invalid stream count"));
         }
 
         let mut streams = Vec::with_capacity(stream_count as usize);
         let mut stream_offset = version_string.len() + 20;
+        let mut streams_seen = [false; 6];
+
         for _ in 0..stream_count {
             if stream_offset > data.len() {
                 return Err(OutOfBounds);
@@ -202,13 +204,30 @@ impl Root {
                 }
             }
 
+            let stream_index = match new_stream.name.as_str() {
+                "#Strings" => 0,
+                "#US" => 1,
+                "#Blob" => 2,
+                "#GUID" => 3,
+                "#~" => 4,
+                "#-" => 5,
+                _ => unreachable!("StreamHeader::from() should have validated the name"),
+            };
+
+            if streams_seen[stream_index] {
+                return Err(malformed_error!(
+                    "Duplicate stream name found: '{}'",
+                    new_stream.name
+                ));
+            }
+            streams_seen[stream_index] = true;
+
             let name_aligned = ((new_stream.name.len() + 1) + 3) & !3;
             stream_offset += 8 + name_aligned;
 
             streams.push(new_stream);
         }
 
-        // ToDo: Verify, if any stream names are duplicates
         if streams.is_empty() {
             return Err(malformed_error!("No valid streams have been found"));
         }
@@ -265,5 +284,42 @@ mod tests {
         assert_eq!(parsed_header.stream_headers[0].offset, 0x1);
         assert_eq!(parsed_header.stream_headers[0].size, 0x5);
         assert_eq!(parsed_header.stream_headers[0].name, "#~");
+    }
+
+    #[test]
+    fn duplicate_stream_names_should_fail() {
+        #[rustfmt::skip]
+        let mut header_bytes = vec![
+            0x42, 0x53, 0x4A, 0x42,  // CIL_HEADER_MAGIC
+            0x00, 0x20,              // major_version
+            0x00, 0x30,              // minor_version
+            0x00, 0x00, 0x00, 0x40,  // reserved
+            0x05, 0x00, 0x00, 0x00,  // length (version string length)
+            b'H', b'E', b'L', b'L', b'O',  // version string
+            0x00, 0x60,              // flags
+            0x02, 0x00,              // stream_number (2 streams)
+
+            // First StreamHeader - #~
+            0x50, 0x00, 0x00, 0x00,  // offset (80 - past all headers)
+            0x05, 0x00, 0x00, 0x00,  // size (5 bytes)
+            0x23, 0x7E, 0x00, 0x00,  // "#~\0" + padding
+
+            // Second StreamHeader - duplicate #~
+            0x55, 0x00, 0x00, 0x00,  // offset (85 - after first stream)
+            0x05, 0x00, 0x00, 0x00,  // size (5 bytes)
+            0x23, 0x7E, 0x00, 0x00,  // "#~\0" + padding (duplicate)
+        ];
+
+        // Add enough padding to reach offset 80 and then the stream data
+        header_bytes.resize(90, 0x00);
+
+        let result = Root::read(&header_bytes);
+        assert!(result.is_err());
+
+        if let Err(error) = result {
+            let error_string = error.to_string();
+            assert!(error_string.contains("Duplicate stream name found"));
+            assert!(error_string.contains("#~"));
+        }
     }
 }
