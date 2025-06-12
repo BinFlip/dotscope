@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2025-06-11
+
+### Fixed
+
+- **Type System Issues**: Resolved critical issues with type flavor classification and inheritance resolution
+- **Method-to-Type Associations**: Fixed method discovery and association with declaring types  
+- **Interface Relationships**: Improved interface inheritance chain resolution
+- **Type Flavor Determination**: Added proper logic to classify value types, interfaces, and classes correctly
+- **Parser Stability**: Enhanced robustness and error handling in metadata parsing
+
+### Added
+
+- **Enhanced Test Coverage**: Expanded test coverage analysis and validation for complex .NET features
+
+### Improved
+
+- **Type System Validation**: More accurate type classification and inheritance analysis
+- **Test Infrastructure**: Enhanced validation and coverage analysis
+
 ## [0.2.0] - 2025-06-10
 
 ### Added
