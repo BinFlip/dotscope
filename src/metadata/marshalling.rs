@@ -20,8 +20,8 @@ use crate::{file::parser::Parser, Error::RecursionLimit, Result};
 /// Native type constants as defined in ECMA-335 II.23.2.9 + `CoreCLR`, some are not mentioned in the standard
 /// but still show up in dlls from Microsoft, some are for COM interfacing and not 'native'
 ///
-/// This implementation includes all native types from the CoreCLR runtime, including newer
-/// WinRT types (IINSPECTABLE, HSTRING) and UTF-8 string marshalling (LPUTF8STR).
+/// This implementation includes all native types from the `CoreCLR` runtime, including newer
+/// `WinRT` types (IINSPECTABLE, HSTRING) and UTF-8 string marshalling (LPUTF8STR).
 pub mod NATIVE_TYPE {
     pub const END: u8 = 0x00;
     pub const VOID: u8 = 0x01;
