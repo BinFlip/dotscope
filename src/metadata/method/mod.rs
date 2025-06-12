@@ -573,13 +573,22 @@ impl Method {
         }
 
         // Resolve the parameters
+        let method_param_count = Some(self.signature.params.len());
         for (_, parameter) in self.params.iter() {
             if parameter.sequence == 0 {
-                parameter.apply_signature(&self.signature.return_type, types.clone())?;
+                parameter.apply_signature(
+                    &self.signature.return_type,
+                    types.clone(),
+                    method_param_count,
+                )?;
             } else {
                 let index = (parameter.sequence - 1) as usize;
                 if let Some(param_signature) = self.signature.params.get(index) {
-                    parameter.apply_signature(param_signature, types.clone())?;
+                    parameter.apply_signature(
+                        param_signature,
+                        types.clone(),
+                        method_param_count,
+                    )?;
                 }
             }
         }

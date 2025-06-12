@@ -176,15 +176,24 @@ impl MemberRefRaw {
             let method_sig = parse_method_signature(signature_data)?;
             let params = Self::create_params_from_signature(&method_sig, strings);
 
+            let method_param_count = Some(method_sig.params.len());
             for (_, param) in params.iter() {
                 if param.sequence == 0 {
                     // Return parameter
-                    param.apply_signature(&method_sig.return_type, types.clone())?;
+                    param.apply_signature(
+                        &method_sig.return_type,
+                        types.clone(),
+                        method_param_count,
+                    )?;
                 } else {
                     // Regular parameter
                     let index = (param.sequence - 1) as usize;
                     if let Some(param_signature) = method_sig.params.get(index) {
-                        param.apply_signature(param_signature, types.clone())?;
+                        param.apply_signature(
+                            param_signature,
+                            types.clone(),
+                            method_param_count,
+                        )?;
                     }
                 }
             }
