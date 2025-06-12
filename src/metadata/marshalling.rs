@@ -19,7 +19,9 @@ use crate::{file::parser::Parser, Error::RecursionLimit, Result};
 #[allow(non_snake_case, dead_code, missing_docs)]
 /// Native type constants as defined in ECMA-335 II.23.2.9 + `CoreCLR`, some are not mentioned in the standard
 /// but still show up in dlls from Microsoft, some are for COM interfacing and not 'native'
-// ToDo: Not all of the types are fully implemented
+///
+/// This implementation includes all native types from the CoreCLR runtime, including newer
+/// WinRT types (IINSPECTABLE, HSTRING) and UTF-8 string marshalling (LPUTF8STR).
 pub mod NATIVE_TYPE {
     pub const END: u8 = 0x00;
     pub const VOID: u8 = 0x01;
@@ -65,6 +67,9 @@ pub mod NATIVE_TYPE {
     pub const LPSTRUCT: u8 = 0x2b;
     pub const CUSTOMMARSHALER: u8 = 0x2c;
     pub const ERROR: u8 = 0x2d;
+    pub const IINSPECTABLE: u8 = 0x2e;
+    pub const HSTRING: u8 = 0x2f;
+    pub const LPUTF8STR: u8 = 0x30;
     pub const MAX: u8 = 0x50;
 }
 
@@ -180,6 +185,9 @@ pub enum NativeType {
     LPTStr {
         size_param_index: Option<u32>,
     },
+    LPUtf8Str {
+        size_param_index: Option<u32>,
+    },
     FixedSysString {
         size: u32,
     },
@@ -188,6 +196,7 @@ pub enum NativeType {
     ByValStr {
         size: u32,
     },
+    VariantBool,
 
     // Array types
     FixedArray {
@@ -212,6 +221,7 @@ pub enum NativeType {
     // Interface types
     IUnknown,
     IDispatch,
+    IInspectable,
     Interface {
         iid_param_index: Option<u32>,
     },
@@ -236,6 +246,7 @@ pub enum NativeType {
     ObjectRef,
     Func,
     AsAny,
+    HString,
 
     // End marker
     End,
@@ -250,6 +261,7 @@ impl NativeType {
             NativeType::LPStr { .. }
                 | NativeType::LPWStr { .. }
                 | NativeType::LPTStr { .. }
+                | NativeType::LPUtf8Str { .. }
                 | NativeType::FixedSysString { .. }
                 | NativeType::ByValStr { .. }
                 | NativeType::FixedArray { .. }
@@ -346,9 +358,76 @@ impl<'a> MarshallingParser<'a> {
                 };
                 Ok(NativeType::LPTStr { size_param_index })
             }
+            NATIVE_TYPE::LPUTF8STR => {
+                let size_param_index = if self.parser.has_more_data()
+                    && self.parser.peek_byte()? != NATIVE_TYPE::END
+                {
+                    Some(self.parser.read_compressed_uint()?)
+                } else {
+                    None
+                };
+                Ok(NativeType::LPUtf8Str { size_param_index })
+            }
             NATIVE_TYPE::FIXEDSYSSTRING => {
                 let size = self.parser.read_compressed_uint()?;
                 Ok(NativeType::FixedSysString { size })
+            }
+            NATIVE_TYPE::OBJECTREF => Ok(NativeType::ObjectRef),
+            NATIVE_TYPE::IUNKNOWN => Ok(NativeType::IUnknown),
+            NATIVE_TYPE::IDISPATCH => Ok(NativeType::IDispatch),
+            NATIVE_TYPE::IINSPECTABLE => Ok(NativeType::IInspectable),
+            NATIVE_TYPE::STRUCT => {
+                // Optional packing size
+                let packing_size = if self.parser.has_more_data()
+                    && self.parser.peek_byte()? != NATIVE_TYPE::END
+                {
+                    Some(self.parser.read_le::<u8>()?)
+                } else {
+                    None
+                };
+                // Optional class size
+                let class_size = if self.parser.has_more_data()
+                    && self.parser.peek_byte()? != NATIVE_TYPE::END
+                {
+                    Some(self.parser.read_compressed_uint()?)
+                } else {
+                    None
+                };
+                Ok(NativeType::Struct {
+                    packing_size,
+                    class_size,
+                })
+            }
+            NATIVE_TYPE::INTF => {
+                let iid_param_index = if self.parser.has_more_data()
+                    && self.parser.peek_byte()? != NATIVE_TYPE::END
+                {
+                    Some(self.parser.read_compressed_uint()?)
+                } else {
+                    None
+                };
+                Ok(NativeType::Interface { iid_param_index })
+            }
+            NATIVE_TYPE::SAFEARRAY => {
+                // Optional<Element_Type> -> VT_TYPE; If none, VT_EMPTY
+                // Optional<String> -> User defined name/string
+
+                let variant_type = if self.parser.has_more_data() {
+                    u16::from(self.parser.read_le::<u8>()?) & VARIANT_TYPE::TYPEMASK
+                } else {
+                    VARIANT_TYPE::EMPTY
+                };
+
+                let user_defined_name = if self.parser.has_more_data() {
+                    Some(String::new())
+                } else {
+                    None
+                };
+
+                Ok(NativeType::SafeArray {
+                    variant_type,
+                    user_defined_name,
+                })
             }
             NATIVE_TYPE::FIXEDARRAY => {
                 let size = self.parser.read_compressed_uint()?;
@@ -390,29 +469,16 @@ impl<'a> MarshallingParser<'a> {
                     num_element,
                 })
             }
-            NATIVE_TYPE::FUNC => Ok(NativeType::Func),
-            NATIVE_TYPE::STRUCT => {
-                // Optional packing size
-                let packing_size = if self.parser.has_more_data()
-                    && self.parser.peek_byte()? != NATIVE_TYPE::END
-                {
-                    Some(self.parser.read_le::<u8>()?)
-                } else {
-                    None
-                };
-                // Optional class size
-                let class_size = if self.parser.has_more_data()
-                    && self.parser.peek_byte()? != NATIVE_TYPE::END
-                {
-                    Some(self.parser.read_compressed_uint()?)
-                } else {
-                    None
-                };
-                Ok(NativeType::Struct {
-                    packing_size,
-                    class_size,
-                })
+            NATIVE_TYPE::NESTEDSTRUCT => Ok(NativeType::NestedStruct),
+            NATIVE_TYPE::BYVALSTR => {
+                let size = self.parser.read_compressed_uint()?;
+                Ok(NativeType::ByValStr { size })
             }
+            NATIVE_TYPE::ANSIBSTR => Ok(NativeType::AnsiBStr),
+            NATIVE_TYPE::TBSTR => Ok(NativeType::TBStr),
+            NATIVE_TYPE::VARIANTBOOL => Ok(NativeType::VariantBool),
+            NATIVE_TYPE::FUNC => Ok(NativeType::Func),
+            NATIVE_TYPE::ASANY => Ok(NativeType::AsAny),
             NATIVE_TYPE::LPSTRUCT => Ok(NativeType::LPStruct),
             NATIVE_TYPE::CUSTOMMARSHALER => {
                 let guid = self.parser.read_string_utf8()?;
@@ -427,6 +493,7 @@ impl<'a> MarshallingParser<'a> {
                     type_reference,
                 })
             }
+            NATIVE_TYPE::HSTRING => Ok(NativeType::HString),
             NATIVE_TYPE::PTR => {
                 // Optional referenced type
                 let ref_type = if self.parser.has_more_data()
@@ -437,40 +504,6 @@ impl<'a> MarshallingParser<'a> {
                     None
                 };
                 Ok(NativeType::Ptr { ref_type })
-            }
-            NATIVE_TYPE::IUNKNOWN => Ok(NativeType::IUnknown),
-            NATIVE_TYPE::IDISPATCH => Ok(NativeType::IDispatch),
-            NATIVE_TYPE::INTF => {
-                let iid_param_index = if self.parser.has_more_data()
-                    && self.parser.peek_byte()? != NATIVE_TYPE::END
-                {
-                    Some(self.parser.read_compressed_uint()?)
-                } else {
-                    None
-                };
-                Ok(NativeType::Interface { iid_param_index })
-            }
-            NATIVE_TYPE::ASANY => Ok(NativeType::AsAny),
-            NATIVE_TYPE::SAFEARRAY => {
-                // Optional<Element_Type> -> VT_TYPE; If none, VT_EMPTY
-                // Optional<String> -> User defined name/string
-
-                let variant_type = if self.parser.has_more_data() {
-                    u16::from(self.parser.read_le::<u8>()?) & VARIANT_TYPE::TYPEMASK
-                } else {
-                    VARIANT_TYPE::EMPTY
-                };
-
-                let user_defined_name = if self.parser.has_more_data() {
-                    Some(String::new())
-                } else {
-                    None
-                };
-
-                Ok(NativeType::SafeArray {
-                    variant_type,
-                    user_defined_name,
-                })
             }
             _ => Err(malformed_error!("Invalid NATIVE_TYPE byte - {}", head_byte)),
         }
@@ -526,6 +559,9 @@ mod tests {
             (vec![NATIVE_TYPE::R8], NativeType::R8),
             (vec![NATIVE_TYPE::INT], NativeType::Int),
             (vec![NATIVE_TYPE::UINT], NativeType::UInt),
+            (vec![NATIVE_TYPE::VARIANTBOOL], NativeType::VariantBool),
+            (vec![NATIVE_TYPE::IINSPECTABLE], NativeType::IInspectable),
+            (vec![NATIVE_TYPE::HSTRING], NativeType::HString),
         ];
 
         for (input, expected) in test_cases {
@@ -555,6 +591,31 @@ mod tests {
         assert_eq!(
             result,
             NativeType::LPStr {
+                size_param_index: None
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_lputf8str() {
+        // LPUTF8STR with size parameter
+        let input = vec![NATIVE_TYPE::LPUTF8STR, 0x10];
+        let mut parser = MarshallingParser::new(&input);
+        let result = parser.parse_native_type().unwrap();
+        assert_eq!(
+            result,
+            NativeType::LPUtf8Str {
+                size_param_index: Some(16)
+            }
+        );
+
+        // LPUTF8STR without size parameter
+        let input = vec![NATIVE_TYPE::LPUTF8STR, NATIVE_TYPE::END];
+        let mut parser = MarshallingParser::new(&input);
+        let result = parser.parse_native_type().unwrap();
+        assert_eq!(
+            result,
+            NativeType::LPUtf8Str {
                 size_param_index: None
             }
         );
