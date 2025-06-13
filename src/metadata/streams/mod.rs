@@ -203,6 +203,7 @@ pub use tables::{
         PropertyMapEntry, PropertyMapEntryList, PropertyMapEntryMap, PropertyMapEntryRc,
         PropertyMapRaw,
     },
+    propertyptr::{PropertyPtr, PropertyPtrList, PropertyPtrMap, PropertyPtrRaw, PropertyPtrRc},
     standalonesig::{
         StandAloneSig, StandAloneSigList, StandAloneSigMap, StandAloneSigRaw, StandAloneSigRc,
     },

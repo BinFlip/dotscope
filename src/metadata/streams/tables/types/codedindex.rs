@@ -189,6 +189,7 @@ impl CodedIndex {
                 TableId::EventPtr => Token::new(row | 0x1300_0000),
                 TableId::Event => Token::new(row | 0x1400_0000),
                 TableId::PropertyMap => Token::new(row | 0x1500_0000),
+                TableId::PropertyPtr => Token::new(row | 0x1600_0000),
                 TableId::Property => Token::new(row | 0x1700_0000),
                 TableId::MethodSemantics => Token::new(row | 0x1800_0000),
                 TableId::MethodImpl => Token::new(row | 0x1900_0000),

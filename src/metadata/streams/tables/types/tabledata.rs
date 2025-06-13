@@ -5,7 +5,8 @@ use crate::metadata::streams::{
     FieldRvaRaw, FileRaw, GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw, InterfaceImplRaw,
     ManifestResourceRaw, MemberRefRaw, MetadataTable, MethodDefRaw, MethodImplRaw, MethodPtrRaw,
     MethodSemanticsRaw, MethodSpecRaw, ModuleRaw, ModuleRefRaw, NestedClassRaw, ParamPtrRaw,
-    ParamRaw, PropertyMapRaw, PropertyRaw, StandAloneSigRaw, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
+    ParamRaw, PropertyMapRaw, PropertyPtrRaw, PropertyRaw, StandAloneSigRaw, TypeDefRaw,
+    TypeRefRaw, TypeSpecRaw,
 };
 
 #[allow(missing_docs)]
@@ -33,6 +34,7 @@ pub enum TableData<'a> {
     EventPtr(MetadataTable<'a, EventPtrRaw>),
     Event(MetadataTable<'a, EventRaw>),
     PropertyMap(MetadataTable<'a, PropertyMapRaw>),
+    PropertyPtr(MetadataTable<'a, PropertyPtrRaw>),
     Property(MetadataTable<'a, PropertyRaw>),
     MethodSemantics(MetadataTable<'a, MethodSemanticsRaw>),
     MethodImpl(MetadataTable<'a, MethodImplRaw>),

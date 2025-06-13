@@ -84,6 +84,8 @@ pub mod paramptr;
 pub mod property;
 /// The implementation of the '`PropertyMap`' table type
 pub mod propertymap;
+/// The implementation of the '`PropertyPtr`' table type
+pub mod propertyptr;
 /// The implementation of the '`StandAloneSig`' table type
 pub mod standalonesig;
 /// The implementation of the '`TypeDef`' table type

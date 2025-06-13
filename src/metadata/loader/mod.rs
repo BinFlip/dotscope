@@ -54,6 +54,7 @@ mod param;
 mod paramptr;
 mod property;
 mod propertymap;
+mod propertyptr;
 mod standalonesig;
 mod typedef;
 mod typeref;
@@ -62,7 +63,7 @@ mod typespec;
 pub(crate) use context::LoaderContext;
 pub(crate) use data::CilObjectData;
 
-static LOADERS: [&'static dyn MetadataLoader; 42] = [
+static LOADERS: [&'static dyn MetadataLoader; 43] = [
     &assembly::AssemblyLoader,
     &assemblyos::AssemblyOsLoader,
     &assemblyprocessor::AssemblyProcessorLoader,
@@ -101,6 +102,7 @@ static LOADERS: [&'static dyn MetadataLoader; 42] = [
     &paramptr::ParamPtrLoader,
     &property::PropertyLoader,
     &propertymap::PropertyMapLoader,
+    &propertyptr::PropertyPtrLoader,
     &standalonesig::StandAloneSigLoader,
     &typedef::TypeDefLoader,
     &typeref::TypeRefLoader,

@@ -11,8 +11,8 @@ use crate::{
         GenericParamRaw, ImplMapRaw, InterfaceImplRaw, ManifestResourceRaw, MemberRefRaw,
         MetadataTable, MethodDefRaw, MethodImplRaw, MethodPtrRaw, MethodSemanticsRaw,
         MethodSpecRaw, ModuleRaw, ModuleRefRaw, NestedClassRaw, ParamPtrRaw, ParamRaw,
-        PropertyMapRaw, PropertyRaw, RowDefinition, StandAloneSigRaw, TableData, TableId,
-        TableInfo, TableInfoRef, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
+        PropertyMapRaw, PropertyPtrRaw, PropertyRaw, RowDefinition, StandAloneSigRaw, TableData,
+        TableId, TableInfo, TableInfoRef, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
     },
     Error::OutOfBounds,
     Result,
@@ -362,6 +362,9 @@ impl<'a> TablesHeader<'a> {
                 TableData::PropertyMap(table) => unsafe {
                     Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
                 },
+                TableData::PropertyPtr(table) => unsafe {
+                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
+                },
                 TableData::Property(table) => unsafe {
                     Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
                 },
@@ -590,6 +593,13 @@ impl<'a> TablesHeader<'a> {
                 *current_offset += table.size() as usize;
 
                 TableData::PropertyMap(table)
+            }
+            TableId::PropertyPtr => {
+                let table =
+                    MetadataTable::<PropertyPtrRaw>::new(data, t_info.rows, self.info.clone())?;
+                *current_offset += table.size() as usize;
+
+                TableData::PropertyPtr(table)
             }
             TableId::Property => {
                 let table =

@@ -212,6 +212,13 @@ pub enum TableId {
     /// Each row maps a type to a range of properties in the Property table.
     PropertyMap = 0x15,
 
+    /// `PropertyPtr` table (0x16) - Indirection table for Property entries in `#-` streams.
+    ///
+    /// This table is only present in assemblies using uncompressed metadata streams (`#-`).
+    /// Each row contains a single field: a 1-based index into the Property table.
+    /// When present, property references should resolve through this indirection table.
+    PropertyPtr = 0x16,
+
     /// `Property` table (0x17) - Property definitions within types.
     ///
     /// Contains property definitions, including property attributes, name,
