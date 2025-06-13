@@ -109,15 +109,3 @@ impl MethodValidator {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use crate::test::create_method;
-
-    #[test]
-    fn test_method_validation_basic() {
-        // Basic test to ensure module compiles
-        let _method = create_method("TestMethod");
-        assert!(true);
-    }
-}

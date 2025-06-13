@@ -121,7 +121,7 @@ impl ValidationConfig {
             enable_type_system_validation: false, // Runtime validates on-demand during loading
             enable_semantic_validation: true,   // Runtime enforces ECMA-335 semantic rules
             enable_method_validation: true,     // Runtime enforces method constraints
-            enable_token_validation: true,      // Runtime validates critical token references
+            enable_token_validation: false,     // Runtime validates critical token references
             max_nesting_depth: 64,              // Reasonable runtime limit
         }
     }

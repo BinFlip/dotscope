@@ -72,31 +72,3 @@ impl TokenValidator {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use crate::metadata::{
-        token::Token,
-        typesystem::{CilFlavor, CilType},
-    };
-    use std::sync::Arc;
-
-    #[test]
-    fn test_token_validation_basic() {
-        // Basic test to ensure module compiles
-        let _cil_type = CilType::new(
-            Token::new(0x02000001), // TypeDef table
-            "TestNamespace".to_string(),
-            "TestType".to_string(),
-            None,
-            None,
-            0,
-            Arc::new(boxcar::Vec::new()),
-            Arc::new(boxcar::Vec::new()),
-            Some(CilFlavor::Class),
-        );
-
-        // Basic test to ensure we can create a type
-        assert!(true);
-    }
-}

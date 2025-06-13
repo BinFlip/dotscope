@@ -129,7 +129,9 @@ impl MethodImplRaw {
                 match self.method_declaration.tag {
                     TableId::MethodDef => match methods.get(&self.method_declaration.token) {
                         Some(parent) => {
-                            if let CilTypeReference::MethodDef(method_ref) = &interface_implementation {
+                            if let CilTypeReference::MethodDef(method_ref) =
+                                &interface_implementation
+                            {
                                 parent.value().interface_impls.push(method_ref.clone());
                             }
                         }

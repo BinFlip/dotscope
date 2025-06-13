@@ -207,6 +207,10 @@ impl<'a> CilObjectData<'a> {
             }
         }
 
+        // Validate stream layout after all streams are loaded
+        self.header_root
+            .validate_stream_layout(meta_root_offset, self.header.meta_data_size)?;
+
         Ok(())
     }
 }
