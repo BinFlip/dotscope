@@ -10,7 +10,7 @@ use crate::{
         signatures::parse_method_signature,
         streams::{
             tables::types::{RowDefinition, TableId, TableInfoRef},
-            Blob, ParamMap, Strings,
+            Blob, ParamMap, ParamPtrMap, Strings,
         },
         token::Token,
     },
@@ -48,6 +48,7 @@ impl MethodDefRaw {
     /// * 'strings' - The processed Strings
     /// * 'blob'    - The processed Blobs
     /// * '`params_map`'  - All parsed `Param` entries for param resolution
+    /// * '`param_ptr_map`' - All parsed `ParamPtr` entries for indirection resolution
     /// * 'table'   - The `MethodDef` table for getting next row's `param_list`
     ///
     /// # Errors
@@ -58,6 +59,7 @@ impl MethodDefRaw {
         strings: &Strings,
         blob: &Blob,
         params_map: &ParamMap,
+        param_ptr_map: &ParamPtrMap,
         table: &MetadataTable<MethodDefRaw>,
     ) -> Result<MethodRc> {
         let signature = parse_method_signature(blob.get(self.signature as usize)?)?;
@@ -97,15 +99,49 @@ impl MethodDefRaw {
             } else {
                 let type_params = Arc::new(boxcar::Vec::with_capacity(end - start));
                 for counter in start..end {
-                    let token_value = u32::try_from(counter | 0x0800_0000).map_err(|_| {
-                        malformed_error!("Token value too large: {}", counter | 0x0800_0000)
-                    })?;
-                    match params_map.get(&Token::new(token_value)) {
+                    let actual_param_token = if param_ptr_map.is_empty() {
+                        let token_value = u32::try_from(counter | 0x0800_0000).map_err(|_| {
+                            malformed_error!("Token value too large: {}", counter | 0x0800_0000)
+                        })?;
+                        Token::new(token_value)
+                    } else {
+                        let param_ptr_token_value =
+                            u32::try_from(counter | 0x0A00_0000).map_err(|_| {
+                                malformed_error!(
+                                    "ParamPtr token value too large: {}",
+                                    counter | 0x0A00_0000
+                                )
+                            })?;
+                        let param_ptr_token = Token::new(param_ptr_token_value);
+
+                        match param_ptr_map.get(&param_ptr_token) {
+                            Some(param_ptr) => {
+                                let actual_param_rid = param_ptr.value().param;
+                                let actual_param_token_value =
+                                    u32::try_from(actual_param_rid as usize | 0x0800_0000)
+                                        .map_err(|_| {
+                                            malformed_error!(
+                                                "Param token value too large: {}",
+                                                actual_param_rid as usize | 0x0800_0000
+                                            )
+                                        })?;
+                                Token::new(actual_param_token_value)
+                            }
+                            None => {
+                                return Err(malformed_error!(
+                                    "Failed to resolve ParamPtr - {}",
+                                    counter | 0x0A00_0000
+                                ))
+                            }
+                        }
+                    };
+
+                    match params_map.get(&actual_param_token) {
                         Some(param) => _ = type_params.push(param.value().clone()),
                         None => {
                             return Err(malformed_error!(
                                 "Failed to resolve param - {}",
-                                counter | 0x0800_0000
+                                actual_param_token.value()
                             ))
                         }
                     }

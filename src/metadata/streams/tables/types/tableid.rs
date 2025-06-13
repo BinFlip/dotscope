@@ -15,6 +15,13 @@ use strum::{EnumCount, EnumIter};
 /// - **`MethodDef`**: Method definitions
 /// - **`Param`**: Method parameter definitions
 ///
+/// ### Indirection Tables (`#-` Streams)
+/// - **`FieldPtr`**: Indirection table for Field entries in uncompressed streams
+/// - **`MethodPtr`**: Indirection table for MethodDef entries in uncompressed streams
+/// - **`ParamPtr`**: Indirection table for Param entries in uncompressed streams
+/// - **`EventPtr`**: Indirection table for Event entries in uncompressed streams
+/// - **`PropertyPtr`**: Indirection table for Property entries in uncompressed streams
+///
 /// ### Type Relationships
 /// - **`InterfaceImpl`**: Interface implementations by types
 /// - **`NestedClass`**: Nested class relationships
@@ -99,10 +106,10 @@ pub enum TableId {
     /// and signature. Fields are owned by types defined in the `TypeDef` table.
     Field = 0x04,
 
-    /// `MethodPtr` table (0x05) - Indirection table for MethodDef entries in `#-` streams.
+    /// `MethodPtr` table (0x05) - Indirection table for `MethodDef` entries in `#-` streams.
     ///
     /// This table is only present in assemblies using uncompressed metadata streams (`#-`).
-    /// Each row contains a single field: a 1-based index into the MethodDef table.
+    /// Each row contains a single field: a 1-based index into the `MethodDef` table.
     /// When present, method references should resolve through this indirection table.
     MethodPtr = 0x05,
 

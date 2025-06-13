@@ -17,66 +17,54 @@ pub type MethodPtrList = Arc<boxcar::Vec<MethodPtrRc>>;
 /// A reference to a `MethodPtr`
 pub type MethodPtrRc = Arc<MethodPtr>;
 
-/// The MethodPtr table provides an indirection layer for accessing MethodDef table entries
+/// The `MethodPtr` table provides an indirection layer for accessing `MethodDef` table entries
 /// in uncompressed metadata streams (`#-`). This table is only present in assemblies
 /// that use the `#-` stream format instead of the standard `#~` compressed format.
 ///
-/// Each row contains a single field: a 1-based index into the MethodDef table. When MethodPtr
+/// Each row contains a single field: a 1-based index into the `MethodDef` table. When `MethodPtr`
 /// is present, method references should be resolved through this indirection table rather
-/// than directly indexing into the MethodDef table.
+/// than directly indexing into the `MethodDef` table.
 ///
 /// Similar to `MethodPtrRaw` but with resolved indexes and owned data.
 pub struct MethodPtr {
     /// Row ID (1-based index)
     pub rid: u32,
-    /// Token for this MethodPtr entry
+    /// Token for this `MethodPtr` entry
     pub token: Token,
     /// Byte offset of this entry in the metadata stream
     pub offset: usize,
-    /// 1-based index into the MethodDef table
+    /// 1-based index into the `MethodDef` table
     pub method: u32,
 }
 
-impl MethodPtr {
-    /// Create a new MethodPtr instance
-    pub fn new(rid: u32, offset: usize, method: u32) -> Self {
-        Self {
-            rid,
-            token: Token::new(0x0500_0000 + rid),
-            offset,
-            method,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
-/// The MethodPtr table provides indirection for MethodDef table access in `#-` streams.
+/// The `MethodPtr` table provides indirection for `MethodDef` table access in `#-` streams.
 /// Table ID = 0x05
 ///
 /// This table is only present in assemblies using uncompressed metadata streams (`#-`).
-/// It contains a single column with 1-based indices into the MethodDef table, providing
+/// It contains a single column with 1-based indices into the `MethodDef` table, providing
 /// an indirection layer that allows for more flexible method ordering and access patterns.
 ///
 /// ## ECMA-335 Specification
 /// From ECMA-335, Partition II, Section 22.25:
 /// > The MethodPtr table is an auxiliary table used by the CLI loaders to implement
-/// > a more complex method layout than the simple sequential layout provided by the MethodDef table.
-/// > Each row contains an index into the MethodDef table.
+/// > a more complex method layout than the simple sequential layout provided by the `MethodDef` table.
+/// > Each row contains an index into the `MethodDef` table.
 ///
 /// ## Usage in `#-` Streams
 /// When the metadata uses the `#-` (uncompressed) stream format instead of `#~` (compressed),
-/// the MethodPtr table may be present to provide indirection. If present:
-/// 1. Method references should resolve through MethodPtr first
-/// 2. If MethodPtr is empty or missing, fall back to direct MethodDef table indexing
+/// the `MethodPtr` table may be present to provide indirection. If present:
+/// 1. Method references should resolve through `MethodPtr` first
+/// 2. If `MethodPtr` is empty or missing, fall back to direct `MethodDef` table indexing
 /// 3. The indirection allows for non-sequential method ordering
 pub struct MethodPtrRaw {
     /// Row ID (1-based index)
     pub rid: u32,
-    /// Token for this MethodPtr entry
+    /// Token for this `MethodPtr` entry
     pub token: Token,
     /// Byte offset of this entry in the metadata stream
     pub offset: usize,
-    /// 1-based index into the MethodDef table
+    /// 1-based index into the `MethodDef` table
     pub method: u32,
 }
 
@@ -97,12 +85,12 @@ impl MethodPtrRaw {
 
     /// Apply a `MethodPtrRaw` entry to update related metadata structures.
     ///
-    /// MethodPtr entries provide indirection for method access but don't directly
+    /// `MethodPtr` entries provide indirection for method access but don't directly
     /// modify other metadata structures during parsing. The indirection logic
     /// is handled at the table resolution level.
     ///
     /// # Errors
-    /// Always returns `Ok(())` as MethodPtr entries don't modify other tables directly.
+    /// Always returns `Ok(())` as `MethodPtr` entries don't modify other tables directly.
     pub fn apply(&self) -> Result<()> {
         Ok(())
     }

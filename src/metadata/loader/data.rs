@@ -195,15 +195,7 @@ impl<'a> CilObjectData<'a> {
             }
 
             match stream.name.as_str() {
-                "#~" => self.meta = Some(TablesHeader::from(&self.data[start..end])?),
-                "#-" => {
-                    // TODO: Handle uncompressed metadata tables stream properly
-                    // Currently we parse #- streams the same as #~ streams, but this is incomplete.
-                    // The #- stream may contain additional Ptr tables (FieldPtr, MethodPtr, ParamPtr,
-                    // EventPtr, PropertyPtr) that require special indirection logic.
-                    // See the comprehensive TODO in from_file() method above for full requirements.
-                    self.meta = Some(TablesHeader::from(&self.data[start..end])?);
-                }
+                "#~" | "#-" => self.meta = Some(TablesHeader::from(&self.data[start..end])?),
                 "#Strings" => self.strings = Some(Strings::from(&self.data[start..end])?),
                 "#US" => self.userstrings = Some(UserStrings::from(&self.data[start..end])?),
                 "#GUID" => self.guids = Some(Guid::from(&self.data[start..end])?),

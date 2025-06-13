@@ -17,11 +17,11 @@ pub type ParamPtrList = Arc<boxcar::Vec<ParamPtrRc>>;
 /// A reference to a `ParamPtr`
 pub type ParamPtrRc = Arc<ParamPtr>;
 
-/// The ParamPtr table provides an indirection layer for accessing Param table entries
+/// The `ParamPtr` table provides an indirection layer for accessing Param table entries
 /// in uncompressed metadata streams (`#-`). This table is only present in assemblies
 /// that use the `#-` stream format instead of the standard `#~` compressed format.
 ///
-/// Each row contains a single field: a 1-based index into the Param table. When ParamPtr
+/// Each row contains a single field: a 1-based index into the Param table. When `ParamPtr`
 /// is present, parameter references should be resolved through this indirection table rather
 /// than directly indexing into the Param table.
 ///
@@ -29,7 +29,7 @@ pub type ParamPtrRc = Arc<ParamPtr>;
 pub struct ParamPtr {
     /// Row ID (1-based index)
     pub rid: u32,
-    /// Token for this ParamPtr entry
+    /// Token for this `ParamPtr` entry
     pub token: Token,
     /// Byte offset of this entry in the metadata stream
     pub offset: usize,
@@ -37,20 +37,8 @@ pub struct ParamPtr {
     pub param: u32,
 }
 
-impl ParamPtr {
-    /// Create a new ParamPtr instance
-    pub fn new(rid: u32, offset: usize, param: u32) -> Self {
-        Self {
-            rid,
-            token: Token::new(0x0700_0000 + rid),
-            offset,
-            param,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
-/// The ParamPtr table provides indirection for Param table access in `#-` streams.
+/// The `ParamPtr` table provides indirection for Param table access in `#-` streams.
 /// Table ID = 0x07
 ///
 /// This table is only present in assemblies using uncompressed metadata streams (`#-`).
@@ -65,14 +53,14 @@ impl ParamPtr {
 ///
 /// ## Usage in `#-` Streams
 /// When the metadata uses the `#-` (uncompressed) stream format instead of `#~` (compressed),
-/// the ParamPtr table may be present to provide indirection. If present:
-/// 1. Parameter references should resolve through ParamPtr first
-/// 2. If ParamPtr is empty or missing, fall back to direct Param table indexing
+/// the `ParamPtr` table may be present to provide indirection. If present:
+/// 1. Parameter references should resolve through `ParamPtr` first
+/// 2. If `ParamPtr` is empty or missing, fall back to direct Param table indexing
 /// 3. The indirection allows for non-sequential parameter ordering
 pub struct ParamPtrRaw {
     /// Row ID (1-based index)
     pub rid: u32,
-    /// Token for this ParamPtr entry
+    /// Token for this `ParamPtr` entry
     pub token: Token,
     /// Byte offset of this entry in the metadata stream
     pub offset: usize,
@@ -97,12 +85,12 @@ impl ParamPtrRaw {
 
     /// Apply a `ParamPtrRaw` entry to update related metadata structures.
     ///
-    /// ParamPtr entries provide indirection for parameter access but don't directly
+    /// `ParamPtr` entries provide indirection for parameter access but don't directly
     /// modify other metadata structures during parsing. The indirection logic
     /// is handled at the table resolution level.
     ///
     /// # Errors
-    /// Always returns `Ok(())` as ParamPtr entries don't modify other tables directly.
+    /// Always returns `Ok(())` as `ParamPtr` entries don't modify other tables directly.
     pub fn apply(&self) -> Result<()> {
         Ok(())
     }

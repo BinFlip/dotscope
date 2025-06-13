@@ -9,7 +9,7 @@ use crate::{
 
 use super::MetadataLoader;
 
-/// Loader for the PropertyPtr table.
+/// Loader for the `PropertyPtr` table.
 pub struct PropertyPtrLoader;
 
 impl MetadataLoader for PropertyPtrLoader {

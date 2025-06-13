@@ -1,5 +1,4 @@
 //! `FieldPtr` loader implementation
-//!
 use crate::{
     metadata::{
         loader::context::LoaderContext,
@@ -10,7 +9,7 @@ use crate::{
 
 use super::MetadataLoader;
 
-/// Loader for the FieldPtr table.
+/// Loader for the `FieldPtr` table.
 pub struct FieldPtrLoader;
 
 impl MetadataLoader for FieldPtrLoader {

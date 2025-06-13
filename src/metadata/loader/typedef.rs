@@ -19,7 +19,9 @@ impl MetadataLoader for TypeDefLoader {
                         |coded_index| context.get_ref(coded_index),
                         strings,
                         &context.field,
+                        &context.field_ptr,
                         context.method_def,
+                        &context.method_ptr,
                         table,
                     )?;
 
@@ -35,6 +37,12 @@ impl MetadataLoader for TypeDefLoader {
     }
 
     fn dependencies(&self) -> &'static [TableId] {
-        &[TableId::Field, TableId::MethodDef, TableId::TypeRef]
+        &[
+            TableId::Field,
+            TableId::FieldPtr,
+            TableId::MethodDef,
+            TableId::MethodPtr,
+            TableId::TypeRef,
+        ]
     }
 }

@@ -16,7 +16,8 @@ impl MetadataLoader for MethodDefLoader {
         {
             if let Some(table) = header.table::<MethodDefRaw>(TableId::MethodDef) {
                 table.par_iter().try_for_each(|row| {
-                    let owned = row.to_owned(strings, blobs, &context.param, table)?;
+                    let owned =
+                        row.to_owned(strings, blobs, &context.param, &context.param_ptr, table)?;
 
                     context.method_def.insert(row.token, owned.clone());
                     Ok(())
@@ -32,6 +33,6 @@ impl MetadataLoader for MethodDefLoader {
     }
 
     fn dependencies(&self) -> &'static [TableId] {
-        &[TableId::Param]
+        &[TableId::Param, TableId::ParamPtr]
     }
 }

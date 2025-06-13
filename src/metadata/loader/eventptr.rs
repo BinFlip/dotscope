@@ -9,7 +9,7 @@ use crate::{
 
 use super::MetadataLoader;
 
-/// Loader for the EventPtr table.
+/// Loader for the `EventPtr` table.
 pub struct EventPtrLoader;
 
 impl MetadataLoader for EventPtrLoader {

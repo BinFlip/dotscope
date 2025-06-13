@@ -17,11 +17,11 @@ pub type EventPtrList = Arc<boxcar::Vec<EventPtrRc>>;
 /// A reference to a `EventPtr`
 pub type EventPtrRc = Arc<EventPtr>;
 
-/// The EventPtr table provides an indirection layer for accessing Event table entries
+/// The `EventPtr` table provides an indirection layer for accessing Event table entries
 /// in uncompressed metadata streams (`#-`). This table is only present in assemblies
 /// that use the `#-` stream format instead of the standard `#~` compressed format.
 ///
-/// Each row contains a single field: a 1-based index into the Event table. When EventPtr
+/// Each row contains a single field: a 1-based index into the Event table. When `EventPtr`
 /// is present, event references should be resolved through this indirection table rather
 /// than directly indexing into the Event table.
 ///
@@ -29,7 +29,7 @@ pub type EventPtrRc = Arc<EventPtr>;
 pub struct EventPtr {
     /// Row ID (1-based index)
     pub rid: u32,
-    /// Token for this EventPtr entry
+    /// Token for this `EventPtr` entry
     pub token: Token,
     /// Byte offset of this entry in the metadata stream
     pub offset: usize,
@@ -37,20 +37,8 @@ pub struct EventPtr {
     pub event: u32,
 }
 
-impl EventPtr {
-    /// Create a new EventPtr instance
-    pub fn new(rid: u32, offset: usize, event: u32) -> Self {
-        Self {
-            rid,
-            token: Token::new(0x1300_0000 + rid),
-            offset,
-            event,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
-/// The EventPtr table provides indirection for Event table access in `#-` streams.
+/// The `EventPtr` table provides indirection for Event table access in `#-` streams.
 /// Table ID = 0x13
 ///
 /// This table is only present in assemblies using uncompressed metadata streams (`#-`).
@@ -65,14 +53,14 @@ impl EventPtr {
 ///
 /// ## Usage in `#-` Streams
 /// When the metadata uses the `#-` (uncompressed) stream format instead of `#~` (compressed),
-/// the EventPtr table may be present to provide indirection. If present:
-/// 1. Event references should resolve through EventPtr first
-/// 2. If EventPtr is empty or missing, fall back to direct Event table indexing
+/// the `EventPtr` table may be present to provide indirection. If present:
+/// 1. Event references should resolve through `EventPtr` first
+/// 2. If `EventPtr` is empty or missing, fall back to direct Event table indexing
 /// 3. The indirection allows for non-sequential event ordering
 pub struct EventPtrRaw {
     /// Row ID (1-based index)
     pub rid: u32,
-    /// Token for this EventPtr entry
+    /// Token for this `EventPtr` entry
     pub token: Token,
     /// Byte offset of this entry in the metadata stream
     pub offset: usize,
@@ -97,12 +85,12 @@ impl EventPtrRaw {
 
     /// Apply a `EventPtrRaw` entry to update related metadata structures.
     ///
-    /// EventPtr entries provide indirection for event access but don't directly
+    /// `EventPtr` entries provide indirection for event access but don't directly
     /// modify other metadata structures during parsing. The indirection logic
     /// is handled at the table resolution level.
     ///
     /// # Errors
-    /// Always returns `Ok(())` as EventPtr entries don't modify other tables directly.
+    /// Always returns `Ok(())` as `EventPtr` entries don't modify other tables directly.
     pub fn apply(&self) -> Result<()> {
         Ok(())
     }

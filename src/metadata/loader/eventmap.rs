@@ -17,7 +17,8 @@ impl MetadataLoader for EventMapLoader {
         if let Some(header) = context.meta.as_ref() {
             if let Some(table) = header.table::<EventMapRaw>(TableId::EventMap) {
                 table.par_iter().try_for_each(|row| {
-                    let owned = row.to_owned(context.types, &context.event, table)?;
+                    let owned =
+                        row.to_owned(context.types, &context.event, &context.event_ptr, table)?;
                     owned.apply()?;
 
                     context.event_map.insert(row.token, owned);
@@ -33,6 +34,6 @@ impl MetadataLoader for EventMapLoader {
     }
 
     fn dependencies(&self) -> &'static [TableId] {
-        &[TableId::Event]
+        &[TableId::Event, TableId::EventPtr]
     }
 }

@@ -17,11 +17,11 @@ pub type PropertyPtrList = Arc<boxcar::Vec<PropertyPtrRc>>;
 /// A reference to a `PropertyPtr`
 pub type PropertyPtrRc = Arc<PropertyPtr>;
 
-/// The PropertyPtr table provides an indirection layer for accessing Property table entries
+/// The `PropertyPtr` table provides an indirection layer for accessing Property table entries
 /// in uncompressed metadata streams (`#-`). This table is only present in assemblies
 /// that use the `#-` stream format instead of the standard `#~` compressed format.
 ///
-/// Each row contains a single field: a 1-based index into the Property table. When PropertyPtr
+/// Each row contains a single field: a 1-based index into the Property table. When `PropertyPtr`
 /// is present, property references should be resolved through this indirection table rather
 /// than directly indexing into the Property table.
 ///
@@ -29,7 +29,7 @@ pub type PropertyPtrRc = Arc<PropertyPtr>;
 pub struct PropertyPtr {
     /// Row ID (1-based index)
     pub rid: u32,
-    /// Token for this PropertyPtr entry
+    /// Token for this `PropertyPtr` entry
     pub token: Token,
     /// Byte offset of this entry in the metadata stream
     pub offset: usize,
@@ -37,20 +37,8 @@ pub struct PropertyPtr {
     pub property: u32,
 }
 
-impl PropertyPtr {
-    /// Create a new PropertyPtr instance
-    pub fn new(rid: u32, offset: usize, property: u32) -> Self {
-        Self {
-            rid,
-            token: Token::new(0x1600_0000 + rid),
-            offset,
-            property,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
-/// The PropertyPtr table provides indirection for Property table access in `#-` streams.
+/// The `PropertyPtr` table provides indirection for Property table access in `#-` streams.
 /// Table ID = 0x16
 ///
 /// This table is only present in assemblies using uncompressed metadata streams (`#-`).
@@ -65,14 +53,14 @@ impl PropertyPtr {
 ///
 /// ## Usage in `#-` Streams
 /// When the metadata uses the `#-` (uncompressed) stream format instead of `#~` (compressed),
-/// the PropertyPtr table may be present to provide indirection. If present:
-/// 1. Property references should resolve through PropertyPtr first
-/// 2. If PropertyPtr is empty or missing, fall back to direct Property table indexing
+/// the `PropertyPtr` table may be present to provide indirection. If present:
+/// 1. Property references should resolve through `PropertyPtr` first
+/// 2. If `PropertyPtr` is empty or missing, fall back to direct Property table indexing
 /// 3. The indirection allows for non-sequential property ordering
 pub struct PropertyPtrRaw {
     /// Row ID (1-based index)
     pub rid: u32,
-    /// Token for this PropertyPtr entry
+    /// Token for this `PropertyPtr` entry
     pub token: Token,
     /// Byte offset of this entry in the metadata stream
     pub offset: usize,
@@ -97,12 +85,12 @@ impl PropertyPtrRaw {
 
     /// Apply a `PropertyPtrRaw` entry to update related metadata structures.
     ///
-    /// PropertyPtr entries provide indirection for property access but don't directly
+    /// `PropertyPtr` entries provide indirection for property access but don't directly
     /// modify other metadata structures during parsing. The indirection logic
     /// is handled at the table resolution level.
     ///
     /// # Errors
-    /// Always returns `Ok(())` as PropertyPtr entries don't modify other tables directly.
+    /// Always returns `Ok(())` as `PropertyPtr` entries don't modify other tables directly.
     pub fn apply(&self) -> Result<()> {
         Ok(())
     }
