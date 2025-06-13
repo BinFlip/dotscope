@@ -400,6 +400,25 @@ pub use error::Error;
 /// ```
 pub use metadata::cilobject::CilObject;
 
+/// Configuration for metadata validation during assembly loading.
+///
+/// Controls which validation checks are performed when loading .NET assemblies.
+/// Different presets are available for various use cases.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use dotscope::{CilObject, ValidationConfig};
+///
+/// // Use minimal validation for best performance
+/// let assembly = CilObject::from_file_with_validation(
+///     std::path::Path::new("tests/samples/WindowsBase.dll"),
+///     ValidationConfig::minimal()
+/// )?;
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+pub use metadata::validation::ValidationConfig;
+
 /// Metadata streams and heaps for direct access to ECMA-335 data structures.
 ///
 /// These types provide low-level access to the metadata structures:

@@ -204,6 +204,7 @@ We're continuously working to improve `dotscope` and add new capabilities. Here 
 
 ### Core Improvements
 
+- Handling U/I (compilation dependend 64bit or 32bit) properly
 - Improve correctness and API design
 - Improve documentation and examples
 - Add protections against large allocations (e.g. maliciously crafted files that aim to exhaust system memory)

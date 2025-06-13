@@ -402,6 +402,7 @@ impl CilFlavor {
         }
 
         // Primitive widening rules
+        #[allow(clippy::match_same_arms)]
         match (self, target) {
             // Integer widening: smaller -> larger
             (CilFlavor::I1 | CilFlavor::U1, CilFlavor::I2 | CilFlavor::I4 | CilFlavor::I8) => true,
@@ -451,6 +452,7 @@ impl CilFlavor {
         }
 
         // For constants, we're more restrictive - only safe widening
+        #[allow(clippy::match_same_arms)]
         match (constant_flavor, self) {
             // Integer literal widening (safe)
             (CilFlavor::I1, CilFlavor::I2 | CilFlavor::I4 | CilFlavor::I8) => true,

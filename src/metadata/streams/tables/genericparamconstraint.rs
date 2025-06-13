@@ -11,6 +11,7 @@ use crate::{
         },
         token::Token,
         typesystem::{CilTypeRc, TypeRegistry},
+        validation::ConstraintValidator,
     },
     Result,
 };
@@ -43,8 +44,15 @@ impl GenericParamConstraint {
     /// Apply an `GenericParamConstraint` - The owner will be updated with the new `GenericParamConstraint` entry
     ///
     /// # Errors
-    /// This function does not currently return errors, but returns Result for consistency
+    /// Returns an error if constraint compatibility validation fails
     pub fn apply(&self) -> Result<()> {
+        ConstraintValidator::validate_constraint(
+            &self.constraint,
+            self.owner.flags,
+            &self.owner.name,
+            self.owner.token.value(),
+        )?;
+
         self.owner.constraints.push(self.constraint.clone().into());
         Ok(())
     }
@@ -73,7 +81,8 @@ impl GenericParamConstraintRaw {
     /// * 'types'           - All parsed `TypeDef`, `TypeRef` and `TypeSpec` entries
     ///
     /// # Errors
-    /// Returns an error if constraint or generic parameter lookup fails
+    /// Returns an error if constraint or generic parameter lookup fails, or if
+    /// constraint compatibility validation fails
     pub fn apply(&self, generic_params: &GenericParamMap, types: &TypeRegistry) -> Result<()> {
         let Some(constraint) = types.get(&self.constraint.token) else {
             return Err(malformed_error!(
@@ -84,6 +93,13 @@ impl GenericParamConstraintRaw {
 
         match generic_params.get(&Token::new(self.owner | 0x2A00_0000)) {
             Some(owner) => {
+                ConstraintValidator::validate_constraint(
+                    &constraint,
+                    owner.value().flags,
+                    &owner.value().name,
+                    owner.value().token.value(),
+                )?;
+
                 owner.value().constraints.push(constraint.into());
                 Ok(())
             }

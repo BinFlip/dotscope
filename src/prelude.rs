@@ -14,6 +14,9 @@ pub use crate::Error;
 /// The result type used throughout dotscope
 pub use crate::Result;
 
+/// Configuration for metadata validation during assembly loading
+pub use crate::ValidationConfig;
+
 // ================================================================================================
 // Main Entry Points
 // ================================================================================================

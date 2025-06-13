@@ -64,3 +64,5 @@ pub mod streams;
 pub mod token;
 /// Implementation of the .NET type system
 pub mod typesystem;
+/// Metadata validation utilities
+pub mod validation;

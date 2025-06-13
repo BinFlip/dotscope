@@ -48,24 +48,12 @@ impl MethodImpl {
     pub fn apply(&self) -> Result<()> {
         self.class.overwrites.push(self.method_body.clone());
 
-        match &self.method_declaration {
-            CilTypeReference::MethodDef(method_ref) => {
-                if let Some(method) = method_ref.upgrade() {
-                    match &self.method_body {
-                        CilTypeReference::MethodDef(body_method_ref) => {
-                            method.interface_impls.push(body_method_ref.clone());
-                        }
-                        _ => {
-                            // Only MethodDef implementations are tracked in interface_impls
-                        }
-                    }
+        if let CilTypeReference::MethodDef(method_ref) = &self.method_declaration {
+            if let Some(method) = method_ref.upgrade() {
+                if let CilTypeReference::MethodDef(body_method_ref) = &self.method_body {
+                    method.interface_impls.push(body_method_ref.clone());
                 }
             }
-            CilTypeReference::MemberRef(_) => {
-                // MemberRef interface declarations are handled differently
-                // The relationship is primarily tracked on the implementing class
-            }
-            _ => {}
         }
 
         Ok(())
@@ -141,13 +129,8 @@ impl MethodImplRaw {
                 match self.method_declaration.tag {
                     TableId::MethodDef => match methods.get(&self.method_declaration.token) {
                         Some(parent) => {
-                            match &interface_implementation {
-                                CilTypeReference::MethodDef(method_ref) => {
-                                    parent.value().interface_impls.push(method_ref.clone());
-                                }
-                                _ => {
-                                    // Only MethodDef implementations are tracked in interface_impls
-                                }
+                            if let CilTypeReference::MethodDef(method_ref) = &interface_implementation {
+                                parent.value().interface_impls.push(method_ref.clone());
                             }
                         }
                         None => {
@@ -176,7 +159,7 @@ impl MethodImplRaw {
                             self.method_declaration.token.value()
                         ))
                     }
-                };
+                }
 
                 Ok(())
             }
