@@ -17,7 +17,12 @@ impl MetadataLoader for PropertyMapLoader {
         if let Some(header) = context.meta.as_ref() {
             if let Some(table) = header.table::<PropertyMapRaw>(TableId::PropertyMap) {
                 table.par_iter().try_for_each(|row| {
-                    let owned = row.to_owned(context.types, &context.property, table)?;
+                    let owned = row.to_owned(
+                        context.types,
+                        &context.property,
+                        &context.property_ptr,
+                        table,
+                    )?;
                     owned.apply()?;
 
                     context.property_map.insert(row.token, owned);
@@ -36,6 +41,7 @@ impl MetadataLoader for PropertyMapLoader {
     fn dependencies(&self) -> &'static [TableId] {
         &[
             TableId::Property,
+            TableId::PropertyPtr,
             TableId::TypeDef,
             TableId::TypeRef,
             TableId::TypeSpec,

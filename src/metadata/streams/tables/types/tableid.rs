@@ -15,6 +15,13 @@ use strum::{EnumCount, EnumIter};
 /// - **`MethodDef`**: Method definitions
 /// - **`Param`**: Method parameter definitions
 ///
+/// ### Indirection Tables (`#-` Streams)
+/// - **`FieldPtr`**: Indirection table for Field entries in uncompressed streams
+/// - **`MethodPtr`**: Indirection table for MethodDef entries in uncompressed streams
+/// - **`ParamPtr`**: Indirection table for Param entries in uncompressed streams
+/// - **`EventPtr`**: Indirection table for Event entries in uncompressed streams
+/// - **`PropertyPtr`**: Indirection table for Property entries in uncompressed streams
+///
 /// ### Type Relationships
 /// - **`InterfaceImpl`**: Interface implementations by types
 /// - **`NestedClass`**: Nested class relationships
@@ -86,11 +93,25 @@ pub enum TableId {
     /// base type, and member lists.
     TypeDef = 0x02,
 
+    /// `FieldPtr` table (0x03) - Indirection table for Field entries in `#-` streams.
+    ///
+    /// This table is only present in assemblies using uncompressed metadata streams (`#-`).
+    /// Each row contains a single field: a 1-based index into the Field table.
+    /// When present, field references should resolve through this indirection table.
+    FieldPtr = 0x03,
+
     /// `Field` table (0x04) - Field definitions within types.
     ///
     /// Contains all field definitions, including their attributes, name,
     /// and signature. Fields are owned by types defined in the `TypeDef` table.
     Field = 0x04,
+
+    /// `MethodPtr` table (0x05) - Indirection table for `MethodDef` entries in `#-` streams.
+    ///
+    /// This table is only present in assemblies using uncompressed metadata streams (`#-`).
+    /// Each row contains a single field: a 1-based index into the `MethodDef` table.
+    /// When present, method references should resolve through this indirection table.
+    MethodPtr = 0x05,
 
     /// `MethodDef` table (0x06) - Method definitions within types.
     ///
@@ -98,6 +119,13 @@ pub enum TableId {
     /// static methods, and finalizers. Includes method attributes, name,
     /// signature, and RVA (if the method has IL code).
     MethodDef = 0x06,
+
+    /// `ParamPtr` table (0x07) - Indirection table for Param entries in `#-` streams.
+    ///
+    /// This table is only present in assemblies using uncompressed metadata streams (`#-`).
+    /// Each row contains a single field: a 1-based index into the Param table.
+    /// When present, parameter references should resolve through this indirection table.
+    ParamPtr = 0x07,
 
     /// `Param` table (0x08) - Parameter definitions for methods.
     ///
@@ -171,6 +199,13 @@ pub enum TableId {
     /// Each row maps a type to a range of events in the Event table.
     EventMap = 0x12,
 
+    /// `EventPtr` table (0x13) - Indirection table for Event entries in `#-` streams.
+    ///
+    /// This table is only present in assemblies using uncompressed metadata streams (`#-`).
+    /// Each row contains a single field: a 1-based index into the Event table.
+    /// When present, event references should resolve through this indirection table.
+    EventPtr = 0x13,
+
     /// `Event` table (0x14) - Event definitions within types.
     ///
     /// Contains event definitions, including event attributes, name, and
@@ -183,6 +218,13 @@ pub enum TableId {
     /// Establishes the relationship between types and the properties they define.
     /// Each row maps a type to a range of properties in the Property table.
     PropertyMap = 0x15,
+
+    /// `PropertyPtr` table (0x16) - Indirection table for Property entries in `#-` streams.
+    ///
+    /// This table is only present in assemblies using uncompressed metadata streams (`#-`).
+    /// Each row contains a single field: a 1-based index into the Property table.
+    /// When present, property references should resolve through this indirection table.
+    PropertyPtr = 0x16,
 
     /// `Property` table (0x17) - Property definitions within types.
     ///

@@ -202,23 +202,20 @@ impl ImplMapRaw {
         F: Fn(&CodedIndex) -> CilTypeReference,
     {
         let member_forwarded = match get_ref(&self.member_forwarded) {
-            CilTypeReference::MethodDef(method_def) => {
-                // Convert from MethodDefWeak to MethodRc
-                match method_def.upgrade() {
-                    Some(method) => {
-                        method
-                            .flags_pinvoke
-                            .store(self.mapping_flags, Ordering::Relaxed);
-                        method
-                    }
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to upgrade MethodDef weak reference - {}",
-                            self.member_forwarded.token.value()
-                        ))
-                    }
+            CilTypeReference::MethodDef(method_def) => match method_def.upgrade() {
+                Some(method) => {
+                    method
+                        .flags_pinvoke
+                        .store(self.mapping_flags, Ordering::Relaxed);
+                    method
                 }
-            }
+                None => {
+                    return Err(malformed_error!(
+                        "Failed to upgrade MethodDef weak reference - {}",
+                        self.member_forwarded.token.value()
+                    ))
+                }
+            },
             _ => {
                 return Err(malformed_error!(
                     "Invalid member_forwarded token - {}",

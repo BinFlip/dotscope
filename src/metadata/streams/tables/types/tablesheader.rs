@@ -6,12 +6,13 @@ use crate::{
     metadata::streams::{
         AssemblyOsRaw, AssemblyProcessorRaw, AssemblyRaw, AssemblyRefOsRaw,
         AssemblyRefProcessorRaw, AssemblyRefRaw, ClassLayoutRaw, ConstantRaw, CustomAttributeRaw,
-        DeclSecurityRaw, EventMapRaw, EventRaw, ExportedTypeRaw, FieldLayoutRaw, FieldMarshalRaw,
-        FieldRaw, FieldRvaRaw, FileRaw, GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw,
-        InterfaceImplRaw, ManifestResourceRaw, MemberRefRaw, MetadataTable, MethodDefRaw,
-        MethodImplRaw, MethodSemanticsRaw, MethodSpecRaw, ModuleRaw, ModuleRefRaw, NestedClassRaw,
-        ParamRaw, PropertyMapRaw, PropertyRaw, RowDefinition, StandAloneSigRaw, TableData, TableId,
-        TableInfo, TableInfoRef, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
+        DeclSecurityRaw, EventMapRaw, EventPtrRaw, EventRaw, ExportedTypeRaw, FieldLayoutRaw,
+        FieldMarshalRaw, FieldPtrRaw, FieldRaw, FieldRvaRaw, FileRaw, GenericParamConstraintRaw,
+        GenericParamRaw, ImplMapRaw, InterfaceImplRaw, ManifestResourceRaw, MemberRefRaw,
+        MetadataTable, MethodDefRaw, MethodImplRaw, MethodPtrRaw, MethodSemanticsRaw,
+        MethodSpecRaw, ModuleRaw, ModuleRefRaw, NestedClassRaw, ParamPtrRaw, ParamRaw,
+        PropertyMapRaw, PropertyPtrRaw, PropertyRaw, RowDefinition, StandAloneSigRaw, TableData,
+        TableId, TableInfo, TableInfoRef, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
     },
     Error::OutOfBounds,
     Result,
@@ -304,10 +305,19 @@ impl<'a> TablesHeader<'a> {
                 TableData::TypeDef(table) => unsafe {
                     Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
                 },
+                TableData::FieldPtr(table) => unsafe {
+                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
+                },
                 TableData::Field(table) => unsafe {
                     Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
                 },
+                TableData::MethodPtr(table) => unsafe {
+                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
+                },
                 TableData::MethodDef(table) => unsafe {
+                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
+                },
+                TableData::ParamPtr(table) => unsafe {
                     Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
                 },
                 TableData::Param(table) => unsafe {
@@ -343,10 +353,16 @@ impl<'a> TablesHeader<'a> {
                 TableData::EventMap(table) => unsafe {
                     Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
                 },
+                TableData::EventPtr(table) => unsafe {
+                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
+                },
                 TableData::Event(table) => unsafe {
                     Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
                 },
                 TableData::PropertyMap(table) => unsafe {
+                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
+                },
+                TableData::PropertyPtr(table) => unsafe {
                     Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
                 },
                 TableData::Property(table) => unsafe {
@@ -448,11 +464,25 @@ impl<'a> TablesHeader<'a> {
 
                 TableData::TypeDef(table)
             }
+            TableId::FieldPtr => {
+                let table =
+                    MetadataTable::<FieldPtrRaw>::new(data, t_info.rows, self.info.clone())?;
+                *current_offset += table.size() as usize;
+
+                TableData::FieldPtr(table)
+            }
             TableId::Field => {
                 let table = MetadataTable::<FieldRaw>::new(data, t_info.rows, self.info.clone())?;
                 *current_offset += table.size() as usize;
 
                 TableData::Field(table)
+            }
+            TableId::MethodPtr => {
+                let table =
+                    MetadataTable::<MethodPtrRaw>::new(data, t_info.rows, self.info.clone())?;
+                *current_offset += table.size() as usize;
+
+                TableData::MethodPtr(table)
             }
             TableId::MethodDef => {
                 let table =
@@ -460,6 +490,13 @@ impl<'a> TablesHeader<'a> {
                 *current_offset += table.size() as usize;
 
                 TableData::MethodDef(table)
+            }
+            TableId::ParamPtr => {
+                let table =
+                    MetadataTable::<ParamPtrRaw>::new(data, t_info.rows, self.info.clone())?;
+                *current_offset += table.size() as usize;
+
+                TableData::ParamPtr(table)
             }
             TableId::Param => {
                 let table = MetadataTable::<ParamRaw>::new(data, t_info.rows, self.info.clone())?;
@@ -537,6 +574,13 @@ impl<'a> TablesHeader<'a> {
 
                 TableData::EventMap(table)
             }
+            TableId::EventPtr => {
+                let table =
+                    MetadataTable::<EventPtrRaw>::new(data, t_info.rows, self.info.clone())?;
+                *current_offset += table.size() as usize;
+
+                TableData::EventPtr(table)
+            }
             TableId::Event => {
                 let table = MetadataTable::<EventRaw>::new(data, t_info.rows, self.info.clone())?;
                 *current_offset += table.size() as usize;
@@ -549,6 +593,13 @@ impl<'a> TablesHeader<'a> {
                 *current_offset += table.size() as usize;
 
                 TableData::PropertyMap(table)
+            }
+            TableId::PropertyPtr => {
+                let table =
+                    MetadataTable::<PropertyPtrRaw>::new(data, t_info.rows, self.info.clone())?;
+                *current_offset += table.size() as usize;
+
+                TableData::PropertyPtr(table)
             }
             TableId::Property => {
                 let table =

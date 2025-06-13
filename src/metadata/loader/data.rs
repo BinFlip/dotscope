@@ -128,15 +128,20 @@ impl<'a> CilObjectData<'a> {
                 method_semantics: SkipMap::default(),
                 method_spec: &cil_object.method_specs,
                 field: SkipMap::default(),
+                field_ptr: SkipMap::default(),
+                method_ptr: SkipMap::default(),
                 field_layout: SkipMap::default(),
                 field_marshal: SkipMap::default(),
                 field_rva: SkipMap::default(),
                 param: SkipMap::default(),
+                param_ptr: SkipMap::default(),
                 generic_param: SkipMap::default(),
                 generic_param_constraint: SkipMap::default(),
                 property: SkipMap::default(),
+                property_ptr: SkipMap::default(),
                 property_map: SkipMap::default(),
                 event: SkipMap::default(),
+                event_ptr: SkipMap::default(),
                 event_map: SkipMap::default(),
                 member_ref: &cil_object.refs_member,
                 class_layout: SkipMap::default(),
@@ -190,15 +195,7 @@ impl<'a> CilObjectData<'a> {
             }
 
             match stream.name.as_str() {
-                "#~" => self.meta = Some(TablesHeader::from(&self.data[start..end])?),
-                "#-" => {
-                    // TODO: Handle uncompressed metadata tables stream properly
-                    // Currently we parse #- streams the same as #~ streams, but this is incomplete.
-                    // The #- stream may contain additional Ptr tables (FieldPtr, MethodPtr, ParamPtr,
-                    // EventPtr, PropertyPtr) that require special indirection logic.
-                    // See the comprehensive TODO in from_file() method above for full requirements.
-                    self.meta = Some(TablesHeader::from(&self.data[start..end])?);
-                }
+                "#~" | "#-" => self.meta = Some(TablesHeader::from(&self.data[start..end])?),
                 "#Strings" => self.strings = Some(Strings::from(&self.data[start..end])?),
                 "#US" => self.userstrings = Some(UserStrings::from(&self.data[start..end])?),
                 "#GUID" => self.guids = Some(Guid::from(&self.data[start..end])?),
@@ -207,7 +204,6 @@ impl<'a> CilObjectData<'a> {
             }
         }
 
-        // Validate stream layout after all streams are loaded
         self.header_root
             .validate_stream_layout(meta_root_offset, self.header.meta_data_size)?;
 

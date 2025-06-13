@@ -4,7 +4,10 @@ use std::sync::Arc;
 use crate::{
     file::io::read_le_at_dyn,
     metadata::{
-        streams::{MetadataTable, PropertyList, PropertyMap, RowDefinition, TableId, TableInfoRef},
+        streams::{
+            MetadataTable, PropertyList, PropertyMap, PropertyPtrMap, RowDefinition, TableId,
+            TableInfoRef,
+        },
         token::Token,
         typesystem::{CilTypeRef, TypeRegistry},
     },
@@ -77,10 +80,11 @@ impl PropertyMapRaw {
     fn resolve_property_list(
         &self,
         properties: &PropertyMap,
+        property_ptr: &PropertyPtrMap,
         map: &MetadataTable<PropertyMapRaw>,
-    ) -> Result<Vec<crate::metadata::streams::PropertyRc>> {
+    ) -> Result<PropertyList> {
         if self.property_list == 0 || properties.is_empty() {
-            return Ok(Vec::new());
+            return Ok(Arc::new(boxcar::Vec::new()));
         }
 
         let next_row_id = self.rid + 1;
@@ -100,22 +104,56 @@ impl PropertyMapRaw {
         };
 
         if start > properties.len() || end > (properties.len() + 1) || end < start {
-            return Ok(Vec::new());
+            return Ok(Arc::new(boxcar::Vec::new()));
         }
 
-        let mut property_list = Vec::with_capacity(end - start);
+        let property_list = Arc::new(boxcar::Vec::with_capacity(end - start));
         for counter in start..end {
-            let token_value = counter | 0x1700_0000;
-            let token = Token::new(
-                u32::try_from(token_value)
-                    .map_err(|_| malformed_error!("Property counter overflow"))?,
-            );
-            match properties.get(&token) {
-                Some(property) => property_list.push(property.value().clone()),
+            let actual_property_token = if property_ptr.is_empty() {
+                let token_value = counter | 0x1700_0000;
+                Token::new(
+                    u32::try_from(token_value)
+                        .map_err(|_| malformed_error!("Property counter overflow"))?,
+                )
+            } else {
+                let property_ptr_token_value =
+                    u32::try_from(counter | 0x0E00_0000).map_err(|_| {
+                        malformed_error!(
+                            "PropertyPtr token value too large: {}",
+                            counter | 0x0E00_0000
+                        )
+                    })?;
+                let property_ptr_token = Token::new(property_ptr_token_value);
+
+                match property_ptr.get(&property_ptr_token) {
+                    Some(property_ptr_entry) => {
+                        let actual_property_rid = property_ptr_entry.value().property;
+                        let actual_property_token_value = u32::try_from(
+                            actual_property_rid as usize | 0x1700_0000,
+                        )
+                        .map_err(|_| {
+                            malformed_error!(
+                                "Property token value too large: {}",
+                                actual_property_rid as usize | 0x1700_0000
+                            )
+                        })?;
+                        Token::new(actual_property_token_value)
+                    }
+                    None => {
+                        return Err(malformed_error!(
+                            "Failed to resolve PropertyPtr - {}",
+                            counter | 0x0E00_0000
+                        ))
+                    }
+                }
+            };
+
+            match properties.get(&actual_property_token) {
+                Some(property) => _ = property_list.push(property.value().clone()),
                 None => {
                     return Err(malformed_error!(
                         "Failed to resolve property - {}",
-                        counter | 0x1700_0000
+                        actual_property_token.value()
                     ))
                 }
             }
@@ -132,6 +170,7 @@ impl PropertyMapRaw {
     /// ## Arguments
     /// * 'types' - The type registry for resolving parent types
     /// * 'properties' - The property map for resolving property references
+    /// * 'property_ptr' - All parsed `PropertyPtr` entries for indirection resolution
     /// * 'map' - The `MetadataTable` for `PropertyMapRaw` entries (needed for list range resolution)
     ///
     /// # Errors
@@ -140,9 +179,9 @@ impl PropertyMapRaw {
         &self,
         types: &TypeRegistry,
         properties: &PropertyMap,
+        property_ptr: &PropertyPtrMap,
         map: &MetadataTable<PropertyMapRaw>,
     ) -> Result<PropertyMapEntryRc> {
-        // Resolve parent type
         let parent = match types.get(&Token::new(self.parent | 0x0200_0000)) {
             Some(parent_type) => parent_type.into(),
             None => {
@@ -153,19 +192,12 @@ impl PropertyMapRaw {
             }
         };
 
-        // Resolve property list using the helper method
-        let property_list_vec = self.resolve_property_list(properties, map)?;
-        let property_list = Arc::new(boxcar::Vec::new());
-        for property in property_list_vec {
-            _ = property_list.push(property);
-        }
-
         Ok(Arc::new(PropertyMapEntry {
             rid: self.rid,
             token: self.token,
             offset: self.offset,
             parent,
-            properties: property_list,
+            properties: self.resolve_property_list(properties, property_ptr, map)?,
         }))
     }
 
@@ -174,6 +206,7 @@ impl PropertyMapRaw {
     /// ## Arguments
     /// * 'types'       - All parsed `TypeDef` entries
     /// * 'properties'  - All parsed `Property` entries
+    /// * '`property_ptr`' - All parsed `PropertyPtr` entries for indirection resolution
     /// * 'map'         - The `MetadataTable` for `PropertyMapRaw` entries
     ///
     /// # Errors
@@ -182,10 +215,10 @@ impl PropertyMapRaw {
         &self,
         types: &TypeRegistry,
         properties: &PropertyMap,
+        property_ptr: &PropertyPtrMap,
         map: &MetadataTable<PropertyMapRaw>,
     ) -> Result<()> {
-        // Use the helper method to resolve property list
-        let property_list = self.resolve_property_list(properties, map)?;
+        let property_list = self.resolve_property_list(properties, property_ptr, map)?;
 
         if property_list.is_empty() && (self.property_list != 0 && !properties.is_empty()) {
             return Err(malformed_error!("Invalid property_list"));
@@ -193,7 +226,7 @@ impl PropertyMapRaw {
 
         match types.get(&Token::new(self.parent | 0x0200_0000)) {
             Some(entry) => {
-                for property in &property_list {
+                for (_, property) in property_list.iter() {
                     _ = entry.properties.push(property.clone());
                 }
                 Ok(())

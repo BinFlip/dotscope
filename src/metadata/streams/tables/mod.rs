@@ -32,6 +32,8 @@ pub mod declsecurity;
 pub mod event;
 /// The implementation of the '`EventMap`' table type
 pub mod eventmap;
+/// The implementation of the '`EventPtr`' table type
+pub mod eventptr;
 /// The implementation of the '`ExportedType`' table type
 pub mod exportedtype;
 /// The implementation of the '`Field`' table type
@@ -40,6 +42,8 @@ pub mod field;
 pub mod fieldlayout;
 /// The implementation of the '`FieldMarshal`' table type
 pub mod fieldmarshal;
+/// The implementation of the '`FieldPtr`' table type
+pub mod fieldptr;
 /// The implementation of the '`FieldRVA`' table type
 pub mod fieldrva;
 /// The implementation of the '`File`' table type
@@ -60,6 +64,8 @@ pub mod memberref;
 pub mod methoddef;
 /// The implementation of the '`MethodImpl`' table type
 pub mod methodimpl;
+/// The implementation of the '`MethodPtr`' table type
+pub mod methodptr;
 /// The implementation of the '`MethodScematics`' table type
 pub mod methodsemantics;
 /// The implementation of the '`MethodSpec`' table type
@@ -72,10 +78,14 @@ pub mod moduleref;
 pub mod nestedclass;
 /// The implementation of the '`Param`' table type
 pub mod param;
+/// The implementation of the '`ParamPtr`' table type
+pub mod paramptr;
 /// The implementation of the '`Property`' table type
 pub mod property;
 /// The implementation of the '`PropertyMap`' table type
 pub mod propertymap;
+/// The implementation of the '`PropertyPtr`' table type
+pub mod propertyptr;
 /// The implementation of the '`StandAloneSig`' table type
 pub mod standalonesig;
 /// The implementation of the '`TypeDef`' table type

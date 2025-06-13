@@ -4,7 +4,9 @@ use std::sync::Arc;
 use crate::{
     file::io::read_le_at_dyn,
     metadata::{
-        streams::{EventList, EventMap, MetadataTable, RowDefinition, TableId, TableInfoRef},
+        streams::{
+            EventList, EventMap, EventPtrMap, MetadataTable, RowDefinition, TableId, TableInfoRef,
+        },
         token::Token,
         typesystem::{CilTypeRef, TypeRegistry},
     },
@@ -77,10 +79,11 @@ impl EventMapRaw {
     fn resolve_event_list(
         &self,
         events: &EventMap,
+        event_ptr: &EventPtrMap,
         map: &MetadataTable<EventMapRaw>,
-    ) -> Result<Vec<crate::metadata::streams::EventRc>> {
+    ) -> Result<EventList> {
         if self.event_list == 0 || events.is_empty() {
-            return Ok(Vec::new());
+            return Ok(Arc::new(boxcar::Vec::new()));
         }
 
         let next_row_id = self.rid + 1;
@@ -100,22 +103,51 @@ impl EventMapRaw {
         };
 
         if start > events.len() || end > (events.len() + 1) || end < start {
-            return Ok(Vec::new());
+            return Ok(Arc::new(boxcar::Vec::new()));
         }
 
-        let mut event_list = Vec::with_capacity(end - start);
+        let event_list = Arc::new(boxcar::Vec::with_capacity(end - start));
         for counter in start..end {
-            let token_value = counter | 0x1400_0000;
-            let token =
+            let actual_event_token = if event_ptr.is_empty() {
+                let token_value = counter | 0x1400_0000;
                 Token::new(u32::try_from(token_value).map_err(|_| {
                     malformed_error!("Token value {} exceeds u32 range", token_value)
-                })?);
-            match events.get(&token) {
-                Some(event) => event_list.push(event.value().clone()),
+                })?)
+            } else {
+                let event_ptr_token_value = u32::try_from(counter | 0x0D00_0000).map_err(|_| {
+                    malformed_error!("EventPtr token value too large: {}", counter | 0x0D00_0000)
+                })?;
+                let event_ptr_token = Token::new(event_ptr_token_value);
+
+                match event_ptr.get(&event_ptr_token) {
+                    Some(event_ptr_entry) => {
+                        let actual_event_rid = event_ptr_entry.value().event;
+                        let actual_event_token_value = u32::try_from(
+                            actual_event_rid as usize | 0x1400_0000,
+                        )
+                        .map_err(|_| {
+                            malformed_error!(
+                                "Event token value too large: {}",
+                                actual_event_rid as usize | 0x1400_0000
+                            )
+                        })?;
+                        Token::new(actual_event_token_value)
+                    }
+                    None => {
+                        return Err(malformed_error!(
+                            "Failed to resolve EventPtr - {}",
+                            counter | 0x0D00_0000
+                        ))
+                    }
+                }
+            };
+
+            match events.get(&actual_event_token) {
+                Some(event) => _ = event_list.push(event.value().clone()),
                 None => {
                     return Err(malformed_error!(
                         "Failed to resolve event - {}",
-                        counter | 0x1400_0000
+                        actual_event_token.value()
                     ))
                 }
             }
@@ -132,6 +164,7 @@ impl EventMapRaw {
     /// ## Arguments
     /// * 'types' - The type registry for resolving parent types
     /// * 'events' - The event map for resolving event references
+    /// * 'event_ptr' - All parsed `EventPtr` entries for indirection resolution
     /// * 'map' - The `MetadataTable` for `EventMapRaw` entries (needed for list range resolution)
     ///
     /// # Errors
@@ -140,9 +173,9 @@ impl EventMapRaw {
         &self,
         types: &TypeRegistry,
         events: &EventMap,
+        event_ptr: &EventPtrMap,
         map: &MetadataTable<EventMapRaw>,
     ) -> Result<EventMapEntryRc> {
-        // Resolve parent type
         let parent = match types.get(&Token::new(self.parent | 0x0200_0000)) {
             Some(parent_type) => parent_type.into(),
             None => {
@@ -153,19 +186,12 @@ impl EventMapRaw {
             }
         };
 
-        // Resolve event list using the helper method
-        let event_list_vec = self.resolve_event_list(events, map)?;
-        let event_list = Arc::new(boxcar::Vec::new());
-        for event in event_list_vec {
-            _ = event_list.push(event);
-        }
-
         Ok(Arc::new(EventMapEntry {
             rid: self.rid,
             token: self.token,
             offset: self.offset,
             parent,
-            events: event_list,
+            events: self.resolve_event_list(events, event_ptr, map)?,
         }))
     }
 
@@ -174,6 +200,7 @@ impl EventMapRaw {
     /// ## Arguments
     /// * 'types'   - All parsed `TypeDef` entries
     /// * 'events'  - All parsed `Event` entries
+    /// * '`event_ptr`' - All parsed `EventPtr` entries for indirection resolution
     /// * 'map'     - The `MetadataTable` for `EventMapRaw` entries
     ///
     /// # Errors
@@ -182,10 +209,10 @@ impl EventMapRaw {
         &self,
         types: &TypeRegistry,
         events: &EventMap,
+        event_ptr: &EventPtrMap,
         map: &MetadataTable<EventMapRaw>,
     ) -> Result<()> {
-        // Use the helper method to resolve event list
-        let event_list = self.resolve_event_list(events, map)?;
+        let event_list = self.resolve_event_list(events, event_ptr, map)?;
 
         if event_list.is_empty() && (self.event_list != 0 && !events.is_empty()) {
             return Err(malformed_error!("Invalid event list"));
@@ -193,7 +220,7 @@ impl EventMapRaw {
 
         match types.get(&Token::new(self.parent | 0x0200_0000)) {
             Some(event_parent) => {
-                for entry in &event_list {
+                for (_, entry) in event_list.iter() {
                     _ = event_parent.events.push(entry.clone());
                 }
                 Ok(())

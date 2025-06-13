@@ -64,13 +64,21 @@ pub use crate::metadata::streams::{
 pub use crate::metadata::streams::{ExportedType, ExportedTypeRc};
 
 /// Fields and field-related types
-pub use crate::metadata::streams::{Field, FieldLayout, FieldList, FieldMap, FieldRc};
+pub use crate::metadata::streams::{
+    Field, FieldLayout, FieldList, FieldMap, FieldPtr, FieldPtrList, FieldPtrMap, FieldPtrRc,
+    FieldRc, MethodPtr, MethodPtrList, MethodPtrMap, MethodPtrRc,
+};
 
 /// Parameters
-pub use crate::metadata::streams::{Param, ParamList, ParamRc};
+pub use crate::metadata::streams::{
+    Param, ParamList, ParamPtr, ParamPtrList, ParamPtrMap, ParamPtrRc, ParamRc,
+};
 
 /// Properties and events
-pub use crate::metadata::streams::{Event, EventList, EventRc, Property, PropertyList, PropertyRc};
+pub use crate::metadata::streams::{
+    Event, EventList, EventPtr, EventPtrList, EventPtrMap, EventPtrRc, EventRc, Property,
+    PropertyList, PropertyPtr, PropertyPtrList, PropertyPtrMap, PropertyPtrRc, PropertyRc,
+};
 
 /// Interfaces and member references
 pub use crate::metadata::streams::{InterfaceImpl, InterfaceImplRc, MemberRef, MemberRefRc};
@@ -108,14 +116,17 @@ pub use crate::metadata::streams::{
 pub use crate::metadata::streams::{ExportedTypeRaw, TypeDefRaw, TypeRefRaw, TypeSpecRaw};
 
 /// Field and method raw table types
-pub use crate::metadata::streams::{FieldLayoutRaw, FieldRaw, FieldRvaRaw, MethodDefRaw, ParamRaw};
+pub use crate::metadata::streams::{
+    FieldLayoutRaw, FieldPtrRaw, FieldRaw, FieldRvaRaw, MethodDefRaw, MethodPtrRaw, ParamPtrRaw,
+    ParamRaw,
+};
 
 /// Core metadata raw table types
 pub use crate::metadata::streams::{
-    ClassLayoutRaw, ConstantRaw, CustomAttributeRaw, DeclSecurityRaw, EventMapRaw, EventRaw,
-    FieldMarshalRaw, GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw, InterfaceImplRaw,
-    ManifestResourceRaw, MemberRefRaw, MethodImplRaw, MethodSemanticsRaw, MethodSpecRaw,
-    NestedClassRaw, PropertyMapRaw, PropertyRaw, StandAloneSigRaw,
+    ClassLayoutRaw, ConstantRaw, CustomAttributeRaw, DeclSecurityRaw, EventMapRaw, EventPtrRaw,
+    EventRaw, FieldMarshalRaw, GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw,
+    InterfaceImplRaw, ManifestResourceRaw, MemberRefRaw, MethodImplRaw, MethodSemanticsRaw,
+    MethodSpecRaw, NestedClassRaw, PropertyMapRaw, PropertyPtrRaw, PropertyRaw, StandAloneSigRaw,
 };
 
 /// File system raw table types

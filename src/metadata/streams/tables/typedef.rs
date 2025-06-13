@@ -5,8 +5,8 @@ use crate::{
     metadata::{
         method::MethodMap,
         streams::{
-            CodedIndex, CodedIndexType, FieldMap, MetadataTable, RowDefinition, Strings, TableId,
-            TableInfoRef,
+            CodedIndex, CodedIndexType, FieldMap, FieldPtrMap, MetadataTable, MethodPtrMap,
+            RowDefinition, Strings, TableId, TableInfoRef,
         },
         token::Token,
         typesystem::{CilType, CilTypeRc, CilTypeReference},
@@ -107,7 +107,10 @@ impl TypeDefRaw {
     /// * `get_ref` - Closure to resolve coded indexes
     /// * 'strings'     - The #String heap
     /// * 'fields'  - All processed `Field` elements
+    /// * '`field_ptr`' - All parsed `FieldPtr` entries for indirection resolution
     /// * 'methods' - All processed `Method` elements
+    /// * '`method_ptr`' - All parsed `MethodPtr` entries for indirection resolution
+    /// * '`defs`' - The `TypeDef` table for getting next row's field/method boundaries
     ///
     /// # Errors
     /// Returns an error if the type name or namespace cannot be resolved from the strings heap,
@@ -117,7 +120,9 @@ impl TypeDefRaw {
         get_ref: F,
         strings: &Strings,
         fields: &FieldMap,
+        field_ptr: &FieldPtrMap,
         methods: &MethodMap,
+        method_ptr: &MethodPtrMap,
         defs: &MetadataTable<TypeDefRaw>,
     ) -> Result<CilTypeRc>
     where
@@ -148,14 +153,49 @@ impl TypeDefRaw {
         } else {
             let type_fields = Arc::new(boxcar::Vec::with_capacity(end_fields - start_fields));
             for counter in start_fields..end_fields {
-                match fields.get(&Token::new(u32::try_from(counter | 0x0400_0000).map_err(
-                    |_| malformed_error!("Field token overflow: {}", counter | 0x0400_0000),
-                )?)) {
+                let actual_field_token = if field_ptr.is_empty() {
+                    Token::new(u32::try_from(counter | 0x0400_0000).map_err(|_| {
+                        malformed_error!("Field token overflow: {}", counter | 0x0400_0000)
+                    })?)
+                } else {
+                    let field_ptr_token_value =
+                        u32::try_from(counter | 0x0300_0000).map_err(|_| {
+                            malformed_error!(
+                                "FieldPtr token value too large: {}",
+                                counter | 0x0300_0000
+                            )
+                        })?;
+                    let field_ptr_token = Token::new(field_ptr_token_value);
+
+                    match field_ptr.get(&field_ptr_token) {
+                        Some(field_ptr_entry) => {
+                            let actual_field_rid = field_ptr_entry.value().field;
+                            let actual_field_token_value = u32::try_from(
+                                actual_field_rid as usize | 0x0400_0000,
+                            )
+                            .map_err(|_| {
+                                malformed_error!(
+                                    "Field token value too large: {}",
+                                    actual_field_rid as usize | 0x0400_0000
+                                )
+                            })?;
+                            Token::new(actual_field_token_value)
+                        }
+                        None => {
+                            return Err(malformed_error!(
+                                "Failed to resolve FieldPtr - {}",
+                                counter | 0x0300_0000
+                            ))
+                        }
+                    }
+                };
+
+                match fields.get(&actual_field_token) {
                     Some(field) => _ = type_fields.push(field.value().clone()),
                     None => {
                         return Err(malformed_error!(
                             "Failed to resolve field - {}",
-                            counter | 0x0400_0000
+                            actual_field_token.value()
                         ))
                     }
                 }
@@ -175,14 +215,49 @@ impl TypeDefRaw {
         } else {
             let type_methods = Arc::new(boxcar::Vec::with_capacity(end_methods - start_methods));
             for counter in start_methods..end_methods {
-                match methods.get(&Token::new(u32::try_from(counter | 0x0600_0000).map_err(
-                    |_| malformed_error!("Method token overflow: {}", counter | 0x0600_0000),
-                )?)) {
+                let actual_method_token = if method_ptr.is_empty() {
+                    Token::new(u32::try_from(counter | 0x0600_0000).map_err(|_| {
+                        malformed_error!("Method token overflow: {}", counter | 0x0600_0000)
+                    })?)
+                } else {
+                    let method_ptr_token_value =
+                        u32::try_from(counter | 0x0900_0000).map_err(|_| {
+                            malformed_error!(
+                                "MethodPtr token value too large: {}",
+                                counter | 0x0900_0000
+                            )
+                        })?;
+                    let method_ptr_token = Token::new(method_ptr_token_value);
+
+                    match method_ptr.get(&method_ptr_token) {
+                        Some(method_ptr_entry) => {
+                            let actual_method_rid = method_ptr_entry.value().method;
+                            let actual_method_token_value = u32::try_from(
+                                actual_method_rid as usize | 0x0600_0000,
+                            )
+                            .map_err(|_| {
+                                malformed_error!(
+                                    "Method token value too large: {}",
+                                    actual_method_rid as usize | 0x0600_0000
+                                )
+                            })?;
+                            Token::new(actual_method_token_value)
+                        }
+                        None => {
+                            return Err(malformed_error!(
+                                "Failed to resolve MethodPtr - {}",
+                                counter | 0x0900_0000
+                            ))
+                        }
+                    }
+                };
+
+                match methods.get(&actual_method_token) {
                     Some(method) => _ = type_methods.push(method.value().clone().into()),
                     None => {
                         return Err(malformed_error!(
                             "Failed to resolve method - {}",
-                            counter | 0x0600_0000
+                            actual_method_token.value()
                         ))
                     }
                 }

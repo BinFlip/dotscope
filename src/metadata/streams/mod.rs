@@ -154,6 +154,7 @@ pub use tables::{
     },
     event::{Event, EventAttributes, EventList, EventMap, EventRaw, EventRc},
     eventmap::{EventMapEntry, EventMapEntryList, EventMapEntryMap, EventMapEntryRc, EventMapRaw},
+    eventptr::{EventPtr, EventPtrList, EventPtrMap, EventPtrRaw, EventPtrRc},
     exportedtype::{
         ExportedType, ExportedTypeList, ExportedTypeMap, ExportedTypeRaw, ExportedTypeRc,
     },
@@ -162,6 +163,7 @@ pub use tables::{
     fieldmarshal::{
         FieldMarshal, FieldMarshalList, FieldMarshalMap, FieldMarshalRaw, FieldMarshalRc,
     },
+    fieldptr::{FieldPtr, FieldPtrList, FieldPtrMap, FieldPtrRaw, FieldPtrRc},
     fieldrva::{FieldRVAList, FieldRVAMap, FieldRVARc, FieldRva, FieldRvaRaw},
     file::{File, FileAttributes, FileList, FileMap, FileRaw, FileRc},
     genericparam::{
@@ -185,6 +187,7 @@ pub use tables::{
     },
     methoddef::MethodDefRaw,
     methodimpl::{MethodImpl, MethodImplList, MethodImplMap, MethodImplRaw, MethodImplRc},
+    methodptr::{MethodPtr, MethodPtrList, MethodPtrMap, MethodPtrRaw, MethodPtrRc},
     methodsemantics::{
         MethodSemantics, MethodSemanticsAttributes, MethodSemanticsList, MethodSemanticsMap,
         MethodSemanticsRaw, MethodSemanticsRc,
@@ -194,11 +197,13 @@ pub use tables::{
     moduleref::{ModuleRef, ModuleRefList, ModuleRefMap, ModuleRefRaw, ModuleRefRc},
     nestedclass::{NestedClass, NestedClassList, NestedClassMap, NestedClassRaw, NestedClassRc},
     param::{Param, ParamAttributes, ParamList, ParamMap, ParamRaw, ParamRc},
+    paramptr::{ParamPtr, ParamPtrList, ParamPtrMap, ParamPtrRaw, ParamPtrRc},
     property::{Property, PropertyAttributes, PropertyList, PropertyMap, PropertyRaw, PropertyRc},
     propertymap::{
         PropertyMapEntry, PropertyMapEntryList, PropertyMapEntryMap, PropertyMapEntryRc,
         PropertyMapRaw,
     },
+    propertyptr::{PropertyPtr, PropertyPtrList, PropertyPtrMap, PropertyPtrRaw, PropertyPtrRc},
     standalonesig::{
         StandAloneSig, StandAloneSigList, StandAloneSigMap, StandAloneSigRaw, StandAloneSigRc,
     },
