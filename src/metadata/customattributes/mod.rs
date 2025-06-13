@@ -59,177 +59,27 @@ pub use types::*;
 mod tests {
     use super::*;
     use crate::metadata::{
-        method::{
-            Method, MethodAccessFlags, MethodImplCodeType, MethodImplManagement, MethodImplOptions,
-            MethodModifiers, MethodRc, MethodVtableFlags,
-        },
-        signatures::SignatureMethod,
+        method::MethodRc,
         streams::Param,
         token::Token,
-        typesystem::{CilFlavor, CilType, CilTypeRc, CilTypeRef, TypeBuilder, TypeRegistry},
+        typesystem::{CilFlavor, CilTypeRef, TypeBuilder, TypeRegistry},
     };
-    use std::sync::{
-        atomic::AtomicU32,
-        {Arc, OnceLock},
-    };
+    use crate::test::MethodBuilder;
+    use std::sync::{Arc, OnceLock};
 
-    // Helper function to create a mock method for testing
-    fn create_mock_method() -> MethodRc {
-        Arc::new(Method {
-            rid: 1,
-            token: Token::new(0x06000001),
-            meta_offset: 0,
-            name: "TestConstructor".to_string(),
-            impl_code_type: MethodImplCodeType::empty(),
-            impl_management: MethodImplManagement::empty(),
-            impl_options: MethodImplOptions::empty(),
-            flags_access: MethodAccessFlags::empty(),
-            flags_vtable: MethodVtableFlags::empty(),
-            flags_modifiers: MethodModifiers::empty(),
-            flags_pinvoke: AtomicU32::new(0),
-            params: Arc::new(boxcar::Vec::new()),
-            varargs: Arc::new(boxcar::Vec::new()),
-            generic_params: Arc::new(boxcar::Vec::new()),
-            generic_args: Arc::new(boxcar::Vec::new()),
-            signature: SignatureMethod::default(),
-            rva: None,
-            body: OnceLock::new(),
-            local_vars: Arc::new(boxcar::Vec::new()),
-            overrides: OnceLock::new(),
-            interface_impls: Arc::new(boxcar::Vec::new()),
-            security: OnceLock::new(),
-            blocks: OnceLock::new(),
-            custom_attributes: Arc::new(boxcar::Vec::new()),
-        })
+    // Helper function to create a simple method for basic parsing tests
+    fn create_empty_constructor() -> MethodRc {
+        MethodBuilder::new().with_name("EmptyConstructor").build()
     }
 
-    // Helper function to create a method with specific parameter types
-    fn create_method_with_params(param_types: Vec<CilFlavor>) -> MethodRc {
-        let method = create_mock_method();
-        let type_registry = Arc::new(TypeRegistry::new().unwrap());
-
-        for (i, flavor) in param_types.into_iter().enumerate() {
-            // Use the TypeRegistry to get or create types with proper lifetime management
-            let param_type = match flavor {
-                CilFlavor::Boolean => type_registry
-                    .get_primitive(crate::metadata::typesystem::CilPrimitiveKind::Boolean)
-                    .unwrap(),
-                CilFlavor::Char => type_registry
-                    .get_primitive(crate::metadata::typesystem::CilPrimitiveKind::Char)
-                    .unwrap(),
-                CilFlavor::I1 => type_registry
-                    .get_primitive(crate::metadata::typesystem::CilPrimitiveKind::I1)
-                    .unwrap(),
-                CilFlavor::U1 => type_registry
-                    .get_primitive(crate::metadata::typesystem::CilPrimitiveKind::U1)
-                    .unwrap(),
-                CilFlavor::I2 => type_registry
-                    .get_primitive(crate::metadata::typesystem::CilPrimitiveKind::I2)
-                    .unwrap(),
-                CilFlavor::U2 => type_registry
-                    .get_primitive(crate::metadata::typesystem::CilPrimitiveKind::U2)
-                    .unwrap(),
-                CilFlavor::I4 => type_registry
-                    .get_primitive(crate::metadata::typesystem::CilPrimitiveKind::I4)
-                    .unwrap(),
-                CilFlavor::U4 => type_registry
-                    .get_primitive(crate::metadata::typesystem::CilPrimitiveKind::U4)
-                    .unwrap(),
-                CilFlavor::I8 => type_registry
-                    .get_primitive(crate::metadata::typesystem::CilPrimitiveKind::I8)
-                    .unwrap(),
-                CilFlavor::U8 => type_registry
-                    .get_primitive(crate::metadata::typesystem::CilPrimitiveKind::U8)
-                    .unwrap(),
-                CilFlavor::R4 => type_registry
-                    .get_primitive(crate::metadata::typesystem::CilPrimitiveKind::R4)
-                    .unwrap(),
-                CilFlavor::R8 => type_registry
-                    .get_primitive(crate::metadata::typesystem::CilPrimitiveKind::R8)
-                    .unwrap(),
-                CilFlavor::I => type_registry
-                    .get_primitive(crate::metadata::typesystem::CilPrimitiveKind::I)
-                    .unwrap(),
-                CilFlavor::U => type_registry
-                    .get_primitive(crate::metadata::typesystem::CilPrimitiveKind::U)
-                    .unwrap(),
-                CilFlavor::String => type_registry
-                    .get_primitive(crate::metadata::typesystem::CilPrimitiveKind::String)
-                    .unwrap(),
-                CilFlavor::Object => type_registry
-                    .get_primitive(crate::metadata::typesystem::CilPrimitiveKind::Object)
-                    .unwrap(),
-                CilFlavor::Void => type_registry
-                    .get_primitive(crate::metadata::typesystem::CilPrimitiveKind::Void)
-                    .unwrap(),
-                other_flavor => {
-                    // For complex types, create them properly in the registry
-                    type_registry
-                        .get_or_create_type(
-                            &mut None,
-                            other_flavor,
-                            "System",
-                            "TestType",
-                            crate::metadata::typesystem::TypeSource::CurrentModule,
-                        )
-                        .unwrap()
-                }
-            };
-
-            let param = Arc::new(Param {
-                rid: (i + 1) as u32,
-                token: Token::new(0x08000001 + i as u32),
-                offset: 0,
-                flags: 0,
-                sequence: (i + 1) as u32,
-                name: Some(format!("param{}", i)),
-                default: OnceLock::new(),
-                marshal: OnceLock::new(),
-                modifiers: Arc::new(boxcar::Vec::new()),
-                base: OnceLock::new(),
-                is_by_ref: std::sync::atomic::AtomicBool::new(false),
-                custom_attributes: Arc::new(boxcar::Vec::new()),
-            });
-
-            param.base.set(CilTypeRef::from(param_type)).ok();
-            method.params.push(param);
-        }
-
-        // Store the type registry in a static location to keep types alive
-        // This is a test-only workaround - use thread-safe unique keys
-        use std::collections::HashMap;
-        use std::sync::atomic::{AtomicU64, Ordering};
-        use std::sync::Mutex;
-        static TYPE_REGISTRIES: std::sync::OnceLock<Mutex<HashMap<u64, Arc<TypeRegistry>>>> =
-            std::sync::OnceLock::new();
-        static COUNTER: AtomicU64 = AtomicU64::new(1);
-
-        let registries = TYPE_REGISTRIES.get_or_init(|| Mutex::new(HashMap::new()));
-        let mut registries_lock = registries.lock().unwrap();
-        let key = COUNTER.fetch_add(1, Ordering::SeqCst);
-        registries_lock.insert(key, type_registry);
-
-        method
-    }
-
-    // Helper function to create a type with specific flavor
-    fn create_type_with_flavor(flavor: CilFlavor) -> CilTypeRc {
-        Arc::new(CilType::new(
-            Token::new(0x01000001),
-            "System".to_string(),
-            "TestType".to_string(),
-            None,
-            None,
-            0,
-            Arc::new(boxcar::Vec::new()),
-            Arc::new(boxcar::Vec::new()),
-            Some(flavor),
-        ))
+    // Helper function to create a method with specific parameter types using builders
+    fn create_constructor_with_params(param_types: Vec<CilFlavor>) -> MethodRc {
+        MethodBuilder::with_param_types("AttributeConstructor", param_types).build()
     }
 
     #[test]
     fn test_parse_empty_blob_with_method() {
-        let method = create_mock_method();
+        let method = create_empty_constructor();
         let result = parse_custom_attribute_data(&[0x01, 0x00], &method.params).unwrap();
         assert!(result.fixed_args.is_empty());
         assert!(result.named_args.is_empty());
@@ -237,7 +87,7 @@ mod tests {
 
     #[test]
     fn test_parse_invalid_prolog_with_method() {
-        let method = create_mock_method();
+        let method = create_empty_constructor();
         let result = parse_custom_attribute_data(&[0x00, 0x01], &method.params);
         assert!(result.is_err());
         assert!(result
@@ -248,7 +98,7 @@ mod tests {
 
     #[test]
     fn test_parse_simple_blob_with_method() {
-        let method = create_mock_method();
+        let method = create_empty_constructor();
 
         // Test case 1: Just prolog
         let blob_data = &[0x01, 0x00];
@@ -269,7 +119,7 @@ mod tests {
 
     #[test]
     fn test_parse_boolean_argument() {
-        let method = create_method_with_params(vec![CilFlavor::Boolean]);
+        let method = create_constructor_with_params(vec![CilFlavor::Boolean]);
 
         let blob_data = &[
             0x01, 0x00, // Prolog
@@ -287,7 +137,7 @@ mod tests {
 
     #[test]
     fn test_parse_char_argument() {
-        let method = create_method_with_params(vec![CilFlavor::Char]);
+        let method = create_constructor_with_params(vec![CilFlavor::Char]);
 
         let blob_data = &[
             0x01, 0x00, // Prolog
@@ -305,7 +155,7 @@ mod tests {
 
     #[test]
     fn test_parse_integer_arguments() {
-        let method = create_method_with_params(vec![
+        let method = create_constructor_with_params(vec![
             CilFlavor::I1,
             CilFlavor::U1,
             CilFlavor::I2,
@@ -369,7 +219,7 @@ mod tests {
 
     #[test]
     fn test_parse_floating_point_arguments() {
-        let method = create_method_with_params(vec![CilFlavor::R4, CilFlavor::R8]);
+        let method = create_constructor_with_params(vec![CilFlavor::R4, CilFlavor::R8]);
 
         let blob_data = &[
             0x01, 0x00, // Prolog
@@ -394,7 +244,7 @@ mod tests {
 
     #[test]
     fn test_parse_native_integer_arguments() {
-        let method = create_method_with_params(vec![CilFlavor::I, CilFlavor::U]);
+        let method = create_constructor_with_params(vec![CilFlavor::I, CilFlavor::U]);
 
         #[cfg(target_pointer_width = "64")]
         let blob_data = &[
@@ -430,7 +280,7 @@ mod tests {
 
     #[test]
     fn test_parse_string_argument() {
-        let method = create_method_with_params(vec![CilFlavor::String]);
+        let method = create_constructor_with_params(vec![CilFlavor::String]);
 
         let blob_data = &[
             0x01, 0x00, // Prolog
@@ -450,7 +300,7 @@ mod tests {
 
     #[test]
     fn test_parse_class_as_type_argument() {
-        let method = create_method_with_params(vec![CilFlavor::Class]);
+        let method = create_constructor_with_params(vec![CilFlavor::Class]);
 
         let blob_data = &[
             0x01, 0x00, // Prolog
@@ -481,7 +331,7 @@ mod tests {
     #[test]
     fn test_parse_class_argument_scenarios() {
         // Test basic class scenarios that should work
-        let method1 = create_method_with_params(vec![CilFlavor::Class]);
+        let method1 = create_constructor_with_params(vec![CilFlavor::Class]);
         let blob_data1 = &[
             0x01, 0x00, // Prolog
             0x00, // Compressed length: 0 (empty string)
@@ -505,7 +355,7 @@ mod tests {
 
     #[test]
     fn test_parse_valuetype_enum_argument() {
-        let method = create_method_with_params(vec![CilFlavor::ValueType]);
+        let method = create_constructor_with_params(vec![CilFlavor::ValueType]);
 
         let blob_data = &[
             0x01, 0x00, // Prolog
@@ -530,7 +380,7 @@ mod tests {
 
     #[test]
     fn test_parse_void_argument() {
-        let method = create_method_with_params(vec![CilFlavor::Void]);
+        let method = create_constructor_with_params(vec![CilFlavor::Void]);
 
         let blob_data = &[
             0x01, 0x00, // Prolog
@@ -548,7 +398,7 @@ mod tests {
 
     #[test]
     fn test_parse_array_argument_error() {
-        let method = create_method_with_params(vec![CilFlavor::Array {
+        let method = create_constructor_with_params(vec![CilFlavor::Array {
             rank: 1,
             dimensions: vec![],
         }]);
@@ -583,7 +433,7 @@ mod tests {
             .unwrap();
 
         // Create method with the array parameter
-        let method = create_mock_method();
+        let method = create_empty_constructor();
         let param = Arc::new(Param {
             rid: 1,
             token: Token::new(0x08000001),
@@ -650,7 +500,7 @@ mod tests {
 
     #[test]
     fn test_parse_multidimensional_array_error() {
-        let method = create_method_with_params(vec![CilFlavor::Array {
+        let method = create_constructor_with_params(vec![CilFlavor::Array {
             rank: 2,
             dimensions: vec![],
         }]);
@@ -671,7 +521,7 @@ mod tests {
 
     #[test]
     fn test_parse_named_arguments() {
-        let method = create_mock_method();
+        let method = create_empty_constructor();
 
         let blob_data = &[
             0x01, 0x00, // Prolog
@@ -719,7 +569,7 @@ mod tests {
 
     #[test]
     fn test_parse_named_argument_char_type() {
-        let method = create_mock_method();
+        let method = create_empty_constructor();
 
         let blob_data = &[
             0x01, 0x00, // Prolog
@@ -745,7 +595,7 @@ mod tests {
 
     #[test]
     fn test_parse_invalid_named_argument_type() {
-        let method = create_mock_method();
+        let method = create_empty_constructor();
 
         let blob_data = &[
             0x01, 0x00, // Prolog
@@ -766,7 +616,7 @@ mod tests {
 
     #[test]
     fn test_parse_malformed_data_errors() {
-        let method = create_method_with_params(vec![CilFlavor::I4]);
+        let method = create_constructor_with_params(vec![CilFlavor::I4]);
 
         // Test insufficient data for fixed argument
         let blob_data = &[
@@ -789,7 +639,7 @@ mod tests {
         );
 
         // Test string with invalid length
-        let method_string = create_method_with_params(vec![CilFlavor::String]);
+        let method_string = create_constructor_with_params(vec![CilFlavor::String]);
         let blob_data = &[
             0x01, 0x00, // Prolog
             0xFF, 0xFF, 0xFF, 0xFF, 0x0F, // Invalid compressed length (too large)
@@ -801,7 +651,7 @@ mod tests {
 
     #[test]
     fn test_parse_mixed_fixed_and_named_arguments() {
-        let method = create_method_with_params(vec![CilFlavor::I4, CilFlavor::String]);
+        let method = create_constructor_with_params(vec![CilFlavor::I4, CilFlavor::String]);
 
         let blob_data = &[
             0x01, 0x00, // Prolog
@@ -846,7 +696,7 @@ mod tests {
 
     #[test]
     fn test_parse_utf16_edge_cases() {
-        let method = create_method_with_params(vec![CilFlavor::Char]);
+        let method = create_constructor_with_params(vec![CilFlavor::Char]);
 
         // Test invalid UTF-16 value (should be replaced with replacement character)
         let blob_data = &[
@@ -866,7 +716,7 @@ mod tests {
 
     #[test]
     fn test_unsupported_type_flavor_error() {
-        let method = create_method_with_params(vec![CilFlavor::Pointer]);
+        let method = create_constructor_with_params(vec![CilFlavor::Pointer]);
 
         let blob_data = &[
             0x01, 0x00, // Prolog
@@ -884,7 +734,7 @@ mod tests {
 
     #[test]
     fn test_empty_string_argument() {
-        let method = create_method_with_params(vec![CilFlavor::String]);
+        let method = create_constructor_with_params(vec![CilFlavor::String]);
 
         let blob_data = &[
             0x01, 0x00, // Prolog
@@ -903,7 +753,7 @@ mod tests {
 
     #[test]
     fn test_parse_unsupported_named_argument_type() {
-        let method = create_mock_method();
+        let method = create_empty_constructor();
 
         let blob_data = &[
             0x01, 0x00, // Prolog

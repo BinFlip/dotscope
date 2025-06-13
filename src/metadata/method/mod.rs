@@ -645,7 +645,7 @@ mod tests {
     use crate::disassembler::{
         BasicBlock, FlowType, Instruction, InstructionCategory, Operand, StackBehavior,
     };
-    use std::sync::Arc;
+    use crate::test::builders::MethodBuilder;
 
     #[test]
     fn test_instructions_iterator_empty_method() {
@@ -773,36 +773,13 @@ mod tests {
     }
 
     // Helper function to create a test method with the given blocks
-    fn create_test_method(blocks: Vec<BasicBlock>) -> Method {
-        let blocks_once_lock = OnceLock::new();
-        blocks_once_lock.set(blocks).ok();
+    fn create_test_method(blocks: Vec<BasicBlock>) -> MethodRc {
+        let method = MethodBuilder::new().with_name("TestMethod").build();
 
-        Method {
-            rid: 1,
-            token: Token::new(0x06000001),
-            meta_offset: 0,
-            name: "TestMethod".to_string(),
-            impl_code_type: MethodImplCodeType::empty(),
-            impl_management: MethodImplManagement::empty(),
-            impl_options: MethodImplOptions::empty(),
-            flags_access: MethodAccessFlags::empty(),
-            flags_vtable: MethodVtableFlags::empty(),
-            flags_modifiers: MethodModifiers::empty(),
-            flags_pinvoke: AtomicU32::new(0),
-            params: Arc::new(boxcar::Vec::new()),
-            varargs: Arc::new(boxcar::Vec::new()),
-            generic_params: Arc::new(boxcar::Vec::new()),
-            generic_args: Arc::new(boxcar::Vec::new()),
-            signature: SignatureMethod::default(),
-            rva: None,
-            body: OnceLock::new(),
-            local_vars: Arc::new(boxcar::Vec::new()),
-            overrides: OnceLock::new(),
-            interface_impls: Arc::new(boxcar::Vec::new()),
-            security: OnceLock::new(),
-            blocks: blocks_once_lock,
-            custom_attributes: Arc::new(boxcar::Vec::new()),
-        }
+        // Set the blocks in the method (this is test-specific setup)
+        method.blocks.set(blocks).ok();
+
+        method
     }
 
     // Helper function to create a test instruction
