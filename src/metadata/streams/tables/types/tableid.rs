@@ -99,6 +99,13 @@ pub enum TableId {
     /// and signature. Fields are owned by types defined in the `TypeDef` table.
     Field = 0x04,
 
+    /// `MethodPtr` table (0x05) - Indirection table for MethodDef entries in `#-` streams.
+    ///
+    /// This table is only present in assemblies using uncompressed metadata streams (`#-`).
+    /// Each row contains a single field: a 1-based index into the MethodDef table.
+    /// When present, method references should resolve through this indirection table.
+    MethodPtr = 0x05,
+
     /// `MethodDef` table (0x06) - Method definitions within types.
     ///
     /// Contains all method definitions including constructors, instance methods,

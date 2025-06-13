@@ -185,6 +185,7 @@ pub use tables::{
         MemberRef, MemberRefList, MemberRefMap, MemberRefRaw, MemberRefRc, MemberRefSignature,
     },
     methoddef::MethodDefRaw,
+    methodptr::{MethodPtr, MethodPtrList, MethodPtrMap, MethodPtrRaw, MethodPtrRc},
     methodimpl::{MethodImpl, MethodImplList, MethodImplMap, MethodImplRaw, MethodImplRc},
     methodsemantics::{
         MethodSemantics, MethodSemanticsAttributes, MethodSemanticsList, MethodSemanticsMap,

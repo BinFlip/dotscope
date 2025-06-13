@@ -42,6 +42,7 @@ mod interfaceimpl;
 mod manifestresource;
 mod memberref;
 mod methoddef;
+mod methodptr;
 mod methodimpl;
 mod methodsemantics;
 mod methodspec;
@@ -59,7 +60,7 @@ mod typespec;
 pub(crate) use context::LoaderContext;
 pub(crate) use data::CilObjectData;
 
-static LOADERS: [&'static dyn MetadataLoader; 39] = [
+static LOADERS: [&'static dyn MetadataLoader; 40] = [
     &assembly::AssemblyLoader,
     &assemblyos::AssemblyOsLoader,
     &assemblyprocessor::AssemblyProcessorLoader,
@@ -75,6 +76,7 @@ static LOADERS: [&'static dyn MetadataLoader; 39] = [
     &exportedtype::ExportedTypeLoader,
     &field::FieldLoader,
     &fieldptr::FieldPtrLoader,
+    &methodptr::MethodPtrLoader,
     &fieldlayout::FieldLayoutLoader,
     &fieldmarshal::FieldMarshalLoader,
     &fieldrva::FieldRvaLoader,

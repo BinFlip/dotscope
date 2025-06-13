@@ -60,6 +60,8 @@ pub mod manifestresource;
 pub mod memberref;
 /// The implementation of the '`MethodDef`' table type
 pub mod methoddef;
+/// The implementation of the '`MethodPtr`' table type
+pub mod methodptr;
 /// The implementation of the '`MethodImpl`' table type
 pub mod methodimpl;
 /// The implementation of the '`MethodScematics`' table type

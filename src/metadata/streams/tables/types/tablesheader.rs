@@ -9,7 +9,7 @@ use crate::{
         DeclSecurityRaw, EventMapRaw, EventRaw, ExportedTypeRaw, FieldLayoutRaw, FieldMarshalRaw,
         FieldPtrRaw, FieldRaw, FieldRvaRaw, FileRaw, GenericParamConstraintRaw, GenericParamRaw,
         ImplMapRaw, InterfaceImplRaw, ManifestResourceRaw, MemberRefRaw, MetadataTable,
-        MethodDefRaw, MethodImplRaw, MethodSemanticsRaw, MethodSpecRaw, ModuleRaw, ModuleRefRaw,
+        MethodDefRaw, MethodImplRaw, MethodPtrRaw, MethodSemanticsRaw, MethodSpecRaw, ModuleRaw, ModuleRefRaw,
         NestedClassRaw, ParamRaw, PropertyMapRaw, PropertyRaw, RowDefinition, StandAloneSigRaw,
         TableData, TableId, TableInfo, TableInfoRef, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
     },
@@ -310,6 +310,9 @@ impl<'a> TablesHeader<'a> {
                 TableData::Field(table) => unsafe {
                     Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
                 },
+                TableData::MethodPtr(table) => unsafe {
+                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
+                },
                 TableData::MethodDef(table) => unsafe {
                     Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
                 },
@@ -463,6 +466,13 @@ impl<'a> TablesHeader<'a> {
                 *current_offset += table.size() as usize;
 
                 TableData::Field(table)
+            }
+            TableId::MethodPtr => {
+                let table =
+                    MetadataTable::<MethodPtrRaw>::new(data, t_info.rows, self.info.clone())?;
+                *current_offset += table.size() as usize;
+
+                TableData::MethodPtr(table)
             }
             TableId::MethodDef => {
                 let table =

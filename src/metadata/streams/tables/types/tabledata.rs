@@ -1,10 +1,10 @@
 use crate::metadata::streams::{
     AssemblyOsRaw, AssemblyProcessorRaw, AssemblyRaw, AssemblyRefOsRaw, AssemblyRefProcessorRaw,
     AssemblyRefRaw, ClassLayoutRaw, ConstantRaw, CustomAttributeRaw, DeclSecurityRaw, EventMapRaw,
-    EventRaw, ExportedTypeRaw, FieldLayoutRaw, FieldMarshalRaw, FieldPtrRaw, FieldRaw, FieldRvaRaw,
-    FileRaw, GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw, InterfaceImplRaw,
-    ManifestResourceRaw, MemberRefRaw, MetadataTable, MethodDefRaw, MethodImplRaw,
-    MethodSemanticsRaw, MethodSpecRaw, ModuleRaw, ModuleRefRaw, NestedClassRaw, ParamRaw,
+    EventRaw, ExportedTypeRaw, FieldLayoutRaw, FieldMarshalRaw, FieldPtrRaw, FieldRaw, FieldRvaRaw, 
+    FileRaw, GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw, InterfaceImplRaw, 
+    ManifestResourceRaw, MemberRefRaw, MetadataTable, MethodDefRaw, MethodImplRaw, 
+    MethodPtrRaw, MethodSemanticsRaw, MethodSpecRaw, ModuleRaw, ModuleRefRaw, NestedClassRaw, ParamRaw, 
     PropertyMapRaw, PropertyRaw, StandAloneSigRaw, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
 };
 
@@ -16,6 +16,7 @@ pub enum TableData<'a> {
     TypeDef(MetadataTable<'a, TypeDefRaw>),
     FieldPtr(MetadataTable<'a, FieldPtrRaw>),
     Field(MetadataTable<'a, FieldRaw>),
+    MethodPtr(MetadataTable<'a, MethodPtrRaw>),
     MethodDef(MetadataTable<'a, MethodDefRaw>),
     Param(MetadataTable<'a, ParamRaw>),
     InterfaceImpl(MetadataTable<'a, InterfaceImplRaw>),

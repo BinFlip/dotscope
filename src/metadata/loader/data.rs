@@ -129,6 +129,7 @@ impl<'a> CilObjectData<'a> {
                 method_spec: &cil_object.method_specs,
                 field: SkipMap::default(),
                 field_ptr: SkipMap::default(),
+                method_ptr: SkipMap::default(),
                 field_layout: SkipMap::default(),
                 field_marshal: SkipMap::default(),
                 field_rva: SkipMap::default(),
