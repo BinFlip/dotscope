@@ -184,6 +184,59 @@ impl CustomAttributeRaw {
         F: Fn(&CodedIndex) -> CilTypeReference,
     {
         let constructor_ref = get_ref(&self.constructor);
+        match &constructor_ref {
+            CilTypeReference::MethodDef(method_ref) => {
+                if let Some(constructor) = method_ref.upgrade() {
+                    if !constructor.is_constructor() {
+                        return Err(malformed_error!(
+                            "CustomAttribute constructor must be a .ctor or .cctor method, found '{}' (token: {})",
+                            constructor.name,
+                            self.token.value()
+                        ));
+                    }
+
+                    if constructor.name.is_empty() {
+                        return Err(malformed_error!(
+                            "Constructor name cannot be empty for CustomAttribute token {}",
+                            self.token.value()
+                        ));
+                    }
+                } else {
+                    return Err(malformed_error!(
+                        "CustomAttribute constructor method reference is no longer valid (token: {})",
+                        self.token.value()
+                    ));
+                }
+            }
+            CilTypeReference::MemberRef(member_ref) => {
+                if !member_ref.is_constructor() {
+                    return Err(malformed_error!(
+                        "CustomAttribute constructor must be a .ctor or .cctor method, found '{}' (token: {})",
+                        member_ref.name,
+                        self.token.value()
+                    ));
+                }
+
+                if member_ref.name.is_empty() {
+                    return Err(malformed_error!(
+                        "Constructor name cannot be empty for CustomAttribute token {}",
+                        self.token.value()
+                    ));
+                }
+            }
+            CilTypeReference::None => {
+                return Err(malformed_error!(
+                    "CustomAttribute constructor reference cannot be None (token: {})",
+                    self.token.value()
+                ));
+            }
+            _ => {
+                return Err(malformed_error!(
+                    "CustomAttribute constructor must be MethodDef or MemberRef (token: {})",
+                    self.token.value()
+                ));
+            }
+        }
 
         let value = if self.value == 0 {
             CustomAttributeValue {
@@ -194,7 +247,6 @@ impl CustomAttributeRaw {
             match &constructor_ref {
                 CilTypeReference::MethodDef(method_ref) => match method_ref.upgrade() {
                     Some(constructor) => {
-                        // Pass the Arc directly to avoid unnecessary vector allocation
                         parse_custom_attribute_blob(blob, self.value, &constructor.params)?
                     }
                     None => CustomAttributeValue {
@@ -202,18 +254,15 @@ impl CustomAttributeRaw {
                         named_args: vec![],
                     },
                 },
-                CilTypeReference::MemberRef(member_ref) => {
-                    match &member_ref.signature {
-                        MemberRefSignature::Method(_method_sig) => {
-                            // Pass the Arc directly to avoid unnecessary vector allocation
-                            parse_custom_attribute_blob(blob, self.value, &member_ref.params)?
-                        }
-                        MemberRefSignature::Field(_) => CustomAttributeValue {
-                            fixed_args: vec![],
-                            named_args: vec![],
-                        },
+                CilTypeReference::MemberRef(member_ref) => match &member_ref.signature {
+                    MemberRefSignature::Method(_method_sig) => {
+                        parse_custom_attribute_blob(blob, self.value, &member_ref.params)?
                     }
-                }
+                    MemberRefSignature::Field(_) => CustomAttributeValue {
+                        fixed_args: vec![],
+                        named_args: vec![],
+                    },
+                },
                 _ => CustomAttributeValue {
                     fixed_args: vec![],
                     named_args: vec![],
@@ -221,16 +270,14 @@ impl CustomAttributeRaw {
             }
         };
 
-        let custom_attribute = CustomAttribute {
+        Ok(Arc::new(CustomAttribute {
             rid: self.rid,
             token: self.token,
             offset: self.offset,
             parent: get_ref(&self.parent),
             constructor: constructor_ref,
             value,
-        };
-
-        Ok(Arc::new(custom_attribute))
+        }))
     }
 }
 

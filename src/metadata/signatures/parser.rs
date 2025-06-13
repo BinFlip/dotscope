@@ -340,10 +340,9 @@ impl<'a> SignatureParser<'a> {
                         custom_mods.push(self.parser.read_compressed_token()?);
                     }
                     0x45 => {
-                        // Only 'Constraint' that is supported at the moment - PINNED - II.23.2.9
-                        // ToDo - this seems to be for each custom modifier and not just per local variable? Might be wrong currently
-                        //        and should be stored together with the custom modifier
-
+                        // PINNED constraint (ELEMENT_TYPE_PINNED) - II.23.2.9
+                        // This is a constraint that applies to the entire local variable,
+                        // not to individual custom modifiers, per ECMA-335 specification.
                         self.parser.advance()?;
                         pinned = true;
                     }

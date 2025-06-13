@@ -7,6 +7,7 @@ use crate::{
         streams::{MetadataTable, RowDefinition, TableId, TableInfoRef},
         token::Token,
         typesystem::{CilTypeRc, TypeRegistry},
+        validation::NestedClassValidator,
     },
     Result,
 };
@@ -40,14 +41,13 @@ impl NestedClass {
     /// efficiently update the enclosing type without re-resolving anything.
     ///
     /// # Errors
-    /// Returns an error if the enclosing class and nested class are the same type.
+    /// Returns an error if the enclosing class and nested class are the same type,
+    /// or if nested class validation fails.
     pub fn apply(&self) -> Result<()> {
-        if self.enclosing_class.token == self.nested_class.token {
-            return Err(malformed_error!(
-                "enclosing_class and nested_class cannot be the same - {}",
-                self.enclosing_class.token.value()
-            ));
-        }
+        NestedClassValidator::validate_nested_relationship(
+            self.nested_class.token,
+            self.enclosing_class.token,
+        )?;
 
         self.enclosing_class
             .nested_types
@@ -76,7 +76,7 @@ impl NestedClassRaw {
     ///
     /// # Errors
     ///
-    /// Returns an error if the enclosing class and nested class are the same, or if referenced types
+    /// Returns an error if nested class validation fails or if referenced types
     /// cannot be found in the type registry.
     ///
     /// ## Arguments
@@ -84,13 +84,12 @@ impl NestedClassRaw {
     /// * 'types'    - All parsed `CilType` entries
     pub fn apply(classes: &MetadataTable<NestedClassRaw>, types: &TypeRegistry) -> Result<()> {
         let mut mapping: HashMap<u32, Vec<u32>> = HashMap::new();
+
         for row in classes {
-            if row.enclosing_class == row.nested_class {
-                return Err(malformed_error!(
-                    "enclosing_class and nested_class can not be the same - {}",
-                    row.enclosing_class
-                ));
-            }
+            let nested_token = Token::new(row.nested_class | 0x0200_0000);
+            let enclosing_token = Token::new(row.enclosing_class | 0x0200_0000);
+
+            NestedClassValidator::validate_nested_relationship(nested_token, enclosing_token)?;
 
             mapping
                 .entry(row.enclosing_class | 0x0200_0000)

@@ -55,12 +55,12 @@ impl<'a> Guid<'a> {
     /// # Errors
     /// Returns an error if the index is out of bounds or if the GUID data cannot be parsed
     pub fn get(&self, index: usize) -> Result<uguid::Guid> {
-        if index < 1 || index * 15 > self.data.len() {
+        if index < 1 || (index - 1) * 16 + 16 > self.data.len() {
             return Err(OutOfBounds);
         }
 
-        let offset_start = ((index - 1) * 15) + (index - 1);
-        let offset_end = (index * 15) + 1 + (index - 1);
+        let offset_start = (index - 1) * 16;
+        let offset_end = offset_start + 16;
 
         let mut buffer = [0u8; 16];
         buffer.copy_from_slice(&self.data[offset_start..offset_end]);
@@ -276,5 +276,42 @@ mod tests {
         );
 
         assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn test_guid_index_calculation_correctness() {
+        // Test with specific data pattern to verify 16-byte alignment
+        // Each GUID should be exactly 16 bytes apart
+        #[rustfmt::skip]
+        let data = [
+            // GUID 1: All 0x11
+            0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 
+            0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+            // GUID 2: All 0x22  
+            0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 
+            0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+            // GUID 3: All 0x33
+            0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 
+            0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 0x33,
+        ];
+
+        let guids = Guid::from(&data).unwrap();
+
+        // Verify each GUID can be accessed correctly with proper 16-byte spacing
+        let guid1 = guids.get(1).unwrap();
+        let guid2 = guids.get(2).unwrap();
+        let guid3 = guids.get(3).unwrap();
+
+        // Each GUID should contain the expected pattern
+        assert_eq!(guid1, uguid::guid!("11111111-1111-1111-1111-111111111111"));
+        assert_eq!(guid2, uguid::guid!("22222222-2222-2222-2222-222222222222"));
+        assert_eq!(guid3, uguid::guid!("33333333-3333-3333-3333-333333333333"));
+
+        // Test out of bounds
+        assert!(guids.get(4).is_err(), "Index 4 should be out of bounds");
+        assert!(
+            guids.get(0).is_err(),
+            "Index 0 should be invalid (1-based indexing)"
+        );
     }
 }

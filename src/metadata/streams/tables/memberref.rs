@@ -8,6 +8,7 @@ use crate::{
         customattributes::CustomAttributeValueList,
         signatures::{
             parse_field_signature, parse_method_signature, SignatureField, SignatureMethod,
+            TypeSignature,
         },
         streams::{
             tables::param::Param, Blob, CodedIndex, CodedIndexType, ParamRc, RowDefinition,
@@ -176,15 +177,24 @@ impl MemberRefRaw {
             let method_sig = parse_method_signature(signature_data)?;
             let params = Self::create_params_from_signature(&method_sig, strings);
 
+            let method_param_count = Some(method_sig.params.len());
             for (_, param) in params.iter() {
                 if param.sequence == 0 {
                     // Return parameter
-                    param.apply_signature(&method_sig.return_type, types.clone())?;
+                    param.apply_signature(
+                        &method_sig.return_type,
+                        types.clone(),
+                        method_param_count,
+                    )?;
                 } else {
                     // Regular parameter
                     let index = (param.sequence - 1) as usize;
                     if let Some(param_signature) = method_sig.params.get(index) {
-                        param.apply_signature(param_signature, types.clone())?;
+                        param.apply_signature(
+                            param_signature,
+                            types.clone(),
+                            method_param_count,
+                        )?;
                     }
                 }
             }
@@ -192,20 +202,62 @@ impl MemberRefRaw {
             (MemberRefSignature::Method(method_sig), params)
         };
 
+        let declaredby = get_ref(&self.class);
+        if matches!(declaredby, CilTypeReference::None) {
+            return Err(malformed_error!(
+                "Failed to resolve class token - {}",
+                self.class.token.value()
+            ));
+        }
+
+        match (&signature, &declaredby) {
+            (
+                MemberRefSignature::Method(method_sig),
+                CilTypeReference::TypeDef(_parent_type) | CilTypeReference::TypeRef(_parent_type),
+            ) => {
+                if strings.get(self.name as usize)?.is_empty() {
+                    return Err(malformed_error!(
+                        "Method name cannot be empty for MemberRef token {}",
+                        self.token.value()
+                    ));
+                }
+
+                if method_sig.params.len() > 255 {
+                    return Err(malformed_error!(
+                        "Method signature has too many parameters ({}) for MemberRef token {}",
+                        method_sig.params.len(),
+                        self.token.value()
+                    ));
+                }
+            }
+            (
+                MemberRefSignature::Field(field_sig),
+                CilTypeReference::TypeDef(_parent_type) | CilTypeReference::TypeRef(_parent_type),
+            ) => {
+                if strings.get(self.name as usize)?.is_empty() {
+                    return Err(malformed_error!(
+                        "Field name cannot be empty for MemberRef token {}",
+                        self.token.value()
+                    ));
+                }
+
+                if matches!(field_sig.base, TypeSignature::Unknown) {
+                    return Err(malformed_error!(
+                        "Field signature has unknown type for MemberRef token {}",
+                        self.token.value()
+                    ));
+                }
+            }
+            // For module references and other parent types, we allow more flexibility
+            // as these might reference external or special members
+            _ => {}
+        }
+
         let member_ref = Arc::new(MemberRef {
             rid: self.rid,
             token: self.token,
             offset: self.offset,
-            declaredby: {
-                let type_ref = get_ref(&self.class);
-                if matches!(type_ref, CilTypeReference::None) {
-                    return Err(malformed_error!(
-                        "Failed to resolve class token - {}",
-                        self.class.token.value()
-                    ));
-                }
-                type_ref
-            },
+            declaredby,
             name: strings.get(self.name as usize)?.to_string(),
             signature,
             params,
@@ -243,9 +295,18 @@ impl<'a> RowDefinition<'a> for MemberRefRaw {
     }
 }
 
+impl MemberRef {
+    /// Check if this member reference is a constructor (.ctor or .cctor)
+    #[must_use]
+    pub fn is_constructor(&self) -> bool {
+        (self.name.starts_with(".ctor") || self.name.starts_with(".cctor"))
+            && matches!(self.signature, MemberRefSignature::Method(_))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::metadata::streams::tables::types::{MetadataTable, TableId, TableInfo};
+    use crate::metadata::streams::{MetadataTable, TableId, TableInfo};
 
     use super::*;
 

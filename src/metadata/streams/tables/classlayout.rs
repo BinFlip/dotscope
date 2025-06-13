@@ -7,6 +7,7 @@ use crate::{
         streams::{RowDefinition, TableId, TableInfoRef},
         token::Token,
         typesystem::{CilTypeRc, TypeRegistry},
+        validation::LayoutValidator,
     },
     Result,
 };
@@ -44,6 +45,8 @@ impl ClassLayout {
     /// # Errors
     /// Returns an error if the class size or packing size is already set on the target type.
     pub fn apply(&self) -> Result<()> {
+        LayoutValidator::validate_class_layout(self.class_size, self.packing_size, &self.parent)?;
+
         self.parent
             .class_size
             .set(self.class_size)
@@ -84,6 +87,8 @@ impl ClassLayoutRaw {
     pub fn apply(&self, types: &TypeRegistry) -> Result<()> {
         match types.get(&Token::new(self.parent | 0x0200_0000)) {
             Some(class) => {
+                LayoutValidator::validate_class_layout(self.class_size, self.packing_size, &class)?;
+
                 class
                     .class_size
                     .set(self.class_size)

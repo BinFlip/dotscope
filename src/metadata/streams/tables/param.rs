@@ -77,16 +77,29 @@ impl Param {
     /// # Errors
     ///
     /// Returns an error if type resolution fails, if modifier types cannot be resolved,
-    /// or if the base type has already been set for this parameter.
+    /// if the base type has already been set for this parameter, or if sequence validation fails.
     ///
     /// ## Arguments
     /// * 'signature'   - The signature to apply to this parameter
     /// * 'types'       - The type registry for lookup and generation of types
+    /// * `method_param_count` - Total number of parameters in the method signature (for validation)
     pub fn apply_signature(
         &self,
         signature: &SignatureParameter,
         types: Arc<TypeRegistry>,
+        method_param_count: Option<usize>,
     ) -> Result<()> {
+        if let Some(param_count) = method_param_count {
+            #[allow(clippy::cast_possible_truncation)]
+            if self.sequence > param_count as u32 {
+                return Err(malformed_error!(
+                    "Parameter sequence {} exceeds method parameter count {} for parameter token {}",
+                    self.sequence,
+                    param_count,
+                    self.token.value()
+                ));
+            }
+        }
         self.is_by_ref.store(signature.by_ref, Ordering::Relaxed);
 
         for modifier in &signature.modifiers {
@@ -108,14 +121,23 @@ impl Param {
 
         // Handle the case where multiple methods share the same parameter
         // This is valid in .NET metadata and happens when methods have identical signatures
-        match self.base.set(resolved_type.clone().into()) {
-            Ok(()) => Ok(()),
-            Err(_) => {
-                // Base type is already set - this is acceptable when methods share parameters
-                // In a proper implementation, we'd compare the actual types for compatibility
-                Ok(())
+        if self.base.set(resolved_type.clone().into()).is_err() {
+            if let Some(existing_type_ref) = self.base.get() {
+                let existing_type = existing_type_ref.upgrade().ok_or_else(|| {
+                    malformed_error!(
+                        "Invalid type reference: existing parameter type has been dropped"
+                    )
+                })?;
+
+                if !resolved_type.is_compatible_with(&existing_type) {
+                    return Err(malformed_error!(
+                        "Type compatibility error: parameter {} cannot be shared between methods with incompatible types",
+                        self.token.value()
+                    ));
+                }
             }
         }
+        Ok(())
     }
 }
 

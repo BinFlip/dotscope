@@ -180,6 +180,16 @@ impl MethodRef {
     pub fn name(&self) -> Option<String> {
         self.upgrade().map(|m| m.name.clone())
     }
+
+    /// Check if the referenced method is a constructor (.ctor or .cctor)
+    #[must_use]
+    pub fn is_constructor(&self) -> bool {
+        if let Some(method) = self.upgrade() {
+            method.is_constructor()
+        } else {
+            false
+        }
+    }
 }
 
 impl From<MethodRc> for MethodRef {
@@ -490,6 +500,12 @@ impl Method {
             .contains(MethodImplOptions::MAX_METHOD_IMPL_VAL)
     }
 
+    /// Returns true if the method is a constructor (.ctor or .cctor).
+    #[must_use]
+    pub fn is_constructor(&self) -> bool {
+        self.name.starts_with(".ctor") || self.name.starts_with(".cctor")
+    }
+
     /// Parse provided data, and extract additional information from the binary. e.g. Disassembly,
     /// method body, local variables, exception handlers, etc.
     ///
@@ -573,13 +589,22 @@ impl Method {
         }
 
         // Resolve the parameters
+        let method_param_count = Some(self.signature.params.len());
         for (_, parameter) in self.params.iter() {
             if parameter.sequence == 0 {
-                parameter.apply_signature(&self.signature.return_type, types.clone())?;
+                parameter.apply_signature(
+                    &self.signature.return_type,
+                    types.clone(),
+                    method_param_count,
+                )?;
             } else {
                 let index = (parameter.sequence - 1) as usize;
                 if let Some(param_signature) = self.signature.params.get(index) {
-                    parameter.apply_signature(param_signature, types.clone())?;
+                    parameter.apply_signature(
+                        param_signature,
+                        types.clone(),
+                        method_param_count,
+                    )?;
                 }
             }
         }

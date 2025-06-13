@@ -40,12 +40,22 @@ impl MethodImpl {
     /// Apply a `MethodImpl` to update the class with interface implementation information.
     ///
     /// Since this is the owned structure, all references are already resolved, so we can
-    /// efficiently update the class without re-resolving anything.
+    /// efficiently update the class without re-resolving anything. This establishes the
+    /// bidirectional relationship between interface methods and their implementations.
     ///
     /// # Errors
     /// Returns an error if updating the class overwrite information fails.
     pub fn apply(&self) -> Result<()> {
         self.class.overwrites.push(self.method_body.clone());
+
+        if let CilTypeReference::MethodDef(method_ref) = &self.method_declaration {
+            if let Some(method) = method_ref.upgrade() {
+                if let CilTypeReference::MethodDef(body_method_ref) = &self.method_body {
+                    method.interface_impls.push(body_method_ref.clone());
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -71,7 +81,6 @@ impl MethodImplRaw {
     /// Apply an `MethodImplRaw` to the relevant entries of types (e.g. fields, methods and parameters)
     ///
     /// ## Arguments
-    /// * 'value'       - The value to be converted
     /// * 'types'       - All parsed `CilType` entries
     /// * 'memberrefs'  - All parsed `MemberRef` entries
     /// * 'methods'     - All parsed `MethodDef` entries
@@ -115,7 +124,45 @@ impl MethodImplRaw {
 
         match types.get(&Token::new(self.class | 0x0200_0000)) {
             Some(cil_type) => {
-                cil_type.overwrites.push(interface_implementation);
+                cil_type.overwrites.push(interface_implementation.clone());
+
+                match self.method_declaration.tag {
+                    TableId::MethodDef => match methods.get(&self.method_declaration.token) {
+                        Some(parent) => {
+                            if let CilTypeReference::MethodDef(method_ref) =
+                                &interface_implementation
+                            {
+                                parent.value().interface_impls.push(method_ref.clone());
+                            }
+                        }
+                        None => {
+                            return Err(malformed_error!(
+                                "Failed to resolve methoddef method_declaration token - {}",
+                                self.method_declaration.token.value()
+                            ))
+                        }
+                    },
+                    TableId::MemberRef => match memberrefs.get(&self.method_declaration.token) {
+                        Some(_parent) => {
+                            // ToDo: Handle MemberRef interface declarations
+                            // MemberRef declarations need special handling for cross-assembly references
+                            // For now, we only track bidirectional relationships for MethodDef declarations
+                        }
+                        None => {
+                            return Err(malformed_error!(
+                                "Failed to resolve memberref method_declaration token - {}",
+                                self.method_declaration.token.value()
+                            ))
+                        }
+                    },
+                    _ => {
+                        return Err(malformed_error!(
+                            "Invalid method_declaration token - {}",
+                            self.method_declaration.token.value()
+                        ))
+                    }
+                }
+
                 Ok(())
             }
             None => Err(malformed_error!(
@@ -123,27 +170,13 @@ impl MethodImplRaw {
                 self.class | 0x0200_0000
             )),
         }
-
-        // ToDo: Implement resolving and updating of the type that implements the interface definition
-        // let interface_definition = match self.method_declaration.tag {
-        //     TableId::MethodDef => match methods.get(&self.method_declaration.token) {
-        //         Some(parent) => CilTypeReference::MethodDef(parent.clone()),
-        //         None => return Err(Malformed),
-        //     },
-        //     TableId::MemberRef => match memberrefs.get(&self.method_declaration.token) {
-        //         Some(parent) => CilTypeReference::MemberRef(parent.clone()),
-        //         None => return Err(Malformed),
-        //     },
-        //     _ => return Err(Malformed),
-        // };
     }
 
     /// Convert an `MethodImplRaw`, into a `MethodImpl` which has indexes resolved and owns the referenced data
     ///
     /// ## Arguments
-    /// * 'types'       - All parsed `CilType` entries
-    /// * 'memberrefs'  - All parsed `MemberRef` entries
-    /// * 'methods'     - All parsed `MethodDef` entries
+    /// * `get_ref`  - Closure to resolve coded indexes to type references
+    /// * `types`    - The type registry containing all parsed `CilType` entries
     ///
     /// # Errors
     /// Returns an error if method tokens cannot be resolved, if the class type cannot be found,

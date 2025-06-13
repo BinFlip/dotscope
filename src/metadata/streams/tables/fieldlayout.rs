@@ -6,6 +6,7 @@ use crate::{
     metadata::{
         streams::{FieldMap, FieldRc, RowDefinition, TableId, TableInfoRef},
         token::Token,
+        validation::FieldValidator,
     },
     Result,
 };
@@ -39,8 +40,11 @@ impl FieldLayout {
     /// efficiently update the parent field without re-resolving anything.
     ///
     /// # Errors
-    /// Returns an error if the field layout is already set on the target field.
+    /// Returns an error if the field layout is already set on the target field,
+    /// or if the field offset validation fails.
     pub fn apply(&self) -> Result<()> {
+        FieldValidator::validate_field_offset(self.field_offset, Some(&self.field))?;
+
         self.field
             .layout
             .set(self.field_offset)
@@ -71,8 +75,11 @@ impl FieldLayoutRaw {
     /// * 'fields'      - All parsed `Field` entries
     ///
     /// # Errors
-    /// Returns an error if field lookup fails or if the layout is already set
+    /// Returns an error if field lookup fails, field offset validation fails,
+    /// or if the layout is already set
     pub fn apply(&self, fields: &FieldMap) -> Result<()> {
+        FieldValidator::validate_field_offset(self.field_offset, None)?;
+
         match fields.get(&Token::new(self.field | 0x0400_0000)) {
             Some(field) => field
                 .value()
