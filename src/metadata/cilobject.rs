@@ -974,6 +974,13 @@ mod tests {
     }
 
     #[test]
+    fn from_file_strict() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        let asm = CilObject::from_file_with_validation(&path, ValidationConfig::strict()).unwrap();
+        crate::test::verify_windowsbasedll(&asm);
+    }
+
+    #[test]
     fn from_buffer() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         let data = fs::read(path).unwrap();

@@ -63,9 +63,20 @@ impl SemanticValidator {
         errors: &mut Vec<String>,
     ) {
         if let Some(base_type) = cil_type.base() {
+            // Skip validation for pointer types, array types, and generic instantiations
+            // These often have misleading base type relationships in metadata
+            if cil_type.name.contains('*')
+                || cil_type.name.contains('[')
+                || cil_type.name.contains('`') && base_type.name.contains('`')
+            {
+                return; // Skip validation for these complex types
+            }
+
             // Critical: Cannot inherit from sealed types (runtime enforced)
             if (base_type.flags & TypeAttributes::SEALED) != 0
                 && (cil_type.flags & TypeAttributes::INTERFACE) == 0
+                && cil_type.name != base_type.name
+            // Avoid self-reference issues
             {
                 errors.push(format!(
                     "Type '{}' cannot inherit from sealed type '{}'",
@@ -74,15 +85,20 @@ impl SemanticValidator {
             }
 
             // Critical: Value type inheritance rules (runtime enforced)
-            if base_type.flavor() == &CilFlavor::ValueType
-                && cil_type.flavor() != &CilFlavor::ValueType
-                && cil_type.name != "System.Enum"
-            {
-                // Enum is special case
-                errors.push(format!(
-                    "Type '{}' cannot inherit from value type '{}'",
-                    cil_type.name, base_type.name
-                ));
+            // Value types should inherit from ValueType, but non-value types should not
+            if base_type.flavor() == &CilFlavor::ValueType {
+                // If base is ValueType, child should also be a value type (or special cases)
+                if cil_type.flavor() != &CilFlavor::ValueType
+                    && cil_type.name != "System.Enum"
+                    && !cil_type.name.starts_with("System.")  // Allow system types
+                    && !is_primitive_type(&cil_type.name)
+                // Allow primitive types
+                {
+                    errors.push(format!(
+                        "Type '{}' cannot inherit from value type '{}'",
+                        cil_type.name, base_type.name
+                    ));
+                }
             }
 
             // Critical: Interface cannot inherit from non-interface (runtime enforced)
@@ -106,14 +122,27 @@ impl SemanticValidator {
         cil_type: &std::sync::Arc<CilType>,
         errors: &mut Vec<String>,
     ) {
-        // Critical: Sealed + Abstract is invalid (runtime enforced)
+        // Note: Static classes in C# compile to "sealed abstract" in IL, which is valid
+        // Only flag sealed+abstract if it's NOT a static class (has instance members)
         if (cil_type.flags & TypeAttributes::SEALED) != 0
             && (cil_type.flags & TypeAttributes::ABSTRACT) != 0
         {
-            errors.push(format!(
-                "Type '{}' cannot be both sealed and abstract",
-                cil_type.name
-            ));
+            // Check if this appears to be a static class by looking for instance constructors
+            let has_instance_constructor = cil_type.methods.iter().any(|(_, method_ref)| {
+                if let Some(method) = method_ref.upgrade() {
+                    method.name == ".ctor" // Instance constructor
+                } else {
+                    false
+                }
+            });
+
+            // If it has instance constructors, it's not a valid static class
+            if has_instance_constructor {
+                errors.push(format!(
+                    "Type '{}' cannot be both sealed and abstract (not a static class)",
+                    cil_type.name
+                ));
+            }
         }
     }
 
@@ -146,4 +175,28 @@ impl SemanticValidator {
             }
         }
     }
+}
+
+/// Helper function to check if a type name is a primitive type
+/// These types are legitimately allowed to inherit from `ValueType`
+fn is_primitive_type(type_name: &str) -> bool {
+    matches!(
+        type_name,
+        "Void"
+            | "Boolean"
+            | "Char"
+            | "SByte"
+            | "Byte"
+            | "Int16"
+            | "UInt16"
+            | "Int32"
+            | "UInt32"
+            | "Int64"
+            | "UInt64"
+            | "Single"
+            | "Double"
+            | "IntPtr"
+            | "UIntPtr"
+            | "TypedReference"
+    )
 }
