@@ -40,6 +40,8 @@ pub mod field;
 pub mod fieldlayout;
 /// The implementation of the '`FieldMarshal`' table type
 pub mod fieldmarshal;
+/// The implementation of the '`FieldPtr`' table type
+pub mod fieldptr;
 /// The implementation of the '`FieldRVA`' table type
 pub mod fieldrva;
 /// The implementation of the '`File`' table type

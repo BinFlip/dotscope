@@ -170,6 +170,7 @@ impl CodedIndex {
                 TableId::Module => Token::new(row),
                 TableId::TypeRef => Token::new(row | 0x0100_0000),
                 TableId::TypeDef => Token::new(row | 0x0200_0000),
+                TableId::FieldPtr => Token::new(row | 0x0300_0000),
                 TableId::Field => Token::new(row | 0x0400_0000),
                 TableId::MethodDef => Token::new(row | 0x0600_0000),
                 TableId::Param => Token::new(row | 0x0800_0000),

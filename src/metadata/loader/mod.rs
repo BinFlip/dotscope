@@ -31,6 +31,7 @@ mod exportedtype;
 mod field;
 mod fieldlayout;
 mod fieldmarshal;
+mod fieldptr;
 mod fieldrva;
 mod file;
 mod genericparam;
@@ -58,7 +59,7 @@ mod typespec;
 pub(crate) use context::LoaderContext;
 pub(crate) use data::CilObjectData;
 
-static LOADERS: [&'static dyn MetadataLoader; 38] = [
+static LOADERS: [&'static dyn MetadataLoader; 39] = [
     &assembly::AssemblyLoader,
     &assemblyos::AssemblyOsLoader,
     &assemblyprocessor::AssemblyProcessorLoader,
@@ -73,6 +74,7 @@ static LOADERS: [&'static dyn MetadataLoader; 38] = [
     &eventmap::EventMapLoader,
     &exportedtype::ExportedTypeLoader,
     &field::FieldLoader,
+    &fieldptr::FieldPtrLoader,
     &fieldlayout::FieldLayoutLoader,
     &fieldmarshal::FieldMarshalLoader,
     &fieldrva::FieldRvaLoader,

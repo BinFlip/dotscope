@@ -162,6 +162,7 @@ pub use tables::{
     fieldmarshal::{
         FieldMarshal, FieldMarshalList, FieldMarshalMap, FieldMarshalRaw, FieldMarshalRc,
     },
+    fieldptr::{FieldPtr, FieldPtrList, FieldPtrMap, FieldPtrRaw, FieldPtrRc},
     fieldrva::{FieldRVAList, FieldRVAMap, FieldRVARc, FieldRva, FieldRvaRaw},
     file::{File, FileAttributes, FileList, FileMap, FileRaw, FileRc},
     genericparam::{

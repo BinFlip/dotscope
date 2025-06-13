@@ -7,11 +7,11 @@ use crate::{
         AssemblyOsRaw, AssemblyProcessorRaw, AssemblyRaw, AssemblyRefOsRaw,
         AssemblyRefProcessorRaw, AssemblyRefRaw, ClassLayoutRaw, ConstantRaw, CustomAttributeRaw,
         DeclSecurityRaw, EventMapRaw, EventRaw, ExportedTypeRaw, FieldLayoutRaw, FieldMarshalRaw,
-        FieldRaw, FieldRvaRaw, FileRaw, GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw,
-        InterfaceImplRaw, ManifestResourceRaw, MemberRefRaw, MetadataTable, MethodDefRaw,
-        MethodImplRaw, MethodSemanticsRaw, MethodSpecRaw, ModuleRaw, ModuleRefRaw, NestedClassRaw,
-        ParamRaw, PropertyMapRaw, PropertyRaw, RowDefinition, StandAloneSigRaw, TableData, TableId,
-        TableInfo, TableInfoRef, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
+        FieldPtrRaw, FieldRaw, FieldRvaRaw, FileRaw, GenericParamConstraintRaw, GenericParamRaw,
+        ImplMapRaw, InterfaceImplRaw, ManifestResourceRaw, MemberRefRaw, MetadataTable,
+        MethodDefRaw, MethodImplRaw, MethodSemanticsRaw, MethodSpecRaw, ModuleRaw, ModuleRefRaw,
+        NestedClassRaw, ParamRaw, PropertyMapRaw, PropertyRaw, RowDefinition, StandAloneSigRaw,
+        TableData, TableId, TableInfo, TableInfoRef, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
     },
     Error::OutOfBounds,
     Result,
@@ -304,6 +304,9 @@ impl<'a> TablesHeader<'a> {
                 TableData::TypeDef(table) => unsafe {
                     Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
                 },
+                TableData::FieldPtr(table) => unsafe {
+                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
+                },
                 TableData::Field(table) => unsafe {
                     Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
                 },
@@ -447,6 +450,13 @@ impl<'a> TablesHeader<'a> {
                 *current_offset += table.size() as usize;
 
                 TableData::TypeDef(table)
+            }
+            TableId::FieldPtr => {
+                let table =
+                    MetadataTable::<FieldPtrRaw>::new(data, t_info.rows, self.info.clone())?;
+                *current_offset += table.size() as usize;
+
+                TableData::FieldPtr(table)
             }
             TableId::Field => {
                 let table = MetadataTable::<FieldRaw>::new(data, t_info.rows, self.info.clone())?;

@@ -86,6 +86,13 @@ pub enum TableId {
     /// base type, and member lists.
     TypeDef = 0x02,
 
+    /// `FieldPtr` table (0x03) - Indirection table for Field entries in `#-` streams.
+    ///
+    /// This table is only present in assemblies using uncompressed metadata streams (`#-`).
+    /// Each row contains a single field: a 1-based index into the Field table.
+    /// When present, field references should resolve through this indirection table.
+    FieldPtr = 0x03,
+
     /// `Field` table (0x04) - Field definitions within types.
     ///
     /// Contains all field definitions, including their attributes, name,

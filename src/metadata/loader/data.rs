@@ -128,6 +128,7 @@ impl<'a> CilObjectData<'a> {
                 method_semantics: SkipMap::default(),
                 method_spec: &cil_object.method_specs,
                 field: SkipMap::default(),
+                field_ptr: SkipMap::default(),
                 field_layout: SkipMap::default(),
                 field_marshal: SkipMap::default(),
                 field_rva: SkipMap::default(),
@@ -207,7 +208,6 @@ impl<'a> CilObjectData<'a> {
             }
         }
 
-        // Validate stream layout after all streams are loaded
         self.header_root
             .validate_stream_layout(meta_root_offset, self.header.meta_data_size)?;
 

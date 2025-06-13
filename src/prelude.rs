@@ -64,7 +64,10 @@ pub use crate::metadata::streams::{
 pub use crate::metadata::streams::{ExportedType, ExportedTypeRc};
 
 /// Fields and field-related types
-pub use crate::metadata::streams::{Field, FieldLayout, FieldList, FieldMap, FieldRc};
+pub use crate::metadata::streams::{
+    Field, FieldLayout, FieldList, FieldMap, FieldPtr, FieldPtrList, FieldPtrMap, FieldPtrRc,
+    FieldRc,
+};
 
 /// Parameters
 pub use crate::metadata::streams::{Param, ParamList, ParamRc};
@@ -108,7 +111,9 @@ pub use crate::metadata::streams::{
 pub use crate::metadata::streams::{ExportedTypeRaw, TypeDefRaw, TypeRefRaw, TypeSpecRaw};
 
 /// Field and method raw table types
-pub use crate::metadata::streams::{FieldLayoutRaw, FieldRaw, FieldRvaRaw, MethodDefRaw, ParamRaw};
+pub use crate::metadata::streams::{
+    FieldLayoutRaw, FieldPtrRaw, FieldRaw, FieldRvaRaw, MethodDefRaw, ParamRaw,
+};
 
 /// Core metadata raw table types
 pub use crate::metadata::streams::{
