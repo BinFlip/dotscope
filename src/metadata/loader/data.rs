@@ -140,6 +140,7 @@ impl<'a> CilObjectData<'a> {
                 property: SkipMap::default(),
                 property_map: SkipMap::default(),
                 event: SkipMap::default(),
+                event_ptr: SkipMap::default(),
                 event_map: SkipMap::default(),
                 member_ref: &cil_object.refs_member,
                 class_layout: SkipMap::default(),

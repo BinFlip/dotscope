@@ -154,6 +154,7 @@ pub use tables::{
     },
     event::{Event, EventAttributes, EventList, EventMap, EventRaw, EventRc},
     eventmap::{EventMapEntry, EventMapEntryList, EventMapEntryMap, EventMapEntryRc, EventMapRaw},
+    eventptr::{EventPtr, EventPtrList, EventPtrMap, EventPtrRaw, EventPtrRc},
     exportedtype::{
         ExportedType, ExportedTypeList, ExportedTypeMap, ExportedTypeRaw, ExportedTypeRc,
     },

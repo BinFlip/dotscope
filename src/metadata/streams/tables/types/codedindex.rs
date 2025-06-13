@@ -186,6 +186,7 @@ impl CodedIndex {
                 TableId::FieldLayout => Token::new(row | 0x1000_0000),
                 TableId::StandAloneSig => Token::new(row | 0x1100_0000),
                 TableId::EventMap => Token::new(row | 0x1200_0000),
+                TableId::EventPtr => Token::new(row | 0x1300_0000),
                 TableId::Event => Token::new(row | 0x1400_0000),
                 TableId::PropertyMap => Token::new(row | 0x1500_0000),
                 TableId::Property => Token::new(row | 0x1700_0000),

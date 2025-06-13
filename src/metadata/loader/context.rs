@@ -18,8 +18,8 @@ use crate::{
         streams::{
             AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, AssemblyRefOsMap,
             AssemblyRefProcessorMap, Blob, ClassLayoutMap, CodedIndex, ConstantMap,
-            CustomAttributeMap, DeclSecurityMap, EventMap, EventMapEntryMap, FieldLayoutMap,
-            FieldMap, FieldMarshalMap, FieldPtrMap, FieldRVAMap, FileMap,
+            CustomAttributeMap, DeclSecurityMap, EventMap, EventMapEntryMap, EventPtrMap,
+            FieldLayoutMap, FieldMap, FieldMarshalMap, FieldPtrMap, FieldRVAMap, FileMap,
             GenericParamConstraintMap, GenericParamMap, Guid, InterfaceImplMap, MemberRefMap,
             MethodImplMap, MethodPtrMap, MethodSemanticsMap, MethodSpecMap, ModuleRc, ModuleRefMap,
             NestedClassMap, ParamMap, ParamPtrMap, PropertyMap, PropertyMapEntryMap,
@@ -72,6 +72,7 @@ pub(crate) struct LoaderContext<'a> {
     pub property: PropertyMap,
     pub property_map: PropertyMapEntryMap,
     pub event: EventMap,
+    pub event_ptr: EventPtrMap,
     pub event_map: EventMapEntryMap,
     pub member_ref: &'a MemberRefMap,
     pub class_layout: ClassLayoutMap,

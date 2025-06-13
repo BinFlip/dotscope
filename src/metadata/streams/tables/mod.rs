@@ -32,6 +32,8 @@ pub mod declsecurity;
 pub mod event;
 /// The implementation of the '`EventMap`' table type
 pub mod eventmap;
+/// The implementation of the '`EventPtr`' table type
+pub mod eventptr;
 /// The implementation of the '`ExportedType`' table type
 pub mod exportedtype;
 /// The implementation of the '`Field`' table type

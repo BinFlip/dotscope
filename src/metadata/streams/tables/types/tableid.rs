@@ -192,6 +192,13 @@ pub enum TableId {
     /// Each row maps a type to a range of events in the Event table.
     EventMap = 0x12,
 
+    /// `EventPtr` table (0x13) - Indirection table for Event entries in `#-` streams.
+    ///
+    /// This table is only present in assemblies using uncompressed metadata streams (`#-`).
+    /// Each row contains a single field: a 1-based index into the Event table.
+    /// When present, event references should resolve through this indirection table.
+    EventPtr = 0x13,
+
     /// `Event` table (0x14) - Event definitions within types.
     ///
     /// Contains event definitions, including event attributes, name, and

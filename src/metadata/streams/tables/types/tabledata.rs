@@ -1,8 +1,8 @@
 use crate::metadata::streams::{
     AssemblyOsRaw, AssemblyProcessorRaw, AssemblyRaw, AssemblyRefOsRaw, AssemblyRefProcessorRaw,
     AssemblyRefRaw, ClassLayoutRaw, ConstantRaw, CustomAttributeRaw, DeclSecurityRaw, EventMapRaw,
-    EventRaw, ExportedTypeRaw, FieldLayoutRaw, FieldMarshalRaw, FieldPtrRaw, FieldRaw, FieldRvaRaw,
-    FileRaw, GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw, InterfaceImplRaw,
+    EventPtrRaw, EventRaw, ExportedTypeRaw, FieldLayoutRaw, FieldMarshalRaw, FieldPtrRaw, FieldRaw,
+    FieldRvaRaw, FileRaw, GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw, InterfaceImplRaw,
     ManifestResourceRaw, MemberRefRaw, MetadataTable, MethodDefRaw, MethodImplRaw, MethodPtrRaw,
     MethodSemanticsRaw, MethodSpecRaw, ModuleRaw, ModuleRefRaw, NestedClassRaw, ParamPtrRaw,
     ParamRaw, PropertyMapRaw, PropertyRaw, StandAloneSigRaw, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
@@ -30,6 +30,7 @@ pub enum TableData<'a> {
     FieldLayout(MetadataTable<'a, FieldLayoutRaw>),
     StandAloneSig(MetadataTable<'a, StandAloneSigRaw>),
     EventMap(MetadataTable<'a, EventMapRaw>),
+    EventPtr(MetadataTable<'a, EventPtrRaw>),
     Event(MetadataTable<'a, EventRaw>),
     PropertyMap(MetadataTable<'a, PropertyMapRaw>),
     Property(MetadataTable<'a, PropertyRaw>),

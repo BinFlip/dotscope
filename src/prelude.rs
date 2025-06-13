@@ -75,7 +75,10 @@ pub use crate::metadata::streams::{
 };
 
 /// Properties and events
-pub use crate::metadata::streams::{Event, EventList, EventRc, Property, PropertyList, PropertyRc};
+pub use crate::metadata::streams::{
+    Event, EventList, EventPtr, EventPtrList, EventPtrMap, EventPtrRc, EventRc, Property,
+    PropertyList, PropertyRc,
+};
 
 /// Interfaces and member references
 pub use crate::metadata::streams::{InterfaceImpl, InterfaceImplRc, MemberRef, MemberRefRc};
@@ -120,10 +123,10 @@ pub use crate::metadata::streams::{
 
 /// Core metadata raw table types
 pub use crate::metadata::streams::{
-    ClassLayoutRaw, ConstantRaw, CustomAttributeRaw, DeclSecurityRaw, EventMapRaw, EventRaw,
-    FieldMarshalRaw, GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw, InterfaceImplRaw,
-    ManifestResourceRaw, MemberRefRaw, MethodImplRaw, MethodSemanticsRaw, MethodSpecRaw,
-    NestedClassRaw, PropertyMapRaw, PropertyRaw, StandAloneSigRaw,
+    ClassLayoutRaw, ConstantRaw, CustomAttributeRaw, DeclSecurityRaw, EventMapRaw, EventPtrRaw,
+    EventRaw, FieldMarshalRaw, GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw,
+    InterfaceImplRaw, ManifestResourceRaw, MemberRefRaw, MethodImplRaw, MethodSemanticsRaw,
+    MethodSpecRaw, NestedClassRaw, PropertyMapRaw, PropertyRaw, StandAloneSigRaw,
 };
 
 /// File system raw table types

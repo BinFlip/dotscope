@@ -27,6 +27,7 @@ mod data;
 mod declsecurity;
 mod event;
 mod eventmap;
+mod eventptr;
 mod exportedtype;
 mod field;
 mod fieldlayout;
@@ -61,7 +62,7 @@ mod typespec;
 pub(crate) use context::LoaderContext;
 pub(crate) use data::CilObjectData;
 
-static LOADERS: [&'static dyn MetadataLoader; 41] = [
+static LOADERS: [&'static dyn MetadataLoader; 42] = [
     &assembly::AssemblyLoader,
     &assemblyos::AssemblyOsLoader,
     &assemblyprocessor::AssemblyProcessorLoader,
@@ -74,6 +75,7 @@ static LOADERS: [&'static dyn MetadataLoader; 41] = [
     &declsecurity::DeclSecurityLoader,
     &event::EventLoader,
     &eventmap::EventMapLoader,
+    &eventptr::EventPtrLoader,
     &exportedtype::ExportedTypeLoader,
     &field::FieldLoader,
     &fieldptr::FieldPtrLoader,
