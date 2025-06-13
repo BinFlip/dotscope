@@ -185,8 +185,8 @@ pub use tables::{
         MemberRef, MemberRefList, MemberRefMap, MemberRefRaw, MemberRefRc, MemberRefSignature,
     },
     methoddef::MethodDefRaw,
-    methodptr::{MethodPtr, MethodPtrList, MethodPtrMap, MethodPtrRaw, MethodPtrRc},
     methodimpl::{MethodImpl, MethodImplList, MethodImplMap, MethodImplRaw, MethodImplRc},
+    methodptr::{MethodPtr, MethodPtrList, MethodPtrMap, MethodPtrRaw, MethodPtrRc},
     methodsemantics::{
         MethodSemantics, MethodSemanticsAttributes, MethodSemanticsList, MethodSemanticsMap,
         MethodSemanticsRaw, MethodSemanticsRc,
@@ -196,6 +196,7 @@ pub use tables::{
     moduleref::{ModuleRef, ModuleRefList, ModuleRefMap, ModuleRefRaw, ModuleRefRc},
     nestedclass::{NestedClass, NestedClassList, NestedClassMap, NestedClassRaw, NestedClassRc},
     param::{Param, ParamAttributes, ParamList, ParamMap, ParamRaw, ParamRc},
+    paramptr::{ParamPtr, ParamPtrList, ParamPtrMap, ParamPtrRaw, ParamPtrRc},
     property::{Property, PropertyAttributes, PropertyList, PropertyMap, PropertyRaw, PropertyRc},
     propertymap::{
         PropertyMapEntry, PropertyMapEntryList, PropertyMapEntryMap, PropertyMapEntryRc,

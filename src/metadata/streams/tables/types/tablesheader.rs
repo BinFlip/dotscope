@@ -9,9 +9,10 @@ use crate::{
         DeclSecurityRaw, EventMapRaw, EventRaw, ExportedTypeRaw, FieldLayoutRaw, FieldMarshalRaw,
         FieldPtrRaw, FieldRaw, FieldRvaRaw, FileRaw, GenericParamConstraintRaw, GenericParamRaw,
         ImplMapRaw, InterfaceImplRaw, ManifestResourceRaw, MemberRefRaw, MetadataTable,
-        MethodDefRaw, MethodImplRaw, MethodPtrRaw, MethodSemanticsRaw, MethodSpecRaw, ModuleRaw, ModuleRefRaw,
-        NestedClassRaw, ParamRaw, PropertyMapRaw, PropertyRaw, RowDefinition, StandAloneSigRaw,
-        TableData, TableId, TableInfo, TableInfoRef, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
+        MethodDefRaw, MethodImplRaw, MethodPtrRaw, MethodSemanticsRaw, MethodSpecRaw, ModuleRaw,
+        ModuleRefRaw, NestedClassRaw, ParamPtrRaw, ParamRaw, PropertyMapRaw, PropertyRaw,
+        RowDefinition, StandAloneSigRaw, TableData, TableId, TableInfo, TableInfoRef, TypeDefRaw,
+        TypeRefRaw, TypeSpecRaw,
     },
     Error::OutOfBounds,
     Result,
@@ -316,6 +317,9 @@ impl<'a> TablesHeader<'a> {
                 TableData::MethodDef(table) => unsafe {
                     Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
                 },
+                TableData::ParamPtr(table) => unsafe {
+                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
+                },
                 TableData::Param(table) => unsafe {
                     Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
                 },
@@ -480,6 +484,13 @@ impl<'a> TablesHeader<'a> {
                 *current_offset += table.size() as usize;
 
                 TableData::MethodDef(table)
+            }
+            TableId::ParamPtr => {
+                let table =
+                    MetadataTable::<ParamPtrRaw>::new(data, t_info.rows, self.info.clone())?;
+                *current_offset += table.size() as usize;
+
+                TableData::ParamPtr(table)
             }
             TableId::Param => {
                 let table = MetadataTable::<ParamRaw>::new(data, t_info.rows, self.info.clone())?;

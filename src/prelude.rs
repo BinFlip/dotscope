@@ -70,7 +70,9 @@ pub use crate::metadata::streams::{
 };
 
 /// Parameters
-pub use crate::metadata::streams::{Param, ParamList, ParamRc};
+pub use crate::metadata::streams::{
+    Param, ParamList, ParamPtr, ParamPtrList, ParamPtrMap, ParamPtrRc, ParamRc,
+};
 
 /// Properties and events
 pub use crate::metadata::streams::{Event, EventList, EventRc, Property, PropertyList, PropertyRc};
@@ -112,7 +114,8 @@ pub use crate::metadata::streams::{ExportedTypeRaw, TypeDefRaw, TypeRefRaw, Type
 
 /// Field and method raw table types
 pub use crate::metadata::streams::{
-    FieldLayoutRaw, FieldPtrRaw, FieldRaw, FieldRvaRaw, MethodDefRaw, MethodPtrRaw, ParamRaw,
+    FieldLayoutRaw, FieldPtrRaw, FieldRaw, FieldRvaRaw, MethodDefRaw, MethodPtrRaw, ParamPtrRaw,
+    ParamRaw,
 };
 
 /// Core metadata raw table types

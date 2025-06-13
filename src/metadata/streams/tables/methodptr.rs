@@ -20,7 +20,7 @@ pub type MethodPtrRc = Arc<MethodPtr>;
 /// The MethodPtr table provides an indirection layer for accessing MethodDef table entries
 /// in uncompressed metadata streams (`#-`). This table is only present in assemblies
 /// that use the `#-` stream format instead of the standard `#~` compressed format.
-/// 
+///
 /// Each row contains a single field: a 1-based index into the MethodDef table. When MethodPtr
 /// is present, method references should be resolved through this indirection table rather
 /// than directly indexing into the MethodDef table.

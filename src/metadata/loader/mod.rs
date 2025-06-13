@@ -42,14 +42,15 @@ mod interfaceimpl;
 mod manifestresource;
 mod memberref;
 mod methoddef;
-mod methodptr;
 mod methodimpl;
+mod methodptr;
 mod methodsemantics;
 mod methodspec;
 mod module;
 mod moduleref;
 mod nestedclass;
 mod param;
+mod paramptr;
 mod property;
 mod propertymap;
 mod standalonesig;
@@ -60,7 +61,7 @@ mod typespec;
 pub(crate) use context::LoaderContext;
 pub(crate) use data::CilObjectData;
 
-static LOADERS: [&'static dyn MetadataLoader; 40] = [
+static LOADERS: [&'static dyn MetadataLoader; 41] = [
     &assembly::AssemblyLoader,
     &assemblyos::AssemblyOsLoader,
     &assemblyprocessor::AssemblyProcessorLoader,
@@ -95,6 +96,7 @@ static LOADERS: [&'static dyn MetadataLoader; 40] = [
     &moduleref::ModuleRefLoader,
     &nestedclass::NestedClassLoader,
     &param::ParamLoader,
+    &paramptr::ParamPtrLoader,
     &property::PropertyLoader,
     &propertymap::PropertyMapLoader,
     &standalonesig::StandAloneSigLoader,

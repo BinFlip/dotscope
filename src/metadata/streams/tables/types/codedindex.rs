@@ -174,6 +174,7 @@ impl CodedIndex {
                 TableId::Field => Token::new(row | 0x0400_0000),
                 TableId::MethodPtr => Token::new(row | 0x0500_0000),
                 TableId::MethodDef => Token::new(row | 0x0600_0000),
+                TableId::ParamPtr => Token::new(row | 0x0700_0000),
                 TableId::Param => Token::new(row | 0x0800_0000),
                 TableId::InterfaceImpl => Token::new(row | 0x0900_0000),
                 TableId::MemberRef => Token::new(row | 0x0A00_0000),

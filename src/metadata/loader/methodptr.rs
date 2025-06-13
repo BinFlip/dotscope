@@ -1,3 +1,5 @@
+//! `MethodPtr` loader implementation
+
 use crate::{
     metadata::{
         loader::{LoaderContext, MetadataLoader},

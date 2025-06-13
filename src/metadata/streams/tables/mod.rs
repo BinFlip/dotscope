@@ -60,10 +60,10 @@ pub mod manifestresource;
 pub mod memberref;
 /// The implementation of the '`MethodDef`' table type
 pub mod methoddef;
-/// The implementation of the '`MethodPtr`' table type
-pub mod methodptr;
 /// The implementation of the '`MethodImpl`' table type
 pub mod methodimpl;
+/// The implementation of the '`MethodPtr`' table type
+pub mod methodptr;
 /// The implementation of the '`MethodScematics`' table type
 pub mod methodsemantics;
 /// The implementation of the '`MethodSpec`' table type
@@ -76,6 +76,8 @@ pub mod moduleref;
 pub mod nestedclass;
 /// The implementation of the '`Param`' table type
 pub mod param;
+/// The implementation of the '`ParamPtr`' table type
+pub mod paramptr;
 /// The implementation of the '`Property`' table type
 pub mod property;
 /// The implementation of the '`PropertyMap`' table type

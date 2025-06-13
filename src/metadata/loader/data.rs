@@ -134,6 +134,7 @@ impl<'a> CilObjectData<'a> {
                 field_marshal: SkipMap::default(),
                 field_rva: SkipMap::default(),
                 param: SkipMap::default(),
+                param_ptr: SkipMap::default(),
                 generic_param: SkipMap::default(),
                 generic_param_constraint: SkipMap::default(),
                 property: SkipMap::default(),

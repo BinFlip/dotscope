@@ -113,6 +113,13 @@ pub enum TableId {
     /// signature, and RVA (if the method has IL code).
     MethodDef = 0x06,
 
+    /// `ParamPtr` table (0x07) - Indirection table for Param entries in `#-` streams.
+    ///
+    /// This table is only present in assemblies using uncompressed metadata streams (`#-`).
+    /// Each row contains a single field: a 1-based index into the Param table.
+    /// When present, parameter references should resolve through this indirection table.
+    ParamPtr = 0x07,
+
     /// `Param` table (0x08) - Parameter definitions for methods.
     ///
     /// Contains parameter information for methods, including parameter attributes,
