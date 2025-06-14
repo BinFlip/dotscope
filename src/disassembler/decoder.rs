@@ -64,7 +64,7 @@ impl<'a> Decoder<'a> {
     /// * 'offset'      - The offset at which the first instructions starts (must be in range of parser)
     /// * 'rva'         - The rva of the first instruction
     /// * 'exceptions'  - Optional information about exception handlers
-    /// * 'visited'     - VisitedMap for tracking disassembly progress
+    /// * 'visited'     - `VisitedMap` for tracking disassembly progress
     pub fn new(
         parser: &'a mut Parser<'a>,
         offset: usize,
@@ -277,7 +277,7 @@ impl<'a> Decoder<'a> {
 ///
 /// * `method` - The Method instance to populate with disassembled basic blocks
 /// * `file` - The File containing the raw method bytecode and metadata
-/// * `shared_visited` - Optional shared VisitedMap for coordinated disassembly across methods
+/// * `shared_visited` - Optional shared `VisitedMap` for coordinated disassembly across methods
 ///
 /// # Returns
 ///
@@ -300,7 +300,7 @@ impl<'a> Decoder<'a> {
 /// - Basic block construction uses efficient control flow analysis algorithms
 /// - Exception handler processing is optimized for typical .NET code patterns
 /// - Memory usage scales linearly with method size and complexity
-/// - When using a shared VisitedMap, memory usage is reduced across parallel operations
+/// - When using a shared `VisitedMap`, memory usage is reduced across parallel operations
 ///
 /// # Examples
 ///
@@ -334,7 +334,7 @@ impl<'a> Decoder<'a> {
 ///
 /// * `method` - The parsed `Method` object to disassemble. Must have valid RVA and metadata.
 /// * `file` - The mapped input file providing access to raw bytecode data.
-/// * `shared_visited` - Optional shared VisitedMap for efficient parallel disassembly.
+/// * `shared_visited` - Optional shared `VisitedMap` for efficient parallel disassembly.
 ///
 /// # Returns
 ///

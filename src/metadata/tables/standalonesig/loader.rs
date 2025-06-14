@@ -39,9 +39,7 @@ impl MetadataLoader for StandAloneSigLoader {
 
                 // ToDo: We return only the first error encountered
                 for result in results {
-                    if let Err(err) = result {
-                        return Err(err);
-                    }
+                    result?;
                 }
             }
         }
