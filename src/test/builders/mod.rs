@@ -20,12 +20,12 @@ mod types;
 // Re-export all builders for use by parent module
 pub use assembly::*;
 //pub use attributes::*;
-//pub use constants::*;  // Not used yet
+pub use constants::*;
 pub use fields::*;
 pub use files::*;
 //pub use generics::*;
 pub use methods::*;
-//pub use params::*;  // Not used yet
-//pub use properties::*;  // Not used yet
+pub use params::*;
+pub use properties::*;
 pub use signatures::*;
 pub use types::*;

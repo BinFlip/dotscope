@@ -206,15 +206,124 @@ impl FieldBuilder {
             .with_flags(FieldAttributes::COMPILER_CONTROLLED)
     }
 
+    /// Create a simple int32 field
+    pub fn simple_i4_field(name: &str) -> Self {
+        let i4_type = Arc::new(crate::metadata::typesystem::CilType::new(
+            Token::new(0x02000001),
+            "System".to_string(),
+            "Int32".to_string(),
+            None,
+            None,
+            0,
+            Arc::new(boxcar::Vec::new()),
+            Arc::new(boxcar::Vec::new()),
+            Some(CilFlavor::I4),
+        ));
+        Self::new(name, i4_type)
+    }
+
+    /// Create a simple string field
+    pub fn simple_string_field(name: &str) -> Self {
+        let string_type = Arc::new(crate::metadata::typesystem::CilType::new(
+            Token::new(0x02000002),
+            "System".to_string(),
+            "String".to_string(),
+            None,
+            None,
+            0,
+            Arc::new(boxcar::Vec::new()),
+            Arc::new(boxcar::Vec::new()),
+            Some(CilFlavor::String),
+        ));
+        Self::new(name, string_type)
+    }
+
+    /// Create a simple boolean field
+    pub fn simple_boolean_field(name: &str) -> Self {
+        let bool_type = Arc::new(crate::metadata::typesystem::CilType::new(
+            Token::new(0x02000003),
+            "System".to_string(),
+            "Boolean".to_string(),
+            None,
+            None,
+            0,
+            Arc::new(boxcar::Vec::new()),
+            Arc::new(boxcar::Vec::new()),
+            Some(CilFlavor::Boolean),
+        ));
+        Self::new(name, bool_type)
+    }
+
+    /// Create a simple float32 field  
+    pub fn simple_r4_field(name: &str) -> Self {
+        let r4_type = Arc::new(crate::metadata::typesystem::CilType::new(
+            Token::new(0x02000004),
+            "System".to_string(),
+            "Single".to_string(),
+            None,
+            None,
+            0,
+            Arc::new(boxcar::Vec::new()),
+            Arc::new(boxcar::Vec::new()),
+            Some(CilFlavor::R4),
+        ));
+        Self::new(name, r4_type)
+    }
+
+    /// Create a simple object field
+    pub fn simple_object_field(name: &str) -> Self {
+        let object_type = Arc::new(crate::metadata::typesystem::CilType::new(
+            Token::new(0x02000005),
+            "System".to_string(),
+            "Object".to_string(),
+            None,
+            None,
+            0,
+            Arc::new(boxcar::Vec::new()),
+            Arc::new(boxcar::Vec::new()),
+            Some(CilFlavor::Object),
+        ));
+        Self::new(name, object_type)
+    }
+
     pub fn build(self) -> FieldRc {
         // Compute optional values before moving self
         let offset = self.compute_offset();
         let marshal_info = self.create_marshalling_info();
 
-        // Create basic field signature
-        let signature = SignatureField {
-            modifiers: Vec::new(),
-            base: TypeSignature::I4, // Simplified for mock - represents int32
+        // Create field signature based on the field type
+        let signature = if let Some(ref field_type) = self.field_type {
+            match field_type.flavor() {
+                CilFlavor::I4 => SignatureField {
+                    modifiers: Vec::new(),
+                    base: TypeSignature::I4,
+                },
+                CilFlavor::String => SignatureField {
+                    modifiers: Vec::new(),
+                    base: TypeSignature::String,
+                },
+                CilFlavor::Boolean => SignatureField {
+                    modifiers: Vec::new(),
+                    base: TypeSignature::Boolean,
+                },
+                CilFlavor::R4 => SignatureField {
+                    modifiers: Vec::new(),
+                    base: TypeSignature::R4,
+                },
+                CilFlavor::Object => SignatureField {
+                    modifiers: Vec::new(),
+                    base: TypeSignature::Object,
+                },
+                _ => SignatureField {
+                    modifiers: Vec::new(),
+                    base: TypeSignature::I4, // Default fallback
+                },
+            }
+        } else {
+            SignatureField {
+                modifiers: Vec::new(),
+                base: TypeSignature::I4, // Default fallback
+            }
         };
 
         // Create field with OnceLock fields
