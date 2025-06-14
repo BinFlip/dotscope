@@ -20,9 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Improved
 
-- Extended marshalling support for native interop scenarios
+- Extended marshaling support for native interop scenarios
 - Improved validation of various entries while loading the binary
-- Performance pptimizations
+- Performance optimizations
 - Improved type resolution and generic parameter handling
 - Expanded test coverage with crafted test cases
 
