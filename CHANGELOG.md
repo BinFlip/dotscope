@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2025-06-14
+
+### Added
+
+- Implemented missing pointer tables (FieldPtr, MethodPtr, ParamPtr, EventPtr, PropertyPtr)
+- New builder system and test scenarios for complex .NET features
+- Support for parsing XML-based security permission sets
+
+### Changed
+
+- Reorganized metadata table structure for better maintainability
+- Better separation of raw tables, loaders, and owned types
+
+### Improved
+
+- Extended marshalling support for native interop scenarios
+- Improved validation of various entries while loading the binary
+- Performance pptimizations
+- Improved type resolution and generic parameter handling
+- Expanded test coverage with crafted test cases
+
 ## [0.2.1] - 2025-06-11
 
 ### Fixed
