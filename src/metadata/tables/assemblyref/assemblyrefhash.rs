@@ -38,17 +38,20 @@ impl AssemblyRefHash {
     }
 
     /// Get the underlying data
-    #[must_use] pub fn data(&self) -> &[u8] {
+    #[must_use]
+    pub fn data(&self) -> &[u8] {
         &self.data
     }
 
     /// Get a formatted hex representation of the hash
-    #[must_use] pub fn hex(&self) -> String {
+    #[must_use]
+    pub fn hex(&self) -> String {
         bytes_to_hex(&self.data)
     }
 
     /// Return a human-readable representation
-    #[must_use] pub fn to_string_pretty(&self) -> String {
+    #[must_use]
+    pub fn to_string_pretty(&self) -> String {
         let hex = self.hex();
         let algorithm = match self.data.len() {
             16 => "MD5",
@@ -60,7 +63,8 @@ impl AssemblyRefHash {
     }
 
     /// Verify if the hash matches the expected value using MD5
-    #[must_use] pub fn verify_md5(&self, expected: &[u8]) -> bool {
+    #[must_use]
+    pub fn verify_md5(&self, expected: &[u8]) -> bool {
         if self.data.len() != 16 {
             return false;
         }
@@ -73,7 +77,8 @@ impl AssemblyRefHash {
     }
 
     /// Verify if the hash matches the expected value using SHA1
-    #[must_use] pub fn verify_sha1(&self, expected: &[u8]) -> bool {
+    #[must_use]
+    pub fn verify_sha1(&self, expected: &[u8]) -> bool {
         if self.data.len() != 20 {
             return false;
         }

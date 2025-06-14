@@ -13,7 +13,6 @@
 //! # Main Functions
 //! - [`decode_instruction`] - Decode a single instruction
 //! - [`decode_stream`] - Decode a sequence of instructions
-//! - [`decode_method`] - Decode an entire method body
 //! - [`decode_blocks`] - Build basic blocks from instruction stream
 //!
 //! # Example
