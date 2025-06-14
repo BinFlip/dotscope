@@ -225,7 +225,7 @@ mod tests {
     #[test]
     fn test_realistic_struct_layout_validation() {
         // Create a realistic struct layout using builders
-        let fields = vec![
+        let fields = [
             FieldBuilder::new("x", create_int32_type())
                 .with_layout(FieldLayout::Explicit(0))
                 .build(),
@@ -424,7 +424,7 @@ mod tests {
             .build();
 
         // Comprehensive validation of the complex layout
-        let fields = vec![
+        let fields = [
             &header_field,
             &counter_field,
             &flags_field,

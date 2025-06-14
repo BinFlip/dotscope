@@ -59,7 +59,7 @@ impl VisitedMap {
     ///
     /// # Arguments
     /// * 'element' - The element or byte that should be looked up
-    pub fn get_range(&self, element: usize) -> usize {
+    pub fn get_range(&self, mut element: usize) -> usize {
         if element > self.elements {
             return 0;
         }
@@ -68,7 +68,7 @@ impl VisitedMap {
 
         while let Some(bitfield) = self.data.get((element + counter) / self.bitfield_size) {
             if *bitfield == usize::MAX {
-                counter += self.bitfield_size;
+                element += self.bitfield_size;
             } else {
                 let shift_amount =
                     u32::try_from((element + counter) % self.bitfield_size).unwrap_or(0);
@@ -387,5 +387,33 @@ mod tests {
             map.set(i, true);
             assert!(map.get(i));
         }
+    }
+
+    #[test]
+    fn is_empty_test() {
+        let empty_map = VisitedMap::new(0);
+        assert!(empty_map.is_empty());
+
+        let non_empty_map = VisitedMap::new(1);
+        assert!(!non_empty_map.is_empty());
+    }
+
+    #[test]
+    fn get_out_of_bounds() {
+        let map = VisitedMap::new(10);
+
+        // Test accessing element beyond the map size
+        assert!(!map.get(10));
+        assert!(!map.get(15));
+        assert!(!map.get(100));
+    }
+
+    #[test]
+    fn get_range_out_of_bounds() {
+        let map = VisitedMap::new(10);
+
+        // Test getting range starting beyond the map size - should return 0
+        assert_eq!(map.get_range(11), 0);
+        assert_eq!(map.get_range(15), 0);
     }
 }

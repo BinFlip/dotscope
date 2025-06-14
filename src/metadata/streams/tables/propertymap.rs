@@ -170,7 +170,7 @@ impl PropertyMapRaw {
     /// ## Arguments
     /// * 'types' - The type registry for resolving parent types
     /// * 'properties' - The property map for resolving property references
-    /// * 'property_ptr' - All parsed `PropertyPtr` entries for indirection resolution
+    /// * '`property_ptr`' - All parsed `PropertyPtr` entries for indirection resolution
     /// * 'map' - The `MetadataTable` for `PropertyMapRaw` entries (needed for list range resolution)
     ///
     /// # Errors

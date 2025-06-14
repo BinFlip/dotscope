@@ -454,4 +454,74 @@ mod tests {
         let result = read_le::<f64>(&buffer);
         assert!(matches!(result, Err(OutOfBounds)));
     }
+
+    #[test]
+    fn read_le_usize() {
+        let size_bytes = std::mem::size_of::<usize>();
+        let mut buffer = vec![0u8; size_bytes];
+
+        // Create test data - little endian representation of 0x12345678 (or truncated for smaller usize)
+        buffer[0] = 0x78;
+        buffer[1] = 0x56;
+        if size_bytes >= 4 {
+            buffer[2] = 0x34;
+            buffer[3] = 0x12;
+        }
+
+        let result = read_le::<usize>(&buffer).unwrap();
+        if size_bytes == 8 {
+            assert_eq!(result, 0x12345678);
+        } else {
+            assert_eq!(result, 0x5678);
+        }
+    }
+
+    #[test]
+    fn read_be_usize() {
+        let size_bytes = std::mem::size_of::<usize>();
+        let mut buffer = vec![0u8; size_bytes];
+
+        // Create test data - big endian representation
+        if size_bytes >= 4 {
+            buffer[size_bytes - 4] = 0x12;
+            buffer[size_bytes - 3] = 0x34;
+        }
+        buffer[size_bytes - 2] = 0x56;
+        buffer[size_bytes - 1] = 0x78;
+
+        let result = read_be::<usize>(&buffer).unwrap();
+        if size_bytes == 8 {
+            assert_eq!(result, 0x12345678);
+        } else {
+            assert_eq!(result, 0x5678);
+        }
+    }
+
+    #[test]
+    fn read_le_isize() {
+        let size_bytes = std::mem::size_of::<isize>();
+        let mut buffer = vec![0u8; size_bytes];
+
+        // Create test data - little endian representation of -1
+        for item in buffer.iter_mut().take(size_bytes) {
+            *item = 0xFF;
+        }
+
+        let result = read_le::<isize>(&buffer).unwrap();
+        assert_eq!(result, -1);
+    }
+
+    #[test]
+    fn read_be_isize() {
+        let size_bytes = std::mem::size_of::<isize>();
+        let mut buffer = vec![0u8; size_bytes];
+
+        // Create test data - big endian representation of -1
+        for item in buffer.iter_mut().take(size_bytes) {
+            *item = 0xFF;
+        }
+
+        let result = read_be::<isize>(&buffer).unwrap();
+        assert_eq!(result, -1);
+    }
 }

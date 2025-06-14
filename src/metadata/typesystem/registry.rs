@@ -1,5 +1,5 @@
 use std::{
-    hash::{Hash, Hasher},
+    hash::Hash,
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc,
@@ -114,137 +114,137 @@ impl SourceRegistry {
     }
 }
 
-/// A hash that represents a unique type
-struct TypeSignatureHash {
-    hash: u64,
-}
+// /// A hash that represents a unique type
+// struct TypeSignatureHash {
+//     hash: u64,
+// }
 
-impl TypeSignatureHash {
-    /// Create a new signature hash builder
-    fn new() -> Self {
-        TypeSignatureHash { hash: 0 }
-    }
+// impl TypeSignatureHash {
+//     /// Create a new signature hash builder
+//     fn new() -> Self {
+//         TypeSignatureHash { hash: 0 }
+//     }
 
-    /// Add flavor to the hash
-    ///
-    /// ## Arguments
-    /// * `flavor` - The `CilFlavor` to hash in
-    fn add_flavor(&mut self, flavor: &CilFlavor) -> &mut Self {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+//     /// Add flavor to the hash
+//     ///
+//     /// ## Arguments
+//     /// * `flavor` - The `CilFlavor` to hash in
+//     fn add_flavor(&mut self, flavor: &CilFlavor) -> &mut Self {
+//         let mut hasher = std::collections::hash_map::DefaultHasher::new();
 
-        match flavor {
-            CilFlavor::Void => 1u8.hash(&mut hasher),
-            CilFlavor::Boolean => 2u8.hash(&mut hasher),
-            CilFlavor::Char => 3u8.hash(&mut hasher),
-            CilFlavor::I1 => 4u8.hash(&mut hasher),
-            CilFlavor::U1 => 5u8.hash(&mut hasher),
-            CilFlavor::I2 => 6u8.hash(&mut hasher),
-            CilFlavor::U2 => 7u8.hash(&mut hasher),
-            CilFlavor::I4 => 8u8.hash(&mut hasher),
-            CilFlavor::U4 => 9u8.hash(&mut hasher),
-            CilFlavor::I8 => 10u8.hash(&mut hasher),
-            CilFlavor::U8 => 11u8.hash(&mut hasher),
-            CilFlavor::R4 => 12u8.hash(&mut hasher),
-            CilFlavor::R8 => 13u8.hash(&mut hasher),
-            CilFlavor::I => 14u8.hash(&mut hasher),
-            CilFlavor::U => 15u8.hash(&mut hasher),
-            CilFlavor::Object => 16u8.hash(&mut hasher),
-            CilFlavor::String => 17u8.hash(&mut hasher),
-            CilFlavor::Array { rank, dimensions } => {
-                18u8.hash(&mut hasher);
-                rank.hash(&mut hasher);
-                dimensions.len().hash(&mut hasher);
-            }
-            CilFlavor::Pointer => 19u8.hash(&mut hasher),
-            CilFlavor::ByRef => 20u8.hash(&mut hasher),
-            CilFlavor::GenericInstance => 21u8.hash(&mut hasher),
-            CilFlavor::Pinned => 22u8.hash(&mut hasher),
-            CilFlavor::FnPtr { signature: _ } => {
-                // Function pointer signatures are complex, so we just use a simple marker
-                // A full implementation would hash the entire signature
-                23u8.hash(&mut hasher);
-            }
-            CilFlavor::GenericParameter { index, method } => {
-                24u8.hash(&mut hasher);
-                index.hash(&mut hasher);
-                method.hash(&mut hasher);
-            }
-            CilFlavor::Class => 25u8.hash(&mut hasher),
-            CilFlavor::ValueType => 26u8.hash(&mut hasher),
-            CilFlavor::Interface => 27u8.hash(&mut hasher),
-            CilFlavor::Unknown => 0u8.hash(&mut hasher),
-        }
+//         match flavor {
+//             CilFlavor::Void => 1u8.hash(&mut hasher),
+//             CilFlavor::Boolean => 2u8.hash(&mut hasher),
+//             CilFlavor::Char => 3u8.hash(&mut hasher),
+//             CilFlavor::I1 => 4u8.hash(&mut hasher),
+//             CilFlavor::U1 => 5u8.hash(&mut hasher),
+//             CilFlavor::I2 => 6u8.hash(&mut hasher),
+//             CilFlavor::U2 => 7u8.hash(&mut hasher),
+//             CilFlavor::I4 => 8u8.hash(&mut hasher),
+//             CilFlavor::U4 => 9u8.hash(&mut hasher),
+//             CilFlavor::I8 => 10u8.hash(&mut hasher),
+//             CilFlavor::U8 => 11u8.hash(&mut hasher),
+//             CilFlavor::R4 => 12u8.hash(&mut hasher),
+//             CilFlavor::R8 => 13u8.hash(&mut hasher),
+//             CilFlavor::I => 14u8.hash(&mut hasher),
+//             CilFlavor::U => 15u8.hash(&mut hasher),
+//             CilFlavor::Object => 16u8.hash(&mut hasher),
+//             CilFlavor::String => 17u8.hash(&mut hasher),
+//             CilFlavor::Array { rank, dimensions } => {
+//                 18u8.hash(&mut hasher);
+//                 rank.hash(&mut hasher);
+//                 dimensions.len().hash(&mut hasher);
+//             }
+//             CilFlavor::Pointer => 19u8.hash(&mut hasher),
+//             CilFlavor::ByRef => 20u8.hash(&mut hasher),
+//             CilFlavor::GenericInstance => 21u8.hash(&mut hasher),
+//             CilFlavor::Pinned => 22u8.hash(&mut hasher),
+//             CilFlavor::FnPtr { signature: _ } => {
+//                 // Function pointer signatures are complex, so we just use a simple marker
+//                 // A full implementation would hash the entire signature
+//                 23u8.hash(&mut hasher);
+//             }
+//             CilFlavor::GenericParameter { index, method } => {
+//                 24u8.hash(&mut hasher);
+//                 index.hash(&mut hasher);
+//                 method.hash(&mut hasher);
+//             }
+//             CilFlavor::Class => 25u8.hash(&mut hasher),
+//             CilFlavor::ValueType => 26u8.hash(&mut hasher),
+//             CilFlavor::Interface => 27u8.hash(&mut hasher),
+//             CilFlavor::Unknown => 0u8.hash(&mut hasher),
+//         }
 
-        self.hash ^= hasher.finish();
-        self
-    }
+//         self.hash ^= hasher.finish();
+//         self
+//     }
 
-    /// Add namespace and name to the hash
-    ///
-    /// ## Arguments
-    /// * 'namespace'   - The namespace of the type
-    /// * 'name'        - The name of the type
-    fn add_fullname(&mut self, namespace: &str, name: &str) -> &mut Self {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        namespace.hash(&mut hasher);
-        name.hash(&mut hasher);
-        self.hash ^= hasher.finish();
-        self
-    }
+//     /// Add namespace and name to the hash
+//     ///
+//     /// ## Arguments
+//     /// * 'namespace'   - The namespace of the type
+//     /// * 'name'        - The name of the type
+//     fn add_fullname(&mut self, namespace: &str, name: &str) -> &mut Self {
+//         let mut hasher = std::collections::hash_map::DefaultHasher::new();
+//         namespace.hash(&mut hasher);
+//         name.hash(&mut hasher);
+//         self.hash ^= hasher.finish();
+//         self
+//     }
 
-    /// Add a token to the hash
-    ///
-    /// ## Arguments
-    /// * 'token' - The token of the type
-    fn add_token(&mut self, token: Token) -> &mut Self {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        token.value().hash(&mut hasher);
-        self.hash ^= hasher.finish();
-        self
-    }
+//     /// Add a token to the hash
+//     ///
+//     /// ## Arguments
+//     /// * 'token' - The token of the type
+//     fn add_token(&mut self, token: Token) -> &mut Self {
+//         let mut hasher = std::collections::hash_map::DefaultHasher::new();
+//         token.value().hash(&mut hasher);
+//         self.hash ^= hasher.finish();
+//         self
+//     }
 
-    /// Add source information to the hash
-    ///
-    /// ## Arguments
-    /// * 'source' - The source to hash in
-    fn add_source(&mut self, source: TypeSource) -> &mut Self {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        match source {
-            TypeSource::CurrentModule => {
-                0u8.hash(&mut hasher);
-            }
-            TypeSource::Module(token) => {
-                1u8.hash(&mut hasher);
-                token.value().hash(&mut hasher);
-            }
-            TypeSource::ModuleRef(token) => {
-                2u8.hash(&mut hasher);
-                token.value().hash(&mut hasher);
-            }
-            TypeSource::AssemblyRef(token) => {
-                3u8.hash(&mut hasher);
-                token.value().hash(&mut hasher);
-            }
-            TypeSource::File(token) => {
-                4u8.hash(&mut hasher);
-                token.value().hash(&mut hasher);
-            }
-            TypeSource::Primitive => {
-                5u8.hash(&mut hasher);
-            }
-            TypeSource::Unknown => {
-                6u8.hash(&mut hasher);
-            }
-        }
-        self.hash ^= hasher.finish();
-        self
-    }
+//     /// Add source information to the hash
+//     ///
+//     /// ## Arguments
+//     /// * 'source' - The source to hash in
+//     fn add_source(&mut self, source: TypeSource) -> &mut Self {
+//         let mut hasher = std::collections::hash_map::DefaultHasher::new();
+//         match source {
+//             TypeSource::CurrentModule => {
+//                 0u8.hash(&mut hasher);
+//             }
+//             TypeSource::Module(token) => {
+//                 1u8.hash(&mut hasher);
+//                 token.value().hash(&mut hasher);
+//             }
+//             TypeSource::ModuleRef(token) => {
+//                 2u8.hash(&mut hasher);
+//                 token.value().hash(&mut hasher);
+//             }
+//             TypeSource::AssemblyRef(token) => {
+//                 3u8.hash(&mut hasher);
+//                 token.value().hash(&mut hasher);
+//             }
+//             TypeSource::File(token) => {
+//                 4u8.hash(&mut hasher);
+//                 token.value().hash(&mut hasher);
+//             }
+//             TypeSource::Primitive => {
+//                 5u8.hash(&mut hasher);
+//             }
+//             TypeSource::Unknown => {
+//                 6u8.hash(&mut hasher);
+//             }
+//         }
+//         self.hash ^= hasher.finish();
+//         self
+//     }
 
-    /// Finalize and get the hash value
-    fn finalize(&self) -> u64 {
-        self.hash
-    }
-}
+//     /// Finalize and get the hash value
+//     fn finalize(&self) -> u64 {
+//         self.hash
+//     }
+// }
 
 /// Manages registration, lookup, and deduplication of types
 pub struct TypeRegistry {

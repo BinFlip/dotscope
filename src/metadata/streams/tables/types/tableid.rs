@@ -17,7 +17,7 @@ use strum::{EnumCount, EnumIter};
 ///
 /// ### Indirection Tables (`#-` Streams)
 /// - **`FieldPtr`**: Indirection table for Field entries in uncompressed streams
-/// - **`MethodPtr`**: Indirection table for MethodDef entries in uncompressed streams
+/// - **`MethodPtr`**: Indirection table for `MethodDef` entries in uncompressed streams
 /// - **`ParamPtr`**: Indirection table for Param entries in uncompressed streams
 /// - **`EventPtr`**: Indirection table for Event entries in uncompressed streams
 /// - **`PropertyPtr`**: Indirection table for Property entries in uncompressed streams

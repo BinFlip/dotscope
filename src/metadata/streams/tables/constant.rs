@@ -273,6 +273,7 @@ mod tests {
     use crate::metadata::streams::tables::types::{MetadataTable, TableId, TableInfo};
 
     use super::*;
+    use crate::metadata::token::Token;
 
     #[test]
     fn crafted_short() {

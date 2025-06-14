@@ -164,7 +164,7 @@ impl EventMapRaw {
     /// ## Arguments
     /// * 'types' - The type registry for resolving parent types
     /// * 'events' - The event map for resolving event references
-    /// * 'event_ptr' - All parsed `EventPtr` entries for indirection resolution
+    /// * '`event_ptr`' - All parsed `EventPtr` entries for indirection resolution
     /// * 'map' - The `MetadataTable` for `EventMapRaw` entries (needed for list range resolution)
     ///
     /// # Errors

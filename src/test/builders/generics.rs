@@ -210,7 +210,6 @@ impl GenericTypeBuilder {
     }
 
     /// Create common generic type scenarios
-
     /// Create a generic collection type like List<T>
     pub fn generic_collection(name: &str) -> Self {
         Self::new("System.Collections.Generic", name).with_constrained_parameter("T", |p| p)
