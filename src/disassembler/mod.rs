@@ -13,7 +13,6 @@
 //! # Main Functions
 //! - [`decode_instruction`] - Decode a single instruction
 //! - [`decode_stream`] - Decode a sequence of instructions
-//! - [`decode_method`] - Decode an entire method body
 //! - [`decode_blocks`] - Build basic blocks from instruction stream
 //!
 //! # Example
@@ -40,3 +39,4 @@ pub use instruction::{
     FlowType, Immediate, Instruction, InstructionCategory, Operand, OperandType, StackBehavior,
 };
 pub use instructions::*;
+pub(crate) use visitedmap::VisitedMap;

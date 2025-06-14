@@ -236,4 +236,164 @@ mod tests {
         assert_eq!(parsed_header.managed_native_header_rva, 0);
         assert_eq!(parsed_header.managed_native_header_size, 0);
     }
+
+    #[test]
+    fn test_zero_metadata_rva() {
+        #[rustfmt::skip]
+        let header_bytes = [
+            0x48, 0x00, 0x00, 0x00, // cb = 72
+            0x02, 0x00,             // major_runtime_version = 2
+            0x03, 0x00,             // minor_runtime_version = 3
+            0x00, 0x00, 0x00, 0x00, // meta_data_rva = 0 (INVALID)
+            0x00, 0x00, 0x00, 0x05, // meta_data_size = 0x05000000
+            0x00, 0x00, 0x00, 0x00, // flags = 0
+            0x00, 0x00, 0x00, 0x07, // entry_point_token
+            0x00, 0x00, 0x00, 0x00, // resource_rva = 0
+            0x00, 0x00, 0x00, 0x00, // resource_size = 0
+            0x00, 0x00, 0x00, 0x00, // strong_name_signature_rva = 0
+            0x00, 0x00, 0x00, 0x00, // strong_name_signature_size = 0
+            0x00, 0x00, 0x00, 0x00, // code_manager_table_rva = 0
+            0x00, 0x00, 0x00, 0x00, // code_manager_table_size = 0
+            0x00, 0x00, 0x00, 0x00, // vtable_fixups_rva = 0
+            0x00, 0x00, 0x00, 0x00, // vtable_fixups_size = 0
+            0x00, 0x00, 0x00, 0x00, // export_address_table_jmp_rva = 0
+            0x00, 0x00, 0x00, 0x00, // export_address_table_jmp_size = 0
+            0x00, 0x00, 0x00, 0x00, // managed_native_header_rva = 0
+            0x00, 0x00, 0x00, 0x00  // managed_native_header_size = 0
+        ];
+
+        let result = Cor20Header::read(&header_bytes);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e.to_string().contains("Metadata RVA cannot be zero"));
+        }
+    }
+
+    #[test]
+    fn test_zero_metadata_size() {
+        #[rustfmt::skip]
+        let header_bytes = [
+            0x48, 0x00, 0x00, 0x00, // cb = 72
+            0x02, 0x00,             // major_runtime_version = 2
+            0x03, 0x00,             // minor_runtime_version = 3
+            0x00, 0x00, 0x00, 0x04, // meta_data_rva = 0x04000000
+            0x00, 0x00, 0x00, 0x00, // meta_data_size = 0 (INVALID)
+            0x00, 0x00, 0x00, 0x00, // flags = 0
+            0x00, 0x00, 0x00, 0x07, // entry_point_token
+            0x00, 0x00, 0x00, 0x00, // resource_rva = 0
+            0x00, 0x00, 0x00, 0x00, // resource_size = 0
+            0x00, 0x00, 0x00, 0x00, // strong_name_signature_rva = 0
+            0x00, 0x00, 0x00, 0x00, // strong_name_signature_size = 0
+            0x00, 0x00, 0x00, 0x00, // code_manager_table_rva = 0
+            0x00, 0x00, 0x00, 0x00, // code_manager_table_size = 0
+            0x00, 0x00, 0x00, 0x00, // vtable_fixups_rva = 0
+            0x00, 0x00, 0x00, 0x00, // vtable_fixups_size = 0
+            0x00, 0x00, 0x00, 0x00, // export_address_table_jmp_rva = 0
+            0x00, 0x00, 0x00, 0x00, // export_address_table_jmp_size = 0
+            0x00, 0x00, 0x00, 0x00, // managed_native_header_rva = 0
+            0x00, 0x00, 0x00, 0x00  // managed_native_header_size = 0
+        ];
+
+        let result = Cor20Header::read(&header_bytes);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e.to_string().contains("Metadata size cannot be zero"));
+        }
+    }
+
+    #[test]
+    fn test_invalid_flags() {
+        #[rustfmt::skip]
+        let header_bytes = [
+            0x48, 0x00, 0x00, 0x00, // cb = 72
+            0x02, 0x00,             // major_runtime_version = 2
+            0x03, 0x00,             // minor_runtime_version = 3
+            0x00, 0x00, 0x00, 0x04, // meta_data_rva = 0x04000000
+            0x00, 0x00, 0x00, 0x05, // meta_data_size = 0x05000000
+            0xFF, 0xFF, 0xFF, 0xFF, // flags = 0xFFFFFFFF (INVALID - has undefined bits)
+            0x00, 0x00, 0x00, 0x07, // entry_point_token
+            0x00, 0x00, 0x00, 0x00, // resource_rva = 0
+            0x00, 0x00, 0x00, 0x00, // resource_size = 0
+            0x00, 0x00, 0x00, 0x00, // strong_name_signature_rva = 0
+            0x00, 0x00, 0x00, 0x00, // strong_name_signature_size = 0
+            0x00, 0x00, 0x00, 0x00, // code_manager_table_rva = 0
+            0x00, 0x00, 0x00, 0x00, // code_manager_table_size = 0
+            0x00, 0x00, 0x00, 0x00, // vtable_fixups_rva = 0
+            0x00, 0x00, 0x00, 0x00, // vtable_fixups_size = 0
+            0x00, 0x00, 0x00, 0x00, // export_address_table_jmp_rva = 0
+            0x00, 0x00, 0x00, 0x00, // export_address_table_jmp_size = 0
+            0x00, 0x00, 0x00, 0x00, // managed_native_header_rva = 0
+            0x00, 0x00, 0x00, 0x00  // managed_native_header_size = 0
+        ];
+
+        let result = Cor20Header::read(&header_bytes);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e.to_string().contains("Invalid CLR flags"));
+        }
+    }
+
+    #[test]
+    fn test_invalid_strong_name_signature() {
+        #[rustfmt::skip]
+        let header_bytes = [
+            0x48, 0x00, 0x00, 0x00, // cb = 72
+            0x02, 0x00,             // major_runtime_version = 2
+            0x03, 0x00,             // minor_runtime_version = 3
+            0x00, 0x00, 0x00, 0x04, // meta_data_rva = 0x04000000
+            0x00, 0x00, 0x00, 0x05, // meta_data_size = 0x05000000
+            0x00, 0x00, 0x00, 0x00, // flags = 0
+            0x00, 0x00, 0x00, 0x07, // entry_point_token
+            0x00, 0x00, 0x00, 0x00, // resource_rva = 0
+            0x00, 0x00, 0x00, 0x00, // resource_size = 0
+            0x00, 0x00, 0x00, 0x00, // strong_name_signature_rva = 0
+            0x01, 0x00, 0x00, 0x00, // strong_name_signature_size = 1 (INVALID - rva is 0 but size is not)
+            0x00, 0x00, 0x00, 0x00, // code_manager_table_rva = 0
+            0x00, 0x00, 0x00, 0x00, // code_manager_table_size = 0
+            0x00, 0x00, 0x00, 0x00, // vtable_fixups_rva = 0
+            0x00, 0x00, 0x00, 0x00, // vtable_fixups_size = 0
+            0x00, 0x00, 0x00, 0x00, // export_address_table_jmp_rva = 0
+            0x00, 0x00, 0x00, 0x00, // export_address_table_jmp_size = 0
+            0x00, 0x00, 0x00, 0x00, // managed_native_header_rva = 0
+            0x00, 0x00, 0x00, 0x00  // managed_native_header_size = 0
+        ];
+
+        let result = Cor20Header::read(&header_bytes);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e.to_string().contains("Strong name values are invalid"));
+        }
+    }
+
+    #[test]
+    fn test_invalid_vtable_fixups() {
+        #[rustfmt::skip]
+        let header_bytes = [
+            0x48, 0x00, 0x00, 0x00, // cb = 72
+            0x02, 0x00,             // major_runtime_version = 2
+            0x03, 0x00,             // minor_runtime_version = 3
+            0x00, 0x00, 0x00, 0x04, // meta_data_rva = 0x04000000
+            0x00, 0x00, 0x00, 0x05, // meta_data_size = 0x05000000
+            0x00, 0x00, 0x00, 0x00, // flags = 0
+            0x00, 0x00, 0x00, 0x07, // entry_point_token
+            0x00, 0x00, 0x00, 0x00, // resource_rva = 0
+            0x00, 0x00, 0x00, 0x00, // resource_size = 0
+            0x00, 0x00, 0x00, 0x00, // strong_name_signature_rva = 0
+            0x00, 0x00, 0x00, 0x00, // strong_name_signature_size = 0
+            0x00, 0x00, 0x00, 0x00, // code_manager_table_rva = 0
+            0x00, 0x00, 0x00, 0x00, // code_manager_table_size = 0
+            0x01, 0x00, 0x00, 0x00, // vtable_fixups_rva = 1 (INVALID - rva is not 0 but size is 0)
+            0x00, 0x00, 0x00, 0x00, // vtable_fixups_size = 0
+            0x00, 0x00, 0x00, 0x00, // export_address_table_jmp_rva = 0
+            0x00, 0x00, 0x00, 0x00, // export_address_table_jmp_size = 0
+            0x00, 0x00, 0x00, 0x00, // managed_native_header_rva = 0
+            0x00, 0x00, 0x00, 0x00  // managed_native_header_size = 0
+        ];
+
+        let result = Cor20Header::read(&header_bytes);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e.to_string().contains("VTable fixups are invalid"));
+        }
+    }
 }

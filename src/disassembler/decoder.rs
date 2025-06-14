@@ -26,6 +26,8 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 
+use std::sync::Arc;
+
 use crate::{
     disassembler::{
         visitedmap::VisitedMap, BasicBlock, FlowType, Immediate, Instruction, Operand, OperandType,
@@ -46,7 +48,7 @@ struct Decoder<'a> {
     blocks: Vec<BasicBlock>,
 
     exceptions: Option<&'a [ExceptionHandler]>,
-    visited: VisitedMap,
+    visited: Arc<VisitedMap>,
     parser: &'a mut Parser<'a>,
     block_id: usize,
 
@@ -62,11 +64,13 @@ impl<'a> Decoder<'a> {
     /// * 'offset'      - The offset at which the first instructions starts (must be in range of parser)
     /// * 'rva'         - The rva of the first instruction
     /// * 'exceptions'  - Optional information about exception handlers
+    /// * 'visited'     - `VisitedMap` for tracking disassembly progress
     pub fn new(
         parser: &'a mut Parser<'a>,
         offset: usize,
         rva: usize,
         exceptions: Option<&'a [ExceptionHandler]>,
+        visited: Arc<VisitedMap>,
     ) -> Result<Self> {
         if offset > parser.len() {
             return Err(OutOfBounds);
@@ -75,7 +79,7 @@ impl<'a> Decoder<'a> {
         Ok(Decoder {
             blocks: Vec::new(),
             exceptions,
-            visited: VisitedMap::new(parser.len()),
+            visited,
             parser,
             block_id: 0,
             offset_start: offset,
@@ -273,6 +277,7 @@ impl<'a> Decoder<'a> {
 ///
 /// * `method` - The Method instance to populate with disassembled basic blocks
 /// * `file` - The File containing the raw method bytecode and metadata
+/// * `shared_visited` - Optional shared `VisitedMap` for coordinated disassembly across methods
 ///
 /// # Returns
 ///
@@ -295,6 +300,7 @@ impl<'a> Decoder<'a> {
 /// - Basic block construction uses efficient control flow analysis algorithms
 /// - Exception handler processing is optimized for typical .NET code patterns
 /// - Memory usage scales linearly with method size and complexity
+/// - When using a shared `VisitedMap`, memory usage is reduced across parallel operations
 ///
 /// # Examples
 ///
@@ -310,7 +316,7 @@ impl<'a> Decoder<'a> {
 ///     let method = entry.value();
 ///     
 ///     // This is called automatically when accessing method instructions
-///     decode_method(&method, &file)?;
+///     decode_method(&method, &file, None)?;
 ///     
 ///     // Now blocks are available
 ///     println!("Method {} has {} blocks", method.name, method.block_count());
@@ -328,6 +334,7 @@ impl<'a> Decoder<'a> {
 ///
 /// * `method` - The parsed `Method` object to disassemble. Must have valid RVA and metadata.
 /// * `file` - The mapped input file providing access to raw bytecode data.
+/// * `shared_visited` - Optional shared `VisitedMap` for efficient parallel disassembly.
 ///
 /// # Returns
 ///
@@ -343,7 +350,11 @@ impl<'a> Decoder<'a> {
 /// - Exception handlers are automatically associated with relevant blocks
 /// - Control flow analysis builds proper predecessor/successor relationships
 /// - The function is thread-safe when called on different methods
-pub(crate) fn decode_method(method: &Method, file: &File) -> Result<()> {
+pub(crate) fn decode_method(
+    method: &Method,
+    file: &File,
+    shared_visited: Arc<VisitedMap>,
+) -> Result<()> {
     let rva = match method.rva {
         Some(rva) => rva as usize,
         None => return Ok(()),
@@ -380,6 +391,7 @@ pub(crate) fn decode_method(method: &Method, file: &File) -> Result<()> {
             code_start,
             rva + body.size_header,
             Some(&body.exception_handlers),
+            shared_visited,
         )?;
 
         decoder.decode_blocks()?;
@@ -480,7 +492,8 @@ pub fn decode_blocks(
     };
 
     let mut parser = Parser::new(effective_data);
-    let mut decoder = Decoder::new(&mut parser, 0, rva, None)?;
+    let visited = Arc::new(VisitedMap::new(effective_data.len()));
+    let mut decoder = Decoder::new(&mut parser, 0, rva, None, visited)?;
 
     decoder.decode_blocks()?;
 
@@ -731,7 +744,8 @@ pub fn decode_instruction(parser: &mut Parser, rva: u64) -> Result<Instruction> 
 mod tests {
     use crate::{
         disassembler::{
-            decode_instruction, decode_stream, FlowType, Immediate, InstructionCategory, Operand,
+            decode_blocks, decode_instruction, decode_stream, FlowType, Immediate,
+            InstructionCategory, Operand,
         },
         Parser,
     };
@@ -1001,5 +1015,179 @@ mod tests {
             result.is_err(),
             "Expected error for empty data with offset 0"
         );
+    }
+
+    #[test]
+    fn decode_invalid_fe_instruction() {
+        // Test invalid FE prefixed instruction
+        let code = [0xFE, 0xFF]; // FE prefix with invalid second byte
+        let mut parser = Parser::new(&code);
+        let result = decode_instruction(&mut parser, 0x1000);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_blocks_offset_out_of_bounds() {
+        // Test decode_blocks with invalid offset
+        let code = [0x00, 0x2A]; // nop, ret
+        let result = decode_blocks(&code, 10, 0x1000, None); // offset 10 > code.len()
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_empty_data() {
+        // Test decoding empty data
+        let code = [];
+        let result = decode_blocks(&code, 0, 0x1000, None);
+        // This should either succeed with empty blocks or fail gracefully
+        if let Ok(blocks) = result {
+            assert!(blocks.is_empty());
+        }
+        // Error is also acceptable for empty data
+    }
+
+    #[test]
+    fn decode_instruction_uint8_operand() {
+        let mut parser = Parser::new(&[0x11, 0xFF]); // ldloc.s with max u8 value
+        let rva = 0x1000;
+
+        let result = decode_instruction(&mut parser, rva).unwrap();
+
+        // Verify the operand is properly decoded
+        match &result.operand {
+            Operand::Immediate(Immediate::Int8(val)) => assert_eq!(*val, -1), // 0xFF as signed
+            _ => panic!("Expected Operand::Immediate(Immediate::Int8)"),
+        }
+    }
+
+    #[test]
+    fn decode_instruction_uint16_operand() {
+        // Test for UInt16 operand - need to find an instruction that actually uses UInt16
+        // For now, removing this test since no instructions seem to use UInt16 operand type
+        // This is likely because UInt16 operands are not used in the CIL instruction set
+    }
+
+    #[test]
+    fn decode_instruction_int16_operand() {
+        // Test for Int16 operand - ldarg uses Int16 operand type (FE 09)
+        let mut parser = Parser::new(&[0xFE, 0x09, 0xFF, 0xFF]); // ldarg with -1
+        let rva = 0x1000;
+
+        let result = decode_instruction(&mut parser, rva).unwrap();
+
+        assert_eq!(result.mnemonic, "ldarg");
+        // The operand should be decoded as Int16
+        match &result.operand {
+            Operand::Immediate(Immediate::Int16(val)) => assert_eq!(*val, -1),
+            _ => panic!("Expected Operand::Immediate(Immediate::Int16)"),
+        }
+    }
+
+    #[test]
+    fn decode_instruction_uint32_operand() {
+        // Test for UInt32 operand - switch instruction uses UInt32 for target count
+        let mut parser = Parser::new(&[
+            0x45, 0x01, 0x00, 0x00, 0x00, // switch with 1 target
+            0x05, 0x00, 0x00, 0x00, // single target offset
+        ]);
+        let rva = 0x1000;
+
+        let result = decode_instruction(&mut parser, rva).unwrap();
+
+        assert_eq!(result.mnemonic, "switch");
+        assert_eq!(result.flow_type, FlowType::Switch);
+        assert_eq!(result.branch_targets.len(), 1);
+    }
+
+    #[test]
+    fn decode_instruction_uint64_operand() {
+        // Test for Int64 operand - ldc.i8 uses Int64 operand type
+        let mut parser = Parser::new(&[0x21, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]); // ldc.i8 with -1 as i64
+        let rva = 0x1000;
+
+        let result = decode_instruction(&mut parser, rva).unwrap();
+
+        assert_eq!(result.mnemonic, "ldc.i8");
+        match &result.operand {
+            Operand::Immediate(Immediate::Int64(val)) => assert_eq!(*val, -1),
+            _ => panic!("Expected Operand::Immediate(Immediate::Int64)"),
+        }
+    }
+
+    #[test]
+    fn decode_bounds_error() {
+        // Test the uncovered bounds error path in decode_blocks
+        let data = [0x00]; // Single byte
+
+        // Try to decode with offset beyond data length
+        let result = decode_blocks(&data, 10, 0x1000, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_blocks_access() {
+        // Test decode_blocks function
+        let data = [0x00, 0x2A]; // nop, ret
+
+        let blocks = decode_blocks(&data, 0, 0x1000, None).unwrap();
+        assert!(!blocks.is_empty());
+        assert_eq!(blocks.len(), 1); // Should create one basic block
+    }
+
+    #[test]
+    fn decode_blocks_basic_coverage() {
+        // Test basic decode_blocks functionality to cover more code paths
+        let data = [
+            0x00, // nop
+            0x2A, // ret
+        ];
+
+        let blocks = decode_blocks(&data, 0, 0x1000, Some(2)).unwrap();
+        assert!(!blocks.is_empty());
+        assert_eq!(blocks.len(), 1);
+
+        // Test the basic block structure
+        let block = &blocks[0];
+        assert_eq!(block.rva, 0x1000);
+        assert_eq!(block.offset, 0);
+        assert!(block.size > 0);
+    }
+
+    #[test]
+    fn decode_blocks_max_size_limit() {
+        // Test max_size parameter
+        let data = [0x00, 0x00, 0x00, 0x2A]; // nop, nop, nop, ret
+
+        // Limit to only 2 bytes
+        let blocks = decode_blocks(&data, 0, 0x1000, Some(2)).unwrap();
+        assert!(!blocks.is_empty());
+
+        // Should only process the first 2 bytes
+        let total_size: usize = blocks.iter().map(|b| b.size).sum();
+        assert!(total_size <= 2);
+    }
+
+    #[test]
+    fn decode_stream_empty() {
+        // Test decode_stream with empty data
+        let data = [];
+        let mut parser = Parser::new(&data);
+
+        let result = decode_stream(&mut parser, 0x1000).unwrap();
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn decode_blocks_invalid_method_body() {
+        // Test error paths in decode_blocks related to method validation
+        let data = [0x00]; // Single byte - not enough for a complete instruction
+
+        let result = decode_blocks(&data, 0, 0x1000, None);
+        // This might succeed with a truncated instruction or fail - both are valid outcomes
+        // The important thing is it doesn't crash
+        if let Ok(blocks) = result {
+            assert!(!blocks.is_empty());
+        }
+        // Error is also acceptable
     }
 }

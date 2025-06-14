@@ -14,9 +14,7 @@
 //! let id = Identity::from(&pubkey, true).unwrap();
 //! ```
 
-use crate::{
-    file::io::read_le, metadata::streams::tables::assembly::AssemblyHashAlgorithm, Result,
-};
+use crate::{file::io::read_le, metadata::tables::AssemblyHashAlgorithm, Result};
 
 use md5::{Digest, Md5};
 use sha1::Sha1;
@@ -83,7 +81,7 @@ impl Identity {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::streams::tables::assembly::AssemblyHashAlgorithm;
+    use crate::metadata::tables::AssemblyHashAlgorithm;
 
     #[test]
     fn test_identity_from_pubkey() {

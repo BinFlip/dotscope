@@ -3,7 +3,7 @@
 //! This module provides validation utilities for field layout tables,
 //! ensuring compliance with .NET runtime rules and metadata constraints.
 
-use crate::{metadata::streams::FieldRc, Result};
+use crate::{metadata::tables::FieldRc, Result};
 
 /// Maximum allowed field offset value (`INT32_MAX` from .NET runtime)
 const MAX_FIELD_OFFSET: u32 = i32::MAX as u32; // 2,147,483,647
@@ -133,6 +133,25 @@ impl FieldValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test::{
+        create_inheritance_scenario, CilTypeBuilder, FieldBuilder, FieldConstant, FieldLayout,
+        FieldMarshalling,
+    };
+
+    fn create_int32_type() -> crate::metadata::typesystem::CilTypeRc {
+        CilTypeBuilder::new()
+            .with_namespace("System")
+            .with_name("Int32")
+            .with_flavor(crate::metadata::typesystem::CilFlavor::I4)
+            .build()
+    }
+
+    fn create_string_type() -> crate::metadata::typesystem::CilTypeRc {
+        crate::test::builders::CilTypeBuilder::new()
+            .with_namespace("System")
+            .with_name("String")
+            .build()
+    }
 
     #[test]
     fn test_valid_field_offset() {
@@ -162,6 +181,32 @@ mod tests {
     }
 
     #[test]
+    fn test_field_offset_with_realistic_field() {
+        // Test with actual field instance using builder
+        let field = FieldBuilder::new("TestField", create_int32_type())
+            .with_layout(FieldLayout::Explicit(42))
+            .build();
+
+        assert!(FieldValidator::validate_field_offset(42, Some(&field)).is_ok());
+    }
+
+    #[test]
+    fn test_field_offset_validation_with_marshaled_field() {
+        // Test field with marshalling information
+        let field = FieldBuilder::new("MarshaledField", create_int32_type())
+            .with_layout(FieldLayout::Explicit(16))
+            .with_marshalling(FieldMarshalling::LPWStr)
+            .build();
+
+        assert!(FieldValidator::validate_field_offset(16, Some(&field)).is_ok());
+
+        // Test with invalid offset
+        let result = FieldValidator::validate_field_offset(0xFFFF_FFFF, Some(&field));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("MarshaledField"));
+    }
+
+    #[test]
     fn test_no_field_overlaps() {
         // Non-overlapping fields should pass
         let fields = vec![(0, 4), (8, 4), (16, 8)];
@@ -173,6 +218,60 @@ mod tests {
         // Overlapping fields should fail
         let fields = vec![(0, 8), (4, 4)]; // First field (0-8) overlaps with second (4-8)
         let result = FieldValidator::validate_field_overlaps(&fields);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("overlap"));
+    }
+
+    #[test]
+    fn test_realistic_struct_layout_validation() {
+        // Create a realistic struct layout using builders
+        let fields = [
+            FieldBuilder::new("x", create_int32_type())
+                .with_layout(FieldLayout::Explicit(0))
+                .build(),
+            FieldBuilder::new("y", create_int32_type())
+                .with_layout(FieldLayout::Explicit(4))
+                .build(),
+            FieldBuilder::new("z", create_int32_type())
+                .with_layout(FieldLayout::Explicit(8))
+                .build(),
+        ];
+
+        // Extract offset and size info for validation
+        let field_offsets: Vec<(u32, u32)> = fields
+            .iter()
+            .map(|f| (f.layout.get().copied().unwrap_or(0), 4)) // Assume 4-byte primitives
+            .collect();
+
+        assert!(FieldValidator::validate_field_overlaps(&field_offsets).is_ok());
+        assert!(FieldValidator::validate_explicit_layout_coverage(12, &field_offsets).is_ok());
+    }
+
+    #[test]
+    fn test_complex_struct_with_different_field_sizes() {
+        // Test struct with varying field sizes
+        let field_offsets = vec![
+            (0, 1),  // byte at offset 0
+            (1, 2),  // short at offset 1
+            (4, 4),  // int at offset 4 (aligned)
+            (8, 8),  // long at offset 8 (aligned)
+            (16, 4), // float at offset 16
+        ];
+
+        assert!(FieldValidator::validate_field_overlaps(&field_offsets).is_ok());
+        assert!(FieldValidator::validate_explicit_layout_coverage(20, &field_offsets).is_ok());
+    }
+
+    #[test]
+    fn test_union_like_overlapping_fields() {
+        // Test union-like structure where fields intentionally overlap
+        let field_offsets = vec![
+            (0, 4), // int value
+            (0, 4), // float overlay (same offset - union semantics)
+        ];
+
+        // This should fail overlap detection
+        let result = FieldValidator::validate_field_overlaps(&field_offsets);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("overlap"));
     }
@@ -204,5 +303,179 @@ mod tests {
         let result = FieldValidator::validate_explicit_layout_coverage(0xFFFF_FFFF, &fields);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("overflow"));
+    }
+
+    #[test]
+    fn test_edge_case_field_at_max_offset() {
+        // Test field at maximum allowed offset
+        let field = FieldBuilder::new("EdgeField", create_int32_type())
+            .with_layout(FieldLayout::Explicit(MAX_FIELD_OFFSET))
+            .build();
+
+        assert!(FieldValidator::validate_field_offset(MAX_FIELD_OFFSET, Some(&field)).is_ok());
+    }
+
+    #[test]
+    fn test_field_with_constant_value() {
+        // Test field with constant value (should still validate offset)
+        let field = FieldBuilder::new("ConstantField", create_int32_type())
+            .with_layout(FieldLayout::Explicit(8))
+            .with_constant(FieldConstant::I4(42))
+            .build();
+
+        assert!(FieldValidator::validate_field_offset(8, Some(&field)).is_ok());
+        assert!(field.default.get().is_some());
+    }
+
+    #[test]
+    fn test_comprehensive_field_validation_scenarios() {
+        // Test various realistic field validation scenarios
+
+        // Scenario 1: Simple struct with sequential fields
+        let simple_fields = vec![
+            (0, 4),
+            (4, 4),
+            (8, 4),
+            (12, 4), // 4 int32 fields
+        ];
+        assert!(FieldValidator::validate_field_overlaps(&simple_fields).is_ok());
+        assert!(FieldValidator::validate_explicit_layout_coverage(16, &simple_fields).is_ok());
+
+        // Scenario 2: Struct with padding/alignment
+        let aligned_fields = vec![
+            (0, 1),  // byte
+            (4, 4),  // int32 (aligned to 4-byte boundary)
+            (8, 8),  // int64 (aligned to 8-byte boundary)
+            (16, 1), // byte
+            (20, 4), // int32
+        ];
+        assert!(FieldValidator::validate_field_overlaps(&aligned_fields).is_ok());
+        assert!(FieldValidator::validate_explicit_layout_coverage(24, &aligned_fields).is_ok());
+
+        // Scenario 3: Nested struct layout
+        let nested_fields = vec![
+            (0, 16), // Embedded struct of 16 bytes
+            (16, 4), // Additional int32
+            (20, 8), // Additional int64
+        ];
+        assert!(FieldValidator::validate_field_overlaps(&nested_fields).is_ok());
+        assert!(FieldValidator::validate_explicit_layout_coverage(28, &nested_fields).is_ok());
+    }
+
+    #[test]
+    fn test_field_builder_integration_with_validation() {
+        // Test creating fields via builder and validating their layout
+        let field1 = FieldBuilder::new("Field1", create_int32_type())
+            .with_layout(FieldLayout::Explicit(0))
+            .with_access_public()
+            .build();
+
+        let field2 = FieldBuilder::new("Field2", create_int32_type())
+            .with_layout(FieldLayout::Explicit(4))
+            .with_access_public()
+            .build();
+
+        let field3 = FieldBuilder::new("Field3", create_int32_type())
+            .with_layout(FieldLayout::Explicit(8))
+            .with_marshalling(FieldMarshalling::LPStr)
+            .build();
+
+        // Validate each field individually
+        assert!(FieldValidator::validate_field_offset(0, Some(&field1)).is_ok());
+        assert!(FieldValidator::validate_field_offset(4, Some(&field2)).is_ok());
+        assert!(FieldValidator::validate_field_offset(8, Some(&field3)).is_ok());
+
+        // Validate collective layout
+        let field_offsets = vec![(0, 4), (4, 4), (8, 4)];
+        assert!(FieldValidator::validate_field_overlaps(&field_offsets).is_ok());
+        assert!(FieldValidator::validate_explicit_layout_coverage(12, &field_offsets).is_ok());
+    }
+
+    #[test]
+    fn test_comprehensive_builder_integration_scenario() {
+        let (base_class, derived_class) = create_inheritance_scenario();
+
+        // Create a comprehensive set of fields with different types and characteristics
+        let header_field = FieldBuilder::new("header", base_class.clone())
+            .with_layout(FieldLayout::Explicit(0))
+            .with_access_private()
+            .build();
+
+        let counter_field = FieldBuilder::new("counter", create_int32_type())
+            .with_layout(FieldLayout::Explicit(8))
+            .with_access_public()
+            .with_constant(FieldConstant::I4(42))
+            .build();
+
+        let flags_field = FieldBuilder::new("flags", create_int32_type())
+            .with_layout(FieldLayout::Explicit(12))
+            .with_access_family()
+            .build();
+
+        let name_field = FieldBuilder::new("name", create_string_type())
+            .with_layout(FieldLayout::Explicit(16))
+            .with_access_public()
+            .with_marshalling(FieldMarshalling::LPWStr)
+            .build();
+
+        let data_field = FieldBuilder::new("data", derived_class.clone())
+            .with_layout(FieldLayout::Explicit(20))
+            .with_access_assembly()
+            .build();
+
+        // Comprehensive validation of the complex layout
+        let fields = [
+            &header_field,
+            &counter_field,
+            &flags_field,
+            &name_field,
+            &data_field,
+        ];
+        let field_offsets = vec![(0, 8), (8, 4), (12, 4), (16, 4), (20, 8)];
+
+        // Validate individual field properties
+        for (i, field) in fields.iter().enumerate() {
+            let offset = field_offsets[i].0;
+            assert!(
+                FieldValidator::validate_field_offset(offset, Some(field)).is_ok(),
+                "Field {} should have valid offset {}",
+                field.name,
+                offset
+            );
+        }
+
+        // Validate comprehensive layout constraints
+        assert!(
+            FieldValidator::validate_field_overlaps(&field_offsets).is_ok(),
+            "Complex field layout should not have overlaps"
+        );
+
+        let total_size = 28; // Sum of all field sizes
+        assert!(
+            FieldValidator::validate_explicit_layout_coverage(total_size, &field_offsets).is_ok(),
+            "Complex field layout should provide complete coverage"
+        );
+
+        // Test edge cases and constraints
+
+        // 1. Verify that constant fields are properly handled
+        assert!(
+            counter_field.default.get().is_some(),
+            "Counter field should have a default/constant value"
+        );
+
+        // 2. Verify that marshalling information is preserved
+        assert!(
+            name_field.marshal.get().is_some(),
+            "Name field should have marshalling information"
+        );
+
+        // 3. Verify that flags are preserved (access info is encoded in the flags field)
+        // Note: In real Field structs, access modifiers are encoded in the flags bitfield
+        // This is a demonstration of how the enhanced builders make fields more realistic
+        assert!(
+            header_field.flags != 0 || counter_field.flags != 0,
+            "Fields should have appropriate flags set"
+        );
     }
 }

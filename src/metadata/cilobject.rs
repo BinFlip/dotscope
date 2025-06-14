@@ -24,10 +24,10 @@ use crate::{
         method::MethodMap,
         resources::Resources,
         root::Root,
-        streams::{
-            AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, Blob, Guid,
-            MemberRefMap, MethodSpecMap, ModuleRc, ModuleRefMap, Strings, TablesHeader,
-            UserStrings,
+        streams::{Blob, Guid, Strings, TablesHeader, UserStrings},
+        tables::{
+            AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, MemberRefMap,
+            MethodSpecMap, ModuleRc, ModuleRefMap,
         },
         typesystem::TypeRegistry,
         validation::{Orchestrator, ValidationConfig},
@@ -377,7 +377,7 @@ impl CilObject {
     /// # Examples
     ///
     /// ```rust
-    /// use dotscope::{CilObject, metadata::streams::{TypeDefRaw, TableId}};
+    /// use dotscope::{CilObject, metadata::tables::{TypeDefRaw, TableId}};
     ///
     /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
     ///

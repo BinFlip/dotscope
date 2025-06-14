@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     metadata::{
         signatures::{SignatureMethodSpec, TypeSignature},
-        streams::MethodSpec,
+        tables::MethodSpec,
         token::Token,
         typesystem::{
             ArrayDimensions, CilFlavor, CilModifier, CilPrimitiveKind, CilTypeRc, CilTypeReference,
@@ -444,7 +444,7 @@ mod tests {
             signatures::{
                 SignatureArray, SignatureMethod, SignaturePointer, SignatureSzArray, TypeSignature,
             },
-            streams::GenericParam,
+            tables::GenericParam,
             typesystem::ArrayDimensions,
         },
         Error,

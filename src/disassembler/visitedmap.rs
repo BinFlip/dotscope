@@ -4,11 +4,16 @@
 //! processed, enabling fast detection of unvisited regions and preventing redundant analysis.
 //! Used internally by the disassembler for control flow and block analysis.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 /// This structure tracks the bytes of the file that is being analysed, in order to avoid double
 /// processing of the same locations. But also to focus scans on remaining locations that have not
-/// been analysed before
+/// been analysed before.
+///
+/// The `VisitedMap` is thread-safe and can be shared across multiple threads for parallel
+/// disassembly operations. It uses atomic operations for thread-safe access to the bitfield data.
 pub struct VisitedMap {
-    data: Vec<usize>,
+    data: Vec<AtomicUsize>,
     elements: usize,
     bitfield_size: usize,
 }
@@ -20,9 +25,15 @@ impl VisitedMap {
     /// * 'elements' - The amount of bytes to track
     pub fn new(elements: usize) -> VisitedMap {
         let bitfield_size = std::mem::size_of::<usize>() * 8;
+        let num_bitfields = elements.div_ceil(bitfield_size);
+
+        let mut data = Vec::with_capacity(num_bitfields);
+        for _ in 0..num_bitfields {
+            data.push(AtomicUsize::new(0));
+        }
 
         VisitedMap {
-            data: vec![0_usize; elements.div_ceil(bitfield_size)],
+            data,
             elements,
             bitfield_size,
         }
@@ -49,7 +60,8 @@ impl VisitedMap {
 
         if let Some(bitfield) = self.data.get(element / self.bitfield_size) {
             let shift_amount = u32::try_from(element % self.bitfield_size).unwrap_or(0);
-            return (bitfield.wrapping_shr(shift_amount) & 1_usize) != 0;
+            let current_value = bitfield.load(Ordering::Acquire);
+            return (current_value.wrapping_shr(shift_amount) & 1_usize) != 0;
         }
 
         false
@@ -67,12 +79,13 @@ impl VisitedMap {
         let mut counter = 0;
 
         while let Some(bitfield) = self.data.get((element + counter) / self.bitfield_size) {
-            if *bitfield == usize::MAX {
+            let current_value = bitfield.load(Ordering::Acquire);
+            if current_value == usize::MAX {
                 counter += self.bitfield_size;
             } else {
                 let shift_amount =
                     u32::try_from((element + counter) % self.bitfield_size).unwrap_or(0);
-                if (bitfield.wrapping_shr(shift_amount) & 1_usize) == 0 {
+                if (current_value.wrapping_shr(shift_amount) & 1_usize) == 0 {
                     counter += 1;
                 } else {
                     break;
@@ -91,24 +104,25 @@ impl VisitedMap {
         let mut counter = 0;
 
         while let Some(bitfield) = self.data.get(counter / self.bitfield_size) {
+            let current_value = bitfield.load(Ordering::Acquire);
             if visited {
-                if *bitfield == usize::MAX {
+                if current_value == usize::MAX {
                     return counter;
-                } else if *bitfield == 0 {
+                } else if current_value == 0 {
                     counter += self.bitfield_size;
                 } else {
                     let shift_amount = u32::try_from(counter % self.bitfield_size).unwrap_or(0);
-                    if (bitfield.wrapping_shr(shift_amount) & 1_usize) == 0 {
+                    if (current_value.wrapping_shr(shift_amount) & 1_usize) == 0 {
                         counter += 1;
                     } else {
                         return counter;
                     }
                 }
-            } else if *bitfield == 0 {
+            } else if current_value == 0 {
                 return counter;
-            } else if *bitfield == usize::MAX {
+            } else if current_value == usize::MAX {
                 counter += self.bitfield_size;
-            } else if (bitfield
+            } else if (current_value
                 .wrapping_shr(u32::try_from(counter % self.bitfield_size).unwrap_or(0))
                 & 1_usize)
                 != 0
@@ -127,7 +141,7 @@ impl VisitedMap {
     /// # Arguments
     /// * 'element' - The element / byte which is going to be set
     /// * 'visited' - The state that should be applied to the specified element
-    pub fn set(&mut self, element: usize, visited: bool) {
+    pub fn set(&self, element: usize, visited: bool) {
         self.set_range(element, visited, 1);
     }
 
@@ -137,7 +151,7 @@ impl VisitedMap {
     /// * 'element' - The first element which is going to be set
     /// * 'state'   - The state that should be applied to the specified element
     /// * 'len'     - The count of elements that should receive the new state
-    pub fn set_range(&mut self, element: usize, state: bool, len: usize) {
+    pub fn set_range(&self, element: usize, state: bool, len: usize) {
         if element > self.elements || (element + len) > self.elements {
             debug_assert!(false, "Invalid element!");
             return;
@@ -145,24 +159,23 @@ impl VisitedMap {
 
         let mut counter = 0;
         while counter < len {
-            if let Some(bitfield) = self.data.get_mut((element + counter) / self.bitfield_size) {
+            if let Some(bitfield) = self.data.get((element + counter) / self.bitfield_size) {
                 if len - counter > self.bitfield_size {
                     if state {
-                        *bitfield = usize::MAX;
+                        bitfield.store(usize::MAX, Ordering::Release);
                     } else {
-                        *bitfield = 0;
+                        bitfield.store(0, Ordering::Release);
                     }
-
                     counter += self.bitfield_size;
                 } else {
+                    let shift_amount =
+                        u32::try_from((element + counter) % self.bitfield_size).unwrap_or(0);
+                    let bit_mask = 1_usize.wrapping_shl(shift_amount);
+
                     if state {
-                        *bitfield |= 1_usize.wrapping_shl(
-                            u32::try_from((element + counter) % self.bitfield_size).unwrap_or(0),
-                        );
+                        bitfield.fetch_or(bit_mask, Ordering::AcqRel);
                     } else {
-                        *bitfield &= !(1_usize.wrapping_shl(
-                            u32::try_from((element + counter) % self.bitfield_size).unwrap_or(0),
-                        ));
+                        bitfield.fetch_and(!bit_mask, Ordering::AcqRel);
                     }
 
                     counter += 1;
@@ -177,15 +190,19 @@ impl VisitedMap {
     /// Clear a specific element to be not visited
     /// # Arguments
     /// * 'element' - The element that will be cleared
-    pub fn clear(&mut self, element: usize) {
+    pub fn clear(&self, element: usize) {
         self.set(element, false);
     }
 
     /// Clears the whole structure back to not visited
-    pub fn clear_all(&mut self) {
+    pub fn clear_all(&self) {
         self.set_range(0, false, self.elements);
     }
 }
+
+// Make VisitedMap thread-safe
+unsafe impl Send for VisitedMap {}
+unsafe impl Sync for VisitedMap {}
 
 #[cfg(test)]
 mod tests {
@@ -209,7 +226,7 @@ mod tests {
 
     #[test]
     fn use_one() {
-        let mut map = VisitedMap::new(4096);
+        let map = VisitedMap::new(4096);
 
         map.set(1, true);
         assert!(map.get(1));
@@ -222,7 +239,7 @@ mod tests {
 
     #[test]
     fn use_many() {
-        let mut map = VisitedMap::new(4096);
+        let map = VisitedMap::new(4096);
 
         map.set(0, true);
         map.set(2, true);
@@ -246,7 +263,7 @@ mod tests {
 
     #[test]
     fn clear_one() {
-        let mut map = VisitedMap::new(4096);
+        let map = VisitedMap::new(4096);
 
         map.set(4, true);
         assert!(map.get(4));
@@ -257,7 +274,7 @@ mod tests {
 
     #[test]
     fn clear_many() {
-        let mut map = VisitedMap::new(4096);
+        let map = VisitedMap::new(4096);
 
         map.set(0, true);
         map.set(4, true);
@@ -291,7 +308,7 @@ mod tests {
 
     #[test]
     fn get_range() {
-        let mut map = VisitedMap::new(4096);
+        let map = VisitedMap::new(4096);
 
         map.set(0, true);
         map.set(1, true);
@@ -306,7 +323,7 @@ mod tests {
 
     #[test]
     fn set_range_long() {
-        let mut map = VisitedMap::new(4096);
+        let map = VisitedMap::new(4096);
 
         map.set_range(0, true, 1001);
 
@@ -323,7 +340,7 @@ mod tests {
 
     #[test]
     fn set_range_small() {
-        let mut map = VisitedMap::new(4096);
+        let map = VisitedMap::new(4096);
 
         map.set_range(0, true, 32);
 
@@ -337,7 +354,7 @@ mod tests {
 
     #[test]
     fn get_first_true() {
-        let mut map = VisitedMap::new(4096);
+        let map = VisitedMap::new(4096);
 
         map.clear_all();
 
@@ -357,7 +374,7 @@ mod tests {
         let bitfield_size = std::mem::size_of::<usize>() * 8;
         for offset in 1..8 {
             let elements = bitfield_size + offset;
-            let mut map = VisitedMap::new(elements);
+            let map = VisitedMap::new(elements);
 
             for i in 0..elements {
                 map.set(i, true);
@@ -381,7 +398,7 @@ mod tests {
     #[test]
     fn bitfield_boundary_exact() {
         let bitfield_size = std::mem::size_of::<usize>() * 8;
-        let mut map = VisitedMap::new(bitfield_size);
+        let map = VisitedMap::new(bitfield_size);
 
         for i in 0..bitfield_size {
             map.set(i, true);

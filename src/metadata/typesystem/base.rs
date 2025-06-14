@@ -4,7 +4,7 @@ use crate::{
     metadata::{
         method::MethodRef,
         signatures::SignatureMethod,
-        streams::{
+        tables::{
             AssemblyRc, AssemblyRefRc, DeclSecurityRc, EventRc, ExportedTypeRc, FieldRc, FileRc,
             GenericParamConstraintRc, GenericParamRc, InterfaceImplRc, MemberRefRc, MethodSpecList,
             MethodSpecRc, ModuleRc, ModuleRefRc, ParamRc, PropertyRc, StandAloneSigRc,

@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use crate::{
-    metadata::{loader::MetadataLoader, streams::TableId},
+    metadata::{loader::MetadataLoader, tables::TableId},
     Error::GraphError,
     Result,
 };

@@ -58,7 +58,7 @@ use crate::metadata::{
     customattributes::CustomAttributeValueList,
     method::MethodRefList,
     security::Security,
-    streams::{
+    tables::{
         EventList, FieldList, GenericParamList, MethodSpecList, PropertyList, TypeAttributes,
     },
     token::Token,
