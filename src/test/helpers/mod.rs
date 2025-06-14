@@ -6,7 +6,7 @@
 
 use crate::metadata::{
     method::MethodRc,
-    streams::{AssemblyRefRc, FileRc, ModuleRefRc},
+    tables::{AssemblyRefRc, FileRc, ModuleRefRc},
     token::Token,
     typesystem::{CilTypeRc, CilTypeReference},
 };

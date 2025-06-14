@@ -6,7 +6,7 @@
 
 use crate::metadata::{
     method::MethodRc,
-    streams::{AssemblyRefRc, ModuleRefRc},
+    tables::{AssemblyRefRc, ModuleRefRc},
     typesystem::CilTypeRc,
 };
 

@@ -3,7 +3,7 @@
 //! This module provides validation utilities for field layout tables,
 //! ensuring compliance with .NET runtime rules and metadata constraints.
 
-use crate::{metadata::streams::FieldRc, Result};
+use crate::{metadata::tables::FieldRc, Result};
 
 /// Maximum allowed field offset value (`INT32_MAX` from .NET runtime)
 const MAX_FIELD_OFFSET: u32 = i32::MAX as u32; // 2,147,483,647

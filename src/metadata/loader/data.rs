@@ -17,10 +17,10 @@ use crate::{
         method::MethodMap,
         resources::Resources,
         root::Root,
-        streams::{
-            AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, Blob, FileMap, Guid,
-            MemberRefMap, MethodSpecMap, ModuleRc, ModuleRefMap, Strings, TablesHeader,
-            UserStrings,
+        streams::{Blob, Guid, Strings, TablesHeader, UserStrings},
+        tables::{
+            AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, FileMap, MemberRefMap,
+            MethodSpecMap, ModuleRc, ModuleRefMap,
         },
         typesystem::TypeRegistry,
     },

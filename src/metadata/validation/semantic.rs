@@ -5,7 +5,7 @@
 
 use crate::metadata::{
     loader::CilObjectData,
-    streams::TypeAttributes,
+    tables::TypeAttributes,
     typesystem::{CilFlavor, CilType, TypeRegistry},
 };
 use rayon::prelude::*;

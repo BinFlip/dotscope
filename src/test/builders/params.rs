@@ -8,7 +8,7 @@ use std::sync::{atomic::AtomicBool, Arc, OnceLock};
 use crate::{
     metadata::{
         marshalling::MarshallingInfo,
-        streams::{Param, ParamRc},
+        tables::{Param, ParamRc},
         token::Token,
         typesystem::{CilFlavor, CilPrimitive, TypeRegistry},
     },

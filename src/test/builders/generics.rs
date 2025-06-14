@@ -7,7 +7,7 @@
 use std::sync::{Arc, OnceLock};
 
 use crate::metadata::{
-    streams::{tables::genericparam::GenericParamRc, GenericParam},
+    tables::{GenericParam, GenericParamRc},
     token::Token,
     typesystem::{CilFlavor, CilType, CilTypeRc, CilTypeRef, CilTypeReference},
 };

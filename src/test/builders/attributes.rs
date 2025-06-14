@@ -10,7 +10,7 @@ use crate::metadata::{
         CustomAttributeArgument, CustomAttributeNamedArgument, CustomAttributeValue,
         CustomAttributeValueList,
     },
-    streams::{CustomAttribute, CustomAttributeRc},
+    tables::{CustomAttribute, CustomAttributeRc},
     token::Token,
     typesystem::CilTypeReference,
 };

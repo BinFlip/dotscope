@@ -6,8 +6,9 @@
 use std::sync::Arc;
 
 use crate::metadata::{
-    streams::tables::constant::{Constant, ConstantRaw, ConstantRc},
-    streams::{CodedIndex, TableId},
+    tables::{
+        CodedIndex, Constant, ConstantRaw, ConstantRc, FieldRc, ParamRc, PropertyRc, TableId,
+    },
     token::Token,
     typesystem::{CilPrimitive, CilTypeReference, ELEMENT_TYPE},
 };
@@ -40,11 +41,7 @@ impl ConstantBuilder {
     }
 
     /// Create a constant for a field with int32 value
-    pub fn field_i4_constant(
-        rid: u32,
-        field: crate::metadata::streams::FieldRc,
-        value: i32,
-    ) -> Self {
+    pub fn field_i4_constant(rid: u32, field: FieldRc, value: i32) -> Self {
         Self::new(
             rid,
             ELEMENT_TYPE::I4,
@@ -54,11 +51,7 @@ impl ConstantBuilder {
     }
 
     /// Create a constant for a parameter with int32 value
-    pub fn param_i4_constant(
-        rid: u32,
-        param: crate::metadata::streams::ParamRc,
-        value: i32,
-    ) -> Self {
+    pub fn param_i4_constant(rid: u32, param: ParamRc, value: i32) -> Self {
         Self::new(
             rid,
             ELEMENT_TYPE::I4,
@@ -68,11 +61,7 @@ impl ConstantBuilder {
     }
 
     /// Create a constant for a property with int32 value
-    pub fn property_i4_constant(
-        rid: u32,
-        property: crate::metadata::streams::PropertyRc,
-        value: i32,
-    ) -> Self {
+    pub fn property_i4_constant(rid: u32, property: PropertyRc, value: i32) -> Self {
         Self::new(
             rid,
             ELEMENT_TYPE::I4,
@@ -82,11 +71,7 @@ impl ConstantBuilder {
     }
 
     /// Create a constant for a field with string value
-    pub fn field_string_constant(
-        rid: u32,
-        field: crate::metadata::streams::FieldRc,
-        value: &str,
-    ) -> Self {
+    pub fn field_string_constant(rid: u32, field: FieldRc, value: &str) -> Self {
         Self::new(
             rid,
             ELEMENT_TYPE::STRING,

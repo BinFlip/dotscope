@@ -60,7 +60,7 @@ mod tests {
     use super::*;
     use crate::metadata::{
         method::MethodRc,
-        streams::Param,
+        tables::Param,
         token::Token,
         typesystem::{CilFlavor, CilTypeRef, TypeBuilder, TypeRegistry},
     };

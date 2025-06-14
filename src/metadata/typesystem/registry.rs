@@ -11,7 +11,7 @@ use dashmap::DashMap;
 
 use crate::{
     metadata::{
-        streams::{AssemblyRefRc, FileRc, ModuleRc, ModuleRefRc},
+        tables::{AssemblyRefRc, FileRc, ModuleRc, ModuleRefRc},
         token::Token,
         typesystem::{
             CilFlavor, CilPrimitive, CilPrimitiveKind, CilType, CilTypeRc, CilTypeReference,
@@ -757,7 +757,7 @@ mod tests {
     use uguid::guid;
 
     use super::*;
-    use crate::metadata::streams::{AssemblyRef, AssemblyRefHash, File, Module, ModuleRef};
+    use crate::metadata::tables::{AssemblyRef, AssemblyRefHash, File, Module, ModuleRef};
 
     #[test]
     fn test_registry_primitives() {

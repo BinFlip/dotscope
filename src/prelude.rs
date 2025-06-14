@@ -56,73 +56,73 @@ pub use crate::metadata::typesystem::{
 // ================================================================================================
 
 /// Assembly and module information
-pub use crate::metadata::streams::{
+pub use crate::metadata::tables::{
     Assembly, AssemblyRc, AssemblyRef, AssemblyRefRc, Module, ModuleRc, ModuleRef, ModuleRefRc,
 };
 
 /// Type definitions and references
-pub use crate::metadata::streams::{ExportedType, ExportedTypeRc};
+pub use crate::metadata::tables::{ExportedType, ExportedTypeRc};
 
 /// Fields and field-related types
-pub use crate::metadata::streams::{
+pub use crate::metadata::tables::{
     Field, FieldLayout, FieldList, FieldMap, FieldPtr, FieldPtrList, FieldPtrMap, FieldPtrRc,
     FieldRc, MethodPtr, MethodPtrList, MethodPtrMap, MethodPtrRc,
 };
 
 /// Parameters
-pub use crate::metadata::streams::{
+pub use crate::metadata::tables::{
     Param, ParamList, ParamPtr, ParamPtrList, ParamPtrMap, ParamPtrRc, ParamRc,
 };
 
 /// Properties and events
-pub use crate::metadata::streams::{
+pub use crate::metadata::tables::{
     Event, EventList, EventPtr, EventPtrList, EventPtrMap, EventPtrRc, EventRc, Property,
     PropertyList, PropertyPtr, PropertyPtrList, PropertyPtrMap, PropertyPtrRc, PropertyRc,
 };
 
 /// Interfaces and member references
-pub use crate::metadata::streams::{InterfaceImpl, InterfaceImplRc, MemberRef, MemberRefRc};
+pub use crate::metadata::tables::{InterfaceImpl, InterfaceImplRc, MemberRef, MemberRefRc};
 
 /// Generic types and constraints
-pub use crate::metadata::streams::{
+pub use crate::metadata::tables::{
     GenericParam, GenericParamConstraint, GenericParamConstraintRc, GenericParamList,
     GenericParamRc, MethodSpec, MethodSpecRc,
 };
 
 /// Security and custom attributes
-pub use crate::metadata::streams::{
+pub use crate::metadata::tables::{
     CustomAttribute, CustomAttributeList, CustomAttributeRc, DeclSecurity, DeclSecurityRc,
 };
 
 /// Files and resources
-pub use crate::metadata::streams::{
+pub use crate::metadata::tables::{
     File as MetadataFile, FileRc, ManifestResource, ManifestResourceRc,
 };
 
 /// Standalone signatures
-pub use crate::metadata::streams::{StandAloneSig, StandAloneSigRc};
+pub use crate::metadata::tables::{StandAloneSig, StandAloneSigRc};
 
 // ================================================================================================
 // Raw Metadata Table Types
 // ================================================================================================
 
 /// Assembly and module raw table types
-pub use crate::metadata::streams::{
+pub use crate::metadata::tables::{
     AssemblyOsRaw, AssemblyProcessorRaw, AssemblyRaw, AssemblyRefOsRaw, AssemblyRefProcessorRaw,
     AssemblyRefRaw, ModuleRaw, ModuleRefRaw,
 };
 
 /// Type definition raw table types
-pub use crate::metadata::streams::{ExportedTypeRaw, TypeDefRaw, TypeRefRaw, TypeSpecRaw};
+pub use crate::metadata::tables::{ExportedTypeRaw, TypeDefRaw, TypeRefRaw, TypeSpecRaw};
 
 /// Field and method raw table types
-pub use crate::metadata::streams::{
+pub use crate::metadata::tables::{
     FieldLayoutRaw, FieldPtrRaw, FieldRaw, FieldRvaRaw, MethodDefRaw, MethodPtrRaw, ParamPtrRaw,
     ParamRaw,
 };
 
 /// Core metadata raw table types
-pub use crate::metadata::streams::{
+pub use crate::metadata::tables::{
     ClassLayoutRaw, ConstantRaw, CustomAttributeRaw, DeclSecurityRaw, EventMapRaw, EventPtrRaw,
     EventRaw, FieldMarshalRaw, GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw,
     InterfaceImplRaw, ManifestResourceRaw, MemberRefRaw, MethodImplRaw, MethodSemanticsRaw,
@@ -130,7 +130,7 @@ pub use crate::metadata::streams::{
 };
 
 /// File system raw table types
-pub use crate::metadata::streams::FileRaw;
+pub use crate::metadata::tables::FileRaw;
 
 // ================================================================================================
 // Signatures and Type Information
@@ -150,7 +150,7 @@ pub use crate::metadata::signatures::{
 };
 
 /// Additional signature support types
-pub use crate::metadata::streams::MemberRefSignature;
+pub use crate::metadata::tables::MemberRefSignature;
 
 // ================================================================================================
 // Method Analysis
@@ -206,7 +206,7 @@ pub use crate::metadata::{cor20header::Cor20Header, root::Root};
 // ================================================================================================
 
 /// Common attribute flags for metadata tables
-pub use crate::metadata::streams::{
+pub use crate::metadata::tables::{
     EventAttributes, FieldAttributes, FileAttributes, ParamAttributes, PropertyAttributes,
     TypeAttributes,
 };
@@ -226,9 +226,9 @@ pub use crate::metadata::marshalling::{NATIVE_TYPE, VARIANT_TYPE};
 // ================================================================================================
 
 /// Metadata table identifiers
-pub use crate::metadata::streams::TableId;
+pub use crate::metadata::tables::TableId;
 
 /// Coded index types for metadata table relationships
-pub use crate::metadata::streams::{
+pub use crate::metadata::tables::{
     CodedIndex, CodedIndexType, MetadataTable, TableInfo, TableInfoRef,
 };

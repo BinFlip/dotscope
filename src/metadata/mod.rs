@@ -60,6 +60,8 @@ pub mod security;
 pub mod signatures;
 /// Implementation of all metadata streams (tables, heaps, etc.)
 pub mod streams;
+/// Implementation of the .NET metadata tables
+pub mod tables;
 /// Commonly used metadata token type
 pub mod token;
 /// Implementation of the .NET type system

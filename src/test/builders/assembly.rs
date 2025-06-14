@@ -6,7 +6,7 @@
 use std::sync::{atomic::AtomicU32, Arc};
 
 use crate::metadata::{
-    streams::{AssemblyRef, AssemblyRefHash, AssemblyRefRc},
+    tables::{AssemblyRef, AssemblyRefHash, AssemblyRefRc},
     token::Token,
 };
 

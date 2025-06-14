@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::metadata::{
     customattributes::CustomAttributeValue,
-    streams::{AssemblyRefHash, File, FileRc, ModuleRef, ModuleRefRc},
+    tables::{AssemblyRefHash, File, FileRc, ModuleRef, ModuleRefRc},
     token::Token,
 };
 

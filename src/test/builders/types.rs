@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use crate::metadata::{
-    streams::{ExportedType, ExportedTypeRc},
+    tables::{ExportedType, ExportedTypeRc},
     token::Token,
     typesystem::{CilFlavor, CilType, CilTypeRc, CilTypeReference},
 };

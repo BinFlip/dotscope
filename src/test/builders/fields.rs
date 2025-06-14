@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 use crate::metadata::{
     marshalling::{MarshallingInfo, NativeType},
     signatures::{SignatureField, TypeSignature},
-    streams::{Field, FieldAttributes, FieldRc},
+    tables::{Field, FieldAttributes, FieldRc},
     token::Token,
     typesystem::{CilFlavor, CilPrimitive, CilTypeRc},
 };

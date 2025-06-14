@@ -13,110 +13,67 @@
 //!
 //! # Usage
 //! Implement the `MetadataLoader` trait for each table loader, then use `build_dependency_graph` and `execute_loaders_in_parallel` to process metadata efficiently.
-mod assembly;
-mod assemblyos;
-mod assemblyprocessor;
-mod assemblyref;
-mod assemblyrefos;
-mod assemblyrefprocessor;
-mod classlayout;
-mod constant;
 mod context;
-mod customattribute;
 mod data;
-mod declsecurity;
-mod event;
-mod eventmap;
-mod eventptr;
-mod exportedtype;
-mod field;
-mod fieldlayout;
-mod fieldmarshal;
-mod fieldptr;
-mod fieldrva;
-mod file;
-mod genericparam;
-mod genericparamconstraint;
 mod graph;
-mod implmap;
-mod interfaceimpl;
-mod manifestresource;
-mod memberref;
-mod methoddef;
-mod methodimpl;
-mod methodptr;
-mod methodsemantics;
-mod methodspec;
-mod module;
-mod moduleref;
-mod nestedclass;
-mod param;
-mod paramptr;
-mod property;
-mod propertymap;
-mod propertyptr;
-mod standalonesig;
-mod typedef;
-mod typeref;
-mod typespec;
 
 pub(crate) use context::LoaderContext;
 pub(crate) use data::CilObjectData;
 
 static LOADERS: [&'static dyn MetadataLoader; 43] = [
-    &assembly::AssemblyLoader,
-    &assemblyos::AssemblyOsLoader,
-    &assemblyprocessor::AssemblyProcessorLoader,
-    &assemblyref::AssemblyRefLoader,
-    &assemblyrefos::AssemblyRefOsLoader,
-    &assemblyrefprocessor::AssemblyRefProcessorLoader,
-    &classlayout::ClassLayoutLoader,
-    &constant::ConstantLoader,
-    &customattribute::CustomAttributeLoader,
-    &declsecurity::DeclSecurityLoader,
-    &event::EventLoader,
-    &eventmap::EventMapLoader,
-    &eventptr::EventPtrLoader,
-    &exportedtype::ExportedTypeLoader,
-    &field::FieldLoader,
-    &fieldptr::FieldPtrLoader,
-    &methodptr::MethodPtrLoader,
-    &fieldlayout::FieldLayoutLoader,
-    &fieldmarshal::FieldMarshalLoader,
-    &fieldrva::FieldRvaLoader,
-    &file::FileLoader,
-    &genericparam::GenericParamLoader,
-    &genericparamconstraint::GenericParamConstraintLoader,
-    &implmap::ImplMapLoader,
-    &interfaceimpl::InterfaceImplLoader,
-    &manifestresource::ManifestResourceLoader,
-    &memberref::MemberRefLoader,
-    &methoddef::MethodDefLoader,
-    &methodimpl::MethodImplLoader,
-    &methodsemantics::MethodSemanticsLoader,
-    &methodspec::MethodSpecLoader,
-    &module::ModuleLoader,
-    &moduleref::ModuleRefLoader,
-    &nestedclass::NestedClassLoader,
-    &param::ParamLoader,
-    &paramptr::ParamPtrLoader,
-    &property::PropertyLoader,
-    &propertymap::PropertyMapLoader,
-    &propertyptr::PropertyPtrLoader,
-    &standalonesig::StandAloneSigLoader,
-    &typedef::TypeDefLoader,
-    &typeref::TypeRefLoader,
-    &typespec::TypeSpecLoader,
+    &crate::metadata::tables::AssemblyLoader,
+    &crate::metadata::tables::AssemblyOsLoader,
+    &crate::metadata::tables::AssemblyProcessorLoader,
+    &crate::metadata::tables::AssemblyRefLoader,
+    &crate::metadata::tables::AssemblyRefOsLoader,
+    &crate::metadata::tables::AssemblyRefProcessorLoader,
+    &crate::metadata::tables::ClassLayoutLoader,
+    &crate::metadata::tables::ConstantLoader,
+    &crate::metadata::tables::CustomAttributeLoader,
+    &crate::metadata::tables::DeclSecurityLoader,
+    &crate::metadata::tables::EventLoader,
+    &crate::metadata::tables::EventMapLoader,
+    &crate::metadata::tables::EventPtrLoader,
+    &crate::metadata::tables::ExportedTypeLoader,
+    &crate::metadata::tables::FieldLoader,
+    &crate::metadata::tables::FieldPtrLoader,
+    &crate::metadata::tables::MethodPtrLoader,
+    &crate::metadata::tables::FieldLayoutLoader,
+    &crate::metadata::tables::FieldMarshalLoader,
+    &crate::metadata::tables::FieldRvaLoader,
+    &crate::metadata::tables::FileLoader,
+    &crate::metadata::tables::GenericParamLoader,
+    &crate::metadata::tables::GenericParamConstraintLoader,
+    &crate::metadata::tables::ImplMapLoader,
+    &crate::metadata::tables::InterfaceImplLoader,
+    &crate::metadata::tables::ManifestResourceLoader,
+    &crate::metadata::tables::MemberRefLoader,
+    &crate::metadata::tables::MethodDefLoader,
+    &crate::metadata::tables::MethodImplLoader,
+    &crate::metadata::tables::MethodSemanticsLoader,
+    &crate::metadata::tables::MethodSpecLoader,
+    &crate::metadata::tables::ModuleLoader,
+    &crate::metadata::tables::ModuleRefLoader,
+    &crate::metadata::tables::NestedClassLoader,
+    &crate::metadata::tables::ParamLoader,
+    &crate::metadata::tables::ParamPtrLoader,
+    &crate::metadata::tables::PropertyLoader,
+    &crate::metadata::tables::PropertyMapLoader,
+    &crate::metadata::tables::PropertyPtrLoader,
+    &crate::metadata::tables::StandAloneSigLoader,
+    &crate::metadata::tables::TypeDefLoader,
+    &crate::metadata::tables::TypeRefLoader,
+    &crate::metadata::tables::TypeSpecLoader,
 ];
 
-use crate::{metadata::streams::TableId, Result};
+use crate::{metadata::tables::TableId, Result};
 use rayon::prelude::*;
 
 /// Trait for metadata table loaders.
 ///
 /// Implement this trait for each loader that processes a specific metadata table.
 /// The loader must declare its dependencies and provide a loading implementation.
-trait MetadataLoader: Send + Sync {
+pub(crate) trait MetadataLoader: Send + Sync {
     /// Load this metadata table using the provided `CilObjectData` and `LoaderContext`.
     ///
     /// # Arguments

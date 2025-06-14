@@ -10,7 +10,7 @@ use crossbeam_skiplist::map::Entry;
 
 use crate::{
     metadata::{
-        streams::{ExportedTypeList, ExportedTypeMap, ExportedTypeRc},
+        tables::{ExportedTypeList, ExportedTypeMap, ExportedTypeRc},
         token::Token,
         typesystem::CilTypeReference,
     },

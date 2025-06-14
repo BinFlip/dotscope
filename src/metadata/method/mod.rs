@@ -114,9 +114,8 @@ use crate::{
         customattributes::CustomAttributeValueList,
         security::Security,
         signatures::{parse_local_var_signature, SignatureMethod},
-        streams::{
-            Blob, GenericParamList, MetadataTable, MethodSpecList, ParamList, StandAloneSigRaw,
-        },
+        streams::Blob,
+        tables::{GenericParamList, MetadataTable, MethodSpecList, ParamList, StandAloneSigRaw},
         token::Token,
         typesystem::{TypeRegistry, TypeResolver},
     },

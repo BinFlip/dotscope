@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 use crate::{
     metadata::{
         signatures::{SignatureProperty, TypeSignature},
-        streams::{Property, PropertyRc},
+        tables::{Property, PropertyRc},
         token::Token,
         typesystem::CilPrimitive,
     },
