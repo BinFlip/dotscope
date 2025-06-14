@@ -26,6 +26,8 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 
+use std::sync::Arc;
+
 use crate::{
     disassembler::{
         visitedmap::VisitedMap, BasicBlock, FlowType, Immediate, Instruction, Operand, OperandType,
@@ -46,7 +48,7 @@ struct Decoder<'a> {
     blocks: Vec<BasicBlock>,
 
     exceptions: Option<&'a [ExceptionHandler]>,
-    visited: VisitedMap,
+    visited: Arc<VisitedMap>,
     parser: &'a mut Parser<'a>,
     block_id: usize,
 
@@ -62,11 +64,13 @@ impl<'a> Decoder<'a> {
     /// * 'offset'      - The offset at which the first instructions starts (must be in range of parser)
     /// * 'rva'         - The rva of the first instruction
     /// * 'exceptions'  - Optional information about exception handlers
+    /// * 'visited'     - VisitedMap for tracking disassembly progress
     pub fn new(
         parser: &'a mut Parser<'a>,
         offset: usize,
         rva: usize,
         exceptions: Option<&'a [ExceptionHandler]>,
+        visited: Arc<VisitedMap>,
     ) -> Result<Self> {
         if offset > parser.len() {
             return Err(OutOfBounds);
@@ -75,7 +79,7 @@ impl<'a> Decoder<'a> {
         Ok(Decoder {
             blocks: Vec::new(),
             exceptions,
-            visited: VisitedMap::new(parser.len()),
+            visited,
             parser,
             block_id: 0,
             offset_start: offset,
@@ -273,6 +277,7 @@ impl<'a> Decoder<'a> {
 ///
 /// * `method` - The Method instance to populate with disassembled basic blocks
 /// * `file` - The File containing the raw method bytecode and metadata
+/// * `shared_visited` - Optional shared VisitedMap for coordinated disassembly across methods
 ///
 /// # Returns
 ///
@@ -295,6 +300,7 @@ impl<'a> Decoder<'a> {
 /// - Basic block construction uses efficient control flow analysis algorithms
 /// - Exception handler processing is optimized for typical .NET code patterns
 /// - Memory usage scales linearly with method size and complexity
+/// - When using a shared VisitedMap, memory usage is reduced across parallel operations
 ///
 /// # Examples
 ///
@@ -310,7 +316,7 @@ impl<'a> Decoder<'a> {
 ///     let method = entry.value();
 ///     
 ///     // This is called automatically when accessing method instructions
-///     decode_method(&method, &file)?;
+///     decode_method(&method, &file, None)?;
 ///     
 ///     // Now blocks are available
 ///     println!("Method {} has {} blocks", method.name, method.block_count());
@@ -328,6 +334,7 @@ impl<'a> Decoder<'a> {
 ///
 /// * `method` - The parsed `Method` object to disassemble. Must have valid RVA and metadata.
 /// * `file` - The mapped input file providing access to raw bytecode data.
+/// * `shared_visited` - Optional shared VisitedMap for efficient parallel disassembly.
 ///
 /// # Returns
 ///
@@ -343,7 +350,11 @@ impl<'a> Decoder<'a> {
 /// - Exception handlers are automatically associated with relevant blocks
 /// - Control flow analysis builds proper predecessor/successor relationships
 /// - The function is thread-safe when called on different methods
-pub(crate) fn decode_method(method: &Method, file: &File) -> Result<()> {
+pub(crate) fn decode_method(
+    method: &Method,
+    file: &File,
+    shared_visited: Arc<VisitedMap>,
+) -> Result<()> {
     let rva = match method.rva {
         Some(rva) => rva as usize,
         None => return Ok(()),
@@ -380,6 +391,7 @@ pub(crate) fn decode_method(method: &Method, file: &File) -> Result<()> {
             code_start,
             rva + body.size_header,
             Some(&body.exception_handlers),
+            shared_visited,
         )?;
 
         decoder.decode_blocks()?;
@@ -480,7 +492,8 @@ pub fn decode_blocks(
     };
 
     let mut parser = Parser::new(effective_data);
-    let mut decoder = Decoder::new(&mut parser, 0, rva, None)?;
+    let visited = Arc::new(VisitedMap::new(effective_data.len()));
+    let mut decoder = Decoder::new(&mut parser, 0, rva, None, visited)?;
 
     decoder.decode_blocks()?;
 

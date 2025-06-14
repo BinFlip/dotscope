@@ -1,8 +1,9 @@
 //! `StandAloneSig` loader implementation
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::{
+    disassembler::VisitedMap,
     metadata::{
         loader::{LoaderContext, MetadataLoader},
         tables::StandAloneSigRaw,
@@ -19,24 +20,28 @@ impl MetadataLoader for StandAloneSigLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(blobs)) = (context.meta, context.blobs) {
             if let Some(table) = header.table::<StandAloneSigRaw>(TableId::StandAloneSig) {
-                let error = Arc::new(Mutex::new(None));
+                let shared_visited = Arc::new(VisitedMap::new(context.input.data().len()));
+                let results: Vec<Result<()>> = context
+                    .method_def
+                    .iter()
+                    .par_bridge()
+                    .map(|row| {
+                        let method = row.value();
+                        method.parse(
+                            &context.input,
+                            blobs,
+                            table,
+                            context.types,
+                            shared_visited.clone(),
+                        )
+                    })
+                    .collect();
 
-                context.method_def.iter().par_bridge().for_each(|row| {
-                    if lock!(error).is_some() {
-                        return;
+                // ToDo: We return only the first error encountered
+                for result in results {
+                    if let Err(err) = result {
+                        return Err(err);
                     }
-
-                    let method = row.value();
-                    if let Err(err) = method.parse(&context.input, blobs, table, context.types) {
-                        let mut guard = lock!(error);
-                        if guard.is_none() {
-                            *guard = Some(err);
-                        }
-                    }
-                });
-
-                if let Some(err) = Arc::into_inner(error).unwrap().into_inner().unwrap() {
-                    return Err(err);
                 }
             }
         }

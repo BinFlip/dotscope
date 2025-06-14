@@ -108,7 +108,7 @@ pub use iter::InstructionIterator;
 pub use types::*;
 
 use crate::{
-    disassembler::{self, BasicBlock},
+    disassembler::{self, BasicBlock, VisitedMap},
     file::File,
     metadata::{
         customattributes::CustomAttributeValueList,
@@ -522,6 +522,7 @@ impl Method {
         blobs: &Blob,
         sigs: &MetadataTable<StandAloneSigRaw>,
         types: &Arc<TypeRegistry>,
+        shared_visited: Arc<VisitedMap>,
     ) -> Result<()> {
         if let Some(rva) = self.rva {
             let method_offset = file.rva_to_offset(rva as usize)?;
@@ -632,7 +633,7 @@ impl Method {
         }
 
         // Last step, disassemble the whole method and generate analysis
-        disassembler::decode_method(self, file)?;
+        disassembler::decode_method(self, file, shared_visited)?;
 
         Ok(())
     }

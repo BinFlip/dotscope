@@ -26,7 +26,7 @@ impl VisitedMap {
     pub fn new(elements: usize) -> VisitedMap {
         let bitfield_size = std::mem::size_of::<usize>() * 8;
         let num_bitfields = elements.div_ceil(bitfield_size);
-
+        
         let mut data = Vec::with_capacity(num_bitfields);
         for _ in 0..num_bitfields {
             data.push(AtomicUsize::new(0));
@@ -168,10 +168,9 @@ impl VisitedMap {
                     }
                     counter += self.bitfield_size;
                 } else {
-                    let shift_amount =
-                        u32::try_from((element + counter) % self.bitfield_size).unwrap_or(0);
+                    let shift_amount = u32::try_from((element + counter) % self.bitfield_size).unwrap_or(0);
                     let bit_mask = 1_usize.wrapping_shl(shift_amount);
-
+                    
                     if state {
                         bitfield.fetch_or(bit_mask, Ordering::AcqRel);
                     } else {

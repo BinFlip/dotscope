@@ -39,3 +39,4 @@ pub use instruction::{
     FlowType, Immediate, Instruction, InstructionCategory, Operand, OperandType, StackBehavior,
 };
 pub use instructions::*;
+pub(crate) use visitedmap::VisitedMap;
