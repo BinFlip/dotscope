@@ -1,148 +1,93 @@
-mod windowsbase;
-use std::sync::{atomic::AtomicU32, Arc, OnceLock};
+//! Test utilities and mock data builders for unit testing
+//!
+//! This module provides comprehensive mock data builders for testing complex
+//! .NET metadata structures. The goal is to create reusable, composable mock
+//! builders that can generate realistic test data covering all major types.
+//!
+//! # Module Organization
+//!
+//! - **builders/** - Fluent API builders for creating mock metadata objects
+//! - **scenarios/** - Pre-built complex scenarios and test data combinations  
+//! - **helpers/** - Legacy helper functions and utilities
+//! - **windowsbase.rs** - Windows-specific test helpers and verification
+//!
+//! # Mock Data Architecture
+//!
+//! ## 1. CORE BUILDERS (completed):
+//! - ModuleRefBuilder - For module references
+//! - AssemblyRefBuilder - For assembly references with versioning
+//! - FileBuilder - For file metadata
+//! - MethodBuilder - For methods with signatures and flags
+//! - CilTypeBuilder - For types with inheritance and members
+//! - ExportedTypeBuilder - For exported type definitions
+//!
+//! ## 2. ADVANCED BUILDERS (TODO):
+//! - MethodBodyBuilder - for IL code, local vars, exception handlers
+//! - SignatureBuilder - for complex method/type signatures
+//! - CustomAttributeBuilder - for custom attributes with various data types
+//! - GenericTypeBuilder - for generic types with constraints
+//! - FieldBuilder - for fields with layouts, marshalling
+//! - PropertyBuilder - for properties with getters/setters
+//! - EventBuilder - for events with add/remove methods
+//! - SecurityBuilder - for security attributes and permissions
+//! - ResourceBuilder - for embedded resources
+//!
+//! ## 3. SCENARIO BUILDERS (TODO):
+//! - ComplexTypeHierarchyBuilder - inheritance chains, interfaces
+//! - GenericScenarioBuilder - generic classes, methods, constraints
+//! - PInvokeScenarioBuilder - native interop scenarios
+//! - AsyncMethodScenarioBuilder - async/await patterns
+//! - ExceptionHandlingScenarioBuilder - try/catch/finally patterns
+//! - LINQScenarioBuilder - LINQ expressions and delegates
+//!
+//! ## 4. INTEGRATION BUILDERS (TODO):
+//! - AssemblyBuilder - complete assembly with multiple types/methods
+//! - ModuleBuilder - complete module with dependencies
+//! - PackageBuilder - multi-assembly scenarios
+//!
+//! ## 5. VALIDATION TEST DATA (TODO):
+//! - MalformedDataBuilder - for validation error testing
+//! - EdgeCaseBuilder - boundary conditions, limits
+//! - PerformanceDataBuilder - large-scale data for performance tests
+//!
+//! # Usage Patterns
+//!
+//! ```rust,no_run
+//! use dotscope::test::{builders::*, scenarios::*};
+//!
+//! // Fluent API usage
+//! let assembly = AssemblyRefBuilder::new()
+//!     .with_name("TestAssembly")
+//!     .with_version(1, 0, 0, 0)
+//!     .build();
+//!
+//! // Preset scenarios
+//! let method = MethodBuilder::simple_void_method("TestMethod").build();
+//! let class_type = CilTypeBuilder::simple_class("Test", "MyClass").build();
+//!
+//! // Complex scenarios
+//! let (base_class, derived_class) = create_inheritance_scenario();
+//! let standard_refs = create_standard_assembly_refs();
+//! ```
+//!
+//! ### Examples (`examples/`)
+//! Comprehensive examples showing how to use the builders for realistic scenarios:
+//! - Field validation testing
+//! - Method signature creation
+//! - Custom attribute scenarios
+//! - Generic type definitions
 
+mod windowsbase;
+
+// Sub-modules
+pub mod builders;
+mod helpers;
+pub mod scenarios;
+
+// Re-export the windowsbase module
 pub use windowsbase::*;
 
-use crate::metadata::{
-    method::{
-        Method, MethodAccessFlags, MethodImplCodeType, MethodImplManagement, MethodImplOptions,
-        MethodModifiers, MethodRc, MethodVtableFlags,
-    },
-    signatures::{SignatureMethod, SignatureParameter, TypeSignature},
-    streams::{
-        AssemblyRef, AssemblyRefHash, AssemblyRefRc, ExportedType, ExportedTypeRc, File, FileRc,
-        ModuleRef, ModuleRefRc,
-    },
-    token::Token,
-    typesystem::{CilFlavor, CilType, CilTypeRc, CilTypeReference},
-};
-
-// Helper function to create a ModuleRef
-pub fn create_module_ref(rid: u32, name: &str) -> ModuleRefRc {
-    Arc::new(ModuleRef {
-        rid,
-        offset: rid as usize,
-        token: Token::new(0x1A000000 + rid),
-        name: name.to_string(),
-        custom_attributes: Arc::new(boxcar::Vec::new()),
-    })
-}
-
-// Helper function to create an AssemblyRef
-pub fn create_assembly_ref(rid: u32, name: &str) -> AssemblyRefRc {
-    Arc::new(AssemblyRef {
-        rid,
-        token: Token::new(0x23000000 + rid),
-        offset: rid as usize,
-        name: name.to_string(),
-        culture: None,
-        major_version: 4,
-        minor_version: 0,
-        build_number: 0,
-        revision_number: 0,
-        flags: 0,
-        identifier: None,
-        hash: None,
-        os_platform_id: AtomicU32::new(0),
-        os_major_version: AtomicU32::new(0),
-        os_minor_version: AtomicU32::new(0),
-        processor: AtomicU32::new(0),
-        custom_attributes: Arc::new(boxcar::Vec::new()),
-    })
-}
-
-// Helper function to create a File
-pub fn create_file(rid: u32, name: &str) -> FileRc {
-    Arc::new(File {
-        rid,
-        token: Token::new(0x26000000 + rid),
-        offset: rid as usize,
-        flags: 0,
-        name: name.to_string(),
-        hash_value: AssemblyRefHash::new(&[1, 2, 3, 4]).unwrap(),
-        custom_attributes: Arc::new(boxcar::Vec::new()),
-    })
-}
-
-// Helper function to create a Method
-pub fn create_method(name: &str) -> MethodRc {
-    Arc::new(Method {
-        rid: 1,
-        token: Token::new(0x06000001),
-        meta_offset: 0,
-        impl_code_type: MethodImplCodeType::empty(),
-        impl_management: MethodImplManagement::empty(),
-        impl_options: MethodImplOptions::empty(),
-        flags_access: MethodAccessFlags::empty(),
-        flags_vtable: MethodVtableFlags::empty(),
-        flags_modifiers: MethodModifiers::empty(),
-        flags_pinvoke: AtomicU32::new(0),
-        name: name.to_string(),
-        params: Arc::new(boxcar::Vec::new()),
-        varargs: Arc::new(boxcar::Vec::new()),
-        generic_params: Arc::new(boxcar::Vec::new()),
-        generic_args: Arc::new(boxcar::Vec::new()),
-        signature: SignatureMethod {
-            has_this: false,
-            explicit_this: false,
-            default: false,
-            vararg: false,
-            cdecl: true,
-            stdcall: false,
-            thiscall: false,
-            fastcall: false,
-            param_count_generic: 0,
-            param_count: 0,
-            return_type: SignatureParameter {
-                modifiers: Vec::new(),
-                by_ref: false,
-                base: TypeSignature::Void,
-            },
-            params: Vec::new(),
-            varargs: Vec::new(),
-        },
-        rva: Some(0x1000),
-        body: OnceLock::new(),
-        local_vars: Arc::new(boxcar::Vec::new()),
-        overrides: OnceLock::new(),
-        interface_impls: Arc::new(boxcar::Vec::new()),
-        security: OnceLock::new(),
-        blocks: OnceLock::new(),
-        custom_attributes: Arc::new(boxcar::Vec::new()),
-    })
-}
-
-// Helper function to create a CilType
-pub fn create_cil_type(
-    token: Token,
-    namespace: &str,
-    name: &str,
-    external: Option<CilTypeReference>,
-) -> CilTypeRc {
-    Arc::new(CilType::new(
-        token,
-        namespace.to_string(),
-        name.to_string(),
-        external,
-        None,
-        0,
-        Arc::new(boxcar::Vec::new()),
-        Arc::new(boxcar::Vec::new()),
-        Some(CilFlavor::Class),
-    ))
-}
-
-/// Helper function to create an ExportedTypeRc
-pub fn create_exportedtype(dummy_type: CilTypeRc) -> ExportedTypeRc {
-    Arc::new(ExportedType {
-        rid: 1,
-        token: Token::new(0x27000001),
-        offset: 0,
-        flags: 0,
-        type_def_id: dummy_type.token.0,
-        name: "ExportedType".to_string(),
-        namespace: Some("Test.Namespace".to_string()),
-        implementation: CilTypeReference::File(create_file(1, "export_test")),
-        custom_attributes: Arc::new(boxcar::Vec::new()),
-    })
-}
+// Re-export builder modules for convenience
+pub use builders::*;
+pub use helpers::*;
+pub use scenarios::*;

@@ -490,6 +490,8 @@ public struct BufferStruct
 }
 */
 
+use dotscope::metadata::marshalling::{parse_marshalling_descriptor, NativeType};
+use dotscope::metadata::security::{ArgumentValue, PermissionSet, PermissionSetFormat};
 use dotscope::prelude::*;
 use std::path::PathBuf;
 
@@ -524,6 +526,7 @@ fn crafted_2() {
     test_assembly_metadata_validation(&asm);
     test_table_count_validation(&asm);
     test_custom_attribute_validation(&asm);
+    test_xml_permission_set_parsing(&asm);
 }
 
 /// Verify the cor20 header matches the values of '`crafted_2.exe`' on disk
@@ -1339,6 +1342,34 @@ fn verify_specialized_attribute_tables(asm: &CilObject) {
             marshal_count, 1,
             "Expected 1 FieldMarshal entry for _marshaledField"
         );
+
+        // Test marshalling descriptor parsing - this verifies our marshalling implementation
+        // against real .NET assembly data
+        let row = field_marshal_table.get(1).unwrap();
+        let blob_heap = asm.blob().expect("Expected blob heap to be present");
+        let descriptor_blob = blob_heap.get(row.native_type as usize).unwrap();
+
+        // Parse the marshalling descriptor using our implementation
+        let marshalling_info = parse_marshalling_descriptor(descriptor_blob).unwrap();
+
+        // The C# source has: [MarshalAs(UnmanagedType.LPWStr)] private string _marshaledField;
+        // This should parse as LPWStr native type
+        match &marshalling_info.primary_type {
+            NativeType::LPWStr { size_param_index } => {
+                assert_eq!(
+                    size_param_index, &None,
+                    "Expected no size parameter for simple LPWStr"
+                );
+                println!(
+                    "✓ Marshalling descriptor parsed successfully: {:?}",
+                    marshalling_info
+                );
+            }
+            _ => panic!(
+                "Expected LPWStr marshalling for _marshaledField, got {:?}",
+                marshalling_info.primary_type
+            ),
+        }
     }
 
     // Test DeclSecurity table (stores security attributes)
@@ -3032,4 +3063,144 @@ fn test_assembly_metadata_validation(asm: &CilObject) {
     println!("  ✓ Metadata directory accessible");
 
     println!("✓ Assembly metadata validation completed");
+}
+
+/// Test XML permission set parsing functionality
+fn test_xml_permission_set_parsing(asm: &CilObject) {
+    println!("Testing XML permission set parsing...");
+
+    // Look for DeclSecurity entries with XML permission sets
+    let tables = asm.tables().unwrap();
+
+    if let Some(decl_security_table) = tables.table::<DeclSecurityRaw>(TableId::DeclSecurity) {
+        let mut found_xml_permission_set = false;
+
+        // Iterate through DeclSecurity entries
+        for security_row in decl_security_table.iter() {
+            // Get the permission set blob from the blob stream
+            if let Some(blob_heap) = asm.blob() {
+                if let Ok(blob_data) = blob_heap.get(security_row.permission_set as usize) {
+                    // Check if this looks like XML (starts with '<')
+                    if !blob_data.is_empty() && blob_data[0] == b'<' {
+                        found_xml_permission_set = true;
+                        println!("Found XML permission set data: {} bytes", blob_data.len());
+
+                        // Parse the XML permission set using new
+                        let permission_set = PermissionSet::new(blob_data).unwrap();
+
+                        // Verify it was detected as XML format
+                        match permission_set.format() {
+                            PermissionSetFormat::Xml => {
+                                println!(
+                                    "Successfully parsed XML permission set with {} permissions",
+                                    permission_set.permissions().len()
+                                );
+
+                                // Verify we can extract permission information
+                                for permission in permission_set.permissions() {
+                                    println!("Permission: {}", permission.class_name);
+
+                                    // Check for specific permission types we expect from the C# source
+                                    if permission.class_name.contains("SecurityPermission") {
+                                        println!(
+                                            "Found SecurityPermission with {} arguments",
+                                            permission.named_arguments.len()
+                                        );
+                                        // Verify it has the Assertion flag
+                                        for arg in &permission.named_arguments {
+                                            if arg.name == "Assertion" {
+                                                match &arg.value {
+                                                    ArgumentValue::Boolean(b) => {
+                                                        assert!(*b);
+                                                    }
+                                                    _ => panic!(
+                                                        "Expected boolean value for Assertion"
+                                                    ),
+                                                }
+                                                println!("Verified Assertion=true");
+                                            }
+                                        }
+                                    }
+
+                                    if permission.class_name.contains("FileIOPermission") {
+                                        println!(
+                                            "Found FileIOPermission with {} arguments",
+                                            permission.named_arguments.len()
+                                        );
+                                        // Verify it has the Read property
+                                        for arg in &permission.named_arguments {
+                                            if arg.name == "Read" {
+                                                match &arg.value {
+                                                    ArgumentValue::String(s) => {
+                                                        assert!(s.contains("TestData"));
+                                                        println!("Verified Read path contains TestData: {}", s);
+                                                    }
+                                                    _ => panic!("Expected string value for Read"),
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            other_format => {
+                                // If it's not XML, let's see what format it is
+                                println!("Permission set format detected as: {:?}", other_format);
+
+                                // Still test that we can parse it regardless of format
+                                assert!(
+                                    !permission_set.permissions().is_empty(),
+                                    "Permission set should contain permissions"
+                                );
+                            }
+                        }
+
+                        break;
+                    }
+                } else {
+                    println!(
+                        "Could not read blob data at index {}",
+                        security_row.permission_set
+                    );
+                }
+            }
+        }
+
+        // For this test to be meaningful, we should find at least one permission set
+        // (it might be binary format instead of XML, which is also fine)
+        assert!(
+            decl_security_table.row_count() > 0,
+            "Should have DeclSecurity entries from crafted_2.exe"
+        );
+
+        if !found_xml_permission_set {
+            println!("Note: No XML permission sets found in crafted_2.exe");
+            println!(
+                "This is normal - modern compilers typically use binary format instead of XML"
+            );
+
+            // Let's test that we can at least parse the binary permission sets
+            for security_row in decl_security_table.iter() {
+                if let Some(blob_heap) = asm.blob() {
+                    if let Ok(blob_data) = blob_heap.get(security_row.permission_set as usize) {
+                        let permission_set = PermissionSet::new(blob_data).unwrap();
+                        println!(
+                            "Parsed {:?} permission set with {} permissions",
+                            permission_set.format(),
+                            permission_set.permissions().len()
+                        );
+
+                        // Verify we can extract meaningful information
+                        for permission in permission_set.permissions() {
+                            println!("  - {}", permission.class_name);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    } else {
+        panic!("No DeclSecurity table found in crafted_2.exe");
+    }
+
+    println!("✓ XML permission set parsing tested");
 }

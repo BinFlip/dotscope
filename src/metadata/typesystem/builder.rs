@@ -21,10 +21,12 @@ use std::sync::Arc;
 
 use crate::{
     metadata::{
-        signatures::SignatureMethod,
+        signatures::{SignatureMethod, SignatureMethodSpec},
+        tables::MethodSpec,
         token::Token,
         typesystem::{
-            CilFlavor, CilModifier, CilPrimitiveKind, CilTypeRc, TypeRegistry, TypeSource,
+            CilFlavor, CilModifier, CilPrimitiveKind, CilTypeRc, CilTypeReference, TypeRegistry,
+            TypeSource,
         },
     },
     Error::TypeError,
@@ -417,12 +419,12 @@ impl TypeBuilder {
                             .and_then(|v| v.checked_add(1))
                             .ok_or_else(|| malformed_error!("Token value overflow"))?;
 
-                    let method_spec = Arc::new(crate::metadata::streams::MethodSpec {
+                    let method_spec = Arc::new(MethodSpec {
                         rid,
                         token: Token::new(token_value),
                         offset: 0,
-                        method: crate::metadata::typesystem::CilTypeReference::None,
-                        instantiation: crate::metadata::signatures::SignatureMethodSpec {
+                        method: CilTypeReference::None,
+                        instantiation: SignatureMethodSpec {
                             generic_args: vec![],
                         },
                         custom_attributes: Arc::new(boxcar::Vec::new()),
@@ -465,7 +467,7 @@ mod tests {
     use crate::{
         metadata::{
             signatures::{SignatureMethod, SignatureParameter, TypeSignature},
-            streams::GenericParam,
+            tables::GenericParam,
             token::Token,
             typesystem::{CilFlavor, CilPrimitiveKind, TypeRegistry, TypeSource},
         },

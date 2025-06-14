@@ -17,10 +17,10 @@ use crate::{
         method::MethodMap,
         resources::Resources,
         root::Root,
-        streams::{
-            AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, Blob, FileMap, Guid,
-            MemberRefMap, MethodSpecMap, ModuleRc, ModuleRefMap, Strings, TablesHeader,
-            UserStrings,
+        streams::{Blob, Guid, Strings, TablesHeader, UserStrings},
+        tables::{
+            AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, FileMap, MemberRefMap,
+            MethodSpecMap, ModuleRc, ModuleRefMap,
         },
         typesystem::TypeRegistry,
     },
@@ -128,15 +128,20 @@ impl<'a> CilObjectData<'a> {
                 method_semantics: SkipMap::default(),
                 method_spec: &cil_object.method_specs,
                 field: SkipMap::default(),
+                field_ptr: SkipMap::default(),
+                method_ptr: SkipMap::default(),
                 field_layout: SkipMap::default(),
                 field_marshal: SkipMap::default(),
                 field_rva: SkipMap::default(),
                 param: SkipMap::default(),
+                param_ptr: SkipMap::default(),
                 generic_param: SkipMap::default(),
                 generic_param_constraint: SkipMap::default(),
                 property: SkipMap::default(),
+                property_ptr: SkipMap::default(),
                 property_map: SkipMap::default(),
                 event: SkipMap::default(),
+                event_ptr: SkipMap::default(),
                 event_map: SkipMap::default(),
                 member_ref: &cil_object.refs_member,
                 class_layout: SkipMap::default(),
@@ -190,7 +195,7 @@ impl<'a> CilObjectData<'a> {
             }
 
             match stream.name.as_str() {
-                "#~" => self.meta = Some(TablesHeader::from(&self.data[start..end])?),
+                "#~" | "#-" => self.meta = Some(TablesHeader::from(&self.data[start..end])?),
                 "#Strings" => self.strings = Some(Strings::from(&self.data[start..end])?),
                 "#US" => self.userstrings = Some(UserStrings::from(&self.data[start..end])?),
                 "#GUID" => self.guids = Some(Guid::from(&self.data[start..end])?),
@@ -198,6 +203,9 @@ impl<'a> CilObjectData<'a> {
                 _ => return Err(NotSupported),
             }
         }
+
+        self.header_root
+            .validate_stream_layout(meta_root_offset, self.header.meta_data_size)?;
 
         Ok(())
     }

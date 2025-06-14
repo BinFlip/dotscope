@@ -45,7 +45,33 @@ impl StreamHeader {
             return Err(OutOfBounds);
         }
 
-        // ToDo: This can be better solved using str
+        let offset = read_le::<u32>(data)?;
+        let size = read_le::<u32>(&data[4..])?;
+
+        // ECMA-335 compliance - Size must be aligned to 4-byte boundary
+        if size % 4 != 0 {
+            return Err(malformed_error!(
+                "Stream size {} is not aligned to 4-byte boundary (ECMA-335 II.24.2.2)",
+                size
+            ));
+        }
+
+        // Validate offset bounds - offset must be reasonable
+        if offset > 0x7FFF_FFFF {
+            return Err(malformed_error!(
+                "Stream offset {} exceeds maximum allowed value (0x7FFFFFFF)",
+                offset
+            ));
+        }
+
+        // Validate size bounds - prevent integer overflow and unreasonable sizes
+        if size > 0x7FFF_FFFF {
+            return Err(malformed_error!(
+                "Stream size {} exceeds maximum allowed value (0x7FFFFFFF)",
+                size
+            ));
+        }
+
         let mut name = String::with_capacity(32);
         for counter in 0..std::cmp::min(32, data.len() - 8) {
             let name_char = read_le::<u8>(&data[8 + counter..])?;
@@ -56,18 +82,14 @@ impl StreamHeader {
             name.push(char::from(name_char));
         }
 
-        if !["#Strings", "#US", "#Blob", "#GUID", "#~"]
+        if !["#Strings", "#US", "#Blob", "#GUID", "#~", "#-"]
             .iter()
             .any(|valid_name| name == *valid_name)
         {
             return Err(malformed_error!("Invalid stream header name - {}", name));
         }
 
-        Ok(StreamHeader {
-            offset: read_le::<u32>(data)?,
-            size: read_le::<u32>(&data[4..])?,
-            name,
-        })
+        Ok(StreamHeader { offset, size, name })
     }
 }
 

@@ -16,7 +16,7 @@ pub use types::*;
 
 use std::sync::Arc;
 
-use crate::{file::File, metadata::streams::ManifestResourceRc};
+use crate::{file::File, metadata::tables::ManifestResourceRc};
 
 /// Container for all resources in the assembly.
 ///

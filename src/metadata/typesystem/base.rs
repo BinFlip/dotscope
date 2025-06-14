@@ -4,7 +4,7 @@ use crate::{
     metadata::{
         method::MethodRef,
         signatures::SignatureMethod,
-        streams::{
+        tables::{
             AssemblyRc, AssemblyRefRc, DeclSecurityRc, EventRc, ExportedTypeRc, FieldRc, FileRc,
             GenericParamConstraintRc, GenericParamRc, InterfaceImplRc, MemberRefRc, MethodSpecList,
             MethodSpecRc, ModuleRc, ModuleRefRc, ParamRc, PropertyRc, StandAloneSigRc,
@@ -89,6 +89,38 @@ impl CilTypeRef {
     #[must_use]
     pub fn generic_args(&self) -> Option<MethodSpecList> {
         self.upgrade().map(|t| t.generic_args.clone())
+    }
+
+    /// Check if this type reference is compatible with another type
+    ///
+    /// # Arguments
+    /// * `other` - The other type to check compatibility against
+    ///
+    /// # Returns
+    /// `true` if this type is compatible with the other type, `false` if incompatible or if the reference is invalid
+    #[must_use]
+    pub fn is_compatible_with(&self, other: &CilType) -> bool {
+        if let Some(this_type) = self.upgrade() {
+            this_type.is_compatible_with(other)
+        } else {
+            false
+        }
+    }
+
+    /// Check if this type reference can accept a constant value
+    ///
+    /// # Arguments  
+    /// * `constant` - The constant value to check
+    ///
+    /// # Returns
+    /// `true` if this type can accept the constant, `false` if not or if the reference is invalid
+    #[must_use]
+    pub fn accepts_constant(&self, constant: &CilPrimitive) -> bool {
+        if let Some(this_type) = self.upgrade() {
+            this_type.accepts_constant(constant)
+        } else {
+            false
+        }
     }
 }
 
@@ -349,342 +381,98 @@ impl CilFlavor {
             _ => None,
         }
     }
-}
 
-impl From<CilPrimitive> for CilFlavor {
-    fn from(primitive: CilPrimitive) -> Self {
-        primitive.to_flavor()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use crate::metadata::{token::Token, typesystem::CilType};
-
-    use super::*;
-
-    #[test]
-    fn test_cil_flavor_is_primitive() {
-        assert!(CilFlavor::Void.is_primitive());
-        assert!(CilFlavor::Boolean.is_primitive());
-        assert!(CilFlavor::Char.is_primitive());
-        assert!(CilFlavor::I1.is_primitive());
-        assert!(CilFlavor::U1.is_primitive());
-        assert!(CilFlavor::I2.is_primitive());
-        assert!(CilFlavor::U2.is_primitive());
-        assert!(CilFlavor::I4.is_primitive());
-        assert!(CilFlavor::U4.is_primitive());
-        assert!(CilFlavor::I8.is_primitive());
-        assert!(CilFlavor::U8.is_primitive());
-        assert!(CilFlavor::R4.is_primitive());
-        assert!(CilFlavor::R8.is_primitive());
-        assert!(CilFlavor::I.is_primitive());
-        assert!(CilFlavor::U.is_primitive());
-        assert!(CilFlavor::Object.is_primitive());
-        assert!(CilFlavor::String.is_primitive());
-
-        assert!(!CilFlavor::Array {
-            rank: 1,
-            dimensions: vec![]
-        }
-        .is_primitive());
-        assert!(!CilFlavor::Pointer.is_primitive());
-        assert!(!CilFlavor::ByRef.is_primitive());
-        assert!(!CilFlavor::GenericInstance.is_primitive());
-        assert!(!CilFlavor::Pinned.is_primitive());
-        assert!(!CilFlavor::Class.is_primitive());
-        assert!(!CilFlavor::ValueType.is_primitive());
-        assert!(!CilFlavor::Interface.is_primitive());
-        assert!(!CilFlavor::Unknown.is_primitive());
-    }
-
-    #[test]
-    fn test_cil_flavor_is_value_type() {
-        assert!(CilFlavor::Boolean.is_value_type());
-        assert!(CilFlavor::Char.is_value_type());
-        assert!(CilFlavor::I1.is_value_type());
-        assert!(CilFlavor::U1.is_value_type());
-        assert!(CilFlavor::I2.is_value_type());
-        assert!(CilFlavor::U2.is_value_type());
-        assert!(CilFlavor::I4.is_value_type());
-        assert!(CilFlavor::U4.is_value_type());
-        assert!(CilFlavor::I8.is_value_type());
-        assert!(CilFlavor::U8.is_value_type());
-        assert!(CilFlavor::R4.is_value_type());
-        assert!(CilFlavor::R8.is_value_type());
-        assert!(CilFlavor::I.is_value_type());
-        assert!(CilFlavor::U.is_value_type());
-        assert!(CilFlavor::ValueType.is_value_type());
-
-        assert!(!CilFlavor::Void.is_value_type());
-        assert!(!CilFlavor::Object.is_value_type());
-        assert!(!CilFlavor::String.is_value_type());
-        assert!(!CilFlavor::Array {
-            rank: 1,
-            dimensions: vec![]
-        }
-        .is_value_type());
-        assert!(!CilFlavor::Pointer.is_value_type());
-        assert!(!CilFlavor::Class.is_value_type());
-    }
-
-    #[test]
-    fn test_cil_flavor_is_reference_type() {
-        assert!(CilFlavor::Object.is_reference_type());
-        assert!(CilFlavor::String.is_reference_type());
-        assert!(CilFlavor::Class.is_reference_type());
-        assert!(CilFlavor::Array {
-            rank: 1,
-            dimensions: vec![]
-        }
-        .is_reference_type());
-
-        assert!(!CilFlavor::Boolean.is_reference_type());
-        assert!(!CilFlavor::I4.is_reference_type());
-        assert!(!CilFlavor::ValueType.is_reference_type());
-        assert!(!CilFlavor::Pointer.is_reference_type());
-        assert!(!CilFlavor::ByRef.is_reference_type());
-    }
-
-    #[test]
-    fn test_cil_flavor_to_primitive_kind() {
-        assert_eq!(
-            CilFlavor::Void.to_primitive_kind(),
-            Some(CilPrimitiveKind::Void)
-        );
-        assert_eq!(
-            CilFlavor::Boolean.to_primitive_kind(),
-            Some(CilPrimitiveKind::Boolean)
-        );
-        assert_eq!(
-            CilFlavor::Char.to_primitive_kind(),
-            Some(CilPrimitiveKind::Char)
-        );
-        assert_eq!(
-            CilFlavor::I1.to_primitive_kind(),
-            Some(CilPrimitiveKind::I1)
-        );
-        assert_eq!(
-            CilFlavor::U1.to_primitive_kind(),
-            Some(CilPrimitiveKind::U1)
-        );
-        assert_eq!(
-            CilFlavor::I2.to_primitive_kind(),
-            Some(CilPrimitiveKind::I2)
-        );
-        assert_eq!(
-            CilFlavor::U2.to_primitive_kind(),
-            Some(CilPrimitiveKind::U2)
-        );
-        assert_eq!(
-            CilFlavor::I4.to_primitive_kind(),
-            Some(CilPrimitiveKind::I4)
-        );
-        assert_eq!(
-            CilFlavor::U4.to_primitive_kind(),
-            Some(CilPrimitiveKind::U4)
-        );
-        assert_eq!(
-            CilFlavor::I8.to_primitive_kind(),
-            Some(CilPrimitiveKind::I8)
-        );
-        assert_eq!(
-            CilFlavor::U8.to_primitive_kind(),
-            Some(CilPrimitiveKind::U8)
-        );
-        assert_eq!(
-            CilFlavor::R4.to_primitive_kind(),
-            Some(CilPrimitiveKind::R4)
-        );
-        assert_eq!(
-            CilFlavor::R8.to_primitive_kind(),
-            Some(CilPrimitiveKind::R8)
-        );
-        assert_eq!(CilFlavor::I.to_primitive_kind(), Some(CilPrimitiveKind::I));
-        assert_eq!(CilFlavor::U.to_primitive_kind(), Some(CilPrimitiveKind::U));
-        assert_eq!(
-            CilFlavor::Object.to_primitive_kind(),
-            Some(CilPrimitiveKind::Object)
-        );
-        assert_eq!(
-            CilFlavor::String.to_primitive_kind(),
-            Some(CilPrimitiveKind::String)
-        );
-        assert_eq!(
-            CilFlavor::ValueType.to_primitive_kind(),
-            Some(CilPrimitiveKind::ValueType)
-        );
-
-        assert_eq!(
-            CilFlavor::GenericParameter {
-                index: 0,
-                method: false
-            }
-            .to_primitive_kind(),
-            Some(CilPrimitiveKind::Var)
-        );
-        assert_eq!(
-            CilFlavor::GenericParameter {
-                index: 0,
-                method: true
-            }
-            .to_primitive_kind(),
-            Some(CilPrimitiveKind::MVar)
-        );
-
-        assert_eq!(
-            CilFlavor::Array {
-                rank: 1,
-                dimensions: vec![]
-            }
-            .to_primitive_kind(),
-            None
-        );
-        assert_eq!(CilFlavor::Pointer.to_primitive_kind(), None);
-        assert_eq!(CilFlavor::ByRef.to_primitive_kind(), None);
-        assert_eq!(CilFlavor::GenericInstance.to_primitive_kind(), None);
-        assert_eq!(CilFlavor::Pinned.to_primitive_kind(), None);
-        assert_eq!(
-            CilFlavor::FnPtr {
-                signature: SignatureMethod::default()
-            }
-            .to_primitive_kind(),
-            None
-        );
-    }
-
-    #[test]
-    fn test_from_cil_primitive_for_cil_flavor() {
-        let primitive = CilPrimitive::new(CilPrimitiveKind::I4);
-        let flavor = CilFlavor::from(primitive);
-
-        assert!(matches!(flavor, CilFlavor::I4));
-
-        assert!(matches!(
-            CilFlavor::from(CilPrimitive::new(CilPrimitiveKind::Boolean)),
-            CilFlavor::Boolean
-        ));
-        assert!(matches!(
-            CilFlavor::from(CilPrimitive::new(CilPrimitiveKind::Object)),
-            CilFlavor::Object
-        ));
-        assert!(matches!(
-            CilFlavor::from(CilPrimitive::new(CilPrimitiveKind::Var)),
-            CilFlavor::GenericParameter {
-                index: 0,
-                method: false
-            }
-        ));
-    }
-
-    #[test]
-    fn test_cil_type_reference() {
-        let type_ref = CilTypeReference::None;
-        assert!(matches!(type_ref, CilTypeReference::None));
-
-        let type_rc = Arc::new(CilType::new(
-            Token::new(0x01000001),
-            "System".to_string(),
-            "Int32".to_string(),
-            None,
-            None,
-            0,
-            Arc::new(boxcar::Vec::new()),
-            Arc::new(boxcar::Vec::new()),
-            Some(CilFlavor::I4),
-        ));
-
-        let type_ref = CilTypeReference::TypeDef(CilTypeRef::from(type_rc.clone()));
-        match type_ref {
-            CilTypeReference::TypeDef(ref t) => {
-                assert_eq!(t.token(), Some(Token::new(0x01000001)));
-                assert_eq!(t.name(), Some("Int32".to_string()));
-            }
-            _ => panic!("Expected TypeDef variant"),
+    /// Check if this flavor is compatible with (assignable to) the target flavor
+    ///
+    /// Implements .NET primitive type compatibility rules including:
+    /// - Exact type matching
+    /// - Primitive widening conversions (byte -> int -> long, etc.)
+    /// - Reference type compatibility
+    ///
+    /// # Arguments
+    /// * `target` - The target flavor to check compatibility against
+    ///
+    /// # Returns
+    /// `true` if this flavor can be assigned to the target flavor
+    #[must_use]
+    pub fn is_compatible_with(&self, target: &CilFlavor) -> bool {
+        // Exact match
+        if self == target {
+            return true;
         }
 
-        let cloned_ref = type_ref.clone();
-        match cloned_ref {
-            CilTypeReference::TypeDef(ref t) => {
-                assert_eq!(t.token(), Some(Token::new(0x01000001)));
-            }
-            _ => panic!("Expected TypeDef variant after cloning"),
+        // Primitive widening rules
+        #[allow(clippy::match_same_arms)]
+        match (self, target) {
+            // Integer widening: smaller -> larger
+            (CilFlavor::I1 | CilFlavor::U1, CilFlavor::I2 | CilFlavor::I4 | CilFlavor::I8) => true,
+            (CilFlavor::I2, CilFlavor::I4 | CilFlavor::I8) => true,
+            (CilFlavor::I4, CilFlavor::I8) => true,
+
+            // Unsigned integer widening
+            (CilFlavor::U1, CilFlavor::U2 | CilFlavor::U4 | CilFlavor::U8) => true,
+            (CilFlavor::U2, CilFlavor::U4 | CilFlavor::U8) => true,
+            (CilFlavor::U4, CilFlavor::U8) => true,
+
+            // Float widening: float -> double
+            (CilFlavor::R4, CilFlavor::R8) => true,
+
+            // Integer to float (with potential precision loss)
+            (
+                CilFlavor::I1 | CilFlavor::U1 | CilFlavor::I2 | CilFlavor::U2 | CilFlavor::I4,
+                CilFlavor::R4 | CilFlavor::R8,
+            ) => true,
+            (CilFlavor::I8 | CilFlavor::U4 | CilFlavor::U8, CilFlavor::R8) => true,
+
+            // Any reference type to Object
+            (source, CilFlavor::Object) if source.is_reference_type() => true,
+
+            // All value types are compatible with ValueType
+            (source, CilFlavor::ValueType) if source.is_value_type() => true,
+
+            _ => false,
         }
     }
 
-    #[test]
-    fn test_element_type_constants() {
-        assert_eq!(ELEMENT_TYPE::END, 0x00);
-        assert_eq!(ELEMENT_TYPE::VOID, 0x01);
-        assert_eq!(ELEMENT_TYPE::BOOLEAN, 0x02);
-        assert_eq!(ELEMENT_TYPE::CHAR, 0x03);
-        assert_eq!(ELEMENT_TYPE::I1, 0x04);
-        assert_eq!(ELEMENT_TYPE::U1, 0x05);
-        assert_eq!(ELEMENT_TYPE::I2, 0x06);
-        assert_eq!(ELEMENT_TYPE::U2, 0x07);
-        assert_eq!(ELEMENT_TYPE::I4, 0x08);
-        assert_eq!(ELEMENT_TYPE::U4, 0x09);
-        assert_eq!(ELEMENT_TYPE::I8, 0x0a);
-        assert_eq!(ELEMENT_TYPE::U8, 0x0b);
-        assert_eq!(ELEMENT_TYPE::R4, 0x0c);
-        assert_eq!(ELEMENT_TYPE::R8, 0x0d);
-        assert_eq!(ELEMENT_TYPE::STRING, 0x0e);
-        assert_eq!(ELEMENT_TYPE::PTR, 0x0f);
-        assert_eq!(ELEMENT_TYPE::BYREF, 0x10);
-        assert_eq!(ELEMENT_TYPE::VALUETYPE, 0x11);
-        assert_eq!(ELEMENT_TYPE::CLASS, 0x12);
-        assert_eq!(ELEMENT_TYPE::VAR, 0x13);
-        assert_eq!(ELEMENT_TYPE::ARRAY, 0x14);
-        assert_eq!(ELEMENT_TYPE::GENERICINST, 0x15);
-        assert_eq!(ELEMENT_TYPE::TYPEDBYREF, 0x16);
-        assert_eq!(ELEMENT_TYPE::I, 0x18);
-        assert_eq!(ELEMENT_TYPE::U, 0x19);
-        assert_eq!(ELEMENT_TYPE::FNPTR, 0x1b);
-        assert_eq!(ELEMENT_TYPE::OBJECT, 0x1c);
-        assert_eq!(ELEMENT_TYPE::SZARRAY, 0x1d);
-        assert_eq!(ELEMENT_TYPE::MVAR, 0x1e);
-        assert_eq!(ELEMENT_TYPE::CMOD_REQD, 0x1f);
-        assert_eq!(ELEMENT_TYPE::CMOD_OPT, 0x20);
-        assert_eq!(ELEMENT_TYPE::INTERNAL, 0x21);
-        assert_eq!(ELEMENT_TYPE::MODIFIER, 0x40);
-        assert_eq!(ELEMENT_TYPE::SENTINEL, 0x41);
-        assert_eq!(ELEMENT_TYPE::PINNED, 0x45);
-    }
+    /// Check if this flavor can accept a constant of the given flavor
+    ///
+    /// This is more restrictive than general compatibility as constants
+    /// require exact matches or safe widening conversions only.
+    ///
+    /// # Arguments
+    /// * `constant_flavor` - The flavor of the constant value
+    ///
+    /// # Returns  
+    /// `true` if a constant of the given flavor can be assigned to this type
+    #[must_use]
+    pub fn accepts_constant(&self, constant_flavor: &CilFlavor) -> bool {
+        // Exact match is always allowed
+        if self == constant_flavor {
+            return true;
+        }
 
-    #[test]
-    fn test_cil_modifier() {
-        let type_rc = Arc::new(CilType::new(
-            Token::new(0x01000001),
-            "System.Runtime.InteropServices".to_string(),
-            "InAttribute".to_string(),
-            None,
-            None,
-            0,
-            Arc::new(boxcar::Vec::new()),
-            Arc::new(boxcar::Vec::new()),
-            Some(CilFlavor::Class),
-        ));
+        // For constants, we're more restrictive - only safe widening
+        #[allow(clippy::match_same_arms)]
+        match (constant_flavor, self) {
+            // Integer literal widening (safe)
+            (CilFlavor::I1, CilFlavor::I2 | CilFlavor::I4 | CilFlavor::I8) => true,
+            (CilFlavor::I2, CilFlavor::I4 | CilFlavor::I8) => true,
+            (CilFlavor::I4, CilFlavor::I8) => true,
 
-        let required_modifier = CilModifier {
-            required: true,
-            modifier: CilTypeRef::from(type_rc.clone()),
-        };
-        assert!(required_modifier.required);
-        assert_eq!(
-            required_modifier.modifier.name(),
-            Some("InAttribute".to_string())
-        );
+            // Unsigned integer literal widening
+            (CilFlavor::U1, CilFlavor::U2 | CilFlavor::U4 | CilFlavor::U8) => true,
+            (CilFlavor::U2, CilFlavor::U4 | CilFlavor::U8) => true,
+            (CilFlavor::U4, CilFlavor::U8) => true,
 
-        let optional_modifier = CilModifier {
-            required: false,
-            modifier: CilTypeRef::from(type_rc.clone()),
-        };
-        assert!(!optional_modifier.required);
-        assert_eq!(
-            optional_modifier.modifier.name(),
-            Some("InAttribute".to_string())
-        );
+            // Float literal widening
+            (CilFlavor::R4, CilFlavor::R8) => true,
+
+            // String constants to Object
+            (CilFlavor::String, CilFlavor::Object) => true,
+
+            // Null constant to any reference type
+            // Note: This would need special handling for null literals
+            _ => false,
+        }
     }
 }

@@ -215,7 +215,7 @@ impl<'a> InstructionIterator<'a> {
     /// from each block sequentially. Empty blocks are handled gracefully and skipped
     /// automatically during iteration.
     ///
-    /// This method is typically called internally by [`Method::instructions()`] rather
+    /// This method is typically called internally by [`crate::metadata::method::Method::instructions()`] rather
     /// than being used directly, but it can be useful for testing or when working
     /// with standalone basic block collections.
     ///

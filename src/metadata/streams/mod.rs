@@ -120,96 +120,9 @@ pub use strings::{Strings, StringsIterator};
 mod userstrings;
 pub use userstrings::{UserStrings, UserStringsIterator};
 
-/// The '#~' implementation
-pub(crate) mod tables;
-pub use tables::{
-    assembly::{
-        Assembly, AssemblyFlags, AssemblyHashAlgorithm, AssemblyList, AssemblyMap, AssemblyRaw,
-        AssemblyRc,
-    },
-    assemblyos::{AssemblyOs, AssemblyOsList, AssemblyOsMap, AssemblyOsRaw, AssemblyOsRc},
-    assemblyprocessor::{
-        AssemblyProcessor, AssemblyProcessorList, AssemblyProcessorMap, AssemblyProcessorRaw,
-        AssemblyProcessorRc,
-    },
-    assemblyref::{
-        AssemblyRef, AssemblyRefHash, AssemblyRefList, AssemblyRefMap, AssemblyRefRaw,
-        AssemblyRefRc,
-    },
-    assemblyrefos::{
-        AssemblyRefOs, AssemblyRefOsList, AssemblyRefOsMap, AssemblyRefOsRaw, AssemblyRefOsRc,
-    },
-    assemblyrefprocessor::{
-        AssemblyRefProcessor, AssemblyRefProcessorList, AssemblyRefProcessorMap,
-        AssemblyRefProcessorRaw, AssemblyRefProcessorRc,
-    },
-    classlayout::{ClassLayout, ClassLayoutList, ClassLayoutMap, ClassLayoutRaw, ClassLayoutRc},
-    constant::{Constant, ConstantList, ConstantMap, ConstantRaw, ConstantRc},
-    customattribute::{
-        CustomAttribute, CustomAttributeList, CustomAttributeMap, CustomAttributeRaw,
-        CustomAttributeRc,
-    },
-    declsecurity::{
-        DeclSecurity, DeclSecurityList, DeclSecurityMap, DeclSecurityRaw, DeclSecurityRc,
-    },
-    event::{Event, EventAttributes, EventList, EventMap, EventRaw, EventRc},
-    eventmap::{EventMapEntry, EventMapEntryList, EventMapEntryMap, EventMapEntryRc, EventMapRaw},
-    exportedtype::{
-        ExportedType, ExportedTypeList, ExportedTypeMap, ExportedTypeRaw, ExportedTypeRc,
-    },
-    field::{Field, FieldAttributes, FieldList, FieldMap, FieldRaw, FieldRc},
-    fieldlayout::{FieldLayout, FieldLayoutList, FieldLayoutMap, FieldLayoutRaw, FieldLayoutRc},
-    fieldmarshal::{
-        FieldMarshal, FieldMarshalList, FieldMarshalMap, FieldMarshalRaw, FieldMarshalRc,
-    },
-    fieldrva::{FieldRVAList, FieldRVAMap, FieldRVARc, FieldRva, FieldRvaRaw},
-    file::{File, FileAttributes, FileList, FileMap, FileRaw, FileRc},
-    genericparam::{
-        GenericParam, GenericParamAttributes, GenericParamList, GenericParamMap, GenericParamRaw,
-        GenericParamRc,
-    },
-    genericparamconstraint::{
-        GenericParamConstraint, GenericParamConstraintList, GenericParamConstraintMap,
-        GenericParamConstraintRaw, GenericParamConstraintRc,
-    },
-    implmap::{ImplMap, ImplMapList, ImplMapMap, ImplMapRaw, ImplMapRc},
-    interfaceimpl::{
-        InterfaceImpl, InterfaceImplList, InterfaceImplMap, InterfaceImplRaw, InterfaceImplRc,
-    },
-    manifestresource::{
-        ManifestResource, ManifestResourceAttributes, ManifestResourceList, ManifestResourceMap,
-        ManifestResourceRaw, ManifestResourceRc,
-    },
-    memberref::{
-        MemberRef, MemberRefList, MemberRefMap, MemberRefRaw, MemberRefRc, MemberRefSignature,
-    },
-    methoddef::MethodDefRaw,
-    methodimpl::{MethodImpl, MethodImplList, MethodImplMap, MethodImplRaw, MethodImplRc},
-    methodsemantics::{
-        MethodSemantics, MethodSemanticsAttributes, MethodSemanticsList, MethodSemanticsMap,
-        MethodSemanticsRaw, MethodSemanticsRc,
-    },
-    methodspec::{MethodSpec, MethodSpecList, MethodSpecMap, MethodSpecRaw, MethodSpecRc},
-    module::{Module, ModuleList, ModuleMap, ModuleRaw, ModuleRc},
-    moduleref::{ModuleRef, ModuleRefList, ModuleRefMap, ModuleRefRaw, ModuleRefRc},
-    nestedclass::{NestedClass, NestedClassList, NestedClassMap, NestedClassRaw, NestedClassRc},
-    param::{Param, ParamAttributes, ParamList, ParamMap, ParamRaw, ParamRc},
-    property::{Property, PropertyAttributes, PropertyList, PropertyMap, PropertyRaw, PropertyRc},
-    propertymap::{
-        PropertyMapEntry, PropertyMapEntryList, PropertyMapEntryMap, PropertyMapEntryRc,
-        PropertyMapRaw,
-    },
-    standalonesig::{
-        StandAloneSig, StandAloneSigList, StandAloneSigMap, StandAloneSigRaw, StandAloneSigRc,
-    },
-    typedef::{TypeAttributes, TypeDefRaw},
-    typeref::TypeRefRaw,
-    types::{
-        CodedIndex, CodedIndexType, CodedIndexTypeIter, MetadataTable, RowDefinition, TableData,
-        TableId, TableInfo, TableInfoRef, TableIterator, TableRowInfo, TablesHeader,
-    },
-    typespec::{TypeSpec, TypeSpecList, TypeSpecMap, TypeSpecRaw, TypeSpecRc},
-};
+/// The '#~' / '#-' implementation
+mod tablesheader;
+pub use tablesheader::TablesHeader;
 
 /// The '#GUID' heap / array implementation
 mod guid;

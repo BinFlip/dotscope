@@ -1,5 +1,4 @@
 use std::{convert::TryFrom, fmt};
-use widestring::U16Str;
 
 use crate::{
     file::io::read_le,
@@ -226,19 +225,23 @@ impl CilPrimitiveData {
                     return Ok(CilPrimitiveData::String(String::new()));
                 }
 
-                // ToDo: Solve this without copy? - Strings are not 0-terminated and cause issues when parsing, leading
-                //       to the inclusion of trash into the string. U16CString / U16String can't handle it, transmute
-                //       causes alignment issues
-                let mut data_2 = Vec::with_capacity(data.len() / 2);
-                for i in data.chunks(2) {
-                    let str = (u16::from(i[1]) << 8) | u16::from(i[0]);
-                    data_2.push(str);
+                if data.len() % 2 != 0 {
+                    return Err(malformed_error!(
+                        "Invalid UTF-16 string length: {} (must be even)",
+                        data.len()
+                    ));
                 }
 
-                let input = U16Str::from_slice(&data_2);
-                match input.to_string() {
+                let utf16_chars: Vec<u16> = data
+                    .chunks_exact(2)
+                    .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                    .collect();
+
+                match String::from_utf16(&utf16_chars) {
                     Ok(utf_string) => Ok(CilPrimitiveData::String(utf_string)),
-                    Err(_) => Err(malformed_error!("Invalid primitive string")),
+                    Err(_) => Err(malformed_error!(
+                        "Invalid UTF-16 sequence in primitive string"
+                    )),
                 }
             }
             _ => Ok(CilPrimitiveData::Bytes(data.to_vec())),
@@ -751,6 +754,22 @@ impl CilPrimitive {
             },
             CilPrimitiveKind::Class => CilFlavor::Class,
         }
+    }
+
+    /// Check if this primitive is compatible with a target flavor
+    ///
+    /// This is a convenience method that converts the primitive to a flavor
+    /// and checks compatibility with the target flavor.
+    ///
+    /// # Arguments
+    /// * `target_flavor` - The target flavor to check compatibility against
+    ///
+    /// # Returns
+    /// `true` if this primitive value can be assigned to the target flavor
+    #[must_use]
+    pub fn is_compatible_with(&self, target_flavor: &CilFlavor) -> bool {
+        let this_flavor = self.to_flavor();
+        this_flavor.is_compatible_with(target_flavor)
     }
 
     /// Is this a value type

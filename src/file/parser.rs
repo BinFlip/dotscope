@@ -192,7 +192,7 @@ impl<'a> Parser<'a> {
     /// Read a compressed unsigned integer as defined in II.23.2
     ///
     /// # Errors
-    /// Returns [`OutOfBounds`] if reading would exceed the data length or [`Malformed`] for invalid compressed uint format
+    /// Returns [`OutOfBounds`] if reading would exceed the data length or [`crate::Error::Malformed`] for invalid compressed uint format
     pub fn read_compressed_uint(&mut self) -> Result<u32> {
         let first_byte = self.read_le::<u8>()?;
 
@@ -223,7 +223,7 @@ impl<'a> Parser<'a> {
     /// Read a compressed signed integer
     ///
     /// # Errors
-    /// Returns [`OutOfBounds`] if reading would exceed the data length or [`Error::Malformed`] for invalid encoding
+    /// Returns [`OutOfBounds`] if reading would exceed the data length or [`crate::Error::Malformed`] for invalid encoding
     pub fn read_compressed_int(&mut self) -> Result<i32> {
         let unsigned = self.read_compressed_uint()?;
 
@@ -244,7 +244,7 @@ impl<'a> Parser<'a> {
     /// Read a compressed token
     ///
     /// # Errors
-    /// Returns [`OutOfBounds`] if reading would exceed the data length or [`Error::Malformed`] for invalid token encoding
+    /// Returns [`OutOfBounds`] if reading would exceed the data length or [`crate::Error::Malformed`] for invalid token encoding
     pub fn read_compressed_token(&mut self) -> Result<Token> {
         let compressed_token = self.read_compressed_uint()?;
 
@@ -268,7 +268,7 @@ impl<'a> Parser<'a> {
     /// Read a 7-bit encoded integer (used in .NET for variable-length encoding)
     ///
     /// # Errors
-    /// Returns [`OutOfBounds`] if reading would exceed the data length or [`Error::Malformed`] for invalid encoding
+    /// Returns [`OutOfBounds`] if reading would exceed the data length or [`crate::Error::Malformed`] for invalid encoding
     pub fn read_7bit_encoded_int(&mut self) -> Result<u32> {
         let mut value = 0u32;
         let mut shift = 0;
@@ -299,7 +299,7 @@ impl<'a> Parser<'a> {
     /// Reads a UTF-8 encoded null-terminated string
     ///
     /// # Errors
-    /// Returns [`OutOfBounds`] if reading would exceed the data length or [`Error::Malformed`] for invalid UTF-8
+    /// Returns [`OutOfBounds`] if reading would exceed the data length or [`crate::Error::Malformed`] for invalid UTF-8
     pub fn read_string_utf8(&mut self) -> Result<String> {
         let start = self.position;
         let mut end = start;
@@ -323,7 +323,7 @@ impl<'a> Parser<'a> {
     /// Read a length-prefixed string (encoded as a 7-bit encoded length followed by UTF-8 bytes)
     ///
     /// # Errors
-    /// Returns [`OutOfBounds`] if reading would exceed the data length or [`Error::Malformed`] for invalid UTF-8
+    /// Returns [`OutOfBounds`] if reading would exceed the data length or [`crate::Error::Malformed`] for invalid UTF-8
     pub fn read_prefixed_string_utf8(&mut self) -> Result<String> {
         let length = self.read_7bit_encoded_int()? as usize;
 
@@ -347,7 +347,7 @@ impl<'a> Parser<'a> {
     /// Read a length-prefixed string (encoded as a 7-bit encoded length followed by UTF-16 bytes)
     ///
     /// # Errors
-    /// Returns [`OutOfBounds`] if reading would exceed the data length or [`Error::Malformed`] for invalid UTF-16
+    /// Returns [`OutOfBounds`] if reading would exceed the data length or [`crate::Error::Malformed`] for invalid UTF-16
     pub fn read_prefixed_string_utf16(&mut self) -> Result<String> {
         let length = self.read_7bit_encoded_int()? as usize;
         if self.position + length > self.data.len() {

@@ -217,3 +217,82 @@ pub struct SignatureMethodSpec {
     /// Types of the generic arguments
     pub generic_args: Vec<TypeSignature>,
 }
+
+impl TypeSignature {
+    /// Check if a constant primitive value is compatible with this type signature
+    ///
+    /// This implements .NET type compatibility rules for constants including:
+    /// - Exact type matching for primitives
+    /// - Safe widening conversions (e.g., int32 constant to int64 type)
+    /// - String constants to Object types
+    ///
+    /// # Arguments
+    /// * `constant` - The constant primitive value to check
+    ///
+    /// # Returns
+    /// `true` if the constant can be assigned to this type signature
+    #[must_use]
+    #[allow(clippy::unnested_or_patterns)] // Keep patterns separate for readability
+    pub fn accepts_constant(&self, constant: &crate::metadata::typesystem::CilPrimitive) -> bool {
+        use crate::metadata::typesystem::CilPrimitiveKind;
+
+        match (constant.kind, self) {
+            // Exact primitive matches and type conversions - all return true
+            // Exact type matches
+            (CilPrimitiveKind::Void, TypeSignature::Void)
+            | (CilPrimitiveKind::Boolean, TypeSignature::Boolean)
+            | (CilPrimitiveKind::Char, TypeSignature::Char)
+            | (CilPrimitiveKind::I1, TypeSignature::I1)
+            | (CilPrimitiveKind::U1, TypeSignature::U1)
+            | (CilPrimitiveKind::I2, TypeSignature::I2)
+            | (CilPrimitiveKind::U2, TypeSignature::U2)
+            | (CilPrimitiveKind::I4, TypeSignature::I4)
+            | (CilPrimitiveKind::U4, TypeSignature::U4)
+            | (CilPrimitiveKind::I8, TypeSignature::I8)
+            | (CilPrimitiveKind::U8, TypeSignature::U8)
+            | (CilPrimitiveKind::R4, TypeSignature::R4)
+            | (CilPrimitiveKind::R8, TypeSignature::R8)
+            | (CilPrimitiveKind::I, TypeSignature::I)
+            | (CilPrimitiveKind::U, TypeSignature::U)
+            | (CilPrimitiveKind::String, TypeSignature::String)
+            | (CilPrimitiveKind::Object, TypeSignature::Object)
+            // Safe widening conversions for signed integers
+            | (CilPrimitiveKind::I1, TypeSignature::I2 | TypeSignature::I4 | TypeSignature::I8)
+            | (CilPrimitiveKind::I2, TypeSignature::I4 | TypeSignature::I8)
+            | (CilPrimitiveKind::I4, TypeSignature::I8)
+            // Safe widening conversions for unsigned integers
+            | (CilPrimitiveKind::U1, TypeSignature::U2 | TypeSignature::U4 | TypeSignature::U8)
+            | (CilPrimitiveKind::U2, TypeSignature::U4 | TypeSignature::U8)
+            | (CilPrimitiveKind::U4, TypeSignature::U8)
+            // Float widening
+            | (CilPrimitiveKind::R4, TypeSignature::R8)
+            // Integer to float (with potential precision loss, but allowed for constants)
+            | (
+                CilPrimitiveKind::I1
+                | CilPrimitiveKind::U1
+                | CilPrimitiveKind::I2
+                | CilPrimitiveKind::U2
+                | CilPrimitiveKind::I4,
+                TypeSignature::R4 | TypeSignature::R8,
+            )
+            | (
+                CilPrimitiveKind::I8 | CilPrimitiveKind::U4 | CilPrimitiveKind::U8,
+                TypeSignature::R8,
+            )
+            // String constants to Object
+            | (CilPrimitiveKind::String, TypeSignature::Object)
+            // Null and Class constants can be assigned to any reference type
+            | (
+                CilPrimitiveKind::Null | CilPrimitiveKind::Class,
+                TypeSignature::String | TypeSignature::Object,
+            )
+            // For complex types (Class, ValueType, etc.), we can't easily validate without
+            // full type resolution, so we allow them (conservative approach)
+            // Note: This also covers Null and Class constants to complex types
+            | (_, TypeSignature::Class(_) | TypeSignature::ValueType(_)) => true,
+
+            // All other combinations are incompatible
+            _ => false,
+        }
+    }
+}

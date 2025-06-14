@@ -7,9 +7,9 @@ use crate::metadata::{
     method::MethodMap,
     resources::{Resource, ResourceType, Resources},
     root::{Root, CIL_HEADER_MAGIC},
-    streams::{
-        tables::types::{CodedIndex, TablesHeader},
-        AssemblyRaw, AssemblyRefMap, AssemblyRefRaw, ClassLayoutRaw, ConstantRaw,
+    streams::TablesHeader,
+    tables::{
+        AssemblyRaw, AssemblyRefMap, AssemblyRefRaw, ClassLayoutRaw, CodedIndex, ConstantRaw,
         CustomAttributeRaw, DeclSecurityRaw, EventMapRaw, EventRaw, ExportedTypeRaw,
         FieldLayoutRaw, FieldMarshalRaw, FieldRaw, FieldRvaRaw, GenericParamConstraintRaw,
         GenericParamRaw, ImplMapRaw, InterfaceImplRaw, ManifestResourceAttributes,

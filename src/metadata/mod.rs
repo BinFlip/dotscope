@@ -6,14 +6,14 @@
 //!
 //! # Key Components
 //!
-//! - [`CilObject`](self::cilobject) - Main assembly representation with metadata and IL code
-//! - [`method`](self::method) - Complete method analysis and IL disassembly
+//! - [`CilObject`](cilobject) - Main assembly representation with metadata and IL code
+//! - [`method`] - Complete method analysis and IL disassembly
 //! - Method body parsing, exception handlers, and local variables
 //! - IL instruction decoding and basic block construction
-//! - [`token`](self::token) - Metadata table row references used throughout .NET
-//! - [`typesystem`](self::typesystem) - Complete .NET type system representation
-//! - [`signatures`](self::signatures) - Method and type signature parsing
-//! - [`streams`](self::streams) - Metadata stream parsing (strings, blobs, GUIDs, etc.)
+//! - [`token`] - Metadata table row references used throughout .NET
+//! - [`typesystem`] - Complete .NET type system representation
+//! - [`signatures`] - Method and type signature parsing
+//! - [`streams`] - Metadata stream parsing (strings, blobs, GUIDs, etc.)
 //!
 //! # Examples
 //!
@@ -60,7 +60,11 @@ pub mod security;
 pub mod signatures;
 /// Implementation of all metadata streams (tables, heaps, etc.)
 pub mod streams;
+/// Implementation of the .NET metadata tables
+pub mod tables;
 /// Commonly used metadata token type
 pub mod token;
 /// Implementation of the .NET type system
 pub mod typesystem;
+/// Metadata validation utilities
+pub mod validation;

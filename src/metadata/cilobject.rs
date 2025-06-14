@@ -24,12 +24,13 @@ use crate::{
         method::MethodMap,
         resources::Resources,
         root::Root,
-        streams::{
-            AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, Blob, Guid,
-            MemberRefMap, MethodSpecMap, ModuleRc, ModuleRefMap, Strings, TablesHeader,
-            UserStrings,
+        streams::{Blob, Guid, Strings, TablesHeader, UserStrings},
+        tables::{
+            AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, MemberRefMap,
+            MethodSpecMap, ModuleRc, ModuleRefMap,
         },
         typesystem::TypeRegistry,
+        validation::{Orchestrator, ValidationConfig},
     },
     Result,
 };
@@ -136,8 +137,51 @@ impl CilObject {
     ///
     /// Returns an error if the file cannot be read or parsed as a valid .NET assembly.
     pub fn from_file(file: &Path) -> Result<Self> {
+        Self::from_file_with_validation(file, ValidationConfig::minimal())
+    }
+
+    /// Creates a new `CilObject` by parsing a .NET assembly from a file with custom validation configuration.
+    ///
+    /// This method allows you to control which validation checks are performed during loading.
+    /// Use this when you need to balance performance vs. validation coverage.
+    ///
+    /// # Arguments
+    ///
+    /// * `file` - Path to the .NET assembly file
+    /// * `validation_config` - Configuration specifying which validation checks to perform
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::{CilObject, ValidationConfig};
+    /// use std::path::Path;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// // Load with minimal validation for maximum performance
+    /// let assembly = CilObject::from_file_with_validation(
+    ///     Path::new("tests/samples/WindowsBase.dll"),
+    ///     ValidationConfig::minimal()
+    /// )?;
+    ///
+    /// // Load with production validation for balance of safety and performance
+    /// let assembly = CilObject::from_file_with_validation(
+    ///     Path::new("tests/samples/WindowsBase.dll"),
+    ///     ValidationConfig::production()
+    /// )?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be read, parsed as a valid .NET assembly,
+    /// or if validation checks fail.
+    pub fn from_file_with_validation(
+        file: &Path,
+        validation_config: ValidationConfig,
+    ) -> Result<Self> {
         let input = Arc::new(File::from_file(file)?);
-        Self::load(input)
+        Self::load_with_validation(input, validation_config)
     }
 
     /// Creates a new `CilObject` by parsing a .NET assembly from a memory buffer.
@@ -177,19 +221,71 @@ impl CilObject {
     ///
     /// Returns an error if the memory buffer cannot be parsed as a valid .NET assembly.
     pub fn from_mem(data: Vec<u8>) -> Result<Self> {
+        Self::from_mem_with_validation(data, ValidationConfig::minimal())
+    }
+
+    /// Creates a new `CilObject` by parsing a .NET assembly from a memory buffer with custom validation configuration.
+    ///
+    /// This method allows you to control which validation checks are performed during loading.
+    /// Use this when you need to balance performance vs. validation coverage.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Raw bytes of the .NET assembly in PE format
+    /// * `validation_config` - Configuration specifying which validation checks to perform
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::{CilObject, ValidationConfig};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let file_data = std::fs::read("tests/samples/WindowsBase.dll")?;
+    ///
+    /// // Load with production validation settings
+    /// let assembly = CilObject::from_mem_with_validation(
+    ///     file_data.clone(),
+    ///     ValidationConfig::production()
+    /// )?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the memory buffer cannot be parsed as a valid .NET assembly
+    /// or if validation checks fail.
+    pub fn from_mem_with_validation(
+        data: Vec<u8>,
+        validation_config: ValidationConfig,
+    ) -> Result<Self> {
         let input = Arc::new(File::from_mem(data)?);
-        Self::load(input)
+        Self::load_with_validation(input, validation_config)
     }
 
     /// Creates a new instance of a `File` by parsing the provided memory and building internal
     /// data structures which are needed to analyse this file properly
     ///
     /// # Arguments
-    /// * 'data' - A vector of bytes which will be parsed and loaded
+    /// * 'file' - The file to parse
     fn load(file: Arc<File>) -> Result<Self> {
+        Self::load_with_validation(file, ValidationConfig::default())
+    }
+
+    /// Creates a new instance of a `File` by parsing the provided memory and building internal
+    /// data structures which are needed to analyse this file properly, with custom validation
+    ///
+    /// # Arguments
+    /// * `file` - The file to parse
+    /// * `validation_config` - Configuration specifying which validation checks to perform
+    fn load_with_validation(file: Arc<File>, validation_config: ValidationConfig) -> Result<Self> {
         match CilObject::try_new(file, |file| {
             match CilObjectData::from_file(file.clone(), file.data()) {
-                Ok(loaded) => Ok(loaded),
+                Ok(loaded) => {
+                    Orchestrator::validate_loaded_data(&loaded, validation_config)?;
+
+                    Ok(loaded)
+                }
                 Err(error) => Err(error),
             }
         }) {
@@ -281,7 +377,7 @@ impl CilObject {
     /// # Examples
     ///
     /// ```rust
-    /// use dotscope::{CilObject, metadata::streams::{TypeDefRaw, TableId}};
+    /// use dotscope::{CilObject, metadata::tables::{TypeDefRaw, TableId}};
     ///
     /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
     ///
@@ -817,6 +913,52 @@ impl CilObject {
     pub fn file(&self) -> &Arc<File> {
         self.borrow_file()
     }
+
+    /// Performs comprehensive validation on the loaded assembly.
+    ///
+    /// This method allows you to validate an already-loaded assembly with
+    /// specific validation settings. This is useful when you want to perform
+    /// additional validation after loading, or when you loaded with minimal
+    /// validation initially.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Validation configuration specifying which validations to perform
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if all validations pass, or an error describing
+    /// any validation failures found.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::{CilObject, ValidationConfig};
+    /// use std::path::Path;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// // Load assembly with minimal validation for speed
+    /// let assembly = CilObject::from_file_with_validation(
+    ///     Path::new("tests/samples/WindowsBase.dll"),
+    ///     ValidationConfig::minimal()
+    /// )?;
+    ///
+    /// // Later, perform comprehensive validation
+    /// assembly.validate(ValidationConfig::comprehensive())?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns validation errors found during analysis, such as:
+    /// - Circular type nesting
+    /// - Field layout overlaps
+    /// - Invalid generic constraints
+    /// - Type system inconsistencies
+    pub fn validate(&self, config: ValidationConfig) -> Result<()> {
+        self.with_data(|data| Orchestrator::validate_loaded_data(data, config))
+    }
 }
 
 #[cfg(test)]
@@ -828,6 +970,13 @@ mod tests {
     fn from_file() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         let asm = CilObject::from_file(&path).unwrap();
+        crate::test::verify_windowsbasedll(&asm);
+    }
+
+    #[test]
+    fn from_file_strict() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        let asm = CilObject::from_file_with_validation(&path, ValidationConfig::strict()).unwrap();
         crate::test::verify_windowsbasedll(&asm);
     }
 

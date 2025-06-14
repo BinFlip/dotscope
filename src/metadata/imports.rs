@@ -17,7 +17,7 @@ use dashmap::DashMap;
 use crate::{
     metadata::{
         method::MethodRc,
-        streams::{AssemblyRef, AssemblyRefRc, File, FileRc, Module, ModuleRef, ModuleRefRc},
+        tables::{AssemblyRef, AssemblyRefRc, File, FileRc, Module, ModuleRef, ModuleRefRc},
         token::Token,
         typesystem::{CilTypeRc, CilTypeReference},
     },
