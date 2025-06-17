@@ -1,24 +1,34 @@
 //! Custom attribute parsing and representation for .NET metadata.
 //!
-//! This module provides parsing of .NET custom attributes according to the ECMA-335 standard.
-//! Custom attributes encode metadata annotations in a compact binary format that includes
-//! constructor arguments and named field/property values.
+//! This module provides comprehensive parsing of .NET custom attributes according to the
+//! ECMA-335 standard. Custom attributes encode metadata annotations in a compact binary
+//! format that includes constructor arguments and named field/property values.
 //!
-//! # Custom Attribute Format
+//! # Architecture
 //!
-//! Custom attributes use a binary encoding with the following structure:
+//! Custom attributes are annotations attached to types, members, assemblies, and other
+//! metadata elements in .NET assemblies. They provide a mechanism for adding declarative
+//! information that can be retrieved at runtime via reflection.
+//!
+//! ## Binary Format Structure
+//!
+//! Custom attributes use a standardized binary encoding with the following structure:
 //! - **Prolog** - Standard 0x0001 marker indicating valid custom attribute blob
 //! - **Fixed Arguments** - Constructor parameter values in declaration order
+//! - **Named Arguments Count** - Number of named field/property assignments
 //! - **Named Arguments** - Field and property values with name/value pairs
 //!
-//! # Parsing Approach
+//! # Key Components
 //!
-//! The parsing implementation follows ECMA-335 II.23.3 specification strictly:
+//! - [`crate::metadata::customattributes::CustomAttributeValue`] - Complete parsed custom attribute
+//! - [`crate::metadata::customattributes::CustomAttributeArgument`] - Individual argument values
+//! - [`crate::metadata::customattributes::CustomAttributeNamedArgument`] - Named field/property assignments
+//! - [`crate::metadata::customattributes::parse_custom_attribute_data`] - Parse with constructor method info
+//! - [`crate::metadata::customattributes::parse_custom_attribute_blob`] - Parse raw blob data
 //!
-//! - **Type-Aware Parsing** - Uses resolved constructor method parameters for precise parsing
-//! - **Standard Compliance** - Only accepts well-formed custom attribute blobs with proper type information
+//! # Usage Examples
 //!
-//! # Examples
+//! ## Basic Custom Attribute Parsing
 //!
 //! ```rust,no_run
 //! use dotscope::metadata::customattributes::{parse_custom_attribute_data, CustomAttributeValue};
@@ -34,16 +44,63 @@
 //!     CustomAttributeValue { fixed_args, named_args } => {
 //!         println!("Found {} fixed arguments and {} named arguments",
 //!                  fixed_args.len(), named_args.len());
+//!         
+//!         // Process fixed arguments (constructor parameters)
+//!         for (i, arg) in fixed_args.iter().enumerate() {
+//!             println!("Fixed arg {}: {:?}", i, arg);
+//!         }
+//!         
+//!         // Process named arguments (field/property assignments)
+//!         for named_arg in &named_args {
+//!             println!("Named arg '{}': {:?}", named_arg.name, named_arg.value);
+//!         }
 //!     }
 //! }
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
-//! # Implementation Notes
+//! ## Working with Different Argument Types
 //!
-//! - All parsing follows ECMA-335 II.23.3 specification for custom attribute encoding
-//! - Constructor method information is required for accurate type-aware parsing
-//! - Named arguments support both field and property assignments according to the specification
+//! ```rust,no_run
+//! use dotscope::metadata::customattributes::{CustomAttributeArgument, parse_custom_attribute_data};
+//!
+//! # fn get_parsed_custom_attribute() -> dotscope::metadata::customattributes::CustomAttributeValue { todo!() }
+//! let custom_attr = get_parsed_custom_attribute();
+//!
+//! for arg in &custom_attr.fixed_args {
+//!     match arg {
+//!         CustomAttributeArgument::Bool(b) => println!("Boolean: {}", b),
+//!         CustomAttributeArgument::I4(i) => println!("Int32: {}", i),
+//!         CustomAttributeArgument::String(s) => println!("String: '{}'", s),
+//!         CustomAttributeArgument::Enum(type_name, value) => println!("Enum: {} = {:?}", type_name, value),
+//!         CustomAttributeArgument::Type(t) => println!("Type: {:?}", t),
+//!         _ => println!("Other argument type: {:?}", arg),
+//!     }
+//! }
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! # Parsing Implementation
+//!
+//! The parsing implementation follows ECMA-335 II.23.3 specification strictly:
+//!
+//! - **Type-Aware Parsing** - Uses resolved constructor method parameters for precise parsing
+//! - **Standard Compliance** - Only accepts well-formed custom attribute blobs with proper type information
+//! - **Graceful Degradation** - Falls back to heuristic parsing when type resolution fails
+//! - **Recursion Protection** - Limits parsing depth to prevent stack overflow attacks
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::method`] - Method resolution for constructor parameter types
+//! - [`crate::metadata::typesystem`] - Type system for argument type resolution
+//! - [`crate::metadata::tables`] - Metadata table access for type information
+//!
+//! # Standards Compliance
+//!
+//! - **ECMA-335**: Full compliance with custom attribute binary format (II.23.3)
+//! - **Type Safety**: Strong typing for parsed arguments based on constructor signatures
+//! - **Error Handling**: Comprehensive validation and error reporting for malformed data
 //!
 //! # References
 //!

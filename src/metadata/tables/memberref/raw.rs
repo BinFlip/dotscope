@@ -1,3 +1,17 @@
+//! Raw MemberRef table structure with unresolved coded indexes and blob references.
+//!
+//! This module provides the [`MemberRefRaw`] struct, which represents external member references
+//! as stored in the metadata stream. The structure contains unresolved coded indexes
+//! and blob heap references that require processing to establish member access information.
+//!
+//! # Purpose
+//! [`MemberRefRaw`] serves as the direct representation of MemberRef table entries from the
+//! binary metadata stream, before reference resolution and signature parsing. This raw format
+//! is processed during metadata loading to create [`MemberRef`] instances with resolved
+//! references and parsed signature information.
+//!
+//! [`MemberRef`]: crate::metadata::tables::MemberRef
+
 use std::sync::{atomic::AtomicBool, Arc, OnceLock};
 
 use crate::{
@@ -17,35 +31,93 @@ use crate::{
     Result,
 };
 
+/// Raw MemberRef table entry with unresolved indexes and blob references.
+///
+/// This structure represents an external member reference as stored directly in the metadata
+/// stream. All references are unresolved coded indexes or heap offsets that require processing
+/// during metadata loading to establish member access and signature information.
+///
+/// # Table Structure (ECMA-335 §22.25)
+/// | Column | Size | Description |
+/// |--------|------|-------------|
+/// | Class | MemberRefParent coded index | Declaring type or module reference |
+/// | Name | String index | Member name identifier |
+/// | Signature | Blob index | Member signature (method or field) |
+///
+/// # Coded Index Resolution
+/// The `class` field uses the MemberRefParent coded index encoding:
+/// - **Tag 0**: TypeDef table (current assembly types)
+/// - **Tag 1**: TypeRef table (external assembly types)
+/// - **Tag 2**: ModuleRef table (external modules)
+/// - **Tag 3**: MethodDef table (vararg method signatures)
+/// - **Tag 4**: TypeSpec table (generic type instantiations)
+///
+/// # Signature Parsing
+/// Member signatures in the blob heap are parsed according to their type:
+/// - **Field signatures**: Start with 0x06, contain type information
+/// - **Method signatures**: Start with calling convention, contain parameter and return types
+/// - **Generic signatures**: Include type parameter information
+/// - **Property signatures**: Start with 0x08, handled as field signatures
 #[derive(Clone, Debug)]
-/// The `MemberRef` table references members (fields or methods) of types defined in other modules. `TableId` = 0x0A
 pub struct MemberRefRaw {
-    /// `RowID`
+    /// Row identifier within the MemberRef table.
+    ///
+    /// Unique identifier for this member reference entry, used for internal
+    /// table management and token generation.
     pub rid: u32,
-    /// Token
+
+    /// Metadata token for this MemberRef entry (TableId 0x0A).
+    ///
+    /// Computed as `0x0A000000 | rid` to create the full token value
+    /// for referencing this member from other metadata structures.
     pub token: Token,
-    /// Offset
+
+    /// Byte offset of this entry within the raw table data.
+    ///
+    /// Used for efficient table navigation and binary metadata processing.
     pub offset: usize,
-    /// an index into the `MethodDef`, `ModuleRef`, `TypeDef`, `TypeRef`, or `TypeSpec` tables; more precisely, a `MemberRefParent` (§II.24.2.6) coded index
+
+    /// MemberRefParent coded index for the declaring type or module.
+    ///
+    /// Points to TypeDef, TypeRef, ModuleRef, MethodDef, or TypeSpec tables
+    /// to specify the context where this member is declared. Requires
+    /// coded index resolution during processing to determine the actual parent.
     pub class: CodedIndex,
-    /// an index into the String heap
+
+    /// String heap index for the member name.
+    ///
+    /// References the member identifier name in the string heap. For constructors,
+    /// this is typically ".ctor" (instance) or ".cctor" (static).
     pub name: u32,
-    /// an index into the Blob heap
+
+    /// Blob heap index for the member signature.
+    ///
+    /// References signature data in the blob heap that describes the member type,
+    /// calling convention (for methods), parameters, and return type. Must be
+    /// parsed according to signature format specifications.
     pub signature: u32,
 }
 
 impl MemberRefRaw {
-    /// Create Param structures from a method signature
+    /// Creates parameter metadata structures from a parsed method signature.
     ///
-    /// This creates parameter objects similar to how `MethodDef` entries work,
-    /// enabling unified parameter handling across `MethodDef` and `MemberRef` constructors.
+    /// This method generates parameter objects similar to those created for `MethodDef`
+    /// entries, enabling unified parameter handling across both definition and reference
+    /// contexts. The created parameters include return type information and all method
+    /// parameters with proper sequence numbering.
+    ///
+    /// # Parameter Structure
+    /// The created parameter collection includes:
+    /// - **Return parameter**: Sequence 0, contains return type information
+    /// - **Method parameters**: Sequence 1-N, contain parameter type information
+    /// - **Placeholder metadata**: Names are None as MemberRef parameters lack names
     ///
     /// # Arguments
-    /// * `method_sig` - The parsed method signature
-    /// * `strings` - The strings heap for parameter names (will be None for `MemberRef` params)
+    /// * `method_sig` - The parsed method signature containing parameter and return type information
+    /// * `_strings` - The strings heap (unused as MemberRef parameters don't have names)
     ///
-    /// # Errors
-    /// Returns an error if parameter creation fails
+    /// # Returns
+    /// Thread-safe collection of parameter metadata structures with type information applied.
     fn create_params_from_signature(
         method_sig: &SignatureMethod,
         _strings: &Strings,
@@ -92,28 +164,45 @@ impl MemberRefRaw {
         params
     }
 
-    /// Apply a `MemberRefRaw` - no-op for `MemberRef` as member references don't modify other table entries
+    /// Applies a MemberRefRaw entry to update related metadata structures.
     ///
-    /// `MemberRef` entries represent references to members (fields, methods) defined in other types
-    /// and don't require cross-table application during loading.
+    /// MemberRef entries represent references to external members and don't require
+    /// cross-table modifications during the dual variant resolution phase. Unlike
+    /// definition tables (TypeDef, MethodDef, etc.), reference tables are primarily
+    /// descriptive and don't modify other metadata structures.
     ///
-    /// # Errors
-    /// This method currently returns Ok(()) as `MemberRef` entries don't require cross-table updates.
+    /// # Design Rationale
+    /// Member references are passive metadata that describe external dependencies
+    /// rather than active definitions that need to update type systems or establish
+    /// relationships with other metadata tables.
+    ///
+    /// # Returns
+    /// * `Ok(())` - Always succeeds as MemberRef entries don't modify other tables
+    /// * `Err(_)` - Reserved for future error conditions (currently infallible)
     pub fn apply(&self) -> Result<()> {
         Ok(())
     }
 
-    /// Convert an `MemberRefRaw`, into a `MemberRef` which has indexes resolved and owns the referenced data
+    /// Converts a MemberRefRaw entry into a MemberRef with resolved references and parsed signatures.
     ///
-    /// ## Arguments
-    /// * 'strings'     - The #String heap
-    /// * 'blob'        - The #Blob heap
-    /// * 'types'       - All parsed `CilType` entries
-    /// * `get_ref`     - Closure for resolving coded indexes to type references
+    /// This method performs complete member reference resolution, including parent type resolution,
+    /// signature parsing, and parameter metadata creation. The resulting owned structure provides
+    /// type-safe access to all member information for invocation and access operations.
     ///
-    /// # Errors
-    /// Returns an error if the signature data is invalid, if the type cannot be resolved,
-    /// or if the signature cannot be parsed correctly.
+    /// # Arguments
+    /// * `strings` - The string heap for resolving member names
+    /// * `blob` - The blob heap for signature data retrieval
+    /// * `types` - Type registry for signature parsing and type resolution
+    /// * `get_ref` - Closure for resolving coded indexes to type references
+    ///
+    /// # Returns
+    /// * `Ok(MemberRefRc)` - Successfully resolved member reference with complete metadata
+    /// * `Err(_)` - If signature parsing, parent resolution, or name retrieval fails
+    ///
+    /// # Signature Format Detection
+    /// Signature type is determined by the first byte of blob data:
+    /// - `0x06`: Field signature with type information
+    /// - Other values: Method signature with calling convention and parameters
     pub fn to_owned<F>(
         &self,
         strings: &Strings,

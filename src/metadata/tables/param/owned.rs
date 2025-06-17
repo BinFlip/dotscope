@@ -1,3 +1,8 @@
+//! # Param Owned Implementation
+//!
+//! This module provides the owned variant of Param table entries with resolved
+//! references and owned data structures for efficient runtime access.
+
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, OnceLock,
@@ -14,47 +19,136 @@ use crate::{
     Result,
 };
 
-/// The `Param` table defines parameters for methods in the `MethodDef` table. Similar to `ParamRaw` but
-/// with resolved indexes and owned data.
+/// Owned representation of a Param table entry with resolved references.
+///
+/// This structure represents the processed entry from the Param metadata table,
+/// which contains information about method parameters including their names, attributes,
+/// sequence numbers, and type information. Unlike [`ParamRaw`](crate::metadata::tables::ParamRaw), this version contains
+/// resolved references to actual parameter data for efficient runtime access.
+///
+/// ## Purpose
+///
+/// The Param table entry provides comprehensive parameter information:
+/// - Parameter names for debugging and reflection
+/// - Sequence numbers for parameter ordering
+/// - Attributes for direction, defaults, and marshalling
+/// - Type information for signature construction
+/// - Default values and marshalling information when applicable
+///
+/// ## Parameter Types
+///
+/// Param entries can represent different types of parameters:
+/// - **Input Parameters**: Standard parameters passed to methods
+/// - **Output Parameters**: Parameters used to return data from methods
+/// - **Optional Parameters**: Parameters that can be omitted in method calls
+/// - **Return Type**: Special parameter with sequence 0 representing return type
 pub struct Param {
-    /// `RowID`
+    /// Row identifier within the Param table.
+    ///
+    /// Unique identifier for this Param entry within the table.
+    /// Combined with the table ID, it forms the complete metadata token.
     pub rid: u32,
-    /// Token
+
+    /// Metadata token for this Param entry.
+    ///
+    /// Token in the format 0x08??????, where the high byte 0x08 identifies
+    /// the Param table and the low 3 bytes contain the row ID.
     pub token: Token,
-    /// Offset
+
+    /// Byte offset of this entry in the original metadata stream.
+    ///
+    /// Used for debugging and low-level metadata inspection.
+    /// Points to the start of this entry's data in the file.
     pub offset: usize,
-    /// bitmask of `ParamAttributes`, §II.23.1.13
+
+    /// Parameter attributes bitmask according to ECMA-335 §II.23.1.13.
+    ///
+    /// Defines parameter characteristics including direction (in/out), optional status,
+    /// default values, and marshalling information. See [`ParamAttributes`](crate::metadata::tables::ParamAttributes)
+    /// for available flags.
     pub flags: u32,
-    /// The sequence number (0 for return value)
+
+    /// Sequence number defining parameter order.
+    ///
+    /// - 0: Return type parameter
+    /// - 1+: Method parameters in declaration order
+    ///   Used for proper parameter binding during method invocation.
     pub sequence: u32,
-    /// The parameter name
+
+    /// Parameter name resolved from the string heap.
+    ///
+    /// Human-readable parameter name for debugging and reflection.
+    /// May be None for compiler-generated or unnamed parameters.
     pub name: Option<String>,
-    /// `flags.HAS_DEFAULT` -> This is the default value of this parameter
+
+    /// Default value for this parameter when HAS_DEFAULT flag is set.
+    ///
+    /// Thread-safe lazy initialization of default values from the Constant table.
+    /// Only populated when [`ParamAttributes::HAS_DEFAULT`](crate::metadata::tables::ParamAttributes::HAS_DEFAULT) is set.
     pub default: OnceLock<CilPrimitive>,
-    /// `flags.HAS_MARSHAL` -> The marshal instructions for `PInvoke`
+
+    /// Marshalling information for P/Invoke when HAS_FIELD_MARSHAL flag is set.
+    ///
+    /// Thread-safe lazy initialization of marshalling information from the FieldMarshal table.
+    /// Only populated when [`ParamAttributes::HAS_FIELD_MARSHAL`](crate::metadata::tables::ParamAttributes::HAS_FIELD_MARSHAL) is set.
     pub marshal: OnceLock<MarshallingInfo>,
-    /// Custom modifiers that are applied to this `Param`
+
+    /// Custom modifiers applied to this parameter type.
+    ///
+    /// Thread-safe collection of type modifiers that affect parameter behavior,
+    /// such as const, volatile, or custom modifiers for specialized scenarios.
     pub modifiers: CilTypeRefList,
-    /// The underlaying type of this `Param`
+
+    /// Resolved base type of this parameter.
+    ///
+    /// Thread-safe lazy initialization of the parameter's type information.
+    /// Populated during signature application from method signatures.
     pub base: OnceLock<CilTypeRef>,
-    /// Is the parameter passed by reference
+
+    /// Whether the parameter is passed by reference.
+    ///
+    /// Atomic boolean indicating if the parameter is passed by reference
+    /// rather than by value. Updated during signature application.
     pub is_by_ref: AtomicBool,
-    /// Custom attributes applied to this parameter
+
+    /// Custom attributes attached to this parameter.
+    ///
+    /// Thread-safe collection of custom attributes that provide additional
+    /// metadata for this parameter. Populated during custom attribute processing.
     pub custom_attributes: CustomAttributeValueList,
 }
 
 impl Param {
-    /// Apply a signature to this parameter, will cause update with type information
+    /// Applies a method signature to this parameter, updating type information.
     ///
-    /// # Errors
+    /// This method integrates signature information with the parameter definition,
+    /// resolving type references and establishing the complete parameter specification.
+    /// It handles type resolution, modifier application, and compatibility validation
+    /// for shared parameters between methods.
     ///
-    /// Returns an error if type resolution fails, if modifier types cannot be resolved,
-    /// if the base type has already been set for this parameter, or if sequence validation fails.
+    /// ## Shared Parameters
+    ///
+    /// Multiple methods can share the same parameter when they have identical signatures.
+    /// This method handles this scenario by checking type compatibility when a parameter
+    /// already has a resolved base type.
     ///
     /// ## Arguments
-    /// * 'signature'   - The signature to apply to this parameter
-    /// * 'types'       - The type registry for lookup and generation of types
-    /// * `method_param_count` - Total number of parameters in the method signature (for validation)
+    ///
+    /// * `signature` - The signature parameter information to apply
+    /// * `types` - The type registry for type lookup and resolution
+    /// * `method_param_count` - Optional total parameter count for validation
+    ///
+    /// ## Returns
+    ///
+    /// Returns `Ok(())` if the signature is successfully applied.
+    ///
+    /// ## Errors
+    ///
+    /// - Parameter sequence exceeds the method parameter count
+    /// - Type resolution fails for modifiers or base type
+    /// - The base type has already been set with an incompatible type
+    /// - Type compatibility validation fails for shared parameters
+    /// - Type references become invalid during resolution
     pub fn apply_signature(
         &self,
         signature: &SignatureParameter,

@@ -1,25 +1,51 @@
 //! CIL instruction representation, operand types, and decoding metadata.
 //!
-//! This module defines the core types for representing CIL instructions, operands, immediates,
-//! categories, stack behavior, and flow control. It is used throughout the disassembler and analysis
-//! engine for decoding, analyzing, and emitting CIL bytecode.
+//! This module defines the comprehensive type system for representing decoded CIL instructions
+//! and their associated metadata. It provides strongly-typed representations for operands,
+//! stack effects, control flow behavior, and instruction categories, enabling sophisticated
+//! static analysis and program understanding capabilities.
 //!
-//! # Key Types
-//! - [`Instruction`] - Represents a decoded CIL instruction
-//! - [`OperandType`] - Enum for all possible operand types
-//! - [`Immediate`] - Enum for all possible immediate values
-//! - [`Operand`] - Enum for all possible operands
-//! - [`InstructionCategory`] - Enum for instruction categories
-//! - [`FlowType`] - Enum for control flow types
-//! - [`StackBehavior`] - Stack effect metadata for instructions
+//! # Architecture
 //!
-//! # Example
+//! The module is organized around the central [`crate::disassembler::instruction::Instruction`] struct,
+//! which aggregates all information about a decoded instruction. Supporting enums provide
+//! type-safe representations for operands, flow control, and instruction classification.
+//! The design emphasizes immutability and comprehensive metadata preservation.
+//!
+//! # Key Components
+//!
+//! - [`crate::disassembler::instruction::Instruction`] - Complete decoded instruction representation
+//! - [`crate::disassembler::instruction::Operand`] - Type-safe operand representation
+//! - [`crate::disassembler::instruction::Immediate`] - Immediate value types with conversions
+//! - [`crate::disassembler::instruction::FlowType`] - Control flow behavior classification
+//! - [`crate::disassembler::instruction::InstructionCategory`] - Functional instruction grouping
+//! - [`crate::disassembler::instruction::StackBehavior`] - Stack effect analysis metadata
+//!
+//! # Usage Examples
+//!
 //! ```rust,no_run
-//! use dotscope::disassembler::{Instruction, OperandType, Immediate, Operand};
+//! use dotscope::disassembler::{Instruction, OperandType, Immediate, Operand, FlowType};
+//!
+//! // Working with operand types and immediates
 //! let op_type = OperandType::Int32;
 //! let imm = Immediate::Int32(42);
 //! let operand = Operand::Immediate(imm);
+//!
+//! // Convert immediate to u64 for analysis
+//! let value: u64 = imm.into();
+//! assert_eq!(value, 42);
+//!
+//! // Check control flow properties
+//! let flow = FlowType::ConditionalBranch;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::disassembler::decoder`] - Consumes these types during instruction decoding
+//! - [`crate::disassembler::block`] - Uses instructions to build basic block sequences
+//! - [`crate::metadata::token`] - References metadata tokens in operands
 
 use crate::metadata::token::Token;
 use std::fmt::{self, UpperHex};
@@ -38,6 +64,7 @@ use std::fmt::{self, UpperHex};
 /// let local_operand = OperandType::UInt8;  // ldloc.s takes a byte
 /// let branch_operand = OperandType::Int32; // br takes a 4-byte offset
 /// let token_operand = OperandType::Token;  // ldtoken takes a metadata token
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperandType {
@@ -88,6 +115,7 @@ pub enum OperandType {
 /// // Convert to u64 for analysis
 /// let as_u64: u64 = byte_val.into();
 /// assert_eq!(as_u64, 42);
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Immediate {
@@ -168,6 +196,7 @@ impl From<Immediate> for u64 {
 /// let immediate = Operand::Immediate(Immediate::Int32(42));
 /// let branch_target = Operand::Target(0x1000);
 /// let metadata_ref = Operand::Token(Token::new(0x06000001));
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone)]
 pub enum Operand {
@@ -202,6 +231,7 @@ pub enum Operand {
 /// let branch = FlowType::ConditionalBranch;   // brtrue, brfalse, etc.
 /// let call = FlowType::Call;                  // call, callvirt
 /// let ret = FlowType::Return;                 // ret instruction
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlowType {
@@ -248,6 +278,7 @@ pub enum FlowType {
 ///     pushes: 1,
 ///     net_effect: 1,
 /// };
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StackBehavior {
@@ -273,6 +304,7 @@ pub struct StackBehavior {
 /// let arithmetic = InstructionCategory::Arithmetic;     // add, sub, mul, div
 /// let control_flow = InstructionCategory::ControlFlow;  // br, switch, ret
 /// let load_store = InstructionCategory::LoadStore;      // ldloc, stfld
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstructionCategory {
@@ -367,7 +399,8 @@ impl Instruction {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// # use dotscope::disassembler::{Instruction, FlowType, InstructionCategory, StackBehavior, Operand};
+    /// use dotscope::disassembler::{Instruction, FlowType, InstructionCategory, StackBehavior, Operand};
+    ///
     /// let mut instruction = Instruction {
     ///     rva: 0x1000,
     ///     offset: 0,
@@ -383,6 +416,7 @@ impl Instruction {
     /// };
     ///
     /// assert!(instruction.is_branch());
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
     pub fn is_branch(&self) -> bool {
@@ -401,7 +435,8 @@ impl Instruction {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// # use dotscope::disassembler::{Instruction, FlowType, InstructionCategory, StackBehavior, Operand};
+    /// use dotscope::disassembler::{Instruction, FlowType, InstructionCategory, StackBehavior, Operand};
+    ///
     /// let ret_instruction = Instruction {
     ///     rva: 0x1000,
     ///     offset: 0,
@@ -417,6 +452,7 @@ impl Instruction {
     /// };
     ///
     /// assert!(ret_instruction.is_terminal());
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
     pub fn is_terminal(&self) -> bool {
@@ -441,7 +477,8 @@ impl Instruction {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// # use dotscope::disassembler::{Instruction, FlowType, InstructionCategory, StackBehavior, Operand};
+    /// use dotscope::disassembler::{Instruction, FlowType, InstructionCategory, StackBehavior, Operand};
+    ///
     /// let branch_instruction = Instruction {
     ///     rva: 0x1000,
     ///     offset: 0,
@@ -458,6 +495,7 @@ impl Instruction {
     ///
     /// let targets = branch_instruction.get_targets();
     /// assert_eq!(targets, vec![0x2000]);
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
     pub fn get_targets(&self) -> Vec<u64> {

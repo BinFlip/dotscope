@@ -6,11 +6,11 @@
 //!
 //! # Key Components
 //!
-//! - [`CilType`]: Core type representation combining TypeDef, TypeRef, and TypeSpec
-//! - [`TypeRegistry`]: Central registry for all types in an assembly  
-//! - [`TypeResolver`]: Resolves type references and builds complete type information
-//! - [`TypeBuilder`]: Builder pattern for constructing complex types
-//! - [`CilPrimitive`]: Built-in primitive types (int32, string, object, etc.)
+//! - [`crate::metadata::typesystem::CilType`]: Core type representation combining TypeDef, TypeRef, and TypeSpec
+//! - [`crate::metadata::typesystem::TypeRegistry`]: Central registry for all types in an assembly  
+//! - [`crate::metadata::typesystem::TypeResolver`]: Resolves type references and builds complete type information
+//! - [`crate::metadata::typesystem::TypeBuilder`]: Builder pattern for constructing complex types
+//! - [`crate::metadata::typesystem::CilPrimitive`]: Built-in primitive types (int32, string, object, etc.)
 //!
 //! # Type System Features
 //!
@@ -64,58 +64,84 @@ use crate::metadata::{
     token::Token,
 };
 
-/// A vector that holds a list of `CilType`
+/// A vector that holds a list of `CilType` references.
+///
+/// This is a thread-safe, efficient collection optimized for append-only operations
+/// during metadata loading and concurrent read access during analysis.
 pub type CilTypeList = Arc<boxcar::Vec<CilTypeRc>>;
-/// Reference to a `CilType`
+
+/// Reference-counted pointer to a `CilType`.
+///
+/// Enables efficient sharing of type information across the metadata system
+/// while maintaining thread safety for concurrent access scenarios.
 pub type CilTypeRc = Arc<CilType>;
 
-/// Represents a 'Type', close to `TypeDef` and `TypeRef` but as a combined item, containing
-/// more information. The `Token` will match either the `TypeDef` or `TypeRef` or `TypeSpec` or
-/// `TypeBase` (artificial, for mapping to specific primitive types supported in the runtime).
+/// Represents a unified type definition combining information from TypeDef, TypeRef, and TypeSpec tables.
+///
+/// `CilType` provides a complete representation of a .NET type, merging metadata from multiple
+/// tables into a single coherent structure. This eliminates the need to navigate between
+/// different metadata tables during type analysis and provides a more convenient API.
+///
+/// The `token` field indicates the source table:
+/// - `TypeDef` tokens for types defined in the current assembly
+/// - `TypeRef` tokens for types referenced from other assemblies  
+/// - `TypeSpec` tokens for generic instantiations and complex type signatures
+/// - Artificial tokens for runtime primitive types
+///
+/// # Thread Safety
+///
+/// `CilType` is designed for concurrent access with interior mutability using `OnceLock`
+/// for lazily computed fields. Most fields are immutable after construction, while
+/// computed properties like `flavor` and `base` are thread-safely cached.
+///
+/// # Examples
+///
+/// Basic type information access is available through the type registry.
+/// Complex iteration patterns may require understanding the current iterator implementation.
 pub struct CilType {
-    /// Token
+    /// Metadata token identifying this type (TypeDef, TypeRef, TypeSpec, or artificial)
     pub token: Token,
-    /// Computed type flavor - lazily determined from context
+    /// Computed type flavor - lazily determined from context and inheritance chain
     flavor: OnceLock<CilFlavor>,
-    /// `TypeNamespace` (can be empty, e.g. for artificial `<module>` (globals) )
+    /// Type namespace (empty for global types and some special cases like `<Module>`)
     pub namespace: String,
-    /// `TypeName`
+    /// Type name (class name, interface name, etc.)
     pub name: String,
-    /// Type is imported (e.g. `AssemblyRef`, `File`, `ModuleRef`, ...)
+    /// External type reference for imported types (from AssemblyRef, File, ModuleRef)
     pub external: Option<CilTypeReference>,
-    /// This types base aka 'extends' (from `TypeDef`, `TypeRef` or `TypeSpec`)
+    /// Base type reference - the type this type inherits from (for classes) or extends (for interfaces)
     base: OnceLock<CilTypeRef>,
-    /// Flags (a 4-byte bitmask of type `TypeAttributes`, §II.23.1.15)
+    /// Type attributes flags - 4-byte bitmask from TypeAttributes (ECMA-335 §II.23.1.15)
     pub flags: u32,
-    /// All fields this type has
+    /// All fields defined in this type
     pub fields: FieldList,
-    /// All methods this type has
+    /// All methods defined in this type (constructors, instance methods, static methods)
     pub methods: MethodRefList,
-    /// All properties this type has
+    /// All properties defined in this type
     pub properties: PropertyList,
-    /// All events this type has
+    /// All events defined in this type
     pub events: EventList,
-    /// All interfaces this class implements
+    /// All interfaces this type implements (from InterfaceImpl table)
     pub interfaces: CilTypeRefList,
-    /// All method overwrites this type implements (e.g. Interfaces)
+    /// All method overwrites this type implements (explicit interface implementations)
     pub overwrites: Arc<boxcar::Vec<CilTypeReference>>,
-    /// All types that are 'contained' in this type
+    /// Nested types contained within this type (inner classes, delegates, etc.)
     pub nested_types: CilTypeRefList,
-    /// All generic parameters this type has (type information, not the instantiated version)
+    /// Generic parameters for this type definition (e.g., T, U in Class<T, U>)
     pub generic_params: GenericParamList,
-    /// All generic arguments this type has (instantiated version)
+    /// Generic arguments for instantiated generic types (actual types substituted for parameters)
     pub generic_args: MethodSpecList,
-    /// All custom attributes this type has
+    /// Custom attributes applied to this type (annotations, decorators)
     pub custom_attributes: CustomAttributeValueList,
-    /// a 2-byte value, specifying the alignment of fields
+    /// Field layout packing size - alignment of fields in memory (from ClassLayout table)
     pub packing_size: OnceLock<u16>,
-    /// a 4-byte value, specifying the size of the class
+    /// Total size of the class in bytes (from ClassLayout table)
     pub class_size: OnceLock<u32>,
-    /// `TypeSpec` specifiers for the type
+    /// TypeSpec specifiers providing additional type information for complex types
     pub spec: OnceLock<CilFlavor>,
-    /// Type modifiers from `TypeSpec` for this type
+    /// Type modifiers from TypeSpec (required/optional modifiers, pinned types, etc.)
     pub modifiers: Arc<boxcar::Vec<CilModifier>>,
-    /// The .NET CIL Security Information (if present)
+    /// Security declarations and permissions associated with this type
     pub security: OnceLock<Security>,
     // vtable
     // security
@@ -128,18 +154,49 @@ pub struct CilType {
 }
 
 impl CilType {
-    /// Create a new instance of a `CilType`
+    /// Create a new instance of a `CilType`.
     ///
-    /// ## Arguments
-    /// * `token` - The token for this type
-    /// * `namespace` - The namespace of the type
+    /// Creates a new type representation with the provided metadata. Some fields like
+    /// `properties`, `events`, `interfaces`, etc. are initialized as empty collections
+    /// and can be populated later during metadata loading.
+    ///
+    /// # Arguments
+    /// * `token` - The metadata token for this type
+    /// * `namespace` - The namespace of the type (can be empty for global types)
     /// * `name` - The name of the type  
     /// * `external` - External type reference if this is an imported type
-    /// * `base` - Base type reference if this type inherits from another
-    /// * `flags` - Type attributes flags
+    /// * `base` - Base type reference if this type inherits from another (optional)
+    /// * `flags` - Type attributes flags from TypeAttributes
     /// * `fields` - Fields belonging to this type
     /// * `methods` - Methods belonging to this type
     /// * `flavor` - Optional explicit flavor. If None, flavor will be computed lazily
+    ///
+    /// # Thread Safety
+    ///
+    /// The returned `CilType` is safe for concurrent access. Lazily computed fields
+    /// like `flavor` and `base` use `OnceLock` for thread-safe initialization.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::{
+    ///     typesystem::{CilType, CilFlavor},
+    ///     token::Token,
+    /// };
+    /// use std::sync::Arc;
+    ///
+    /// let cil_type = CilType::new(
+    ///     Token::new(0x02000001), // TypeDef token
+    ///     "MyNamespace".to_string(),
+    ///     "MyClass".to_string(),
+    ///     None, // Not an external type
+    ///     None, // No base type specified yet
+    ///     0x00100001, // TypeAttributes flags
+    ///     Arc::new(boxcar::Vec::new()), // Empty fields list
+    ///     Arc::new(boxcar::Vec::new()), // Empty methods list
+    ///     Some(CilFlavor::Class), // Explicit class flavor
+    /// );
+    /// ```
     pub fn new(
         token: Token,
         namespace: String,
@@ -187,21 +244,68 @@ impl CilType {
         }
     }
 
-    /// Set the base type of this type (for interface inheritance)
+    /// Set the base type of this type for inheritance relationships.
     ///
-    /// # Errors
+    /// This method allows setting the base type after the `CilType` has been created,
+    /// which is useful during metadata loading when type references may not be fully
+    /// resolved at construction time.
     ///
-    /// Returns `Err(base_type)` if a base type was already set for this type.
-    /// The error contains the `base_type` that was attempted to be set.
+    /// # Arguments
+    /// * `base_type` - The base type this type inherits from
     ///
     /// # Returns
+    /// * `Ok(())` if the base type was set successfully
+    /// * `Err(base_type)` if a base type was already set for this type
     ///
-    /// `Ok(())` if the base type was set successfully.
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently. Only the first
+    /// call will succeed in setting the base type.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::typesystem::{CilType, CilTypeRef};
+    /// use std::sync::{Arc, Weak};
+    ///
+    /// # fn example(cil_type: &CilType, base_type: Arc<CilType>) {
+    /// let base_ref = CilTypeRef::new(&base_type);
+    /// match cil_type.set_base(base_ref) {
+    ///     Ok(()) => println!("Base type set successfully"),
+    ///     Err(_) => println!("Base type was already set"),
+    /// }
+    /// # }
+    /// ```
     pub fn set_base(&self, base_type: CilTypeRef) -> Result<(), CilTypeRef> {
         self.base.set(base_type)
     }
 
-    /// Access the base type of this type, if it exists
+    /// Access the base type of this type, if it exists.
+    ///
+    /// Returns the base type that this type inherits from, if one has been set.
+    /// For classes, this is typically another class or `System.Object`. For value types,
+    /// this is usually `System.ValueType` or `System.Enum`.
+    ///
+    /// # Returns
+    /// * `Some(CilTypeRc)` - The base type if one is set and the reference is still valid
+    /// * `None` - If no base type is set or the reference has been dropped
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use dotscope::metadata::typesystem::CilType;
+    /// # fn example(cil_type: &CilType) {
+    /// if let Some(base) = cil_type.base() {
+    ///     println!("Base type: {}.{}", base.namespace, base.name);
+    /// } else {
+    ///     println!("No base type (likely System.Object or interface)");
+    /// }
+    /// # }
+    /// ```
     pub fn base(&self) -> Option<CilTypeRc> {
         if let Some(base) = self.base.get() {
             base.upgrade()
@@ -210,7 +314,34 @@ impl CilType {
         }
     }
 
-    /// Get the computed type flavor - determined lazily from context
+    /// Get the computed type flavor - determined lazily from context.
+    ///
+    /// The flavor represents the fundamental nature of the type (class, interface,
+    /// value type, etc.) and is computed from type attributes, inheritance relationships,
+    /// and naming patterns. The result is cached for performance.
+    ///
+    /// # Returns
+    /// A reference to the computed `CilFlavor` for this type
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe. The flavor is computed once and cached using
+    /// `OnceLock` for subsequent calls.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::typesystem::{CilType, CilFlavor};
+    ///
+    /// # fn example(cil_type: &CilType) {
+    /// match cil_type.flavor() {
+    ///     CilFlavor::Class => println!("Reference type class"),
+    ///     CilFlavor::ValueType => println!("Value type (struct/enum)"),
+    ///     CilFlavor::Interface => println!("Interface definition"),
+    ///     _ => println!("Other type flavor"),
+    /// }
+    /// # }
+    /// ```
     pub fn flavor(&self) -> &CilFlavor {
         self.flavor.get_or_init(|| self.compute_flavor())
     }
@@ -292,7 +423,13 @@ impl CilType {
         CilFlavor::Class
     }
 
-    /// Returns the full name (Namespace.Name) of the entity
+    /// Returns the full name (Namespace.Name) of the type.
+    ///
+    /// Combines the namespace and name to create a fully qualified type name,
+    /// which is useful for type lookup and identification.
+    ///
+    /// # Returns
+    /// A string containing the full name in the format "Namespace.Name"
     pub fn fullname(&self) -> String {
         format!("{0}.{1}", self.namespace, self.name)
     }

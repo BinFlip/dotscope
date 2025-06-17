@@ -1,3 +1,29 @@
+//! Owned Constant table representation.
+//!
+//! This module provides the [`crate::metadata::tables::constant::owned::Constant`] struct
+//! which contains fully resolved compile-time constant values with owned data and resolved
+//! table references. This is the primary data structure for representing constant values
+//! in a usable form after the dual variant resolution phase.
+//!
+//! # Architecture
+//!
+//! The owned representation stores fully resolved data from the Constant metadata table,
+//! including resolved references to parent metadata elements. This eliminates the need for table
+//! lookups during runtime access, providing immediate access to constant value metadata.
+//!
+//! # Key Components
+//!
+//! - [`crate::metadata::tables::constant::owned::Constant`] - Main owned constant structure
+//! - [`crate::metadata::typesystem::CilTypeReference`] - Referenced parent element
+//! - [`crate::metadata::typesystem::CilPrimitive`] - Constant value data
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::tables::constant::raw`] - Raw table representation
+//! - [`crate::metadata::typesystem`] - Type system components
+//! - [`crate::metadata::token`] - Token-based metadata references
+
 use std::sync::Arc;
 
 use crate::{
@@ -8,27 +34,77 @@ use crate::{
     Result,
 };
 
-/// The Constant table stores constant values for fields, parameters, and properties. Similar to `ConstantRaw` but
-/// with resolved indexes and owned data
+/// Represents a compile-time constant value from the Constant metadata table
+///
+/// This structure contains the complete constant information from the Constant metadata
+/// table (0x0B), with all table references resolved to owned type instances. Unlike
+/// [`crate::metadata::tables::constant::raw::ConstantRaw`], this provides immediate
+/// access to resolved constant data without requiring table lookups.
+///
+/// # Constant Value Storage
+///
+/// Constants contain compile-time literal values that are embedded in the metadata:
+/// - **Element type**: The primitive type of the constant (ELEMENT_TYPE_*)
+/// - **Parent reference**: The field, property, or parameter that owns this constant
+/// - **Binary value**: The actual constant data stored as a primitive value
+/// - **Type safety**: Ensures constant types match their target containers
+///
+/// Constants are primarily used for:
+/// - **const fields**: Compile-time field initializers in C# (`const int MaxValue = 100`)
+/// - **Default parameters**: Optional parameter values in method signatures
+/// - **Property defaults**: Compile-time constant property values
+/// - **Enum backing values**: Underlying primitive values for enum members
+/// - **Attribute parameters**: Constant arguments for custom attribute constructors
 pub struct Constant {
-    /// `RowID`
+    /// Row identifier in the Constant metadata table
+    ///
+    /// This is the 1-based row index where this constant was defined in the metadata table.
     pub rid: u32,
-    /// Token
+
+    /// Metadata token uniquely identifying this constant
+    ///
+    /// The token provides a unique identifier for this constant entry within the assembly,
+    /// constructed from the table ID and row number.
     pub token: Token,
-    /// Offset
+
+    /// File offset where this constant's data begins
+    ///
+    /// The byte offset in the metadata file where this constant's binary representation starts.
     pub offset: usize,
-    /// a 1-byte constant, followed by a 1-byte padding zero); see §II.23.1.16. The encoding of Type for the
-    /// nullref value for `FieldInit` in ilasm (§II.16.2) is `ELEMENT_TYPE_CLASS` with a Value of a 4-byte zero.
-    /// Unlike uses of `ELEMENT_TYPE_CLASS` in signatures, this one is not followed by a type toke
+
+    /// Element type of the constant value
+    ///
+    /// Specifies the primitive type of the constant using ELEMENT_TYPE_* enumeration values
+    /// (see ECMA-335 II.23.1.16). This determines how the constant value should be interpreted.
+    /// For null reference constants, this is ELEMENT_TYPE_CLASS with a 4-byte zero value.
     pub c_type: u8,
-    /// an index into the `Param`, `Field`, or `Property` table; more precisely, a `HasConstant` (§II.24.2.6) coded index
+
+    /// Resolved reference to the parent metadata element
+    ///
+    /// Points to the field, property, or parameter that owns this constant. This is resolved
+    /// from the original HasConstant coded index to provide direct access to the parent entity.
     pub parent: CilTypeReference,
-    /// The const value
+
+    /// The constant value data
+    ///
+    /// Contains the actual constant value as a strongly-typed primitive. The value is wrapped
+    /// in Arc for efficient sharing and is guaranteed to be type-compatible with the parent entity.
     pub value: Arc<CilPrimitive>,
 }
 
 impl Constant {
-    /// Apply a `Constant` to set the default value on the parent entity (field, parameter, or property)
+    /// Apply this constant value to its parent metadata element
+    ///
+    /// Associates this constant with its parent field, property, or parameter by setting
+    /// the default value. This method performs type compatibility validation to ensure
+    /// the constant value is appropriate for the target element's type.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the constant is successfully applied, or [`crate::Error`] if:
+    /// - The constant type is incompatible with the parent type
+    /// - A default value is already set for the parent element
+    /// - The parent element type is invalid or unsupported
     ///
     /// # Errors
     /// Returns an error if the default value is already set for the parent entity,

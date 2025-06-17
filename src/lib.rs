@@ -29,19 +29,37 @@
 //! [![Documentation](https://docs.rs/dotscope/badge.svg)](https://docs.rs/dotscope)
 //! [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/BinFlip/dotscope/blob/main/LICENSE-APACHE)
 //!
-//! A high-performance, cross-platform framework for analyzing and reverse engineering .NET PE executables.
+//! A cross-platform framework for analyzing and reverse engineering .NET PE executables.
 //! Built in pure Rust, `dotscope` provides comprehensive tooling for parsing CIL (Common Intermediate Language)
 //! bytecode, metadata structures, and disassembling .NET assemblies without requiring Windows or the .NET runtime.
 //!
-//! ## Features
+//! # Architecture
 //!
-//! - **📦 Efficient memory access** - Memory-mapped file access with minimal allocations and reference-based parsing
+//! The library is organized into several key modules that work together to provide complete .NET assembly analysis:
+//!
+//! - **File Layer**: Memory-mapped file access and binary parsing
+//! - **Metadata Layer**: ECMA-335 metadata parsing and type system representation  
+//! - **Disassembly Layer**: CIL instruction decoding and control flow analysis
+//! - **Validation Layer**: Configurable validation and integrity checking
+//!
+//! ## Key Components
+//!
+//! - [`crate::CilObject`] - Main entry point for .NET assembly analysis
+//! - [`crate::metadata`] - Complete ECMA-335 metadata parsing and type system
+//! - [`crate::disassembler`] - CIL instruction decoding and control flow analysis
+//! - [`crate::prelude`] - Convenient re-exports of commonly used types
+//! - [`crate::Error`] and [`crate::Result`] - Comprehensive error handling
+//!
+//! # Features
+//!
 //! - **🔍 Complete metadata analysis** - Parse all ECMA-335 metadata tables and streams
-//! - **⚡ High-performance disassembly** - Fast CIL instruction decoding with control flow analysis
+//! - **⚡ CIL disassembly** - CIL instruction decoding with control flow analysis
 //! - **🔧 Cross-platform** - Works on Windows, Linux, macOS, and any Rust-supported platform
 //! - **🛡️ Memory safe** - Built in Rust with comprehensive error handling
 //! - **📊 Rich type system** - Full support for generics, signatures, and complex .NET types
 //! - **🧩 Extensible architecture** - Modular design for custom analysis and tooling
+//!
+//! # Usage Examples
 //!
 //! ## Quick Start
 //!
@@ -49,7 +67,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! dotscope = "0.2.1"
+//! dotscope = "0.3.0"
 //! ```
 //!
 //! ### Using the Prelude
@@ -65,7 +83,7 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
-//! ### Basic Usage
+//! ### Basic Assembly Analysis
 //!
 //! ```rust,no_run
 //! use dotscope::metadata::cilobject::CilObject;
@@ -86,66 +104,6 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
-//! ### Disassembly Example
-//!
-//! The disassembler module provides comprehensive CIL instruction decoding and control flow analysis.
-//! See the [`disassembler`] module documentation for detailed usage examples.
-//!
-//! ## Architecture
-//!
-//! `dotscope` is organized into several key modules:
-//!
-//! - [`prelude`] - Convenient re-exports of commonly used types and traits
-//! - [`metadata`] - Complete ECMA-335 metadata parsing and type system
-//! - [`disassembler`] - CIL instruction decoding and control flow analysis  
-//! - [`Error`] and [`Result`] - Comprehensive error handling
-//!
-//! ### Metadata Analysis
-//!
-//! The [`metadata::cilobject::CilObject`] is the main entry point for analyzing .NET assemblies.
-//! It provides access to:
-//!
-//! - **Streams**: Strings, user strings, GUIDs, and blob heaps
-//! - **Tables**: All ECMA-335 metadata tables (types, methods, fields, etc.)
-//! - **Type System**: Rich representation of .NET types and signatures
-//! - **Resources**: Embedded resources and manifest information
-//! - **Security**: Code access security and permission sets
-//!
-//! ### Disassembly Engine
-//!
-//! The [`disassembler`] module provides:
-//!
-//! - **Instruction Decoding**: Parse individual CIL opcodes with full operand support
-//! - **Control Flow Analysis**: Build basic blocks and control flow graphs
-//! - **Stack Analysis**: Track stack effects and type flow
-//! - **Exception Handling**: Parse and analyze try/catch/finally regions
-//!
-//! ## Advanced Usage
-//!
-//! ### Custom Analysis
-//!
-//! ```rust,no_run
-//! use dotscope::metadata::cilobject::CilObject;
-//!
-//! fn analyze_assembly(path: &str) -> dotscope::Result<()> {
-//!     let assembly = CilObject::from_file(std::path::Path::new(path))?;
-//!     
-//!     // Access raw metadata tables
-//!     if let Some(tables) = assembly.tables() {
-//!         println!("Metadata tables present: {}", tables.table_count());
-//!     }
-//!     
-//!     // Examine imports and exports
-//!     let imports = assembly.imports();
-//!     let exports = assembly.exports();
-//!     
-//!     println!("Imports: {} items", imports.len());
-//!     println!("Exports: {} items", exports.len());
-//!     
-//!     Ok(())
-//! }
-//! ```
-//!
 //! ### Memory-based Analysis
 //!
 //! ```rust,no_run
@@ -161,7 +119,79 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
-//! ## Standards Compliance
+//! ### Custom Analysis with Validation
+//!
+//! ```rust,no_run
+//! use dotscope::{CilObject, ValidationConfig};
+//!
+//! fn analyze_assembly(path: &str) -> dotscope::Result<()> {
+//!     // Use minimal validation for best performance
+//!     let assembly = CilObject::from_file_with_validation(
+//!         std::path::Path::new(path),
+//!         ValidationConfig::minimal()
+//!     )?;
+//!     
+//!     // Access imports and exports
+//!     let imports = assembly.imports();
+//!     let exports = assembly.exports();
+//!     
+//!     println!("Imports: {} items", imports.len());
+//!     println!("Exports: {} items", exports.len());
+//!     
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ### Disassembly Analysis
+//!
+//! The disassembler module provides comprehensive CIL instruction decoding and control flow analysis.
+//! See the [`crate::disassembler`] module documentation for detailed usage examples.
+//!
+//! ```rust,no_run
+//! use dotscope::{disassembler::decode_instruction, Parser};
+//!
+//! let bytecode = &[0x00, 0x2A]; // nop, ret
+//! let mut parser = Parser::new(bytecode);
+//! let instruction = decode_instruction(&mut parser, 0x1000)?;
+//!
+//! println!("Mnemonic: {}", instruction.mnemonic);
+//! println!("Flow type: {:?}", instruction.flow_type);
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! # Integration
+//!
+//! The metadata analysis seamlessly integrates with the disassembly engine. The [`crate::CilObject`] provides
+//! access to both metadata and method bodies for comprehensive analysis workflows.
+//!
+//! ### Metadata-Driven Disassembly
+//!
+//! ```rust,no_run
+//! use dotscope::CilObject;
+//!
+//! let assembly = CilObject::from_file(std::path::Path::new("tests/samples/WindowsBase.dll"))?;
+//!
+//! // Access raw metadata tables
+//! if let Some(tables) = assembly.tables() {
+//!     println!("Metadata tables present: {}", tables.table_count());
+//! }
+//!
+//! // Access metadata heaps with indexed access and iteration
+//! if let Some(strings) = assembly.strings() {
+//!     let name = strings.get(1)?; // Indexed access
+//!     
+//!     // Iterate through all entries
+//!     for result in strings.iter() {
+//!         match result {
+//!             Ok((offset, string)) => println!("String at {}: '{}'", offset, string),
+//!             Err(e) => eprintln!("Error: {}", e),
+//!         }
+//!     }
+//! }
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! # Standards Compliance
 //!
 //! `dotscope` implements the **ECMA-335 specification** (6th edition) for the Common Language Infrastructure.
 //! All metadata structures, CIL instructions, and type system features conform to this standard.
@@ -171,18 +201,7 @@
 //! - [ECMA-335 Standard](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Official CLI specification
 //! - [.NET Runtime](https://github.com/dotnet/runtime) - Microsoft's reference implementation
 //!
-//! ## Performance
-//!
-//! `dotscope` is designed for high-performance analysis:
-//!
-//! - **Efficient memory access** - Memory-mapped files with reference-based parsing where possible
-//! - **Lazy evaluation** of metadata structures
-//! - **Parallel processing** support for batch analysis
-//! - **Minimal allocations** through careful memory management
-//!
-//! Benchmarks show parsing times in the milliseconds for typical assemblies.
-//!
-//! ## Error Handling
+//! # Error Handling
 //!
 //! All operations return [`Result<T, Error>`](Result) with comprehensive error information:
 //!
@@ -197,34 +216,13 @@
 //! }
 //! ```
 //!
-//! ## Development and Testing
+//! # Thread Safety
 //!
-//! The crate includes comprehensive fuzzing support for security and robustness:
+//! All public types are [`Send`] and [`Sync`] unless explicitly documented otherwise. The library
+//! is designed for safe concurrent access across multiple threads.
 //!
-//! ### Fuzzing
-//!
-//! ```bash
-//! # Install fuzzing tools
-//! cargo install cargo-fuzz cargo-llvm-cov cargo-binutils
-//!
-//! # Run fuzzer
-//! cargo +nightly fuzz run cilobject --release
-//!
-//! # Multi-core fuzzing
-//! cargo +nightly fuzz run cilobject --release -- -jobs=4 -fork=1
-//!
-//! # Coverage analysis
-//! RUSTFLAGS="-C instrument-coverage" cargo +nightly fuzz coverage cilobject --release
-//! ```
-//!
-//! ### Testing
-//!
-//! The test suite includes real-world .NET assemblies and edge cases:
-//!
-//! ```bash
-//! cargo test
-//! cargo test --release  # For performance tests
-//! ```
+//! # Development and Testing
+
 #[macro_use]
 pub(crate) mod macros;
 
@@ -241,7 +239,18 @@ pub(crate) mod test;
 /// This module provides a curated selection of the most frequently used types
 /// from across the dotscope library, allowing for convenient glob imports.
 ///
-/// # Example
+/// # Architecture
+///
+/// The prelude follows Rust's standard library pattern, re-exporting the most commonly
+/// used types and traits from various modules for convenient access.
+///
+/// # Key Components
+///
+/// - [`crate::CilObject`] - Main entry point for .NET assembly analysis
+/// - [`crate::Error`] and [`crate::Result`] - Error handling types
+/// - Core metadata types and validation configuration
+///
+/// # Usage Examples
 ///
 /// ```rust,no_run
 /// use dotscope::prelude::*;
@@ -251,32 +260,37 @@ pub(crate) mod test;
 /// let methods = assembly.methods();
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// All re-exported types maintain their original thread safety guarantees.
 pub mod prelude;
 
-/// Instructions, Disassembler based on ECMA-355
+/// CIL instruction decoding and disassembly based on ECMA-335.
 ///
 /// This module provides comprehensive CIL (Common Intermediate Language) instruction decoding
-/// and disassembly capabilities. It includes:
+/// and disassembly capabilities. It implements the complete ECMA-335 instruction set with
+/// support for control flow analysis and stack effect tracking.
 ///
-/// - **Instruction Decoding**: Parse individual CIL opcodes with full operand support
-/// - **Control Flow Analysis**: Build basic blocks and analyze program flow
-/// - **Stack Effect Analysis**: Track how instructions affect the evaluation stack
-/// - **Exception Handling**: Parse try/catch/finally regions and exception handlers
+/// # Architecture
 ///
-/// # Key Types
+/// The disassembler is built around several core concepts:
+/// - **Instruction Decoding**: Binary CIL bytecode to structured instruction representation
+/// - **Control Flow Analysis**: Building basic blocks and analyzing program flow
+/// - **Stack Effect Analysis**: Tracking how instructions affect the evaluation stack
+/// - **Exception Handling**: Parsing try/catch/finally regions and exception handlers
 ///
-/// - [`disassembler::Instruction`] - Represents a decoded CIL instruction
-/// - [`disassembler::BasicBlock`] - A sequence of instructions with single entry/exit
-/// - [`disassembler::Operand`] - Instruction operands (immediates, tokens, targets)
-/// - [`disassembler::FlowType`] - How instructions affect control flow
+/// # Key Components
 ///
-/// # Main Functions
+/// - [`crate::disassembler::Instruction`] - Represents a decoded CIL instruction
+/// - [`crate::disassembler::BasicBlock`] - A sequence of instructions with single entry/exit
+/// - [`crate::disassembler::Operand`] - Instruction operands (immediates, tokens, targets)
+/// - [`crate::disassembler::FlowType`] - How instructions affect control flow
+/// - [`crate::disassembler::decode_instruction`] - Decode a single instruction
+/// - [`crate::disassembler::decode_stream`] - Decode a sequence of instructions  
+/// - [`crate::disassembler::decode_blocks`] - Build basic blocks from instruction stream
 ///
-/// - [`disassembler::decode_instruction`] - Decode a single instruction
-/// - [`disassembler::decode_stream`] - Decode a sequence of instructions  
-/// - [`disassembler::decode_blocks`] - Build basic blocks from instruction stream
-///
-/// # Examples
+/// # Usage Examples
 ///
 /// ```rust,no_run
 /// use dotscope::{disassembler::decode_instruction, Parser};
@@ -289,43 +303,65 @@ pub mod prelude;
 /// println!("Flow type: {:?}", instruction.flow_type);
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Integration
+///
+/// The disassembler integrates with the metadata system to resolve tokens and provide
+/// rich semantic information about method calls, field access, and type operations.
+///
+/// # Thread Safety
+///
+/// All disassembler types are [`Send`] and [`Sync`] for safe concurrent processing.
 pub mod disassembler;
 
-/// Definitions, parsing, loading, mapping of CIL metadata based on ECMA-355
+/// .NET metadata parsing, loading, and type system based on ECMA-335.
 ///
 /// This module implements the complete ECMA-335 metadata system for .NET assemblies.
 /// It provides comprehensive parsing and access to all metadata tables, streams, and
-/// type system constructs.
+/// type system constructs defined in the Common Language Infrastructure specification.
+///
+/// # Architecture
+///
+/// The metadata system is organized into several layers:
+/// - **Physical Layer**: Raw binary data access and stream parsing
+/// - **Logical Layer**: Structured access to metadata tables and heaps
+/// - **Type System Layer**: High-level representation of .NET types and signatures
+/// - **Validation Layer**: Configurable validation and integrity checking
 ///
 /// # Key Components
 ///
 /// ## Assembly Analysis
-/// - [`CilObject`] - Main entry point for assembly analysis
-/// - [`metadata::cor20header`] - CLR 2.0 header information
-/// - [`metadata::root`] - Metadata root and stream directory
+/// - [`crate::CilObject`] - Main entry point for assembly analysis
+/// - [`crate::metadata::cor20header`] - CLR 2.0 header information
+/// - [`crate::metadata::root`] - Metadata root and stream directory
 ///
 /// ## Type System
-/// - [`metadata::typesystem`] - Complete .NET type system representation
-/// - [`metadata::signatures`] - Method and field signatures, generics support
-/// - [`metadata::token`] - Metadata tokens for cross-references
+/// - [`crate::metadata::typesystem`] - Complete .NET type system representation
+/// - [`crate::metadata::signatures`] - Method and field signatures, generics support
+/// - [`crate::metadata::token`] - Metadata tokens for cross-references
+///
+/// ## Method Body Analysis
+/// - [`crate::metadata::method`] - Method body parsing and analysis
 ///
 /// ## Metadata Streams
-/// - [`metadata::streams`] - All ECMA-335 metadata tables and heaps
-/// - String, GUID, Blob, and UserString heaps via [`Strings`], [`Guid`], [`Blob`], [`UserStrings`]
-/// - Metadata tables and stream headers via [`TablesHeader`], [`StreamHeader`]
-/// - Assembly, Type, Method, Field, and other metadata tables
+/// - [`crate::metadata::streams`] - All ECMA-335 metadata tables and heaps
+/// - [`crate::Strings`], [`crate::Guid`], [`crate::Blob`], [`crate::UserStrings`] - String, GUID, Blob, and UserString heaps
+/// - [`crate::TablesHeader`], [`crate::StreamHeader`] - Metadata tables and stream headers
+///
+/// ## Metadata Tables
+/// - [`crate::metadata::tables`] - Assembly, Type, Method, Field, and other metadata tables
 ///
 /// ## Import/Export Analysis  
-/// - [`metadata::imports`] - Analysis of imported types and methods
-/// - [`metadata::exports`] - Analysis of exported types and methods
-/// - [`metadata::resources`] - Embedded resources and manifests
+/// - [`crate::metadata::imports`] - Analysis of imported types and methods
+/// - [`crate::metadata::exports`] - Analysis of exported types and methods
+/// - [`crate::metadata::resources`] - Embedded resources and manifests
 ///
 /// ## Security and Identity
-/// - [`metadata::security`] - Code Access Security (CAS) permissions
-/// - [`metadata::identity`] - Assembly identity and verification
-/// - [`metadata::marshalling`] - P/Invoke and COM interop marshalling
+/// - [`crate::metadata::security`] - Code Access Security (CAS) permissions
+/// - [`crate::metadata::identity`] - Assembly identity and verification
+/// - [`crate::metadata::marshalling`] - P/Invoke and COM interop marshalling
 ///
-/// # Examples
+/// # Usage Examples
 ///
 /// ```rust,no_run
 /// use dotscope::CilObject;
@@ -349,14 +385,23 @@ pub mod disassembler;
 /// println!("Methods found: {}", methods.len());
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Integration
+///
+/// The metadata system provides the foundation for the disassembler module, supplying
+/// token resolution, type information, and method body access for comprehensive analysis.
+///
+/// # Thread Safety
+///
+/// All metadata types are [`Send`] and [`Sync`] for safe concurrent access.
 pub mod metadata;
 
-/// `dotscope` Result type
+/// `dotscope` Result type.
 ///
-/// A type alias for [`std::result::Result<T, Error>`] where the error type is always [`Error`].
+/// A type alias for [`std::result::Result<T, Error>`] where the error type is always [`crate::Error`].
 /// This is used consistently throughout the crate for all fallible operations.
 ///
-/// # Examples
+/// # Usage Examples
 ///
 /// ```rust,no_run
 /// use dotscope::{Result, CilObject};
@@ -367,12 +412,12 @@ pub mod metadata;
 /// ```
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// `dotscope` Error type
+/// `dotscope` Error type.
 ///
 /// The main error type for all operations in this crate. Provides detailed error information
 /// for file parsing, metadata validation, and disassembly operations.
 ///
-/// # Examples
+/// # Usage Examples
 ///
 /// ```rust,no_run
 /// use dotscope::{Error, CilObject};
@@ -388,9 +433,9 @@ pub use error::Error;
 
 /// Main entry point for working with .NET assemblies.
 ///
-/// See [`metadata::cilobject::CilObject`] for high-level analysis and metadata access.
+/// See [`crate::metadata::cilobject::CilObject`] for high-level analysis and metadata access.
 ///
-/// # Example
+/// # Usage Examples
 ///
 /// ```rust,no_run
 /// use dotscope::CilObject;
@@ -405,7 +450,7 @@ pub use metadata::cilobject::CilObject;
 /// Controls which validation checks are performed when loading .NET assemblies.
 /// Different presets are available for various use cases.
 ///
-/// # Example
+/// # Usage Examples
 ///
 /// ```rust,no_run
 /// use dotscope::{CilObject, ValidationConfig};
@@ -422,17 +467,17 @@ pub use metadata::validation::ValidationConfig;
 /// Metadata streams and heaps for direct access to ECMA-335 data structures.
 ///
 /// These types provide low-level access to the metadata structures:
-/// - [`Blob`] - Binary blob heap for signatures and complex data
-/// - [`Guid`] - GUID heap for type and assembly identifiers  
-/// - [`Strings`] - String heap for names and identifiers
-/// - [`UserStrings`] - User string heap for string literals
-/// - [`TablesHeader`] - Metadata tables header information
-/// - [`StreamHeader`] - Individual stream header information
+/// - [`crate::Blob`] - Binary blob heap for signatures and complex data
+/// - [`crate::Guid`] - GUID heap for type and assembly identifiers  
+/// - [`crate::Strings`] - String heap for names and identifiers
+/// - [`crate::UserStrings`] - User string heap for string literals
+/// - [`crate::TablesHeader`] - Metadata tables header information
+/// - [`crate::StreamHeader`] - Individual stream header information
 ///
 /// All heaps provide both indexed access via `get()` methods and iterator support
 /// for efficient sequential traversal of all entries.
 ///
-/// # Example
+/// # Usage Examples
 ///
 /// ```rust,no_run
 /// use dotscope::{CilObject, Strings};
@@ -453,7 +498,7 @@ pub use metadata::validation::ValidationConfig;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
-/// See the [`metadata::streams`] module for comprehensive examples of all heap types and iterators.
+/// See the [`crate::metadata::streams`] module for comprehensive examples of all heap types and iterators.
 pub use metadata::streams::{
     Blob, BlobIterator, Guid, GuidIterator, StreamHeader, Strings, StringsIterator, TablesHeader,
     UserStrings, UserStringsIterator,
@@ -461,9 +506,9 @@ pub use metadata::streams::{
 
 /// Provides access to low-level file and memory parsing utilities.
 ///
-/// The [`Parser`] type is used for decoding CIL bytecode and metadata streams.
+/// The [`crate::Parser`] type is used for decoding CIL bytecode and metadata streams.
 ///
-/// # Example
+/// # Usage Examples
 ///
 /// ```rust,no_run
 /// use dotscope::{Parser, disassembler::decode_instruction};

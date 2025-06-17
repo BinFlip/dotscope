@@ -1,3 +1,8 @@
+//! # Property Raw Implementation
+//!
+//! This module provides the raw variant of Property table entries with unresolved
+//! indexes for initial parsing and memory-efficient storage.
+
 use std::sync::{Arc, OnceLock};
 
 use crate::{
@@ -12,32 +17,104 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-/// The `Property` table defines properties for types. Each entry includes the property name, flags, and signature. `TableId` = 0x17
+/// Raw representation of a Property table entry with unresolved indexes.
+///
+/// This structure represents the unprocessed entry from the Property metadata table
+/// (ID 0x17), which defines properties exposed by types in .NET assemblies. It contains
+/// raw index values that require resolution to actual metadata objects.
+///
+/// ## Purpose
+///
+/// The Property table provides the foundation for .NET property system:
+/// - **Property Definition**: Defines property names, types, and characteristics
+/// - **Type Integration**: Associates properties with their declaring types
+/// - **Method Binding**: Links properties to getter/setter methods via MethodSemantics
+/// - **Reflection Foundation**: Enables property-based reflection and metadata queries
+///
+/// ## Raw vs Owned
+///
+/// This raw variant is used during initial metadata parsing and contains:
+/// - Unresolved string heap indexes requiring name lookup
+/// - Unresolved blob heap indexes requiring signature parsing
+/// - Minimal memory footprint for storage during parsing
+/// - Direct representation of on-disk table structure
+///
+/// ## Property Attributes
+///
+/// Properties can have various attributes that control their behavior:
+/// - **SpecialName**: Property has special naming conventions (0x0200)
+/// - **RTSpecialName**: Runtime should verify name encoding (0x0400)
+/// - **HasDefault**: Property has a default value defined (0x1000)
+///
+/// ## References
+///
+/// - ECMA-335, Partition II, §22.34 - Property table specification
+/// - [`crate::metadata::tables::Property`] - Owned variant for comparison
+/// - [`crate::metadata::tables::PropertyMap`] - Property to type mapping
+/// - [`crate::metadata::signatures::SignatureProperty`] - Property signature details
 pub struct PropertyRaw {
-    /// `RowID`
+    /// Row identifier within the Property table (1-based indexing).
+    ///
+    /// This field provides the logical position of this entry within the Property table,
+    /// following the standard 1-based indexing convention used throughout .NET metadata.
     pub rid: u32,
-    /// Token
+
+    /// Metadata token uniquely identifying this Property entry.
+    ///
+    /// The token combines the table identifier (Property = 0x17) with the row ID,
+    /// providing a unique reference for this property across the entire metadata system.
     pub token: Token,
-    /// Offset
+
+    /// Byte offset of this entry within the metadata stream.
+    ///
+    /// This offset indicates the exact position of this Property entry within the
+    /// metadata stream, enabling direct access to the raw table data and supporting
+    /// metadata analysis and debugging operations.
     pub offset: usize,
-    /// a 2-byte bitmask of type `PropertyAttributes`, §II.23.1.14
+
+    /// Property attribute flags defining characteristics and behavior.
+    ///
+    /// A 2-byte bitmask of PropertyAttributes (ECMA-335 §II.23.1.14) that controls
+    /// various aspects of the property including special naming, default values,
+    /// and runtime behavior. See [`super::PropertyAttributes`] for flag definitions.
     pub flags: u32,
-    /// an index into the String heap
+
+    /// Index into the string heap for the property name.
+    ///
+    /// This field contains the heap index that must be resolved to obtain the
+    /// actual property name string. The name provides the identifier used for
+    /// property access and reflection operations.
     pub name: u32,
-    /// an index into the Blob heap
+
+    /// Index into the blob heap for the property signature.
+    ///
+    /// This field contains the heap index that must be resolved and parsed to
+    /// obtain the complete property signature, including property type, parameter
+    /// types for indexers, and calling conventions.
     pub signature: u32,
 }
 
 impl PropertyRaw {
-    /// Convert an `PropertyRaw`, into a `Property` which has indexes resolved and owns the referenced data
+    /// Converts this raw Property entry to its owned representation.
     ///
-    /// # Errors
-    /// Returns an error if the property name cannot be retrieved from the strings heap
-    /// or if the property signature cannot be parsed from the blob heap.
+    /// This method transforms the raw table entry into a fully owned Property instance
+    /// with resolved names and parsed signatures. The conversion involves string heap
+    /// lookup for the property name and blob heap parsing for the property signature.
     ///
     /// ## Arguments
-    /// * 'strings' - The #String heap
-    /// * 'blob'    - The #Blob heap
+    ///
+    /// * `strings` - The string heap for name resolution
+    /// * `blob` - The blob heap for signature parsing
+    ///
+    /// ## Returns
+    ///
+    /// * `Ok(PropertyRc)` - Successfully converted to owned representation
+    /// * `Err(Error)` - String resolution or signature parsing error
+    ///
+    /// ## Errors
+    ///
+    /// * [`crate::error::Error::OutOfBounds`] - Invalid string or blob heap index
+    /// * [`crate::error::Error::Malformed`] - Malformed property signature
     pub fn to_owned(&self, strings: &Strings, blob: &Blob) -> Result<PropertyRc> {
         Ok(Arc::new(Property {
             token: self.token,
@@ -52,20 +129,39 @@ impl PropertyRaw {
         }))
     }
 
-    /// Apply a `PropertyRaw` entry to update related metadata structures.
+    /// Applies this Property entry to the metadata loading process.
     ///
-    /// Property entries define properties that types can expose. They are associated with types
-    /// but don't themselves modify other metadata during the dual variant resolution phase.
-    /// Property methods (getter, setter, etc.) are resolved separately through method resolution.
+    /// Property entries define properties that types can expose but do not directly
+    /// modify other metadata structures during the loading process. Property method
+    /// associations (getter, setter, other) are resolved separately through the
+    /// MethodSemantics table during higher-level metadata resolution.
     ///
-    /// # Errors
-    /// Always returns `Ok(())` as Property entries don't modify other tables directly.
+    /// This method is provided for consistency with the table loading framework
+    /// but performs no operations for Property entries.
+    ///
+    /// ## Returns
+    ///
+    /// * `Ok(())` - Always succeeds as no processing is required
     pub fn apply(&self) -> Result<()> {
         Ok(())
     }
 }
 
 impl<'a> RowDefinition<'a> for PropertyRaw {
+    /// Calculates the byte size of a single Property table row.
+    ///
+    /// The size depends on the metadata heap size configuration:
+    /// - **flags**: 2 bytes (PropertyAttributes bitmask)
+    /// - **name**: String heap index size (2 or 4 bytes)
+    /// - **signature**: Blob heap index size (2 or 4 bytes)
+    ///
+    /// ## Arguments
+    ///
+    /// * `sizes` - Table size configuration information
+    ///
+    /// ## Returns
+    ///
+    /// * `u32` - Total row size in bytes (6-10 bytes typically)
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
@@ -75,6 +171,28 @@ impl<'a> RowDefinition<'a> for PropertyRaw {
         )
     }
 
+    /// Reads a single Property table row from metadata bytes.
+    ///
+    /// This method parses a Property entry from the metadata stream, extracting
+    /// the property flags, name index, and signature index to construct the
+    /// complete row structure with metadata context.
+    ///
+    /// ## Arguments
+    ///
+    /// * `data` - The metadata bytes to read from
+    /// * `offset` - Current position in the data (updated after reading)
+    /// * `rid` - Row identifier for this entry (1-based)
+    /// * `sizes` - Table size configuration for index resolution
+    ///
+    /// ## Returns
+    ///
+    /// * `Ok(PropertyRaw)` - Successfully parsed Property entry
+    /// * `Err(Error)` - Failed to read or parse the entry
+    ///
+    /// ## Errors
+    ///
+    /// * [`crate::error::Error::OutOfBounds`] - Insufficient data for complete entry
+    /// * [`crate::error::Error::Malformed`] - Malformed table entry structure
     fn read_row(
         data: &'a [u8],
         offset: &mut usize,

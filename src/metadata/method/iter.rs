@@ -81,14 +81,6 @@
 //! }
 //! # Ok::<(), dotscope::Error>(())
 //! ```
-//!
-//! ## Performance Characteristics
-//!
-//! The iterator is designed for efficient traversal:
-//! - No instruction copying - yields references to original data
-//! - Lazy evaluation - blocks are processed as iteration progresses
-//! - Minimal memory overhead - only stores current position state
-//! - Compatible with iterator combinators like `filter`, `map`, `take`, etc.
 
 use crate::disassembler::BasicBlock;
 
@@ -195,16 +187,12 @@ use crate::disassembler::BasicBlock;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
-/// # Performance Notes
-///
-/// - The iterator yields references to instructions, avoiding expensive copies
-/// - Size hints are calculated precisely, enabling efficient collection pre-allocation
-/// - Empty basic blocks are skipped automatically during iteration
-/// - Block transitions use efficient indexing rather than complex state machines
-/// - Compatible with all standard iterator methods (`map`, `filter`, `fold`, etc.)
 pub struct InstructionIterator<'a> {
+    /// Reference to the basic blocks being iterated
     blocks: &'a [BasicBlock],
+    /// Index of the current basic block
     current_block: usize,
+    /// Index of the current instruction within the current block
     current_instruction: usize,
 }
 

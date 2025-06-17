@@ -2,12 +2,97 @@
 //!
 //! This module defines all bitflags, constants, and supporting types used to represent and extract
 //! method implementation flags, attributes, vtable layout, and local variable/vararg information for CIL methods.
+//! It provides a comprehensive set of flags and types that correspond to the .NET metadata specifications
+//! in ECMA-335 for method attributes and implementation details.
+//!
+//! # Architecture Overview
+//!
+//! The flag types in this module are organized hierarchically to match the .NET metadata structure:
+//! - **Implementation Flags**: Control how methods are implemented (IL, native, runtime)
+//! - **Access Flags**: Define method visibility and accessibility
+//! - **Modifier Flags**: Specify method behavior (static, virtual, abstract, etc.)
+//! - **Body Flags**: Control method body format and initialization
+//!
+//! Each flag group provides extraction methods that parse raw metadata values according to
+//! the official bitmask specifications.
 //!
 //! # Key Types
-//! - [`MethodImplCodeType`], [`MethodImplManagement`], [`MethodImplOptions`]: Implementation flags
-//! - [`MethodAccessFlags`], [`MethodVtableFlags`], [`MethodModifiers`]: Attribute flags
-//! - [`MethodBodyFlags`], [`SectionFlags`]: Method body and section flags
-//! - [`LocalVariable`], [`VarArg`]: Local variable and vararg parameter representations
+//!
+//! ## Implementation Attributes
+//! - [`MethodImplCodeType`] - Method implementation type (IL, native, runtime)
+//! - [`MethodImplManagement`] - Managed vs unmanaged execution
+//! - [`MethodImplOptions`] - Additional implementation options (inlining, synchronization, etc.)
+//!
+//! ## Method Attributes  
+//! - [`MethodAccessFlags`] - Visibility and accessibility controls
+//! - [`MethodVtableFlags`] - Virtual table layout behavior
+//! - [`MethodModifiers`] - Method behavior modifiers (static, virtual, abstract, etc.)
+//!
+//! ## Body and Section Attributes
+//! - [`MethodBodyFlags`] - Method body format and initialization flags
+//! - [`SectionFlags`] - Exception handling and data section flags
+//!
+//! ## Variable Types
+//! - [`LocalVariable`] - Resolved local variable with type information
+//! - [`VarArg`] - Variable argument parameter with type information
+//!
+//! # Usage Patterns
+//!
+//! ## Flag Extraction from Raw Metadata
+//!
+//! ```rust,ignore
+//! // Extract different flag categories from raw method attributes
+//! let raw_impl_flags = 0x0001_2080; // Example implementation flags
+//! let raw_method_flags = 0x0086; // Example method attribute flags
+//!
+//! let code_type = MethodImplCodeType::from_impl_flags(raw_impl_flags);
+//! let management = MethodImplManagement::from_impl_flags(raw_impl_flags);
+//! let options = MethodImplOptions::from_impl_flags(raw_impl_flags);
+//!
+//! let access = MethodAccessFlags::from_method_flags(raw_method_flags);
+//! let vtable = MethodVtableFlags::from_method_flags(raw_method_flags);
+//! let modifiers = MethodModifiers::from_method_flags(raw_method_flags);
+//! ```
+//!
+//! ## Flag Testing and Analysis
+//!
+//! ```rust,ignore
+//! use dotscope::CilObject;
+//! use std::path::Path;
+//!
+//! let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+//!
+//! for entry in assembly.methods().iter().take(20) {
+//!     let method = entry.value();
+//!     
+//!     // Analyze method characteristics
+//!     if method.flags_access.contains(MethodAccessFlags::PUBLIC) {
+//!         println!("Public method: {}", method.name);
+//!     }
+//!     
+//!     if method.flags_modifiers.contains(MethodModifiers::STATIC) {
+//!         println!("Static method: {}", method.name);
+//!     }
+//!     
+//!     if method.flags_modifiers.contains(MethodModifiers::VIRTUAL) {
+//!         println!("Virtual method: {}", method.name);
+//!     }
+//! }
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! # Flag Relationships
+//!
+//! Many flags have logical relationships and constraints:
+//! - Methods marked `ABSTRACT` must also be `VIRTUAL`
+//! - `STATIC` methods cannot be `VIRTUAL` or `ABSTRACT`  
+//! - `PINVOKE_IMPL` methods typically have `PRESERVE_SIG` option
+//! - `RUNTIME` code type often paired with `INTERNAL_CALL` option
+//!
+//! # Thread Safety
+//!
+//! All flag types are `Copy` and thread-safe. LocalVariable and VarArg use `Arc`-based
+//! reference counting for safe sharing across threads.
 
 use bitflags::bitflags;
 
@@ -215,24 +300,170 @@ bitflags! {
     }
 }
 
-/// Represents a local variable in a method. Similar to `SignatureLocalVariable`, but with resolved indexes and owned data.
+/// Represents a local variable in a method with resolved type information.
+///
+/// `LocalVariable` provides a fully resolved representation of a local variable within a
+/// method body, including its type signature, custom modifiers, and special attributes
+/// like reference passing and pinning. This is the resolved form of signature local
+/// variables, with all type tokens converted to concrete type references.
+///
+/// # Type Resolution
+///
+/// Unlike signature-based representations, `LocalVariable` contains resolved type
+/// references that can be directly used for analysis without additional lookups.
+/// This makes it efficient for runtime analysis and code generation scenarios.
+///
+/// # Pinning and References
+///
+/// Local variables can have special memory management attributes:
+/// - **By Reference**: The variable stores a reference rather than a value
+/// - **Pinned**: The variable's memory location is fixed (prevents GC movement)
+///
+/// These attributes are crucial for interop scenarios and unsafe code analysis.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use dotscope::CilObject;
+/// use std::path::Path;
+///
+/// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+///
+/// for entry in assembly.methods().iter().take(10) {
+///     let method = entry.value();
+///     
+///     if !method.local_vars.is_empty() {
+///         println!("Method '{}' has {} local variables:",
+///                  method.name, method.local_vars.len());
+///         
+///         for (i, local_var) in method.local_vars.iter().enumerate() {
+///             let var_info = format!("  [{}] Type: {}, ByRef: {}, Pinned: {}, Modifiers: {}",
+///                                   i,
+///                                   local_var.base.name(),
+///                                   local_var.is_byref,
+///                                   local_var.is_pinned,
+///                                   local_var.modifiers.len());
+///             println!("{}", var_info);
+///         }
+///     }
+/// }
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+///
+/// # Memory Management
+///
+/// - **Type References**: Use `Arc` for efficient sharing across thread boundaries
+/// - **Modifiers**: Stored in reference-counted vectors for minimal memory overhead
+/// - **Flags**: Stored as boolean values for fast access
+///
+/// # Thread Safety
+///
+/// `LocalVariable` is thread-safe through its use of `Arc`-based type references.
+/// Multiple threads can safely access local variable information concurrently.
 pub struct LocalVariable {
-    /// Custom modifiers
+    /// Custom modifiers applied to the variable type.
+    ///
+    /// These are optional and required modifiers that change the semantic meaning
+    /// of the base type, such as `const`, `volatile`, or custom attribute-based
+    /// modifiers. Each modifier is a resolved type reference.
     pub modifiers: CilTypeRefList,
-    /// Is passed by reference
+
+    /// Whether the variable is passed by reference.
+    ///
+    /// When `true`, the variable stores a reference to the actual data rather than
+    /// the data itself. This is equivalent to `ref` or `out` parameters in C#.
     pub is_byref: bool,
-    /// This variable is pinned
+
+    /// Whether the variable is pinned in memory.
+    ///
+    /// When `true`, the garbage collector will not move this variable's memory
+    /// location, allowing safe use with unmanaged code pointers. This is typically
+    /// used in unsafe code scenarios and P/Invoke operations.
     pub is_pinned: bool,
-    /// The signature of this variable
+
+    /// The resolved base type of the variable.
+    ///
+    /// This is the primary type of the local variable after all type tokens have
+    /// been resolved to concrete type references. The type includes full namespace
+    /// and assembly qualification for unambiguous identification.
     pub base: CilTypeRef,
 }
 
-/// Variable Argument used in `SignatureMethod` to describe vararg parameters of `Method`
+/// Variable argument parameter used in method signatures to describe vararg parameters.
+///
+/// `VarArg` represents a single parameter in the variable-length argument list of a
+/// method that uses varargs (...) calling convention. Each vararg parameter has its
+/// own type signature and modifiers, allowing for type-safe variable argument processing.
+///
+/// # Varargs in .NET
+///
+/// Variable arguments in .NET are less common than in C/C++ but are still supported
+/// for scenarios like P/Invoke to C libraries that use varargs, or for implementing
+/// methods like `String.Format` with variable parameter counts.
+///
+/// # Type Resolution
+///
+/// Like `LocalVariable`, `VarArg` contains fully resolved type references rather than
+/// raw signature data, making it efficient for analysis and code generation without
+/// requiring additional type lookups.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use dotscope::CilObject;
+/// use std::path::Path;
+///
+/// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+///
+/// for entry in assembly.methods().iter() {
+///     let method = entry.value();
+///     
+///     if !method.varargs.is_empty() {
+///         println!("Method '{}' has {} vararg parameters:",
+///                  method.name, method.varargs.len());
+///         
+///         for (i, vararg) in method.varargs.iter().enumerate() {
+///             let arg_info = format!("  VarArg[{}] Type: {}, ByRef: {}, Modifiers: {}",
+///                                   i,
+///                                   vararg.base.name(),
+///                                   vararg.by_ref,
+///                                   vararg.modifiers.len());
+///             println!("{}", arg_info);
+///         }
+///     }
+/// }
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+///
+/// # Memory Management
+///
+/// - **Type References**: Use `Arc` for efficient sharing and thread safety
+/// - **Modifiers**: Reference-counted vectors for minimal memory overhead  
+/// - **Flags**: Simple boolean values for fast access
+///
+/// # Thread Safety
+///
+/// `VarArg` is thread-safe through its use of `Arc`-based type references.
+/// Multiple threads can safely access vararg parameter information concurrently.
 pub struct VarArg {
-    /// Custom modifiers of the parameter
+    /// Custom modifiers applied to the parameter type.
+    ///
+    /// These are optional and required modifiers that change the semantic meaning
+    /// of the base parameter type. Common modifiers include `const`, `volatile`,
+    /// or custom attribute-based type modifications.
     pub modifiers: CilTypeRefList,
-    /// Parameter is passed by reference
+
+    /// Whether the parameter is passed by reference.
+    ///
+    /// When `true`, the parameter is passed by reference rather than by value.
+    /// This allows the called method to modify the original value in the caller's
+    /// context, similar to `ref` or `out` parameters in C#.
     pub by_ref: bool,
-    /// The type of the parameter
+
+    /// The resolved base type of the parameter.
+    ///
+    /// This is the primary type of the vararg parameter after all type tokens
+    /// have been resolved to concrete type references. The type includes full
+    /// namespace and assembly qualification for unambiguous identification.
     pub base: CilTypeRef,
 }

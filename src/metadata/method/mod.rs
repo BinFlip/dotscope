@@ -7,22 +7,22 @@
 //! # Architecture Overview
 //!
 //! The method analysis system uses a streamlined architecture centered around the
-//! [`Method`] struct with lazy-initialized basic blocks. Key design principles:
+//! [`crate::metadata::method::Method`] struct with lazy-initialized basic blocks. Key design principles:
 //!
 //! - **Thread-safe lazy initialization**: Basic blocks are computed once and cached
-//!   using `OnceLock<Vec<BasicBlock>>` for efficient concurrent access
-//! - **Zero-copy iteration**: The [`InstructionIterator`] yields references to
+//!   using `OnceLock<Vec<crate::disassembler::BasicBlock>>` for efficient concurrent access
+//! - **Zero-copy iteration**: The [`crate::metadata::method::InstructionIterator`] yields references to
 //!   instructions without copying, enabling efficient analysis of large methods
 //! - **Unified storage**: All instruction data is stored in basic blocks, eliminating
 //!   redundant caching layers and simplifying the architecture
 //!
 //! # Key Components
 //!
-//! - [`Method`] - Complete method representation with metadata and lazily-loaded IL code
-//! - [`MethodBody`] - Method body containing IL instructions and exception handlers
-//! - [`ExceptionHandler`] - Try/catch/finally exception handling regions
-//! - [`InstructionIterator`] - Efficient iterator over method instructions
-//! - [`MethodMap`] - Token-indexed collection of all methods in an assembly
+//! - [`crate::metadata::method::Method`] - Complete method representation with metadata and lazily-loaded IL code
+//! - [`crate::metadata::method::MethodBody`] - Method body containing IL instructions and exception handlers
+//! - [`crate::metadata::method::ExceptionHandler`] - Try/catch/finally exception handling regions
+//! - [`crate::metadata::method::InstructionIterator`] - Efficient iterator over method instructions
+//! - [`crate::metadata::method::MethodMap`] - Token-indexed collection of all methods in an assembly
 //!
 //! # Usage Patterns
 //!
@@ -85,14 +85,6 @@
 //! - Basic block initialization uses `OnceLock` for thread-safe lazy loading
 //! - Multiple threads can safely iterate over the same method simultaneously
 //! - Iterator creation and consumption can happen concurrently
-//!
-//! # Performance Characteristics
-//!
-//! - **Lazy loading**: Basic blocks are only computed when first accessed
-//! - **Efficient counting**: Block and instruction counts use O(1) or O(blocks) operations
-//! - **Zero-copy iteration**: Instructions are yielded by reference, not copied
-//! - **Accurate size hints**: Iterators provide exact bounds for efficient collection
-//! - **Memory efficient**: Single storage location for all instruction data
 
 mod body;
 mod exceptions;
@@ -132,55 +124,274 @@ pub type MethodRefList = Arc<boxcar::Vec<MethodRef>>;
 pub type MethodRc = Arc<Method>;
 
 /// A smart reference to a Method that automatically handles weak references
-/// to prevent circular reference memory leaks while providing a clean API
+/// to prevent circular reference memory leaks while providing a clean API.
+///
+/// `MethodRef` provides a safe way to reference methods without creating strong
+/// reference cycles that could lead to memory leaks. This is particularly useful
+/// when methods reference other methods (e.g., through inheritance or interfaces)
+/// where circular dependencies might occur.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use dotscope::CilObject;
+/// use std::path::Path;
+///
+/// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+///
+/// // Create weak references to avoid circular dependencies
+/// for entry in assembly.methods().iter().take(5) {
+///     let method = entry.value();
+///     let weak_ref = dotscope::metadata::method::MethodRef::new(&method);
+///     
+///     // Check if the reference is still valid
+///     if weak_ref.is_valid() {
+///         if let Some(name) = weak_ref.name() {
+///             println!("Referenced method: {}", name);
+///         }
+///     }
+/// }
+/// # Ok::<(), dotscope::Error>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct MethodRef {
+    /// Weak reference to the actual method to avoid reference cycles
     weak_ref: Weak<Method>,
 }
 
 impl MethodRef {
-    /// Create a new `MethodRef` from a strong reference
+    /// Create a new `MethodRef` from a strong reference.
+    ///
+    /// This method creates a weak reference to the provided method, allowing
+    /// safe referencing without creating strong reference cycles.
+    ///
+    /// # Arguments
+    ///
+    /// * `strong_ref` - A strong reference (`Arc<Method>`) to the method
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// if let Some(entry) = assembly.methods().iter().next() {
+    ///     let method = entry.value();
+    ///     let method_ref = dotscope::metadata::method::MethodRef::new(&method);
+    ///     println!("Created weak reference to method: {}", method.name);
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn new(strong_ref: &MethodRc) -> Self {
         Self {
             weak_ref: Arc::downgrade(strong_ref),
         }
     }
 
-    /// Get a strong reference to the method, returning None if the method has been dropped
+    /// Get a strong reference to the method, returning None if the method has been dropped.
+    ///
+    /// This method attempts to upgrade the weak reference to a strong reference.
+    /// If the original method has been dropped, this returns `None`.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(Arc<Method>)` if the method is still alive
+    /// - `None` if the method has been dropped
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// if let Some(entry) = assembly.methods().iter().next() {
+    ///     let method = entry.value();
+    ///     let method_ref = dotscope::metadata::method::MethodRef::new(&method);
+    ///     
+    ///     // Later, try to access the method
+    ///     if let Some(method) = method_ref.upgrade() {
+    ///         println!("Method is still available: {}", method.name);
+    ///     } else {
+    ///         println!("Method has been dropped");
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     #[must_use]
     pub fn upgrade(&self) -> Option<MethodRc> {
         self.weak_ref.upgrade()
     }
 
-    /// Get a strong reference to the method, panicking if the method has been dropped
-    /// Use this when you're certain the method should still exist
+    /// Get a strong reference to the method, panicking if the method has been dropped.
+    ///
+    /// Use this when you're certain the method should still exist. This provides
+    /// a convenient way to access the method without handling the `Option` case.
+    ///
+    /// # Arguments
+    ///
+    /// * `msg` - Error message to display if the method has been dropped
     ///
     /// # Panics
+    ///
     /// Panics if the method has been dropped and the weak reference cannot be upgraded.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// if let Some(entry) = assembly.methods().iter().next() {
+    ///     let method = entry.value();
+    ///     let method_ref = dotscope::metadata::method::MethodRef::new(&method);
+    ///     
+    ///     // Use expect when you're certain the method should exist
+    ///     let method = method_ref.expect("Method should still be available");
+    ///     println!("Accessed method: {}", method.name);
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     #[must_use]
     pub fn expect(&self, msg: &str) -> MethodRc {
         self.weak_ref.upgrade().expect(msg)
     }
 
-    /// Check if the referenced method is still alive
+    /// Check if the referenced method is still alive.
+    ///
+    /// This provides a quick way to test if the weak reference can still be
+    /// upgraded to a strong reference without actually performing the upgrade.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the method is still alive, `false` if it has been dropped
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let mut method_refs = Vec::new();
+    ///
+    /// // Collect weak references
+    /// for entry in assembly.methods().iter().take(10) {
+    ///     let method = entry.value();
+    ///     method_refs.push(dotscope::metadata::method::MethodRef::new(&method));
+    /// }
+    ///
+    /// // Check which references are still valid
+    /// let valid_count = method_refs.iter().filter(|r| r.is_valid()).count();
+    /// println!("{} out of {} method references are still valid",
+    ///          valid_count, method_refs.len());
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     #[must_use]
     pub fn is_valid(&self) -> bool {
         self.weak_ref.strong_count() > 0
     }
 
-    /// Get the token of the referenced method (if still alive)
+    /// Get the token of the referenced method (if still alive).
+    ///
+    /// This is a convenience method that upgrades the reference and extracts
+    /// the method token in a single operation.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(Token)` if the method is still alive
+    /// - `None` if the method has been dropped
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// if let Some(entry) = assembly.methods().iter().next() {
+    ///     let method = entry.value();
+    ///     let method_ref = dotscope::metadata::method::MethodRef::new(&method);
+    ///     
+    ///     if let Some(token) = method_ref.token() {
+    ///         println!("Method token: {:?}", token);
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     #[must_use]
     pub fn token(&self) -> Option<Token> {
         self.upgrade().map(|m| m.token)
     }
 
-    /// Get the name of the referenced method (if still alive)
+    /// Get the name of the referenced method (if still alive).
+    ///
+    /// This is a convenience method that upgrades the reference and extracts
+    /// the method name in a single operation.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(String)` containing the method name if the method is still alive
+    /// - `None` if the method has been dropped
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let mut method_names = Vec::new();
+    ///
+    /// for entry in assembly.methods().iter().take(5) {
+    ///     let method = entry.value();
+    ///     let method_ref = dotscope::metadata::method::MethodRef::new(&method);
+    ///     
+    ///     if let Some(name) = method_ref.name() {
+    ///         method_names.push(name);
+    ///     }
+    /// }
+    ///
+    /// println!("Collected {} method names", method_names.len());
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     #[must_use]
     pub fn name(&self) -> Option<String> {
         self.upgrade().map(|m| m.name.clone())
     }
 
-    /// Check if the referenced method is a constructor (.ctor or .cctor)
+    /// Check if the referenced method is a constructor (.ctor or .cctor).
+    ///
+    /// This is a convenience method that upgrades the reference and checks
+    /// if the method is a constructor in a single operation.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the method is still alive and is a constructor, `false` otherwise
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let mut constructor_count = 0;
+    ///
+    /// for entry in assembly.methods().iter() {
+    ///     let method = entry.value();
+    ///     let method_ref = dotscope::metadata::method::MethodRef::new(&method);
+    ///     
+    ///     if method_ref.is_constructor() {
+    ///         constructor_count += 1;
+    ///     }
+    /// }
+    ///
+    /// println!("Found {} constructors", constructor_count);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     #[must_use]
     pub fn is_constructor(&self) -> bool {
         if let Some(method) = self.upgrade() {
@@ -294,12 +505,6 @@ impl Method {
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    ///
-    /// # Performance Notes
-    ///
-    /// - Calling this method multiple times reuses the same underlying blocks
-    /// - For just counting instructions, use [`instruction_count()`](Method::instruction_count) instead
-    /// - The iterator is lazy and doesn't traverse blocks until consumed
     pub fn instructions(&self) -> InstructionIterator<'_> {
         if let Some(blocks) = self.blocks.get() {
             InstructionIterator::new(blocks.as_slice())
@@ -448,52 +653,255 @@ impl Method {
     }
 
     /// Returns true if the method has IL code.
+    ///
+    /// This checks the `MethodImplCodeType::IL` flag in the method's implementation
+    /// attributes to determine if the method contains Common Intermediate Language (CIL)
+    /// instructions that can be disassembled and analyzed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// for entry in assembly.methods().iter().take(10) {
+    ///     let method = entry.value();
+    ///     if method.is_code_il() {
+    ///         println!("Method '{}' contains IL code", method.name);
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn is_code_il(&self) -> bool {
         self.impl_code_type.contains(MethodImplCodeType::IL)
     }
 
     /// Returns true if the method has native code (P/Invoke).
+    ///
+    /// This checks the `MethodImplCodeType::NATIVE` flag to determine if the method
+    /// is implemented in native code rather than IL. This is typical for P/Invoke
+    /// methods that call into unmanaged libraries.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let native_methods: Vec<_> = assembly.methods().iter()
+    ///     .filter(|entry| entry.value().is_code_native())
+    ///     .map(|entry| entry.value().name.clone())
+    ///     .collect();
+    ///
+    /// println!("Found {} native methods", native_methods.len());
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn is_code_native(&self) -> bool {
         self.impl_code_type.contains(MethodImplCodeType::NATIVE)
     }
 
     /// Returns true if the method has optimized IL code.
+    ///
+    /// This checks the `MethodImplCodeType::OPTIL` flag to determine if the method
+    /// contains optimized Common Intermediate Language that may have been transformed
+    /// by the runtime or tools for better performance.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// for entry in assembly.methods().iter() {
+    ///     let method = entry.value();
+    ///     if method.is_code_opt_il() {
+    ///         println!("Method '{}' has optimized IL code", method.name);
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn is_code_opt_il(&self) -> bool {
         self.impl_code_type.contains(MethodImplCodeType::OPTIL)
     }
 
     /// Returns true if the method is implemented in the runtime.
+    ///
+    /// This checks the `MethodImplCodeType::RUNTIME` flag to determine if the method
+    /// is implemented directly by the .NET runtime rather than containing user code.
+    /// This is common for intrinsic methods and runtime-provided functionality.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let runtime_methods: Vec<_> = assembly.methods().iter()
+    ///     .filter(|entry| entry.value().is_code_runtime())
+    ///     .map(|entry| entry.value().name.clone())
+    ///     .collect();
+    ///
+    /// println!("Found {} runtime-implemented methods", runtime_methods.len());
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn is_code_runtime(&self) -> bool {
         self.impl_code_type.contains(MethodImplCodeType::RUNTIME)
     }
 
     /// Returns true if the method is unmanaged.
+    ///
+    /// This checks the `MethodImplManagement::UNMANAGED` flag to determine if the
+    /// method runs outside the managed execution environment, typically for P/Invoke
+    /// methods or COM interop scenarios.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// for entry in assembly.methods().iter() {
+    ///     let method = entry.value();
+    ///     if method.is_code_unmanaged() {
+    ///         println!("Unmanaged method: {}", method.name);
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn is_code_unmanaged(&self) -> bool {
         self.impl_management
             .contains(MethodImplManagement::UNMANAGED)
     }
 
-    /// Returns true if the method is defined (used in merge scenarios).
+    /// Returns true if the method is a forward reference (used in merge scenarios).
+    ///
+    /// This checks the `MethodImplOptions::FORWARD_REF` flag to determine if the
+    /// method is declared but not yet defined, which can occur during incremental
+    /// compilation or when working with incomplete assemblies.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let forward_refs: Vec<_> = assembly.methods().iter()
+    ///     .filter(|entry| entry.value().is_forward_ref())
+    ///     .map(|entry| entry.value().name.clone())
+    ///     .collect();
+    ///
+    /// if !forward_refs.is_empty() {
+    ///     println!("Found {} forward reference methods", forward_refs.len());
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn is_forward_ref(&self) -> bool {
         self.impl_options.contains(MethodImplOptions::FORWARD_REF)
     }
 
     /// Returns true if the method is synchronized.
+    ///
+    /// This checks the `MethodImplOptions::SYNCHRONIZED` flag to determine if the
+    /// method automatically acquires a lock before execution, providing thread-safe
+    /// access to the method body. This is equivalent to marking a method with the
+    /// `synchronized` keyword in some languages.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// for entry in assembly.methods().iter() {
+    ///     let method = entry.value();
+    ///     if method.is_synchronized() {
+    ///         println!("Synchronized method: {}", method.name);
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn is_synchronized(&self) -> bool {
         self.impl_options.contains(MethodImplOptions::SYNCHRONIZED)
     }
 
-    /// Returns true if the method is a P/Invoke.
+    /// Returns true if the method preserves signature for P/Invoke.
+    ///
+    /// This checks the `MethodImplOptions::PRESERVE_SIG` flag to determine if the
+    /// method signature should be preserved exactly as declared when calling into
+    /// unmanaged code, rather than applying standard .NET marshalling transformations.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// for entry in assembly.methods().iter() {
+    ///     let method = entry.value();
+    ///     if method.is_pinvoke() {
+    ///         println!("P/Invoke method with preserved signature: {}", method.name);
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn is_pinvoke(&self) -> bool {
         self.impl_options.contains(MethodImplOptions::PRESERVE_SIG)
     }
 
-    /// Returns true if the runtime shall check all types of parameters.
+    /// Returns true if the method is an internal call.
+    ///
+    /// This checks the `MethodImplOptions::INTERNAL_CALL` flag to determine if the
+    /// method is implemented internally by the runtime with special handling for
+    /// parameter type checking and validation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let internal_methods: Vec<_> = assembly.methods().iter()
+    ///     .filter(|entry| entry.value().is_internal_call())
+    ///     .map(|entry| entry.value().name.clone())
+    ///     .collect();
+    ///
+    /// println!("Found {} internal call methods", internal_methods.len());
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn is_internal_call(&self) -> bool {
         self.impl_options.contains(MethodImplOptions::INTERNAL_CALL)
     }
 
     /// Returns true if the method implementation is forwarded through P/Invoke.
+    ///
+    /// This checks the `MethodImplOptions::MAX_METHOD_IMPL_VAL` flag to determine
+    /// if the method implementation is forwarded to an external library through
+    /// the Platform Invoke (P/Invoke) mechanism.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// for entry in assembly.methods().iter() {
+    ///     let method = entry.value();
+    ///     if method.is_forarded_pinvoke() {
+    ///         println!("Forwarded P/Invoke method: {}", method.name);
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn is_forarded_pinvoke(&self) -> bool {
         self.impl_options
             .contains(MethodImplOptions::MAX_METHOD_IMPL_VAL)

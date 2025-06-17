@@ -1,60 +1,242 @@
+//! Resource type definitions and parsing for .NET resource files.
+//!
+//! This module provides comprehensive support for parsing and representing the various data types
+//! that can be stored in .NET resource files (.resources). It implements the complete type system
+//! defined by the .NET resource format specification, including primitive types, special types,
+//! and user-defined types.
+//!
+//! # .NET Resource Type System
+//!
+//! The .NET resource format supports a hierarchical type system:
+//! - **Primitive Types (0x00-0x1F)**: Built-in .NET value types like integers, strings, booleans
+//! - **Special Types (0x20-0x3F)**: Complex types with special serialization like byte arrays
+//! - **User Types (0x40+)**: Custom types serialized using the binary formatter
+//!
+//! # Magic Number
+//!
+//! All .NET resource files begin with the magic number `0xBEEFCACE` to identify the format.
+//!
+//! # Examples
+//!
+//! ## Basic Type Parsing
+//!
+//! ```ignore
+//! use dotscope::metadata::resources::types::{ResourceType, RESOURCE_MAGIC};
+//! use dotscope::file::parser::Parser;
+//!
+//! // Parse a resource file header
+//! let mut parser = Parser::new(&data);
+//! let magic = parser.read_le::<u32>()?;
+//! assert_eq!(magic, RESOURCE_MAGIC);
+//!
+//! // Parse a type from type byte
+//! let type_byte = parser.read_le::<u8>()?;
+//! let resource_type = ResourceType::from_type_byte(type_byte, &mut parser)?;
+//!
+//! match resource_type {
+//!     ResourceType::String(s) => println!("Found string: {}", s),
+//!     ResourceType::Int32(i) => println!("Found integer: {}", i),
+//!     ResourceType::ByteArray(bytes) => println!("Found byte array: {} bytes", bytes.len()),
+//!     _ => println!("Found other type"),
+//! }
+//! ```
+//!
+//! ## Type Name Resolution
+//!
+//! ```ignore
+//! use dotscope::metadata::resources::types::ResourceType;
+//! use dotscope::file::parser::Parser;
+//!
+//! let mut parser = Parser::new(&data);
+//!
+//! // Parse using type name instead of type byte
+//! let resource_type = ResourceType::from_type_name("System.String", &mut parser)?;
+//! if let ResourceType::String(s) = resource_type {
+//!     println!("Parsed string from type name: {}", s);
+//! }
+//! ```
+//!
+//! # Thread Safety
+//!
+//! All types in this module are thread-safe:
+//! - [`ResourceType`] implements `Send + Sync` for safe sharing across threads
+//! - Parsing operations are stateless and can be performed concurrently
+//! - No global state is maintained during parsing operations
+
 /// The magic number that identifies a .NET resource file (0xBEEFCACE)
 pub const RESOURCE_MAGIC: u32 = 0xBEEF_CACE;
 
 use crate::{file::parser::Parser, Error::TypeError, Result};
 
-/// Represents the common types that can be stored in .NET resources
+/// Represents all data types that can be stored in .NET resource files.
 ///
-/// ```rust,ignore
-/// An internal implementation detail for .resources files, describing
-/// what type an object is.
+/// This enum provides a complete representation of the type system used in .NET resource files,
+/// including all primitive types, special collection types, and extensibility for user-defined types.
+/// Each variant corresponds to specific type codes defined in the .NET resource format specification.
 ///
-/// Ranges:
-///     0 - 0x1F     Primitives and reserved values
-///     0x20 - 0x3F  Specially recognized types, like byte[] and Streams
+/// # Type Code Ranges
 ///
-/// Note this data must be included in any documentation describing the
-/// internals of .resources files.
+/// - **0x00-0x1F**: Primitive and built-in types (null, strings, numbers, dates)
+/// - **0x20-0x3F**: Special types with custom serialization (byte arrays, streams)
+/// - **0x40+**: User-defined types serialized with the binary formatter
+///
+/// # Examples
+///
+/// ```ignore
+/// use dotscope::metadata::resources::types::ResourceType;
+/// use dotscope::file::parser::Parser;
+///
+/// // Parse different resource types
+/// let mut parser = Parser::new(&data);
+///
+/// // Parse a string resource (type code 0x01)
+/// let string_resource = ResourceType::from_type_byte(0x01, &mut parser)?;
+/// if let ResourceType::String(s) = string_resource {
+///     println!("String resource: {}", s);
+/// }
+///
+/// // Parse an integer resource (type code 0x08)
+/// let int_resource = ResourceType::from_type_byte(0x08, &mut parser)?;
+/// if let ResourceType::Int32(i) = int_resource {
+///     println!("Integer resource: {}", i);
+/// }
+///
+/// // Parse a byte array resource (type code 0x20)
+/// let bytes_resource = ResourceType::from_type_byte(0x20, &mut parser)?;
+/// if let ResourceType::ByteArray(bytes) = bytes_resource {
+///     println!("Byte array: {} bytes", bytes.len());
+/// }
 /// ```
-#[allow(missing_docs)]
+///
+/// # Thread Safety
+///
+/// All variants are thread-safe and can be safely shared across threads without synchronization.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResourceType {
-    /* 0 */ Null,
-    /* 1 */ String(String),
-    /* 2 */ Boolean(bool),
-    /* 3 */ Char(char),
-    /* 4 */ Byte(u8),
-    /* 5 */ SByte(i8),
-    /* 6 */ Int16(i16),
-    /* 7 */ UInt16(u16),
-    /* 8 */ Int32(i32),
-    /* 9 */ UInt32(u32),
-    /* 0xA */ Int64(i64),
-    /* 0xB */ UInt64(u64),
-    /* 0xC */ Single(f32),
-    /* 0xD */ Double(f64),
-    /* 0xE */ Decimal,
-    /* 0xF */ DateTime,
-    /* 0x10 */ TimeSpan,
+    /// Null resource value (type code 0x00)
+    /* 0 */
+    Null,
+    /// UTF-8 string resource with length prefix (type code 0x01)
+    /* 1 */
+    String(String),
+    /// Boolean resource value, false=0, true=non-zero (type code 0x02)
+    /* 2 */
+    Boolean(bool),
+    /// Single character resource as byte value (type code 0x03)
+    /* 3 */
+    Char(char),
+    /// Unsigned 8-bit integer resource (type code 0x04)
+    /* 4 */
+    Byte(u8),
+    /// Signed 8-bit integer resource (type code 0x05)
+    /* 5 */
+    SByte(i8),
+    /// Signed 16-bit integer resource, little-endian (type code 0x06)
+    /* 6 */
+    Int16(i16),
+    /// Unsigned 16-bit integer resource, little-endian (type code 0x07)
+    /* 7 */
+    UInt16(u16),
+    /// Signed 32-bit integer resource, little-endian (type code 0x08)
+    /* 8 */
+    Int32(i32),
+    /// Unsigned 32-bit integer resource, little-endian (type code 0x09)
+    /* 9 */
+    UInt32(u32),
+    /// Signed 64-bit integer resource, little-endian (type code 0x0A)
+    /* 0xA */
+    Int64(i64),
+    /// Unsigned 64-bit integer resource, little-endian (type code 0x0B)
+    /* 0xB */
+    UInt64(u64),
+    /// 32-bit floating point resource, little-endian (type code 0x0C)
+    /* 0xC */
+    Single(f32),
+    /// 64-bit floating point resource, little-endian (type code 0x0D)
+    /* 0xD */
+    Double(f64),
+    /// Decimal resource value (type code 0x0E) - not yet implemented
+    /* 0xE */
+    Decimal,
+    /// DateTime resource value (type code 0x0F) - not yet implemented
+    /* 0xF */
+    DateTime,
+    /// TimeSpan resource value (type code 0x10) - not yet implemented
+    /* 0x10 */
+    TimeSpan,
 
     // Type with special representation, like byte[] and Stream
+    /// Byte array resource with length prefix (type code 0x20)
     /* 0x20 */
     ByteArray(Vec<u8>),
-    /* 0x21 */ Stream,
+    /// Stream resource reference (type code 0x21) - not yet implemented
+    /* 0x21 */
+    Stream,
 
     // User types - serialized using the binary formatter
-    /* 0x40 */ StartOfUserTypes,
+    /// Marker for the beginning of user-defined types (type code 0x40+)
+    /* 0x40 */
+    StartOfUserTypes,
 }
 
 impl ResourceType {
-    /// Convert a .NET type byte into a `ResourceType`
+    /// Parses a resource type from its binary type code.
+    ///
+    /// This method reads a resource value from the parser based on the provided type byte,
+    /// which corresponds to the type codes defined in the .NET resource format specification.
+    /// Each type code indicates both the data type and how to parse the following bytes.
     ///
     /// # Arguments
-    /// * `byte` - The type byte
-    /// * `parser` - Instance of the parser to read the underlying value
+    ///
+    /// * `byte` - The type code byte (0x00-0xFF) that identifies the data type
+    /// * `parser` - A mutable reference to the parser positioned after the type byte
+    ///
+    /// # Returns
+    ///
+    /// Returns a [`crate::Result<ResourceType>`] containing the parsed resource value,
+    /// or an error if the type code is unsupported or parsing fails.
+    ///
+    /// # Supported Type Codes
+    ///
+    /// - `0x01`: UTF-8 string with length prefix
+    /// - `0x02`: Boolean value (0 = false, non-zero = true)
+    /// - `0x03`: Single character as byte
+    /// - `0x04`: Unsigned 8-bit integer
+    /// - `0x05`: Signed 8-bit integer
+    /// - `0x06`: Signed 16-bit integer (little-endian)
+    /// - `0x07`: Unsigned 16-bit integer (little-endian)
+    /// - `0x08`: Signed 32-bit integer (little-endian)
+    /// - `0x09`: Unsigned 32-bit integer (little-endian)
+    /// - `0x0A`: Signed 64-bit integer (little-endian)
+    /// - `0x0B`: Unsigned 64-bit integer (little-endian)
+    /// - `0x0C`: 32-bit floating point (little-endian)
+    /// - `0x0D`: 64-bit floating point (little-endian)
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use dotscope::metadata::resources::types::ResourceType;
+    /// use dotscope::file::parser::Parser;
+    ///
+    /// let mut parser = Parser::new(&data);
+    ///
+    /// // Parse a string resource (type code 0x01)
+    /// let string_type = ResourceType::from_type_byte(0x01, &mut parser)?;
+    /// if let ResourceType::String(s) = string_type {
+    ///     println!("Found string: {}", s);
+    /// }
+    ///
+    /// // Parse an integer resource (type code 0x08)
+    /// let int_type = ResourceType::from_type_byte(0x08, &mut parser)?;
+    /// if let ResourceType::Int32(value) = int_type {
+    ///     println!("Found integer: {}", value);
+    /// }
+    /// ```
     ///
     /// # Errors
-    /// Returns an error if the type byte is invalid or parsing fails.
+    ///
+    /// - [`crate::Error::TypeError`]: If the type byte is not supported
+    /// - Parser errors: If reading the underlying data fails (e.g., truncated data)
     pub fn from_type_byte(byte: u8, parser: &mut Parser) -> Result<Self> {
         match byte {
             0x1 => Ok(ResourceType::String(parser.read_prefixed_string_utf8()?)),
@@ -77,14 +259,72 @@ impl ResourceType {
         }
     }
 
-    /// Convert a .NET type name to a `ResourceType`
+    /// Parses a resource type from its .NET type name.
+    ///
+    /// This method provides an alternative parsing mechanism that uses .NET type names instead
+    /// of type bytes. It maps common .NET Framework type names to their corresponding binary
+    /// representations and delegates to [`Self::from_type_byte`] for the actual parsing.
+    ///
+    /// This approach is commonly used in resource files that store type information as strings
+    /// rather than numeric type codes, particularly in older .NET resource formats.
     ///
     /// # Arguments
-    /// * `type_name` - The name of the type to produce
-    /// * `parser` - Instance of the parser to read the underlying value
+    ///
+    /// * `type_name` - The fully qualified .NET type name (e.g., "System.String")
+    /// * `parser` - A mutable reference to the parser positioned at the resource value
+    ///
+    /// # Returns
+    ///
+    /// Returns a [`crate::Result<ResourceType>`] containing the parsed resource value,
+    /// or an error if the type name is unsupported or parsing fails.
+    ///
+    /// # Supported Type Names
+    ///
+    /// - `"System.Null"`: Null value
+    /// - `"System.String"`: UTF-8 string with length prefix
+    /// - `"System.Boolean"`: Boolean value
+    /// - `"System.Char"`: Single character
+    /// - `"System.Byte"`: Unsigned 8-bit integer
+    /// - `"System.SByte"`: Signed 8-bit integer
+    /// - `"System.Int16"`: Signed 16-bit integer
+    /// - `"System.UInt16"`: Unsigned 16-bit integer
+    /// - `"System.Int32"`: Signed 32-bit integer
+    /// - `"System.UInt32"`: Unsigned 32-bit integer
+    /// - `"System.Int64"`: Signed 64-bit integer
+    /// - `"System.UInt64"`: Unsigned 64-bit integer
+    /// - `"System.Single"`: 32-bit floating point
+    /// - `"System.Double"`: 64-bit floating point
+    /// - `"System.Byte[]"`: Byte array
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use dotscope::metadata::resources::types::ResourceType;
+    /// use dotscope::file::parser::Parser;
+    ///
+    /// let mut parser = Parser::new(&data);
+    ///
+    /// // Parse using .NET type names
+    /// let string_resource = ResourceType::from_type_name("System.String", &mut parser)?;
+    /// if let ResourceType::String(s) = string_resource {
+    ///     println!("String resource: {}", s);
+    /// }
+    ///
+    /// let int_resource = ResourceType::from_type_name("System.Int32", &mut parser)?;
+    /// if let ResourceType::Int32(value) = int_resource {
+    ///     println!("Integer resource: {}", value);
+    /// }
+    ///
+    /// let bytes_resource = ResourceType::from_type_name("System.Byte[]", &mut parser)?;
+    /// if let ResourceType::ByteArray(bytes) = bytes_resource {
+    ///     println!("Byte array: {} bytes", bytes.len());
+    /// }
+    /// ```
     ///
     /// # Errors
-    /// Returns an error if the type name is invalid or parsing fails.
+    ///
+    /// - [`crate::Error::TypeError`]: If the type name is not supported
+    /// - Parser errors: If reading the underlying data fails
     pub fn from_type_name(type_name: &str, parser: &mut Parser) -> Result<Self> {
         match type_name {
             "System.Null" => ResourceType::from_type_byte(0, parser),

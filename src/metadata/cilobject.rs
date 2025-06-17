@@ -1,16 +1,87 @@
 //! High-level .NET assembly abstraction and metadata access.
 //!
-//! The [`CilObject`] struct is the main entry point for analyzing .NET assemblies. It provides
-//! access to all ECMA-335 metadata tables, streams, type system, resources, and more. This is the
-//! recommended API for most users who want to inspect, analyze, or transform .NET binaries.
+//! This module provides the main entry point for analyzing .NET assemblies through the
+//! [`crate::CilObject`] struct. It offers comprehensive access to all ECMA-335 metadata
+//! tables, streams, type system, resources, and assembly information with efficient
+//! memory management and thread-safe access patterns.
 //!
-//! # Key Features
+//! # Architecture
 //!
-//! - Access to all metadata tables, streams, and heaps
-//! - Type system and signature resolution
-//! - Resource, import, and export analysis
-//! - Disassembly and method body parsing
-//! - Parallelized metadata loading
+//! The module is built around a self-referencing pattern that ensures parsed metadata
+//! structures maintain valid references to the underlying file data without expensive
+//! copying. Key architectural components include:
+//!
+//! - **File Layer**: Memory-mapped file access for efficient I/O
+//! - **Metadata Layer**: Structured access to ECMA-335 metadata tables and streams
+//! - **Validation Layer**: Configurable validation during loading
+//! - **Caching Layer**: Thread-safe caching of parsed structures
+//!
+//! # Key Components
+//!
+//! - [`crate::CilObject`] - Main entry point for .NET assembly analysis
+//! - [`crate::metadata::validation::ValidationConfig`] - Configuration for validation during loading
+//!
+//! # Usage Examples
+//!
+//! ## Basic Assembly Loading
+//!
+//! ```rust,no_run
+//! use dotscope::CilObject;
+//! use std::path::Path;
+//!
+//! // Load an assembly from file
+//! let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+//!
+//! // Access basic assembly information
+//! if let Some(module) = assembly.module() {
+//!     println!("Module: {}", module.name);
+//! }
+//!
+//! if let Some(assembly_info) = assembly.assembly() {
+//!     println!("Assembly: {}", assembly_info.name);
+//! }
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! ## Memory-based Analysis
+//!
+//! ```rust,no_run
+//! use dotscope::CilObject;
+//!
+//! // Load from memory buffer (e.g., downloaded or embedded)
+//! let file_data = std::fs::read("assembly.dll")?;
+//! let assembly = CilObject::from_mem(file_data)?;
+//!
+//! // Access metadata streams
+//! if let Some(strings) = assembly.strings() {
+//!     if let Ok(name) = strings.get(1) {
+//!         println!("String at index 1: {}", name);
+//!     }
+//! }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! # Error Handling
+//!
+//! All operations return [`crate::Result<T>`] with comprehensive error information:
+//! - **File I/O errors**: When files cannot be read or accessed
+//! - **Format errors**: When PE or metadata format is invalid
+//! - **Validation errors**: When validation checks fail during loading
+//! - **Memory errors**: When insufficient memory is available
+//!
+//! # Thread Safety
+//!
+//! [`crate::CilObject`] is designed for thread-safe concurrent read access. Internal
+//! caching and lazy loading use appropriate synchronization primitives to ensure
+//! correctness in multi-threaded scenarios. All public APIs are [`Send`] and [`Sync`].
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::disassembler`] - Method body disassembly and instruction decoding  
+//! - [`crate::metadata::tables`] - Low-level metadata table access
+//! - [`crate::metadata::typesystem`] - Type resolution and signature parsing
+//! - Low-level PE file parsing and memory management components
 use ouroboros::self_referencing;
 use std::{path::Path, sync::Arc};
 
@@ -58,13 +129,7 @@ use crate::{
 /// without requiring expensive data copying. This enables efficient analysis
 /// of large assemblies while maintaining Rust's memory safety guarantees.
 ///
-/// # Thread Safety
-///
-/// `CilObject` is designed to be thread-safe for concurrent read access.
-/// Internal caching and lazy loading use appropriate synchronization primitives
-/// to ensure correctness in multi-threaded scenarios.
-///
-/// # Examples
+/// # Usage Examples
 ///
 /// ```rust,no_run
 /// use dotscope::CilObject;
@@ -74,26 +139,27 @@ use crate::{
 /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
 ///
 /// // Access assembly metadata
-/// println!("Assembly name: {}", assembly.name());
+/// if let Some(assembly_info) = assembly.assembly() {
+///     println!("Assembly name: {}", assembly_info.name);
+/// }
 /// println!("Number of types: {}", assembly.types().len());
 ///
 /// // Examine methods
-/// for method in assembly.methods() {
+/// for method in assembly.methods().values() {
 ///     println!("Method: {} (RVA: {:X})", method.name, method.rva.unwrap_or(0));
 /// }
 ///
 /// // Load from memory buffer
 /// let file_data = std::fs::read("tests/samples/WindowsBase.dll")?;
-/// let assembly = CilObject::from_buffer(&file_data)?;
-/// # Ok::<(), dotscope::Error>(())
+/// let assembly = CilObject::from_mem(file_data)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
-/// # Performance Notes
+/// # Thread Safety
 ///
-/// - Metadata tables are parsed lazily on first access
-/// - String lookups are cached for improved performance
-/// - Large assemblies benefit from the efficient memory access design
-/// - Memory usage scales with the number of accessed metadata items
+/// `CilObject` is designed to be thread-safe for concurrent read access.
+/// Internal caching and lazy loading use appropriate synchronization primitives
+/// to ensure correctness in multi-threaded scenarios.
 pub struct CilObject {
     // Holds the input data, either as memory buffer or mmaped file
     file: Arc<File>,
@@ -122,20 +188,22 @@ impl CilObject {
     /// - The PE file is not a valid .NET assembly
     /// - Metadata streams are corrupted or invalid
     ///
-    /// # Examples
+    /// # Usage Examples
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
     /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
-    /// println!("Loaded assembly: {}", assembly.assembly().unwrap().name);
+    /// if let Some(assembly_info) = assembly.assembly() {
+    ///     println!("Loaded assembly: {}", assembly_info.name);
+    /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
     /// # Errors
     ///
-    /// Returns an error if the file cannot be read or parsed as a valid .NET assembly.
+    /// Returns [`crate::Error`] if the file cannot be read or parsed as a valid .NET assembly.
     pub fn from_file(file: &Path) -> Result<Self> {
         Self::from_file_with_validation(file, ValidationConfig::minimal())
     }
@@ -143,38 +211,36 @@ impl CilObject {
     /// Creates a new `CilObject` by parsing a .NET assembly from a file with custom validation configuration.
     ///
     /// This method allows you to control which validation checks are performed during loading.
-    /// Use this when you need to balance performance vs. validation coverage.
+    /// Use this when you need to balance security requirements vs. loading speed.
     ///
     /// # Arguments
     ///
     /// * `file` - Path to the .NET assembly file
     /// * `validation_config` - Configuration specifying which validation checks to perform
     ///
-    /// # Examples
+    /// # Usage Examples
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use dotscope::{CilObject, ValidationConfig};
     /// use std::path::Path;
     ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// // Load with minimal validation for maximum performance
+    /// // Load with minimal validation for maximum speed
     /// let assembly = CilObject::from_file_with_validation(
     ///     Path::new("tests/samples/WindowsBase.dll"),
     ///     ValidationConfig::minimal()
     /// )?;
     ///
-    /// // Load with production validation for balance of safety and performance
+    /// // Load with production validation for balance of safety and speed
     /// let assembly = CilObject::from_file_with_validation(
     ///     Path::new("tests/samples/WindowsBase.dll"),
     ///     ValidationConfig::production()
     /// )?;
-    /// # Ok(())
-    /// # }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
     /// # Errors
     ///
-    /// Returns an error if the file cannot be read, parsed as a valid .NET assembly,
+    /// Returns [`crate::Error`] if the file cannot be read, parsed as a valid .NET assembly,
     /// or if validation checks fail.
     pub fn from_file_with_validation(
         file: &Path,
@@ -202,24 +268,25 @@ impl CilObject {
     /// - Metadata streams are corrupted or invalid
     /// - Memory allocation fails during processing
     ///
-    /// # Examples
+    /// # Usage Examples
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     ///
-    /// // Load assembly from network or embedded resource
-    /// //let assembly_bytes = download_assembly().await?;
-    /// //let assembly = CilObject::from_mem(assembly_bytes)?;
-    ///
-    /// // Or from file for comparison
+    /// // Load assembly from file into memory then parse
     /// let file_data = std::fs::read("tests/samples/WindowsBase.dll")?;
     /// let assembly = CilObject::from_mem(file_data)?;
+    ///
+    /// // Access the loaded assembly
+    /// if let Some(module) = assembly.module() {
+    ///     println!("Module name: {}", module.name);
+    /// }
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
     /// # Errors
     ///
-    /// Returns an error if the memory buffer cannot be parsed as a valid .NET assembly.
+    /// Returns [`crate::Error`] if the memory buffer cannot be parsed as a valid .NET assembly.
     pub fn from_mem(data: Vec<u8>) -> Result<Self> {
         Self::from_mem_with_validation(data, ValidationConfig::minimal())
     }
@@ -227,19 +294,18 @@ impl CilObject {
     /// Creates a new `CilObject` by parsing a .NET assembly from a memory buffer with custom validation configuration.
     ///
     /// This method allows you to control which validation checks are performed during loading.
-    /// Use this when you need to balance performance vs. validation coverage.
+    /// Use this when you need to balance security requirements vs. loading speed.
     ///
     /// # Arguments
     ///
     /// * `data` - Raw bytes of the .NET assembly in PE format
     /// * `validation_config` - Configuration specifying which validation checks to perform
     ///
-    /// # Examples
+    /// # Usage Examples
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use dotscope::{CilObject, ValidationConfig};
     ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let file_data = std::fs::read("tests/samples/WindowsBase.dll")?;
     ///
     /// // Load with production validation settings
@@ -247,13 +313,12 @@ impl CilObject {
     ///     file_data.clone(),
     ///     ValidationConfig::production()
     /// )?;
-    /// # Ok(())
-    /// # }
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
     /// # Errors
     ///
-    /// Returns an error if the memory buffer cannot be parsed as a valid .NET assembly
+    /// Returns [`crate::Error`] if the memory buffer cannot be parsed as a valid .NET assembly
     /// or if validation checks fail.
     pub fn from_mem_with_validation(
         data: Vec<u8>,
@@ -302,15 +367,15 @@ impl CilObject {
     ///
     /// # Returns
     ///
-    /// Reference to the parsed `Cor20Header` structure containing:
+    /// Reference to the parsed [`crate::metadata::cor20header::Cor20Header`] structure containing:
     /// - Metadata directory RVA and size
     /// - Entry point token (for executables)
     /// - Runtime flags (`IL_ONLY`, `32BIT_REQUIRED`, etc.)
     /// - Resources and strong name signature locations
     ///
-    /// # Examples
+    /// # Usage Examples
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     ///
     /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
@@ -333,14 +398,14 @@ impl CilObject {
     ///
     /// # Returns
     ///
-    /// Reference to the parsed `Root` structure containing:
+    /// Reference to the parsed [`crate::metadata::root::Root`] structure containing:
     /// - Metadata format version and signature  
     /// - Stream directory with names, offsets, and sizes
     /// - Framework version string
     ///
-    /// # Examples
+    /// # Usage Examples
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     ///
     /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
@@ -366,10 +431,10 @@ impl CilObject {
     ///
     /// # Returns
     ///
-    /// - `Some(&TablesHeader)` if the #~ stream is present (compressed metadata)
+    /// - `Some(&`[`crate::metadata::streams::TablesHeader`]`)` if the #~ stream is present (compressed metadata)
     /// - `None` if no tables stream is found (invalid or malformed assembly)
     ///
-    /// The `TablesHeader` provides access to:
+    /// The [`crate::metadata::streams::TablesHeader`] provides access to:
     /// - All metadata table row counts and data
     /// - String, GUID, and Blob heap indices
     /// - Schema version and heap size information
@@ -403,7 +468,7 @@ impl CilObject {
     ///
     /// # Returns
     ///
-    /// - `Some(&Strings)` if the #Strings stream is present
+    /// - `Some(&`[`crate::metadata::streams::Strings`]`)` if the #Strings stream is present
     /// - `None` if the stream is missing (malformed assembly)
     ///
     /// # Examples
@@ -433,7 +498,7 @@ impl CilObject {
     ///
     /// # Returns
     ///
-    /// - `Some(&UserStrings)` if the #US stream is present
+    /// - `Some(&`[`crate::metadata::streams::UserStrings`]`)` if the #US stream is present
     /// - `None` if the stream is missing (assembly has no string literals)
     ///
     /// # Examples
@@ -463,7 +528,7 @@ impl CilObject {
     ///
     /// # Returns
     ///
-    /// - `Some(&Guid)` if the #GUID stream is present
+    /// - `Some(&`[`crate::metadata::streams::Guid`]`)` if the #GUID stream is present
     /// - `None` if the stream is missing (assembly has no GUID references)
     ///
     /// # Examples
@@ -493,7 +558,7 @@ impl CilObject {
     ///
     /// # Returns
     ///
-    /// - `Some(&Blob)` if the #Blob stream is present
+    /// - `Some(&`[`crate::metadata::streams::Blob`]`)` if the #Blob stream is present
     /// - `None` if the stream is missing (malformed assembly)
     ///
     /// # Examples

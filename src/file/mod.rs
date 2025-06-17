@@ -6,16 +6,32 @@
 //!
 //! # Architecture
 //!
-//! The module is built around several key components:
+//! The module is built around several key components that work together to provide
+//! comprehensive PE file analysis capabilities:
 //!
-//! - [`File`] - Main PE file abstraction with .NET-specific functionality
-//! - [`Backend`] - Trait for different data sources (disk files, memory buffers)
-//! - [`parser::Parser`] - High-level parsing interface for metadata extraction
-//! - [`io`] - Low-level I/O utilities for reading PE structures
+//! - **File abstraction layer** - Unified interface for PE file access
+//! - **Backend system** - Pluggable data sources (disk files, memory buffers)
+//! - **PE format parsing** - Complete PE/COFF structure analysis
+//! - **Address translation** - RVA to file offset conversion
+//! - **Data directory access** - Direct access to PE data directories
+//!
+//! # Key Components
+//!
+//! ## Core Types
+//! - [`crate::file::File`] - Main PE file abstraction with .NET-specific functionality
+//! - [`crate::file::Backend`] - Trait for different data sources (disk files, memory buffers)
+//!
+//! ## Parsing Infrastructure  
+//! - [`crate::file::parser::Parser`] - High-level parsing interface for metadata extraction
+//! - [`crate::file::io`] - Low-level I/O utilities for reading PE structures
+//!
+//! ## Backend Implementations
+//! - [`crate::file::physical::Physical`] - Memory-mapped file backend for disk access
+//! - [`crate::file::memory::Memory`] - In-memory buffer backend for dynamic analysis
 //!
 //! # Data Sources
 //!
-//! The module supports multiple data sources through the [`Backend`] trait:
+//! The module supports multiple data sources through the [`crate::file::Backend`] trait:
 //! - **Physical files** - Memory-mapped files for efficient disk access
 //! - **Memory buffers** - In-memory PE data for dynamic analysis
 //!
@@ -94,16 +110,16 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::cilobject`] - Uses file parsing for .NET metadata extraction
+//! - [`crate::disassembler`] - Provides binary data access for instruction analysis
+//! - [`crate::file::parser`] - High-level parsing utilities for metadata streams
+//!
 //! The file module provides low-level PE file parsing capabilities. For high-level assembly
 //! analysis, use the [`CilObject`](crate::CilObject) interface which builds upon these
 //! primitives to provide a rich metadata API.
-//!
-//! # Performance Notes
-//!
-//! - File-based loading uses memory mapping for efficient access to large files
-//! - Memory-based loading keeps the entire file in RAM for faster random access
-//! - RVA translation is cached to avoid repeated section table lookups
-//! - All parsing operations are lazy where possible to minimize startup time
 //!
 //! # Thread Safety
 //!
@@ -829,7 +845,7 @@ mod tests {
 
     use super::*;
 
-    /// Verifies the correctness of a loaded [`File`] instance.
+    /// Verifies the correctness of a loaded [`crate::file::File`] instance.
     ///
     /// This function checks various properties of the loaded PE file, including headers,
     /// sections, and .NET-specific metadata.

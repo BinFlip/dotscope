@@ -1,3 +1,304 @@
+//! ECMA-335 Metadata Tables Header (`#~`) for .NET Assembly Parsing
+//!
+//! This module provides comprehensive parsing and access to the compressed metadata tables
+//! stream (`#~`) defined in ECMA-335 Section II.24.2.6 and detailed in Section II.22.
+//! The tables header serves as the central access point for all metadata tables within
+//! a .NET assembly, enabling efficient reflection, analysis, and runtime operations.
+//!
+//! # Metadata Tables Architecture
+//!
+//! The metadata tables system is the core of .NET assemblies, containing structured
+//! information about types, methods, fields, properties, events, and relationships
+//! between these entities. The `#~` stream provides a compressed, optimized format
+//! for storing this metadata with variable-width encoding for maximum space efficiency.
+//!
+//! ## Stream Structure
+//!
+//! The compressed metadata tables stream follows this binary layout:
+//! ```text
+//! Offset | Size | Field              | Description
+//! -------|------|--------------------|-----------------------------------------
+//! 0      | 4    | Reserved           | Must be 0x00000000
+//! 4      | 1    | MajorVersion       | Schema major version (typically 2)
+//! 5      | 1    | MinorVersion       | Schema minor version (typically 0)
+//! 6      | 1    | HeapSizes          | Heap index size flags (strings, blobs, GUIDs)
+//! 7      | 1    | Reserved           | Must be 0x01
+//! 8      | 8    | Valid              | Bit vector of present tables (64 bits)
+//! 16     | 8    | Sorted             | Bit vector of sorted tables (64 bits)
+//! 24     | 4*N  | Rows[]             | Row counts for each present table
+//! 24+4*N | Var  | TableData[]        | Actual table data in binary format
+//! ```
+//!
+//! ## Supported Metadata Tables
+//!
+//! The ECMA-335 specification defines 45 metadata tables, each serving specific purposes:
+//!
+//! ### Core Type System Tables
+//! - **Module** (0x00): Assembly module information
+//! - **TypeRef** (0x01): External type references
+//! - **TypeDef** (0x02): Type definitions within this assembly
+//! - **Field** (0x04): Field definitions and metadata
+//! - **MethodDef** (0x06): Method definitions and signatures
+//! - **Param** (0x08): Parameter definitions and attributes
+//!
+//! ### Member Reference Tables
+//! - **MemberRef** (0x0A): References to external members
+//! - **InterfaceImpl** (0x09): Interface implementation relationships
+//! - **Constant** (0x0B): Compile-time constant values
+//! - **CustomAttribute** (0x0C): Custom attribute applications
+//!
+//! ### Layout and Mapping Tables
+//! - **ClassLayout** (0x0F): Type layout and packing information
+//! - **FieldLayout** (0x10): Field offset specifications
+//! - **FieldRVA** (0x1D): Field data relative virtual addresses
+//! - **ImplMap** (0x1C): P/Invoke and native interop mappings
+//!
+//! ### Event and Property Tables
+//! - **Event** (0x14): Event definitions
+//! - **Property** (0x17): Property definitions
+//! - **EventMap** (0x12): Type-to-event mappings
+//! - **PropertyMap** (0x15): Type-to-property mappings
+//! - **MethodSemantics** (0x18): Event/property accessor method relationships
+//!
+//! ### Assembly and Module Tables
+//! - **Assembly** (0x20): Assembly metadata and versioning
+//! - **AssemblyRef** (0x23): External assembly references
+//! - **File** (0x26): Multi-file assembly components
+//! - **ManifestResource** (0x28): Embedded and linked resources
+//! - **ExportedType** (0x27): Types exported from this assembly
+//!
+//! ### Generic Type Tables
+//! - **GenericParam** (0x2A): Generic type and method parameters
+//! - **GenericParamConstraint** (0x2C): Generic parameter constraints
+//! - **MethodSpec** (0x2B): Generic method instantiations
+//!
+//! ### Security and Advanced Tables
+//! - **DeclSecurity** (0x0E): Declarative security attributes
+//! - **StandAloneSig** (0x11): Standalone method signatures
+//! - **TypeSpec** (0x1B): Complex type specifications
+//! - **NestedClass** (0x29): Nested type relationships
+//!
+//! ## Memory-Efficient Design
+//!
+//! The [`crate::metadata::streams::tablesheader::TablesHeader`] implementation prioritizes memory efficiency and performance:
+//!
+//! ### Zero-Copy Architecture
+//! - **Borrowed references**: All table data remains in original assembly buffer
+//! - **Lazy parsing**: Table rows parsed only when accessed
+//! - **Minimal overhead**: Table metadata cached, but data stays in place
+//! - **Lifetime safety**: Rust borrow checker prevents dangling references
+//!
+//! ### Optimized Access Patterns
+//! - **Direct indexing**: O(1) random access to any table row
+//! - **Sequential iteration**: Efficient streaming through large tables
+//! - **Parallel processing**: Safe concurrent access via `rayon` integration
+//! - **Type safety**: Compile-time verification of table type correctness
+//!
+//! # Examples
+//!
+//! ## Basic Table Access and Analysis
+//! ```rust
+//! use dotscope::metadata::{streams::TablesHeader, tables::{TableId, TypeDefRaw, MethodDefRaw}};
+//!
+//! # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
+//! let tables = TablesHeader::from(tables_data)?;
+//!
+//! // Analyze assembly structure
+//! println!("Assembly contains {} metadata tables", tables.table_count());
+//!
+//! // Access type definitions
+//! if let Some(typedef_table) = tables.table::<TypeDefRaw>(TableId::TypeDef) {
+//!     println!("Found {} type definitions", typedef_table.row_count());
+//!     
+//!     // Examine first few types
+//!     for (index, type_def) in typedef_table.iter().enumerate().take(5) {
+//!         println!("Type {}: flags={:#x}, name_idx={}, namespace_idx={}",
+//!                  index, type_def.flags, type_def.type_name, type_def.type_namespace);
+//!     }
+//! }
+//!
+//! // Access method definitions
+//! if let Some(method_table) = tables.table::<MethodDefRaw>(TableId::MethodDef) {
+//!     println!("Found {} method definitions", method_table.row_count());
+//!     
+//!     // Find methods by characteristics
+//!     let static_methods = method_table.iter()
+//!         .filter(|method| method.flags & 0x0010 != 0) // MethodAttributes.Static
+//!         .count();
+//!     println!("Static methods: {}", static_methods);
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Cross-Table Analysis and Relationships
+//! ```rust
+//! use dotscope::metadata::{streams::TablesHeader, tables::{TableId, TypeDefRaw, FieldRaw}};
+//!
+//! # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
+//! let tables = TablesHeader::from(tables_data)?;
+//!
+//! // Analyze types and their fields together
+//! if let (Some(typedef_table), Some(field_table)) = (
+//!     tables.table::<TypeDefRaw>(TableId::TypeDef),
+//!     tables.table::<FieldRaw>(TableId::Field)
+//! ) {
+//!     for (type_idx, type_def) in typedef_table.iter().enumerate().take(10) {
+//!         // Calculate field range for this type
+//!         let field_start = type_def.field_list.saturating_sub(1) as usize;
+//!         
+//!         // Find field range end (next type's field_list or table end)
+//!         let field_end = if type_idx + 1 < typedef_table.row_count() as usize {
+//!             typedef_table.get((type_idx + 1) as u32)
+//!                 .map(|next_type| next_type.field_list.saturating_sub(1) as usize)
+//!                 .unwrap_or(field_table.row_count() as usize)
+//!         } else {
+//!             field_table.row_count() as usize
+//!         };
+//!         
+//!         let field_count = field_end.saturating_sub(field_start);
+//!         println!("Type {} has {} fields (indices {}-{})",
+//!                  type_idx, field_count, field_start, field_end);
+//!     }
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Parallel Processing for Performance
+//! ```rust
+//! use dotscope::metadata::{streams::TablesHeader, tables::{TableId, CustomAttributeRaw}};
+//! use rayon::prelude::*;
+//!
+//! # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
+//! let tables = TablesHeader::from(tables_data)?;
+//!
+//! // Process custom attributes in parallel for large assemblies
+//! if let Some(ca_table) = tables.table::<CustomAttributeRaw>(TableId::CustomAttribute) {
+//!     println!("Processing {} custom attributes in parallel", ca_table.row_count());
+//!     
+//!     // Parallel analysis using rayon
+//!     let attribute_stats = ca_table.par_iter()
+//!         .map(|attr| {
+//!             // Analyze attribute type and parent
+//!             let parent_table = attr.parent.tag;
+//!             let parent_index = attr.parent.row;
+//!             (parent_table, parent_index)
+//!         })
+//!         .collect::<Vec<_>>();
+//!     
+//!     println!("Analyzed {} attribute relationships", attribute_stats.len());
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Memory-Efficient Large Table Processing
+//! ```rust
+//! use dotscope::metadata::{streams::TablesHeader, tables::{TableId, MemberRefRaw}};
+//!
+//! # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
+//! let tables = TablesHeader::from(tables_data)?;
+//!
+//! // Process large tables in chunks to manage memory usage
+//! if let Some(memberref_table) = tables.table::<MemberRefRaw>(TableId::MemberRef) {
+//!     const CHUNK_SIZE: u32 = 1000;
+//!     let total_rows = memberref_table.row_count();
+//!     
+//!     println!("Processing {} member references in chunks of {}", total_rows, CHUNK_SIZE);
+//!     
+//!     for chunk_start in (0..total_rows).step_by(CHUNK_SIZE as usize) {
+//!         let chunk_end = (chunk_start + CHUNK_SIZE).min(total_rows);
+//!         
+//!         // Process chunk without loading entire table into memory
+//!         let mut external_refs = 0;
+//!         for i in chunk_start..chunk_end {
+//!             if let Some(member_ref) = memberref_table.get(i) {
+//!                 // Analyze member reference
+//!                 if member_ref.class.tag == TableId::TypeRef {
+//!                     external_refs += 1;
+//!                 }
+//!             }
+//!         }
+//!         
+//!         println!("Chunk {}-{}: {} external references",
+//!                  chunk_start, chunk_end, external_refs);
+//!     }
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Table Discovery and Introspection
+//! ```rust
+//! use dotscope::metadata::{streams::TablesHeader, tables::TableId};
+//!
+//! # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
+//! let tables = TablesHeader::from(tables_data)?;
+//!
+//! println!("Assembly Metadata Summary:");
+//! println!("========================");
+//!
+//! // Get overview of all present tables
+//! let summaries = tables.table_summary();
+//! for summary in summaries {
+//!     println!("{:?}: {} rows", summary.table_id, summary.row_count);
+//! }
+//!
+//! // Check for specific advanced features
+//! if tables.has_table(TableId::GenericParam) {
+//!     println!("✓ Assembly uses generic types");
+//! }
+//! if tables.has_table(TableId::DeclSecurity) {
+//!     println!("✓ Assembly has declarative security");
+//! }
+//! if tables.has_table(TableId::ManifestResource) {
+//!     println!("✓ Assembly contains embedded resources");
+//! }
+//!
+//! // Check for common tables by ID
+//! if tables.has_table_by_id(0x20) { // Assembly table
+//!     println!("✓ Assembly metadata present");
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # ECMA-335 Compliance
+//!
+//! This implementation fully complies with ECMA-335 specifications:
+//! - **Section II.24.2.6**: Metadata tables stream format and structure
+//! - **Section II.22**: Complete table definitions and relationships
+//! - **Compression format**: Proper handling of variable-width table indices
+//! - **Heap references**: Correct interpretation of string, blob, and GUID heap indices
+//! - **Table relationships**: Accurate representation of cross-table references
+//!
+//! # Security Considerations
+//!
+//! ## Input Validation
+//! - **Bounds checking**: All table access protected against buffer overruns
+//! - **Format validation**: ECMA-335 format requirements enforced during parsing
+//! - **Index validation**: Heap and table references validated for correctness
+//! - **Size limits**: Reasonable limits on table sizes prevent resource exhaustion
+//!
+//! ## Memory Safety
+//! - **Lifetime enforcement**: Rust borrow checker prevents use-after-free
+//! - **Type safety**: Generic type parameters prevent incorrect table access
+//! - **Bounds verification**: All array and slice access bounds-checked
+//! - **No unsafe aliasing**: Careful pointer management in type casting
+//!
+//! # See Also
+//! - [`crate::metadata::tables`]: Individual metadata table definitions and structures
+//! - [`crate::metadata::streams`]: Overview of all metadata stream types
+//! - [`crate::metadata::root`]: Metadata root and stream directory parsing
+//! - [ECMA-335 II.24.2.6](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Tables stream specification
+//! - [ECMA-335 II.22](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Metadata table definitions
+//!
+//! # References
+//! - **ECMA-335 II.24.2.6**: Metadata tables stream format and binary layout
+//! - **ECMA-335 II.22**: Complete specifications for all 45 metadata table types
+//! - **ECMA-335 II.25**: File format and metadata integration within PE files
+
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 
@@ -18,11 +319,286 @@ use crate::{
     Result,
 };
 
-/// The `TablesHeader` structure represents the header in the '#~' stream. '#~' which contains all the metadata used
-/// for reflection and execution of the CIL binary.
+/// ECMA-335 compliant metadata tables header providing efficient access to .NET assembly metadata.
 ///
-/// This structure provides efficient access to metadata tables, allowing reference-based parsing and traversal
-/// of .NET assemblies without loading the entire metadata into memory at once.
+/// The [`crate::metadata::streams::tablesheader::TablesHeader`] struct represents the compressed metadata tables stream (`#~`) header
+/// and provides type-safe, memory-efficient access to all metadata tables within a .NET assembly.
+/// This is the primary interface for reflection, analysis, and runtime operations on .NET metadata.
+///
+/// ## Architecture and Design
+///
+/// [`crate::metadata::streams::tablesheader::TablesHeader`] implements a zero-copy, reference-based design that maximizes performance
+/// while maintaining memory safety through Rust's lifetime system:
+///
+/// - **Zero allocation**: All table data remains in the original assembly buffer
+/// - **Lazy parsing**: Table rows are parsed only when accessed
+/// - **Type safety**: Generic type parameters prevent incorrect table access
+/// - **Lifetime safety**: Rust borrow checker prevents dangling references
+/// - **ECMA-335 compliance**: Full specification adherence for all table formats
+///
+/// ## Metadata Tables Overview
+///
+/// The metadata tables system contains 45 different table types defined by ECMA-335,
+/// each serving specific purposes in the .NET type system:
+///
+/// ### Core Tables (Always Present)
+/// - **Module**: Assembly module identification and versioning
+/// - **TypeDef**: Type definitions declared in this assembly
+/// - **MethodDef**: Method definitions and IL code references
+/// - **Field**: Field definitions and attributes
+///
+/// ### Reference Tables (External Dependencies)
+/// - **TypeRef**: References to types in other assemblies
+/// - **MemberRef**: References to methods/fields in external types
+/// - **AssemblyRef**: External assembly dependencies
+/// - **ModuleRef**: Multi-module assembly references
+///
+/// ### Relationship Tables (Type System Structure)
+/// - **InterfaceImpl**: Interface implementation relationships
+/// - **NestedClass**: Nested type parent-child relationships
+/// - **GenericParam**: Generic type and method parameters
+/// - **GenericParamConstraint**: Generic parameter constraints
+///
+/// ### Attribute and Metadata Tables
+/// - **CustomAttribute**: Custom attribute applications
+/// - **Constant**: Compile-time constant values
+/// - **DeclSecurity**: Declarative security permissions
+/// - **FieldMarshal**: Native interop marshalling specifications
+///
+/// ## Thread Safety and Concurrency
+///
+/// [`crate::metadata::streams::tablesheader::TablesHeader`] provides comprehensive thread safety for concurrent metadata access:
+/// - **Immutable data**: All table data read-only after construction
+/// - **Independent access**: Multiple threads can access different tables safely
+/// - **Parallel iteration**: Safe concurrent processing of table rows
+/// - **No synchronization**: Zero contention between concurrent operations
+///
+/// # Examples
+///
+/// ## Basic Table Access and Type Analysis
+/// ```rust
+/// use dotscope::metadata::{streams::TablesHeader, tables::{TableId, TypeDefRaw, MethodDefRaw}};
+///
+/// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
+/// let tables = TablesHeader::from(tables_data)?;
+///
+/// // Safe table presence checking
+/// if tables.has_table(TableId::TypeDef) {
+///     let typedef_table = tables.table::<TypeDefRaw>(TableId::TypeDef).unwrap();
+///     
+///     println!("Assembly defines {} types", typedef_table.row_count());
+///     
+///     // Analyze type characteristics
+///     for (index, type_def) in typedef_table.iter().enumerate().take(10) {
+///         let is_public = type_def.flags & 0x00000007 == 0x00000001;
+///         let is_sealed = type_def.flags & 0x00000100 != 0;
+///         let is_abstract = type_def.flags & 0x00000080 != 0;
+///         
+///         println!("Type {}: public={}, sealed={}, abstract={}",
+///                  index, is_public, is_sealed, is_abstract);
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Cross-Table Relationship Analysis
+/// ```rust
+/// use dotscope::metadata::{streams::TablesHeader, tables::{TableId, TypeDefRaw, FieldRaw, MethodDefRaw}};
+///
+/// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
+/// let tables = TablesHeader::from(tables_data)?;
+///
+/// // Analyze complete type structure with members
+/// if let (Some(typedef_table), Some(field_table), Some(method_table)) = (
+///     tables.table::<TypeDefRaw>(TableId::TypeDef),
+///     tables.table::<FieldRaw>(TableId::Field),
+///     tables.table::<MethodDefRaw>(TableId::MethodDef)
+/// ) {
+///     for (type_idx, type_def) in typedef_table.iter().enumerate().take(5) {
+///         // Calculate member ranges for this type
+///         let next_type = typedef_table.get((type_idx + 1) as u32);
+///         
+///         let field_start = type_def.field_list.saturating_sub(1);
+///         let field_end = next_type.as_ref()
+///             .map(|t| t.field_list.saturating_sub(1))
+///             .unwrap_or(field_table.row_count());
+///         
+///         let method_start = type_def.method_list.saturating_sub(1);
+///         let method_end = next_type.as_ref()
+///             .map(|t| t.method_list.saturating_sub(1))
+///             .unwrap_or(method_table.row_count());
+///         
+///         println!("Type {}: {} fields, {} methods",
+///                  type_idx,
+///                  field_end.saturating_sub(field_start),
+///                  method_end.saturating_sub(method_start));
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## High-Performance Parallel Processing
+/// ```rust,ignore
+/// use dotscope::metadata::{streams::TablesHeader, tables::{TableId, CustomAttributeRaw}};
+/// use rayon::prelude::*;
+/// use std::collections::HashMap;
+///
+/// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
+/// let tables = TablesHeader::from(tables_data)?;
+///
+/// // Parallel analysis of custom attributes
+/// if let Some(ca_table) = tables.table::<CustomAttributeRaw>(TableId::CustomAttribute) {
+///     // Process attributes in parallel for large assemblies
+///     let attribute_analysis: HashMap<u32, u32> = ca_table.par_iter()
+///         .map(|attr| {
+///             // Extract parent table type from coded index
+///             // Note: Actual implementation would use proper CodedIndex methods
+///             let parent_table = 1u32; // Simplified for documentation
+///             (parent_table, 1u32)
+///         })
+///         .collect::<Vec<_>>()
+///         .into_iter()
+///         .fold(HashMap::new(), |mut acc, (table, count)| {
+///             *acc.entry(table).or_insert(0) += count;
+///             acc
+///         });
+///     
+///     println!("Custom attribute distribution:");
+///     for (table_id, count) in attribute_analysis {
+///         println!("  Table {}: {} attributes", table_id, count);
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Memory-Efficient Large Table Processing
+/// ```rust,ignore
+/// use dotscope::metadata::{streams::TablesHeader, tables::{TableId, MemberRefRaw}};
+///
+/// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
+/// let tables = TablesHeader::from(tables_data)?;
+///
+/// // Process large tables without loading all data into memory
+/// if let Some(memberref_table) = tables.table::<MemberRefRaw>(TableId::MemberRef) {
+///     const CHUNK_SIZE: u32 = 1000;
+///     let total_rows = memberref_table.row_count();
+///     
+///     println!("Processing {} member references in {} chunks",
+///              total_rows, (total_rows + CHUNK_SIZE - 1) / CHUNK_SIZE);
+///     
+///     let mut external_method_refs = 0;
+///     let mut external_field_refs = 0;
+///     
+///     // Process in chunks to manage memory usage
+///     for chunk_start in (0..total_rows).step_by(CHUNK_SIZE as usize) {
+///         let chunk_end = (chunk_start + CHUNK_SIZE).min(total_rows);
+///         
+///         for i in chunk_start..chunk_end {
+///             if let Some(member_ref) = memberref_table.get(i) {
+///                 // Analyze member reference type and parent
+///                 // Note: Actual implementation would use proper CodedIndex methods
+///                 let is_method = true; // Simplified: check signature
+///                 let is_external = true; // Simplified: check class reference
+///                 
+///                 if is_external {
+///                     if is_method {
+///                         external_method_refs += 1;
+///                     } else {
+///                         external_field_refs += 1;
+///                     }
+///                 }
+///             }
+///         }
+///     }
+///     
+///     println!("External references: {} methods, {} fields",
+///              external_method_refs, external_field_refs);
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Complete Assembly Introspection
+/// ```rust
+/// use dotscope::metadata::{streams::TablesHeader, tables::TableId};
+///
+/// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
+/// let tables = TablesHeader::from(tables_data)?;
+///
+/// println!("Assembly Metadata Analysis");
+/// println!("=========================");
+/// println!("Total tables: {}", tables.table_count());
+/// println!();
+///
+/// // Analyze present tables and their characteristics
+/// let summaries = tables.table_summary();
+/// for summary in summaries {
+///     match summary.table_id {
+///         TableId::TypeDef => println!("✓ {} type definitions", summary.row_count),
+///         TableId::MethodDef => println!("✓ {} method definitions", summary.row_count),
+///         TableId::Field => println!("✓ {} field definitions", summary.row_count),
+///         TableId::Assembly => println!("✓ Assembly metadata present"),
+///         TableId::AssemblyRef => println!("✓ {} assembly references", summary.row_count),
+///         TableId::CustomAttribute => println!("✓ {} custom attributes", summary.row_count),
+///         TableId::GenericParam => println!("✓ {} generic parameters (generics used)", summary.row_count),
+///         TableId::DeclSecurity => println!("✓ {} security declarations", summary.row_count),
+///         TableId::ManifestResource => println!("✓ {} embedded resources", summary.row_count),
+///         _ => println!("✓ {:?}: {} rows", summary.table_id, summary.row_count),
+///     }
+/// }
+///
+/// // Feature detection
+/// println!();
+/// println!("Assembly Features:");
+/// if tables.has_table(TableId::GenericParam) {
+///     println!("  ✓ Uses generic types/methods");
+/// }
+/// if tables.has_table(TableId::Event) {
+///     println!("  ✓ Defines events");
+/// }
+/// if tables.has_table(TableId::Property) {
+///     println!("  ✓ Defines properties");
+/// }
+/// if tables.has_table(TableId::DeclSecurity) {
+///     println!("  ✓ Has security declarations");
+/// }
+/// if tables.has_table(TableId::ImplMap) {
+///     println!("  ✓ Uses P/Invoke");
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Security Considerations
+///
+/// ## Input Validation
+/// - **ECMA-335 compliance**: Strict adherence to specification format requirements
+/// - **Bounds checking**: All table and row access validated against buffer boundaries  
+/// - **Index validation**: Cross-table references verified for correctness
+/// - **Size limits**: Reasonable limits prevent resource exhaustion attacks
+///
+/// ## Memory Safety
+/// - **Lifetime enforcement**: Rust borrow checker prevents use-after-free vulnerabilities
+/// - **Type safety**: Generic parameters prevent incorrect table type access
+/// - **Bounds verification**: All array and slice access is bounds-checked
+/// - **Controlled unsafe**: Minimal unsafe code with careful pointer management
+///
+/// # ECMA-335 Compliance
+///
+/// This implementation fully complies with ECMA-335 Partition II specifications:
+/// - **Section II.24.2.6**: Metadata tables stream format and binary layout
+/// - **Section II.22**: Complete metadata table definitions and relationships
+/// - **Compression format**: Proper variable-width encoding for table indices
+/// - **Heap integration**: Correct interpretation of string, blob, and GUID heap references
+///
+/// # See Also
+/// - [`crate::metadata::tables::MetadataTable`]: Individual table access and iteration
+/// - [`crate::metadata::tables::TableId`]: Enumeration of all supported table types
+/// - [`crate::metadata::streams`]: Overview of all metadata stream types
+/// - [ECMA-335 II.24.2.6](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Tables header specification
 ///
 /// ## Efficient Table Access Examples
 ///
@@ -172,37 +748,354 @@ use crate::{
 /// ## Reference
 /// * '<https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf>' - II.24.2.6 && II.22
 pub struct TablesHeader<'a> {
-    /// Major version of table schemeta, shall be 2
+    /// Major version of the metadata table schema, must be 2 per ECMA-335.
+    ///
+    /// This field indicates the major version of the metadata table format. According to
+    /// ECMA-335 Section II.24.2.6, this value must be 2 for all compliant .NET assemblies.
+    /// Different major versions would indicate incompatible changes to the table format.
     pub major_version: u8,
-    /// Minor version of table schemata, shall be 0
+
+    /// Minor version of the metadata table schema, must be 0 per ECMA-335.
+    ///
+    /// This field indicates the minor version of the metadata table format. The ECMA-335
+    /// specification requires this value to be 0. Minor version changes would indicate
+    /// backward-compatible additions to the table format.
     pub minor_version: u8,
-    /// Bit vector of present tables, let n be the number of bits that are 1.
+
+    /// Bit vector indicating which of the 64 possible metadata tables are present.
+    ///
+    /// Each bit corresponds to a specific table ID (0-63) as defined in ECMA-335.
+    /// A set bit (1) indicates the corresponding table is present and contains data.
+    /// The number of set bits determines how many row count entries follow in the header.
+    ///
+    /// ## Table ID Mapping
+    /// - Bit 0: Module table
+    /// - Bit 1: TypeRef table  
+    /// - Bit 2: TypeDef table
+    /// - Bit 4: Field table
+    /// - Bit 6: MethodDef table
+    /// - ... (see ECMA-335 II.22 for complete mapping)
     pub valid: u64,
-    /// Bit vector of sorted tables
+
+    /// Bit vector indicating which metadata tables are sorted.
+    ///
+    /// For each present table (indicated by `valid`), the corresponding bit in `sorted`
+    /// indicates whether that table's rows are sorted according to ECMA-335 requirements.
+    /// Some tables must be sorted for binary search operations, while others may be
+    /// unsorted for faster insertion during metadata generation.
     pub sorted: u64,
-    /// Information about specific tables, e.g their row count, and their reference index sizes
+
+    /// Shared table information containing row counts and heap index sizes.
+    ///
+    /// This reference-counted structure provides efficient access to table metadata
+    /// including row counts for each present table and the size encoding for heap
+    /// indices (strings, blobs, GUIDs). The `Arc` allows multiple table instances
+    /// to share this information without duplication.
     pub info: TableInfoRef,
-    /// The offset of physical tables, relative to the `TablesHeader`
+
+    /// Byte offset to the start of table data relative to the beginning of this header.
+    ///
+    /// This offset points to where the actual table row data begins, after the header
+    /// and row count arrays. Table data is stored sequentially in the order defined
+    /// by the ECMA-335 table ID enumeration.
     tables_offset: usize,
-    /// Reference to table data
+
+    /// Vector of parsed metadata tables, indexed by table ID.
+    ///
+    /// Each element corresponds to a specific table type (0-44) and contains `Some(table)`
+    /// if the table is present or `None` if absent. The tables are parsed lazily and
+    /// stored as type-erased `TableData` enums to handle the heterogeneous table types
+    /// while maintaining memory efficiency.
     tables: Vec<Option<TableData<'a>>>,
 }
 
-/// Summary information for a metadata table
+/// Summary information for a metadata table providing table identity and size information.
+///
+/// [`crate::metadata::streams::tablesheader::TableSummary`] is used by [`crate::metadata::streams::tablesheader::TablesHeader::table_summary`] to provide an overview
+/// of all present tables in the metadata without requiring full table access. This
+/// is useful for assembly analysis, diagnostics, and determining what metadata is
+/// available before processing specific tables.
+///
+/// # Examples
+///
+/// ## Basic Usage with Table Summary
+/// ```rust
+/// use dotscope::metadata::streams::TablesHeader;
+///
+/// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
+/// let tables = TablesHeader::from(tables_data)?;
+///
+/// // Get overview of all tables
+/// let summaries = tables.table_summary();
+///
+/// for summary in summaries {
+///     println!("Table {:?} has {} rows", summary.table_id, summary.row_count);
+///     
+///     // Make decisions based on table size
+///     if summary.row_count > 1000 {
+///         println!("  ↳ Large table - consider parallel processing");
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Filtering and Analysis
+/// ```rust
+/// use dotscope::metadata::{streams::TablesHeader, tables::TableId};
+///
+/// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
+/// let tables = TablesHeader::from(tables_data)?;
+/// let summaries = tables.table_summary();
+///
+/// // Find the largest tables
+/// let mut large_tables: Vec<_> = summaries.iter()
+///     .filter(|s| s.row_count > 100)
+///     .collect();
+/// large_tables.sort_by_key(|s| std::cmp::Reverse(s.row_count));
+///
+/// println!("Largest metadata tables:");
+/// for summary in large_tables.iter().take(5) {
+///     println!("  {:?}: {} rows", summary.table_id, summary.row_count);
+/// }
+///
+/// // Check for specific features
+/// let has_generics = summaries.iter()
+///     .any(|s| s.table_id == TableId::GenericParam && s.row_count > 0);
+/// if has_generics {
+///     println!("Assembly uses generic types");
+/// }
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone)]
 pub struct TableSummary {
+    /// The type/ID of the metadata table.
+    ///
+    /// Identifies which specific metadata table this summary describes using the
+    /// ECMA-335 table enumeration. This corresponds to table IDs 0-44 as defined
+    /// in the specification.
     pub table_id: TableId,
+
+    /// The number of rows present in this table.
+    ///
+    /// Indicates the count of data rows in the table. A value of 0 means the table
+    /// is present in the assembly but contains no data. Tables not present in the
+    /// assembly will not appear in the summary at all.
     pub row_count: u32,
 }
 
 impl<'a> TablesHeader<'a> {
-    /// Create a `TablesHeader` object from a sequence of bytes
+    /// Parse and construct a metadata tables header from binary data.
+    ///
+    /// Creates a [`crate::metadata::streams::tablesheader::TablesHeader`] by parsing the compressed metadata tables stream (`#~`)
+    /// according to ECMA-335 Section II.24.2.6. This method performs comprehensive
+    /// validation of the stream format and constructs efficient access structures for
+    /// all present metadata tables.
+    ///
+    /// ## Binary Format Parsed
+    ///
+    /// The method parses the following header structure:
+    /// ```text
+    /// Offset | Size | Field              | Description
+    /// -------|------|--------------------|-----------------------------------------
+    /// 0      | 4    | Reserved           | Must be 0x00000000
+    /// 4      | 1    | MajorVersion       | Schema major version (must be 2)
+    /// 5      | 1    | MinorVersion       | Schema minor version (must be 0)
+    /// 6      | 1    | HeapSizes          | String/Blob/GUID heap index sizes
+    /// 7      | 1    | Reserved           | Must be 0x01
+    /// 8      | 8    | Valid              | Bit vector of present tables
+    /// 16     | 8    | Sorted             | Bit vector of sorted tables
+    /// 24     | 4*N  | Rows[]             | Row counts for each present table
+    /// 24+4*N | Var  | TableData[]        | Binary table data
+    /// ```
+    ///
+    /// ## Validation Performed
+    ///
+    /// The method enforces ECMA-335 compliance through comprehensive validation:
+    /// - **Minimum size**: Data must contain complete header (≥24 bytes)
+    /// - **Version checking**: Major version must be 2, minor version must be 0
+    /// - **Table presence**: At least one table must be present (valid ≠ 0)
+    /// - **Format integrity**: Row count array and table data must be accessible
+    /// - **Table structure**: Each present table validated for proper format
+    ///
+    /// ## Construction Process
+    ///
+    /// 1. **Header parsing**: Extract version, heap sizes, and table bit vectors
+    /// 2. **Row count extraction**: Read row counts for all present tables
+    /// 3. **Table initialization**: Parse each present table's binary data
+    /// 4. **Reference setup**: Establish efficient access structures
+    /// 5. **Validation**: Verify all tables conform to ECMA-335 format
     ///
     /// # Arguments
-    /// * 'data' - The byte slice from which this object shall be created
+    /// * `data` - Complete binary data of the compressed metadata tables stream
+    ///
+    /// # Returns
+    /// * `Ok(TablesHeader)` - Successfully parsed and validated tables header
+    /// * `Err(Error)` - Parsing failed due to format violations or insufficient data
     ///
     /// # Errors
-    /// Returns an error if the data is too short or if no valid table rows are found
+    ///
+    /// Returns [`crate::Error`] in the following cases:
+    /// - **[`crate::Error::OutOfBounds`]**: Data too short for complete header (< 24 bytes)
+    /// - **Malformed data**: No valid tables present (all bits in `valid` are 0)
+    /// - **Version error**: Unsupported major/minor version combination
+    /// - **Format error**: Invalid table data or corrupted stream structure
+    /// - **Table error**: Individual table parsing failures due to malformed data
+    ///
+    /// # Examples
+    ///
+    /// ## Basic Tables Header Construction
+    /// ```rust
+    /// use dotscope::metadata::streams::TablesHeader;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// // Read compressed metadata tables stream from assembly
+    /// # let tables_stream_data = include_bytes!("../../../tests/samples/WB_STREAM_TABLES_O-0x6C_S-0x59EB4.bin");
+    /// let tables_stream_data = &[/* binary data from #~ stream */];
+    ///
+    /// let tables = TablesHeader::from(tables_stream_data)?;
+    ///
+    /// // Verify successful construction
+    /// println!("Parsed metadata with {} tables", tables.table_count());
+    /// println!("Schema version: {}.{}", tables.major_version, tables.minor_version);
+    ///
+    /// // Check for common tables
+    /// use dotscope::metadata::tables::TableId;
+    /// if tables.has_table(TableId::TypeDef) {
+    ///     println!("Assembly defines {} types", tables.table_row_count(TableId::TypeDef));
+    /// }
+    /// if tables.has_table(TableId::MethodDef) {
+    ///     println!("Assembly defines {} methods", tables.table_row_count(TableId::MethodDef));
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// ## Error Handling and Validation
+    /// ```rust
+    /// use dotscope::metadata::streams::TablesHeader;
+    ///
+    /// # fn example() {
+    /// // Error: Data too short
+    /// let too_short = [0u8; 20]; // Only 20 bytes, need at least 24
+    /// assert!(TablesHeader::from(&too_short).is_err());
+    ///
+    /// // Error: No valid tables
+    /// let no_tables = [
+    ///     0x00, 0x00, 0x00, 0x00, // Reserved
+    ///     0x02, 0x00,             // Version 2.0
+    ///     0x01, 0x01,             // HeapSizes, Reserved
+    ///     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Valid = 0 (no tables)
+    ///     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Sorted
+    /// ];
+    /// assert!(TablesHeader::from(&no_tables).is_err());
+    /// # }
+    /// ```
+    ///
+    /// ## Large Assembly Processing
+    /// ```rust
+    /// use dotscope::metadata::streams::TablesHeader;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// # let large_assembly_data = include_bytes!("../../../tests/samples/WB_STREAM_TABLES_O-0x6C_S-0x59EB4.bin");
+    /// // Process large assembly with many tables
+    /// let large_assembly_data = &[/* large assembly #~ stream data */];
+    ///
+    /// let start_time = std::time::Instant::now();
+    /// let tables = TablesHeader::from(large_assembly_data)?;
+    /// let parse_time = start_time.elapsed();
+    ///
+    /// println!("Parsed {} tables in {:?}", tables.table_count(), parse_time);
+    ///
+    /// // Analyze assembly size and complexity
+    /// let summaries = tables.table_summary();
+    /// let total_rows: u32 = summaries.iter().map(|s| s.row_count).sum();
+    ///
+    /// println!("Assembly complexity:");
+    /// println!("  Total metadata rows: {}", total_rows);
+    /// println!("  Average rows per table: {:.1}",
+    ///          total_rows as f64 / tables.table_count() as f64);
+    ///
+    /// // Identify the most complex tables
+    /// let mut large_tables: Vec<_> = summaries.iter()
+    ///     .filter(|s| s.row_count > 1000)
+    ///     .collect();
+    /// large_tables.sort_by_key(|s| std::cmp::Reverse(s.row_count));
+    ///
+    /// println!("Largest tables:");
+    /// for summary in large_tables.iter().take(3) {
+    ///     println!("  {:?}: {} rows", summary.table_id, summary.row_count);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// ## Assembly Feature Detection
+    /// ```rust
+    /// use dotscope::metadata::{streams::TablesHeader, tables::TableId};
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// # let assembly_data = include_bytes!("../../../tests/samples/WB_STREAM_TABLES_O-0x6C_S-0x59EB4.bin");
+    /// let assembly_data = &[/* assembly #~ stream data */];
+    /// let tables = TablesHeader::from(assembly_data)?;
+    ///
+    /// println!("Assembly Feature Analysis:");
+    /// println!("=========================");
+    ///
+    /// // Detect .NET framework features
+    /// if tables.has_table(TableId::GenericParam) {
+    ///     let generic_count = tables.table_row_count(TableId::GenericParam);
+    ///     println!("✓ Uses generics ({} parameters)", generic_count);
+    /// }
+    ///
+    /// if tables.has_table(TableId::Event) {
+    ///     let event_count = tables.table_row_count(TableId::Event);
+    ///     println!("✓ Defines events ({} events)", event_count);
+    /// }
+    ///
+    /// if tables.has_table(TableId::Property) {
+    ///     let prop_count = tables.table_row_count(TableId::Property);
+    ///     println!("✓ Defines properties ({} properties)", prop_count);
+    /// }
+    ///
+    /// if tables.has_table(TableId::DeclSecurity) {
+    ///     let security_count = tables.table_row_count(TableId::DeclSecurity);
+    ///     println!("✓ Has security declarations ({} declarations)", security_count);
+    /// }
+    ///
+    /// if tables.has_table(TableId::ImplMap) {
+    ///     let pinvoke_count = tables.table_row_count(TableId::ImplMap);
+    ///     println!("✓ Uses P/Invoke ({} mappings)", pinvoke_count);
+    /// }
+    ///
+    /// if tables.has_table(TableId::ManifestResource) {
+    ///     let resource_count = tables.table_row_count(TableId::ManifestResource);
+    ///     println!("✓ Embeds resources ({} resources)", resource_count);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// Construction is thread-safe when called with different data sources.
+    /// The resulting [`crate::metadata::streams::tablesheader::TablesHeader`] instance is immutable and safe for concurrent
+    /// access across multiple threads.
+    ///
+    /// # ECMA-335 Compliance
+    ///
+    /// This method implements full ECMA-335 Partition II compliance:
+    /// - **Section II.24.2.6**: Metadata tables stream header format
+    /// - **Section II.22**: Individual table format specifications
+    /// - **Compression format**: Variable-width index encoding based on heap sizes
+    /// - **Table relationships**: Proper handling of cross-table references
+    ///
+    /// # See Also
+    /// - [`TablesHeader::table`]: Access individual metadata tables after construction
+    /// - [`TablesHeader::table_summary`]: Get overview of all present tables
+    /// - [`crate::metadata::tables::TableInfo`]: Table metadata and row count information
+    /// - [ECMA-335 II.24.2.6](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Tables header specification
     pub fn from(data: &'a [u8]) -> Result<TablesHeader<'a>> {
         if data.len() < 24 {
             return Err(OutOfBounds);

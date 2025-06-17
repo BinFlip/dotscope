@@ -1,29 +1,177 @@
-//! Nested class validation for .NET metadata
+//! # Nested Class Validation for .NET Metadata
 //!
-//! This module provides validation utilities for nested class relationships,
-//! ensuring compliance with .NET runtime rules and metadata constraints.
+//! This module provides comprehensive validation utilities for nested class relationships
+//! in .NET metadata, ensuring compliance with runtime rules, ECMA-335 specifications,
+//! and preventing structural anomalies that could cause runtime issues.
+//!
+//! ## Overview
+//!
+//! Nested classes in .NET provide a way to define types within the scope of other types,
+//! creating logical groupings and encapsulation boundaries. However, nested class
+//! relationships must follow specific rules to ensure proper runtime behavior and
+//! prevent structural problems.
+//!
+//! ## Validation Categories
+//!
+//! ### Relationship Validation
+//! - **Self-Reference Prevention**: Types cannot be nested within themselves
+//! - **Token Validation**: Ensures proper TypeDef token usage
+//! - **RID Validation**: Validates non-zero row identifiers
+//!
+//! ### Structural Validation
+//! - **Circular Reference Detection**: Prevents cycles in nesting relationships
+//! - **Depth Limit Enforcement**: Prevents excessive nesting that could cause stack issues
+//! - **Hierarchy Consistency**: Ensures proper parent-child relationships
+//!
+//! ### Performance Validation
+//! - **Depth Limits**: Configurable maximum nesting depth (default: 64 levels)
+//! - **Cycle Detection**: Efficient graph algorithms for cycle detection
+//! - **Memory Validation**: Prevents memory exhaustion from deep nesting
+//!
+//! ## Nesting Rules
+//!
+//! ### Basic Rules
+//! 1. **No Self-Nesting**: A type cannot be nested within itself
+//! 2. **TypeDef Only**: Both nested and enclosing types must be TypeDef tokens
+//! 3. **Valid RIDs**: Token row identifiers must be non-zero
+//! 4. **Single Enclosing**: Each nested type can have only one direct enclosing type
+//!
+//! ### Structural Rules
+//! 1. **No Cycles**: Nesting relationships must form a directed acyclic graph (DAG)
+//! 2. **Finite Depth**: Nesting chains must have reasonable depth limits
+//! 3. **Proper References**: All token references must be valid and resolvable
+//!
+//! ## Validation Algorithms
+//!
+//! ### Cycle Detection
+//! Uses depth-first search (DFS) with recursion stack tracking to detect cycles
+//! in O(V + E) time complexity, where V is vertices (types) and E is edges (nesting relationships).
+//!
+//! ### Depth Validation
+//! Traverses nesting chains from leaf to root to measure maximum depth
+//! in O(V) time complexity per chain, with early termination on depth violations.
+//!
+//! ### Invalid Nesting Patterns
+//! ```csharp
+//! // ❌ Circular nesting (impossible in C# but could exist in malformed metadata)
+//! // ClassA contains ClassB
+//! // ClassB contains ClassC  
+//! // ClassC contains ClassA  <- Creates cycle
+//!
+//! // ❌ Excessive depth (design issue, potential runtime problems)
+//! // Class1 -> Class2 -> Class3 -> ... -> Class100+ (too deep)
+//! ```
+//!
+//! ## Error Types
+//!
+//! | Error Category | Description | Example |
+//! |----------------|-------------|---------|
+//! | **Self-Reference** | Type nested within itself | `ClassA` nested in `ClassA` |
+//! | **Invalid Token** | Non-TypeDef token used | MethodDef token for nested type |
+//! | **Zero RID** | Invalid row identifier | Token with RID = 0 |
+//! | **Circular Reference** | Cycle in nesting chain | A→B→C→A |
+//! | **Depth Exceeded** | Too many nesting levels | 65+ levels of nesting |
+//!
+//! ## Runtime Compliance
+//!
+//! The validation follows .NET runtime behavior:
+//! - **Token Validation**: Matches CoreCLR token validation rules
+//! - **Structural Validation**: Prevents runtime loading failures
+//! - **Error Messages**: Provides runtime-style error descriptions
+//! - **Performance**: Efficient validation suitable for production use
+//!
+//! ## Thread Safety
+//!
+//! The `NestedClassValidator` is stateless and safe for concurrent use across
+//! multiple threads. All validation methods are pure functions without side effects.
+//!
+//! ## References
+//!
+//! - ECMA-335, Partition II, Section 10.6 - Nested types
+//! - ECMA-335, Partition II, Section 23.2.11 - NestedClass table
+//! - .NET Core Runtime: Nested type validation implementation
+//! - C# Language Specification: Nested type declarations
 
 use crate::{metadata::token::Token, Result};
 use std::collections::{HashMap, HashSet};
 
-/// Validator for nested class metadata
+/// Nested class validator for .NET metadata compliance.
+///
+/// Provides comprehensive validation functionality for nested class relationships
+/// as defined in ECMA-335 and implemented by the .NET runtime. This validator
+/// ensures that nested type structures are valid, acyclic, and conform to
+/// runtime constraints.
+///
+/// ## Design Philosophy
+///
+/// The validator implements multiple layers of validation:
+/// - **Basic validation**: Token format and reference integrity
+/// - **Structural validation**: Cycle detection and hierarchy verification
+/// - **Performance validation**: Depth limits and resource constraints
+/// - **Runtime compliance**: Matching .NET runtime validation behavior
+///
+/// ## Validation Approach
+///
+/// The validator uses efficient graph algorithms to analyze nesting relationships:
+/// - **DFS-based cycle detection** for comprehensive circular reference detection
+/// - **Chain traversal** for depth validation with early termination
+/// - **Token validation** for format and reference integrity
+/// - **Batch processing** for efficient validation of large type systems
+///
+/// ## Thread Safety
+///
+/// This struct is stateless and all methods are safe for concurrent use.
+/// The validation algorithms do not maintain any shared state between calls.
 pub struct NestedClassValidator;
 
 impl NestedClassValidator {
-    /// Validates a nested class relationship according to .NET runtime rules
+    /// Validates a nested class relationship according to .NET runtime rules.
+    ///
+    /// Performs basic validation of a single nested class relationship to ensure
+    /// that the nesting is structurally valid and conforms to .NET metadata
+    /// requirements. This validation prevents self-referential nesting and
+    /// validates token format constraints.
+    ///
+    /// ## Validation Performed
+    ///
+    /// ### Self-Reference Prevention
+    /// - Ensures a type is not nested within itself (prevents infinite recursion)
+    /// - Validates that nested and enclosing tokens are different
+    ///
+    /// ### Token Format Validation
+    /// - Verifies both tokens are TypeDef tokens (table ID 0x02)
+    /// - Ensures row identifiers (RIDs) are non-zero and valid
+    /// - Validates token structure and format compliance
+    ///
+    /// ## Token Requirements
+    ///
+    /// Both nested and enclosing class tokens must be:
+    /// - **TypeDef tokens**: Table ID must be 0x02 (not MethodDef, FieldDef, etc.)
+    /// - **Valid RIDs**: Row identifier must be > 0 (1-based indexing)
+    /// - **Different tokens**: Cannot be the same token (no self-nesting)
     ///
     /// # Arguments
-    /// * `nested_class_token` - Token of the nested class
-    /// * `enclosing_class_token` - Token of the enclosing class
+    ///
+    /// * `nested_class_token` - Token of the type being nested inside another type
+    /// * `enclosing_class_token` - Token of the type that contains the nested type
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the nesting relationship is valid, or an error describing the
+    /// specific validation failure.
     ///
     /// # Errors
-    /// Returns an error if:
-    /// - Nested class and enclosing class are the same type
-    /// - Token values are invalid or malformed
+    ///
+    /// Returns [`crate::Error`] in these cases:
+    /// - **Self-Referential Nesting**: Nested and enclosing tokens are identical
+    /// - **Invalid Token Type**: Token is not a TypeDef token (wrong table ID)
+    /// - **Invalid RID**: Token has zero row identifier (invalid reference)
     ///
     /// # .NET Runtime Reference
-    /// Based on validation logic in nested class processing that prevents
-    /// a type from being nested within itself.
+    ///
+    /// This validation is based on the .NET runtime's nested class processing logic
+    /// that prevents structural anomalies and ensures proper type loading behavior.
+    /// The validation matches CoreCLR's token validation and relationship checking.
     pub fn validate_nested_relationship(
         nested_class_token: Token,
         enclosing_class_token: Token,
@@ -63,21 +211,58 @@ impl NestedClassValidator {
         Ok(())
     }
 
-    /// Validates a nested class hierarchy for circular references
+    /// Validates a nested class hierarchy for circular references.
+    ///
+    /// Performs comprehensive cycle detection in nested class relationships using
+    /// depth-first search (DFS) algorithm. Circular nesting would create infinite
+    /// recursion during type loading and must be prevented.
+    ///
+    /// ## Algorithm Details
+    ///
+    /// Uses DFS with recursion stack tracking to detect back edges that indicate cycles:
+    /// 1. **Build Graph**: Creates adjacency list from nesting relationships
+    /// 2. **DFS Traversal**: Visits each node using depth-first search
+    /// 3. **Recursion Stack**: Tracks current path to detect back edges
+    /// 4. **Cycle Detection**: Identifies when a node is reached via two different paths
+    ///
+    /// ## Cycle Examples
+    ///
+    /// ### Valid Hierarchies (No Cycles)
+    /// ```text
+    /// A → B → C    (Linear chain)
+    /// A → B        (Simple parent-child)
+    ///   → C        (Multiple children)
+    /// ```
+    ///
+    /// ### Invalid Hierarchies (Cycles)
+    /// ```text
+    /// A → B → C → A    (3-node cycle)
+    /// A → B → A        (2-node cycle)
+    /// A → A            (Self-cycle, caught by basic validation)
+    /// ```
     ///
     /// # Arguments
-    /// * `nested_relationships` - Slice of (`nested_token`, `enclosing_token`) pairs
+    ///
+    /// * `nested_relationships` - Slice of `(nested_token, enclosing_token)` pairs
+    ///   representing the complete set of nesting relationships to validate
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if no circular references are detected, or an error identifying
+    /// the first cycle found during traversal.
     ///
     /// # Errors
-    /// Returns an error if circular nesting relationships are detected
     ///
-    /// # Example
-    /// ```ignore
-    /// // This would be invalid:
-    /// // ClassA nested in ClassB
-    /// // ClassB nested in ClassC  
-    /// // ClassC nested in ClassA  <- Creates a cycle
-    /// ```
+    /// Returns [`crate::Error`] when:
+    /// - **Circular Reference**: A cycle is detected in the nesting relationships
+    /// - **Structural Inconsistency**: Invalid relationship structure
+    ///
+    /// # Use Cases
+    ///
+    /// - **Metadata Validation**: Ensuring loaded assemblies have valid structure
+    /// - **Development Tools**: Detecting design issues in nested type hierarchies
+    /// - **Runtime Safety**: Preventing infinite recursion during type loading
+    /// - **Compliance Checking**: Ensuring ECMA-335 structural requirements
     pub fn validate_no_circular_nesting(nested_relationships: &[(Token, Token)]) -> Result<()> {
         // Build adjacency list: enclosing -> list of nested classes
         let mut enclosing_to_nested: HashMap<Token, Vec<Token>> = HashMap::new();
@@ -157,6 +342,22 @@ impl NestedClassValidator {
         Ok(())
     }
 
+    /// Performs depth-first search to detect cycles in nested class relationships.
+    ///
+    /// This function implements cycle detection using a standard DFS algorithm with a
+    /// recursion stack to track the current path. It's used internally by the validation
+    /// engine to detect illegal circular nesting relationships between classes.
+    ///
+    /// # Arguments
+    ///
+    /// * `current` - Token of the current class being examined
+    /// * `enclosing_map` - Map of enclosing class to nested classes relationships
+    /// * `visited` - Set of already visited tokens to avoid redundant work
+    /// * `rec_stack` - Set tracking the current recursion path for cycle detection
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(Token)` of the class where a cycle is detected, or `None` if no cycle exists.
     fn has_cycle_dfs(
         current: Token,
         enclosing_map: &HashMap<Token, Vec<Token>>,

@@ -1,26 +1,155 @@
 //! Low-level byte order and safe reading utilities for CIL and PE parsing.
 //!
-//! This module provides the [`CilIO`] trait for safe, endian-aware reading of primitive types
-//! from byte slices. It is used throughout the file and metadata modules to ensure correct
-//! parsing of binary data structures.
+//! This module provides comprehensive, endian-aware binary data reading functionality for parsing
+//! .NET PE files and CIL metadata structures. It implements safe, bounds-checked operations for
+//! reading primitive types from byte buffers with both little-endian and big-endian support,
+//! ensuring data integrity and preventing buffer overruns during binary analysis.
+//!
+//! # Architecture
+//!
+//! The module is built around the [`crate::file::io::CilIO`] trait which provides a unified
+//! interface for reading binary data in a type-safe manner. The architecture includes:
+//!
+//! - Generic trait-based reading for all primitive types
+//! - Automatic bounds checking to prevent buffer overruns
+//! - Support for both fixed-size and dynamic-size field reading
+//! - Consistent error handling through the [`crate::Result`] type
+//! - Zero-copy operations that work directly on byte slices
+//!
+//! # Key Components
+//!
+//! ## Core Trait
+//! - [`crate::file::io::CilIO`] - Trait defining endian-aware reading capabilities for primitive types
+//!
+//! ## Little-Endian Reading Functions
+//! - [`crate::file::io::read_le`] - Read values from buffer start in little-endian format
+//! - [`crate::file::io::read_le_at`] - Read values at specific offset with auto-advance in little-endian
+//! - [`crate::file::io::read_le_at_dyn`] - Dynamic size reading (2 or 4 bytes) in little-endian
+//!
+//! ## Big-Endian Reading Functions
+//! - [`crate::file::io::read_be`] - Read values from buffer start in big-endian format
+//! - [`crate::file::io::read_be_at`] - Read values at specific offset with auto-advance in big-endian
+//! - [`crate::file::io::read_be_at_dyn`] - Dynamic size reading (2 or 4 bytes) in big-endian
+//!
+//! ## Supported Types
+//! The [`crate::file::io::CilIO`] trait is implemented for:
+//! - **Unsigned integers**: `u8`, `u16`, `u32`, `u64`
+//! - **Signed integers**: `i8`, `i16`, `i32`, `i64`
+//! - **Floating point**: `f32`, `f64`
+//!
+//! # Usage Examples
+//!
+//! ## Basic Value Reading
+//!
+//! ```rust,ignore
+//! use dotscope::file::io::{read_le, read_be};
+//!
+//! // Little-endian reading (most common for PE files)
+//! let data = [0x01, 0x00, 0x00, 0x00]; // u32 value: 1
+//! let value: u32 = read_le(&data)?;
+//! assert_eq!(value, 1);
+//!
+//! // Big-endian reading (less common)
+//! let data = [0x00, 0x00, 0x00, 0x01]; // u32 value: 1
+//! let value: u32 = read_be(&data)?;
+//! assert_eq!(value, 1);
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! ## Sequential Reading with Offset Tracking
+//!
+//! ```rust,ignore
+//! use dotscope::file::io::read_le_at;
+//!
+//! let data = [0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x00, 0x00];
+//! let mut offset = 0;
+//!
+//! // Read multiple values sequentially
+//! let first: u16 = read_le_at(&data, &mut offset)?;  // offset: 0 -> 2
+//! let second: u16 = read_le_at(&data, &mut offset)?; // offset: 2 -> 4  
+//! let third: u32 = read_le_at(&data, &mut offset)?;  // offset: 4 -> 8
+//!
+//! assert_eq!(first, 1);
+//! assert_eq!(second, 2);
+//! assert_eq!(third, 3);
+//! assert_eq!(offset, 8);
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! ## Dynamic Size Reading
+//!
+//! ```rust,ignore
+//! use dotscope::file::io::read_le_at_dyn;
+//!
+//! let data = [0x01, 0x00, 0x02, 0x00, 0x00, 0x00];
+//! let mut offset = 0;
+//!
+//! // Read as u16 (promoted to u32)
+//! let small = read_le_at_dyn(&data, &mut offset, false)?;
+//! assert_eq!(small, 1);
+//!
+//! // Read as u32
+//! let large = read_le_at_dyn(&data, &mut offset, true)?;
+//! assert_eq!(large, 2);
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! # Error Handling
+//!
+//! All reading functions return [`crate::Result<T>`] and will return [`crate::Error::OutOfBounds`]
+//! if there are insufficient bytes in the buffer to complete the read operation. This ensures
+//! memory safety and prevents buffer overruns during parsing.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::file::parser`] - Uses I/O functions for parsing PE file structures
+//! - [`crate::metadata`] - Reads metadata tables and structures from binary data
+//! - [`crate::file::physical`] - Provides low-level file access for reading operations
+//!
+//! The module is designed to be the foundational layer for all binary data access throughout
+//! the dotscope library, ensuring consistent and safe parsing behavior across all components.
 
 use crate::{Error::OutOfBounds, Result};
 
-/// Trait for implementing type specific safe reader / writers
+/// Trait for implementing type-specific safe binary data reading operations.
 ///
-/// This trait abstracts over reading primitive types from byte slices in a safe and endian-aware way.
-/// It is implemented for all common integer types used in PE and metadata parsing.
+/// This trait provides a unified interface for reading primitive types from byte slices
+/// in a safe and endian-aware manner. It abstracts over the conversion from byte arrays
+/// to typed values, supporting both little-endian and big-endian formats commonly
+/// encountered in binary file parsing.
+///
+/// The trait is implemented for all primitive integer and floating-point types used
+/// in PE file and .NET metadata parsing, ensuring type safety and consistent behavior
+/// across all binary reading operations.
+///
+/// # Implementation Details
+///
+/// Each implementation defines a `Bytes` associated type that represents the fixed-size
+/// byte array required for that particular type (e.g., `[u8; 4]` for `u32`). The trait
+/// methods then convert these byte arrays to the target type using the appropriate
+/// endianness conversion.
 ///
 /// # Examples
 ///
-/// ```text
-/// // Internal usage in crate:
+/// ```rust,ignore
+/// use dotscope::file::io::CilIO;
+///
+/// // The trait is used internally by the reading functions
 /// let bytes = [0x01, 0x00, 0x00, 0x00];
 /// let value = u32::from_le_bytes(bytes);
 /// assert_eq!(value, 1);
+///
+/// // Big-endian conversion
+/// let bytes = [0x00, 0x00, 0x00, 0x01];
+/// let value = u32::from_be_bytes(bytes);
+/// assert_eq!(value, 1);
 /// ```
 pub trait CilIO: Sized {
-    #[allow(missing_docs)]
+    /// Associated type representing the byte array type for this numeric type.
+    ///
+    /// This type must be convertible from a byte slice and is used for reading
+    /// binary data in both little-endian and big-endian formats.
     type Bytes: Sized + for<'a> TryFrom<&'a [u8]>;
 
     /// Read T from a byte buffer in little-endian
@@ -188,21 +317,65 @@ impl CilIO for isize {
     }
 }
 
-/// Generic method to safely read T in little-endian from a data stream. Currently T can be u8, u16, u32 and u64
+/// Safely reads a value of type `T` in little-endian byte order from a data buffer.
 ///
-/// ## Arguments
-/// * 'data' - The data buffer / stream to read from
+/// This function reads from the beginning of the buffer and supports all types that implement
+/// the [`crate::file::io::CilIO`] trait (u8, i8, u16, i16, u32, i32, u64, i64, f32, f64).
+///
+/// # Arguments
+///
+/// * `data` - The byte buffer to read from
+///
+/// # Returns
+///
+/// Returns the decoded value or [`crate::Error::OutOfBounds`] if there are insufficient bytes.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use dotscope::file::io::read_le;
+///
+/// let data = [0x01, 0x00, 0x00, 0x00]; // Little-endian u32: 1
+/// let value: u32 = read_le(&data)?;
+/// assert_eq!(value, 1);
+/// # Ok::<(), dotscope::Error>(())
+/// ```
 pub fn read_le<T: CilIO>(data: &[u8]) -> Result<T> {
     let mut offset = 0_usize;
     read_le_at(data, &mut offset)
 }
 
-/// Generic method to safely read T from an offset and in little-endian from a data stream.
-/// Currently T can be u8, u16, u32 and u64
+/// Safely reads a value of type `T` in little-endian byte order from a data buffer at a specific offset.
 ///
-/// ## Arguments
-/// * 'data'    - The data buffer / stream to read from
-/// * 'offset'  - An offset to read from, will be advanced by the amount of bytes read
+/// This function reads from the specified offset and automatically advances the offset by the
+/// number of bytes read. Supports all types that implement the [`crate::file::io::CilIO`] trait.
+///
+/// # Arguments
+///
+/// * `data` - The byte buffer to read from
+/// * `offset` - Mutable reference to the offset position (will be advanced after reading)
+///
+/// # Returns
+///
+/// Returns the decoded value or [`crate::Error::OutOfBounds`] if there are insufficient bytes.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use dotscope::file::io::read_le_at;
+///
+/// let data = [0x01, 0x00, 0x02, 0x00]; // Two u16 values: 1, 2
+/// let mut offset = 0;
+///
+/// let first: u16 = read_le_at(&data, &mut offset)?;
+/// assert_eq!(first, 1);
+/// assert_eq!(offset, 2);
+///
+/// let second: u16 = read_le_at(&data, &mut offset)?;
+/// assert_eq!(second, 2);
+/// assert_eq!(offset, 4);
+/// # Ok::<(), dotscope::Error>(())
+/// ```
 pub fn read_le_at<T: CilIO>(data: &[u8], offset: &mut usize) -> Result<T> {
     let type_len = std::mem::size_of::<T>();
     if (type_len + *offset) > data.len() {
@@ -218,12 +391,41 @@ pub fn read_le_at<T: CilIO>(data: &[u8], offset: &mut usize) -> Result<T> {
     Ok(T::from_le_bytes(read))
 }
 
-/// Safely read 4 or 2 bytes from an offset and in little-endian from a data stream.
+/// Dynamically reads either a 2-byte or 4-byte value in little-endian byte order.
 ///
-/// ## Arguments
-/// * 'data'        - The data buffer / stream to read from
-/// * 'offset'      - An offset to read from, will be advanced by the amount of bytes read
-/// * `is_large`    - Indicates if 2 or 4 bytes should be read
+/// This function reads either a u16 or u32 value based on the `is_large` parameter,
+/// automatically promoting u16 values to u32 for consistent return type handling.
+/// This is commonly used in PE metadata parsing where field sizes vary based on context.
+///
+/// # Arguments
+///
+/// * `data` - The byte buffer to read from
+/// * `offset` - Mutable reference to the offset position (will be advanced after reading)
+/// * `is_large` - If `true`, reads 4 bytes as u32; if `false`, reads 2 bytes as u16 and promotes to u32
+///
+/// # Returns
+///
+/// Returns the decoded value as u32, or [`crate::Error::OutOfBounds`] if there are insufficient bytes.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use dotscope::file::io::read_le_at_dyn;
+///
+/// let data = [0x01, 0x00, 0x02, 0x00, 0x00, 0x00];
+/// let mut offset = 0;
+///
+/// // Read 2 bytes (promoted to u32)
+/// let small_val = read_le_at_dyn(&data, &mut offset, false)?;
+/// assert_eq!(small_val, 1);
+/// assert_eq!(offset, 2);
+///
+/// // Read 4 bytes
+/// let large_val = read_le_at_dyn(&data, &mut offset, true)?;
+/// assert_eq!(large_val, 2);
+/// assert_eq!(offset, 6);
+/// # Ok::<(), dotscope::Error>(())
+/// ```
 pub fn read_le_at_dyn(data: &[u8], offset: &mut usize, is_large: bool) -> Result<u32> {
     let res = if is_large {
         read_le_at::<u32>(data, offset)?
@@ -234,21 +436,67 @@ pub fn read_le_at_dyn(data: &[u8], offset: &mut usize, is_large: bool) -> Result
     Ok(res)
 }
 
-/// Generic method to safely read T in big-endian from a data stream. Currently T can be u8, u16, u32 and u64
+/// Safely reads a value of type `T` in big-endian byte order from a data buffer.
 ///
-/// ## Arguments
-/// * 'data' - The data buffer / stream to read from
+/// This function reads from the beginning of the buffer and supports all types that implement
+/// the [`crate::file::io::CilIO`] trait. Note that PE/CIL files typically use little-endian,
+/// so this function is mainly for completeness and special cases.
+///
+/// # Arguments
+///
+/// * `data` - The byte buffer to read from
+///
+/// # Returns
+///
+/// Returns the decoded value or [`crate::Error::OutOfBounds`] if there are insufficient bytes.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use dotscope::file::io::read_be;
+///
+/// let data = [0x00, 0x00, 0x00, 0x01]; // Big-endian u32: 1
+/// let value: u32 = read_be(&data)?;
+/// assert_eq!(value, 1);
+/// # Ok::<(), dotscope::Error>(())
+/// ```
 pub fn read_be<T: CilIO>(data: &[u8]) -> Result<T> {
     let mut offset = 0_usize;
     read_be_at(data, &mut offset)
 }
 
-/// Generic method to safely read T from an offset and in big-endian from a data stream.
-/// Currently T can be u8, u16, u32 and u64
+/// Safely reads a value of type `T` in big-endian byte order from a data buffer at a specific offset.
 ///
-/// ## Arguments
-/// * 'data'    - The data buffer / stream to read from
-/// * 'offset'  - An offset to read from, will be advanced by the amount of bytes read
+/// This function reads from the specified offset and automatically advances the offset by the
+/// number of bytes read. Note that PE/CIL files typically use little-endian, so this function
+/// is mainly for completeness and special cases.
+///
+/// # Arguments
+///
+/// * `data` - The byte buffer to read from
+/// * `offset` - Mutable reference to the offset position (will be advanced after reading)
+///
+/// # Returns
+///
+/// Returns the decoded value or [`crate::Error::OutOfBounds`] if there are insufficient bytes.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use dotscope::file::io::read_be_at;
+///
+/// let data = [0x00, 0x01, 0x00, 0x02]; // Two big-endian u16 values: 1, 2
+/// let mut offset = 0;
+///
+/// let first: u16 = read_be_at(&data, &mut offset)?;
+/// assert_eq!(first, 1);
+/// assert_eq!(offset, 2);
+///
+/// let second: u16 = read_be_at(&data, &mut offset)?;
+/// assert_eq!(second, 2);
+/// assert_eq!(offset, 4);
+/// # Ok::<(), dotscope::Error>(())
+/// ```
 pub fn read_be_at<T: CilIO>(data: &[u8], offset: &mut usize) -> Result<T> {
     let type_len = std::mem::size_of::<T>();
     if (type_len + *offset) > data.len() {
@@ -264,12 +512,42 @@ pub fn read_be_at<T: CilIO>(data: &[u8], offset: &mut usize) -> Result<T> {
     Ok(T::from_be_bytes(read))
 }
 
-/// Safely read 4 or 2 bytes from an offset and in big-endian from a data stream.
+/// Dynamically reads either a 2-byte or 4-byte value in big-endian byte order.
 ///
-/// ## Arguments
-/// * 'data'        - The data buffer / stream to read from
-/// * 'offset'      - An offset to read from, will be advanced by the amount of bytes read
-/// * `is_large`    - Indicates if 2 or 4 bytes should be read
+/// This function reads either a u16 or u32 value based on the `is_large` parameter,
+/// automatically promoting u16 values to u32 for consistent return type handling.
+/// Note that PE/CIL files typically use little-endian, so this function is mainly
+/// for completeness and special cases.
+///
+/// # Arguments
+///
+/// * `data` - The byte buffer to read from
+/// * `offset` - Mutable reference to the offset position (will be advanced after reading)
+/// * `is_large` - If `true`, reads 4 bytes as u32; if `false`, reads 2 bytes as u16 and promotes to u32
+///
+/// # Returns
+///
+/// Returns the decoded value as u32, or [`crate::Error::OutOfBounds`] if there are insufficient bytes.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use dotscope::file::io::read_be_at_dyn;
+///
+/// let data = [0x00, 0x01, 0x00, 0x00, 0x00, 0x02];
+/// let mut offset = 0;
+///
+/// // Read 2 bytes (promoted to u32)
+/// let small_val = read_be_at_dyn(&data, &mut offset, false)?;
+/// assert_eq!(small_val, 1);
+/// assert_eq!(offset, 2);
+///
+/// // Read 4 bytes
+/// let large_val = read_be_at_dyn(&data, &mut offset, true)?;
+/// assert_eq!(large_val, 2);
+/// assert_eq!(offset, 6);
+/// # Ok::<(), dotscope::Error>(())
+/// ```
 pub fn read_be_at_dyn(data: &[u8], offset: &mut usize, is_large: bool) -> Result<u32> {
     let res = if is_large {
         read_be_at::<u32>(data, offset)?

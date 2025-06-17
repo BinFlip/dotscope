@@ -1,3 +1,17 @@
+//! Raw ImplMap table structure with unresolved coded indexes.
+//!
+//! This module provides the [`ImplMapRaw`] struct, which represents Platform Invoke (P/Invoke)
+//! mapping entries as stored in the metadata stream. The structure contains unresolved
+//! coded indexes and string heap references that require processing to become usable.
+//!
+//! # Purpose
+//! [`ImplMapRaw`] serves as the direct representation of ImplMap table entries from
+//! the binary metadata stream, before reference resolution and string lookup. This
+//! raw format is processed during metadata loading to create [`ImplMap`] instances
+//! with resolved references and owned data.
+//!
+//! [`ImplMap`]: crate::metadata::tables::ImplMap
+
 use std::sync::{atomic::Ordering, Arc};
 
 use crate::{
@@ -16,40 +30,93 @@ use crate::{
     Result,
 };
 
+/// Raw ImplMap table entry with unresolved coded indexes and heap references.
+///
+/// This structure represents a Platform Invoke (P/Invoke) mapping entry as stored
+/// directly in the metadata stream. All references are unresolved coded indexes
+/// or heap offsets that require processing during metadata loading.
+///
+/// # Table Structure (ECMA-335 §22.22)
+/// | Column | Size | Description |
+/// |--------|------|-------------|
+/// | MappingFlags | 2 bytes | P/Invoke attribute flags |
+/// | MemberForwarded | Coded index | Method or field being forwarded (typically MethodDef) |
+/// | ImportName | String index | Name of target function in native library |
+/// | ImportScope | ModuleRef index | Target module containing the native function |
+///
+/// # Coded Index Resolution
+/// The `member_forwarded` field uses the MemberForwarded coded index encoding:
+/// - **Tag 0**: Field table (not supported for exports)
+/// - **Tag 1**: MethodDef table (standard case for P/Invoke)
 #[derive(Clone, Debug)]
-/// The `ImplMap` table holds information about platform invoke (P/Invoke) methods. `TableId` = 0x1C
 pub struct ImplMapRaw {
-    /// `RowID`
+    /// Row identifier within the ImplMap table.
+    ///
+    /// Unique identifier for this P/Invoke mapping entry, used for internal
+    /// table management and token generation.
     pub rid: u32,
-    /// Token
+
+    /// Metadata token for this ImplMap entry (TableId 0x1C).
+    ///
+    /// Computed as `0x1C000000 | rid` to create the full token value
+    /// for referencing this P/Invoke mapping from other metadata structures.
     pub token: Token,
-    /// Offset
+
+    /// Byte offset of this entry within the raw table data.
+    ///
+    /// Used for efficient table navigation and binary metadata processing.
     pub offset: usize,
-    /// a 2-byte bitmask of type `PInvokeAttributes`, §II.23.1.8
+
+    /// Platform Invoke attribute flags as a 2-byte bitmask.
+    ///
+    /// Defines calling conventions, character sets, error handling, and other
+    /// P/Invoke characteristics. See ECMA-335 §23.1.8 and [`PInvokeAttributes`]
+    /// for detailed flag definitions.
+    ///
+    /// [`PInvokeAttributes`]: crate::metadata::tables::implmap::PInvokeAttributes
     pub mapping_flags: u32,
-    /// `MemberForwarded` (an index into the Field or `MethodDef` table; more precisely, a `MemberForwarded`
-    /// (§II.24.2.6) coded index). However, it only ever indexes the `MethodDef` table, since Field export
-    /// is not supported.
+
+    /// MemberForwarded coded index to the method or field being mapped.
+    ///
+    /// Points to either a Field or MethodDef table entry (ECMA-335 §24.2.6).
+    /// In practice, only MethodDef is used since field export is not supported.
+    /// Requires resolution during processing to obtain the actual method reference.
     pub member_forwarded: CodedIndex,
-    /// an index into the String heap
+
+    /// String heap index for the target function name.
+    ///
+    /// References the name of the native function to be called in the target
+    /// library. Requires string heap lookup to obtain the actual function name.
     pub import_name: u32,
-    /// an index into the `ModuleRef` table
+
+    /// ModuleRef table index for the target native library.
+    ///
+    /// References the module containing the native function to be invoked.
+    /// Requires ModuleRef table lookup to obtain the library reference.
     pub import_scope: u32,
 }
 
 impl ImplMapRaw {
-    /// Apply an `ImplMapRaw` to the relevant entries of types (e.g. fields, methods and parameters)
+    /// Applies P/Invoke mapping directly to referenced method and import system.
     ///
-    /// ## Arguments
-    /// * 'value'   - The value to be converted
-    /// * 'string'  - The #String heap
-    /// * 'modules' - All parsed `ModuleRef` entries
-    /// * 'methods' - All parsed `MethodDef` entries
-    /// * 'imports' - All `Import`s
+    /// This method resolves references and immediately applies the P/Invoke configuration
+    /// to the target method and import tracking system. It's an alternative to the
+    /// two-step process of conversion to owned structure followed by application.
+    ///
+    /// # Arguments
+    /// * `strings` - String heap for resolving import function names
+    /// * `modules` - ModuleRef map for resolving target library references
+    /// * `methods` - MethodDef map for resolving target method references
+    /// * `imports` - Import tracking system for registering P/Invoke mappings
+    ///
+    /// * `Ok(())` - P/Invoke mapping applied successfully
+    /// * `Err(_)` - Reference resolution failed or invalid coded index
     ///
     /// # Errors
-    /// Returns an error if the member forwarded reference cannot be resolved,
-    /// if the method token is invalid, or if the import name cannot be retrieved.
+    /// - Invalid member_forwarded token or unsupported table reference
+    /// - Method reference cannot be resolved in the MethodDef map
+    /// - ModuleRef reference cannot be resolved
+    /// - String heap lookup fails for import name
     pub fn apply(
         &self,
         strings: &Strings,
@@ -94,16 +161,26 @@ impl ImplMapRaw {
         }
     }
 
-    /// Convert an `ImplMapRaw`, into a `ImplMap` which has indexes resolved and owns the referenced data
+    /// Converts raw ImplMap entry to owned structure with resolved references.
     ///
-    /// ## Arguments
-    /// * `get_ref` - Closure to resolve coded indexes
-    /// * 'string'  - The #String heap
-    /// * 'modules' - All parsed `ModuleRef` entries
+    /// This method processes the raw table entry by resolving all coded indexes
+    /// and heap references, creating an [`ImplMap`] instance with owned data
+    /// suitable for runtime use and further processing.
+    ///
+    /// # Arguments
+    /// * `get_ref` - Closure to resolve coded indexes to type references
+    /// * `strings` - String heap for resolving import function names
+    /// * `modules` - ModuleRef map for resolving target library references
+    ///
+    /// # Returns
+    /// * `Ok(ImplMapRc)` - Successfully converted owned ImplMap structure
+    /// * `Err(_)` - Reference resolution failed or invalid data
     ///
     /// # Errors
-    /// Returns an error if the member forwarded reference cannot be resolved,
-    /// if the import name cannot be retrieved, or if the import scope module cannot be found.
+    /// - Invalid member_forwarded coded index or weak reference upgrade failure
+    /// - String heap lookup fails for import name
+    /// - ModuleRef reference cannot be resolved
+    /// - Non-MethodDef reference in member_forwarded (unsupported)
     pub fn to_owned<F>(
         &self,
         get_ref: F,
@@ -157,6 +234,16 @@ impl ImplMapRaw {
 }
 
 impl<'a> RowDefinition<'a> for ImplMapRaw {
+    /// Calculates the byte size of an ImplMap table row based on table sizing information.
+    ///
+    /// The row size depends on the size of coded indexes and string/table references,
+    /// which vary based on the total number of entries in referenced tables.
+    ///
+    /// # Row Layout
+    /// - mapping_flags: 2 bytes (fixed size)
+    /// - member_forwarded: Variable size MemberForwarded coded index
+    /// - import_name: Variable size string heap index (2 or 4 bytes)
+    /// - import_scope: Variable size ModuleRef table index (2 or 4 bytes)
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
@@ -167,6 +254,21 @@ impl<'a> RowDefinition<'a> for ImplMapRaw {
         )
     }
 
+    /// Reads a single ImplMap table row from binary metadata stream.
+    ///
+    /// Parses the binary representation of an ImplMap entry, reading fields
+    /// in the order specified by ECMA-335 and handling variable-size indexes
+    /// based on table sizing information.
+    ///
+    /// # Arguments
+    /// * `data` - Binary data containing the table row
+    /// * `offset` - Current read position, updated after reading
+    /// * `rid` - Row identifier for this entry
+    /// * `sizes` - Table sizing information for variable-width fields
+    ///
+    /// # Returns
+    /// * `Ok(ImplMapRaw)` - Successfully parsed table row
+    /// * `Err(_)` - Binary data reading or parsing error
     fn read_row(
         data: &'a [u8],
         offset: &mut usize,

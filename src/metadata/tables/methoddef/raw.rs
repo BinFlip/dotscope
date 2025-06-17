@@ -1,3 +1,18 @@
+//! Raw MethodDef table structure with unresolved indexes and heap references.
+//!
+//! This module provides the [`MethodDefRaw`] struct, which represents method definitions
+//! as stored in the metadata stream. The structure contains unresolved indexes
+//! and heap references that require processing to establish complete method information
+//! with parameter metadata and signature details.
+//!
+//! # Purpose
+//! [`MethodDefRaw`] serves as the direct representation of MethodDef table entries from the
+//! binary metadata stream, before parameter resolution and signature parsing. This raw format
+//! is processed during metadata loading to create [`Method`] instances with resolved
+//! parameters and complete method implementation information.
+//!
+//! [`Method`]: crate::metadata::method::Method
+
 use std::sync::{atomic::AtomicU32, Arc, OnceLock};
 
 use crate::{
@@ -19,42 +34,129 @@ use crate::{
     Result,
 };
 
+/// Raw MethodDef table entry with unresolved indexes and heap references.
+///
+/// This structure represents a method definition as stored directly in the metadata stream.
+/// All references are unresolved indexes or heap offsets that require processing during
+/// metadata loading to establish complete method information with parameter metadata
+/// and implementation details.
+///
+/// # Table Structure (ECMA-335 §22.26)
+/// | Column | Size | Description |
+/// |--------|------|-------------|
+/// | RVA | 4 bytes | Relative virtual address of method implementation |
+/// | ImplFlags | 2 bytes | Method implementation attributes |
+/// | Flags | 2 bytes | Method attributes and access modifiers |
+/// | Name | String index | Method name identifier |
+/// | Signature | Blob index | Method signature (calling convention, parameters, return type) |
+/// | ParamList | Param index | First parameter in the parameter list |
+///
+/// # Implementation Attributes (ImplFlags)
+/// The `impl_flags` field contains method implementation characteristics:
+/// - **Code type**: IL, native, OPTIL, or runtime implementation
+/// - **Management**: Managed, unmanaged, or mixed execution model
+/// - **Implementation**: Forward reference, synchronized, or no inlining flags
+/// - **Security**: Security critical or transparent method marking
+///
+/// # Method Attributes (Flags)
+/// The `flags` field contains method access and behavior modifiers:
+/// - **Access**: Private, public, protected, internal visibility levels
+/// - **Virtual dispatch**: Virtual, abstract, final, override, or new slot semantics
+/// - **Special methods**: Constructor, property accessor, event handler, or operator
+/// - **Calling convention**: Static, instance, or vararg method calling patterns
+///
+/// # Parameter Resolution
+/// The `param_list` field provides access to method parameters:
+/// - **Parameter range**: Contiguous range in the Param table for this method
+/// - **Return parameter**: Special parameter at sequence 0 for return type information
+/// - **Parameter metadata**: Names, types, default values, and custom attributes
+/// - **Indirect access**: Optional ParamPtr table for parameter pointer indirection
+///
+/// # RVA and Implementation
+/// The `rva` field specifies method implementation location:
+/// - **Zero RVA**: Abstract methods, interface methods, or extern methods without implementation
+/// - **Non-zero RVA**: Concrete methods with IL code or native implementation at specified address
+/// - **Implementation type**: Determined by combination of RVA and implementation flags
 #[derive(Clone, Debug)]
-/// The `MethodDef` table defines methods for types in the `TypeDef` table. `TableId` = 0x06
 pub struct MethodDefRaw {
-    /// `RowID`
+    /// Row identifier within the MethodDef table.
+    ///
+    /// Unique identifier for this method definition entry, used for internal
+    /// table management and token generation.
     pub rid: u32,
-    /// Token
+
+    /// Metadata token for this MethodDef entry (TableId 0x06).
+    ///
+    /// Computed as `0x06000000 | rid` to create the full token value
+    /// for referencing this method from other metadata structures.
     pub token: Token,
-    /// Offset
+
+    /// Byte offset of this entry within the raw table data.
+    ///
+    /// Used for efficient table navigation and binary metadata processing.
     pub offset: usize,
-    /// a 4-byte constant
+
+    /// Relative virtual address of the method implementation.
+    ///
+    /// Points to the method's IL code or native implementation within the PE file.
+    /// A value of 0 indicates an abstract method, interface method, or extern method
+    /// without implementation in the current assembly.
     pub rva: u32,
-    /// bitmask of `MethodImplAttributes`, §II.23.1.10
+
+    /// Method implementation attributes bitmask.
+    ///
+    /// Contains flags controlling method implementation characteristics including
+    /// code type (IL/native), management model (managed/unmanaged), and special
+    /// implementation features (synchronized, no inlining, etc.).
     pub impl_flags: u32,
-    /// bitmask of `MethodAttributes`, §II.23.1.10
+
+    /// Method attributes and access modifiers bitmask.
+    ///
+    /// Contains flags controlling method visibility, virtual dispatch behavior,
+    /// special method types, and calling conventions. Used for access control
+    /// and method resolution during compilation and runtime.
     pub flags: u32,
-    /// an index into the String heap
+
+    /// String heap index for the method name.
+    ///
+    /// References the method identifier name in the string heap. For constructors,
+    /// this is typically ".ctor" (instance) or ".cctor" (static type initializer).
     pub name: u32,
-    /// an index into the Blob heap
+
+    /// Blob heap index for the method signature.
+    ///
+    /// References signature data in the blob heap describing calling convention,
+    /// parameter types, return type, and generic type parameters. Must be parsed
+    /// according to method signature format specifications.
     pub signature: u32,
-    /// an index into the Param table
+
+    /// Index into the Param table for the first parameter.
+    ///
+    /// Specifies the starting position of this method's parameters in the Param table.
+    /// Parameter lists are contiguous ranges ending at the next method's param_list
+    /// or the end of the table. A value of 0 indicates no parameters.
     pub param_list: u32,
 }
 
 impl MethodDefRaw {
-    /// Convert an `MethodDefRaw`, into a `Method` which has indexes resolved and owns the referenced data
+    /// Converts a MethodDefRaw entry into a Method with resolved parameters and parsed signature.
     ///
-    /// ## Arguments
-    /// * 'strings' - The processed Strings
-    /// * 'blob'    - The processed Blobs
-    /// * '`params_map`'  - All parsed `Param` entries for param resolution
-    /// * '`param_ptr_map`' - All parsed `ParamPtr` entries for indirection resolution
-    /// * 'table'   - The `MethodDef` table for getting next row's `param_list`
+    /// This method performs complete method definition resolution, including parameter
+    /// range calculation, signature parsing, and method attribute processing. The resulting
+    /// owned structure provides complete method information for invocation, reflection,
+    /// and type system integration.
     ///
-    /// # Errors
-    /// Returns an error if the method name cannot be retrieved from the strings heap,
-    /// or if the method signature cannot be parsed from the blob heap.
+    /// # Arguments
+    /// * `strings` - The string heap for resolving method names
+    /// * `blob` - The blob heap for signature data retrieval
+    /// * `params_map` - Collection of all Param entries for parameter resolution
+    /// * `param_ptr_map` - Collection of ParamPtr entries for indirection (if present)
+    /// * `table` - The MethodDef table for parameter range calculation
+    ///
+    /// # Returns
+    /// * `Ok(MethodRc)` - Successfully resolved method with complete parameter metadata
+    /// * `Err(_)` - If signature parsing, parameter resolution, or name retrieval fails
+    ///
     pub fn to_owned(
         &self,
         strings: &Strings,

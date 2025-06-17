@@ -1,8 +1,46 @@
 //! Basic block representation for CIL control flow analysis.
 //!
-//! This module defines the [`BasicBlock`] struct, which represents a sequence of CIL instructions
-//! with a single entry and exit point. Basic blocks are used for control flow analysis, optimization,
-//! and program understanding in .NET assemblies.
+//! This module defines the fundamental building blocks for control flow analysis in .NET assemblies.
+//! Basic blocks represent maximal sequences of CIL instructions with single entry and exit points,
+//! enabling sophisticated program analysis, optimization, and understanding capabilities.
+//!
+//! # Architecture
+//!
+//! The module is organized around the central [`crate::disassembler::block::BasicBlock`] type, which
+//! encapsulates instruction sequences and their control flow relationships. Basic blocks form the
+//! foundation for constructing control flow graphs that enable dead code elimination, reachability
+//! analysis, and other static analysis techniques.
+//!
+//! # Key Components
+//!
+//! - [`crate::disassembler::block::BasicBlock`] - Core basic block representation with instruction sequences
+//! - [`crate::disassembler::block::BasicBlock::new`] - Factory method for creating new basic blocks
+//! - [`crate::disassembler::block::BasicBlock::is_entry`] - Identifies entry points in control flow
+//! - [`crate::disassembler::block::BasicBlock::is_exit`] - Identifies termination points in control flow
+//!
+//! # Usage Examples
+//!
+//! ```rust,no_run
+//! use dotscope::disassembler::BasicBlock;
+//!
+//! // Create a basic block at method entry point
+//! let entry_block = BasicBlock::new(0, 0x2000, 0x1000);
+//!
+//! // Verify it's an entry block (no predecessors)
+//! assert!(entry_block.is_entry());
+//! assert!(!entry_block.is_exit());
+//!
+//! // Basic blocks start with empty instruction sequences
+//! assert_eq!(entry_block.instructions.len(), 0);
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::disassembler::decoder`] - Provides instructions for basic block construction
+//! - [`crate::disassembler::instruction`] - Defines the instruction types contained in blocks
+//! - [`crate::disassembler::decode_blocks`] - Function that constructs basic blocks from bytecode
 
 use crate::disassembler::{FlowType, Instruction};
 
@@ -14,7 +52,8 @@ use crate::disassembler::{FlowType, Instruction};
 /// - No internal control flow changes
 ///
 /// Basic blocks are fundamental units for control flow analysis, optimization,
-/// and program understanding.
+/// and program understanding. They are constructed by the [`crate::disassembler::decode_blocks`] function
+/// during disassembly and used by various analysis algorithms.
 ///
 /// # Examples
 ///
@@ -29,6 +68,7 @@ use crate::disassembler::{FlowType, Instruction};
 ///
 /// // Basic blocks start empty
 /// assert_eq!(block.instructions.len(), 0);
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct BasicBlock {
@@ -65,7 +105,7 @@ impl BasicBlock {
     ///
     /// # Returns
     ///
-    /// A new `BasicBlock` instance ready for instruction insertion.
+    /// A new [`crate::disassembler::block::BasicBlock`] instance ready for instruction insertion.
     ///
     /// # Examples
     ///
@@ -78,6 +118,7 @@ impl BasicBlock {
     /// assert_eq!(entry_block.rva, 0x2000);
     /// assert_eq!(entry_block.offset, 0x1000);
     /// assert_eq!(entry_block.size, 0);
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
     pub fn new(id: usize, rva: u64, offset: usize) -> Self {
@@ -100,7 +141,7 @@ impl BasicBlock {
     ///
     /// # Returns
     ///
-    /// `Some(&Instruction)` if the block contains at least one instruction,
+    /// `Some(&`[`crate::disassembler::Instruction`]`)` if the block contains at least one instruction,
     /// `None` if the block is empty.
     ///
     /// # Examples
@@ -116,6 +157,7 @@ impl BasicBlock {
     /// // After adding instructions, returns the first one
     /// // block.instructions.push(some_instruction);
     /// // assert!(block.instruction_first().is_some());
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
     pub fn instruction_first(&self) -> Option<&Instruction> {
@@ -126,11 +168,12 @@ impl BasicBlock {
     ///
     /// This is particularly important for control flow analysis as the
     /// last instruction determines how control exits the block (branch,
-    /// fall-through, return, etc.).
+    /// fall-through, return, etc.). The [`crate::disassembler::FlowType`] of the last
+    /// instruction determines the block's control flow behavior.
     ///
     /// # Returns
     ///
-    /// `Some(&Instruction)` if the block contains at least one instruction,
+    /// `Some(&`[`crate::disassembler::Instruction`]`)` if the block contains at least one instruction,
     /// `None` if the block is empty.
     ///
     /// # Examples
@@ -147,6 +190,7 @@ impl BasicBlock {
     /// // if let Some(last) = block.instruction_last() {
     /// //     println!("Block exits with: {:?}", last.flow_type);
     /// // }
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
     pub fn instruction_last(&self) -> Option<&Instruction> {
@@ -177,6 +221,7 @@ impl BasicBlock {
     /// // Adding a predecessor makes it non-entry
     /// block.predecessors.push(1);
     /// assert!(!block.is_entry());
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
     pub fn is_entry(&self) -> bool {
@@ -187,17 +232,19 @@ impl BasicBlock {
     ///
     /// Exit blocks end with instructions that don't fall through to
     /// other blocks, such as return statements or throw instructions.
-    /// These blocks represent the end of execution paths.
+    /// These blocks represent the end of execution paths. The determination
+    /// is based on the [`crate::disassembler::FlowType`] of the last instruction.
     ///
     /// # Returns
     ///
-    /// `true` if the block's last instruction terminates execution,
-    /// `false` if the block can transfer control to other blocks or is empty.
+    /// `true` if the block's last instruction has [`crate::disassembler::FlowType::Return`] or
+    /// [`crate::disassembler::FlowType::Throw`], `false` if the block can transfer control to
+    /// other blocks or is empty.
     ///
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use dotscope::disassembler::{BasicBlock, FlowType};
+    /// use dotscope::disassembler::BasicBlock;
     ///
     /// let mut block = BasicBlock::new(0, 0x2000, 0x1000);
     ///
@@ -208,6 +255,7 @@ impl BasicBlock {
     /// // (This example assumes you have a return instruction)
     /// // block.instructions.push(return_instruction);
     /// // assert!(block.is_exit());
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
     pub fn is_exit(&self) -> bool {

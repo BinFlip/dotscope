@@ -1,35 +1,113 @@
-//! `CustomAttribute` blob parsing implementation.
+//! Custom attribute blob parsing implementation for .NET metadata.
 //!
-//! This module provides parsing of custom attribute blob data strictly according to
-//! ECMA-335 II.23.3 `CustomAttribute` signature specification. It uses the documented
-//! `CorSerializationType` enumeration for accurate .NET runtime-compliant parsing.
+//! This module provides robust parsing of custom attribute blob data according to the
+//! ECMA-335 II.23.3 CustomAttribute signature specification. It implements the documented
+//! CorSerializationType enumeration for accurate .NET runtime-compliant parsing with
+//! comprehensive error handling and graceful degradation strategies.
 //!
-//! # Parsing Strategy
+//! # Architecture
 //!
-//! The parsing follows the .NET runtime approach:
-//! 1. **Fixed Arguments**: Parsed based on constructor parameter types (CilFlavor-based)
-//! 2. **Named Arguments**: Use explicit `CorSerializationType` tags from the blob
-//! 3. **Recursive Design**: Clean recursive parsing with depth limiting like other parsers
-//! 4. **Enum-Based**: Uses `SERIALIZATION_TYPE` constants for documented .NET types
+//! The parsing architecture follows established patterns from other metadata parsers
+//! in the codebase, providing structured and reliable custom attribute processing:
 //!
-//! # Real-World Compatibility
+//! ## Core Components
 //!
-//! This parser prioritizes **robustness and compatibility** for real-world .NET binaries:
+//! - **Fixed Arguments**: Type-aware parsing based on constructor parameter types (CilFlavor-based)
+//! - **Named Arguments**: Explicit CorSerializationType tag parsing from blob data
+//! - **Recursive Design**: Clean recursive parsing with depth limiting for complex types
+//! - **Enum Support**: Uses SERIALIZATION_TYPE constants for documented .NET types
 //!
-//! - **Graceful Degradation**: When type resolution fails, falls back to safer parsing methods
-//! - **Heuristic Enum Detection**: Uses inheritance analysis + name patterns for external enum types
-//! - **Error Recovery**: Continues parsing even when encountering unknown or malformed data
-//! - **Future-Proof**: Designed to work with current single-assembly model while being ready
-//!   for future 'project' style multi-assembly loading
+//! ## Error Handling Strategy
 //!
-//! # Current Limitations & Future Improvements
+//! - **Graceful Degradation**: Falls back to safer parsing when type resolution fails
+//! - **Heuristic Enum Detection**: Uses inheritance analysis and name patterns for external types
+//! - **Error Recovery**: Continues parsing despite unknown or malformed data sections
+//! - **Future-Proof Design**: Ready for multi-assembly loading while working with current single-assembly model
 //!
-//! **Current**: Single assembly scope limits external type resolution to heuristics
+//! # Key Components
 //!
-//! **Future**: TODO - Implement 'project' style loading with:
-//! - Default `windows_dll` directory for common .NET assemblies
-//! - Cross-assembly type resolution and inheritance chains
-//! - Elimination of heuristics through actual type loading
+//! - [`crate::metadata::customattributes::parser::CustomAttributeParser`] - Main parser implementation
+//! - [`crate::metadata::customattributes::parser::parse_custom_attribute_blob`] - Blob heap parsing
+//! - [`crate::metadata::customattributes::parser::parse_custom_attribute_data`] - Raw data parsing
+//! - [`crate::metadata::customattributes::types::SERIALIZATION_TYPE`] - Type tag constants
+//!
+//! # Usage Examples
+//!
+//! ## Parsing from Blob Heap
+//!
+//! ```rust,no_run
+//! use dotscope::metadata::customattributes::parse_custom_attribute_blob;
+//! use dotscope::CilObject;
+//!
+//! let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+//!
+//! # fn get_custom_attribute_data() -> (u32, std::sync::Arc<boxcar::Vec<dotscope::metadata::tables::ParamRc>>) { todo!() }
+//! let (blob_index, constructor_params) = get_custom_attribute_data();
+//!
+//! if let Some(blob_heap) = assembly.blob() {
+//!     let custom_attr = parse_custom_attribute_blob(blob_heap, blob_index, &constructor_params)?;
+//!     
+//!     println!("Fixed arguments: {}", custom_attr.fixed_args.len());
+//!     println!("Named arguments: {}", custom_attr.named_args.len());
+//! }
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! ## Parsing Raw Blob Data
+//!
+//! ```rust,no_run
+//! use dotscope::metadata::customattributes::{parse_custom_attribute_data, CustomAttributeArgument};
+//!
+//! # fn get_constructor_params() -> std::sync::Arc<boxcar::Vec<dotscope::metadata::tables::ParamRc>> { todo!() }
+//! let constructor_params = get_constructor_params();
+//!
+//! // Example: Simple custom attribute with string argument
+//! let blob_data = &[
+//!     0x01, 0x00,                     // Prolog (0x0001)
+//!     0x05,                           // String length
+//!     0x48, 0x65, 0x6C, 0x6C, 0x6F,   // "Hello" (UTF-8)
+//!     0x00, 0x00,                     // Named argument count (0)
+//! ];
+//!
+//! let result = parse_custom_attribute_data(blob_data, &constructor_params)?;
+//!
+//! // Access parsed arguments
+//! match &result.fixed_args[0] {
+//!     CustomAttributeArgument::String(s) => println!("String argument: '{}'", s),
+//!     _ => println!("Unexpected argument type"),
+//! }
+//!
+//! println!("Named arguments: {}", result.named_args.len());
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::customattributes::types`] - Type definitions and argument structures
+//! - [`crate::metadata::streams::Blob`] - Blob heap access for custom attribute data
+//! - [`crate::metadata::tables`] - Parameter resolution for constructor type information
+//! - [`crate::metadata::typesystem`] - Type system integration for CilFlavor handling
+//!
+//! # Implementation Features
+//!
+//! ## Current Capabilities
+//! - **Single Assembly Scope**: Optimized for current single-assembly analysis model
+//! - **Type Resolution**: Full support for resolved constructor parameter types
+//! - **Graceful Fallbacks**: Heuristic parsing when full type information unavailable
+//! - **Comprehensive Validation**: ECMA-335 compliance with detailed error reporting
+//!
+//! ## Future Enhancements
+//! - **Multi-Assembly Support**: Planned project-style loading with cross-assembly resolution
+//! - **External Type Loading**: Default windows_dll directory for common .NET assemblies
+//! - **Enhanced Inheritance**: Full inheritance chain analysis for enum detection
+//!
+//! # Standards Compliance
+//!
+//! - **ECMA-335**: Full compliance with custom attribute specification (II.23.3)
+//! - **Type Safety**: Robust type checking and validation throughout parsing
+//! - **Memory Safety**: Comprehensive bounds checking and recursion limiting
+//! - **Error Handling**: Detailed error messages for debugging malformed data
 
 use crate::{
     file::parser::Parser,
@@ -50,21 +128,50 @@ use std::sync::Arc;
 /// Maximum recursion depth for custom attribute parsing
 const MAX_RECURSION_DEPTH: usize = 50;
 
-/// Parse custom attribute blob data from blob heap with parameter vector
+/// Parse custom attribute blob data from the blob heap using constructor parameter information.
 ///
-/// This function takes a reference to the parameter vector and parses
-/// the custom attribute data according to ECMA-335 II.23.3.
+/// This function retrieves custom attribute data from the specified blob heap index and
+/// parses it according to ECMA-335 II.23.3 specification. It uses the constructor method's
+/// parameter types to accurately parse fixed arguments and automatically handles named
+/// arguments using their embedded type information.
 ///
 /// # Arguments
-/// * `blob` - The blob heap containing custom attribute data
-/// * `index` - The index into the blob heap
-/// * `params` - Reference to the boxcar parameter vector for type information
+/// * `blob` - The [`crate::metadata::streams::Blob`] heap containing custom attribute data
+/// * `index` - The index into the blob heap (0 indicates empty custom attribute)
+/// * `params` - Reference to the constructor method's parameter vector for type-aware parsing
 ///
 /// # Returns
-/// A parsed `CustomAttributeValue` with fixed and named arguments
+/// A parsed [`crate::metadata::customattributes::CustomAttributeValue`] containing:
+/// - `fixed_args` - Constructor arguments in declaration order
+/// - `named_args` - Field and property assignments with names and values
 ///
 /// # Errors
-/// Returns an error if the blob data is malformed or parsing fails
+/// Returns [`crate::Error::OutOfBounds`] if the index is invalid, or
+/// [`crate::Error::Malformed`] if the blob data doesn't conform to ECMA-335 format:
+/// - Invalid prolog (not 0x0001)
+/// - Insufficient data for declared arguments
+/// - Type/value mismatches in argument parsing
+/// - Recursion depth exceeded during parsing
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use dotscope::metadata::customattributes::parse_custom_attribute_blob;
+/// use dotscope::CilObject;
+///
+/// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+///
+/// # fn get_custom_attribute_data() -> (u32, std::sync::Arc<boxcar::Vec<dotscope::metadata::tables::ParamRc>>) { todo!() }
+/// let (blob_index, constructor_params) = get_custom_attribute_data();
+///
+/// if let Some(blob_heap) = assembly.blob() {
+///     let custom_attr = parse_custom_attribute_blob(blob_heap, blob_index, &constructor_params)?;
+///     
+///     println!("Fixed arguments: {}", custom_attr.fixed_args.len());
+///     println!("Named arguments: {}", custom_attr.named_args.len());
+/// }
+/// # Ok::<(), dotscope::Error>(())
+/// ```
 pub fn parse_custom_attribute_blob(
     blob: &Blob,
     index: u32,
@@ -82,20 +189,62 @@ pub fn parse_custom_attribute_blob(
     parser.parse_custom_attribute(params)
 }
 
-/// Parse custom attribute blob data directly from raw bytes with parameter vector
+/// Parse custom attribute blob data directly from raw bytes using constructor parameter information.
 ///
-/// This function takes a reference to the parameter vector and parses
-/// the custom attribute data according to ECMA-335 II.23.3.
+/// This function parses custom attribute data from a raw byte slice according to the
+/// ECMA-335 II.23.3 specification. It's the core parsing function used by other APIs
+/// and provides direct access to the parsing logic without blob heap indirection.
+///
+/// The parser uses constructor method parameter types for accurate fixed argument parsing
+/// and handles named arguments through their embedded serialization type information.
+/// It implements graceful degradation when type resolution fails and provides comprehensive
+/// error reporting for malformed data.
 ///
 /// # Arguments
-/// * `data` - The custom attribute blob data to parse
-/// * `params` - Reference to the boxcar parameter vector for type information
+/// * `data` - Raw bytes of the custom attribute blob data to parse
+/// * `params` - Reference to the constructor method's parameter vector for type-aware parsing
 ///
 /// # Returns
-/// A parsed `CustomAttributeValue` with fixed and named arguments
+/// A parsed [`crate::metadata::customattributes::CustomAttributeValue`] containing:
+/// - `fixed_args` - Constructor arguments parsed using parameter type information
+/// - `named_args` - Field and property assignments with their names and values
 ///
 /// # Errors
-/// Returns an error if the blob data is malformed or parsing fails
+/// Returns [`crate::Error::Malformed`] if the blob data doesn't conform to ECMA-335 format:
+/// - Invalid or missing prolog (must be 0x0001)
+/// - Insufficient data for the number of declared arguments
+/// - Type mismatches between expected and actual argument types
+/// - Invalid serialization type tags in named arguments
+/// - Recursion depth exceeded during complex type parsing
+/// - Truncated or corrupted blob data
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use dotscope::metadata::customattributes::{parse_custom_attribute_data, CustomAttributeArgument};
+///
+/// # fn get_constructor_params() -> std::sync::Arc<boxcar::Vec<dotscope::metadata::tables::ParamRc>> { todo!() }
+/// let constructor_params = get_constructor_params();
+///
+/// // Example: Simple custom attribute with string argument
+/// let blob_data = &[
+///     0x01, 0x00,                     // Prolog (0x0001)
+///     0x05,                           // String length
+///     0x48, 0x65, 0x6C, 0x6C, 0x6F,   // "Hello" (UTF-8)
+///     0x00, 0x00,                     // Named argument count (0)
+/// ];
+///
+/// let result = parse_custom_attribute_data(blob_data, &constructor_params)?;
+///
+/// // Access parsed arguments
+/// match &result.fixed_args[0] {
+///     CustomAttributeArgument::String(s) => println!("String argument: '{}'", s),
+///     _ => println!("Unexpected argument type"),
+/// }
+///
+/// println!("Named arguments: {}", result.named_args.len());
+/// # Ok::<(), dotscope::Error>(())
+/// ```
 pub fn parse_custom_attribute_data(
     data: &[u8],
     params: &Arc<boxcar::Vec<ParamRc>>,
@@ -104,14 +253,37 @@ pub fn parse_custom_attribute_data(
     parser.parse_custom_attribute(params)
 }
 
-/// Custom attribute parser following the same pattern as `SignatureParser` and `MarshallingParser`
+/// Custom attribute parser implementing ECMA-335 II.23.3 specification.
+///
+/// This parser follows the same architectural pattern as other parsers in the codebase
+/// (like `SignatureParser` and `MarshallingParser`) with proper recursion limiting,
+/// error handling, and state management. It provides a structured approach to parsing
+/// the complex binary format of .NET custom attributes.
+///
+/// The parser handles both fixed arguments (based on constructor parameters) and named
+/// arguments (with embedded type information) while maintaining compatibility with
+/// real-world .NET assemblies through graceful degradation strategies.
 pub struct CustomAttributeParser<'a> {
+    /// Binary data parser for reading attribute blob
     parser: Parser<'a>,
+    /// Current recursion depth for nested parsing
     depth: usize,
 }
 
 impl<'a> CustomAttributeParser<'a> {
-    /// Creates a new custom attribute parser
+    /// Creates a new custom attribute parser for the provided blob data.
+    ///
+    /// # Arguments
+    /// * `data` - Raw bytes of the custom attribute blob to parse
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::customattributes::parser::CustomAttributeParser;
+    ///
+    /// let blob_data = &[0x01, 0x00, 0x00, 0x00]; // Minimal custom attribute
+    /// let parser = CustomAttributeParser::new(blob_data);
+    /// ```
     #[must_use]
     pub fn new(data: &'a [u8]) -> Self {
         Self {
@@ -120,10 +292,46 @@ impl<'a> CustomAttributeParser<'a> {
         }
     }
 
-    /// Parse a complete custom attribute blob
+    /// Parse a complete custom attribute blob according to ECMA-335 II.23.3.
+    ///
+    /// This method handles the full custom attribute parsing workflow:
+    /// 1. Validates the standard prolog (0x0001)
+    /// 2. Parses fixed arguments using constructor parameter types
+    /// 3. Parses named arguments using embedded type information
+    ///
+    /// The parser implements type-aware parsing for fixed arguments when constructor
+    /// parameter information is available, and falls back to heuristic parsing when
+    /// type resolution fails. Named arguments are always parsed using their embedded
+    /// serialization type tags.
+    ///
+    /// # Arguments
+    /// * `params` - Constructor method parameters for fixed argument type resolution
+    ///
+    /// # Returns
+    /// A complete [`crate::metadata::customattributes::CustomAttributeValue`] with all parsed data.
     ///
     /// # Errors
-    /// Returns an error if the blob is malformed or recursion limit is exceeded
+    /// Returns [`crate::Error::Malformed`] for various format violations:
+    /// - Invalid prolog (not 0x0001)
+    /// - Insufficient data for declared arguments
+    /// - Invalid serialization types in named arguments
+    /// - Recursion limit exceeded during parsing
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::customattributes::parser::CustomAttributeParser;
+    ///
+    /// # fn get_constructor_params() -> std::sync::Arc<boxcar::Vec<dotscope::metadata::tables::ParamRc>> { todo!() }
+    /// let blob_data = &[0x01, 0x00, 0x00, 0x00]; // Simple custom attribute
+    /// let mut parser = CustomAttributeParser::new(blob_data);
+    /// let params = get_constructor_params();
+    ///
+    /// let custom_attr = parser.parse_custom_attribute(&params)?;
+    /// println!("Parsed {} fixed args and {} named args",
+    ///          custom_attr.fixed_args.len(), custom_attr.named_args.len());
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn parse_custom_attribute(
         &mut self,
         params: &Arc<boxcar::Vec<ParamRc>>,
@@ -162,7 +370,23 @@ impl<'a> CustomAttributeParser<'a> {
         })
     }
 
-    /// Parse fixed arguments based on constructor parameter types
+    /// Parse fixed arguments based on constructor parameter types.
+    ///
+    /// Extracts constructor parameters (excluding return parameter at sequence 0),
+    /// sorts them by sequence number, and parses each argument using its type information.
+    /// This ensures proper argument order matching the constructor signature.
+    ///
+    /// # Arguments
+    /// * `params` - Constructor method parameters with type and sequence information
+    ///
+    /// # Returns
+    /// Vector of parsed arguments in constructor parameter order
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::Malformed`] if:
+    /// - Constructor has parameters but no resolved types
+    /// - Insufficient blob data for declared parameters
+    /// - Parameter type parsing fails
     fn parse_fixed_arguments(
         &mut self,
         params: &Arc<boxcar::Vec<ParamRc>>,
@@ -207,7 +431,28 @@ impl<'a> CustomAttributeParser<'a> {
         Ok(fixed_args)
     }
 
-    /// Parse a single fixed argument based on constructor parameter type
+    /// Parse a single fixed argument based on constructor parameter type.
+    ///
+    /// Uses [`crate::metadata::typesystem::CilFlavor`] to determine the correct parsing
+    /// strategy for each parameter type. Handles primitive types, strings, arrays,
+    /// and complex types including System.Type, System.Object, and enum types.
+    ///
+    /// # Type Handling
+    /// - **Primitives**: Direct binary reading (bool, int, float, etc.)
+    /// - **String**: Compressed length + UTF-8 data or null marker (0xFF)
+    /// - **Class Types**: Special handling for System.Type, System.String, System.Object
+    /// - **ValueType**: Treated as enum with i32 underlying type
+    /// - **Arrays**: Single-dimensional arrays with element type parsing
+    /// - **Enum**: Heuristic detection with graceful fallback to Type parsing
+    ///
+    /// # Arguments
+    /// * `cil_type` - Constructor parameter type information for parsing guidance
+    ///
+    /// # Returns
+    /// Parsed argument if successful, None if type is unsupported
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::Malformed`] for invalid data or unsupported types
     fn parse_fixed_argument(
         &mut self,
         cil_type: &CilTypeRef,
@@ -439,7 +684,23 @@ impl<'a> CustomAttributeParser<'a> {
         }
     }
 
-    /// Parse a named argument (field or property) with explicit type tags
+    /// Parse a named argument (field or property) with explicit type tags.
+    ///
+    /// Named arguments start with a field/property indicator (0x53/0x54), followed by
+    /// a [`crate::metadata::customattributes::types::SERIALIZATION_TYPE`] tag, name length,
+    /// name string, and the argument value. This follows ECMA-335 II.23.3 exactly.
+    ///
+    /// # Format
+    /// 1. Field/Property indicator: 0x53 (FIELD) or 0x54 (PROPERTY)
+    /// 2. Type tag: `CorSerializationType` enumeration value
+    /// 3. Name: Compressed length + UTF-8 string
+    /// 4. Value: Type-specific binary data
+    ///
+    /// # Returns
+    /// Parsed named argument with name, type, and value, or None if no more data
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::Malformed`] for invalid format or unsupported types
     fn parse_named_argument(&mut self) -> Result<Option<CustomAttributeNamedArgument>> {
         if !self.parser.has_more_data() {
             return Ok(None);
@@ -501,7 +762,33 @@ impl<'a> CustomAttributeParser<'a> {
         }))
     }
 
-    /// Parse an argument based on its `CorSerializationType` tag (recursive with depth limiting)
+    /// Parse an argument based on its `CorSerializationType` tag (recursive with depth limiting).
+    ///
+    /// This method handles the core parsing logic for named arguments and tagged objects
+    /// using the .NET runtime's serialization type enumeration. It supports recursion
+    /// for complex types like arrays and tagged objects while preventing stack overflow
+    /// through depth limiting.
+    ///
+    /// # Supported Types
+    /// - All primitive types (bool, int, float, char)
+    /// - String and Type arguments
+    /// - Enum values with type name and underlying value
+    /// - Single-dimensional arrays (SZARRAY)
+    /// - Tagged objects (recursive parsing)
+    ///
+    /// # Recursion Safety
+    /// Uses `depth` tracking with [`MAX_RECURSION_DEPTH`] limit to prevent stack overflow
+    /// from maliciously crafted or deeply nested custom attribute data.
+    ///
+    /// # Arguments
+    /// * `type_tag` - [`crate::metadata::customattributes::types::SERIALIZATION_TYPE`] enumeration value
+    ///
+    /// # Returns
+    /// Parsed argument value according to the type tag specification
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::RecursionLimit`] if maximum depth exceeded, or
+    /// [`crate::Error::Malformed`] for invalid type tags or data format
     fn parse_argument_by_type_tag(&mut self, type_tag: u8) -> Result<CustomAttributeArgument> {
         self.depth += 1;
         if self.depth >= MAX_RECURSION_DEPTH {
@@ -588,8 +875,28 @@ impl<'a> CustomAttributeParser<'a> {
         Ok(result)
     }
 
-    /// Helper method to check if the current position contains string data
-    /// This looks for a valid compressed length followed by valid UTF-8 bytes
+    /// Helper method to check if the current position contains string data.
+    ///
+    /// This method performs non-destructive lookahead to determine if the current
+    /// parser position contains valid string data. It's used for graceful fallback
+    /// during ambiguous type parsing situations.
+    ///
+    /// # Validation Strategy
+    /// 1. Checks for null string marker (0xFF)
+    /// 2. Attempts to read compressed length
+    /// 3. Validates available data matches declared length
+    /// 4. Performs UTF-8 validation on string bytes
+    /// 5. Applies heuristics for reasonable string lengths
+    ///
+    /// # Parser State
+    /// This method preserves parser position - it resets to the original position
+    /// after validation regardless of success or failure.
+    ///
+    /// # Returns
+    /// `true` if the current position appears to contain valid string data
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::Malformed`] if parser position cannot be restored
     fn can_parse_as_string(&mut self) -> Result<bool> {
         let saved_pos = self.parser.pos();
 
@@ -628,8 +935,29 @@ impl<'a> CustomAttributeParser<'a> {
         result
     }
 
-    /// Parse a compressed string from the blob
-    /// According to ECMA-335, null strings are encoded as a single 0xFF byte
+    /// Parse a compressed string from the blob.
+    ///
+    /// Implements ECMA-335 string parsing with support for null strings (0xFF marker)
+    /// and proper UTF-8 handling. Uses compressed unsigned integer for length encoding
+    /// as specified in the .NET metadata format.
+    ///
+    /// # Format
+    /// - **Null String**: Single 0xFF byte
+    /// - **Regular String**: Compressed length + UTF-8 bytes
+    /// - **Empty String**: Length 0 + no data bytes
+    ///
+    /// # Error Recovery
+    /// If invalid UTF-8 is encountered, falls back to lossy conversion to ensure
+    /// parsing continues rather than failing completely on malformed string data.
+    ///
+    /// # Returns
+    /// Parsed string (empty string for null marker or zero length)
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::Malformed`] if:
+    /// - No data available for reading
+    /// - Declared length exceeds available data
+    /// - Compressed length parsing fails
     fn parse_string(&mut self) -> Result<String> {
         if !self.parser.has_more_data() {
             return Err(malformed_error!("No data available for string"));

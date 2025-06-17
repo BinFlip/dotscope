@@ -1,6 +1,6 @@
 //! Metadata root header and stream directory for .NET assemblies.
 //!
-//! This module defines the [`Root`] struct, which represents the root metadata header and stream
+//! This module defines the [`crate::metadata::root::Root`] struct, which represents the root metadata header and stream
 //! directory as specified by ECMA-335. It provides access to all metadata streams, version info,
 //! and structural metadata required for parsing .NET assemblies.
 //!
@@ -48,85 +48,268 @@ use crate::{
 /// The MAGIC value indicating the CIL header
 pub const CIL_HEADER_MAGIC: u32 = 0x424A_5342;
 
-/// The header of the present Metadata, providing necessary information for parsing. The implemented structure is an
-/// approximation and not a 1:1 representation, to allow better use within the framework.
+/// Represents the metadata root header and stream directory of a .NET assembly.
 ///
-/// The [`Root`] struct gives access to the version string, stream directory, and all stream headers
-/// required to parse .NET assembly metadata. It is typically the first structure parsed when reading
-/// metadata from a PE file.
+/// The Root structure is the entry point for all .NET assembly metadata parsing, containing
+/// the metadata header information and directory of all available metadata streams. It follows
+/// the ECMA-335 specification for physical metadata layout and provides access to version
+/// information, stream locations, and structural metadata.
 ///
-/// # Example
+/// This structure is typically the first metadata component parsed when analyzing a .NET assembly,
+/// as it provides the roadmap for locating all other metadata streams such as the tables stream (`#~`),
+/// strings heap (`#Strings`), GUID heap (`#GUID`), blob heap (`#Blob`), and user strings heap (`#US`).
+///
+/// # Physical Layout
+///
+/// The metadata root follows this binary structure:
+/// ```text
+/// Offset | Size | Field           | Description
+/// -------|------|-----------------|---------------------------
+/// 0x00   | 4    | Signature       | Magic: 0x424A5342 ("BSJB")
+/// 0x04   | 2    | MajorVersion    | Metadata format major version
+/// 0x06   | 2    | MinorVersion    | Metadata format minor version  
+/// 0x08   | 4    | Reserved        | Always 0
+/// 0x0C   | 4    | Length          | Length of version string
+/// 0x10   | N    | Version         | Version string (null-terminated)
+/// ...    | 2    | Flags           | Reserved, always 0
+/// ...    | 2    | StreamNumber    | Number of stream headers
+/// ...    | ...  | StreamHeaders   | Array of stream headers
+/// ```
+///
+/// # Stream Directory
+///
+/// The Root contains a directory of all metadata streams, each described by a [`crate::metadata::streams::StreamHeader`]
+/// that specifies the stream's name, offset, and size. Common streams include:
+/// - `#~` or `#-`: Compressed metadata tables stream
+/// - `#Strings`: String heap for identifiers and names
+/// - `#GUID`: GUID heap for type and assembly identifiers
+/// - `#Blob`: Binary blob heap for signatures and complex data
+/// - `#US`: User strings heap for string literals
+///
+/// # Examples
+///
+/// ## Basic Root Parsing
 ///
 /// ```rust,no_run
 /// use dotscope::metadata::root::Root;
+///
 /// let root = Root::read(&[
-///            0x42, 0x53, 0x4A, 0x42,
-///            0x00, 0x20,
-///            0x00, 0x30,
-///            0x00, 0x00, 0x00, 0x40,
-///            0x05, 0x00, 0x00, 0x00,
-///            b'H', b'E', b'L', b'L', b'O',
-///            0x00, 0x60,
-///            0x01, 0x00,
-///            0x1, 0x00, 0x00, 0x00, // StreamHeader
-///            0x5, 0x00, 0x00, 0x00,
-///            0x23, 0x7E, 0x00,
-///        ])?;
-/// println!("Version: {}", root.version);
+///     0x42, 0x53, 0x4A, 0x42,  // Magic signature "BSJB"
+///     0x01, 0x00,              // Major version 1
+///     0x00, 0x00,              // Minor version 0
+///     0x00, 0x00, 0x00, 0x00,  // Reserved
+///     0x0C, 0x00, 0x00, 0x00,  // Version string length
+///     b'v', b'4', b'.', b'0',  // Version string "v4.0.30319"
+///     b'.', b'3', b'0', b'3',
+///     b'1', b'9', 0x00, 0x00,  // Null terminated + padding
+///     0x00, 0x00,              // Flags
+///     0x01, 0x00,              // Stream count: 1
+///     0x5C, 0x00, 0x00, 0x00,  // Stream offset
+///     0x08, 0x00, 0x00, 0x00,  // Stream size
+///     b'#', b'~', 0x00, 0x00,  // Stream name "#~" + padding
+/// ])?;
+///
+/// println!("Metadata version: {}", root.version);
+/// println!("Found {} streams", root.stream_headers.len());
+/// for stream in &root.stream_headers {
+///     println!("Stream '{}' at offset 0x{:X}, size {} bytes",
+///              stream.name, stream.offset, stream.size);
+/// }
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
-/// ## Reference
+/// ## Stream Directory Analysis
+///
+/// ```rust,no_run
+/// use dotscope::metadata::root::Root;
+///
+/// # let metadata_bytes = &[0u8; 100]; // placeholder
+/// let root = Root::read(metadata_bytes)?;
+///
+/// // Find specific streams
+/// if let Some(tables_stream) = root.stream_headers.iter()
+///     .find(|s| s.name == "#~" || s.name == "#-") {
+///     println!("Tables stream at offset 0x{:X}", tables_stream.offset);
+/// }
+///
+/// if let Some(strings_stream) = root.stream_headers.iter()
+///     .find(|s| s.name == "#Strings") {
+///     println!("Strings heap at offset 0x{:X}", strings_stream.offset);
+/// }
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+///
+/// # Validation
+///
+/// The Root structure performs automatic validation during parsing:
+/// - Verifies the magic signature matches `0x424A5342`
+/// - Ensures version string length is within reasonable bounds
+/// - Validates stream count and directory consistency
+/// - Checks for proper null-termination of the version string
+///
+/// # Thread Safety
+///
+/// Root instances are immutable after creation and safe to share across threads.
+/// All fields use thread-safe types and no internal mutability is required.
+///
+/// # References
+///
 /// - [ECMA-335 II.24.2.1: Metadata root](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf)
+/// - [ECMA-335 II.24.2.2: Stream header](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf)
 pub struct Root {
-    /// Magic signature for physical metadata: 0x424A5342
+    /// Magic signature identifying valid metadata: `0x424A5342` ("BSJB" in ASCII).
+    ///
+    /// This field must always contain the value [`CIL_HEADER_MAGIC`] for the metadata
+    /// to be considered valid by the .NET runtime and analysis tools.
     pub signature: u32,
-    /// `MajorVersion`
+
+    /// Major version number of the metadata format.
+    ///
+    /// Typically 1 for most .NET Framework and .NET Core assemblies. This indicates
+    /// the overall structure and capabilities of the metadata format.
     pub major_version: u16,
-    /// `MinorVersion`
+
+    /// Minor version number of the metadata format.
+    ///
+    /// Usually 1 for .NET Framework 2.0+ assemblies. Combined with major_version,
+    /// this determines the exact metadata format specification being used.
     pub minor_version: u16,
-    /// Always 0
+
+    /// Reserved field, always 0.
+    ///
+    /// This field is reserved for future use and should always contain zero
+    /// in valid .NET assemblies.
     pub reserved: u32,
-    /// Number of bytes allocated to hold version string
+
+    /// Length in bytes of the version string that follows.
+    ///
+    /// This includes the null terminator and any padding bytes required to
+    /// align the following fields to 4-byte boundaries.
     pub length: u32,
-    /// 'VersionString\0'
+
+    /// Version string identifying the .NET runtime version.
+    ///
+    /// Common values include:
+    /// - `"v2.0.50727"` for .NET Framework 2.0/3.0/3.5
+    /// - `"v4.0.30319"` for .NET Framework 4.0+
+    /// - Various strings for .NET Core/.NET 5+ assemblies
     pub version: String,
-    /// Reserved, always 0
+
+    /// Reserved flags field, always 0.
+    ///
+    /// This field is reserved for future use and should always contain zero
+    /// in current .NET assemblies.
     pub flags: u16,
-    /// Number of Streams
+
+    /// Number of metadata streams in the stream directory.
+    ///
+    /// Typical assemblies have 3-5 streams (tables, strings, GUID, blob, and optionally user strings).
+    /// This count determines how many [`crate::metadata::streams::StreamHeader`] entries follow.
     pub stream_number: u16,
-    /// Streams
+
+    /// Directory of all metadata streams in this assembly.
+    ///
+    /// Each entry describes a metadata stream's name, offset, and size. Common streams include:
+    /// - `#~` or `#-`: Compressed metadata tables
+    /// - `#Strings`: String heap for identifiers  
+    /// - `#GUID`: GUID heap for type references
+    /// - `#Blob`: Binary blob heap for signatures
+    /// - `#US`: User strings heap for literals
     pub stream_headers: Vec<StreamHeader>,
 }
 
 impl Root {
-    /// Reads a [`Root`] metadata header from a byte slice.
+    /// Parses a metadata root header from binary data.
+    ///
+    /// This method reads and validates the complete metadata root structure including the
+    /// magic signature, version information, and stream directory. It performs comprehensive
+    /// validation to ensure the metadata conforms to ECMA-335 specifications.
     ///
     /// # Arguments
-    /// * `data` - The byte slice from which this object shall be read
     ///
-    /// # Errors
-    /// Returns an error if the data is too short, the signature is invalid, or the stream directory is malformed.
+    /// * `data` - A byte slice containing the metadata root header and stream directory.
+    ///   Must start at the beginning of the metadata root structure.
     ///
-    /// # Example
+    /// # Returns
+    ///
+    /// Returns a [`crate::Result<Root>`] containing the parsed root structure, or an error
+    /// if parsing fails due to invalid data, malformed headers, or insufficient bytes.
+    ///
+    /// # Validation Performed
+    ///
+    /// This method performs extensive validation during parsing:
+    /// - Verifies minimum required data length (36 bytes)
+    /// - Validates magic signature matches [`CIL_HEADER_MAGIC`] (`0x424A5342`)
+    /// - Checks version string length for overflow and bounds
+    /// - Ensures proper null-termination of version string
+    /// - Validates stream count and directory consistency
+    /// - Verifies stream header alignment and bounds
+    ///
+    /// # Binary Format
+    ///
+    /// The expected binary layout is:
+    /// ```text
+    /// Offset | Size | Field         | Description
+    /// -------|------|---------------|---------------------------
+    /// 0x00   | 4    | Signature     | Magic: 0x424A5342 ("BSJB")
+    /// 0x04   | 2    | MajorVersion  | Format major version
+    /// 0x06   | 2    | MinorVersion  | Format minor version
+    /// 0x08   | 4    | Reserved      | Always 0
+    /// 0x0C   | 4    | Length        | Version string length
+    /// 0x10   | N    | Version       | Null-terminated version string
+    /// ...    | 2    | Flags         | Reserved, always 0
+    /// ...    | 2    | StreamNumber  | Number of streams
+    /// ...    | ...  | StreamHeaders | Stream directory entries
+    /// ```
+    ///
+    /// # Examples
+    ///
+    /// ## Basic Parsing
     ///
     /// ```rust,no_run
     /// use dotscope::metadata::root::Root;
-    /// let root = Root::read(&[
-    ///            0x42, 0x53, 0x4A, 0x42,
-    ///            0x00, 0x20,
-    ///            0x00, 0x30,
-    ///            0x00, 0x00, 0x00, 0x40,
-    ///            0x05, 0x00, 0x00, 0x00,
-    ///            b'H', b'E', b'L', b'L', b'O',
-    ///            0x00, 0x60,
-    ///            0x01, 0x00,
-    ///            0x1, 0x00, 0x00, 0x00, // StreamHeader
-    ///            0x5, 0x00, 0x00, 0x00,
-    ///            0x23, 0x7E, 0x00,
-    ///        ])?;
+    ///
+    /// // Parse metadata root from assembly bytes
+    /// # let metadata_bytes = &[0u8; 100]; // placeholder
+    /// let root = Root::read(metadata_bytes)?;
+    ///
+    /// println!("Metadata version: {}", root.version);
+    /// println!("Stream count: {}", root.stream_headers.len());
+    ///
+    /// // Validate magic signature
+    /// assert_eq!(root.signature, 0x424A5342);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// ## Stream Directory Access
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::root::Root;
+    ///
+    /// # let metadata_bytes = &[0u8; 100]; // placeholder
+    /// let root = Root::read(metadata_bytes)?;
+    ///
+    /// // Find the tables stream
+    /// let tables_stream = root.stream_headers.iter()
+    ///     .find(|stream| stream.name == "#~" || stream.name == "#-")
+    ///     .expect("Tables stream not found");
+    ///
+    /// println!("Tables stream at offset 0x{:X}, size {} bytes",
+    ///          tables_stream.offset, tables_stream.size);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - [`crate::Error::OutOfBounds`]: If the data slice is too short for the required fields
+    /// - [`crate::Error::Malformed`]: If the magic signature is invalid, version string is malformed,
+    ///   or stream directory is inconsistent
+    /// - [`crate::Error::TypeError`]: If integer overflow occurs during parsing
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads
+    /// as it performs no mutations and uses only stack-allocated temporary variables.
     pub fn read(data: &[u8]) -> Result<Root> {
         if data.len() < 36 {
             return Err(OutOfBounds);

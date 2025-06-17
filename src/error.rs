@@ -1,7 +1,133 @@
+//! Error types and handling for the dotscope library.
+//!
+//! This module defines the comprehensive error handling system for the dotscope library,
+//! providing detailed error types for .NET assembly parsing, metadata analysis, and
+//! disassembly operations. The error types are designed to provide meaningful context
+//! for different failure modes to enable appropriate error handling and debugging.
+//!
+//! # Architecture
+//!
+//! The error system is built around a single comprehensive [`crate::Error`] enum that
+//! covers all possible error conditions. This approach provides a unified error handling
+//! experience while maintaining detailed error categorization. The system includes:
+//!
+//! - Structured error variants for different failure modes
+//! - Source location tracking for malformed file errors
+//! - Integration with external library errors through automatic conversion
+//! - Thread-safe error propagation for concurrent operations
+//!
+//! # Key Components
+//!
+//! ## Core Types
+//! - [`crate::Error`] - Main error enum covering all possible error conditions
+//! - [`crate::Result`] - Convenience type alias for `Result<T, Error>`
+//!
+//! ## Error Categories
+//! - **File Parsing Errors**: Invalid offsets, malformed data, out-of-bounds access
+//! - **I/O Errors**: Filesystem operations, permission issues
+//! - **Type System Errors**: Type registration, resolution, and conversion failures
+//! - **Analysis Errors**: Recursion limits, synchronization failures, dependency graph issues
+//!
+//! # Usage Examples
+//!
+//! ## Basic Error Handling
+//!
+//! ```rust
+//! use dotscope::{Error, Result};
+//!
+//! fn parse_data() -> Result<String> {
+//!     // Function that might fail
+//!     Err(Error::NotSupported)
+//! }
+//!
+//! match parse_data() {
+//!     Ok(data) => println!("Success: {}", data),
+//!     Err(Error::NotSupported) => println!("Feature not supported"),
+//!     Err(e) => println!("Other error: {}", e),
+//! }
+//! ```
+//!
+//! ## Advanced Error Handling
+//!
+//! ```rust,ignore
+//! use dotscope::{Error, metadata::cilobject::CilObject};
+//! use std::path::Path;
+//!
+//! match CilObject::from_file(Path::new("assembly.dll")) {
+//!     Ok(assembly) => {
+//!         println!("Successfully loaded assembly");
+//!     }
+//!     Err(Error::NotSupported) => {
+//!         eprintln!("File format is not supported");
+//!     }
+//!     Err(Error::Malformed { message, file, line }) => {
+//!         eprintln!("Malformed file: {} ({}:{})", message, file, line);
+//!     }
+//!     Err(Error::FileError(io_err)) => {
+//!         eprintln!("I/O error: {}", io_err);
+//!     }
+//!     Err(e) => {
+//!         eprintln!("Other error: {}", e);
+//!     }
+//! }
+//! ```
+//!
+//! ## Using the Malformed Error Macro
+//!
+//! ```rust,ignore
+//! use dotscope::malformed_error;
+//!
+//! fn validate_header(size: usize) -> dotscope::Result<()> {
+//!     if size < 4 {
+//!         return Err(malformed_error!("Header too small: {} bytes", size));
+//!     }
+//!     Ok(())
+//! }
+//! ```
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata`] - Uses error types for metadata parsing failures
+//! - [`crate::disassembler`] - Reports disassembly and analysis errors
+//! - [`crate::file`] - Handles file I/O and parsing errors
+//!
+//! The error system supports automatic conversion from external library errors
+//! (like `std::io::Error` and `goblin::error::Error`) through the `From` trait,
+//! enabling seamless error propagation throughout the library.
+
 use thiserror::Error;
 
 use crate::metadata::token::Token;
 
+/// Helper macro for creating malformed data errors with source location information.
+///
+/// This macro simplifies the creation of [`crate::Error::Malformed`] errors by automatically
+/// capturing the current file and line number. It supports both simple string messages
+/// and format string patterns with arguments.
+///
+/// # Arguments
+///
+/// * `$msg` - A string or expression that can be converted to a string
+/// * `$fmt, $($arg)*` - A format string and its arguments (like `format!` macro)
+///
+/// # Returns
+///
+/// Returns a [`crate::Error::Malformed`] variant with the provided message and
+/// automatically captured source location information.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # use dotscope::malformed_error;
+/// // Simple string message
+/// let error = malformed_error!("Invalid data format");
+///
+/// // Format string with arguments
+/// let expected = 4;
+/// let actual = 2;
+/// let error = malformed_error!("Expected {} bytes, got {}", expected, actual);
+/// ```
 macro_rules! malformed_error {
     // Single string version
     ($msg:expr) => {
@@ -32,54 +158,29 @@ macro_rules! malformed_error {
 /// # Error Categories
 ///
 /// ## File Parsing Errors
-/// - [`Error::InvalidOffset`] - Invalid file offset during parsing
-/// - [`Error::Malformed`] - Corrupted or invalid file structure
-/// - [`Error::OutOfBounds`] - Attempted to read beyond file boundaries
-/// - [`Error::NotSupported`] - Unsupported file format or feature
-/// - [`Error::Empty`] - Empty input provided
+/// - [`crate::Error::InvalidOffset`] - Invalid file offset during parsing
+/// - [`crate::Error::Malformed`] - Corrupted or invalid file structure
+/// - [`crate::Error::OutOfBounds`] - Attempted to read beyond file boundaries
+/// - [`crate::Error::NotSupported`] - Unsupported file format or feature
+/// - [`crate::Error::Empty`] - Empty input provided
 ///
 /// ## I/O and External Errors
-/// - [`Error::FileError`] - Filesystem I/O errors
-/// - [`Error::GoblinErr`] - PE/ELF parsing errors from goblin crate
+/// - [`crate::Error::FileError`] - Filesystem I/O errors
+/// - [`crate::Error::GoblinErr`] - PE/ELF parsing errors from goblin crate
 ///
 /// ## Type System Errors
-/// - [`Error::TypeInsert`] - Failed to register new type in type system
-/// - [`Error::TypeNotFound`] - Requested type not found in type system
-/// - [`Error::TypeError`] - General type system operation error
-/// - [`Error::TypeMissingParent`] - Type inheritance chain broken
-/// - [`Error::TypeNotPrimitive`] - Expected primitive type
-/// - [`Error::TypeNotConst`] - Cannot convert to constant type
-/// - [`Error::TypeConversionInvalid`] - Invalid type conversion requested
+/// - [`crate::Error::TypeInsert`] - Failed to register new type in type system
+/// - [`crate::Error::TypeNotFound`] - Requested type not found in type system
+/// - [`crate::Error::TypeError`] - General type system operation error
+/// - [`crate::Error::TypeMissingParent`] - Type inheritance chain broken
+/// - [`crate::Error::TypeNotPrimitive`] - Expected primitive type
+/// - [`crate::Error::TypeNotConst`] - Cannot convert to constant type
+/// - [`crate::Error::TypeConversionInvalid`] - Invalid type conversion requested
 ///
 /// ## Analysis Errors
-/// - [`Error::RecursionLimit`] - Maximum recursion depth exceeded
-/// - [`Error::LockError`] - Thread synchronization failure
-/// - [`Error::GraphError`] - Dependency graph analysis error
-///
-/// # Examples
-///
-/// ```rust
-/// use dotscope::{Error, metadata::cilobject::CilObject};
-/// use std::path::Path;
-///
-/// match CilObject::from_file(Path::new("assembly.dll")) {
-///     Ok(assembly) => {
-///         println!("Successfully loaded assembly");
-///     }
-///     Err(Error::NotSupported) => {
-///         eprintln!("File format is not supported");
-///     }
-///     Err(Error::Malformed { message, file, line }) => {
-///         eprintln!("Malformed file: {} ({}:{})", message, file, line);
-///     }
-///     Err(Error::FileError(io_err)) => {
-///         eprintln!("I/O error: {}", io_err);
-///     }
-///     Err(e) => {
-///         eprintln!("Other error: {}", e);
-///     }
-/// }
-/// ```
+/// - [`crate::Error::RecursionLimit`] - Maximum recursion depth exceeded
+/// - [`crate::Error::LockError`] - Thread synchronization failure
+/// - [`crate::Error::GraphError`] - Dependency graph analysis error
 #[derive(Error, Debug)]
 pub enum Error {
     // File parsing Errors
@@ -160,7 +261,7 @@ pub enum Error {
     /// type system fails, typically due to conflicting metadata tokens
     /// or invalid type definitions.
     ///
-    /// The associated [`Token`] identifies which type caused the failure.
+    /// The associated [`crate::metadata::token::Token`] identifies which type caused the failure.
     #[error("Failed to insert new type into TypeSystem - {0}")]
     TypeInsert(Token),
 
@@ -169,7 +270,7 @@ pub enum Error {
     /// This error occurs when looking up a type by token that doesn't
     /// exist in the loaded metadata or type system registry.
     ///
-    /// The associated [`Token`] identifies which type was not found.
+    /// The associated [`crate::metadata::token::Token`] identifies which type was not found.
     #[error("Failed to find type in TypeSystem - {0}")]
     TypeNotFound(Token),
 
