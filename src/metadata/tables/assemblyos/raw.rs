@@ -1,3 +1,46 @@
+//! Raw AssemblyOS table representation.
+//!
+//! This module provides low-level access to AssemblyOS metadata table data through the
+//! [`crate::metadata::tables::assemblyos::raw::AssemblyOsRaw`] structure. The AssemblyOS table
+//! contains operating system targeting information for .NET assemblies, though it is rarely
+//! used in modern applications.
+//!
+//! # Architecture
+//!
+//! Unlike other metadata tables that require heap resolution, AssemblyOS contains only primitive
+//! integer values, making the "raw" and "owned" representations functionally identical. This
+//! simplifies the dual variant pattern used throughout the metadata system.
+//!
+//! # Key Components
+//!
+//! - [`crate::metadata::tables::assemblyos::raw::AssemblyOsRaw`] - Raw table row structure
+//! - [`crate::metadata::tables::assemblyos::AssemblyOsRc`] - Reference-counted owned representation
+//! - [`crate::metadata::tables::RowDefinition`] - Table parsing interface implementation
+//!
+//! # AssemblyOS Table Format
+//!
+//! The AssemblyOS table (0x22) contains operating system targeting information:
+//! - **OSPlatformId** (4 bytes): Operating system platform identifier
+//! - **OSMajorVersion** (4 bytes): Major version number of the target OS
+//! - **OSMinorVersion** (4 bytes): Minor version number of the target OS
+//!
+//! # Historical Context
+//!
+//! This table was designed for early .NET Framework scenarios where assemblies might
+//! need explicit OS compatibility declarations. Modern .NET applications typically
+//! rely on runtime platform abstraction instead of metadata-level OS targeting.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::tables`] - Core metadata table infrastructure
+//! - [`crate::metadata::token`] - Token representation for metadata references
+//! - [`crate::file::io`] - Binary data reading utilities
+//!
+//! # References
+//!
+//! - [ECMA-335 II.22.3](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyOS table specification
+
 use std::sync::Arc;
 
 use crate::{
@@ -10,48 +53,108 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-/// The `AssemblyOS` table specifies which operating systems this assembly is targeted for, `TableId` = 0x22
+/// Raw AssemblyOS table row representing operating system targeting information
+///
+/// Contains platform identification data for assemblies that specify explicit OS compatibility.
+/// Unlike most metadata tables, AssemblyOS contains only primitive integer values and requires
+/// no heap resolution, making this structure immediately usable without further processing.
+///
+/// The AssemblyOS table (0x22) is optional and rarely present in modern .NET assemblies,
+/// which typically rely on runtime platform abstraction rather than compile-time OS targeting.
+///
+/// # Data Model
+///
+/// All fields contain direct integer values rather than heap indexes:
+/// - No string heap references (unlike Assembly.Name)
+/// - No blob heap references (unlike Assembly.PublicKey)
+/// - All data is self-contained within the table row
+///
+/// # Reference
+/// - [ECMA-335 II.22.3](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyOS table specification
 pub struct AssemblyOsRaw {
-    /// `RowID`
+    /// Row identifier within the AssemblyOS metadata table
+    ///
+    /// The 1-based index of this AssemblyOS row. Multiple OS targets can be specified,
+    /// though this is rarely used in practice.
     pub rid: u32,
-    /// Token
+
+    /// Metadata token for this AssemblyOS row
+    ///
+    /// Combines the table identifier (0x22 for AssemblyOS) with the row ID to create
+    /// a unique token. Format: `0x22000000 | rid`
     pub token: Token,
-    /// Offset
+
+    /// Byte offset of this row within the metadata tables stream
+    ///
+    /// Physical location of the raw AssemblyOS data within the metadata binary format.
+    /// Used for debugging and low-level metadata analysis.
     pub offset: usize,
-    /// a 4-byte constant
+
+    /// Operating system platform identifier
+    ///
+    /// 4-byte value identifying the target operating system platform. Common values
+    /// may include platform-specific identifiers, though specific constants are not
+    /// standardized in ECMA-335.
     pub os_platform_id: u32,
-    /// a 4-byte constant
+
+    /// Major version number of the target operating system
+    ///
+    /// 4-byte value specifying the major version of the target OS. Combined with
+    /// [`crate::metadata::tables::assemblyos::raw::AssemblyOsRaw::os_minor_version`] to specify exact OS version requirements.
     pub os_major_version: u32,
-    /// a 4-byte constant
+
+    /// Minor version number of the target operating system
+    ///
+    /// 4-byte value specifying the minor version of the target OS. Combined with
+    /// [`crate::metadata::tables::assemblyos::raw::AssemblyOsRaw::os_major_version`] to specify exact OS version requirements.
     pub os_minor_version: u32,
 }
 
 impl AssemblyOsRaw {
-    /// Convert an `AssemblyOsRaw` into an `AssemblyOs` which has indexes resolved and owns the referenced data.
+    /// Convert raw AssemblyOS data to owned representation
     ///
-    /// Since `AssemblyOs` is a type alias for `AssemblyOsRaw` (no resolution needed), this simply wraps
-    /// the raw data in an Arc for consistency with the dual variant pattern.
+    /// Since the AssemblyOS table contains only primitive values with no heap references,
+    /// this method simply clones the data and wraps it in an [`Arc`] for consistency
+    /// with the dual variant pattern used across all metadata tables.
     ///
-    /// # Errors
-    /// This method currently never fails and always returns `Ok`.
+    /// # Returns
+    /// * `Ok(`[`crate::metadata::tables::AssemblyOsRc`]`)` - Reference-counted AssemblyOS data
     pub fn to_owned(&self) -> Result<AssemblyOsRc> {
         Ok(Arc::new(self.clone()))
     }
 
-    /// Apply an `AssemblyOsRaw` entry to update related metadata structures.
+    /// Apply AssemblyOS row data to update related metadata structures
     ///
-    /// `AssemblyOS` entries specify operating system information for the current assembly.
-    /// They are self-contained and don't require cross-table updates during the dual variant
-    /// resolution phase.
+    /// AssemblyOS entries specify operating system targeting information and are self-contained.
+    /// Unlike other metadata tables that may have cross-references, AssemblyOS entries don't
+    /// require updates to other tables during the dual variant resolution phase.
     ///
-    /// # Errors
-    /// Always returns `Ok(())` as `AssemblyOS` entries don't modify other tables.
+    /// This method exists to satisfy the metadata processing interface but performs
+    /// no actual operations since AssemblyOS data is purely descriptive.
+    ///
+    /// # Returns
+    /// Always returns `Ok(())` since AssemblyOS entries don't modify other tables
     pub fn apply(&self) -> Result<()> {
         Ok(())
     }
 }
 
 impl<'a> RowDefinition<'a> for AssemblyOsRaw {
+    /// Calculate the byte size of an AssemblyOS table row
+    ///
+    /// Returns the fixed size since AssemblyOS contains only primitive integer fields
+    /// with no variable-size heap indexes. Total size is always 12 bytes (3 × 4-byte integers).
+    ///
+    /// # Row Layout
+    /// - os_platform_id: 4 bytes (fixed)
+    /// - os_major_version: 4 bytes (fixed)
+    /// - os_minor_version: 4 bytes (fixed)
+    ///
+    /// # Arguments
+    /// * `_sizes` - Unused for AssemblyOS since no heap indexes are present
+    ///
+    /// # Returns
+    /// Fixed size of 12 bytes for all AssemblyOS rows
     #[rustfmt::skip]
     fn row_size(_sizes: &TableInfoRef) -> u32 {
         /* os_platform_id */   4_u32 +
@@ -59,6 +162,21 @@ impl<'a> RowDefinition<'a> for AssemblyOsRaw {
         /* os_minor_version */ 4_u32
     }
 
+    /// Read and parse an AssemblyOS table row from binary data
+    ///
+    /// Deserializes one AssemblyOS table entry from the metadata tables stream.
+    /// Unlike other tables with variable-width heap indexes, AssemblyOS has a fixed
+    /// 12-byte layout with three 4-byte integer fields.
+    ///
+    /// # Arguments
+    /// * `data` - Binary metadata tables stream data
+    /// * `offset` - Current read position (updated after reading)
+    /// * `rid` - Row identifier for this AssemblyOS entry
+    /// * `_sizes` - Unused since AssemblyOS has no heap indexes
+    ///
+    /// # Returns
+    /// * `Ok(AssemblyOsRaw)` - Successfully parsed AssemblyOS row
+    /// * `Err(`[`crate::Error`]`)` - If data is malformed or insufficient
     fn read_row(
         data: &'a [u8],
         offset: &mut usize,

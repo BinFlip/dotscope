@@ -1,45 +1,99 @@
-use crate::{
-    metadata::{
-        customattributes::CustomAttributeValueList, token::Token, typesystem::CilTypeReference,
-    },
-    Result,
+//! Owned ExportedType entry representation.
+//!
+//! This module provides the [`crate::metadata::tables::exportedtype::owned::ExportedType`] struct
+//! for working with resolved ExportedType metadata with owned data and resolved cross-references.
+//! This represents the processed form of ExportedType entries after raw table data has been
+//! converted and all heap references have been resolved during the dual variant resolution phase.
+//!
+//! # ExportedType Entry Structure
+//!
+//! Each ExportedType entry defines a type that is exported from this assembly but
+//! may be implemented elsewhere. The entry contains:
+//! - **Type Identity**: Name, namespace, and flags defining the exported type
+//! - **Implementation Reference**: Points to where the type is actually defined
+//! - **Type Hints**: Optional TypeDef ID for resolution optimization
+//! - **Custom Attributes**: Metadata annotations applied to the export
+//!
+//! # Export Scenarios
+//!
+//! ExportedType entries support several assembly composition patterns:
+//! - **Type Forwarding**: Redirecting type references to different assemblies
+//! - **Multi-Module**: Exposing types from different files within an assembly
+//! - **Assembly Facades**: Creating simplified public interfaces over complex implementations
+//!
+//! # Reference
+//! - [ECMA-335 II.22.14](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - ExportedType table specification
+
+use crate::metadata::{
+    customattributes::CustomAttributeValueList, token::Token, typesystem::CilTypeReference,
 };
 
-/// The `ExportedType` table contains information about types that are exported from the current assembly,
-/// but defined in other modules of the assembly. Similar to `ExportedTypeRaw` but with resolved indexes and
-/// owned data
+/// Resolved ExportedType entry with owned data and resolved cross-references
+///
+/// Represents a fully processed ExportedType table entry where all heap references
+/// have been resolved and cross-table relationships have been established. Each
+/// entry defines a type that is exported from this assembly for access by other
+/// assemblies, with the actual implementation potentially located elsewhere.
+///
+/// ExportedType entries enable cross-assembly type access and support complex
+/// assembly composition scenarios including type forwarding and multi-module
+/// assemblies.
 pub struct ExportedType {
-    /// `RowID`
+    /// Row identifier within the ExportedType metadata table
+    ///
+    /// The 1-based index of this ExportedType row. Used for metadata token generation
+    /// and cross-referencing with other metadata structures.
     pub rid: u32,
-    /// Token
-    pub token: Token,
-    /// Offset
-    pub offset: usize,
-    /// a 4-byte bitmask of type `TypeAttributes`, §II.23.1.15
-    pub flags: u32,
-    /// a 4-byte index into the (foreign) `TypeDef` table (this is a hint only, name + namespace are used primarily.
-    /// If `type_def_id` happens to match, it has been resolved correctly. `type_def_id` can be 0)
-    pub type_def_id: u32,
-    /// The type name
-    pub name: String,
-    /// The type namespace
-    pub namespace: Option<String>,
-    /// A reference to the Implementation
-    pub implementation: CilTypeReference,
-    /// Custom attributes applied to this `ExportedType`
-    pub custom_attributes: CustomAttributeValueList,
-}
 
-impl ExportedType {
-    /// Apply an `ExportedType` entry to update related metadata structures.
+    /// Metadata token for this ExportedType row
     ///
-    /// `ExportedType` entries define types that are exported from this assembly but may be
-    /// implemented in other files or assemblies. They are primarily metadata descriptors
-    /// and don't require cross-table updates during the dual variant resolution phase.
+    /// Combines the table identifier (0x27 for ExportedType) with the row ID to create
+    /// a unique token. Format: `0x27000000 | rid`
+    pub token: Token,
+
+    /// Byte offset of this row within the metadata tables stream
     ///
-    /// # Errors
-    /// Always returns `Ok(())` as `ExportedType` entries don't modify other tables.
-    pub fn apply(&self) -> Result<()> {
-        Ok(())
-    }
+    /// Physical location of the raw ExportedType data within the metadata binary format.
+    /// Used for debugging and low-level metadata analysis.
+    pub offset: usize,
+
+    /// Type attributes bitmask defining visibility and characteristics
+    ///
+    /// 4-byte bitmask using [`crate::metadata::tables::TypeAttributes`] constants
+    /// that control type visibility, inheritance, and runtime behavior.
+    /// See [ECMA-335 II.23.1.15] for attribute definitions.
+    pub flags: u32,
+
+    /// Optional TypeDef identifier for resolution optimization
+    ///
+    /// 4-byte hint into the target TypeDef table for faster type resolution.
+    /// This is an optimization hint only; primary resolution uses name and namespace.
+    /// May be 0 if no hint is available or applicable.
+    pub type_def_id: u32,
+
+    /// Resolved type name from the String heap
+    ///
+    /// The simple name of the exported type without namespace qualification.
+    /// Combined with the namespace to form the full type identity.
+    pub name: String,
+
+    /// Optional resolved namespace from the String heap
+    ///
+    /// The namespace containing the exported type, or `None` for types in the
+    /// global namespace. Combined with the name to form the full type identity.
+    pub namespace: Option<String>,
+
+    /// Resolved reference to the type implementation location
+    ///
+    /// Points to where the type is actually defined, which can be:
+    /// - **File**: Another file within this assembly (multi-module scenario)
+    /// - **AssemblyRef**: Different assembly entirely (type forwarding scenario)
+    /// - **ExportedType**: Nested export reference (rare but possible)
+    pub implementation: CilTypeReference,
+
+    /// Thread-safe collection of custom attributes applied to this export
+    ///
+    /// Contains all custom attribute values that have been applied to this
+    /// ExportedType entry, providing additional metadata and annotations.
+    pub custom_attributes: CustomAttributeValueList,
 }

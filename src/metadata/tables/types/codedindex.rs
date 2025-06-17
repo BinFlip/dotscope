@@ -1,3 +1,25 @@
+//! # Coded Index Types Module
+//!
+//! This module provides types and functionality for handling coded indices in .NET metadata tables.
+//! Coded indices are a space-efficient encoding mechanism used in CLI metadata to reference
+//! multiple possible table types using a single value.
+//!
+//! ## Overview
+//!
+//! Coded indices combine a table identifier and row index into a single value by using the
+//! lower bits to encode which table type is being referenced, and the remaining bits for
+//! the actual row index. This allows metadata to reference different types of entities
+//! (e.g., TypeDef, TypeRef, or TypeSpec) using a unified format.
+//!
+//! ## Key Components
+//!
+//! - [`CodedIndexType`]: Enumeration of all possible coded index combinations defined in ECMA-335
+//! - [`CodedIndex`]: Decoded representation containing the target table, row, and computed token
+//!
+//! ## References
+//!
+//! - [ECMA-335 Standard](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Section II.24.2.6
+
 use strum::{EnumCount, EnumIter};
 
 use crate::{
@@ -9,46 +31,121 @@ use crate::{
     Result,
 };
 
-/// Represents all possible coded index types
+/// Represents all possible coded index types defined in the CLI metadata specification.
+///
+/// A coded index type defines which combination of metadata tables can be referenced
+/// by a particular coded index field. Each variant corresponds to a specific set of
+/// tables that can be encoded together, allowing for space-efficient cross-references
+/// within the metadata stream.
+///
+/// ## Encoding Scheme
+///
+/// Coded indices use the lower bits to encode the table type and the remaining bits
+/// for the row index. The number of bits required for the table type depends on
+/// how many tables are included in the combination.
+///
+/// ## Examples
+///
+/// - `TypeDefOrRef` can reference TypeDef, TypeRef, or TypeSpec tables
+/// - `HasConstant` can reference Field, Param, or Property tables
+/// - `HasCustomAttribute` can reference any of 22 different table types
 ///
 /// ## Reference
-/// * '<https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf>' - II.24.2.6
 ///
+/// - [ECMA-335 Standard](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Section II.24.2.6
 #[derive(Debug, Hash, Eq, PartialEq, Clone, Copy, EnumIter, EnumCount)]
 #[repr(usize)]
 pub enum CodedIndexType {
-    /// `TypeDef`, `TypeRef`, `TypeSpec`
+    /// References `TypeDef`, `TypeRef`, or `TypeSpec` tables.
+    ///
+    /// Used to identify type definitions, references, or specifications
+    /// in a unified manner throughout the metadata.
     TypeDefOrRef,
-    /// `Field`, `Param`, `Property`
+
+    /// References `Field`, `Param`, or `Property` tables.
+    ///
+    /// Used to identify entities that can have constant values
+    /// assigned to them.
     HasConstant,
-    /// `MethodDef`, `Field`, `TypeRef`, `TypeDef`, `Param`, `InterfaceImpl`, `MemberRef`, `Module`, `Permission`,
-    /// `Property`, `Event`, `StandAloneSig`, `ModuleRef`, `TypeSpec`, `Assembly`, `AssemblyRef`, `File`, `ExportedType`,
-    /// `ManifestResource`, `GenericParam`, `GenericParamConstraint`, `MethodSpec`
+
+    /// References any entity that can have custom attributes attached.
+    ///
+    /// This is the most comprehensive coded index type, supporting references to:
+    /// `MethodDef`, `Field`, `TypeRef`, `TypeDef`, `Param`, `InterfaceImpl`, `MemberRef`,
+    /// `Module`, `Permission`, `Property`, `Event`, `StandAloneSig`, `ModuleRef`, `TypeSpec`,
+    /// `Assembly`, `AssemblyRef`, `File`, `ExportedType`, `ManifestResource`, `GenericParam`,
+    /// `GenericParamConstraint`, `MethodSpec`.
     HasCustomAttribute,
-    /// `Field`, `Param`
+
+    /// References `Field` or `Param` tables.
+    ///
+    /// Used to identify entities that can have marshalling information
+    /// for interop scenarios.
     HasFieldMarshal,
-    /// `TypeDef`, `MethodDef`, `Assembly`
+
+    /// References `TypeDef`, `MethodDef`, or `Assembly` tables.
+    ///
+    /// Used to identify entities that can have declarative security
+    /// attributes applied.
     HasDeclSecurity,
-    /// `TypeDef`, `TypeRef`, `ModuleRef`, `MethodDef`, `TypeSpec`
+
+    /// References `TypeDef`, `TypeRef`, `ModuleRef`, `MethodDef`, or `TypeSpec` tables.
+    ///
+    /// Used as the parent reference for member references.
     MemberRefParent,
-    /// `Event`, `Property`
+
+    /// References `Event` or `Property` tables.
+    ///
+    /// Used to identify entities that can have semantic methods
+    /// (getter, setter, etc.) associated with them.
     HasSemantics,
-    /// `MethodDef`, `MemberRef`
+
+    /// References `MethodDef` or `MemberRef` tables.
+    ///
+    /// Used to reference method definitions or member references
+    /// in a unified manner.
     MethodDefOrRef,
-    /// `Field`, `MethodDef`
+
+    /// References `Field` or `MethodDef` tables.
+    ///
+    /// Used to identify members that are forwarded to other assemblies.
     MemberForwarded,
-    /// `File`, `AssemblyRef`, `ExportedType`
+
+    /// References `File`, `AssemblyRef`, or `ExportedType` tables.
+    ///
+    /// Used to specify the implementation location for exported types.
     Implementation,
-    /// `MethodDef`, `MemberRef`
+
+    /// References `MethodDef` or `MemberRef` tables.
+    ///
+    /// Used to identify the constructor methods for custom attributes.
+    /// Note: Some indices (0, 1, 4) are normally unused but supported
+    /// by the encoding scheme.
     CustomAttributeType,
-    /// `Module`, `ModuleRef`, `AssemblyRef`, `TypeRef`
+
+    /// References `Module`, `ModuleRef`, `AssemblyRef`, or `TypeRef` tables.
+    ///
+    /// Used to specify the scope in which a type reference should be resolved.
     ResolutionScope,
-    /// `TypeDef`, `MethodDef`
+
+    /// References `TypeDef` or `MethodDef` tables.
+    ///
+    /// Used to reference either type or method definitions in contexts
+    /// where both are valid targets.
     TypeOrMethodDef,
 }
 
 impl CodedIndexType {
-    /// Lookup table for coded combinations of the various types and their table IDs
+    /// Returns the array of table IDs that can be referenced by this coded index type.
+    ///
+    /// This method provides the lookup table that defines which metadata tables
+    /// can be encoded using this particular coded index type. The order of tables
+    /// in the returned slice corresponds to the encoded values (0, 1, 2, etc.).
+    ///
+    /// ## Returns
+    ///
+    /// A static slice containing the [`TableId`] values that can be referenced
+    /// by this coded index type, in encoding order.
     #[must_use]
     pub fn tables(&self) -> &'static [TableId] {
         match self {
@@ -117,28 +214,63 @@ impl CodedIndexType {
     }
 }
 
-/// The decoded version of a coded-index
+/// A decoded representation of a coded index value.
+///
+/// This structure contains the decoded components of a coded index, providing
+/// direct access to the target table, row index, and the computed metadata token.
+/// Coded indices are space-efficient encodings that combine table type and row
+/// information into a single value.
+///
+/// ## Fields
+///
+/// - `tag`: The specific metadata table being referenced
+/// - `row`: The 1-based row index within that table
+/// - `token`: The computed metadata token for direct table access
 #[derive(Clone, Debug, PartialEq)]
 pub struct CodedIndex {
-    /// The `TableId` this index is referring to
+    /// The [`TableId`] this index is referring to.
+    ///
+    /// Specifies which metadata table contains the referenced entity.
     pub tag: TableId,
-    /// The row id that this `CodedIndex` is pointing to
+
+    /// The row ID that this `CodedIndex` is pointing to.
+    ///
+    /// This is a 1-based index into the specified table. Row 0 is reserved
+    /// and typically indicates a null reference.
     pub row: u32,
-    /// The token in that `TableId`, that this `CodedIndex` is referring to
+
+    /// The computed metadata token for this coded index.
+    ///
+    /// The token combines the table type (in the upper bits) with the row index
+    /// (in the lower bits) to create a unique identifier that can be used
+    /// for direct table lookups.
     pub token: Token,
 }
 
 impl CodedIndex {
-    /// Create a coded-index from a buffer, and decode the value for easier access
+    /// Reads and decodes a coded index from a byte buffer.
+    ///
+    /// This method reads a coded index value from the provided buffer, automatically
+    /// determining whether to read 2 or 4 bytes based on the table size requirements,
+    /// then decodes the value into its constituent table and row components.
     ///
     /// ## Arguments
-    /// * `data`    - The buffer to read
-    /// * `offset`  - The offset to read from (will be advanced by the amount read)
-    /// * `info`    - Lookup table to get information about tables sizes
-    /// * `ci_type` - The specific type that this should decode
     ///
-    /// # Errors
-    /// Returns an error if the buffer is too small or if the coded index value is invalid.
+    /// * `data` - The byte buffer to read from
+    /// * `offset` - Mutable reference to the current read position (updated after reading)
+    /// * `info` - Table information reference for size calculations and decoding
+    /// * `ci_type` - The specific coded index type to decode
+    ///
+    /// ## Returns
+    ///
+    /// Returns a [`Result`] containing the decoded [`CodedIndex`] on success.
+    ///
+    /// ## Errors
+    ///
+    /// Returns an error if:
+    /// - The buffer is too small to read the required bytes
+    /// - The coded index value is invalid or references a non-existent table/row
+    /// - The table information is inconsistent or corrupted
     pub fn read(
         data: &[u8],
         offset: &mut usize,
@@ -156,11 +288,26 @@ impl CodedIndex {
         Ok(CodedIndex::new(tag, row))
     }
 
-    /// Create a new `CodedIndex`
+    /// Creates a new `CodedIndex` with the specified table and row.
+    ///
+    /// This method constructs a new coded index by combining the table identifier
+    /// and row index, automatically computing the appropriate metadata token based
+    /// on the ECMA-335 token encoding scheme.
     ///
     /// ## Arguments
-    /// * `tag` - The `TableId` to encode
-    /// * `row` - The row to encode
+    ///
+    /// * `tag` - The [`TableId`] specifying which metadata table is being referenced
+    /// * `row` - The 1-based row index within the specified table
+    ///
+    /// ## Returns
+    ///
+    /// A new [`CodedIndex`] instance with the computed token.
+    ///
+    /// ## Token Encoding
+    ///
+    /// The token is computed by combining the table-specific prefix (upper 8 bits)
+    /// with the row index (lower 24 bits). Each table type has a predefined token
+    /// prefix as defined in the ECMA-335 specification.
     #[must_use]
     pub fn new(tag: TableId, row: u32) -> CodedIndex {
         CodedIndex {

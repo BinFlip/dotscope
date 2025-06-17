@@ -1,25 +1,47 @@
-//! # `PropertyMap` Table Module
+//! # PropertyMap Table Module
 //!
-//! This module contains the `PropertyMap` table definitions and related functionality.
-//! The `PropertyMap` table maps properties to their parent types, providing both raw
-//! and owned representations for different use cases.
+//! This module provides comprehensive access to the PropertyMap metadata table (ID 0x15),
+//! which establishes the critical relationship between types and their properties in
+//! .NET assemblies. The PropertyMap table enables property enumeration, reflection
+//! operations, and type-property binding throughout the metadata system.
 //!
-//! ## Table Information
-//! - **Table ID**: 0x15 (21)
-//! - **Purpose**: Maps properties to their parent types
-//! - **Key Components**:
-//!   - Parent type reference (index into `TypeDef` table)
-//!   - Property list reference (index into Property table)
+//! ## Table Purpose
 //!
-//! ## Architecture
+//! The PropertyMap table provides:
+//! - **Type-Property Binding**: Links types to their associated properties
+//! - **Property Enumeration**: Enables discovery of all properties for a given type
+//! - **Inheritance Support**: Facilitates property inheritance and override resolution
+//! - **Reflection Foundation**: Supports property-based reflection and metadata queries
 //!
-//! This module follows a dual-representation pattern:
-//! - **Raw variant** ([`PropertyMapRaw`]): Direct memory representation with unresolved indexes
-//! - **Owned variant** ([`PropertyMapEntry`]): Resolved structure with owned data and resolved references
+//! ## Module Structure
 //!
-//! The raw variant is used during initial parsing and provides efficient memory access,
-//! while the owned variant resolves all references and provides a more convenient API
-//! for metadata analysis.
+//! The module follows the standard dual-variant pattern for metadata tables:
+//!
+//! ### Raw Variant (`PropertyMapRaw`)
+//! - Direct memory representation of table entries
+//! - Contains unresolved table indexes for types and properties
+//! - Minimal processing overhead during initial parsing
+//! - Used for memory-efficient storage and initial metadata loading
+//!
+//! ### Owned Variant (`PropertyMapEntry`)
+//! - Fully processed and validated table entries
+//! - Contains resolved type and property references
+//! - Provides high-level access methods and validation
+//! - Used for application logic and metadata analysis
+//!
+//! ## Property Mapping Architecture
+//!
+//! PropertyMap entries establish one-to-many relationships:
+//! - **Parent Type**: Reference to the type that owns the properties
+//! - **Property List**: Collection of properties associated with the type
+//! - **Range Mapping**: Efficient property range lookup within tables
+//!
+//! ## References
+//!
+//! - ECMA-335, Partition II, §22.35 - PropertyMap table specification
+//! - [`crate::metadata::tables::Property`] - Property definitions
+//! - [`crate::metadata::tables::TypeDefRaw`] - Type definitions
+//! - [`crate::metadata::typesystem`] - Type system integration
 use crate::metadata::token::Token;
 use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
@@ -32,9 +54,21 @@ pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;
 
-/// A map that holds the mapping of Token to parsed resolved `PropertyMapEntry`
+/// A concurrent map that holds Token to PropertyMapEntry mappings.
+///
+/// This skip list-based map provides efficient concurrent access to loaded
+/// PropertyMapEntry entries indexed by their metadata tokens. Used by the loader
+/// for storing and retrieving property mapping entries.
 pub type PropertyMapEntryMap = SkipMap<Token, PropertyMapEntryRc>;
-/// A vector that holds a list of resolved `PropertyMapEntry`
+
+/// A thread-safe vector containing PropertyMapEntry entries.
+///
+/// This concurrent vector provides sequential access to PropertyMapEntry entries
+/// while supporting safe concurrent iteration and access from multiple threads.
 pub type PropertyMapEntryList = Arc<boxcar::Vec<PropertyMapEntryRc>>;
-/// A reference to a resolved `PropertyMapEntry`
+
+/// A reference-counted pointer to a PropertyMapEntry.
+///
+/// This atomic reference-counted pointer enables safe sharing of PropertyMapEntry
+/// instances across threads while providing automatic memory management.
 pub type PropertyMapEntryRc = Arc<PropertyMapEntry>;

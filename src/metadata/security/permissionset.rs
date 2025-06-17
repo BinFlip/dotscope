@@ -1,3 +1,275 @@
+//! .NET declarative security permission sets.
+//!
+//! This module provides the [`PermissionSet`] type, which represents collections of security
+//! permissions in .NET assemblies. Permission sets define the complete security context
+//! for assemblies, types, and methods through declarative security attributes stored
+//! in the DeclSecurity metadata table.
+//!
+//! # Architecture
+//!
+//! The .NET Code Access Security (CAS) architecture uses permission sets as the foundation
+//! for declarative security policy enforcement:
+//!
+//! ```text
+//! Assembly/Type/Method
+//! ├── Security Action (Demand, Assert, Deny, etc.)
+//! └── Permission Set
+//!     ├── Permission 1 (FileIOPermission)
+//!     │   ├── Class: System.Security.Permissions.FileIOPermission
+//!     │   ├── Assembly: mscorlib
+//!     │   └── Arguments: [Read="path", Write="path"]
+//!     ├── Permission 2 (SecurityPermission)
+//!     │   ├── Class: System.Security.Permissions.SecurityPermission
+//!     │   ├── Assembly: mscorlib
+//!     │   └── Arguments: [Flags=0x0002]
+//!     └── ...
+//! ```
+//!
+//! ## Security Model Components
+//!
+//! 1. **Permission Sets**: Collections of individual [`crate::metadata::security::Permission`] instances
+//! 2. **Security Actions**: Define how permissions are enforced (Demand, Assert, Deny, etc.)
+//! 3. **Security Declarations**: Apply permission sets with specific actions to code elements
+//! 4. **Evidence**: Runtime information used to grant permissions to assemblies
+//!
+//! ## Historical Evolution
+//!
+//! - **.NET 1.0-3.5**: Full CAS implementation with complex permission hierarchies
+//! - **.NET 4.0**: Security transparency model simplified CAS usage
+//! - **.NET Core/5+**: CAS largely deprecated, permissions often become no-ops
+//!
+//! # Key Components
+//!
+//! ## Storage Formats
+//! Permission sets can be stored in multiple formats within .NET metadata:
+//!
+//! ### Binary Format (Primary)
+//! The compact binary format used by most .NET Framework assemblies:
+//! ```text
+//! - Format marker: '.' (0x2E)
+//! - Permission count (compressed integer)
+//! - For each permission:
+//!   - Class name length + UTF-8 class name
+//!   - Blob length + property count
+//!   - Named arguments (property/field assignments)
+//! ```
+//!
+//! ### XML Format (Legacy)
+//! The verbose XML format used in some security policies:
+//! ```xml
+//! <PermissionSet class="System.Security.PermissionSet" version="1">
+//!   <IPermission class="System.Security.Permissions.FileIOPermission" version="1">
+//!     <Read>C:\Data</Read>
+//!   </IPermission>
+//! </PermissionSet>
+//! ```
+//!
+//! ### Unicode Format
+//! A UTF-16 encoded text format used in some specialized scenarios.
+//!
+//! ## Property Encoding
+//! Named arguments (properties/fields) are encoded with:
+//! - **Property marker byte**: 0x53 for field, 0x54 for property
+//! - **Type byte**: Indicating the argument data type
+//! - **Property name**: Length-prefixed UTF-8 string
+//! - **Property value**: Format depends on the argument type
+//!
+//! ## Special Permission Sets
+//! - **Full Trust**: Grants unrestricted access to all resources
+//! - **Nothing**: Denies all access (empty permission set)
+//! - **Execution**: Minimal permissions required to execute code
+//! - **Internet/LocalIntranet**: Standard permission sets for different security zones
+//!
+//! # Usage Examples
+//!
+//! ## Security Analysis and Audit
+//!
+//! ```rust
+//! use dotscope::metadata::security::PermissionSet;
+//!
+//! # fn get_permission_set_data() -> Vec<u8> { vec![0x2E, 0x00] }
+//! let data = get_permission_set_data();
+//! let permission_set = PermissionSet::new(&data)?;
+//!
+//! // Check for dangerous permissions
+//! if permission_set.has_file_io() {
+//!     println!("Permission set allows file system access");
+//!     
+//!     let write_paths = permission_set.get_all_file_write_paths();
+//!     if !write_paths.is_empty() {
+//!         println!("Write access to: {:?}", write_paths);
+//!     }
+//! }
+//!
+//! if permission_set.is_full_trust() {
+//!     println!("WARNING: Full trust permission set detected");
+//! }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! ## Permission Enumeration and Inspection
+//!
+//! ```rust
+//! # use dotscope::metadata::security::PermissionSet;
+//! # fn get_permission_set_data() -> Vec<u8> { vec![0x2E, 0x00] }
+//! # let data = get_permission_set_data();
+//! # let permission_set = PermissionSet::new(&data)?;
+//! // Iterate through all permissions
+//! for permission in permission_set.permissions() {
+//!     println!("Permission: {} from {}", permission.class_name, permission.assembly_name);
+//!     
+//!     if permission.is_unrestricted() {
+//!         println!("  -> Grants unrestricted access");
+//!     } else {
+//!         for arg in &permission.named_arguments {
+//!             println!("  -> {}: {:?}", arg.name, arg.value);
+//!         }
+//!     }
+//! }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! ## Specific Permission Type Analysis
+//!
+//! ```rust
+//! # use dotscope::metadata::security::PermissionSet;
+//! # fn get_permission_set_data() -> Vec<u8> { vec![0x2E, 0x00] }
+//! # let data = get_permission_set_data();
+//! # let permission_set = PermissionSet::new(&data)?;
+//! // Look for specific permission types
+//! if let Some(file_perm) = permission_set.get_permission("System.Security.Permissions.FileIOPermission") {
+//!     if let Some(read_paths) = file_perm.get_file_read_paths() {
+//!         println!("File read permissions: {:?}", read_paths);
+//!     }
+//! }
+//!
+//! if let Some(sec_perm) = permission_set.get_permission("System.Security.Permissions.SecurityPermission") {
+//!     if let Some(flags) = sec_perm.get_security_flags() {
+//!         println!("Security flags: {:?}", flags);
+//!     }
+//! }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! ## Working with Different Formats
+//!
+//! ```rust,no_run
+//! use dotscope::metadata::security::PermissionSet;
+//!
+//! // Binary format (most common)
+//! # fn get_binary_data() -> Vec<u8> { vec![0x2E, 0x00] }
+//! let binary_data = get_binary_data();
+//! let binary_set = PermissionSet::new(&binary_data)?;
+//!
+//! // XML format (legacy)
+//! # fn get_xml_data() -> Vec<u8> { b"<PermissionSet>".to_vec() }
+//! let xml_data = get_xml_data();
+//! let xml_set = PermissionSet::new(&xml_data)?;
+//!
+//! // Unicode format (specialized)
+//! # fn get_unicode_data() -> Vec<u8> { vec![0xFF, 0xFE] }
+//! let unicode_data = get_unicode_data();
+//! let unicode_set = PermissionSet::new(&unicode_data)?;
+//!
+//! // All formats provide the same API
+//! println!("Binary permissions: {}", binary_set.permissions().len());
+//! println!("XML permissions: {}", xml_set.permissions().len());
+//! println!("Unicode permissions: {}", unicode_set.permissions().len());
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! # Integration
+//!
+//! Permission sets integrate with the broader .NET security and metadata infrastructure:
+//!
+//! ## With Assembly Metadata
+//! - Stored in the DeclSecurity metadata table
+//! - Referenced by assembly, type, and method security declarations
+//! - Linked to security actions that define enforcement behavior
+//! - Support both IL-level and attribute-based declarations
+//!
+//! ## With Security Actions
+//! - **Demand**: Requires callers to have specified permissions
+//! - **Assert**: Elevates permissions for downstream calls
+//! - **Deny**: Explicitly denies specified permissions
+//! - **PermitOnly**: Restricts permissions to only those specified
+//! - **LinkDemand**: Checked at JIT compilation time
+//! - **InheritanceDemand**: Required for inheritance scenarios
+//!
+//! ## With .NET Security Infrastructure
+//! - Used by the Common Language Runtime (CLR) for security enforcement
+//! - Integrated with evidence-based security in older .NET versions
+//! - Support for custom permission types and security attributes
+//! - Compatible with security transparency models
+//!
+//! ## With Static Analysis Tools
+//! - Enable detection of privileged operations in assemblies
+//! - Support compliance checking against security policies
+//! - Facilitate security auditing and vulnerability assessment
+//! - Provide insights into application security requirements
+//!
+//! # Binary Format Specification
+//!
+//! The binary format supports efficient storage and parsing of permission sets.
+//! The format uses compressed integers for counts and lengths, making it space-efficient
+//! for the typically small permission sets found in most assemblies.
+//!
+//! ## Format Structure
+//! ```text
+//! 1. Format marker: '.' (0x2E)
+//! 2. Permission count (compressed integer)
+//! 3. For each permission:
+//!    - Class name length + UTF-8 class name
+//!    - Blob length + property count
+//!    - Named arguments with type-specific encoding
+//! ```
+//!
+//! ## Compression Algorithm
+//! Compressed integers use a variable-length encoding where:
+//! - Values 0-127: Single byte (0xxxxxxx)
+//! - Values 128-16383: Two bytes (10xxxxxx xxxxxxxx)
+//! - Larger values: Four bytes with specific bit patterns
+//!
+//! # Error Handling
+//!
+//! The module handles various error conditions during permission set processing:
+//!
+//! ## Parsing Errors
+//! - **Empty data**: Permission set data cannot be empty
+//! - **Invalid format markers**: Unrecognized format indicators
+//! - **Truncated data**: Incomplete permission set blobs
+//! - **Malformed XML**: Invalid XML structure in XML format
+//! - **Encoding issues**: UTF-8/UTF-16 decoding failures
+//!
+//! ## Permission Validation Errors
+//! - **Unknown permission classes**: References to unrecognized permission types
+//! - **Invalid assembly names**: Malformed or missing assembly references
+//! - **Argument type mismatches**: Named arguments with incompatible types
+//! - **Corrupted argument data**: Invalid property/field value encoding
+//!
+//! ## Recovery Strategies
+//! - Graceful degradation for unknown permission types
+//! - Best-effort parsing with detailed error reporting
+//! - Support for legacy format variations and assembly name changes
+//! - Compatibility modes for different .NET Framework versions
+//!
+//! # Thread Safety
+//!
+//! [`PermissionSet`] instances are immutable after creation and safe to share across threads.
+//! All analysis methods are read-only and do not modify the internal state.
+//!
+//! Parsing can fail for several reasons:
+//! - **Empty data**: Permission set data cannot be empty
+//! - **Malformed binary**: Invalid compressed integers or string lengths
+//! - **Buffer overflow**: Data claims to extend beyond available bytes
+//! - **Invalid XML**: Malformed XML structure in XML format permission sets
+//!
+//! # Legacy Compatibility
+//!
+//! This implementation supports permission sets from .NET Framework 1.0 through 4.8,
+//! including various binary format variations and assembly name mappings that changed
+//! over time (e.g., mscorlib vs System.Private.CoreLib).
+
 use crate::{
     file::parser::Parser,
     metadata::security::{
@@ -13,47 +285,124 @@ use quick_xml::{
 };
 use std::fmt;
 
-/// `DeclSecurity` entries represent declarative security attributes that define the security requirements,
-/// demands, and permissions for assemblies, types, and methods. They essentially declare what security
-/// permissions the code requires, demands from callers, or promises not to use.
+/// Represents a collection of .NET security permissions in a permission set.
 ///
-/// # Overview of .NET Security System
+/// A `PermissionSet` contains all the security permissions that define the complete security
+/// context for an assembly, type, or method. These are parsed from the DeclSecurity metadata
+/// table and represent declarative security attributes in .NET assemblies.
 ///
-/// .NET's security system includes several key components:
+/// # Structure
 ///
-/// 1. **Code Access Security (CAS)**: A mechanism that helps limit the access that code has to
-///    protected resources and operations. CAS was the primary security mechanism in older .NET versions.
+/// Each permission set contains:
+/// - **Format**: The storage format used (Binary, XML, or Unknown)
+/// - **Permissions**: Collection of individual [`crate::metadata::security::Permission`] instances
+/// - **Raw Data**: The original binary representation for reference
 ///
-/// 2. **Permissions**: Classes that represent access to specific resources or operations.
-///    Each permission class controls access to a different resource.
+/// # Supported Formats
 ///
-/// 3. **Permission Sets**: Collections of permissions that represent a security context.
+/// ## Binary Format (Most Common)
 ///
-/// 4. **Security Actions**: Define how permissions are enforced, such as demanding that callers
-///    have a permission, denying access to certain resources, etc.
+/// The compact binary format starts with a '.' (0x2E) marker and uses compressed integers:
+/// ```text
+/// Format: . + permission_count + [permissions...]
+/// Each permission: class_name_len + class_name + blob_len + properties...
+/// ```
 ///
-/// 5. **Security Declarations**: Attributes that apply permissions with specific actions to code elements.
-///    These correspond to entries in the `DeclSecurity` metadata table.
+/// ## XML Format (Policy Files)
 ///
-/// # .NET Framework Security Evolution
+/// XML-based format used in .NET security policy files:
+/// ```xml
+/// <PermissionSet class="System.Security.PermissionSet" version="1">
+///   <IPermission class="..." version="1">
+///     <PropertyName>PropertyValue</PropertyName>
+///   </IPermission>
+/// </PermissionSet>
+/// ```
 ///
-/// - **.NET 1.0-3.5**: Extensive use of CAS with complex permission hierarchies
-/// - **.NET 4.0**: Introduction of the "security transparency" model that simplified CAS
-/// - **.NET Core/5+**: Significant reduction in use of CAS; many permissions became no-ops
+/// # Examples
 ///
-/// # Common .NET Permission Classes
+/// ## Basic Analysis
 ///
-/// - **`FileIOPermission`**: Controls reading, writing, and appending to files and directories
-/// - **`SecurityPermission`**: Controls security-sensitive operations like calling unmanaged code
-/// - **`ReflectionPermission`**: Controls the ability to use reflection
-/// - **`RegistryPermission`**: Controls reading and writing to registry keys
-/// - **`UIPermission`**: Controls UI operations and clipboard access
+/// ```rust
+/// use dotscope::metadata::security::PermissionSet;
 ///
-/// # Note on Modern .NET
+/// # fn get_permission_data() -> Vec<u8> { vec![0x2E, 0x00] }
+/// let data = get_permission_data();
+/// let permission_set = PermissionSet::new(&data)?;
 ///
-/// While newer .NET platforms have moved away from CAS, understanding these permission structures
-/// remains important for reverse engineering legacy .NET Framework applications and understanding
-/// their security characteristics.
+/// println!("Format: {:?}", permission_set.format());
+/// println!("Permission count: {}", permission_set.permissions().len());
+///
+/// // Check for security-sensitive permissions
+/// if permission_set.is_full_trust() {
+///     println!("WARNING: Full trust permission set");
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// ## Security Scanning
+///
+/// ```rust
+/// # use dotscope::metadata::security::PermissionSet;
+/// # fn get_permission_data() -> Vec<u8> { vec![0x2E, 0x00] }
+/// # let data = get_permission_data();
+/// # let permission_set = PermissionSet::new(&data)?;
+/// // Check for dangerous file system access
+/// if permission_set.has_file_io() {
+///     let write_paths = permission_set.get_all_file_write_paths();
+///     if !write_paths.is_empty() {
+///         println!("File write access to: {:?}", write_paths);
+///     }
+/// }
+///
+/// // Check for unmanaged code execution
+/// if let Some(sec_perm) = permission_set.get_permission("System.Security.Permissions.SecurityPermission") {
+///     if let Some(flags) = sec_perm.get_security_flags() {
+///         println!("Security flags: {:?}", flags);
+///     }
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// ## Permission Enumeration
+///
+/// ```rust
+/// # use dotscope::metadata::security::PermissionSet;
+/// # fn get_permission_data() -> Vec<u8> { vec![0x2E, 0x00] }
+/// # let data = get_permission_data();
+/// # let permission_set = PermissionSet::new(&data)?;
+/// for permission in permission_set.permissions() {
+///     println!("Permission: {}", permission.class_name);
+///     
+///     if permission.is_unrestricted() {
+///         println!("  -> Unrestricted access");
+///     } else {
+///         for arg in &permission.named_arguments {
+///             println!("  -> {}: {:?}", arg.name, arg.value);
+///         }
+///     }
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// # Binary Format Details
+///
+/// The binary format uses a compact encoding:
+/// 1. Format marker byte ('.' = 0x2E)
+/// 2. Permission count (compressed integer)
+/// 3. For each permission:
+///    - Class name length + UTF-8 class name
+///    - Blob length + property count
+///    - Named arguments with type-specific encoding
+///
+/// # Thread Safety
+///
+/// `PermissionSet` instances are immutable after creation and safe to share across threads.
+///
+/// # Legacy Compatibility
+///
+/// Supports permission sets from .NET Framework 1.0 through 4.8, including
+/// assembly name variations (mscorlib vs System.Private.CoreLib) and format changes.
 #[derive(Debug, Clone)]
 pub struct PermissionSet {
     /// The format of this permission set

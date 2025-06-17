@@ -1,10 +1,31 @@
-//! `AssemblyOS` table module
+//! AssemblyOS table module
 //!
-//! This module contains all components related to the `AssemblyOS` metadata table:
-//! - `AssemblyOsRaw`: Raw table structure with unresolved indexes
-//! - `AssemblyOs`: Owned variant (type alias to Raw since no resolution needed)
-//! - Type aliases for collections and references
-//! - Internal loader (pub(crate) only)
+//! Provides complete support for the ECMA-335 AssemblyOS metadata table (0x22), which contains
+//! operating system platform information for assemblies. This module includes raw table access,
+//! collection types, and platform identification utilities.
+//!
+//! # Components
+//!
+//! - [`crate::metadata::tables::assemblyos::AssemblyOsRaw`]: Raw table structure (no heap resolution needed)
+//! - [`crate::metadata::tables::assemblyos::AssemblyOs`]: Type alias to Raw since all data is self-contained
+//! - [`crate::metadata::tables::assemblyos::loader::AssemblyOsLoader`]: Internal loader for processing AssemblyOS table data
+//! - Type aliases for efficient collections and reference management
+//!
+//! # AssemblyOS Table Structure
+//!
+//! The AssemblyOS table contains platform targeting information:
+//! - **OSPlatformId**: Operating system platform identifier (4 bytes)
+//! - **OSMajorVersion**: Major version number of the target OS (4 bytes)
+//! - **OSMinorVersion**: Minor version number of the target OS (4 bytes)
+//!
+//! # Historical Context
+//!
+//! This table was designed for early .NET Framework scenarios where assemblies might need
+//! to specify explicit OS compatibility. Modern .NET applications typically rely on runtime
+//! platform abstraction and conditional compilation instead of metadata-level OS targeting.
+//!
+//! # Reference
+//! - [ECMA-335 II.22.3](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyOS table specification
 
 use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
@@ -17,13 +38,38 @@ mod raw;
 pub(crate) use loader::*;
 pub use raw::*;
 
-/// A map that holds the mapping of Token to parsed `AssemblyOs`
+/// A map that holds the mapping of [`crate::metadata::token::Token`] to parsed [`crate::metadata::tables::assemblyos::AssemblyOs`]
+///
+/// Thread-safe concurrent map using skip list data structure for efficient lookups
+/// and insertions. Used to cache resolved AssemblyOS entries by their metadata tokens.
 pub type AssemblyOsMap = SkipMap<Token, AssemblyOsRc>;
-/// A vector that holds a list of `AssemblyOs`
+
+/// A vector that holds a list of [`crate::metadata::tables::assemblyos::AssemblyOs`] references
+///
+/// Thread-safe append-only vector for storing AssemblyOS collections. Uses atomic operations
+/// for lock-free concurrent access and is optimized for scenarios with frequent reads.
 pub type AssemblyOsList = Arc<boxcar::Vec<AssemblyOsRc>>;
-/// A reference to a `AssemblyOs`
+
+/// A reference-counted pointer to an [`crate::metadata::tables::assemblyos::AssemblyOs`]
+///
+/// Provides shared ownership and automatic memory management for AssemblyOS instances.
+/// Multiple references can safely point to the same AssemblyOS data across threads.
 pub type AssemblyOsRc = Arc<AssemblyOs>;
 
-/// The `AssemblyOS` table specifies which operating systems this assembly is targeted for, `TableId` = 0x22
-// In this case, there's nothing to resolve or own. All data in `AssemblyOsRaw` is already owned by the type
+/// Operating system targeting information for assemblies
+///
+/// Type alias to [`crate::metadata::tables::assemblyos::AssemblyOsRaw`] since the AssemblyOS table contains only primitive values
+/// that don't require heap resolution. All data in the raw structure is immediately usable.
+///
+/// The AssemblyOS table specifies which operating systems this assembly is designed to run on,
+/// though this information is rarely used in modern .NET applications which rely on runtime
+/// platform abstraction instead.
+///
+/// # Data Model
+///
+/// Unlike other metadata tables that reference string or blob heaps, AssemblyOS contains
+/// only integer values, making the "raw" and "owned" representations identical.
+///
+/// # Reference
+/// - [ECMA-335 II.22.3](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyOS table specification (Table ID = 0x22)
 pub type AssemblyOs = AssemblyOsRaw;

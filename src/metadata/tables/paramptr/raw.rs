@@ -1,3 +1,8 @@
+//! # ParamPtr Raw Implementation
+//!
+//! This module provides the raw variant of ParamPtr table entries with unresolved
+//! indexes for initial parsing and memory-efficient storage.
+
 use std::sync::Arc;
 
 use crate::{
@@ -10,42 +15,90 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-/// The `ParamPtr` table provides indirection for Param table access in `#-` streams.
-/// Table ID = 0x07
+/// Raw representation of a ParamPtr table entry with unresolved indexes.
 ///
-/// This table is only present in assemblies using uncompressed metadata streams (`#-`).
-/// It contains a single column with 1-based indices into the Param table, providing
-/// an indirection layer that allows for more flexible parameter ordering and access patterns.
+/// This structure represents the unprocessed entry from the ParamPtr metadata table
+/// (ID 0x04), which provides indirection for parameter table access in optimized
+/// metadata layouts. It contains raw index values that require resolution to actual
+/// metadata objects.
+///
+/// ## Purpose
+///
+/// The ParamPtr table provides parameter indirection:
+/// - **Logical to Physical Mapping**: Maps logical parameter positions to physical table entries
+/// - **Metadata Optimization**: Enables parameter table compression and reordering
+/// - **Access Abstraction**: Maintains consistent parameter access in optimized assemblies
+/// - **Stream Format Support**: Required for assemblies using uncompressed metadata streams
+///
+/// ## Raw vs Owned
+///
+/// This raw variant is used during initial metadata parsing and contains:
+/// - Unresolved parameter table indexes requiring lookup
+/// - Minimal memory footprint for storage during parsing
+/// - Direct representation of on-disk table structure
+/// - Basic field access without metadata resolution capabilities
+///
+/// ## Indirection Mechanism
+///
+/// When ParamPtr table is present, parameter resolution follows this pattern:
+/// - **Logical**: Logical parameter index → `ParamPtr[Logical]` → `Param[Physical]`
+/// - **Resolution**: Logical → `ParamPtr[Logical]` → `Param[Physical]`
+/// - **Access**: Use ParamPtr.param field to find actual parameter entry
+/// - **Fallback**: If ParamPtr absent, use direct Param table indexing
 ///
 /// ## ECMA-335 Specification
-/// From ECMA-335, Partition II, Section 22.33:
-/// > The ParamPtr table is an auxiliary table used by the CLI loaders to implement
-/// > a more complex parameter layout than the simple sequential layout provided by the Param table.
-/// > Each row contains an index into the Param table.
 ///
-/// ## Usage in `#-` Streams
-/// When the metadata uses the `#-` (uncompressed) stream format instead of `#~` (compressed),
-/// the `ParamPtr` table may be present to provide indirection. If present:
-/// 1. Parameter references should resolve through `ParamPtr` first
-/// 2. If `ParamPtr` is empty or missing, fall back to direct Param table indexing
-/// 3. The indirection allows for non-sequential parameter ordering
+/// From ECMA-335, Partition II, §22.26:
+/// > The ParamPtr table provides a level of indirection for accessing parameters.
+/// > Each entry contains an index into the Param table. This indirection enables
+/// > metadata optimization and flexible parameter ordering in optimized assemblies.
+///
+/// ## References
+///
+/// - ECMA-335, Partition II, §22.26 - ParamPtr table specification
+/// - [`crate::metadata::tables::Param`] - Target parameter table entries
+/// - [`crate::metadata::tables::ParamPtr`] - Owned variant for comparison
 pub struct ParamPtrRaw {
-    /// Row ID (1-based index)
+    /// Row identifier within the ParamPtr table (1-based indexing).
+    ///
+    /// This field provides the logical position of this entry within the ParamPtr table,
+    /// following the standard 1-based indexing convention used throughout .NET metadata.
     pub rid: u32,
-    /// Token for this `ParamPtr` entry
+
+    /// Metadata token uniquely identifying this ParamPtr entry.
+    ///
+    /// The token combines the table identifier (ParamPtr = 0x04) with the row ID,
+    /// providing a unique reference for this parameter pointer across the entire
+    /// metadata system.
     pub token: Token,
-    /// Byte offset of this entry in the metadata stream
+
+    /// Byte offset of this entry within the metadata stream.
+    ///
+    /// This offset indicates the exact position of this ParamPtr entry within the
+    /// metadata stream, enabling direct access to the raw table data and supporting
+    /// metadata analysis and debugging operations.
     pub offset: usize,
-    /// 1-based index into the Param table
+
+    /// One-based index into the Param table (target parameter).
+    ///
+    /// This field provides the indirection mapping from logical parameter positions
+    /// to physical parameter table entries. When ParamPtr table is present, all
+    /// parameter references should be resolved through this indirection mechanism
+    /// rather than direct Param table indexing.
     pub param: u32,
 }
 
 impl ParamPtrRaw {
-    /// Convert a `ParamPtrRaw` into a `ParamPtr` with resolved data
+    /// Converts this raw ParamPtr entry to its owned representation.
     ///
-    /// # Errors
-    /// This method currently doesn't fail, but returns Result for consistency
-    /// with other table conversion methods.
+    /// This method transforms the raw table entry into a fully owned ParamPtr instance
+    /// with the same field values but with proper lifecycle management for use in
+    /// application logic and metadata analysis.
+    ///
+    /// ## Returns
+    ///
+    /// * `Ok(ParamPtrRc)` - Successfully converted to owned representation
+    /// * `Err(Error)` - Conversion error (currently unused but reserved for future validation)
     pub fn to_owned(&self) -> Result<ParamPtrRc> {
         Ok(Arc::new(ParamPtr {
             rid: self.rid,
@@ -55,20 +108,37 @@ impl ParamPtrRaw {
         }))
     }
 
-    /// Apply a `ParamPtrRaw` entry to update related metadata structures.
+    /// Applies this ParamPtr entry to the metadata loading process.
     ///
-    /// `ParamPtr` entries provide indirection for parameter access but don't directly
-    /// modify other metadata structures during parsing. The indirection logic
-    /// is handled at the table resolution level.
+    /// ParamPtr entries provide indirection mappings but do not directly modify
+    /// other metadata structures during the loading process. The indirection logic
+    /// is handled at the table resolution and lookup level rather than during
+    /// initial table processing.
     ///
-    /// # Errors
-    /// Always returns `Ok(())` as `ParamPtr` entries don't modify other tables directly.
+    /// This method is provided for consistency with the table loading framework
+    /// but performs no operations for ParamPtr entries.
+    ///
+    /// ## Returns
+    ///
+    /// * `Ok(())` - Always succeeds as no processing is required
     pub fn apply(&self) -> Result<()> {
         Ok(())
     }
 }
 
 impl<'a> RowDefinition<'a> for ParamPtrRaw {
+    /// Calculates the byte size of a single ParamPtr table row.
+    ///
+    /// The size depends on the metadata table size configuration:
+    /// - **param**: Index size into Param table (2 or 4 bytes)
+    ///
+    /// ## Arguments
+    ///
+    /// * `sizes` - Table size configuration information
+    ///
+    /// ## Returns
+    ///
+    /// * `u32` - Total row size in bytes (2-4 bytes typically)
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
@@ -76,6 +146,28 @@ impl<'a> RowDefinition<'a> for ParamPtrRaw {
         )
     }
 
+    /// Reads a single ParamPtr table row from metadata bytes.
+    ///
+    /// This method parses a ParamPtr entry from the metadata stream, extracting
+    /// the parameter table index and constructing the complete row structure
+    /// with metadata context.
+    ///
+    /// ## Arguments
+    ///
+    /// * `data` - The metadata bytes to read from
+    /// * `offset` - Current position in the data (updated after reading)
+    /// * `rid` - Row identifier for this entry (1-based)
+    /// * `sizes` - Table size configuration for index resolution
+    ///
+    /// ## Returns
+    ///
+    /// * `Ok(ParamPtrRaw)` - Successfully parsed ParamPtr entry
+    /// * `Err(Error)` - Failed to read or parse the entry
+    ///
+    /// ## Errors
+    ///
+    /// * [`crate::error::Error::OutOfBounds`] - Insufficient data for complete entry
+    /// * [`crate::error::Error::Malformed`] - Malformed table entry structure
     fn read_row(
         data: &'a [u8],
         offset: &mut usize,

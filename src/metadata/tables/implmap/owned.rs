@@ -1,3 +1,11 @@
+//! Owned ImplMap table structure with resolved references.
+//!
+//! This module provides the [`ImplMap`] struct, which represents Platform Invoke (P/Invoke)
+//! mapping entries with all references resolved and data owned. Unlike [`ImplMapRaw`], this
+//! structure contains resolved method references, owned strings, and module references.
+//!
+//! [`ImplMapRaw`]: crate::metadata::tables::ImplMapRaw
+
 use std::sync::atomic::Ordering;
 
 use crate::{
@@ -5,35 +13,77 @@ use crate::{
     Result,
 };
 
-/// The `ImplMap` table holds information about platform invoke (P/Invoke) methods. Similar to `ImplMapRaw` but
-/// with resolved indexes and owned data
+/// Owned ImplMap table entry with resolved references and owned data.
+///
+/// This structure represents a Platform Invoke (P/Invoke) mapping with all coded indexes
+/// resolved to their target structures and string data owned. It defines the mapping
+/// between a managed method and a native function in an unmanaged library.
+///
+/// # Platform Invoke Mapping
+/// Each ImplMap entry establishes a bridge between managed and native code:
+/// - **Managed side**: Method definition in the current assembly
+/// - **Native side**: Function in an external native library
+/// - **Marshalling**: Controlled by mapping flags for calling conventions and data conversion
 pub struct ImplMap {
-    /// `RowID`
+    /// Row identifier within the ImplMap table.
+    ///
+    /// Unique identifier for this P/Invoke mapping entry, used for internal
+    /// table management and cross-references.
     pub rid: u32,
-    /// Token
+
+    /// Metadata token identifying this ImplMap entry.
+    ///
+    /// The token enables efficient lookup and reference to this P/Invoke mapping
+    /// from other metadata structures and runtime systems.
     pub token: Token,
-    /// Offset
+
+    /// Byte offset of this entry within the raw table data.
+    ///
+    /// Used for efficient table navigation and binary metadata processing.
     pub offset: usize,
-    /// a 2-byte bitmask of type `PInvokeAttributes`, §II.23.1.8
+
+    /// Platform Invoke attribute flags controlling marshalling behavior.
+    ///
+    /// A 2-byte bitmask specifying calling conventions, character sets, error handling,
+    /// and other P/Invoke characteristics. See [`PInvokeAttributes`] for flag definitions.
+    ///
+    /// [`PInvokeAttributes`]: crate::metadata::tables::implmap::PInvokeAttributes
     pub mapping_flags: u32,
-    /// `MemberForwarded` (an index into the Field or `MethodDef` table; more precisely, a `MemberForwarded`
-    /// (§II.24.2.6) coded index). However, it only ever indexes the `MethodDef` table, since Field export
-    /// is not supported.
+
+    /// Resolved reference to the managed method being forwarded to native code.
+    ///
+    /// Points to the managed method definition that will invoke the native function.
+    /// While the ECMA-335 specification allows both Field and MethodDef references,
+    /// in practice only MethodDef is used since field export is not supported.
     pub member_forwarded: MethodRc,
-    /// an index into the String heap
+
+    /// Name of the target function in the native library.
+    ///
+    /// Owned string containing the exact function name to be called in the native
+    /// library. May be subject to name mangling based on the [`mapping_flags`].
+    ///
+    /// [`mapping_flags`]: Self::mapping_flags
     pub import_name: String,
-    /// an index into the `ModuleRef` table
+
+    /// Resolved reference to the module containing the target native function.
+    ///
+    /// Points to the ModuleRef entry that identifies the native library (DLL)
+    /// containing the function to be invoked.
     pub import_scope: ModuleRefRc,
 }
 
 impl ImplMap {
-    /// Apply an `ImplMap` to update method flags and add import information.
+    /// Applies P/Invoke mapping flags to the target method.
     ///
-    /// Since this is the owned structure, all references are already resolved, so we can
-    /// efficiently update the method and imports without re-resolving anything.
+    /// This method updates the managed method with the P/Invoke attributes defined
+    /// in this mapping, enabling the runtime to properly marshal calls to the native
+    /// function. The mapping flags are stored atomically in the method's P/Invoke
+    /// flags field for thread-safe access.
     ///
-    /// # Errors
-    /// Returns an error if adding the import fails.
+    /// # Returns
+    /// * `Ok(())` - P/Invoke flags applied successfully
+    /// * `Err(_)` - Reserved for future error conditions (currently infallible)
+    ///
     pub fn apply(&self) -> Result<()> {
         self.member_forwarded
             .flags_pinvoke

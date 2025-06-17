@@ -1,3 +1,17 @@
+//! Raw ManifestResource table structure with unresolved coded indexes.
+//!
+//! This module provides the [`ManifestResourceRaw`] struct, which represents resource entries
+//! as stored in the metadata stream. The structure contains unresolved coded indexes
+//! and heap references that require processing to establish resource access mechanisms.
+//!
+//! # Purpose
+//! [`ManifestResourceRaw`] serves as the direct representation of ManifestResource table entries
+//! from the binary metadata stream, before reference resolution and resource data access
+//! establishment. This raw format is processed during metadata loading to create
+//! [`ManifestResource`] instances with resolved references and direct resource access.
+//!
+//! [`ManifestResource`]: crate::metadata::tables::ManifestResource
+
 use std::sync::Arc;
 
 use crate::{
@@ -18,22 +32,77 @@ use crate::{
     Result,
 };
 
+/// Raw ManifestResource table entry with unresolved indexes and heap references.
+///
+/// This structure represents a resource entry as stored directly in the metadata stream.
+/// All references are unresolved coded indexes or heap offsets that require processing
+/// during metadata loading to establish resource access and location information.
+///
+/// # Table Structure (ECMA-335 §22.24)
+/// | Column | Size | Description |
+/// |--------|------|-------------|
+/// | Offset | 4 bytes | Resource data offset (0 for external resources) |
+/// | Flags | 4 bytes | Resource visibility attributes |
+/// | Name | String index | Resource identifier name |
+/// | Implementation | Implementation coded index | Resource location reference |
+///
+/// # Coded Index Resolution
+/// The `implementation` field uses the Implementation coded index encoding:
+/// - **Tag 0**: File table (external file resources)
+/// - **Tag 1**: AssemblyRef table (external assembly resources)
+/// - **Tag 2**: ExportedType table (rarely used for resources)
+/// - **Row 0**: Special case indicating embedded resource in current assembly
+///
+/// # Resource Location Logic
+/// Resource data location is determined by the implementation field:
+/// - **Embedded**: implementation.row == 0, data in current assembly at offset
+/// - **File-based**: implementation references File table entry
+/// - **Assembly-based**: implementation references AssemblyRef table entry
 #[derive(Clone, Debug)]
-/// The `ManifestResource` table lists the resources for the assembly. `TableId` = 0x28
 pub struct ManifestResourceRaw {
-    /// `RowID`
+    /// Row identifier within the ManifestResource table.
+    ///
+    /// Unique identifier for this resource entry, used for internal
+    /// table management and token generation.
     pub rid: u32,
-    /// Token
+
+    /// Metadata token for this ManifestResource entry (TableId 0x28).
+    ///
+    /// Computed as `0x28000000 | rid` to create the full token value
+    /// for referencing this resource from other metadata structures.
     pub token: Token,
-    /// Offset
+
+    /// Byte offset of this entry within the raw table data.
+    ///
+    /// Used for efficient table navigation and binary metadata processing.
     pub offset: usize,
-    /// a 4-byte constant
+
+    /// Resource data offset within the target storage location.
+    ///
+    /// For embedded resources (implementation.row == 0), this is the offset within
+    /// the assembly's resource section. For external resources, this value is 0
+    /// and the location is determined by the implementation reference.
     pub offset_field: u32,
-    /// a 4-byte bitmask of type `ManifestResourceAttributes`, §II.23.1.9
+
+    /// Resource visibility and access control flags.
+    ///
+    /// Raw flag value that will be converted to [`ManifestResourceAttributes`]
+    /// during processing to control resource visibility and accessibility.
+    ///
+    /// [`ManifestResourceAttributes`]: crate::metadata::tables::ManifestResourceAttributes
     pub flags: u32,
-    /// an index into the String heap
+
+    /// String heap index for the resource name.
+    ///
+    /// References the resource identifier name in the string heap. Resource names
+    /// are typically hierarchical and used for runtime resource lookup.
     pub name: u32,
-    /// an index into the Implementation coding index
+
+    /// Implementation coded index for resource location.
+    ///
+    /// Points to File, AssemblyRef, or ExportedType tables to specify resource location.
+    /// A row value of 0 indicates an embedded resource in the current assembly.
+    /// Requires coded index resolution during processing to determine actual resource source.
     pub implementation: CodedIndex,
 }
 

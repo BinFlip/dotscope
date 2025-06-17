@@ -1,3 +1,113 @@
+//! Central type registry for .NET assembly analysis.
+//!
+//! This module provides the `TypeRegistry`, a thread-safe, high-performance registry for managing
+//! all types within a .NET assembly. It serves as the central hub for type lookup, deduplication,
+//! and cross-reference resolution during metadata analysis.
+//!
+//! # Key Components
+//!
+//! - [`TypeRegistry`] - Central registry managing all types in an assembly
+//! - [`TypeSource`] - Classification of type origins (current module, external assemblies, etc.)
+//! - `SourceRegistry` - Internal management of external type references
+//!
+//! # Registry Architecture
+//!
+//! The type registry uses a multi-index approach for efficient type lookup:
+//!
+//! - **Token-based lookup**: Primary index using metadata tokens
+//! - **Name-based lookup**: Secondary indices for full names, simple names, and namespaces
+//! - **Source-based lookup**: Types grouped by their origin (assembly, module, etc.)
+//! - **Signature cache**: Deduplication using type signature hashes
+//!
+//! # Thread Safety
+//!
+//! The registry is designed for high-concurrency scenarios:
+//! - Lock-free data structures for primary storage (`SkipMap`)
+//! - Concurrent hash maps for indices (`DashMap`)
+//! - Atomic operations for token generation
+//! - No blocking operations during normal lookup/insertion
+//!
+//! # Type Sources
+//!
+//! Types in the registry can originate from various sources:
+//! - **Current Module**: Types defined in the assembly being analyzed
+//! - **External Assemblies**: Types from referenced assemblies
+//! - **Primitive Types**: Built-in CLR types (System.Int32, System.String, etc.)
+//! - **External Modules**: Types from module references
+//! - **Files**: Types from file references
+//!
+//! # Examples
+//!
+//! ## Creating and Using a Registry
+//!
+//! ```rust,no_run
+//! use dotscope::metadata::typesystem::{TypeRegistry, CilType};
+//! use dotscope::metadata::token::Token;
+//!
+//! // Create a new registry with primitive types
+//! let registry = TypeRegistry::new()?;
+//!
+//! // Look up types by name
+//! for entry in registry.get_by_fullname("System.String") {
+//!     println!("Found String type: 0x{:08X}", entry.token.value());
+//! }
+//!
+//! // Look up by token
+//! if let Some(type_def) = registry.get(&Token::new(0x02000001)) {
+//!     println!("Type: {}.{}", type_def.namespace, type_def.name);
+//! }
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! ## Registering New Types
+//!
+//! ```rust,no_run
+//! use dotscope::metadata::typesystem::{TypeRegistry, CilType, TypeSource};
+//! use dotscope::metadata::token::Token;
+//! use std::sync::Arc;
+//!
+//! # fn example() -> dotscope::Result<()> {
+//! let registry = TypeRegistry::new()?;
+//!
+//! // Create a new type
+//! let new_type = CilType::new(
+//!     Token::new(0x02000001),
+//!     "MyNamespace".to_string(),
+//!     "MyClass".to_string(),
+//!     None, // No external reference
+//!     None, // No base type yet
+//!     0x00100001, // Public class
+//!     Arc::new(boxcar::Vec::new()), // Empty fields
+//!     Arc::new(boxcar::Vec::new()), // Empty methods
+//!     None, // Flavor will be computed
+//! );
+//!
+//! // Register the type
+//! registry.insert(Arc::new(new_type));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Type Lookup Patterns
+//!
+//! The registry provides multiple lookup methods by name, namespace, and token.
+//! Each method returns the appropriate collection type for the query.
+//!
+//! # Performance Characteristics
+//!
+//! - **Lookup by token**: O(log n) using skip list
+//! - **Lookup by name**: O(1) average case using hash maps
+//! - **Registration**: O(log n) for insertion plus O(1) for index updates
+//! - **Memory overhead**: Minimal due to reference counting and deduplication
+//!
+//! # ECMA-335 Compliance
+//!
+//! The registry handles all type reference mechanisms defined in ECMA-335:
+//! - TypeDef, TypeRef, and TypeSpec tokens
+//! - Assembly, Module, and File references
+//! - Generic type instantiations
+//! - Cross-assembly type resolution
+
 use std::{
     hash::Hash,
     sync::{
@@ -21,35 +131,88 @@ use crate::{
     Result,
 };
 
-/// Represents the source of a type in the registry (module, assembly, etc.)
+/// Classification of type origins within the .NET assembly ecosystem.
+///
+/// `TypeSource` identifies where a type is defined, enabling proper resolution
+/// of cross-assembly and cross-module type references. This is crucial for
+/// handling external dependencies and maintaining proper type identity.
+///
+/// # Type Resolution
+///
+/// Different sources require different resolution strategies:
+/// - **CurrentModule**: Direct access to type definition
+/// - **External sources**: Resolution through metadata references
+/// - **Primitive**: Built-in CLR types with artificial tokens
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use dotscope::metadata::typesystem::TypeSource;
+/// use dotscope::metadata::token::Token;
+///
+/// // Local type
+/// let local_source = TypeSource::CurrentModule;
+///
+/// // External assembly type
+/// let external_source = TypeSource::AssemblyRef(Token::new(0x23000001));
+///
+/// // Primitive type
+/// let primitive_source = TypeSource::Primitive;
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TypeSource {
-    /// Type is defined in the current module
+    /// Type is defined in the current module being analyzed
     CurrentModule,
-    /// Type is defined in an external module
+    /// Type is defined in an external module (cross-module reference)
     Module(Token),
     /// Type is defined in an external module reference
     ModuleRef(Token),
-    /// Type is defined in an external assembly reference
+    /// Type is defined in an external assembly reference  
     AssemblyRef(Token),
-    /// Type is defined in an external file
+    /// Type is defined in an external file reference
     File(Token),
-    /// Type is a primitive defined by the CLR
+    /// Type is a primitive defined by the CLR runtime
     Primitive,
-    /// Type source is not known
+    /// Type source is not determined or not available
     Unknown,
 }
 
-/// Tracks sources of types to avoid strong circular references
+/// Internal registry for tracking external type reference sources.
+///
+/// `SourceRegistry` maintains weak references to external assemblies, modules,
+/// and files to prevent circular reference cycles while enabling proper type
+/// resolution. It serves as a lookup table for converting `TypeSource` values
+/// back to their corresponding metadata references.
+///
+/// # Memory Management
+///
+/// The registry uses reference counting to track external sources without
+/// creating strong circular references that could prevent garbage collection.
+/// When sources are no longer needed, they can be automatically cleaned up.
+///
+/// # Thread Safety
+///
+/// All internal collections use `DashMap` for lock-free concurrent access,
+/// making source registration and lookup safe from multiple threads.
 struct SourceRegistry {
+    /// External modules indexed by their metadata tokens
     modules: DashMap<Token, ModuleRc>,
+    /// Module references indexed by their metadata tokens
     module_refs: DashMap<Token, ModuleRefRc>,
+    /// Assembly references indexed by their metadata tokens
     assembly_refs: DashMap<Token, AssemblyRefRc>,
+    /// File references indexed by their metadata tokens
     files: DashMap<Token, FileRc>,
 }
 
 impl SourceRegistry {
-    /// Create a new empty source registry
+    /// Create a new empty source registry.
+    ///
+    /// Initializes all internal collections as empty, ready to receive
+    /// source registrations during metadata loading.
+    ///
+    /// # Returns
+    /// A new `SourceRegistry` with empty collections
     fn new() -> Self {
         SourceRegistry {
             modules: DashMap::new(),
@@ -59,10 +222,22 @@ impl SourceRegistry {
         }
     }
 
-    /// Register a source with the registry
+    /// Register an external type reference source.
     ///
-    /// ## Arguments
-    /// * 'source' - A new source to register
+    /// Stores the external reference and returns a corresponding `TypeSource`
+    /// value that can be used for efficient lookups. This method handles all
+    /// supported external reference types defined in ECMA-335.
+    ///
+    /// # Arguments
+    /// * `source` - The external type reference to register
+    ///
+    /// # Returns
+    /// A `TypeSource` value for efficient source identification
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from
+    /// multiple threads during metadata loading.
     fn register_source(&self, source: &CilTypeReference) -> TypeSource {
         match source {
             CilTypeReference::Module(module) => {
@@ -87,10 +262,21 @@ impl SourceRegistry {
         }
     }
 
-    /// Get a `CilTypeReference` from a source
+    /// Retrieve a type reference from a registered source.
     ///
-    /// ## Arguments
-    /// * `source` - The source to lookup
+    /// Converts a `TypeSource` back to its corresponding `CilTypeReference`,
+    /// enabling resolution of external type references during analysis.
+    ///
+    /// # Arguments
+    /// * `source` - The type source to look up
+    ///
+    /// # Returns
+    /// * `Some(CilTypeReference)` - The corresponding external reference
+    /// * `None` - If source is not external or not found
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and lock-free for concurrent access.
     fn get_source(&self, source: TypeSource) -> Option<CilTypeReference> {
         match source {
             TypeSource::Module(token) => self
@@ -246,31 +432,133 @@ impl SourceRegistry {
 //     }
 // }
 
-/// Manages registration, lookup, and deduplication of types
+/// Central registry for managing all types within a .NET assembly.
+///
+/// `TypeRegistry` provides thread-safe, high-performance storage and lookup
+/// capabilities for all types encountered during metadata analysis. It serves
+/// as the authoritative source for type information and handles deduplication,
+/// cross-references, and efficient query operations.
+///
+/// # Architecture
+///
+/// The registry uses a multi-layered indexing strategy:
+/// - **Primary storage**: Token-based skip list for O(log n) lookups
+/// - **Secondary indices**: Hash maps for name-based and source-based queries
+/// - **Deduplication**: Signature cache to prevent duplicate type entries
+/// - **External references**: Source registry for cross-assembly resolution
+///
+/// # Concurrency Design
+///
+/// All operations are designed for high-concurrency scenarios:
+/// - Lock-free primary storage using `SkipMap`
+/// - Concurrent secondary indices using `DashMap`
+/// - Atomic token generation for thread-safe registration
+/// - No blocking operations during normal operations
+///
+/// # Type Identity
+///
+/// Types are identified using multiple strategies:
+/// - **Token identity**: Primary key using metadata tokens
+/// - **Signature identity**: Hash-based deduplication for complex types
+/// - **Name identity**: Full namespace.name qualification
+/// - **Source identity**: Origin-based grouping
+///
+/// # Memory Management
+///
+/// The registry uses reference counting (`Arc`) to manage type lifetime:
+/// - Types can be shared across multiple consumers
+/// - Automatic cleanup when no longer referenced
+/// - Efficient memory usage through deduplication
+///
+/// # Examples
+///
+/// ## Basic Registry Operations
+///
+/// ```rust,no_run
+/// use dotscope::metadata::typesystem::TypeRegistry;
+///
+/// // Create registry with primitive types
+/// let registry = TypeRegistry::new()?;
+///
+/// // Query primitive types
+/// for entry in registry.get_by_fullname("System.Int32") {
+///     println!("Found Int32: 0x{:08X}", entry.token.value());
+/// }
+///
+/// // Check registry statistics
+/// println!("Total types: {}", registry.len());
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+///
+/// # Thread Safety
+///
+/// The registry is fully thread-safe and optimized for concurrent access:
+/// - Multiple threads can perform lookups simultaneously
+/// - Registration operations are atomic and consistent
+/// - No explicit locking required by consumers
+///
+/// # Performance Characteristics
+///
+/// - **Token lookup**: O(log n) using skip list
+/// - **Name lookup**: O(1) average using hash indices  
+/// - **Registration**: O(log n) + O(1) for indexing
+/// - **Memory**: O(n) with deduplication benefits
 pub struct TypeRegistry {
-    /// Main storage for all types by their token
+    /// Primary type storage indexed by metadata tokens - uses skip list for O(log n) operations
     types: SkipMap<Token, CilTypeRc>,
-    /// Next available token for new types
+    /// Atomic counter for generating unique artificial tokens for new types
     next_token: AtomicU32,
-    /// Cache of type signature hashes to tokens
+    /// Cache mapping type signature hashes to tokens for deduplication
     signature_cache: DashMap<u64, Token>,
-    /// Registry of external reference sources
+    /// Registry managing external assembly/module/file references
     sources: SourceRegistry,
-    /// Types by their source
+    /// Secondary index: types grouped by their origin source
     types_by_source: DashMap<TypeSource, Vec<Token>>,
-    /// Types by name (qualified with namespace)
+    /// Secondary index: types indexed by full name (namespace.name)
     types_by_fullname: DashMap<String, Vec<Token>>,
-    /// Types by name only (may have duplicates across namespaces)
+    /// Secondary index: types indexed by simple name (may have duplicates)
     types_by_name: DashMap<String, Vec<Token>>,
-    /// Types by namespace
+    /// Secondary index: types grouped by namespace
     types_by_namespace: DashMap<String, Vec<Token>>,
 }
 
 impl TypeRegistry {
-    /// Create a new type registry with initialized primitive types
+    /// Create a new type registry with initialized primitive types.
     ///
-    /// # Errors
-    /// Returns an error if primitive types cannot be initialized.
+    /// Constructs a complete type registry with all .NET primitive types
+    /// pre-registered and ready for use. The registry starts with artificial
+    /// tokens in the 0xF000_0020+ range for new type registration.
+    ///
+    /// # Primitive Types
+    ///
+    /// The following primitive types are automatically registered:
+    /// - System.Void, System.Boolean, System.Char
+    /// - Integer types: SByte, Byte, Int16, UInt16, Int32, UInt32, Int64, UInt64
+    /// - Floating point: Single, Double
+    /// - Platform types: IntPtr, UIntPtr
+    /// - Reference types: Object, String
+    /// - Special types: TypedReference, ValueType
+    ///
+    /// # Returns
+    /// * `Ok(TypeRegistry)` - Fully initialized registry with primitive types
+    /// * `Err(Error)` - If primitive type initialization fails
+    ///
+    /// # Thread Safety
+    ///
+    /// The returned registry is fully thread-safe and ready for concurrent use.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::typesystem::TypeRegistry;
+    ///
+    /// let registry = TypeRegistry::new()?;
+    ///
+    /// // Primitive types are immediately available
+    /// let string_types = registry.get_by_fullname("System.String");
+    /// assert!(!string_types.is_empty());
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn new() -> Result<Self> {
         let registry = TypeRegistry {
             types: SkipMap::new(),
@@ -537,20 +825,74 @@ impl TypeRegistry {
         }
     }
 
-    /// Get a type by its token
+    /// Look up a type by its metadata token.
     ///
-    /// ## Arguments
-    /// * 'token' - The token to look up
+    /// Performs the primary lookup operation using the token-based index.
+    /// This is the most efficient lookup method with O(log n) complexity.
+    ///
+    /// # Arguments
+    /// * `token` - The metadata token to look up
+    ///
+    /// # Returns
+    /// * `Some(CilTypeRc)` - The type if found
+    /// * `None` - If no type exists with the given token
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and lock-free for concurrent access.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::{typesystem::TypeRegistry, token::Token};
+    ///
+    /// # fn example(registry: &TypeRegistry) {
+    /// if let Some(type_def) = registry.get(&Token::new(0x02000001)) {
+    ///     println!("Found type: {}.{}", type_def.namespace, type_def.name);
+    /// }
+    /// # }
+    /// ```
     pub fn get(&self, token: &Token) -> Option<CilTypeRc> {
         self.types.get(token).map(|entry| entry.value().clone())
     }
 
-    /// Get a type by its source and name
+    /// Look up a type by its source and qualified name.
     ///
-    /// ## Arguments
-    /// * 'source'      - The source of the type to look for
-    /// * 'namespace'   - The namespace of the type to look for
-    /// * 'name'        - The name of the type to look for
+    /// Performs a targeted lookup for types from a specific source with
+    /// exact namespace and name matching. This is useful for resolving
+    /// external type references where the source is known.
+    ///
+    /// # Arguments
+    /// * `source` - The origin source of the type
+    /// * `namespace` - The namespace of the type (can be empty)
+    /// * `name` - The exact name of the type
+    ///
+    /// # Returns
+    /// * `Some(CilTypeRc)` - The first matching type from the specified source
+    /// * `None` - If no matching type is found in the source
+    ///
+    /// # Performance
+    ///
+    /// This method combines source filtering with name lookup for efficient
+    /// resolution of external type references.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::typesystem::{TypeRegistry, TypeSource};
+    /// use dotscope::metadata::token::Token;
+    ///
+    /// # fn example(registry: &TypeRegistry) {
+    /// let external_source = TypeSource::AssemblyRef(Token::new(0x23000001));
+    /// if let Some(type_def) = registry.get_by_source_and_name(
+    ///     external_source,
+    ///     "System",
+    ///     "String"
+    /// ) {
+    ///     println!("Found external String type");
+    /// }
+    /// # }
+    /// ```
     pub fn get_by_source_and_name(
         &self,
         source: TypeSource,
@@ -582,10 +924,40 @@ impl TypeRegistry {
         None
     }
 
-    /// Get types by their namespace
+    /// Get all types within a specific namespace.
     ///
-    /// ## Arguments
-    /// * 'namespace' - The namespace of the type to look for
+    /// Returns all types that belong to the specified namespace, regardless
+    /// of their source or other characteristics. This is useful for namespace
+    /// exploration and type discovery operations.
+    ///
+    /// # Arguments
+    /// * `namespace` - The namespace to search for (case-sensitive)
+    ///
+    /// # Returns
+    /// A vector of all types in the specified namespace. The vector may be
+    /// empty if no types exist in the namespace.
+    ///
+    /// # Performance
+    ///
+    /// This operation is O(1) for namespace lookup plus O(n) for type
+    /// resolution where n is the number of types in the namespace.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::typesystem::TypeRegistry;
+    ///
+    /// # fn example(registry: &TypeRegistry) {
+    /// // Get all System types
+    /// let system_types = registry.get_by_namespace("System");
+    /// for type_def in system_types {
+    ///     println!("System type: {}", type_def.name);
+    /// }
+    ///
+    /// // Get types in global namespace
+    /// let global_types = registry.get_by_namespace("");
+    /// # }
+    /// ```
     pub fn get_by_namespace(&self, namespace: &str) -> Vec<CilTypeRc> {
         if let Some(tokens) = self.types_by_namespace.get(namespace) {
             tokens
@@ -597,10 +969,34 @@ impl TypeRegistry {
         }
     }
 
-    /// Get types by their name (may return multiple if they're in different namespaces)
+    /// Get all types with a specific simple name across all namespaces.
     ///
-    /// ## Arguments
-    /// * 'name' - The name of the type to look for
+    /// Returns all types that have the specified name, regardless of their
+    /// namespace. This can return multiple types if the same name exists
+    /// in different namespaces (e.g., multiple "List" types).
+    ///
+    /// # Arguments
+    /// * `name` - The simple name to search for (case-sensitive)
+    ///
+    /// # Returns
+    /// A vector of all types with the specified name. Types from different
+    /// namespaces will be included. The vector may be empty if no types
+    /// with the name exist.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::typesystem::TypeRegistry;
+    ///
+    /// # fn example(registry: &TypeRegistry) {
+    /// // Find all "List" types (may find System.Collections.List,
+    /// // System.Collections.Generic.List, custom List types, etc.)
+    /// let list_types = registry.get_by_name("List");
+    /// for type_def in list_types {
+    ///     println!("List type: {}.{}", type_def.namespace, type_def.name);
+    /// }
+    /// # }
+    /// ```
     pub fn get_by_name(&self, name: &str) -> Vec<CilTypeRc> {
         if let Some(tokens) = self.types_by_name.get(name) {
             tokens
@@ -612,10 +1008,41 @@ impl TypeRegistry {
         }
     }
 
-    /// Get types by their fully qualified name (namespace.name)
+    /// Get types by their fully qualified name (namespace.name).
     ///
-    /// ## Arguments
-    /// * 'fullname' - The fullname (namespace.name) of the type to look for
+    /// Returns all types that exactly match the specified fully qualified name.
+    /// This is the most precise name-based lookup method and typically returns
+    /// at most one type (unless there are duplicate definitions).
+    ///
+    /// # Arguments
+    /// * `fullname` - The fully qualified name in "namespace.name" format
+    ///
+    /// # Returns
+    /// A vector containing types that match the full name. Usually contains
+    /// zero or one element, but may contain multiple if duplicates exist.
+    ///
+    /// # Name Format
+    ///
+    /// The fullname should be in the format:
+    /// - "Namespace.TypeName" for namespaced types
+    /// - "TypeName" for types in the global namespace
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::typesystem::TypeRegistry;
+    ///
+    /// # fn example(registry: &TypeRegistry) {
+    /// // Find the specific System.String type
+    /// let string_types = registry.get_by_fullname("System.String");
+    /// if let Some(string_type) = string_types.first() {
+    ///     println!("Found System.String: 0x{:08X}", string_type.token.value());
+    /// }
+    ///
+    /// // Find a global type
+    /// let global_types = registry.get_by_fullname("GlobalType");
+    /// # }
+    /// ```
     pub fn get_by_fullname(&self, fullname: &str) -> Vec<CilTypeRc> {
         if let Some(tokens) = self.types_by_fullname.get(fullname) {
             tokens

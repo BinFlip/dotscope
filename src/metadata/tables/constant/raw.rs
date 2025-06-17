@@ -1,3 +1,21 @@
+//! Raw Constant table representation.
+//!
+//! This module provides the [`crate::metadata::tables::constant::raw::ConstantRaw`] struct
+//! for low-level access to Constant metadata table data with unresolved table indexes.
+//! This represents the binary format of Constant records as they appear in the metadata
+//! tables stream, requiring resolution to create usable data structures.
+//!
+//! # Constant Table Format
+//!
+//! The Constant table (0x0B) contains zero or more rows with these fields:
+//! - **Type** (1 byte): Element type of the constant (ELEMENT_TYPE_* enumeration)
+//! - **Padding** (1 byte): Reserved padding byte (must be zero)
+//! - **Parent** (2/4 bytes): HasConstant coded index into Field, Property, or Param tables  
+//! - **Value** (2/4 bytes): Blob heap index containing the constant's binary data
+//!
+//! # Reference
+//! - [ECMA-335 II.22.9](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Constant table specification
+
 use std::sync::Arc;
 
 use crate::{
@@ -13,34 +31,82 @@ use crate::{
 
 use super::owned::Constant;
 
+/// Raw representation of a Constant metadata table entry
+///
+/// Represents a constant value from the Constant table (0x0B) with unresolved references
+/// to other metadata tables and heaps. This structure contains the binary layout as it
+/// appears in the metadata stream, requiring resolution before practical use.
+///
+/// # Table Structure
+///
+/// Each Constant row contains:
+/// - **Element type**: Primitive type identifier (ELEMENT_TYPE_*)
+/// - **Parent relationship**: Coded index to Field, Property, or Param table
+/// - **Value data**: Binary representation stored in the blob heap
+/// - **Type validation**: Ensures constant types match their containers
 #[derive(Clone, Debug)]
-/// The Constant table stores constant values for fields, parameters, and properties. `TableId` = 0x0B
+///   The Constant table stores constant values for fields, parameters, and properties. `TableId` = 0x0B
 pub struct ConstantRaw {
-    /// `RowID`
+    /// Row identifier in the Constant metadata table
+    ///
+    /// This is the 1-based row index where this constant was defined in the metadata table.
     pub rid: u32,
-    /// Token
+
+    /// Metadata token uniquely identifying this constant
+    ///
+    /// The token provides a unique identifier for this constant entry within the assembly,
+    /// constructed from the table ID (0x0B) and row number.
     pub token: Token,
-    /// Offset
+
+    /// File offset where this constant's data begins
+    ///
+    /// The byte offset in the metadata file where this constant's binary representation starts.
     pub offset: usize,
-    /// a 1-byte constant, followed by a 1-byte padding zero); see §II.23.1.16. The encoding of Type for the
-    /// nullref value for `FieldInit` in ilasm (§II.16.2) is `ELEMENT_TYPE_CLASS` with a Value of a 4-byte zero.
-    /// Unlike uses of `ELEMENT_TYPE_CLASS` in signatures, this one is not followed by a type toke
+
+    /// Element type of the constant value
+    ///
+    /// Specifies the primitive type of the constant using ELEMENT_TYPE_* enumeration values
+    /// (see ECMA-335 II.23.1.16). This determines how the blob value data should be interpreted.
+    /// Common values include ELEMENT_TYPE_I4 for integers, ELEMENT_TYPE_STRING for strings, etc.
+    /// For null reference constants, this is ELEMENT_TYPE_CLASS with a 4-byte zero value.
     pub base: u8,
-    /// an index into the `Param`, `Field`, or `Property` table; more precisely, a `HasConstant` (§II.24.2.6) coded index
+
+    /// HasConstant coded index to the parent metadata element
+    ///
+    /// Points to the field, property, or parameter that owns this constant. This is a coded
+    /// index that must be decoded to determine the target table and row. The coding scheme
+    /// uses the lower 2 bits to identify the table type (Field=0, Param=1, Property=2).
     pub parent: CodedIndex,
-    /// an index into the Blob heap
+
+    /// Blob heap index containing the constant value data
+    ///
+    /// Index into the blob heap where the binary representation of the constant value is stored.
+    /// The interpretation of this blob data depends on the element type specified in `base`.
     pub value: u32,
 }
 
 impl ConstantRaw {
-    /// Apply an `ConstantRaw` to the relevant entries of types (e.g. fields, methods and parameters)
+    /// Apply this constant value directly to its parent metadata element
+    ///
+    /// Associates this constant with its parent field, property, or parameter by resolving
+    /// the coded index and extracting the constant value from the blob heap. This method
+    /// performs immediate type validation and default value assignment.
     ///
     /// ## Arguments
     /// * `get_ref` - A closure that resolves coded indices to `CilTypeReference`
-    /// * 'blob'    - The #Blob heap
+    /// * `blob` - The blob heap containing constant value data
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the constant is successfully applied, or [`crate::Error`] if:
+    /// - The blob heap lookup fails for the constant value
+    /// - The primitive value cannot be constructed from the blob data
+    /// - The parent reference cannot be resolved to a valid type reference
+    /// - The constant type is incompatible with the parent type
+    /// - A default value is already set for the parent entity
     ///
     /// # Errors
-    /// Returns an error if:
+    ///
     /// - The blob heap lookup fails for the constant value
     /// - The primitive value cannot be constructed from the blob data
     /// - The parent reference cannot be resolved to a valid type reference
@@ -109,14 +175,23 @@ impl ConstantRaw {
         }
     }
 
-    /// Convert an `ConstantRaw`, into a `Constant` which has indexes resolved and owns the referenced data
+    /// Convert this raw constant to an owned constant with resolved references
+    ///
+    /// Transforms this raw constant table entry into a fully resolved [`Constant`] instance
+    /// by resolving coded indices and extracting constant value data from the blob heap.
+    /// The resulting owned constant contains all necessary data for direct use.
     ///
     /// ## Arguments
     /// * `get_ref` - A closure that resolves coded indices to `CilTypeReference`
-    /// * 'blob'    - The #Blob heap
+    /// * `blob` - The blob heap containing constant value data
+    ///
+    /// # Returns
+    ///
+    /// Returns a reference-counted [`ConstantRc`] containing the owned constant data,
+    /// or [`crate::Error`] if the conversion fails.
     ///
     /// # Errors
-    /// Returns an error if:
+    ///
     /// - The blob heap lookup fails for the constant value
     /// - The primitive value cannot be constructed from the blob data
     /// - The parent reference cannot be resolved to a valid type reference

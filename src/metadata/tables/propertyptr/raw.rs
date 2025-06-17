@@ -1,3 +1,8 @@
+//! # PropertyPtr Raw Implementation
+//!
+//! This module provides the raw variant of PropertyPtr table entries with unresolved
+//! indexes for initial parsing and memory-efficient storage.
+
 use std::sync::Arc;
 
 use crate::{
@@ -9,43 +14,64 @@ use crate::{
     Result,
 };
 
+/// Raw representation of a PropertyPtr table entry from the .NET metadata.
+///
+/// The PropertyPtr table provides indirection for property table access in optimized
+/// metadata layouts, enabling property table compression and efficient property access
+/// patterns. Each entry contains a single property index that maps logical property
+/// positions to physical property table locations.
+///
+/// ## Metadata Table Information
+/// - **Table ID**: `0x16` (22 decimal)
+/// - **Token Type**: `0x16000000` + RID
+/// - **Purpose**: Provides property table indirection for optimization
+///
+/// ## Structure Layout
+/// The table entry contains a single field that references the actual property
+/// entry in the Property table. This indirection enables:
+/// - **Property Reordering**: Physical property order can differ from logical order
+/// - **Table Compression**: Enables property table optimization strategies
+/// - **Access Efficiency**: Supports efficient property lookup patterns
+///
+/// ## Optimization Context
+/// PropertyPtr tables are present when the assembly uses optimized metadata layouts:
+/// - **Uncompressed Streams**: Present in assemblies using `#-` stream format
+/// - **Property Compression**: When property table ordering has been optimized
+/// - **Runtime Efficiency**: When property access patterns require indirection
+///
+/// ## See Also
+/// - [`crate::metadata::tables::PropertyPtr`] - Resolved owned variant
+/// - [ECMA-335 §II.22.38](https://www.ecma-international.org/publications-and-standards/standards/ecma-335/) - PropertyPtr table specification
 #[derive(Clone, Debug)]
-/// The `PropertyPtr` table provides indirection for Property table access in `#-` streams.
-/// Table ID = 0x16
-///
-/// This table is only present in assemblies using uncompressed metadata streams (`#-`).
-/// It contains a single column with 1-based indices into the Property table, providing
-/// an indirection layer that allows for more flexible property ordering and access patterns.
-///
-/// ## ECMA-335 Specification
-/// From ECMA-335, Partition II, Section 22.35:
-/// > The PropertyPtr table is an auxiliary table used by the CLI loaders to implement
-/// > a more complex property layout than the simple sequential layout provided by the Property table.
-/// > Each row contains an index into the Property table.
-///
-/// ## Usage in `#-` Streams
-/// When the metadata uses the `#-` (uncompressed) stream format instead of `#~` (compressed),
-/// the `PropertyPtr` table may be present to provide indirection. If present:
-/// 1. Property references should resolve through `PropertyPtr` first
-/// 2. If `PropertyPtr` is empty or missing, fall back to direct Property table indexing
-/// 3. The indirection allows for non-sequential property ordering
 pub struct PropertyPtrRaw {
-    /// Row ID (1-based index)
+    /// The 1-based row identifier within the PropertyPtr table.
     pub rid: u32,
-    /// Token for this `PropertyPtr` entry
+
+    /// The metadata token for this PropertyPtr entry.
     pub token: Token,
-    /// Byte offset of this entry in the metadata stream
+
+    /// The byte offset of this entry within the metadata stream.
     pub offset: usize,
-    /// 1-based index into the Property table
+
+    /// The 1-based index into the Property table.
+    ///
+    /// This field provides the actual property index that this property pointer
+    /// entry maps to. When property indirection is active, this value should be
+    /// used instead of direct Property table indexing to access the correct property.
     pub property: u32,
 }
 
 impl PropertyPtrRaw {
-    /// Convert a `PropertyPtrRaw` into a `PropertyPtr` with resolved data
+    /// Converts this raw PropertyPtr entry into an owned representation.
     ///
-    /// # Errors
-    /// This method currently doesn't fail, but returns Result for consistency
-    /// with other table conversion methods.
+    /// Creates a fully-owned [`PropertyPtr`] instance from this raw entry,
+    /// transferring all field values and enabling high-level property
+    /// indirection operations.
+    ///
+    /// ## Returns
+    ///
+    /// * `Ok(PropertyPtrRc)` - Successfully converted owned entry
+    /// * `Err(_)` - Conversion failed (currently no failure cases)
     pub fn to_owned(&self) -> Result<PropertyPtrRc> {
         Ok(Arc::new(PropertyPtr {
             rid: self.rid,
@@ -55,20 +81,39 @@ impl PropertyPtrRaw {
         }))
     }
 
-    /// Apply a `PropertyPtrRaw` entry to update related metadata structures.
+    /// Applies this PropertyPtr entry to update related metadata structures.
     ///
-    /// `PropertyPtr` entries provide indirection for property access but don't directly
-    /// modify other metadata structures during parsing. The indirection logic
-    /// is handled at the table resolution level.
+    /// PropertyPtr entries provide indirection mappings but do not directly
+    /// modify other metadata structures during the loading process. The
+    /// indirection logic is handled at the table resolution and access level.
     ///
-    /// # Errors
-    /// Always returns `Ok(())` as `PropertyPtr` entries don't modify other tables directly.
+    /// ## Returns
+    ///
+    /// * `Ok(())` - Entry application completed (always succeeds)
+    ///
+    /// ## Note
+    ///
+    /// This method exists for consistency with other table types but performs
+    /// no operations as PropertyPtr entries do not modify external state.
     pub fn apply(&self) -> Result<()> {
         Ok(())
     }
 }
 
 impl<'a> RowDefinition<'a> for PropertyPtrRaw {
+    /// Calculates the byte size of a PropertyPtr table row.
+    ///
+    /// The row size depends on the Property table size:
+    /// - 2 bytes if Property table has ≤ 65535 rows
+    /// - 4 bytes if Property table has > 65535 rows
+    ///
+    /// ## Arguments
+    ///
+    /// * `sizes` - Table size information for index size calculation
+    ///
+    /// ## Returns
+    ///
+    /// The size in bytes required for a single PropertyPtr table row
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
@@ -76,6 +121,28 @@ impl<'a> RowDefinition<'a> for PropertyPtrRaw {
         )
     }
 
+    /// Reads a PropertyPtr table row from the metadata stream.
+    ///
+    /// Parses a single PropertyPtr entry from the raw metadata bytes,
+    /// extracting the property index and constructing the complete
+    /// table entry with metadata token and offset information.
+    ///
+    /// ## Arguments
+    ///
+    /// * `data` - The raw metadata bytes containing the table
+    /// * `offset` - Current read position (updated after reading)
+    /// * `rid` - The 1-based row identifier for this entry
+    /// * `sizes` - Table size information for proper index parsing
+    ///
+    /// ## Returns
+    ///
+    /// * `Ok(PropertyPtrRaw)` - Successfully parsed table entry
+    /// * `Err(_)` - Parsing failed due to insufficient data or corruption
+    ///
+    /// ## Errors
+    ///
+    /// * [`crate::error::Error::OutOfBounds`] - Insufficient data for complete entry
+    /// * [`crate::error::Error::Malformed`] - Malformed table entry structure
     fn read_row(
         data: &'a [u8],
         offset: &mut usize,

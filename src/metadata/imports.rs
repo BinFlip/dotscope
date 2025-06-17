@@ -1,13 +1,129 @@
 //! Analysis and representation of imported types and methods in .NET assemblies.
 //!
-//! This module provides types and logic for tracking all external dependencies (imports) of a .NET assembly,
-//! including methods and types imported from other assemblies, modules, or native DLLs. Used for dependency analysis,
-//! interop, and assembly resolution.
+//! This module provides comprehensive functionality for tracking and analyzing all external
+//! dependencies (imports) of a .NET assembly, including methods and types imported from other
+//! assemblies, modules, native DLLs, or file resources. Essential for dependency analysis,
+//! interoperability scenarios, and assembly resolution workflows.
 //!
-//! # Key Types
-//! - [`Import`] - Represents a method or type imported from another assembly or DLL
-//! - [`ImportType`] - Enum for method or type import
-//! - [`ImportSourceId`] - Enum for identifying the source of an import
+//! # Architecture
+//!
+//! The imports system uses a multi-index approach built on concurrent data structures for
+//! thread-safe access patterns. The architecture separates import classification, source
+//! tracking, and lookup optimization into distinct but integrated components.
+//!
+//! ## Core Design Principles
+//!
+//! - **Reference Cycle Prevention**: Token-based source identification avoids circular dependencies
+//! - **Multi-Index Strategy**: Separate indices for name, namespace, and source-based lookups
+//! - **Concurrent Safety**: Lock-free data structures for high-performance multi-threaded access
+//! - **Memory Efficiency**: Reference counting and weak references minimize memory overhead
+//!
+//! # Key Components
+//!
+//! ## Primary Types
+//!
+//! - [`crate::metadata::imports::Import`] - Individual imported entity with complete metadata
+//! - [`crate::metadata::imports::Imports`] - Main container with multi-index lookup capabilities
+//! - [`crate::metadata::imports::ImportType`] - Classification as method or type import
+//! - [`crate::metadata::imports::ImportSourceId`] - Token-based source identification
+//! - [`crate::metadata::imports::ImportContainer`] - Trait for source aggregation patterns
+//!
+//! ## Import Categories
+//!
+//! - **Type Imports**: External types from other .NET assemblies
+//! - **Method Imports**: Platform Invoke (P/Invoke) methods from native DLLs
+//! - **Module References**: Types and methods from separate compilation units
+//! - **File References**: Resources and embedded types from external files
+//!
+//! # Usage Examples
+//!
+//! ## Basic Import Analysis
+//!
+//! ```rust,no_run
+//! use dotscope::metadata::imports::{Imports, ImportType};
+//!
+//! let imports = Imports::new();
+//!
+//! // Find all imports from System namespace
+//! let system_imports = imports.by_namespace("System");
+//! for import in system_imports {
+//!     println!("System import: {}", import.fullname());
+//!     match &import.import {
+//!         ImportType::Type(cil_type) => println!("  Type: {}", cil_type.name),
+//!         ImportType::Method(method) => println!("  Method: {}", method.name),
+//!     }
+//! }
+//!
+//! // Find specific imported type
+//! if let Some(string_import) = imports.by_fullname("System.String") {
+//!     println!("Found String type from: {:?}", string_import.source_id);
+//! }
+//! ```
+//!
+//! ## Source-Based Analysis
+//!
+//! ```rust,no_run
+//! use dotscope::metadata::imports::{Imports, ImportContainer};
+//!
+//! let imports = Imports::new();
+//!
+//! # fn get_assembly_ref() -> std::sync::Arc<dotscope::metadata::tables::AssemblyRef> { todo!() }
+//! # fn get_module_ref() -> std::sync::Arc<dotscope::metadata::tables::ModuleRef> { todo!() }
+//! let system_core = get_assembly_ref(); // System.Core assembly reference
+//! let kernel32 = get_module_ref(); // kernel32.dll module reference
+//!
+//! // Get all imports from specific sources
+//! let core_imports = imports.from_assembly_ref(&system_core);
+//! let native_imports = imports.from_module_ref(&kernel32);
+//!
+//! println!("Imports from System.Core: {}", core_imports.len());
+//! println!("Native imports from kernel32: {}", native_imports.len());
+//! ```
+//!
+//! ## Comprehensive Import Enumeration
+//!
+//! ```rust,no_run
+//! use dotscope::metadata::imports::{Imports, ImportType};
+//!
+//! let imports = Imports::new();
+//!
+//! // Analyze all imports in the assembly
+//! for entry in &imports {
+//!     let import = entry.value();
+//!     println!("Import {} from {:?}", import.fullname(), import.source_id);
+//!     
+//!     match &import.import {
+//!         ImportType::Type(cil_type) => {
+//!             println!("  Type: {}.{}", cil_type.namespace, cil_type.name);
+//!         }
+//!         ImportType::Method(method) => {
+//!             println!("  P/Invoke Method: {}", method.name);
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//! # Integration
+//!
+//! The imports system integrates with other dotscope components:
+//! - [`crate::metadata::typesystem`] - Type resolution and external references
+//! - [`crate::metadata::method`] - Method body analysis and P/Invoke declarations
+//! - [`crate::metadata::tables`] - Metadata table navigation and token resolution
+//! - [`crate::CilObject`] - High-level assembly analysis and dependency tracking
+//!
+//! # Interoperability Support
+//!
+//! Special handling for Platform Invoke (P/Invoke) scenarios:
+//! - Native DLL method imports via [`crate::metadata::tables::ModuleRef`]
+//! - COM interop type imports from external assemblies  
+//! - Mixed-mode assembly dependencies and marshalling requirements
+//!
+//! # Thread Safety
+//!
+//! All operations are thread-safe using lock-free concurrent data structures:
+//! - [`crossbeam_skiplist::SkipMap`] for ordered token-based primary storage
+//! - [`dashmap::DashMap`] for high-performance index lookups
+//! - Reference counting enables safe sharing across threads without contention
 
 use std::sync::Arc;
 
@@ -27,53 +143,185 @@ use crate::{
 /// A reference to an `Import`
 pub type ImportRc = Arc<Import>;
 
-/// What is being imported
+/// Classification of what is being imported from external sources.
 ///
-/// Represents whether the import is a method or a type.
+/// Distinguishes between the two primary categories of imports in .NET assemblies:
+/// methods (typically from native DLLs via P/Invoke) and types (from other assemblies).
+/// This classification affects how the import is resolved and used at runtime.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use dotscope::metadata::imports::ImportType;
+///
+/// # fn process_import(import_type: &ImportType) {
+/// match import_type {
+///     ImportType::Method(method) => {
+///         println!("Native method import: {}", method.name);
+///         // Handle P/Invoke or COM method
+///     }
+///     ImportType::Type(cil_type) => {
+///         println!("Type import: {}.{}", cil_type.namespace, cil_type.name);
+///         // Handle cross-assembly type reference
+///     }
+/// }
+/// # }
+/// ```
 pub enum ImportType {
-    /// Importing a Method
+    /// Importing a method from external source (typically native DLL via P/Invoke).
+    ///
+    /// Represents a method import, most commonly used for Platform Invoke (P/Invoke)
+    /// scenarios where managed code calls into native libraries. The method reference
+    /// contains signature information, calling conventions, and marshalling details.
     Method(MethodRc),
-    /// Importing a Type
+
+    /// Importing a type from external assembly or module.
+    ///
+    /// Represents a type import from another .NET assembly, module, or file. This
+    /// includes classes, interfaces, value types, and enums that are defined externally
+    /// but referenced by the current assembly. Used for cross-assembly type resolution.
     Type(CilTypeRc),
 }
 
-/// An import source identifier - internally used to track where imports come from
-/// without creating reference cycles.
+/// Import source identifier for tracking origins without reference cycles.
+///
+/// Provides a lightweight way to identify where imports originate from without
+/// creating strong references that could lead to reference cycles. Each variant
+/// stores only the token of the source entity, allowing the import system to
+/// group and query imports by source while maintaining clean memory management.
+///
+/// # Design Rationale
+///
+/// Using token-based identification instead of direct references:
+/// - **Prevents Reference Cycles**: Avoids circular dependencies between imports and sources
+/// - **Memory Efficient**: Stores only 4-byte tokens instead of full object references
+/// - **Enables Grouping**: Efficient queries for all imports from specific sources
+/// - **Thread Safe**: Tokens are copyable and don't require synchronization
+///
+/// # Source Categories
+///
+/// - **Module/ModuleRef**: Types and methods from separate compilation units
+/// - **AssemblyRef**: Types from external .NET assemblies
+/// - **File**: Resources and types from external files
+/// - **TypeRef**: Nested types under other type references
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use dotscope::metadata::imports::ImportSourceId;
+/// use dotscope::metadata::token::Token;
+///
+/// // Create source identifiers
+/// let module_source = ImportSourceId::Module(Token::new(0x00000001));
+/// let assembly_source = ImportSourceId::AssemblyRef(Token::new(0x23000001));
+/// let file_source = ImportSourceId::File(Token::new(0x26000001));
+///
+/// // Use in grouping operations
+/// let sources = vec![module_source, assembly_source, file_source];
+/// for source in sources {
+///     println!("Processing imports from: {:?}", source);
+/// }
+/// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Debug)]
 pub enum ImportSourceId {
-    /// Import from a module (by token)
+    /// Import from a module within the same assembly (by metadata token).
     Module(Token),
-    /// Import from a module reference (by token)
+    /// Import from a module reference to external module (by metadata token).
     ModuleRef(Token),
-    /// Import from an assembly reference (by token)
+    /// Import from an assembly reference to external assembly (by metadata token).
     AssemblyRef(Token),
-    /// Import from a file (by token)
+    /// Import from a file reference to external file (by metadata token).
     File(Token),
-    /// Import from a type reference (by token)
+    /// Import from a type reference for nested types (by metadata token).
     TypeRef(Token),
-    /// No source (internal use)
+    /// No specific source identified (internal use).
     None,
 }
 
-/// A `Method` or `Type` that is imported from another .NET Assembly or a native dll.
+/// A method or type imported from external .NET assembly or native DLL.
 ///
-/// This struct contains all metadata about an import, including its name, namespace, type, and source.
-/// Used for dependency analysis, interop, and assembly resolution.
+/// Represents a single import entity with complete metadata about its origin, type,
+/// and naming information. This structure provides all necessary information for
+/// resolving dependencies, performing interop operations, and analyzing assembly
+/// relationships.
+///
+/// # Structure
+///
+/// Each import contains:
+/// - **Identity**: Token and name information for resolution
+/// - **Classification**: Whether it's a method or type import
+/// - **Source Tracking**: Where the import originates from
+/// - **Namespace**: For organized lookup and grouping
+///
+/// # Use Cases
+///
+/// - **Dependency Analysis**: Understanding external dependencies
+/// - **P/Invoke Resolution**: Mapping managed calls to native methods
+/// - **Type Loading**: Resolving external type references
+/// - **Assembly Binding**: Determining required assemblies at runtime
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use dotscope::metadata::imports::{Import, ImportType};
+///
+/// # fn process_import(import: &Import) {
+/// // Examine the import details
+/// println!("Import: {} (Token: {})", import.fullname(), import.token);
+/// println!("Source: {:?}", import.source_id);
+///
+/// match &import.import {
+///     ImportType::Type(cil_type) => {
+///         println!("Type import: {}", cil_type.name);
+///         // Handle cross-assembly type reference
+///     }
+///     ImportType::Method(method) => {
+///         println!("Method import: {}", method.name);
+///         // Handle P/Invoke or COM method
+///     }
+/// }
+/// # }
+/// ```
 pub struct Import {
-    /// The token of this import
+    /// The metadata token identifying this import in the assembly.
     pub token: Token,
-    /// The name of the import (can be different from native export name)
+    /// The name of the imported entity (may differ from original export name).
     pub name: String,
-    /// The namespace of the import (can be empty)
+    /// The namespace of the imported entity (empty for global namespace).
     pub namespace: String,
-    /// The method or type being imported
+    /// The specific method or type being imported.
     pub import: ImportType,
-    /// From which source the import comes from (by ID rather than reference)
+    /// Identifier for the source of this import (avoids reference cycles).
     pub source_id: ImportSourceId,
 }
 
 impl Import {
-    /// Return the entity's full name (namespace.name)
+    /// Return the entity's fully qualified name (namespace.name).
+    ///
+    /// Constructs the full name by combining namespace and name components.
+    /// For entities in the global namespace (empty namespace), returns only the name.
+    /// This format matches the standard .NET type naming conventions.
+    ///
+    /// # Returns
+    /// - `"namespace.name"` if namespace is non-empty
+    /// - `"name"` if namespace is empty or global
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use dotscope::metadata::imports::Import;
+    /// # use dotscope::metadata::token::Token;
+    /// # use dotscope::metadata::imports::{ImportType, ImportSourceId};
+    /// # fn example() {
+    /// // Example: System.String type import
+    /// // let import = ...;  // constructed from metadata
+    /// // assert_eq!(import.fullname(), "System.String");
+    ///
+    /// // Example: Global namespace method
+    /// // let global_import = ...;  // constructed from metadata
+    /// // assert_eq!(global_import.fullname(), "GlobalFunction");
+    /// # }
+    /// ```
     #[must_use]
     pub fn fullname(&self) -> String {
         if self.namespace.is_empty() {
@@ -84,30 +332,172 @@ impl Import {
     }
 }
 
-/// Represents all externally imported `Method` or `CilType`
+/// Container for all imported types and methods in a .NET assembly.
 ///
-/// This struct provides efficient lookup and grouping of all imports in an assembly, supporting queries by name,
-/// namespace, source, and more. Used for dependency analysis and interop.
+/// The `Imports` container provides efficient storage, lookup, and analysis capabilities for
+/// all external dependencies imported by a .NET assembly. It maintains multiple concurrent
+/// indices to support different query patterns while ensuring thread-safe access for
+/// multi-threaded metadata processing scenarios.
+///
+/// # Architecture
+///
+/// ## Multi-Index Strategy
+/// - **Primary Storage**: Token-based ordering using [`crossbeam_skiplist::SkipMap`]
+/// - **Name Indices**: Fast lookup by simple name and fully-qualified name
+/// - **Namespace Index**: Efficient grouping of imports by namespace
+/// - **Source Index**: Imports grouped by originating assembly, module, or file
+///
+/// ## Concurrent Design
+/// All operations are lock-free using concurrent data structures:
+/// - Primary storage supports concurrent reads and writes
+/// - Index updates are atomic and consistent
+/// - Reference counting enables safe sharing across threads
+///
+/// # Import Categories
+///
+/// The container handles multiple types of imports:
+/// - **Type Imports**: Classes, interfaces, value types from external assemblies
+/// - **Method Imports**: P/Invoke methods from native DLLs
+/// - **Module Imports**: Types and methods from separate modules
+/// - **File Imports**: Resources and types from external files
+///
+/// # Usage Examples
+///
+/// ## Basic Container Operations
+///
+/// ```rust,no_run
+/// use dotscope::metadata::imports::Imports;
+///
+/// let imports = Imports::new();
+/// println!("Empty container has {} imports", imports.len());
+/// assert!(imports.is_empty());
+///
+/// // Container will be populated during assembly parsing
+/// // ...parsing logic adds imports...
+///
+/// if !imports.is_empty() {
+///     println!("Found {} total imports", imports.len());
+/// }
+/// ```
+///
+/// ## Name-Based Lookups
+///
+/// ```rust,no_run
+/// use dotscope::metadata::imports::Imports;
+///
+/// let imports = Imports::new();
+///
+/// // Find first import with specific name
+/// if let Some(string_import) = imports.by_name("String") {
+///     println!("Found String import: {}", string_import.fullname());
+/// }
+///
+/// // Find all imports with same name (handles conflicts)
+/// let list_imports = imports.all_by_name("List");
+/// for import in list_imports {
+///     println!("List import: {} from {:?}", import.fullname(), import.source_id);
+/// }
+///
+/// // Find by fully-qualified name
+/// if let Some(specific_import) = imports.by_fullname("System.Collections.Generic.List") {
+///     println!("Found specific List type");
+/// }
+/// ```
+///
+/// ## Namespace and Source Analysis
+///
+/// ```rust,no_run
+/// use dotscope::metadata::imports::{Imports, ImportContainer};
+///
+/// let imports = Imports::new();
+///
+/// // Analyze imports by namespace
+/// let system_imports = imports.by_namespace("System");
+/// println!("System namespace has {} imports", system_imports.len());
+///
+/// # fn get_assembly_ref() -> std::sync::Arc<dotscope::metadata::tables::AssemblyRef> { todo!() }
+/// let mscorlib = get_assembly_ref(); // mscorlib assembly reference
+/// let mscorlib_imports = imports.from_assembly_ref(&mscorlib);
+/// println!("mscorlib provides {} imports", mscorlib_imports.len());
+/// ```
+///
+/// ## Comprehensive Analysis
+///
+/// ```rust,no_run
+/// use dotscope::metadata::imports::{Imports, ImportType};
+///
+/// let imports = Imports::new();
+///
+/// // Analyze all imports with detailed classification
+/// for entry in &imports {
+///     let import = entry.value();
+///     match &import.import {
+///         ImportType::Type(cil_type) => {
+///             println!("Type Import: {}.{} from {:?}",
+///                      cil_type.namespace, cil_type.name, import.source_id);
+///         }
+///         ImportType::Method(method) => {
+///             println!("Method Import: {} from {:?}",
+///                      method.name, import.source_id);
+///         }
+///     }
+/// }
+/// ```
+///
+/// # Source Registration
+///
+/// The container tracks import sources to enable efficient source-based queries:
+/// - Assembly references are automatically registered when types are added
+/// - Module references are registered when methods are imported
+/// - File references are tracked for resource-based imports
+/// - Source tracking uses weak references to prevent circular dependencies
+///
+/// # Thread Safety
+///
+/// All operations are thread-safe and lock-free:
+/// - Multiple threads can add imports concurrently
+/// - Lookups can proceed while additions are in progress
+/// - Iterator consistency is maintained across concurrent modifications
+/// - Reference counting ensures safe access to imported entities
 pub struct Imports {
-    // Primary storage - token to import mapping
+    /// Primary storage - token to import mapping
     data: SkipMap<Token, ImportRc>,
 
-    // Indices for efficient lookup
+    /// Index for lookup by simple name
     by_name: DashMap<String, Vec<Token>>,
+    /// Index for lookup by full qualified name
     by_fullname: DashMap<String, Vec<Token>>,
+    /// Index for lookup by namespace
     by_namespace: DashMap<String, Vec<Token>>,
 
-    // Group imports by their source
+    /// Group imports by their source assembly/module
     by_source: DashMap<ImportSourceId, Vec<Token>>,
 
+    /// Module instances indexed by token
     modules: DashMap<Token, Arc<Module>>,
+    /// Module reference instances indexed by token
     module_refs: DashMap<Token, Arc<ModuleRef>>,
+    /// Assembly reference instances indexed by token
     assembly_refs: DashMap<Token, Arc<AssemblyRef>>,
+    /// File instances indexed by token
     files: DashMap<Token, Arc<File>>,
 }
 
 impl Imports {
-    /// Create a new instance of `Imports`
+    /// Create a new empty imports container.
+    ///
+    /// Initializes all internal data structures for efficient concurrent access.
+    /// The container is immediately ready for import registration and lookup operations.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::imports::Imports;
+    ///
+    /// let imports = Imports::new();
+    /// assert!(imports.is_empty());
+    /// assert_eq!(imports.len(), 0);
+    /// ```
     #[must_use]
     pub fn new() -> Self {
         Imports {
@@ -123,8 +513,33 @@ impl Imports {
         }
     }
 
-    /// Register an entity that can own imports
-    /// This creates a weak reference to avoid circular dependencies
+    /// Register a source entity for import tracking.
+    ///
+    /// Creates internal tracking for entities that can provide imports, enabling
+    /// efficient source-based queries. This registration uses weak references to
+    /// prevent circular dependencies between imports and their sources.
+    ///
+    /// # Arguments
+    /// * `source` - The source entity to register for import tracking
+    ///
+    /// # Supported Sources
+    /// - [`crate::metadata::typesystem::CilTypeReference::Module`] - Internal modules
+    /// - [`crate::metadata::typesystem::CilTypeReference::ModuleRef`] - External module references
+    /// - [`crate::metadata::typesystem::CilTypeReference::AssemblyRef`] - External assembly references
+    /// - [`crate::metadata::typesystem::CilTypeReference::File`] - External file references
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::imports::Imports;
+    /// use dotscope::metadata::typesystem::CilTypeReference;
+    ///
+    /// let imports = Imports::new();
+    ///
+    /// # fn get_assembly_ref() -> CilTypeReference { todo!() }
+    /// let assembly_ref = get_assembly_ref();
+    /// imports.register_source(&assembly_ref);
+    /// ```
     pub fn register_source(&self, source: &CilTypeReference) {
         match source {
             CilTypeReference::Module(module) => {
@@ -147,13 +562,47 @@ impl Imports {
         }
     }
 
-    /// Insert a new `CilType` to be tracked as import
+    /// Add a type as an import from external source.
     ///
-    /// ## Arguments
-    /// * `cil_type` - The type to add as an import
+    /// Registers a [`crate::metadata::typesystem::CilType`] as an imported type, creating all
+    /// necessary index entries for efficient lookup. The type must have an external reference
+    /// to be considered an import; internal types are ignored.
+    ///
+    /// # Arguments
+    /// * `cil_type` - The type to register as an import
+    ///
+    /// # Import Processing
+    /// 1. Validates the type has an external reference
+    /// 2. Creates appropriate source identifier
+    /// 3. Registers the source entity if needed
+    /// 4. Updates all lookup indices
+    /// 5. Handles special cases (TypeRef nesting)
+    ///
+    /// # Special Handling
+    /// - **TypeRef**: Nested types are added to parent's nested collection, not tracked as imports
+    /// - **Source Registration**: External sources are automatically registered for tracking
+    /// - **Index Updates**: All name, namespace, and source indices are updated atomically
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::imports::Imports;
+    ///
+    /// let imports = Imports::new();
+    ///
+    /// # fn get_external_type() -> std::sync::Arc<dotscope::metadata::typesystem::CilType> { todo!() }
+    /// let external_type = get_external_type(); // Type with external reference
+    /// imports.add_type(&external_type)?;
+    ///
+    /// println!("Added import: {}", external_type.name);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     ///
     /// # Errors
-    /// Returns an error if the external reference type is invalid or if source registration fails.
+    /// Returns [`crate::Error`] if:
+    /// - External reference type is invalid or unrecognized
+    /// - Source registration fails
+    /// - Internal data structure operations fail
     pub fn add_type(&self, cil_type: &CilTypeRc) -> Result<()> {
         if let Some(external) = &cil_type.external {
             // Create the source ID from the external reference
@@ -197,17 +646,57 @@ impl Imports {
         }
     }
 
-    /// Insert a new `MethodDef` to be tracked as import
+    /// Add a method as an import from external module.
     ///
-    /// ## Arguments
-    /// * 'name'    - The name of the imported method
-    /// * 'token'   - The token under which this method is imported
-    /// * 'method'  - The method definition
-    /// * 'module'  - The source module of the import
+    /// Registers a Platform Invoke (P/Invoke) method or other external method as an import.
+    /// This is typically used for native DLL methods that are called from managed code
+    /// through P/Invoke declarations.
+    ///
+    /// # Arguments
+    /// * `name` - The imported name of the method (may differ from original export name)
+    /// * `token` - The metadata token identifying this import in the assembly
+    /// * `method` - The method definition containing signature and attributes
+    /// * `module` - The external module reference providing the method
+    ///
+    /// # Import Processing
+    /// 1. Creates module reference-based source identifier
+    /// 2. Registers the module for source tracking
+    /// 3. Creates import entry with method classification
+    /// 4. Updates all relevant lookup indices
+    ///
+    /// # Use Cases
+    /// - **P/Invoke Methods**: Native library functions called from managed code
+    /// - **COM Interop**: Methods from COM objects and interfaces
+    /// - **Mixed Mode**: Methods from C++/CLI assemblies
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::imports::Imports;
+    /// use dotscope::metadata::token::Token;
+    ///
+    /// let imports = Imports::new();
+    ///
+    /// # fn get_method() -> std::sync::Arc<dotscope::metadata::method::Method> { todo!() }
+    /// # fn get_module_ref() -> std::sync::Arc<dotscope::metadata::tables::ModuleRef> { todo!() }
+    /// let method = get_method();
+    /// let kernel32 = get_module_ref(); // kernel32.dll module reference
+    /// let token = Token::new(0x0A000001);
+    ///
+    /// imports.add_method(
+    ///     "GetProcessId".to_string(),
+    ///     &token,
+    ///     method,
+    ///     &kernel32
+    /// )?;
+    ///
+    /// println!("Added P/Invoke import: GetProcessId");
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     ///
     /// # Errors
-    /// This function currently does not return errors but is designed to be extensible
-    /// for future validation requirements.
+    /// Returns [`crate::Error`] if internal data structure operations fail.
+    /// Currently does not validate method signatures or module compatibility.
     pub fn add_method(
         &self,
         name: String,
@@ -265,27 +754,117 @@ impl Imports {
         self.data.insert(import_rc.token, import_rc);
     }
 
-    /// Get the number of total imports
+    /// Get the total number of imports in the container.
+    ///
+    /// Returns the count of all registered imports, including both type and method imports.
+    /// This operation is O(1) as the underlying skip map maintains an internal count.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::imports::Imports;
+    ///
+    /// let imports = Imports::new();
+    /// assert_eq!(imports.len(), 0);
+    ///
+    /// // After adding imports...
+    /// # fn add_some_imports(imports: &Imports) {}
+    /// add_some_imports(&imports);
+    /// println!("Container now has {} imports", imports.len());
+    /// ```
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
-    /// Returns true if there are no imports
+    /// Check if the container has no imports.
+    ///
+    /// Returns `true` if no imports have been registered, `false` otherwise.
+    /// Equivalent to `self.len() == 0` but may be more semantically clear.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::imports::Imports;
+    ///
+    /// let imports = Imports::new();
+    /// assert!(imports.is_empty());
+    ///
+    /// # fn add_import(imports: &Imports) -> dotscope::Result<()> { Ok(()) }
+    /// add_import(&imports)?;
+    /// assert!(!imports.is_empty());
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
 
-    /// Get an iterator over all imports.
+    /// Get an iterator over all imports in the container.
     ///
-    /// Returns an iterator that yields tuples of (Token, `ImportRc`) for each import.
+    /// Returns an iterator that yields [`crossbeam_skiplist::map::Entry`] instances,
+    /// each containing a ([`crate::metadata::token::Token`], [`crate::metadata::imports::ImportRc`]) pair.
+    /// The iteration order is sorted by token value due to the skip map's ordering properties.
+    ///
+    /// # Iterator Properties
+    /// - **Ordering**: Imports are yielded in ascending token order
+    /// - **Consistency**: Safe to use during concurrent modifications
+    /// - **Performance**: Efficient traversal with minimal overhead
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::imports::{Imports, ImportType};
+    ///
+    /// let imports = Imports::new();
+    ///
+    /// // Analyze all imports with classification
+    /// for entry in imports.iter() {
+    ///     let token = entry.key();
+    ///     let import = entry.value();
+    ///     
+    ///     match &import.import {
+    ///         ImportType::Type(cil_type) => {
+    ///             println!("Type Import {}: {}.{}", token, cil_type.namespace, cil_type.name);
+    ///         }
+    ///         ImportType::Method(method) => {
+    ///             println!("Method Import {}: {}", token, method.name);
+    ///         }
+    ///     }
+    /// }
+    /// ```
     pub fn iter(&self) -> crossbeam_skiplist::map::Iter<Token, ImportRc> {
         self.data.iter()
     }
 
-    /// Get an `Import` by name
+    /// Find the first import with the specified name.
     ///
-    /// ## Arguments
-    /// * 'name' - The imported name to look for (method name or type name)
+    /// Performs efficient lookup for imports by their simple name (without namespace).
+    /// If multiple imports have the same name, returns the first one found. Use
+    /// [`Self::all_by_name`] to get all imports with the same name.
+    ///
+    /// # Arguments
+    /// * `name` - The simple name to search for (case-sensitive)
+    ///
+    /// # Returns
+    /// The first [`crate::metadata::imports::ImportRc`] with matching name, or `None` if not found.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::imports::Imports;
+    ///
+    /// let imports = Imports::new();
+    ///
+    /// // Find any import named "String"
+    /// if let Some(string_import) = imports.by_name("String") {
+    ///     println!("Found String import: {}", string_import.fullname());
+    /// }
+    ///
+    /// // Handle case where name doesn't exist
+    /// match imports.by_name("NonExistent") {
+    ///     Some(import) => println!("Found: {}", import.fullname()),
+    ///     None => println!("No import found with that name"),
+    /// }
+    /// ```
     pub fn by_name(&self, name: &str) -> Option<ImportRc> {
         if let Some(tokens) = self.by_name.get(name) {
             if !tokens.is_empty() {
@@ -297,10 +876,36 @@ impl Imports {
         None
     }
 
-    /// Get all `Import`s by name
+    /// Find all imports with the specified name.
     ///
-    /// ## Arguments
-    /// * 'name' - The imported name to look for (method name or type name)
+    /// Returns all imports that have the given simple name, regardless of namespace.
+    /// This is useful when there are name collisions between imports from different
+    /// sources or namespaces.
+    ///
+    /// # Arguments
+    /// * `name` - The simple name to search for (case-sensitive)
+    ///
+    /// # Returns
+    /// A [`Vec`] of [`crate::metadata::imports::ImportRc`] containing all matching imports.
+    /// Empty vector if no matches are found.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::imports::Imports;
+    ///
+    /// let imports = Imports::new();
+    ///
+    /// // Find all imports named "Point" (might be from different namespaces)
+    /// let point_imports = imports.all_by_name("Point");
+    /// for import in point_imports {
+    ///     println!("Point import: {} from {:?}", import.fullname(), import.source_id);
+    /// }
+    ///
+    /// // Handle empty results
+    /// let missing_imports = imports.all_by_name("NonExistent");
+    /// assert!(missing_imports.is_empty());
+    /// ```
     pub fn all_by_name(&self, name: &str) -> Vec<ImportRc> {
         if let Some(tokens) = self.by_name.get(name) {
             return tokens
@@ -311,10 +916,38 @@ impl Imports {
         Vec::new()
     }
 
-    /// Get an `Import` by full name (namespace.name)
+    /// Find import by fully-qualified name.
     ///
-    /// ## Arguments
-    /// * 'name' - The imported name to look for
+    /// Performs efficient lookup using the complete namespace-qualified name.
+    /// This provides precise matching when you know the exact full name of the import.
+    ///
+    /// # Arguments
+    /// * `name` - The fully-qualified name (e.g., "System.Collections.Generic.List")
+    ///
+    /// # Returns
+    /// The first [`crate::metadata::imports::ImportRc`] with matching full name, or `None` if not found.
+    ///
+    /// # Name Format
+    /// - **With Namespace**: "Namespace.TypeName" or "Namespace.Subnamespace.TypeName"
+    /// - **Global Namespace**: Just "TypeName" for imports in the global namespace
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::imports::Imports;
+    ///
+    /// let imports = Imports::new();
+    ///
+    /// // Find specific type by full name
+    /// if let Some(list_import) = imports.by_fullname("System.Collections.Generic.List") {
+    ///     println!("Found List import from: {:?}", list_import.source_id);
+    /// }
+    ///
+    /// // Find global namespace import
+    /// if let Some(global_import) = imports.by_fullname("GlobalFunction") {
+    ///     println!("Found global import: {}", global_import.name);
+    /// }
+    /// ```
     pub fn by_fullname(&self, name: &str) -> Option<ImportRc> {
         if let Some(tokens) = self.by_fullname.get(name) {
             if !tokens.is_empty() {
@@ -340,10 +973,44 @@ impl Imports {
         Vec::new()
     }
 
-    /// Get all `Import`s by namespace
+    /// Find all imports in the specified namespace.
     ///
-    /// ## Arguments
-    /// * 'namespace' - The namespace to look for
+    /// Returns all imports that belong to the given namespace, enabling analysis
+    /// of imports organized by their namespace hierarchy. Useful for understanding
+    /// dependencies on specific namespaces or libraries.
+    ///
+    /// # Arguments
+    /// * `namespace` - The namespace to search in (case-sensitive)
+    ///
+    /// # Returns
+    /// A [`Vec`] of [`crate::metadata::imports::ImportRc`] containing all imports in the namespace.
+    /// Empty vector if the namespace contains no imports.
+    ///
+    /// # Namespace Matching
+    /// - **Exact Match**: Only imports with exactly matching namespace are returned
+    /// - **Case Sensitive**: Namespace comparison is case-sensitive
+    /// - **No Hierarchy**: Subnamespaces are not included (e.g., "System" won't include "System.IO")
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::imports::Imports;
+    ///
+    /// let imports = Imports::new();
+    ///
+    /// // Find all System namespace imports
+    /// let system_imports = imports.by_namespace("System");
+    /// println!("System namespace has {} imports", system_imports.len());
+    /// for import in system_imports {
+    ///     println!("  {}", import.name);
+    /// }
+    ///
+    /// // Find specific sub-namespace imports
+    /// let collections_imports = imports.by_namespace("System.Collections.Generic");
+    /// for import in collections_imports {
+    ///     println!("Collections import: {}", import.fullname());
+    /// }
+    /// ```
     pub fn by_namespace(&self, namespace: &str) -> Vec<ImportRc> {
         if let Some(tokens) = self.by_namespace.get(namespace) {
             return tokens
@@ -408,11 +1075,77 @@ impl<'a> IntoIterator for &'a Imports {
     }
 }
 
-/// Trait for types that can have imports
+/// Trait for entities that can provide or aggregate imports.
 ///
-/// Implement this trait for any type that can own or aggregate imports.
+/// This trait enables different types of import sources (assemblies, modules, files)
+/// to provide a unified interface for retrieving their associated imports. It supports
+/// the source-based analysis patterns common in dependency analysis and interop scenarios.
+///
+/// # Design Purpose
+///
+/// The trait serves multiple purposes:
+/// - **Unified Interface**: Different source types can be queried uniformly
+/// - **Source Analysis**: Easy aggregation of imports by their originating entity
+/// - **Dependency Tracking**: Understanding what each source contributes to the assembly
+/// - **Modularity**: New source types can implement the trait without changing core logic
+///
+/// # Implementation Strategy
+///
+/// Implementors typically:
+/// 1. Create an appropriate [`crate::metadata::imports::ImportSourceId`] from their token
+/// 2. Query the imports container using the source ID
+/// 3. Return the filtered collection of imports
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use dotscope::metadata::imports::{Imports, ImportContainer};
+///
+/// let imports = Imports::new();
+///
+/// # fn get_assembly_ref() -> std::sync::Arc<dotscope::metadata::tables::AssemblyRef> { todo!() }
+/// let mscorlib = get_assembly_ref(); // Assembly reference
+///
+/// // Use the trait to get imports from this source
+/// let mscorlib_imports = mscorlib.get_imports(&imports);
+/// println!("mscorlib provides {} imports", mscorlib_imports.len());
+///
+/// for import in mscorlib_imports {
+///     println!("  {}", import.fullname());
+/// }
+/// ```
+///
+/// # Implementing the Trait
+///
+/// ```rust,no_run
+/// use dotscope::metadata::imports::{ImportContainer, Imports, ImportRc, ImportSourceId};
+/// use dotscope::metadata::token::Token;
+///
+/// struct CustomSource {
+///     token: Token,
+/// }
+///
+/// impl ImportContainer for CustomSource {
+///     fn get_imports(&self, imports: &Imports) -> Vec<ImportRc> {
+///         // Implementation would use appropriate public methods
+///         // to find imports from this source
+///         Vec::new() // placeholder
+///     }
+/// }
+/// ```
 pub trait ImportContainer {
-    /// Get all imports from this container
+    /// Get all imports provided by this source entity.
+    ///
+    /// Returns a collection of all imports that originate from this specific source.
+    /// The implementation should query the imports container using an appropriate
+    /// source identifier derived from the entity's metadata token.
+    ///
+    /// # Arguments
+    /// * `imports` - The imports container to query
+    ///
+    /// # Returns
+    /// A [`Vec`] of [`crate::metadata::imports::ImportRc`] containing all imports from this source.
+    /// Empty vector if this source provides no imports.
     fn get_imports(&self, imports: &Imports) -> Vec<ImportRc>;
 }
 

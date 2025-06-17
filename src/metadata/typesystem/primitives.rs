@@ -1,3 +1,95 @@
+//! .NET primitive types and constant value handling.
+//!
+//! This module provides comprehensive support for .NET's built-in primitive types and their
+//! constant values. It handles the mapping between ECMA-335 element types and Rust representations,
+//! providing type-safe conversions and value operations.
+//!
+//! # Key Components
+//!
+//! - [`CilPrimitive`] - Complete primitive type with optional constant data
+//! - [`CilPrimitiveKind`] - Enumeration of all .NET primitive types
+//! - [`CilPrimitiveData`] - Type-safe storage for constant primitive values
+//!
+//! # Primitive Type System
+//!
+//! The .NET runtime supports a rich set of primitive types that map directly to hardware
+//! and language constructs. This module provides a unified representation for:
+//!
+//! - **Numeric types**: Signed/unsigned integers (8, 16, 32, 64-bit), floating point (32, 64-bit)
+//! - **Character types**: Unicode characters and strings
+//! - **Platform types**: Native integers (pointer-sized)
+//! - **Special types**: Boolean, void, object references
+//! - **Generic types**: Type and method parameters (var, mvar)
+//!
+//! # ECMA-335 Compliance
+//!
+//! All primitive types conform to the ECMA-335 standard specification:
+//! - Element type constants (§II.23.1.16)
+//! - Value encoding and decoding (§II.24.2.6)
+//! - Type compatibility rules (§III.1.1.1)
+//!
+//! # Examples
+//!
+//! ## Creating Primitive Constants
+//!
+//! ```rust,no_run
+//! use dotscope::metadata::typesystem::{CilPrimitive, CilPrimitiveKind, CilPrimitiveData};
+//!
+//! // Create a boolean constant
+//! let bool_const = CilPrimitive::boolean(true);
+//!
+//! // Create an integer constant (i32 uses i4 method)
+//! let int_const = CilPrimitive::i4(42);
+//!
+//! // Create a string constant  
+//! let str_const = CilPrimitive::string("Hello, World!");
+//! ```
+//!
+//! ## Type Conversions
+//!
+//! ```rust,no_run
+//! use dotscope::metadata::typesystem::{CilPrimitive, CilPrimitiveData};
+//!
+//! let primitive = CilPrimitive::i4(42);
+//!
+//! // Convert to different representations
+//! if let Some(as_bool) = primitive.data.as_boolean() {
+//!     println!("As boolean: {}", as_bool); // true (non-zero)
+//! }
+//!
+//! if let Some(as_float) = primitive.data.as_f64() {
+//!     println!("As float: {}", as_float); // 42.0
+//! }
+//! ```
+//!
+//! ## Parsing from Metadata
+//!
+//! ```rust,no_run
+//! use dotscope::metadata::typesystem::{CilPrimitiveData, ELEMENT_TYPE};
+//!
+//! // Parse a 32-bit integer from metadata bytes
+//! let bytes = [42, 0, 0, 0]; // Little-endian 42
+//! let data = CilPrimitiveData::from_bytes(ELEMENT_TYPE::I4, &bytes)?;
+//!
+//! match data {
+//!     CilPrimitiveData::I4(value) => println!("Parsed: {}", value),
+//!     _ => unreachable!(),
+//! }
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! # Thread Safety
+//!
+//! All types in this module are `Send` and `Sync`, making them safe for concurrent access.
+//! Primitive values are immutable after creation, eliminating race conditions.
+//!
+//! # Performance
+//!
+//! - Primitive operations are zero-cost abstractions where possible
+//! - Memory layout is optimized for cache efficiency
+//! - Conversion methods avoid unnecessary allocations
+//! - Token generation uses compile-time constants
+
 use std::{convert::TryFrom, fmt};
 
 use crate::{
@@ -10,48 +102,97 @@ use crate::{
     Result,
 };
 
-/// Type for raw constant data (used in various primitive types)
+/// Type-safe storage for constant primitive values.
+///
+/// `CilPrimitiveData` provides a unified storage mechanism for all .NET primitive constant
+/// values. It handles the full range of primitive types from the ECMA-335 specification
+/// and provides safe conversion methods between different representations.
+///
+/// # Memory Layout
+///
+/// The enum is designed to minimize memory usage while maintaining type safety.
+/// Each variant stores only the necessary data for its specific type.
+///
+/// # Thread Safety
+///
+/// All variants are `Send` and `Sync`, making them safe for concurrent access.
+/// Values are immutable after creation.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use dotscope::metadata::typesystem::CilPrimitiveData;
+///
+/// // Create different primitive values
+/// let bool_val = CilPrimitiveData::Boolean(true);
+/// let int_val = CilPrimitiveData::I4(42);
+/// let str_val = CilPrimitiveData::String("test".to_string());
+///
+/// // Convert between types safely
+/// assert_eq!(bool_val.as_i32(), Some(1));
+/// assert_eq!(int_val.as_f64(), Some(42.0));
+/// ```
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum CilPrimitiveData {
-    /// No data (for void, null, etc.)
+    /// No data - used for void types, null references, and uninitialized values
     #[default]
     None,
-    /// Boolean value
+    /// Boolean value - System.Boolean (true/false)
     Boolean(bool),
-    /// Character value
+    /// Unicode character - System.Char (UTF-16 code unit)
     Char(char),
-    /// 8-bit signed integer
+    /// Signed 8-bit integer - System.SByte (-128 to 127)
     I1(i8),
-    /// 8-bit unsigned integer
+    /// Unsigned 8-bit integer - System.Byte (0 to 255)
     U1(u8),
-    /// 16-bit signed integer
+    /// Signed 16-bit integer - System.Int16 (-32,768 to 32,767)
     I2(i16),
-    /// 16-bit unsigned integer
+    /// Unsigned 16-bit integer - System.UInt16 (0 to 65,535)
     U2(u16),
-    /// 32-bit signed integer
+    /// Signed 32-bit integer - System.Int32 (-2^31 to 2^31-1)
     I4(i32),
-    /// 32-bit unsigned integer
+    /// Unsigned 32-bit integer - System.UInt32 (0 to 2^32-1)
     U4(u32),
-    /// 64-bit signed integer
+    /// Signed 64-bit integer - System.Int64 (-2^63 to 2^63-1)
     I8(i64),
-    /// 64-bit unsigned integer
+    /// Unsigned 64-bit integer - System.UInt64 (0 to 2^64-1)
     U8(u64),
-    /// platform usize
+    /// Platform-specific unsigned integer - System.UIntPtr (pointer-sized)
     U(usize),
-    /// platform isize
+    /// Platform-specific signed integer - System.IntPtr (pointer-sized)
     I(isize),
-    /// 32-bit floating point
+    /// 32-bit IEEE 754 floating point - System.Single
     R4(f32),
-    /// 64-bit floating point
+    /// 64-bit IEEE 754 floating point - System.Double
     R8(f64),
-    /// String value
+    /// Unicode string - System.String (UTF-16 encoded)
     String(String),
-    /// Raw bytes (for complex types)
+    /// Raw byte array - used for complex constants and blob data
     Bytes(Vec<u8>),
 }
 
 impl CilPrimitiveData {
-    /// Try to convert to a boolean value
+    /// Convert to a boolean value following .NET conversion rules.
+    ///
+    /// Implements the standard .NET conversion semantics where:
+    /// - Boolean values return their direct value
+    /// - Numeric values return `true` if non-zero, `false` if zero
+    /// - Other types return `None`
+    ///
+    /// # Returns
+    /// * `Some(bool)` - The converted boolean value
+    /// * `None` - If the value cannot be converted to boolean
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::typesystem::CilPrimitiveData;
+    ///
+    /// assert_eq!(CilPrimitiveData::Boolean(true).as_boolean(), Some(true));
+    /// assert_eq!(CilPrimitiveData::I4(42).as_boolean(), Some(true));
+    /// assert_eq!(CilPrimitiveData::I4(0).as_boolean(), Some(false));
+    /// assert_eq!(CilPrimitiveData::String("test".to_string()).as_boolean(), None);
+    /// ```
     #[must_use]
     pub fn as_boolean(&self) -> Option<bool> {
         match self {
@@ -64,7 +205,26 @@ impl CilPrimitiveData {
         }
     }
 
-    /// Try to convert to an integer value
+    /// Convert to a 32-bit signed integer with overflow handling.
+    ///
+    /// Performs safe conversion from various numeric types to `i32`, handling
+    /// potential overflow conditions gracefully. Floating point values are
+    /// truncated toward zero if they fit within the i32 range.
+    ///
+    /// # Returns
+    /// * `Some(i32)` - The converted integer value
+    /// * `None` - If the value cannot be converted or would overflow
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::typesystem::CilPrimitiveData;
+    ///
+    /// assert_eq!(CilPrimitiveData::Boolean(true).as_i32(), Some(1));
+    /// assert_eq!(CilPrimitiveData::U1(255).as_i32(), Some(255));
+    /// assert_eq!(CilPrimitiveData::R4(42.7).as_i32(), Some(42));
+    /// assert_eq!(CilPrimitiveData::U8(u64::MAX).as_i32(), None); // Overflow
+    /// ```
     #[must_use]
     pub fn as_i32(&self) -> Option<i32> {
         match self {
@@ -183,15 +343,45 @@ impl CilPrimitiveData {
         }
     }
 
-    /// Parse from raw bytes based on primitive type
+    /// Parse primitive constant data from raw metadata bytes.
     ///
-    /// ## Arguments
-    /// * `type_byte`   - The type byte to convert for
-    /// * `data`        - The data blob to parse for the value
+    /// Converts raw byte data from .NET metadata into the appropriate primitive type
+    /// according to ECMA-335 encoding rules. This method handles endianness conversion
+    /// and validates data length for each primitive type.
     ///
-    /// # Errors
-    /// Returns [`OutOfBounds`] if the data is too short for the specified type.
-    /// Returns [`Error`] for invalid string data or other parsing errors.
+    /// # Arguments
+    /// * `type_byte` - ELEMENT_TYPE constant identifying the primitive type
+    /// * `data` - Raw byte data containing the encoded value
+    ///
+    /// # Returns
+    /// * `Ok(CilPrimitiveData)` - Successfully parsed primitive value
+    /// * `Err(OutOfBounds)` - Data buffer too short for the specified type
+    /// * `Err(Error)` - Invalid data encoding or unsupported type
+    ///
+    /// # Encoding Format
+    ///
+    /// All multi-byte values are stored in little-endian format as per ECMA-335:
+    /// - Integers: Little-endian byte order
+    /// - Floating point: IEEE 754 format
+    /// - Strings: Length-prefixed UTF-8 or UTF-16
+    /// - Booleans: Single byte (0 = false, non-zero = true)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::typesystem::{CilPrimitiveData, ELEMENT_TYPE};
+    ///
+    /// // Parse a 32-bit integer (little-endian)
+    /// let bytes = [42, 0, 0, 0];
+    /// let value = CilPrimitiveData::from_bytes(ELEMENT_TYPE::I4, &bytes)?;
+    /// assert_eq!(value, CilPrimitiveData::I4(42));
+    ///
+    /// // Parse a boolean
+    /// let bool_bytes = [1];
+    /// let bool_val = CilPrimitiveData::from_bytes(ELEMENT_TYPE::BOOLEAN, &bool_bytes)?;
+    /// assert_eq!(bool_val, CilPrimitiveData::Boolean(true));
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn from_bytes(type_byte: u8, data: &[u8]) -> Result<Self> {
         match type_byte {
             ELEMENT_TYPE::BOOLEAN => {
@@ -249,68 +439,157 @@ impl CilPrimitiveData {
     }
 }
 
-/// Represents all primitive types in CIL/.NET with optional data
+/// Complete primitive type representation with optional constant data.
+///
+/// `CilPrimitive` combines a primitive type classification with optional constant data,
+/// providing a complete representation for both type information and literal values.
+/// This is commonly used for default values, constant fields, and literal expressions.
+///
+/// # Use Cases
+///
+/// - Constant field values in metadata
+/// - Default parameter values  
+/// - Literal values in custom attributes
+/// - Type system analysis and validation
+///
+/// # Thread Safety
+///
+/// `CilPrimitive` is `Send` and `Sync`, making it safe for concurrent access.
+/// All data is immutable after construction.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use dotscope::metadata::typesystem::{CilPrimitive, CilPrimitiveKind, CilPrimitiveData};
+///
+/// // Create a primitive with data
+/// let int_const = CilPrimitive::i4(42);
+/// assert_eq!(int_const.kind, CilPrimitiveKind::I4);
+/// assert_eq!(int_const.data, CilPrimitiveData::I4(42));
+///
+/// // Create a type-only primitive
+/// let void_type = CilPrimitive::new(CilPrimitiveKind::Void);
+/// assert_eq!(void_type.data, CilPrimitiveData::None);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct CilPrimitive {
-    /// The type of primitive
+    /// The primitive type classification
     pub kind: CilPrimitiveKind,
-    /// The actual data (if available)
+    /// Optional constant data for this primitive
     pub data: CilPrimitiveData,
 }
 
-/// Represents all primitive types in CIL/.NET (without data)
+/// Classification of all .NET primitive types from ECMA-335.
+///
+/// `CilPrimitiveKind` provides a complete enumeration of built-in .NET primitive types
+/// as defined in the ECMA-335 specification. Each variant corresponds to a specific
+/// System type and ELEMENT_TYPE constant.
+///
+/// # ECMA-335 Mapping
+///
+/// This enum directly maps to ELEMENT_TYPE constants (§II.23.1.16):
+/// - Numeric types (I1, U1, I2, U2, I4, U4, I8, U8, R4, R8)
+/// - Platform types (I, U for native integers)
+/// - Character and string types (CHAR, STRING)
+/// - Special types (VOID, BOOLEAN, OBJECT)
+/// - Generic parameters (VAR, MVAR)
+///
+/// # Artificial Tokens
+///
+/// Each primitive kind has an associated artificial token (0xF000_XXXX range)
+/// for use in type resolution and metadata table operations.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use dotscope::metadata::typesystem::CilPrimitiveKind;
+///
+/// // Common primitive types
+/// let int_type = CilPrimitiveKind::I4;    // System.Int32
+/// let bool_type = CilPrimitiveKind::Boolean; // System.Boolean
+/// let str_type = CilPrimitiveKind::String;   // System.String
+///
+/// // Get artificial token
+/// let token = int_type.token();
+/// println!("I4 token: 0x{:08X}", token.value());
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CilPrimitiveKind {
-    /// System.Void - represents no value
+    /// System.Void - represents no value or return type (ELEMENT_TYPE_VOID)
     Void,
-    /// System.Boolean - true/false value
+    /// System.Boolean - true/false value, single byte storage (ELEMENT_TYPE_BOOLEAN)
     Boolean,
-    /// System.Char - Unicode 16-bit character
+    /// System.Char - Unicode UTF-16 code unit, 16-bit value (ELEMENT_TYPE_CHAR)
     Char,
-    /// System.SByte - signed 8-bit integer
+    /// System.SByte - signed 8-bit integer (-128 to 127) (ELEMENT_TYPE_I1)
     I1,
-    /// System.Byte - unsigned 8-bit integer
+    /// System.Byte - unsigned 8-bit integer (0 to 255) (ELEMENT_TYPE_U1)
     U1,
-    /// System.Int16 - signed 16-bit integer
+    /// System.Int16 - signed 16-bit integer (-32,768 to 32,767) (ELEMENT_TYPE_I2)
     I2,
-    /// System.UInt16 - unsigned 16-bit integer
+    /// System.UInt16 - unsigned 16-bit integer (0 to 65,535) (ELEMENT_TYPE_U2)
     U2,
-    /// System.Int32 - signed 32-bit integer
+    /// System.Int32 - signed 32-bit integer (-2^31 to 2^31-1) (ELEMENT_TYPE_I4)
     I4,
-    /// System.UInt32 - unsigned 32-bit integer
+    /// System.UInt32 - unsigned 32-bit integer (0 to 2^32-1) (ELEMENT_TYPE_U4)
     U4,
-    /// System.Int64 - signed 64-bit integer
+    /// System.Int64 - signed 64-bit integer (-2^63 to 2^63-1) (ELEMENT_TYPE_I8)
     I8,
-    /// System.UInt64 - unsigned 64-bit integer
+    /// System.UInt64 - unsigned 64-bit integer (0 to 2^64-1) (ELEMENT_TYPE_U8)
     U8,
-    /// System.Single - 32-bit floating point
+    /// System.Single - 32-bit IEEE 754 floating point (ELEMENT_TYPE_R4)
     R4,
-    /// System.Double - 64-bit floating point
+    /// System.Double - 64-bit IEEE 754 floating point (ELEMENT_TYPE_R8)
     R8,
-    /// System.IntPtr - native sized signed integer
+    /// System.IntPtr - platform-specific signed integer (pointer-sized) (ELEMENT_TYPE_I)
     I,
-    /// System.UIntPtr - native sized unsigned integer
+    /// System.UIntPtr - platform-specific unsigned integer (pointer-sized) (ELEMENT_TYPE_U)
     U,
-    /// System.Object - base class for all reference types
+    /// System.Object - root of the .NET type hierarchy, all types derive from this (ELEMENT_TYPE_OBJECT)
     Object,
-    /// System.String - immutable string of Unicode characters
+    /// System.String - immutable sequence of UTF-16 characters (ELEMENT_TYPE_STRING)
     String,
-    /// Special value for null reference in constants
+    /// Null reference constant - used for null literal values in metadata
     Null,
-    /// System.TypedReference - type-safe pointer (used by compiler)
+    /// System.TypedReference - compiler-generated type for type-safe variable arguments
     TypedReference,
-    /// System.ValueType - base class for value types
+    /// System.ValueType - base class for all value types (structs, enums)
     ValueType,
-    /// Generic type parameter
+    /// Generic type parameter (T, U, etc.) from type definitions (ELEMENT_TYPE_VAR)
     Var,
-    /// Generic method parameter
+    /// Generic method parameter (T, U, etc.) from method definitions (ELEMENT_TYPE_MVAR)
     MVar,
-    /// A class object
+    /// General class reference - used for non-primitive reference types (ELEMENT_TYPE_CLASS)
     Class,
 }
 
 impl CilPrimitiveKind {
-    /// Get the token for this type
+    /// Get the artificial token for this primitive type.
+    ///
+    /// Returns a unique artificial token in the 0xF000_XXXX range that can be used
+    /// to represent this primitive type in metadata operations and type resolution.
+    /// These tokens do not correspond to actual metadata table entries but provide
+    /// a consistent identifier for primitive types.
+    ///
+    /// # Token Range
+    ///
+    /// All primitive tokens use the artificial range 0xF000_0001 to 0xF000_0017,
+    /// which avoids conflicts with actual metadata table tokens.
+    ///
+    /// # Returns
+    /// A unique `Token` for this primitive type
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::typesystem::CilPrimitiveKind;
+    ///
+    /// let int_token = CilPrimitiveKind::I4.token();
+    /// let bool_token = CilPrimitiveKind::Boolean.token();
+    ///
+    /// assert_eq!(int_token.value(), 0xF000_0008);
+    /// assert_eq!(bool_token.value(), 0xF000_0002);
+    /// ```
     #[must_use]
     pub fn token(&self) -> Token {
         Token::new(match self {
@@ -340,13 +619,39 @@ impl CilPrimitiveKind {
         })
     }
 
-    /// Parse from raw bytes based on primitive type
+    /// Parse primitive type from ELEMENT_TYPE byte constant.
     ///
-    /// ## Arguments
-    /// * `type_byte` - The byte to convert from
+    /// Converts an ELEMENT_TYPE constant from ECMA-335 metadata into the corresponding
+    /// primitive type. This is used when parsing type signatures and metadata tables
+    /// that contain element type specifications.
     ///
-    /// # Errors
-    /// Returns [`TypeNotPrimitive`] if the byte does not represent a valid primitive type.
+    /// # Arguments
+    /// * `type_byte` - ELEMENT_TYPE constant from metadata (see ECMA-335 §II.23.1.16)
+    ///
+    /// # Returns
+    /// * `Ok(CilPrimitiveKind)` - Successfully parsed primitive type
+    /// * `Err(TypeNotPrimitive)` - Byte does not represent a valid primitive type
+    ///
+    /// # ELEMENT_TYPE Mapping
+    ///
+    /// Maps standard ELEMENT_TYPE constants to primitive kinds:
+    /// - `ELEMENT_TYPE_BOOLEAN` (0x02) → `Boolean`
+    /// - `ELEMENT_TYPE_I4` (0x08) → `I4`
+    /// - `ELEMENT_TYPE_STRING` (0x0E) → `String`
+    /// - And so on for all supported primitive types
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::typesystem::{CilPrimitiveKind, ELEMENT_TYPE};
+    ///
+    /// let bool_kind = CilPrimitiveKind::from_byte(ELEMENT_TYPE::BOOLEAN)?;
+    /// assert_eq!(bool_kind, CilPrimitiveKind::Boolean);
+    ///
+    /// let int_kind = CilPrimitiveKind::from_byte(ELEMENT_TYPE::I4)?;
+    /// assert_eq!(int_kind, CilPrimitiveKind::I4);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn from_byte(type_byte: u8) -> Result<Self> {
         match type_byte {
             ELEMENT_TYPE::BOOLEAN => Ok(CilPrimitiveKind::Boolean),
@@ -371,10 +676,27 @@ impl CilPrimitiveKind {
 }
 
 impl CilPrimitive {
-    /// Create a new primitive with the default value
+    /// Create a new primitive type without constant data.
     ///
-    /// ## Arguments
-    /// * `kind` - The type or primitive to create
+    /// Creates a primitive type representation with the specified kind but no
+    /// associated constant value. The data field is set to `CilPrimitiveData::None`.
+    /// This is useful for type analysis where only the type classification matters.
+    ///
+    /// # Arguments
+    /// * `kind` - The primitive type classification to create
+    ///
+    /// # Returns
+    /// A new `CilPrimitive` with the specified kind and no data
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::typesystem::{CilPrimitive, CilPrimitiveKind, CilPrimitiveData};
+    ///
+    /// let void_type = CilPrimitive::new(CilPrimitiveKind::Void);
+    /// assert_eq!(void_type.kind, CilPrimitiveKind::Void);
+    /// assert_eq!(void_type.data, CilPrimitiveData::None);
+    /// ```
     #[must_use]
     pub fn new(kind: CilPrimitiveKind) -> Self {
         CilPrimitive {
@@ -383,20 +705,58 @@ impl CilPrimitive {
         }
     }
 
-    /// Create a primitive with specific data
+    /// Create a primitive with both type and constant data.
     ///
-    /// ## Arguments
-    /// * `kind` - Set the kind of primitive
-    /// * `data` - Set the data for the primitive
+    /// Creates a complete primitive representation with both type classification
+    /// and an associated constant value. This is the most general constructor
+    /// and allows for any combination of kind and data.
+    ///
+    /// # Arguments
+    /// * `kind` - The primitive type classification
+    /// * `data` - The constant data value (must be compatible with the kind)
+    ///
+    /// # Returns
+    /// A new `CilPrimitive` with the specified kind and data
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::typesystem::{CilPrimitive, CilPrimitiveKind, CilPrimitiveData};
+    ///
+    /// let int_const = CilPrimitive::with_data(
+    ///     CilPrimitiveKind::I4,
+    ///     CilPrimitiveData::I4(42)
+    /// );
+    /// assert_eq!(int_const.kind, CilPrimitiveKind::I4);
+    /// assert_eq!(int_const.data, CilPrimitiveData::I4(42));
+    /// ```
     #[must_use]
     pub fn with_data(kind: CilPrimitiveKind, data: CilPrimitiveData) -> Self {
         CilPrimitive { kind, data }
     }
 
-    /// Create a boolean primitive
+    /// Create a boolean primitive constant.
     ///
-    /// ## Arguments
-    /// * `value` - The initial value for the requested primitive
+    /// Convenience constructor for creating a boolean primitive with a specific value.
+    /// Equivalent to `with_data(CilPrimitiveKind::Boolean, CilPrimitiveData::Boolean(value))`.
+    ///
+    /// # Arguments
+    /// * `value` - The boolean value (true or false)
+    ///
+    /// # Returns
+    /// A new `CilPrimitive` representing a boolean constant
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::typesystem::CilPrimitive;
+    ///
+    /// let true_const = CilPrimitive::boolean(true);
+    /// let false_const = CilPrimitive::boolean(false);
+    ///
+    /// assert_eq!(true_const.data.as_boolean(), Some(true));
+    /// assert_eq!(false_const.data.as_boolean(), Some(false));
+    /// ```
     #[must_use]
     pub fn boolean(value: bool) -> Self {
         CilPrimitive {

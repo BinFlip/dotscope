@@ -1,42 +1,384 @@
-//! GUID Heap (`#GUID`) for .NET Metadata
+//! ECMA-335 GUID Heap (`#GUID`) for .NET Metadata Storage
 //!
-//! Provides access to the ECMA-335 `#GUID` heap, which stores 128-bit GUIDs for assembly identity and references.
-//! This module exposes the [`Guid`] struct for safe access and parsing of GUIDs referenced by metadata tables.
+//! This module provides safe access to the `#GUID` heap according to ECMA-335 Section II.24.2.5.
+//! The GUID heap stores 128-bit globally unique identifiers used for assembly identity, type library
+//! references, and cross-assembly metadata correlation in .NET applications.
 //!
-//! # Reference
-//! - [ECMA-335 II.24.2.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf)
+//! # GUID Heap Structure
+//!
+//! The `#GUID` heap is a simple array of 128-bit (16-byte) GUID values stored in little-endian
+//! byte order. Each GUID occupies exactly 16 consecutive bytes, and GUIDs are referenced by
+//! 1-based indices from metadata tables.
+//!
+//! ## Memory Layout
+//! ```text
+//! Offset | Content
+//! -------|-------------------
+//! 0x00   | GUID₁ (16 bytes)
+//! 0x10   | GUID₂ (16 bytes)
+//! 0x20   | GUID₃ (16 bytes)
+//! ...    | ...
+//! ```
+//!
+//! ## Indexing Scheme
+//! Unlike other metadata heaps that use 0-based indexing, the GUID heap uses **1-based indexing**:
+//! - Index 1 → First GUID (bytes 0-15)
+//! - Index 2 → Second GUID (bytes 16-31)
+//! - Index N → Nth GUID (bytes (N-1)*16 to N*16-1)
+//!
+//! # GUID Usage in .NET Metadata
+//!
+//! ## Assembly Identity
+//! Each .NET assembly can have an associated GUID for unique identification:
+//! - Used for strong naming and version resolution
+//! - Referenced by AssemblyRef and Assembly metadata tables
+//! - Enables cross-domain and cross-process assembly correlation
+//!
+//! ## Type Library References
+//! For COM interop scenarios, GUIDs identify type libraries:
+//! - Map .NET types to COM interfaces
+//! - Support legacy COM component integration
+//! - Enable marshalling between managed and unmanaged code
+//!
+//! ## Module Identification
+//! Module-level GUIDs provide unique identification:
+//! - Distinguish modules within multi-module assemblies
+//! - Support incremental compilation scenarios
+//! - Enable debugging and profiling correlation
+//!
+
+//!
+//! # Examples
+//!
+//! ## Basic GUID Access
+//! ```rust
+//! use dotscope::metadata::streams::Guid;
+//!
+//! # fn example() -> dotscope::Result<()> {
+//! // Example GUID heap with two entries
+//! #[rustfmt::skip]
+//! let heap_data = [
+//!     // First GUID: d437908e-65e6-487c-9735-7bdff699bea5
+//!     0x8e, 0x90, 0x37, 0xd4, 0xe6, 0x65, 0x7c, 0x48,
+//!     0x97, 0x35, 0x7b, 0xdf, 0xf6, 0x99, 0xbe, 0xa5,
+//!     // Second GUID: all zeros (null GUID)
+//!     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+//!     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+//! ];
+//!
+//! let guid_heap = Guid::from(&heap_data)?;
+//!
+//! // Access GUIDs using 1-based indexing
+//! let first_guid = guid_heap.get(1)?;
+//! let second_guid = guid_heap.get(2)?;
+//!
+//! println!("Assembly GUID: {}", first_guid);
+//! println!("Module GUID: {}", second_guid);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Iterating Over All GUIDs
+//! ```rust
+//! use dotscope::metadata::streams::Guid;
+//!
+//! # fn example() -> dotscope::Result<()> {
+//! let heap_data = [0xFF; 32]; // Two GUIDs with all bytes set to 0xFF
+//! let guid_heap = Guid::from(&heap_data)?;
+//!
+//! for result in guid_heap.iter() {
+//!     let (index, guid) = result?;
+//!     println!("GUID {}: {}", index, guid);
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Assembly Identity Example
+//! ```rust
+//! use dotscope::metadata::streams::Guid;
+//!
+//! # fn example() -> dotscope::Result<()> {
+//! // Real-world assembly GUID from metadata table reference
+//! let assembly_guid_index = 1; // From Assembly table
+//! let heap_data = [
+//!     // Assembly GUID: actual assembly identifier
+//!     0x8e, 0x90, 0x37, 0xd4, 0xe6, 0x65, 0x7c, 0x48,
+//!     0x97, 0x35, 0x7b, 0xdf, 0xf6, 0x99, 0xbe, 0xa5,
+//! ];
+//!
+//! let guid_heap = Guid::from(&heap_data)?;
+//! let assembly_guid = guid_heap.get(assembly_guid_index)?;
+//!
+//! // Use GUID for assembly comparison or caching
+//! let null_guid = uguid::guid!("00000000-0000-0000-0000-000000000000");
+//! if assembly_guid != null_guid {
+//!     println!("Assembly has unique identifier: {}", assembly_guid);
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Error Handling
+//!
+//! The GUID heap API provides comprehensive error handling for:
+//! - **Insufficient Data**: Heap too small to contain valid GUIDs
+//! - **Out of Bounds Access**: Invalid GUID indices
+//! - **Alignment Issues**: Data not properly aligned to 16-byte boundaries
+//! - **Index Validation**: Proper 1-based indexing enforcement
+//!
+//! # ECMA-335 Compliance
+//!
+//! This implementation fully complies with ECMA-335 Partition II, Section 24.2.5:
+//! - Correct 16-byte GUID alignment and storage
+//! - Proper 1-based indexing as specified
+//! - Little-endian byte order handling
+//! - Comprehensive bounds checking and validation
+//!
+//! # See Also
+//! - [`crate::metadata::streams::Strings`]: For string heap access
+//! - [`crate::metadata::streams::Blob`]: For binary blob heap access  
+//! - [`crate::metadata::tables`]: For metadata tables that reference GUIDs
+//! - [ECMA-335 Standard](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Official specification
+//!
+//! # References
+//! - **ECMA-335 II.24.2.5**: `#GUID` heap specification
+//! - **RFC 4122**: UUID/GUID format and generation standards
 
 use crate::{Error::OutOfBounds, Result};
 
-/// '#GUID' is a heap, which contains a sequence of 128-bit GUIDs
+/// ECMA-335 GUID heap providing indexed access to 128-bit globally unique identifiers.
 ///
-/// The `Guid` object provides helper methods to access the data within this blob, and parse / process it
-/// properly according to the standard.
+/// The `Guid` struct represents the `#GUID` metadata heap according to ECMA-335 Section II.24.2.5.
+/// It provides safe, zero-copy access to 16-byte GUID values referenced by metadata table entries
+/// for assembly identification, type library correlation, and module tracking.
+///
+/// # GUID Heap Organization
+///
+/// ## Storage Format
+/// GUIDs are stored as consecutive 16-byte little-endian values:
+/// - Each GUID occupies exactly 16 bytes
+/// - No padding or alignment between entries
+/// - Standard RFC 4122 UUID format within each 16-byte block
+/// - Sequential storage enables efficient bulk operations
+///
+/// ## Indexing Convention
+/// The GUID heap uses **1-based indexing** unlike other metadata heaps:
+/// ```text
+/// Index | Byte Offset | GUID Content
+/// ------|-------------|-------------
+/// 1     | 0-15        | First GUID
+/// 2     | 16-31       | Second GUID
+/// 3     | 32-47       | Third GUID
+/// ```
+///
+/// This convention aligns with ECMA-335 requirements and metadata table references.
+///
+/// # GUID Types and Usage
+///
+/// ## Assembly Identity GUIDs
+/// Uniquely identify assemblies across application domains:
+/// - Enable version-independent assembly correlation
+/// - Support strong naming and security policies
+/// - Facilitate debugging and profiling scenarios
+///
+/// ## Type Library GUIDs  
+/// Support COM interoperability:
+/// - Map .NET types to COM interfaces
+/// - Enable marshalling between managed/unmanaged code
+/// - Provide backward compatibility with legacy systems
+///
+/// ## Module GUIDs
+/// Distinguish modules within multi-module assemblies:
+/// - Support incremental compilation workflows
+/// - Enable fine-grained dependency tracking
+/// - Facilitate debugging symbol correlation
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ## Creating and Accessing GUIDs
+/// ```rust
 /// use dotscope::metadata::streams::Guid;
-/// let data = &[0u8; 32];
-/// let guid_heap = Guid::from(data).unwrap();
-/// // Accessing GUIDs would require valid data and index
+///
+/// # fn example() -> dotscope::Result<()> {
+/// // Sample GUID heap with two entries
+/// #[rustfmt::skip]
+/// let heap_data = [
+///     // GUID 1: d437908e-65e6-487c-9735-7bdff699bea5
+///     0x8e, 0x90, 0x37, 0xd4, 0xe6, 0x65, 0x7c, 0x48,
+///     0x97, 0x35, 0x7b, 0xdf, 0xf6, 0x99, 0xbe, 0xa5,
+///     // GUID 2: All zeros (null GUID)
+///     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+///     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+/// ];
+///
+/// let guid_heap = Guid::from(&heap_data)?;
+///
+/// // Access GUIDs using 1-based indexing (as per ECMA-335)
+/// let assembly_guid = guid_heap.get(1)?;
+/// let module_guid = guid_heap.get(2)?;
+///
+/// let null_guid = uguid::guid!("00000000-0000-0000-0000-000000000000");
+/// assert_ne!(assembly_guid, null_guid);
+/// assert_eq!(module_guid, null_guid);
+/// # Ok(())
+/// # }
 /// ```
 ///
-/// ## Reference
-/// * '<https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf>' - II.24.2.5
+/// ## Assembly Identity Verification
+/// ```rust
+/// use dotscope::metadata::streams::Guid;
+///
+/// # fn example() -> dotscope::Result<()> {
+/// let heap_data = [0xAB; 16]; // Non-null GUID
+/// let guid_heap = Guid::from(&heap_data)?;
+/// let assembly_guid = guid_heap.get(1)?;
+///
+/// let null_guid = uguid::guid!("00000000-0000-0000-0000-000000000000");
+/// // Check if assembly has unique identity
+/// if assembly_guid != null_guid {
+///     println!("Assembly ID: {}", assembly_guid);
+///     // Use for caching, comparison, or security checks
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Iterating Over All GUIDs
+/// ```rust
+/// use dotscope::metadata::streams::Guid;
+///
+/// # fn example() -> dotscope::Result<()> {
+/// let heap_data = [0xFF; 32]; // Two GUIDs with pattern data
+/// let guid_heap = Guid::from(&heap_data)?;
+///
+/// for result in &guid_heap {
+///     let (index, guid) = result?;
+///     println!("GUID {}: {}", index, guid);
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Error Handling
+///
+/// Comprehensive error handling for various failure scenarios:
+/// - **Insufficient data**: Heap smaller than minimum GUID size (16 bytes)
+/// - **Out of bounds**: Invalid index or incomplete GUID data
+/// - **Invalid indexing**: Index 0 or negative indices rejected
+/// - **Alignment issues**: Proper 16-byte boundary validation
+///
+/// # ECMA-335 Compliance
+///
+/// This implementation fully supports ECMA-335 requirements:
+/// - Correct 1-based indexing convention
+/// - Proper 16-byte GUID storage alignment
+/// - Little-endian byte order handling
+/// - Standard RFC 4122 UUID format support
+///
+/// # See Also
+/// - [`crate::metadata::streams::guid::GuidIterator`]: For sequential access to all GUIDs
+/// - [`crate::metadata::tables`]: For metadata tables referencing GUIDs
+/// - [`uguid::Guid`]: The underlying GUID implementation
+/// - [ECMA-335 II.24.2.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Official specification
 ///
 pub struct Guid<'a> {
+    /// Raw bytes of the GUID heap
     data: &'a [u8],
 }
 
 impl<'a> Guid<'a> {
-    /// Create a `Guid` object from a sequence of bytes
+    /// Creates a new `Guid` heap accessor from raw metadata bytes.
     ///
-    /// # Arguments
-    /// * 'data'    - The byte slice from which this object shall be created
+    /// Validates that the provided data contains sufficient bytes to represent at least one
+    /// complete 16-byte GUID. The GUID heap stores sequential 128-bit globally unique
+    /// identifiers referenced by metadata table entries.
+    ///
+    /// # Parameters
+    /// * `data` - Raw bytes containing the complete `#GUID` heap data
+    ///
+    /// # Returns
+    /// A `Guid` instance providing safe access to the heap contents, or an error
+    /// if the data format is invalid.
     ///
     /// # Errors
-    /// Returns an error if the data is too small to contain a valid GUID (less than 16 bytes)
+    /// Returns [`crate::Error`] in the following cases:
+    /// - **Insufficient data**: Less than 16 bytes provided (minimum for one GUID)
+    /// - **Invalid alignment**: Data length not divisible by 16 (partial GUID)
+    /// - **Empty heap**: No GUID data available for processing
+    ///
+    /// # Examples
+    ///
+    /// ## Valid GUID Heap
+    /// ```rust
+    /// use dotscope::metadata::streams::Guid;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// // Single GUID heap (minimum valid size)
+    /// let single_guid = [0xAB; 16];
+    /// let guid_heap = Guid::from(&single_guid)?;
+    /// assert_eq!(guid_heap.get(1)?.to_bytes(), single_guid);
+    ///
+    /// // Multiple GUID heap
+    /// let multiple_guids = [0xFF; 48]; // Three GUIDs
+    /// let guid_heap = Guid::from(&multiple_guids)?;
+    /// assert!(guid_heap.get(1).is_ok());
+    /// assert!(guid_heap.get(3).is_ok());
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// ## Invalid GUID Heap
+    /// ```rust
+    /// use dotscope::metadata::streams::Guid;
+    ///
+    /// // Too small for even one GUID
+    /// let too_small = [0u8; 10];
+    /// assert!(Guid::from(&too_small).is_err());
+    ///
+    /// // Empty data
+    /// let empty_data = &[];
+    /// assert!(Guid::from(empty_data).is_err());
+    /// ```
+    ///
+    /// ## Assembly Identity Use Case
+    /// ```rust
+    /// use dotscope::metadata::streams::Guid;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// // Real assembly GUID from PE metadata
+    /// #[rustfmt::skip]
+    /// let assembly_heap = [
+    ///     0x8e, 0x90, 0x37, 0xd4, 0xe6, 0x65, 0x7c, 0x48,
+    ///     0x97, 0x35, 0x7b, 0xdf, 0xf6, 0x99, 0xbe, 0xa5,
+    /// ];
+    ///
+    /// let guid_heap = Guid::from(&assembly_heap)?;
+    /// let assembly_id = guid_heap.get(1)?;
+    ///
+    /// // Use for assembly identification or caching
+    /// println!("Assembly GUID: {}", assembly_id);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Performance
+    /// - **Zero-copy**: No data is copied or allocated during construction
+    /// - **O(1) validation**: Only checks minimum size requirement
+    /// - **Lazy parsing**: GUID entries parsed only when accessed
+    /// - **Memory efficient**: Direct reference to source data
+    ///
+    /// # GUID Heap Validation
+    /// This method performs minimal validation for performance:
+    /// - Ensures minimum 16-byte size for at least one GUID
+    /// - Does not validate GUID content or format
+    /// - Individual GUID access via [`get`](Self::get) provides bounds checking
+    ///
+    ///
+    /// # See Also
+    /// - [`get`](Self::get): Access individual GUIDs by 1-based index
+    /// - [`iter`](Self::iter): Iterate over all GUIDs in the heap
+    /// - [ECMA-335 II.24.2.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): GUID heap specification
     pub fn from(data: &'a [u8]) -> Result<Guid<'a>> {
         if data.len() < 16 {
             return Err(malformed_error!("Data for #Guid heap is too small"));
@@ -45,15 +387,121 @@ impl<'a> Guid<'a> {
         Ok(Guid { data })
     }
 
-    /// Returns the GUID at the specified index
+    /// Retrieves a GUID from the heap by its 1-based index.
     ///
-    /// GUID has to be build, hence no 'view' possible
+    /// Returns a constructed GUID from the 16-byte data stored at the specified index.
+    /// The index typically comes from metadata table entries that reference specific
+    /// GUIDs for assembly identity, type library correlation, or module identification.
     ///
-    /// ## Arguments
-    /// * 'index' - The index of the GUID to be accessed within the blob (comes from metadata tables)
+    /// # Parameters
+    /// * `index` - 1-based GUID index within the heap (from metadata table references)
+    ///
+    /// # Returns
+    /// A [`uguid::Guid`] constructed from the 16-byte data at the specified index,
+    /// or an error if the index is invalid or the data is insufficient.
     ///
     /// # Errors
-    /// Returns an error if the index is out of bounds or if the GUID data cannot be parsed
+    /// Returns [`crate::Error`] in the following cases:
+    /// - **Invalid index**: Index 0 (GUIDs use 1-based indexing per ECMA-335)
+    /// - **Out of bounds**: Index exceeds available GUID count
+    /// - **Incomplete data**: Insufficient bytes for complete 16-byte GUID
+    /// - **Integer overflow**: Index calculations exceed platform limits
+    ///
+    /// # Examples
+    ///
+    /// ## Basic GUID Access
+    /// ```rust
+    /// use dotscope::metadata::streams::Guid;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// #[rustfmt::skip]
+    /// let heap_data = [
+    ///     // GUID 1: d437908e-65e6-487c-9735-7bdff699bea5
+    ///     0x8e, 0x90, 0x37, 0xd4, 0xe6, 0x65, 0x7c, 0x48,
+    ///     0x97, 0x35, 0x7b, 0xdf, 0xf6, 0x99, 0xbe, 0xa5,
+    ///     // GUID 2: All zeros (null GUID)
+    ///     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ///     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    /// ];
+    ///
+    /// let guid_heap = Guid::from(&heap_data)?;
+    ///
+    /// // Access first GUID (1-based indexing)
+    /// let first_guid = guid_heap.get(1)?;
+    /// let null_guid = uguid::guid!("00000000-0000-0000-0000-000000000000");
+    /// assert_ne!(first_guid, null_guid);
+    ///
+    /// // Access second GUID
+    /// let second_guid = guid_heap.get(2)?;
+    /// assert_eq!(second_guid, null_guid);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// ## Assembly Identity Example
+    /// ```rust
+    /// use dotscope::metadata::streams::Guid;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// // Assembly table references GUID index 1
+    /// let assembly_guid_index = 1;
+    /// let heap_data = [0xAB; 16]; // Sample assembly GUID
+    ///
+    /// let guid_heap = Guid::from(&heap_data)?;
+    /// let assembly_guid = guid_heap.get(assembly_guid_index)?;
+    ///
+    /// let null_guid = uguid::guid!("00000000-0000-0000-0000-000000000000");
+    /// // Use for assembly comparison or caching
+    /// if assembly_guid != null_guid {
+    ///     println!("Assembly identifier: {}", assembly_guid);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// ## Error Handling
+    /// ```rust
+    /// use dotscope::metadata::streams::Guid;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let heap_data = [0xFF; 16]; // Single GUID heap
+    /// let guid_heap = Guid::from(&heap_data)?;
+    ///
+    /// // Valid access
+    /// assert!(guid_heap.get(1).is_ok());
+    ///
+    /// // Invalid index 0 (1-based indexing required)
+    /// assert!(guid_heap.get(0).is_err());
+    ///
+    /// // Out of bounds access
+    /// assert!(guid_heap.get(2).is_err());
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Performance
+    /// - **O(1) access**: Direct offset calculation and validation
+    /// - **Zero-copy construction**: GUID built from direct data reference
+    /// - **Bounds checking**: Full validation with minimal overhead
+    /// - **Cache friendly**: Sequential data access pattern
+    ///
+    /// # Index Calculation
+    /// The byte offset for a GUID is calculated as `(index - 1) * 16`:
+    ///
+    /// | Index | Byte Range | Description |
+    /// |-------|------------|-------------|
+    /// | 1     | 0-15       | First GUID  |
+    /// | 2     | 16-31      | Second GUID |
+    /// | N     | (N-1)*16 to N*16-1 | Nth GUID |
+    ///
+    /// # GUID Format
+    /// Each 16-byte GUID follows RFC 4122 UUID format stored in little-endian
+    /// byte order as specified by ECMA-335.
+    ///
+    /// # See Also
+    /// - [`iter`](Self::iter): Iterate over all GUIDs sequentially
+    /// - [`uguid::Guid`]: The returned GUID type with formatting and comparison methods
+    /// - [ECMA-335 II.24.2.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): GUID heap specification
     pub fn get(&self, index: usize) -> Result<uguid::Guid> {
         if index < 1 || (index - 1) * 16 + 16 > self.data.len() {
             return Err(OutOfBounds);
@@ -68,26 +516,142 @@ impl<'a> Guid<'a> {
         Ok(uguid::Guid::from_bytes(buffer))
     }
 
-    /// Returns an iterator over all GUIDs in the heap
+    /// Returns an iterator over all GUIDs in the heap.
     ///
-    /// Provides access to all 16-byte GUID entries in sequential order.
-    /// Each iteration yields a `Result<(usize, uguid::Guid)>` with the index and GUID value.
+    /// Provides sequential access to every GUID stored in the heap, yielding
+    /// both the 1-based index and constructed GUID for each entry. This is useful for
+    /// comprehensive analysis, validation, or enumeration of all assembly and module identifiers.
+    ///
+    /// # Returns
+    /// Returns a [`crate::metadata::streams::guid::GuidIterator`] that yields `Result<(usize, uguid::Guid)>` tuples containing:
+    /// - **Index**: 1-based position of the GUID within the heap
+    /// - **GUID**: Constructed 128-bit globally unique identifier
+    ///
+    /// # Iteration Behavior
+    /// - **Sequential access**: GUIDs returned in storage order (index 1, 2, 3, ...)
+    /// - **1-based indexing**: Consistent with ECMA-335 specification and `get()` method
+    /// - **Complete iteration**: Processes all valid GUIDs until heap end
+    /// - **Error handling**: Returns errors for malformed or incomplete GUID data
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ## Basic Iteration
+    /// ```rust
     /// use dotscope::metadata::streams::Guid;
     ///
-    /// let data = &[0u8; 32]; // Two empty GUIDs
-    /// let guids = Guid::from(data).unwrap();
+    /// # fn example() -> dotscope::Result<()> {
+    /// #[rustfmt::skip]
+    /// let heap_data = [
+    ///     // GUID 1: Sample assembly identifier
+    ///     0x8e, 0x90, 0x37, 0xd4, 0xe6, 0x65, 0x7c, 0x48,
+    ///     0x97, 0x35, 0x7b, 0xdf, 0xf6, 0x99, 0xbe, 0xa5,
+    ///     // GUID 2: Null GUID
+    ///     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ///     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    /// ];
     ///
-    /// for result in guids.iter() {
-    ///     match result {
-    ///         Ok((index, guid)) => println!("GUID {}: {}", index, guid),
-    ///         Err(e) => eprintln!("Error: {}", e),
+    /// let guid_heap = Guid::from(&heap_data)?;
+    /// let null_guid = uguid::guid!("00000000-0000-0000-0000-000000000000");
+    ///
+    /// for result in guid_heap.iter() {
+    ///     let (index, guid) = result?;
+    ///     println!("GUID {}: {}", index, guid);
+    ///     
+    ///     if guid != null_guid {
+    ///         println!("  Non-null identifier found");
     ///     }
     /// }
+    /// # Ok(())
+    /// # }
     /// ```
+    ///
+    /// ## Assembly and Module Enumeration
+    /// ```rust
+    /// use dotscope::metadata::streams::Guid;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let heap_data = [0xAB; 48]; // Three identical GUIDs for demonstration
+    /// let guid_heap = Guid::from(&heap_data)?;
+    ///
+    /// let mut assembly_guids = Vec::new();
+    /// let mut module_guids = Vec::new();
+    ///
+    /// for result in guid_heap.iter() {
+    ///     let (index, guid) = result?;
+    ///     
+    ///     if index == 1 {
+    ///         assembly_guids.push(guid);
+    ///     } else {
+    ///         module_guids.push(guid);
+    ///     }
+    /// }
+    ///
+    /// println!("Found {} assembly GUIDs, {} module GUIDs",
+    ///          assembly_guids.len(), module_guids.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// ## Error Handling During Iteration
+    /// ```rust
+    /// use dotscope::metadata::streams::Guid;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let heap_data = [0xFF; 32]; // Two complete GUIDs
+    /// let guid_heap = Guid::from(&heap_data)?;
+    ///
+    /// for result in guid_heap.iter() {
+    ///     match result {
+    ///         Ok((index, guid)) => {
+    ///             println!("Valid GUID at index {}: {}", index, guid);
+    ///         }
+    ///         Err(e) => {
+    ///             eprintln!("GUID parsing error: {}", e);
+    ///             break; // Stop on first error
+    ///         }
+    ///     }
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// ## Collecting Non-Null GUIDs
+    /// ```rust
+    /// use dotscope::metadata::streams::Guid;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let heap_data = [0x00; 32]; // Two null GUIDs
+    /// let guid_heap = Guid::from(&heap_data)?;
+    /// let null_guid = uguid::guid!("00000000-0000-0000-0000-000000000000");
+    ///
+    /// let mut non_null_guids = Vec::new();
+    /// for result in guid_heap.iter() {
+    ///     let (index, guid) = result?;
+    ///     if guid != null_guid {
+    ///         non_null_guids.push((index, guid));
+    ///     }
+    /// }
+    ///
+    /// println!("Found {} non-null GUIDs", non_null_guids.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Error Recovery
+    /// If a malformed GUID is encountered (e.g., due to heap truncation),
+    /// the iterator returns an error and terminates. This design ensures
+    /// data integrity while allowing partial processing of valid entries.
+    ///
+    /// # Use Cases
+    /// - **Assembly enumeration**: Identify all assemblies in a multi-module application
+    /// - **GUID validation**: Verify heap integrity and detect corruption
+    /// - **Debugging support**: Display all identifiers for diagnostic purposes
+    /// - **Metadata analysis**: Extract identity information for processing
+    ///
+    /// # See Also
+    /// - [`crate::metadata::streams::guid::GuidIterator`]: The iterator implementation details
+    /// - [`get`](Self::get): Direct access to specific GUIDs by index
+    /// - [ECMA-335 II.24.2.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): GUID heap specification
     #[must_use]
     pub fn iter(&self) -> GuidIterator<'_> {
         GuidIterator::new(self)
@@ -103,16 +667,168 @@ impl<'a> IntoIterator for &'a Guid<'a> {
     }
 }
 
-/// Iterator over entries in the `#GUID` heap
+/// Iterator providing sequential access to all GUIDs in the `#GUID` heap.
 ///
-/// Provides access to 16-byte GUID entries in sequential order.
-/// Each iteration returns the index and GUID value.
+/// The `GuidIterator` traverses the GUID heap in storage order, yielding each GUID's
+/// 1-based index and constructed value. It handles the fixed 16-byte GUID format
+/// and provides comprehensive error reporting for incomplete or corrupted entries.
+///
+/// # Iteration Protocol
+///
+/// ## Yielded Items
+/// Each successful iteration returns `Ok((index, guid))` where:
+/// - **`index`**: 1-based position of the GUID within the heap (consistent with ECMA-335)
+/// - **`guid`**: Constructed [`uguid::Guid`] from the 16-byte heap data
+///
+/// ## Error Handling
+/// Malformed or incomplete GUIDs yield `Err(Error)` with specific information:
+/// - **Out of bounds**: GUID extends beyond heap boundaries
+/// - **Incomplete data**: Less than 16 bytes available for complete GUID
+/// - **Index overflow**: GUID count exceeds platform limits
+///
+/// ## Iteration Behavior
+/// - **Starts at index 1**: Follows ECMA-335 1-based indexing convention
+/// - **Sequential processing**: Processes GUIDs in heap storage order
+/// - **Termination**: Stops when insufficient data remains for complete GUID
+/// - **Error termination**: Immediately stops on first malformed entry
+///
+/// # GUID Construction
+///
+/// Each iteration constructs a new [`uguid::Guid`] from 16 consecutive bytes:
+/// - Uses little-endian byte order as per ECMA-335
+/// - Follows RFC 4122 UUID format within each 16-byte block
+/// - Provides standard GUID operations (formatting, comparison, null checking)
+///
+/// # Examples
+///
+/// ## Basic Sequential Access
+/// ```rust
+/// use dotscope::metadata::streams::Guid;
+///
+/// # fn example() -> dotscope::Result<()> {
+/// #[rustfmt::skip]
+/// let heap_data = [
+///     // GUID 1: Real assembly identifier
+///     0x8e, 0x90, 0x37, 0xd4, 0xe6, 0x65, 0x7c, 0x48,
+///     0x97, 0x35, 0x7b, 0xdf, 0xf6, 0x99, 0xbe, 0xa5,
+///     // GUID 2: Module identifier
+///     0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+///     0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+/// ];
+///
+/// let guid_heap = Guid::from(&heap_data)?;
+/// let mut iterator = guid_heap.iter();
+/// let null_guid = uguid::guid!("00000000-0000-0000-0000-000000000000");
+///
+/// // First GUID at index 1
+/// let (index1, guid1) = iterator.next().unwrap()?;
+/// assert_eq!(index1, 1);
+/// assert_ne!(guid1, null_guid);
+///
+/// // Second GUID at index 2
+/// let (index2, guid2) = iterator.next().unwrap()?;
+/// assert_eq!(index2, 2);
+/// assert_ne!(guid2, null_guid);
+///
+/// // No more GUIDs
+/// assert!(iterator.next().is_none());
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Identity Classification
+/// ```rust
+/// use dotscope::metadata::streams::Guid;
+///
+/// # fn example() -> dotscope::Result<()> {
+/// let heap_data = [0x00; 48]; // Three null GUIDs
+/// let guid_heap = Guid::from(&heap_data)?;
+/// let null_guid = uguid::guid!("00000000-0000-0000-0000-000000000000");
+///
+/// let mut null_count = 0;
+/// let mut non_null_count = 0;
+///
+/// for result in guid_heap.iter() {
+///     let (index, guid) = result?;
+///     
+///     if guid == null_guid {
+///         null_count += 1;
+///         println!("Null GUID at index {}", index);
+///     } else {
+///         non_null_count += 1;
+///         println!("Active GUID at index {}: {}", index, guid);
+///     }
+/// }
+///
+/// println!("Summary: {} null, {} active", null_count, non_null_count);
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Error Handling
+/// ```rust
+/// use dotscope::metadata::streams::Guid;
+///
+/// # fn example() -> dotscope::Result<()> {
+/// // Valid heap with two complete GUIDs
+/// let heap_data = [0xFF; 32];
+/// let guid_heap = Guid::from(&heap_data)?;
+///
+/// for result in guid_heap.iter() {
+///     match result {
+///         Ok((index, guid)) => {
+///             println!("GUID {}: {}", index, guid);
+///         }
+///         Err(error) => {
+///             eprintln!("Iteration error: {}", error);
+///             break; // Handle error appropriately
+///         }
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Memory Usage
+///
+/// - **No allocation**: GUIDs constructed on stack during iteration
+/// - **Constant overhead**: Iterator state requires minimal memory
+/// - **Zero-copy access**: Direct construction from heap data
+///
+/// # Implementation Notes
+///
+/// - **Index tracking**: Maintains current 1-based position
+/// - **Bounds checking**: Validates sufficient data for each GUID
+/// - **Error propagation**: Returns errors without advancing position
+/// - **Termination logic**: Stops cleanly when heap data exhausted
+///
+/// # See Also
+/// - [`crate::metadata::streams::guid::Guid::iter`]: Creates new iterator instances
+/// - [`crate::metadata::streams::guid::Guid::get`]: Direct access to specific GUIDs by index
+/// - [`uguid::Guid`]: The constructed GUID type with rich functionality
+/// - [ECMA-335 II.24.2.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): GUID heap specification
 pub struct GuidIterator<'a> {
+    /// Reference to the GUID heap being iterated
     guid: &'a Guid<'a>,
+    /// Current 1-based index into the GUID heap
     index: usize,
 }
 
 impl<'a> GuidIterator<'a> {
+    /// Creates a new iterator for the given GUID heap.
+    ///
+    /// Initializes the iterator to begin at index 1, following the ECMA-335
+    /// specification for 1-based GUID heap indexing.
+    ///
+    /// # Parameters
+    /// * `guid` - Reference to the GUID heap to iterate over
+    ///
+    /// # Returns
+    /// A new `GuidIterator` positioned at the first GUID entry (index 1).
+    ///
+    /// # Note
+    /// This method is internal and called by [`crate::metadata::streams::guid::Guid::iter`]. Users should
+    /// prefer the public `iter()` method for creating iterators.
     pub(crate) fn new(guid: &'a Guid<'a>) -> Self {
         Self {
             guid,

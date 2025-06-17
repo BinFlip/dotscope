@@ -4,6 +4,79 @@
 //! signatures, and exception handling regions from .NET metadata. Supports both tiny and fat method
 //! headers as specified by ECMA-335.
 //!
+//! # Method Body Format
+//!
+//! .NET methods can have two types of headers:
+//!
+//! ## Tiny Headers
+//! - **Size**: 1 byte
+//! - **Code Size**: Up to 63 bytes
+//! - **Max Stack**: Fixed at 8
+//! - **Local Variables**: None allowed
+//! - **Exception Handling**: Not supported
+//! - **Use Case**: Simple methods with minimal bytecode
+//!
+//! ## Fat Headers
+//! - **Size**: 12 bytes minimum
+//! - **Code Size**: Up to 4GB
+//! - **Max Stack**: Configurable up to 65535
+//! - **Local Variables**: Supported with signature token
+//! - **Exception Handling**: Full support with multiple handlers
+//! - **Use Case**: Complex methods with significant bytecode
+//!
+//! # Exception Handling
+//!
+//! Fat method headers can include exception handling sections with:
+//! - **Try Blocks**: Protected code regions
+//! - **Handler Types**: Exception, finally, fault, and filter handlers
+//! - **Multiple Handlers**: Support for nested and sequential exception handling
+//! - **Section Formats**: Both tiny (12-byte) and fat (24-byte) handler entries
+//!
+//! # Thread Safety
+//!
+//! All types in this module are thread-safe:
+//! - **MethodBody**: Immutable after construction
+//! - **Parsing**: No shared state during parsing operations
+//! - **Exception Handlers**: Read-only data structures
+//!
+//! # Usage Patterns
+//!
+//! ## Basic Method Information
+//! ```rust,ignore
+//! use dotscope::metadata::method::MethodBody;
+//!
+//! let method_data = /* ... method body bytes ... */;
+//! let body = MethodBody::from(method_data)?;
+//!
+//! println!("Method has {} bytes of IL code", body.size_code);
+//! println!("Header type: {}", if body.is_fat { "Fat" } else { "Tiny" });
+//! ```
+//!
+//! ## Local Variable Analysis
+//! ```rust,ignore
+//! if body.local_var_sig_token != 0 {
+//!     println!("Method has local variables (signature token: 0x{:08X})",
+//!              body.local_var_sig_token);
+//!     if body.is_init_local {
+//!         println!("Local variables are zero-initialized");
+//!     }
+//! }
+//! ```
+//!
+//! ## Exception Handler Processing
+//! ```rust,ignore
+//! if body.is_exception_data {
+//!     println!("Method has {} exception handlers", body.exception_handlers.len());
+//!     for (i, handler) in body.exception_handlers.iter().enumerate() {
+//!         println!("Handler {}: try=[{:#x}..{:#x}], handler=[{:#x}..{:#x}]",
+//!                  i, handler.try_offset,
+//!                  handler.try_offset + handler.try_length,
+//!                  handler.handler_offset,
+//!                  handler.handler_offset + handler.handler_length);
+//!     }
+//! }
+//! ```
+//!
 //! # Examples
 //!
 //! ```rust,no_run
@@ -28,6 +101,7 @@
 //!
 //! # References
 //! - ECMA-335 6th Edition, Partition II, Section 25.4 - Method Header Format
+//! - ECMA-335 6th Edition, Partition II, Section 25.4.6 - Exception Handling Data Sections
 
 use crate::{
     file::io::{read_le, read_le_at},
@@ -40,33 +114,112 @@ use crate::{
 ///
 /// The `MethodBody` struct represents the parsed body of a .NET method, including header information,
 /// code size, stack requirements, local variable signature, and exception handling regions.
+///
+/// # Header Format Detection
+///
+/// The structure automatically detects whether the method uses a tiny or fat header format
+/// based on the first byte(s) of the method body data:
+/// - **Tiny Format**: Single byte header for methods with ≤63 bytes of code
+/// - **Fat Format**: 12-byte header for complex methods with extensive metadata
+///
+/// # Field Organization
+///
+/// ## Size Information
+/// - [`Self::size_code`]: Length of the actual CIL instructions in bytes
+/// - [`Self::size_header`]: Length of the method header (1 for tiny, 12+ for fat)
+///
+/// ## Stack and Variables
+/// - [`Self::max_stack`]: Maximum operand stack depth during execution
+/// - [`Self::local_var_sig_token`]: Metadata token for local variable type signature
+/// - [`Self::is_init_local`]: Whether local variables are zero-initialized
+///
+/// ## Format and Features
+/// - [`Self::is_fat`]: Whether this method uses the fat header format
+/// - [`Self::is_exception_data`]: Whether exception handling data is present
+/// - [`Self::exception_handlers`]: Collection of exception handling regions
+///
+/// # Memory Layout
+///
+/// ```text
+/// Tiny Header (1 byte):
+/// ┌─────────────────────────────────────┐
+/// │ Size(6) │ Reserved(2) │ Format(2)   │
+/// └─────────────────────────────────────┘
+///
+/// Fat Header (12 bytes):
+/// ┌─────────────────────────────────────┐
+/// │ Flags(12) │ Size(4) │ Format(2)     │  (bytes 0-1)
+/// ├─────────────────────────────────────┤
+/// │ MaxStack (16 bits)                  │  (bytes 2-3)
+/// ├─────────────────────────────────────┤
+/// │ CodeSize (32 bits)                  │  (bytes 4-7)
+/// ├─────────────────────────────────────┤
+/// │ LocalVarSigTok (32 bits)            │  (bytes 8-11)
+/// └─────────────────────────────────────┘
+/// ```
+///
+/// # Thread Safety
+///
+/// `MethodBody` is fully thread-safe:
+/// - All fields are immutable after construction
+/// - No interior mutability or shared state
+/// - Safe to share across threads without synchronization
 pub struct MethodBody {
-    /// Size of the method (length of all instructions, not counting the header) in bytes
+    /// Size of the method code (length of all CIL instructions, excluding the header) in bytes
     pub size_code: usize,
-    /// Size of the method header in bytes
+    /// Size of the method header in bytes (1 for tiny format, 12+ for fat format)
     pub size_header: usize,
-    /// `MetaData` token for a signature describing the layout of the local variables for the method. 0 == no local variables
+    /// Metadata token for a signature describing the layout of local variables (0 = no locals)
     pub local_var_sig_token: u32,
-    /// Maximum number of items on the operand stack
+    /// Maximum number of items on the operand stack during method execution
     pub max_stack: usize,
-    /// Flag, indicating the type of the method header
+    /// Flag indicating the method header format (false = tiny, true = fat)
     pub is_fat: bool,
-    /// Flag, indicating to call default constructor on all local variables
+    /// Flag indicating whether to zero-initialize all local variables before method execution
     pub is_init_local: bool,
-    /// Flag, indicating if this method does have exception handlers
+    /// Flag indicating whether this method has exception handling data sections
     pub is_exception_data: bool,
-    /// A list of exception handlers this method has
+    /// Collection of exception handlers for this method (empty if no exception handling)
     pub exception_handlers: Vec<ExceptionHandler>,
 }
 
 impl MethodBody {
-    /// Create a `MethodHeader` object from a sequence of bytes.
+    /// Create a `MethodBody` object from a sequence of bytes.
+    ///
+    /// Parses a complete .NET method body including header, CIL instructions, and optional
+    /// exception handling sections. Automatically detects and handles both tiny and fat
+    /// header formats according to ECMA-335 specifications.
     ///
     /// # Arguments
-    /// * `data` - The byte slice from which this object shall be created
+    ///
+    /// * `data` - The byte slice containing the complete method body data, starting with
+    ///   the method header and including all CIL instructions and exception handling sections
+    ///
+    /// # Returns
+    ///
+    /// * [`Ok`]([`MethodBody`]) - Successfully parsed method body with all metadata
+    /// * [`Err`]([`crate::Error`]) - Parsing failed due to invalid format, insufficient data, or corruption
     ///
     /// # Errors
-    /// Returns an error if the data is empty, out of bounds, or malformed.
+    ///
+    /// This method returns an error in the following cases:
+    /// - **Empty Data**: The provided byte slice is empty
+    /// - **Invalid Format**: Header format bits don't match tiny or fat patterns
+    /// - **Insufficient Data**: Not enough bytes for the declared header or code size
+    /// - **Malformed Sections**: Exception handling sections have invalid structure
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::method::MethodBody;
+    ///
+    /// let method_data = &[0x16, 0x00, 0x2A]; // Simple method: ldarg.0, ret
+    /// let body = MethodBody::from(method_data)?;
+    ///
+    /// assert!(!body.is_fat);
+    /// assert_eq!(body.size_code, 5);
+    /// assert_eq!(body.max_stack, 8); // Tiny format default
+    /// ```
     pub fn from(data: &[u8]) -> Result<MethodBody> {
         if data.is_empty() {
             return Err(malformed_error!("Provided data for body parsing is empty"));
@@ -211,7 +364,23 @@ impl MethodBody {
         }
     }
 
-    /// Get the full size of this method
+    /// Get the full size of this method including header and code.
+    ///
+    /// Returns the total size in bytes by combining the header size and code size.
+    /// This represents the complete footprint of the method in the assembly file.
+    ///
+    /// # Returns
+    ///
+    /// The total size in bytes (header + code). Note that exception handling
+    /// sections are stored separately and not included in this size.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// let body = MethodBody::from(method_data)?;
+    /// let total_size = body.size();
+    /// assert_eq!(total_size, body.size_header + body.size_code);
+    /// ```
     #[must_use]
     pub fn size(&self) -> usize {
         self.size_code + self.size_header
