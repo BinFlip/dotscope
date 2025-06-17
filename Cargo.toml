@@ -1,6 +1,6 @@
 [package]
 name = "dotscope"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["Johann Kempter <admin@binflip.rs>"]
 edition = "2021"
 description = "A high-performance, cross-platform framework for analyzing and reverse engineering .NET PE executables"
