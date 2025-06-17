@@ -45,13 +45,13 @@
 
 use crate::metadata::tables::{
     AssemblyOsRaw, AssemblyProcessorRaw, AssemblyRaw, AssemblyRefOsRaw, AssemblyRefProcessorRaw,
-    AssemblyRefRaw, ClassLayoutRaw, ConstantRaw, CustomAttributeRaw, DeclSecurityRaw, EventMapRaw,
-    EventPtrRaw, EventRaw, ExportedTypeRaw, FieldLayoutRaw, FieldMarshalRaw, FieldPtrRaw, FieldRaw,
-    FieldRvaRaw, FileRaw, GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw, InterfaceImplRaw,
-    ManifestResourceRaw, MemberRefRaw, MetadataTable, MethodDefRaw, MethodImplRaw, MethodPtrRaw,
-    MethodSemanticsRaw, MethodSpecRaw, ModuleRaw, ModuleRefRaw, NestedClassRaw, ParamPtrRaw,
-    ParamRaw, PropertyMapRaw, PropertyPtrRaw, PropertyRaw, StandAloneSigRaw, TypeDefRaw,
-    TypeRefRaw, TypeSpecRaw,
+    AssemblyRefRaw, ClassLayoutRaw, ConstantRaw, CustomAttributeRaw, DeclSecurityRaw, EncLogRaw,
+    EncMapRaw, EventMapRaw, EventPtrRaw, EventRaw, ExportedTypeRaw, FieldLayoutRaw,
+    FieldMarshalRaw, FieldPtrRaw, FieldRaw, FieldRvaRaw, FileRaw, GenericParamConstraintRaw,
+    GenericParamRaw, ImplMapRaw, InterfaceImplRaw, ManifestResourceRaw, MemberRefRaw,
+    MetadataTable, MethodDefRaw, MethodImplRaw, MethodPtrRaw, MethodSemanticsRaw, MethodSpecRaw,
+    ModuleRaw, ModuleRefRaw, NestedClassRaw, ParamPtrRaw, ParamRaw, PropertyMapRaw, PropertyPtrRaw,
+    PropertyRaw, StandAloneSigRaw, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
 };
 
 /// Unified enumeration representing all possible metadata tables in a CLI assembly.
@@ -189,6 +189,18 @@ pub enum TableData<'a> {
     /// This table stores declarative security attributes applied to types
     /// or methods, including permission sets and security actions.
     DeclSecurity(MetadataTable<'a, DeclSecurityRaw>),
+
+    /// EncLog table containing Edit-and-Continue log information.
+    ///
+    /// This table tracks metadata changes for Edit-and-Continue debugging scenarios,
+    /// recording which metadata tokens have been modified during compilation.
+    EncLog(MetadataTable<'a, EncLogRaw>),
+
+    /// EncMap table containing Edit-and-Continue token mapping.
+    ///
+    /// This table maps original metadata tokens to their updated versions after
+    /// Edit-and-Continue operations, enabling proper token correlation during debugging.
+    EncMap(MetadataTable<'a, EncMapRaw>),
 
     /// ClassLayout table containing type layout information.
     ///

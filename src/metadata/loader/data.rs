@@ -298,6 +298,8 @@ impl<'a> CilObjectData<'a> {
                 field_layout: SkipMap::default(),
                 field_marshal: SkipMap::default(),
                 field_rva: SkipMap::default(),
+                enc_log: SkipMap::default(),
+                enc_map: SkipMap::default(),
                 param: SkipMap::default(),
                 param_ptr: SkipMap::default(),
                 generic_param: SkipMap::default(),

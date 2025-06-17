@@ -307,13 +307,14 @@ use crate::{
     metadata::tables::{
         AssemblyOsRaw, AssemblyProcessorRaw, AssemblyRaw, AssemblyRefOsRaw,
         AssemblyRefProcessorRaw, AssemblyRefRaw, ClassLayoutRaw, ConstantRaw, CustomAttributeRaw,
-        DeclSecurityRaw, EventMapRaw, EventPtrRaw, EventRaw, ExportedTypeRaw, FieldLayoutRaw,
-        FieldMarshalRaw, FieldPtrRaw, FieldRaw, FieldRvaRaw, FileRaw, GenericParamConstraintRaw,
-        GenericParamRaw, ImplMapRaw, InterfaceImplRaw, ManifestResourceRaw, MemberRefRaw,
-        MetadataTable, MethodDefRaw, MethodImplRaw, MethodPtrRaw, MethodSemanticsRaw,
-        MethodSpecRaw, ModuleRaw, ModuleRefRaw, NestedClassRaw, ParamPtrRaw, ParamRaw,
-        PropertyMapRaw, PropertyPtrRaw, PropertyRaw, RowDefinition, StandAloneSigRaw, TableData,
-        TableId, TableInfo, TableInfoRef, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
+        DeclSecurityRaw, EncLogRaw, EncMapRaw, EventMapRaw, EventPtrRaw, EventRaw, ExportedTypeRaw,
+        FieldLayoutRaw, FieldMarshalRaw, FieldPtrRaw, FieldRaw, FieldRvaRaw, FileRaw,
+        GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw, InterfaceImplRaw,
+        ManifestResourceRaw, MemberRefRaw, MetadataTable, MethodDefRaw, MethodImplRaw,
+        MethodPtrRaw, MethodSemanticsRaw, MethodSpecRaw, ModuleRaw, ModuleRefRaw, NestedClassRaw,
+        ParamPtrRaw, ParamRaw, PropertyMapRaw, PropertyPtrRaw, PropertyRaw, RowDefinition,
+        StandAloneSigRaw, TableData, TableId, TableInfo, TableInfoRef, TypeDefRaw, TypeRefRaw,
+        TypeSpecRaw,
     },
     Error::OutOfBounds,
     Result,
@@ -1234,6 +1235,12 @@ impl<'a> TablesHeader<'a> {
                 TableData::DeclSecurity(table) => unsafe {
                     Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
                 },
+                TableData::EncLog(table) => unsafe {
+                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
+                },
+                TableData::EncMap(table) => unsafe {
+                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
+                },
                 TableData::ClassLayout(table) => unsafe {
                     Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
                 },
@@ -1438,6 +1445,18 @@ impl<'a> TablesHeader<'a> {
                 *current_offset += table.size() as usize;
 
                 TableData::DeclSecurity(table)
+            }
+            TableId::EncLog => {
+                let table = MetadataTable::<EncLogRaw>::new(data, t_info.rows, self.info.clone())?;
+                *current_offset += table.size() as usize;
+
+                TableData::EncLog(table)
+            }
+            TableId::EncMap => {
+                let table = MetadataTable::<EncMapRaw>::new(data, t_info.rows, self.info.clone())?;
+                *current_offset += table.size() as usize;
+
+                TableData::EncMap(table)
             }
             TableId::ClassLayout => {
                 let table =

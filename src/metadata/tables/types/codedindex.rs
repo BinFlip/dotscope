@@ -344,6 +344,8 @@ impl CodedIndex {
                 TableId::TypeSpec => Token::new(row | 0x1B00_0000),
                 TableId::ImplMap => Token::new(row | 0x1C00_0000),
                 TableId::FieldRVA => Token::new(row | 0x1D00_0000),
+                TableId::EncLog => Token::new(row | 0x1E00_0000),
+                TableId::EncMap => Token::new(row | 0x1F00_0000),
                 TableId::Assembly => Token::new(row | 0x2000_0000),
                 TableId::AssemblyProcessor => Token::new(row | 0x2100_0000),
                 TableId::AssemblyOS => Token::new(row | 0x2200_0000),

@@ -272,6 +272,20 @@ pub enum TableId {
     /// or mapped data fields.
     FieldRVA = 0x1D,
 
+    /// `EncLog` table (0x1E) - Edit-and-Continue log entries.
+    ///
+    /// Records all edit operations performed during debugging sessions that use
+    /// Edit-and-Continue functionality. Each entry specifies a metadata token
+    /// and the type of operation (create, update, delete) performed on that element.
+    EncLog = 0x1E,
+
+    /// `EncMap` table (0x1F) - Edit-and-Continue token mapping.
+    ///
+    /// Maps original metadata tokens to their updated versions after Edit-and-Continue
+    /// operations. This table enables debuggers to correlate pre-edit and post-edit
+    /// metadata tokens, maintaining proper references during debugging sessions.
+    EncMap = 0x1F,
+
     /// `Assembly` table (0x20) - Current assembly metadata.
     ///
     /// Contains metadata about the current assembly, including version
