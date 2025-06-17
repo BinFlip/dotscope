@@ -1,3 +1,17 @@
+//! Raw MethodImpl table structure with unresolved coded indexes.
+//!
+//! This module provides the [`MethodImplRaw`] struct, which represents method implementation
+//! mappings as stored in the metadata stream. The structure contains unresolved coded indexes
+//! that require processing to establish complete implementation mapping information.
+//!
+//! # Purpose
+//! [`MethodImplRaw`] serves as the direct representation of MethodImpl table entries from the
+//! binary metadata stream, before reference resolution and type system integration. This raw
+//! format is processed during metadata loading to create [`MethodImpl`] instances with resolved
+//! references and complete implementation mapping information.
+//!
+//! [`MethodImpl`]: crate::metadata::tables::MethodImpl
+
 use std::sync::Arc;
 
 use crate::{
@@ -14,34 +28,86 @@ use crate::{
     Result,
 };
 
+/// Raw MethodImpl table entry with unresolved indexes and coded references.
+///
+/// This structure represents a method implementation mapping as stored directly in the metadata
+/// stream. All references are unresolved indexes or coded indexes that require processing during
+/// metadata loading to establish complete implementation mapping information.
+///
+/// # Table Structure (ECMA-335 §22.27)
+/// | Column | Size | Description |
+/// |--------|------|-------------|
+/// | Class | TypeDef index | Type containing the implementation mapping |
+/// | MethodBody | MethodDefOrRef coded index | Concrete method implementation |
+/// | MethodDeclaration | MethodDefOrRef coded index | Method declaration being implemented |
+///
+/// # Coded Index Resolution
+/// Both `method_body` and `method_declaration` use MethodDefOrRef coded index encoding:
+/// - **Tag 0**: MethodDef table (methods defined in current assembly)
+/// - **Tag 1**: MemberRef table (methods referenced from external assemblies)
+///
+/// # Implementation Mapping Logic
+/// The mapping establishes the relationship:
+/// - **Class**: Contains the concrete implementation method
+/// - **MethodBody**: The actual implementation that provides the behavior
+/// - **MethodDeclaration**: The interface or virtual method being implemented
 #[derive(Clone, Debug)]
-/// The `MethodImpl` table specifies which methods implement which methods for a class. `TableId` = 0x19
 pub struct MethodImplRaw {
-    /// `RowID`
+    /// Row identifier within the MethodImpl table.
+    ///
+    /// Unique identifier for this method implementation mapping entry, used for internal
+    /// table management and token generation.
     pub rid: u32,
-    /// Token
+
+    /// Metadata token for this MethodImpl entry (TableId 0x19).
+    ///
+    /// Computed as `0x19000000 | rid` to create the full token value
+    /// for referencing this implementation mapping from other metadata structures.
     pub token: Token,
-    /// Offset
+
+    /// Byte offset of this entry within the raw table data.
+    ///
+    /// Used for efficient table navigation and binary metadata processing.
     pub offset: usize,
-    /// an index to the `CilType` which implements the Interface
+
+    /// TypeDef table index for the class containing the implementation mapping.
+    ///
+    /// References the type that provides the concrete implementation for the method
+    /// declaration. The class contains the method body that implements the interface
+    /// contract or overrides the virtual method.
     pub class: u32,
-    /// an index to the `Method` owned by 'class' that is implementing the interface functionality
+
+    /// MethodDefOrRef coded index for the concrete method implementation.
+    ///
+    /// Points to MethodDef or MemberRef tables to specify the actual method that
+    /// provides the implementation behavior. This method belongs to the class and
+    /// contains the IL code or native implementation.
     pub method_body: CodedIndex,
-    /// an index to the 'Interface' definition
+
+    /// MethodDefOrRef coded index for the method declaration being implemented.
+    ///
+    /// Points to MethodDef or MemberRef tables to specify the interface method,
+    /// abstract method, or virtual method declaration that is being implemented.
+    /// This establishes the contract that the implementation must fulfill.
     pub method_declaration: CodedIndex,
 }
 
 impl MethodImplRaw {
-    /// Apply an `MethodImplRaw` to the relevant entries of types (e.g. fields, methods and parameters)
+    /// Applies a MethodImplRaw entry to update type system implementation relationships.
     ///
-    /// ## Arguments
-    /// * 'types'       - All parsed `CilType` entries
-    /// * 'memberrefs'  - All parsed `MemberRef` entries
-    /// * 'methods'     - All parsed `MethodDef` entries
+    /// This method establishes bidirectional relationships between method declarations
+    /// and their implementations by updating type system collections. It resolves
+    /// coded indexes to concrete method references and updates both the implementing
+    /// class and the declared method with cross-reference information.
     ///
-    /// # Errors
-    /// Returns an error if method tokens cannot be resolved or if the method body
-    /// or declaration references are invalid.
+    /// # Arguments
+    /// * `types` - Type registry containing all parsed CilType entries for class resolution
+    /// * `memberrefs` - Collection of all MemberRef entries for external method resolution
+    /// * `methods` - Collection of all MethodDef entries for local method resolution
+    ///
+    /// # Returns
+    /// * `Ok(())` - If the implementation mapping was applied successfully
+    /// * `Err(_)` - If class resolution, method resolution, or system updates fail
     pub fn apply(
         &self,
         types: &TypeRegistry,
@@ -126,15 +192,20 @@ impl MethodImplRaw {
         }
     }
 
-    /// Convert an `MethodImplRaw`, into a `MethodImpl` which has indexes resolved and owns the referenced data
+    /// Converts a MethodImplRaw entry into a MethodImpl with resolved references and implementation mappings.
     ///
-    /// ## Arguments
-    /// * `get_ref`  - Closure to resolve coded indexes to type references
-    /// * `types`    - The type registry containing all parsed `CilType` entries
+    /// This method performs complete implementation mapping resolution, including class type resolution,
+    /// method reference resolution through coded indexes, and creation of the owned structure with
+    /// all references established. The resulting structure provides direct access to implementation
+    /// mapping information for method resolution and virtual dispatch operations.
     ///
-    /// # Errors
-    /// Returns an error if method tokens cannot be resolved, if the class type cannot be found,
-    /// or if the method body or declaration references are invalid.
+    /// # Arguments
+    /// * `get_ref` - Closure for resolving coded indexes to type references
+    /// * `types` - Type registry containing all parsed CilType entries for class resolution
+    ///
+    /// # Returns
+    /// * `Ok(MethodImplRc)` - Successfully resolved implementation mapping with complete metadata
+    /// * `Err(_)` - If class resolution, method resolution, or reference validation fails
     pub fn to_owned<F>(&self, get_ref: F, types: &TypeRegistry) -> Result<MethodImplRc>
     where
         F: Fn(&CodedIndex) -> CilTypeReference,

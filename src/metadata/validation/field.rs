@@ -1,14 +1,104 @@
-//! Field layout validation for .NET metadata
+//! # Field Layout Validation for .NET Metadata
 //!
-//! This module provides validation utilities for field layout tables,
-//! ensuring compliance with .NET runtime rules and metadata constraints.
+//! This module provides comprehensive validation utilities for field layout metadata,
+//! ensuring compliance with .NET runtime rules and ECMA-335 specifications. Field layout
+//! validation is critical for assemblies with explicit layout types, where precise memory
+//! positioning and overlap detection are essential for runtime correctness.
+//!
+//! ## Overview
+//!
+//! Field layout validation in .NET involves several key aspects:
+//!
+//! - **Offset Validation**: Ensuring field offsets are within valid ranges
+//! - **Overlap Detection**: Preventing conflicting memory layout in explicit layout types
+//! - **Coverage Analysis**: Verifying that explicit layouts respect declared type sizes
+//! - **Runtime Compliance**: Matching validation behavior of the .NET runtime
+//!
+//! ## Validation Categories
+//!
+//! ### Offset Validation
+//!
+//! - Validates field offsets against `INT32_MAX` limit (2,147,483,647)
+//! - Detects unspecified offsets (`0xFFFFFFFF`) in explicit layout scenarios
+//! - Ensures offsets are properly formatted and within runtime constraints
+//!
+//! ### Overlap Detection
+//!
+//! - Identifies overlapping fields in explicit layout types
+//! - Prevents memory conflicts that could cause runtime issues
+//! - Handles edge cases like adjacent fields and integer overflow
+//!
+//! ### Coverage Analysis
+//!
+//! - Verifies fields don't extend beyond declared type boundaries
+//! - Ensures explicit layout types respect their declared sizes
+//! - Detects integer overflow in field positioning calculations
+//!
+//! ## Usage Examples
+//!
+//! The `FieldValidator` provides methods for validating field layout offsets,
+//! detecting field overlaps, and ensuring explicit layout coverage. These
+//! validations help ensure proper memory layout for types with explicit
+//! field positioning.
+//!
+//! ## Runtime Compliance
+//!
+//! This implementation follows .NET Core runtime validation behavior as documented
+//! in `coreclr/vm/classlayoutinfo.cpp`. Key compliance aspects include:
+//!
+//! - **Maximum Offset**: Enforces `INT32_MAX` limit from runtime sources
+//! - **Unspecified Offsets**: Matches runtime handling of `0xFFFFFFFF` values
+//! - **Overlap Detection**: Implements runtime-equivalent overlap checking
+//! - **Error Messages**: Provides runtime-style error descriptions
+//!
+//! ## Limitations
+//!
+//! Current implementation focuses on basic structural validation:
+//!
+//! - Does not validate type-specific alignment requirements
+//! - Does not perform deep type system analysis for field types
+//! - Does not validate platform-specific layout constraints
+//! - Union-style overlapping fields are detected as errors (by design)
+//!
+//! ## Thread Safety
+//!
+//! The `FieldValidator` is stateless and safe for concurrent use across multiple threads.
+//! All validation functions are pure and do not maintain internal state.
+//!
+//! ## References
+//!
+//! - ECMA-335, Partition II, Section 10.7 - Controlling instance layout
+//! - ECMA-335, Partition II, Section 23.2.5 - FieldLayout table
+//! - .NET Core Runtime: `coreclr/vm/classlayoutinfo.cpp`
+//! - .NET Type Layout documentation
 
 use crate::{metadata::tables::FieldRc, Result};
 
 /// Maximum allowed field offset value (`INT32_MAX` from .NET runtime)
 const MAX_FIELD_OFFSET: u32 = i32::MAX as u32; // 2,147,483,647
 
-/// Validator for field layout metadata
+/// Field layout validator for .NET metadata compliance.
+///
+/// Provides comprehensive validation functionality for field layout metadata as defined
+/// in ECMA-335 and implemented by the .NET runtime. This validator ensures that field
+/// layouts conform to runtime constraints and prevent memory layout conflicts.
+///
+/// ## Design Philosophy
+///
+/// The validator is designed to match .NET runtime behavior as closely as possible,
+/// using the same validation rules and limits found in the CoreCLR implementation.
+/// This ensures that validated metadata will be compatible with actual runtime loading.
+///
+/// ## Validation Scope
+///
+/// The validator handles three primary validation categories:
+/// - **Structural validation**: Offset ranges, format compliance
+/// - **Semantic validation**: Overlap detection, coverage analysis
+/// - **Runtime compliance**: Matching CoreCLR validation behavior
+///
+/// ## Thread Safety
+///
+/// This struct is stateless and all methods are safe for concurrent use.
 pub struct FieldValidator;
 
 impl FieldValidator {
@@ -54,17 +144,44 @@ impl FieldValidator {
         Ok(())
     }
 
-    /// Validates field layout for overlap detection in explicit layout types
+    /// Validates field layout for overlap detection in explicit layout types.
+    ///
+    /// Performs comprehensive overlap detection for fields in explicit layout types,
+    /// ensuring that no two fields occupy the same memory locations. This validation
+    /// is critical for preventing runtime memory corruption and undefined behavior.
+    ///
+    /// ## Algorithm
+    ///
+    /// 1. Sorts fields by offset for efficient comparison
+    /// 2. Checks each adjacent pair for memory overlap
+    /// 3. Detects integer overflow in field size calculations
+    /// 4. Reports detailed overlap information for debugging
+    ///
+    /// ## Overlap Detection
+    ///
+    /// Two fields overlap if: `field1_offset + field1_size > field2_offset`
+    /// where `field2_offset > field1_offset`.
     ///
     /// # Arguments
-    /// * `fields_with_offsets` - Slice of (`field_offset`, `field_size`) tuples
+    ///
+    /// * `fields_with_offsets` - Slice of `(field_offset, field_size)` tuples representing
+    ///   the memory layout of fields in an explicit layout type
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if no overlaps are detected, or an error describing the first overlap found.
     ///
     /// # Errors
-    /// Returns an error if fields overlap in memory layout
+    ///
+    /// Returns [`crate::Error`] in these cases:
+    /// - **Field Overlap**: Two or more fields occupy overlapping memory regions
+    /// - **Integer Overflow**: Field offset + size calculation overflows
+    /// - **Invalid Layout**: Malformed field layout information
     ///
     /// # .NET Runtime Reference
-    /// The .NET runtime detects field overlaps during type loading.
-    /// This validation helps catch issues early during metadata parsing.
+    ///
+    /// This validation matches the overlap detection performed by the .NET runtime
+    /// during type loading, helping catch issues early in the metadata parsing phase.
     pub fn validate_field_overlaps(fields_with_offsets: &[(u32, u32)]) -> Result<()> {
         let mut sorted_fields: Vec<(u32, u32)> = fields_with_offsets.to_vec();
         sorted_fields.sort_by_key(|(offset, _)| *offset);
@@ -93,16 +210,37 @@ impl FieldValidator {
         Ok(())
     }
 
-    /// Validates that explicit layout types have proper field layout coverage
+    /// Validates that explicit layout types have proper field layout coverage.
+    ///
+    /// Ensures that all fields in an explicit layout type fit within the declared
+    /// type size, preventing fields from extending beyond type boundaries. This
+    /// validation is essential for maintaining memory safety and runtime consistency.
+    ///
+    /// ## Coverage Analysis
+    ///
+    /// For each field, validates that: `field_offset + field_size <= class_size`
+    ///
+    /// This ensures that:
+    /// - No field extends beyond the type's memory footprint
+    /// - The declared type size is sufficient for all fields
+    /// - Integer overflow in field calculations is detected
     ///
     /// # Arguments
-    /// * `class_size` - The declared size of the class
-    /// * `fields_with_offsets` - Slice of (`field_offset`, `field_size`) tuples
+    ///
+    /// * `class_size` - The declared size of the class/struct in bytes
+    /// * `fields_with_offsets` - Slice of `(field_offset, field_size)` tuples for all fields
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if all fields fit within the declared class size, or an error describing
+    /// the first field that extends beyond the type boundary.
     ///
     /// # Errors
-    /// Returns an error if:
-    /// - Any field extends beyond the declared class size
-    /// - Class size is insufficient for the field layout
+    ///
+    /// Returns [`crate::Error`] in these cases:
+    /// - **Boundary Violation**: Field extends beyond declared class size
+    /// - **Integer Overflow**: Field offset + size calculation overflows
+    /// - **Size Mismatch**: Declared class size is insufficient for field layout
     pub fn validate_explicit_layout_coverage(
         class_size: u32,
         fields_with_offsets: &[(u32, u32)],

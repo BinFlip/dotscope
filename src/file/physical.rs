@@ -1,3 +1,99 @@
+//! Physical file backend for memory-mapped I/O.
+//!
+//! This module provides the [`crate::file::physical::Physical`] backend that implements the
+//! [`crate::file::Backend`] trait for accessing files from disk using memory-mapped I/O.
+//! This approach provides efficient access to large files without loading the entire content
+//! into memory upfront, while still allowing fast random access to any part of the file.
+//!
+//! # Architecture
+//!
+//! The physical backend uses memory-mapped I/O to map files directly into the process's
+//! virtual address space. This architecture provides several key benefits:
+//!
+//! - **Efficient memory usage** - Only requested portions are loaded into physical memory
+//! - **Zero-copy access** - Direct access to mapped memory without data copying
+//! - **Operating system optimization** - Leverages OS-level caching and paging
+//! - **Shared memory** - Multiple processes can efficiently access the same file
+//! - **Lazy loading** - Pages are loaded on-demand as they are accessed
+//!
+//! # Key Components
+//!
+//! ## Core Type
+//! - [`crate::file::physical::Physical`] - Main backend struct implementing [`crate::file::Backend`]
+//!
+//! ## Backend Methods
+//! - [`crate::file::physical::Physical::new`] - Creates backend from file path with memory mapping
+//! - [`crate::file::Backend::data_slice`] - Retrieves byte slices with bounds checking
+//! - [`crate::file::Backend::data`] - Returns the complete memory-mapped file data
+//! - [`crate::file::Backend::len`] - Returns total file size
+//!
+//! # Usage Examples
+//!
+//! ## Basic File Access
+//!
+//! ```rust,ignore
+//! use dotscope::file::{Physical, Backend};
+//! use std::path::Path;
+//!
+//! let physical = Physical::new(Path::new("assembly.dll"))?;
+//! println!("File size: {} bytes", physical.len());
+//!
+//! // Read the first 4 bytes (e.g., PE signature)
+//! let header = physical.data_slice(0, 4)?;
+//! assert_eq!(header, b"MZ\x90\x00");
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! ## Random Access Pattern
+//!
+//! ```rust,ignore
+//! use dotscope::file::{Physical, Backend};
+//! use std::path::Path;
+//!
+//! let physical = Physical::new(Path::new("MyAssembly.dll"))?;
+//!
+//! // Check DOS header
+//! let dos_header = physical.data_slice(0, 2)?;
+//! assert_eq!(dos_header, b"MZ");
+//!
+//! // Access PE header offset (at offset 60)
+//! let pe_offset_bytes = physical.data_slice(60, 4)?;
+//! let pe_offset = u32::from_le_bytes([
+//!     pe_offset_bytes[0], pe_offset_bytes[1],
+//!     pe_offset_bytes[2], pe_offset_bytes[3]
+//! ]);
+//!
+//! // Jump to PE header location
+//! let pe_signature = physical.data_slice(pe_offset as usize, 4)?;
+//! assert_eq!(pe_signature, b"PE\x00\x00");
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! ## Error Handling
+//!
+//! ```rust,ignore
+//! use dotscope::file::Physical;
+//! use std::path::Path;
+//!
+//! // Handle file that doesn't exist
+//! match Physical::new(Path::new("nonexistent.dll")) {
+//!     Ok(physical) => println!("File opened successfully"),
+//!     Err(e) => println!("Failed to open file: {}", e),
+//! }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::file`] - Provides the [`crate::file::Backend`] trait implementation
+//! - [`crate::file::File`] - Uses physical backend for file-based parsing operations
+//! - [`crate::metadata::cilobject`] - Can parse CIL objects from memory-mapped files
+//!
+//! The physical backend is ideal for production scenarios where files are accessed
+//! from disk and memory efficiency is important, complementing the memory backend
+//! for scenarios where data is already loaded into memory.
+
 use super::Backend;
 use crate::{
     Error::{Error, FileError, OutOfBounds},
@@ -7,17 +103,73 @@ use crate::{
 use memmap2::Mmap;
 use std::{fs, path::Path};
 
-/// Input file backed by a physical file on disk
+/// A file backend that uses memory-mapped I/O for efficient access to files on disk.
+///
+/// [`crate::file::physical::Physical`] provides a way to access large files by mapping them
+/// directly into the process's virtual address space. This eliminates the need to read
+/// the entire file into memory upfront and allows the operating system to manage
+/// memory efficiently through demand paging.
+///
+/// The backend is particularly well-suited for reading .NET assemblies, which can be
+/// large and are typically accessed in a non-sequential pattern when parsing metadata.
+/// All access operations include bounds checking to ensure memory safety.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use dotscope::file::{Physical, Backend};
+/// use std::path::Path;
+///
+/// // Open a .NET assembly file
+/// let physical = Physical::new(Path::new("MyAssembly.dll"))?;
+///
+/// // Check if it's a valid PE file
+/// let dos_header = physical.data_slice(0, 2)?;
+/// assert_eq!(dos_header, b"MZ");
+///
+/// // Get the full file size
+/// println!("Assembly size: {} bytes", physical.len());
+///
+/// // Access the entire file data
+/// let full_data = physical.data();
+/// println!("First byte: 0x{:02X}", full_data[0]);
+/// # Ok::<(), dotscope::Error>(())
+/// ```
 #[derive(Debug)]
 pub struct Physical {
+    /// Memory-mapped file data
     data: Mmap,
 }
 
 impl Physical {
-    /// Create a new physical backend
+    /// Create a new physical file backend by memory-mapping the specified file.
     ///
-    /// ## Arguments
-    /// * 'path' - The file path to use
+    /// This method opens the file at the given path and creates a memory mapping
+    /// for it. The file is mapped as read-only and shared, allowing multiple
+    /// processes to efficiently access the same file.
+    ///
+    /// # Arguments
+    /// * `path` - The file path to open and memory-map
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::FileError`] if the file cannot be opened or
+    /// [`crate::Error::Error`] if memory mapping fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::file::Physical;
+    /// use std::path::Path;
+    ///
+    /// // Open a .NET assembly
+    /// let physical = Physical::new(Path::new("System.dll"))?;
+    /// assert!(physical.len() > 0);
+    ///
+    /// // Open a file that doesn't exist (will return an error)
+    /// let result = Physical::new(Path::new("nonexistent.dll"));
+    /// assert!(result.is_err());
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn new(path: &Path) -> Result<Physical> {
         let file = match fs::File::open(path) {
             Ok(file) => file,
@@ -34,6 +186,40 @@ impl Physical {
 }
 
 impl Backend for Physical {
+    /// Get a slice of data from the memory-mapped file.
+    ///
+    /// This method provides bounds-checked access to a specific region of the
+    /// memory-mapped file. It validates that the requested range is within
+    /// the file bounds and doesn't overflow.
+    ///
+    /// # Arguments
+    /// * `offset` - The starting offset in bytes
+    /// * `len` - The number of bytes to read
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::OutOfBounds`] if the requested range extends
+    /// beyond the file or if offset + len would overflow.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::file::{Physical, Backend};
+    /// use std::path::Path;
+    ///
+    /// let physical = Physical::new(Path::new("assembly.dll"))?;
+    ///
+    /// // Read DOS header signature
+    /// let dos_sig = physical.data_slice(0, 2)?;
+    /// assert_eq!(dos_sig, b"MZ");
+    ///
+    /// // Read 4 bytes starting at offset 60 (PE header offset location)
+    /// let pe_offset_bytes = physical.data_slice(60, 4)?;
+    /// let pe_offset = u32::from_le_bytes([
+    ///     pe_offset_bytes[0], pe_offset_bytes[1],
+    ///     pe_offset_bytes[2], pe_offset_bytes[3]
+    /// ]);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     fn data_slice(&self, offset: usize, len: usize) -> Result<&[u8]> {
         let Some(offset_end) = offset.checked_add(len) else {
             return Err(OutOfBounds);
@@ -46,10 +232,43 @@ impl Backend for Physical {
         Ok(&self.data[offset..offset_end])
     }
 
+    /// Get a reference to the entire memory-mapped file data.
+    ///
+    /// This provides direct access to the underlying memory-mapped data as a byte slice.
+    /// The returned slice represents the entire file contents.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::file::{Physical, Backend};
+    /// use std::path::Path;
+    ///
+    /// let physical = Physical::new(Path::new("assembly.dll"))?;
+    /// let full_data = physical.data();
+    ///
+    /// // Check if it's a PE file
+    /// if full_data.len() >= 2 {
+    ///     assert_eq!(&full_data[0..2], b"MZ");
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     fn data(&self) -> &[u8] {
         self.data.as_ref()
     }
 
+    /// Get the size of the memory-mapped file in bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::file::{Physical, Backend};
+    /// use std::path::Path;
+    ///
+    /// let physical = Physical::new(Path::new("assembly.dll"))?;
+    /// let size = physical.len();
+    /// println!("File size: {} bytes ({:.2} MB)", size, size as f64 / 1024.0 / 1024.0);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     fn len(&self) -> usize {
         self.data.len()
     }

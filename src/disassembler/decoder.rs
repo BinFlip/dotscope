@@ -1,30 +1,55 @@
 //! CIL instruction decoding and disassembly utilities.
 //!
-//! This module provides low-level functions for decoding CIL bytecode into instructions and
-//! analyzing control flow. It is intended for advanced users who need to work with raw bytecode
-//! or build custom analysis tools.
+//! This module provides the core decoding engine for transforming raw CIL bytecode into
+//! structured instruction sequences and basic blocks. It implements the complete ECMA-335
+//! disassembly pipeline, from individual instruction parsing to complex control flow analysis
+//! with exception handler integration.
 //!
-//! # Example: Decoding a Single Instruction
+//! # Architecture
+//!
+//! The module is organized around a stateful [`crate::disassembler::decoder::Decoder`] that
+//! maintains disassembly context while processing bytecode. Public functions provide different
+//! levels of abstraction, from single instruction decoding to complete method disassembly
+//! with basic block construction and control flow analysis.
+//!
+//! # Key Components
+//!
+//! - [`crate::disassembler::decoder::decode_instruction`] - Core single instruction decoder
+//! - [`crate::disassembler::decoder::decode_stream`] - Linear instruction sequence decoder
+//! - [`crate::disassembler::decoder::decode_blocks`] - Complete control flow analysis with basic blocks
+//! - [`crate::disassembler::decoder::decode_method`] - Internal method-level disassembly integration
+//!
+//! # Usage Examples
 //!
 //! ```rust,no_run
-//! use dotscope::{Parser, disassembler::decode_instruction};
+//! use dotscope::{Parser, disassembler::{decode_instruction, decode_stream, decode_blocks}};
+//!
+//! // Decode a single instruction
 //! let code = [0x2A]; // ret
 //! let mut parser = Parser::new(&code);
 //! let instr = decode_instruction(&mut parser, 0x1000)?;
 //! assert_eq!(instr.mnemonic, "ret");
-//! # Ok::<(), dotscope::Error>(())
-//! ```
 //!
-//! # Example: Decoding a Stream of Instructions
-//!
-//! ```rust,no_run
-//! use dotscope::{Parser, disassembler::decode_stream};
+//! // Decode a linear instruction stream  
 //! let code = [0x00, 0x2A]; // nop, ret
 //! let mut parser = Parser::new(&code);
 //! let instrs = decode_stream(&mut parser, 0x1000)?;
 //! assert_eq!(instrs.len(), 2);
+//!
+//! // Decode with control flow analysis
+//! let code = [0x00, 0x2A]; // nop, ret
+//! let blocks = decode_blocks(&code, 0, 0x1000, None)?;
+//! assert_eq!(blocks.len(), 1);
 //! # Ok::<(), dotscope::Error>(())
 //! ```
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::disassembler::instruction`] - Defines instruction structure and metadata
+//! - [`crate::disassembler::block`] - Provides basic block representation for control flow
+//! - [`crate::file::parser`] - Supplies low-level bytecode parsing capabilities
+//! - [`crate::metadata::method`] - Supports method-level disassembly and caching
 
 use std::sync::Arc;
 
@@ -45,26 +70,45 @@ use crate::{
 /// A stateful decoder instance, that exposes the more complex disassembly algorithm
 /// in a simple manner to be used by the framework and exposed methods
 struct Decoder<'a> {
+    /// Collection of decoded basic blocks
     blocks: Vec<BasicBlock>,
-
+    /// Exception handlers that affect control flow (if any)
     exceptions: Option<&'a [ExceptionHandler]>,
+    /// Shared map tracking which addresses have been visited during disassembly
     visited: Arc<VisitedMap>,
+    /// Parser for reading instruction bytes from the method body
     parser: &'a mut Parser<'a>,
+    /// Current block identifier being processed
     block_id: usize,
-
+    /// Starting offset within the method body
     offset_start: usize,
+    /// Starting relative virtual address
     rva_start: usize,
 }
 
 impl<'a> Decoder<'a> {
     /// Create a new stateful Decoder
     ///
-    /// ## Arguments
-    /// * 'parser'      - The parser that wraps the byte stream to process
-    /// * 'offset'      - The offset at which the first instructions starts (must be in range of parser)
-    /// * 'rva'         - The rva of the first instruction
-    /// * 'exceptions'  - Optional information about exception handlers
-    /// * 'visited'     - `VisitedMap` for tracking disassembly progress
+    /// Initializes a decoder instance for processing CIL bytecode into basic blocks.
+    /// The decoder maintains state during disassembly, tracking visited addresses
+    /// and building control flow relationships between basic blocks.
+    ///
+    /// # Arguments
+    ///
+    /// * `parser` - The [`crate::file::parser::Parser`] that wraps the byte stream to process
+    /// * `offset` - The offset at which the first instruction starts (must be in range of parser)
+    /// * `rva` - The relative virtual address of the first instruction
+    /// * `exceptions` - Optional information about exception handlers from method metadata
+    /// * `visited` - [`crate::disassembler::visitedmap::VisitedMap`] for tracking disassembly progress
+    ///
+    /// # Returns
+    ///
+    /// Returns a new [`crate::disassembler::decoder::Decoder`] instance ready for block decoding,
+    /// or an error if the offset is out of bounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::OutOfBounds`] if the offset exceeds the parser's data length.
     pub fn new(
         parser: &'a mut Parser<'a>,
         offset: usize,
@@ -87,6 +131,24 @@ impl<'a> Decoder<'a> {
         })
     }
 
+    /// Returns a reference to the decoded basic blocks.
+    ///
+    /// This method provides read-only access to the basic blocks that have been
+    /// decoded so far. The blocks are ordered by their position in the method body
+    /// and contain complete instruction sequences with control flow relationships.
+    ///
+    /// # Returns
+    ///
+    /// A slice containing all decoded [`crate::disassembler::block::BasicBlock`] instances.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::disassembler::decoder::Decoder;
+    /// # let mut decoder = todo!(); // Decoder instance
+    /// let blocks = decoder.blocks();
+    /// println!("Decoded {} basic blocks", blocks.len());
+    /// ```
     pub fn blocks(&self) -> &[BasicBlock] {
         &self.blocks
     }
@@ -99,19 +161,14 @@ impl<'a> Decoder<'a> {
     ///
     /// # Usage in Method Integration
     ///
-    /// This method is primarily used internally by [`decode_method`] to efficiently
-    /// transfer decoded blocks to the Method's `OnceLock<Vec<BasicBlock>>` field:
+    /// This method is primarily used internally by [`crate::disassembler::decode_method`] to efficiently
+    /// transfer decoded blocks to the [`crate::metadata::method::Method`]'s `OnceLock<Vec<BasicBlock>>` field:
     ///
     /// ```rust,ignore
     /// // Internal usage pattern
     /// let blocks = decoder.into_blocks();
     /// method.blocks.set(blocks);
     /// ```
-    ///
-    /// # Performance
-    ///
-    /// This method performs a move operation (O(1)) rather than cloning all blocks
-    /// and their contained instructions, making it efficient for large methods.
     ///
     /// # Examples
     ///
@@ -126,7 +183,7 @@ impl<'a> Decoder<'a> {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
-    /// Note: `decode_blocks` function internally uses this method to return ownership
+    /// Note: [`crate::disassembler::decode_blocks`] function internally uses this method to return ownership
     /// of the blocks to the caller.
     pub fn into_blocks(self) -> Vec<BasicBlock> {
         self.blocks
@@ -250,34 +307,16 @@ impl<'a> Decoder<'a> {
 
 /// Disassembles a method's body into basic blocks and integrates results into the Method struct.
 ///
-/// This function performs complete method disassembly including:
-/// - Parsing method headers and exception handling information
-/// - Decoding all instructions in the method body
-/// - Building basic blocks with proper control flow analysis
-/// - Associating exception handlers with their corresponding blocks
-/// - Thread-safe integration with the Method's `OnceLock<Vec<BasicBlock>>` storage
-///
-/// The function handles the complete disassembly pipeline from raw bytecode to structured
-/// basic blocks, making the results available through the Method's accessor methods.
-///
-/// # Method Integration
-///
-/// The decoded blocks are efficiently transferred to the Method using `OnceLock::set()`:
-/// ```rust,ignore
-/// decoder.decode_blocks()?;
-/// let _ = method.blocks.set(decoder.into_blocks());
-/// ```
-///
-/// This pattern ensures:
-/// - Thread-safe lazy initialization (first thread to call wins)
-/// - Zero-copy transfer of blocks (no cloning required)
-/// - Subsequent access uses cached results
+/// This function performs complete method disassembly including parsing method headers,
+/// decoding all instructions, building basic blocks with control flow analysis, and
+/// associating exception handlers with their corresponding blocks. The results are
+/// efficiently integrated into the Method's thread-safe storage.
 ///
 /// # Arguments
 ///
-/// * `method` - The Method instance to populate with disassembled basic blocks
-/// * `file` - The File containing the raw method bytecode and metadata
-/// * `shared_visited` - Optional shared `VisitedMap` for coordinated disassembly across methods
+/// * `method` - The [`crate::metadata::method::Method`] instance to populate with disassembled basic blocks
+/// * `file` - The [`crate::file::File`] containing the raw method bytecode and metadata
+/// * `shared_visited` - Shared [`crate::disassembler::visitedmap::VisitedMap`] for coordinated disassembly across methods
 ///
 /// # Returns
 ///
@@ -294,62 +333,15 @@ impl<'a> Decoder<'a> {
 /// If multiple threads attempt to disassemble the same method simultaneously, only
 /// the first thread will perform the work while others will no-op safely.
 ///
-/// # Performance Notes
+/// # Integration
 ///
-/// - The function performs no work if the method is already disassembled
-/// - Basic block construction uses efficient control flow analysis algorithms
-/// - Exception handler processing is optimized for typical .NET code patterns
-/// - Memory usage scales linearly with method size and complexity
-/// - When using a shared `VisitedMap`, memory usage is reduced across parallel operations
-///
-/// # Examples
-///
+/// The decoded blocks are efficiently transferred to the Method using `OnceLock::set()`:
 /// ```rust,ignore
-/// // Internal usage in the library
-/// use dotscope::disassembler::decode_method;
-/// use dotscope::CilObject;
-///
-/// let assembly = CilObject::from_file("assembly.dll")?;
-/// let file = assembly.file();
-///
-/// for entry in assembly.methods().iter().take(10) {
-///     let method = entry.value();
-///     
-///     // This is called automatically when accessing method instructions
-///     decode_method(&method, &file, None)?;
-///     
-///     // Now blocks are available
-///     println!("Method {} has {} blocks", method.name, method.block_count());
-/// }
+/// decoder.decode_blocks()?;
+/// let _ = method.blocks.set(decoder.into_blocks());
 /// ```
 ///
-/// Note: This function is typically called automatically when accessing method
-/// instructions or blocks, rather than being invoked directly by user code.
-/// - Associating exception handlers with relevant blocks
-///
-/// The function automatically handles different method body formats (fat/tiny headers)
-/// and processes exception handling regions according to ECMA-335 specifications.
-///
-/// # Arguments
-///
-/// * `method` - The parsed `Method` object to disassemble. Must have valid RVA and metadata.
-/// * `file` - The mapped input file providing access to raw bytecode data.
-/// * `shared_visited` - Optional shared `VisitedMap` for efficient parallel disassembly.
-///
-/// # Returns
-///
-/// Returns `Ok(())` on successful disassembly, or an error if:
-/// - Method has invalid RVA or offset
-/// - Bytecode is malformed or truncated
-/// - Exception handler data is invalid
-/// - Memory allocation fails during processing
-///
-/// # Notes
-///
-/// - The method basic blocks are stored in method.blocks after disassembly
-/// - Exception handlers are automatically associated with relevant blocks
-/// - Control flow analysis builds proper predecessor/successor relationships
-/// - The function is thread-safe when called on different methods
+/// This ensures thread-safe lazy initialization with zero-copy transfer of blocks.
 pub(crate) fn decode_method(
     method: &Method,
     file: &File,
@@ -411,14 +403,13 @@ pub(crate) fn decode_method(
 
 /// Decodes bytecode into a collection of basic blocks with control flow analysis.
 ///
-/// This is a high-level function that performs comprehensive disassembly of bytecode
-/// into basic blocks, building the complete control flow graph automatically.
-/// Unlike `decode_method`, this function works with raw bytecode without requiring
-/// method metadata or exception handler information.
+/// This function performs comprehensive disassembly of raw bytecode into basic blocks,
+/// automatically building the complete control flow graph. Unlike method-level disassembly,
+/// this function works with standalone bytecode without requiring method metadata or
+/// exception handler information, making it useful for analyzing code fragments.
 ///
 /// The function automatically detects basic block boundaries based on control flow
-/// instructions and builds a complete control flow graph. Each basic block contains
-/// a sequential list of instructions ending with a control transfer instruction.
+/// instructions and builds predecessor/successor relationships between blocks.
 ///
 /// # Arguments
 ///
@@ -429,8 +420,11 @@ pub(crate) fn decode_method(
 ///
 /// # Returns
 ///
-/// Returns a vector of `BasicBlock` objects representing the control flow structure,
-/// or an error if:
+/// Returns a vector of [`crate::disassembler::BasicBlock`] objects representing the control flow structure.
+///
+/// # Errors
+///
+/// Returns [`crate::Error`] if:
 /// - The bytecode contains invalid opcodes
 /// - Instruction operands are malformed or truncated
 /// - The specified offset is beyond the buffer bounds
@@ -455,21 +449,6 @@ pub(crate) fn decode_method(
 /// assert!(blocks.len() >= 2);
 /// # Ok::<(), dotscope::Error>(())
 /// ```
-///
-/// # Notes
-///
-/// - Basic blocks are built based on control flow analysis
-/// - Branch targets automatically create new basic block boundaries  
-/// - No exception handler analysis is performed (use `decode_method` for that)
-/// - The function processes bytecode sequentially until all reachable code is analyzed
-/// - Use this for analyzing raw bytecode outside of method contexts
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - The bytecode is malformed or contains invalid instructions
-/// - Memory access goes out of bounds during decoding
-/// - Invalid branch targets are encountered
 pub fn decode_blocks(
     data: &[u8],
     offset: usize,
@@ -503,7 +482,7 @@ pub fn decode_blocks(
 /// Decodes a continuous stream of CIL instructions from a byte stream.
 ///
 /// This function processes raw bytecode sequentially, decoding each instruction
-/// until the parser reaches the end of available data. Unlike `decode_method`,
+/// until the parser reaches the end of available data. Unlike internal method disassembly,
 /// this function does not perform control flow analysis or create basic blocks.
 ///
 /// The function maintains proper RVA tracking as it processes instructions,
@@ -518,8 +497,11 @@ pub fn decode_blocks(
 ///
 /// # Returns
 ///
-/// Returns a `Vec<Instruction>` containing all successfully decoded instructions,
-/// or an error if:
+/// Returns a `Vec<`[`crate::disassembler::instruction::Instruction`]`>` containing all successfully decoded instructions.
+///
+/// # Errors
+///
+/// Returns [`crate::Error`] if:
 /// - The bytecode stream contains invalid opcodes
 /// - Instruction operands are malformed or truncated
 /// - Parser encounters unexpected end of data during instruction decoding
@@ -549,7 +531,7 @@ pub fn decode_blocks(
 ///
 /// # Errors
 ///
-/// Returns an error if:
+/// Returns [`crate::Error`] if:
 /// - The bytecode stream contains invalid opcodes
 /// - Instruction operands are malformed or truncated
 /// - Parser encounters unexpected end of data during instruction decoding
@@ -559,7 +541,7 @@ pub fn decode_blocks(
 /// - Instructions are decoded in linear order without control flow analysis
 /// - Each instruction's RVA is calculated based on the previous instruction's size
 /// - The function stops when the parser has no more data available
-/// - Use `decode_method` for complete method analysis with basic blocks
+/// - Use [`crate::disassembler::decode_blocks`] for complete analysis with basic blocks
 pub fn decode_stream(parser: &mut Parser, rva: u64) -> Result<Vec<Instruction>> {
     let mut current_rva = rva;
     let mut instructions = Vec::new();
@@ -595,7 +577,7 @@ pub fn decode_stream(parser: &mut Parser, rva: u64) -> Result<Vec<Instruction>> 
 ///
 /// # Returns
 ///
-/// Returns a fully populated `Instruction` struct containing:
+/// Returns a fully populated [`crate::disassembler::instruction::Instruction`] struct containing:
 /// - The instruction mnemonic and opcode information
 /// - Decoded operands with proper type information
 /// - Stack behavior and flow control metadata
@@ -603,7 +585,7 @@ pub fn decode_stream(parser: &mut Parser, rva: u64) -> Result<Vec<Instruction>> 
 ///
 /// # Errors
 ///
-/// Returns an error if:
+/// Returns [`crate::Error`] if:
 /// - An invalid or unrecognized opcode is encountered
 /// - Operand data is truncated or corrupted
 /// - Parser reaches end of data unexpectedly during operand decoding

@@ -1,19 +1,111 @@
 //! Low-level byte stream parser for CIL and metadata decoding.
 //!
-//! The [`Parser`] type provides methods for reading primitive values, seeking, and slicing
-//! byte streams. It is used internally by the disassembler and metadata loader, but is also
-//! available for advanced users who need to decode custom data.
+//! This module provides the [`crate::file::parser::Parser`] type, a cursor-based binary data parser
+//! specifically designed for reading .NET metadata structures and CIL bytecode. It offers bounds-checked
+//! access to binary data with support for both little-endian and big-endian formats, compressed
+//! encodings, and complex metadata structures defined by ECMA-335 specifications.
 //!
-//! # Example
+//! # Architecture
+//!
+//! The parser is built around a simple cursor-based model that maintains a position within
+//! a byte slice. The architecture provides:
+//!
+//! - **Position tracking** - Maintains current offset for sequential parsing operations
+//! - **Bounds checking** - All operations validate data availability before reading
+//! - **Zero-copy access** - Works directly on byte slices without data copying
+//! - **Type-safe reading** - Strongly typed methods for common data types
+//! - **Metadata support** - Specialized methods for .NET metadata structures
+//!
+//! # Key Components
+//!
+//! ## Core Type
+//! - [`crate::file::parser::Parser`] - Main parser struct for binary data reading
+//!
+//! ## Navigation Methods
+//! - [`crate::file::parser::Parser::seek`] - Move to specific position
+//! - [`crate::file::parser::Parser::advance`] - Move forward by one byte
+//! - [`crate::file::parser::Parser::advance_by`] - Move forward by specified bytes
+//! - [`crate::file::parser::Parser::pos`] - Get current position
+//! - [`crate::file::parser::Parser::align`] - Align to byte boundaries
+//!
+//! ## Data Access Methods
+//! - [`crate::file::parser::Parser::read_le`] - Read primitive types (little-endian)
+//! - [`crate::file::parser::Parser::read_be`] - Read primitive types (big-endian)
+//! - [`crate::file::parser::Parser::peek_byte`] - Peek at current byte without advancing
+//! - [`crate::file::parser::Parser::data`] - Access remaining data slice
+//!
+//! ## Metadata Reading Methods
+//! - [`crate::file::parser::Parser::read_compressed_uint`] - Read compressed unsigned integers
+//! - [`crate::file::parser::Parser::read_compressed_int`] - Read compressed signed integers
+//! - [`crate::file::parser::Parser::read_compressed_token`] - Read compressed metadata tokens
+//! - [`crate::file::parser::Parser::read_7bit_encoded_int`] - Read 7-bit encoded integers
+//! - [`crate::file::parser::Parser::read_string_utf8`] - Read UTF-8 strings
+//! - [`crate::file::parser::Parser::read_prefixed_string_utf8`] - Read length-prefixed UTF-8 strings
+//! - [`crate::file::parser::Parser::read_prefixed_string_utf16`] - Read length-prefixed UTF-16 strings
+//!
+//! # Usage Examples
+//!
+//! ## Basic Value Reading
 //!
 //! ```rust,no_run
 //! use dotscope::Parser;
+//!
 //! let data = [0x01, 0x02, 0x03, 0x04];
 //! let mut parser = Parser::new(&data);
+//!
+//! // Read little-endian values
 //! let value = parser.read_le::<u16>()?;
 //! assert_eq!(value, 0x0201);
 //! # Ok::<(), dotscope::Error>(())
 //! ```
+//!
+//! ## Sequential Parsing with Navigation
+//!
+//! ```rust,no_run
+//! use dotscope::Parser;
+//!
+//! let data = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+//! let mut parser = Parser::new(&data);
+//!
+//! // Read sequentially
+//! let first = parser.read_le::<u32>()?;
+//! assert_eq!(first, 0x04030201);
+//!
+//! // Seek to specific position
+//! parser.seek(6)?;
+//! let last_bytes = parser.read_le::<u16>()?;
+//! assert_eq!(last_bytes, 0x0807);
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! ## Metadata Structure Parsing
+//!
+//! ```rust,no_run
+//! use dotscope::Parser;
+//!
+//! // Example metadata with compressed integers
+//! let metadata = [0x0C, 0x80, 0x95, 0x01]; // Compressed encoding example
+//! let mut parser = Parser::new(&metadata);
+//!
+//! // Read compressed metadata values
+//! let param_count = parser.read_compressed_uint()?;
+//! let type_token = parser.read_compressed_token()?;
+//!
+//! println!("Parameter count: {}, Type token: {:?}", param_count, type_token);
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata`] - Uses parser for reading metadata tables and structures
+//! - [`crate::disassembler`] - Parses CIL instruction streams and method bodies
+//! - [`crate::file::io`] - Leverages low-level I/O utilities for primitive type reading
+//! - [`crate::metadata::signatures`] - Parses complex type and method signatures
+//!
+//! The parser is used internally throughout the dotscope library for all binary data
+//! parsing operations, providing a consistent and safe interface for accessing .NET
+//! assembly structures.
 
 use crate::{
     file::io::{read_be_at, read_le_at, CilIO},
@@ -65,45 +157,110 @@ use crate::{
 /// structures found in .NET assemblies. It supports reading calling conventions, parameter
 /// counts, type signatures, and other binary metadata formats efficiently.
 pub struct Parser<'a> {
+    /// The binary data being parsed
     data: &'a [u8],
+    /// Current position within the data buffer
     position: usize,
 }
 
 impl<'a> Parser<'a> {
-    /// Create a new `Parser` from a byte slice
+    /// Create a new [`crate::file::parser::Parser`] from a byte slice.
     ///
-    /// ## Arguments
-    /// * 'data' - The byte slice to read from
+    /// # Arguments
+    /// * `data` - The byte slice to read from
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    /// let data = [0x01, 0x02, 0x03, 0x04];
+    /// let parser = Parser::new(&data);
+    /// assert_eq!(parser.len(), 4);
+    /// ```
     #[must_use]
     pub fn new(data: &'a [u8]) -> Self {
         Parser { data, position: 0 }
     }
 
-    /// Returns the length of the data
+    /// Returns the length of the underlying data buffer.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    /// let data = [0x01, 0x02, 0x03];
+    /// let parser = Parser::new(&data);
+    /// assert_eq!(parser.len(), 3);
+    /// ```
     #[must_use]
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
-    /// Returns true if the parser has no data
+    /// Returns `true` if the parser has no data.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    /// let empty_data = [];
+    /// let parser = Parser::new(&empty_data);
+    /// assert!(parser.is_empty());
+    ///
+    /// let data = [0x01];
+    /// let parser = Parser::new(&data);
+    /// assert!(!parser.is_empty());
+    /// ```
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
 
-    /// Returns true if there is more data to parse
+    /// Returns `true` if there is more data available to parse.
+    ///
+    /// This checks if the current position is before the end of the data buffer.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    /// let data = [0x01, 0x02];
+    /// let mut parser = Parser::new(&data);
+    /// assert!(parser.has_more_data());
+    ///
+    /// let _byte = parser.read_le::<u8>()?;
+    /// assert!(parser.has_more_data());
+    ///
+    /// let _byte = parser.read_le::<u8>()?;
+    /// assert!(!parser.has_more_data());
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     #[must_use]
     pub fn has_more_data(&self) -> bool {
         self.position < self.data.len()
     }
 
-    /// Move current position to N
+    /// Move the current position to the specified index.
     ///
-    /// ## Arguments
-    /// * 'pos' - The position to move the cursor to
+    /// # Arguments
+    /// * `pos` - The position to move the cursor to
     ///
     /// # Errors
-    /// Returns [`OutOfBounds`] if position is beyond the data length
+    /// Returns [`crate::Error::OutOfBounds`] if position is beyond the data length.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    /// let data = [0x01, 0x02, 0x03, 0x04];
+    /// let mut parser = Parser::new(&data);
+    ///
+    /// parser.seek(2)?;
+    /// assert_eq!(parser.pos(), 2);
+    /// let value = parser.read_le::<u8>()?;
+    /// assert_eq!(value, 0x03);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn seek(&mut self, pos: usize) -> Result<()> {
         if pos >= self.data.len() {
             return Err(OutOfBounds);
@@ -113,21 +270,47 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// Move the position forward by one
+    /// Move the position forward by one byte.
     ///
     /// # Errors
-    /// Returns [`OutOfBounds`] if advancing would exceed the data length
+    /// Returns [`crate::Error::OutOfBounds`] if advancing would exceed the data length.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    /// let data = [0x01, 0x02, 0x03];
+    /// let mut parser = Parser::new(&data);
+    ///
+    /// assert_eq!(parser.pos(), 0);
+    /// parser.advance()?;
+    /// assert_eq!(parser.pos(), 1);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn advance(&mut self) -> Result<()> {
         self.advance_by(1)
     }
 
-    /// Mode the position forward by N
+    /// Move the position forward by the specified number of bytes.
     ///
-    /// ## Arguments
-    /// * 'step' - Amount of steps to take
+    /// # Arguments
+    /// * `step` - Amount of bytes to advance
     ///
     /// # Errors
-    /// Returns [`OutOfBounds`] if advancing by step would exceed the data length
+    /// Returns [`crate::Error::OutOfBounds`] if advancing by step would exceed the data length.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    /// let data = [0x01, 0x02, 0x03, 0x04, 0x05];
+    /// let mut parser = Parser::new(&data);
+    ///
+    /// assert_eq!(parser.pos(), 0);
+    /// parser.advance_by(3)?;
+    /// assert_eq!(parser.pos(), 3);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn advance_by(&mut self, step: usize) -> Result<()> {
         if self.position + step >= self.data.len() {
             return Err(OutOfBounds);
@@ -137,22 +320,59 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// Get the current position of the parser
+    /// Get the current position of the parser within the data buffer.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    /// let data = [0x01, 0x02, 0x03];
+    /// let mut parser = Parser::new(&data);
+    ///
+    /// assert_eq!(parser.pos(), 0);
+    /// let _byte = parser.read_le::<u8>()?;
+    /// assert_eq!(parser.pos(), 1);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     #[must_use]
     pub fn pos(&self) -> usize {
         self.position
     }
 
-    /// Get access to the underlying data
+    /// Get access to the underlying data buffer.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    /// let data = [0x01, 0x02, 0x03];
+    /// let parser = Parser::new(&data);
+    /// assert_eq!(parser.data(), &[0x01, 0x02, 0x03]);
+    /// ```
     #[must_use]
     pub fn data(&self) -> &[u8] {
         self.data
     }
 
-    /// Peak a single byte without moving
+    /// Peek at the next byte without advancing the position.
     ///
     /// # Errors
-    /// Returns [`OutOfBounds`] if position is at or beyond the data length
+    /// Returns [`crate::Error::OutOfBounds`] if position is at or beyond the data length.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    /// let data = [0x01, 0x02, 0x03];
+    /// let mut parser = Parser::new(&data);
+    ///
+    /// assert_eq!(parser.peek_byte()?, 0x01);
+    /// assert_eq!(parser.pos(), 0); // Position unchanged
+    /// let value = parser.read_le::<u8>()?;
+    /// assert_eq!(value, 0x01);
+    /// assert_eq!(parser.pos(), 1); // Now position advanced
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn peek_byte(&self) -> Result<u8> {
         if self.position >= self.data.len() {
             return Err(OutOfBounds);
@@ -160,10 +380,29 @@ impl<'a> Parser<'a> {
         Ok(self.data[self.position])
     }
 
-    /// Align the position to a specific boundary
+    /// Align the position to a specific boundary.
+    ///
+    /// This advances the position to the next multiple of the specified alignment,
+    /// which is useful when parsing data structures that require specific memory alignment.
+    ///
+    /// # Arguments
+    /// * `alignment` - The boundary to align to (must be a power of 2)
     ///
     /// # Errors
-    /// Returns [`OutOfBounds`] if aligning would exceed the data length
+    /// Returns [`crate::Error::OutOfBounds`] if aligning would exceed the data length.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    /// let data = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+    /// let mut parser = Parser::new(&data);
+    ///
+    /// parser.advance()?; // Position is now 1
+    /// parser.align(4)?;  // Align to 4-byte boundary
+    /// assert_eq!(parser.pos(), 4); // Position advanced to next 4-byte boundary
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn align(&mut self, alignment: usize) -> Result<()> {
         let padding = (alignment - (self.position % alignment)) % alignment;
         if self.position + padding > self.data.len() {
@@ -173,26 +412,75 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// Read a type T from the current position in little-endian, and advance accordingly
+    /// Read a type `T` from the current position in little-endian format and advance the position.
     ///
     /// # Errors
-    /// Returns [`OutOfBounds`] if reading would exceed the data length
+    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    /// let data = [0x01, 0x02, 0x03, 0x04];
+    /// let mut parser = Parser::new(&data);
+    ///
+    /// let value: u16 = parser.read_le()?;
+    /// assert_eq!(value, 0x0201); // Little-endian interpretation
+    /// assert_eq!(parser.pos(), 2);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn read_le<T: CilIO>(&mut self) -> Result<T> {
         read_le_at::<T>(self.data, &mut self.position)
     }
 
-    /// Read a type T from the current position in big-endian, and advance accordingly
+    /// Read a type `T` from the current position in big-endian format and advance the position.
     ///
     /// # Errors
-    /// Returns [`OutOfBounds`] if reading would exceed the data length
+    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    /// let data = [0x01, 0x02, 0x03, 0x04];
+    /// let mut parser = Parser::new(&data);
+    ///
+    /// let value: u16 = parser.read_be()?;
+    /// assert_eq!(value, 0x0102); // Big-endian interpretation
+    /// assert_eq!(parser.pos(), 2);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn read_be<T: CilIO>(&mut self) -> Result<T> {
         read_be_at::<T>(self.data, &mut self.position)
     }
 
-    /// Read a compressed unsigned integer as defined in II.23.2
+    /// Read a compressed unsigned integer as defined in ECMA-335 II.23.2.
+    ///
+    /// Compressed integers use variable-length encoding to efficiently store small values:
+    /// - Values 0-127: 1 byte (0xxxxxxx)
+    /// - Values 128-16383: 2 bytes (10xxxxxx xxxxxxxx)  
+    /// - Values 16384-536870911: 4 bytes (11xxxxxx xxxxxxxx xxxxxxxx xxxxxxxx)
     ///
     /// # Errors
-    /// Returns [`OutOfBounds`] if reading would exceed the data length or [`crate::Error::Malformed`] for invalid compressed uint format
+    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or
+    /// [`crate::Error::Malformed`] for invalid compressed uint format.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    ///
+    /// // Single byte encoding (value < 128)
+    /// let data = [0x7F]; // Represents 127
+    /// let mut parser = Parser::new(&data);
+    /// assert_eq!(parser.read_compressed_uint()?, 127);
+    ///
+    /// // Two byte encoding
+    /// let data = [0x80, 0x80]; // Represents 128
+    /// let mut parser = Parser::new(&data);
+    /// assert_eq!(parser.read_compressed_uint()?, 128);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn read_compressed_uint(&mut self) -> Result<u32> {
         let first_byte = self.read_le::<u8>()?;
 
@@ -220,10 +508,31 @@ impl<'a> Parser<'a> {
         Err(malformed_error!("Invalid compressed uint - {}", first_byte))
     }
 
-    /// Read a compressed signed integer
+    /// Read a compressed signed integer as defined in ECMA-335 II.23.2.
+    ///
+    /// Compressed signed integers use the same variable-length encoding as unsigned integers
+    /// but with the least significant bit indicating the sign and the remaining bits shifted right.
     ///
     /// # Errors
-    /// Returns [`OutOfBounds`] if reading would exceed the data length or [`crate::Error::Malformed`] for invalid encoding
+    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or
+    /// [`crate::Error::Malformed`] for invalid encoding.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    ///
+    /// // Positive number: 10 encoded as 20 (10 << 1 | 0)
+    /// let data = [20];
+    /// let mut parser = Parser::new(&data);
+    /// assert_eq!(parser.read_compressed_int()?, 10);
+    ///
+    /// // Negative number: -5 encoded as 9 ((5-1) << 1 | 1)
+    /// let data = [9];
+    /// let mut parser = Parser::new(&data);
+    /// assert_eq!(parser.read_compressed_int()?, -5);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn read_compressed_int(&mut self) -> Result<i32> {
         let unsigned = self.read_compressed_uint()?;
 
@@ -241,10 +550,30 @@ impl<'a> Parser<'a> {
         Ok(signed)
     }
 
-    /// Read a compressed token
+    /// Read a compressed token as defined in ECMA-335 II.23.2.4.
+    ///
+    /// Compressed tokens encode type references using 2 tag bits and the table index.
+    /// The tag bits determine which metadata table the token refers to:
+    /// - 0x0: TypeDef table
+    /// - 0x1: TypeRef table  
+    /// - 0x2: TypeSpec table
     ///
     /// # Errors
-    /// Returns [`OutOfBounds`] if reading would exceed the data length or [`crate::Error::Malformed`] for invalid token encoding
+    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or
+    /// [`crate::Error::Malformed`] for invalid token encoding.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    ///
+    /// // TypeRef token (tag 0x1, index 1) encoded as (1 << 2) | 0x1 = 5
+    /// let data = [5];
+    /// let mut parser = Parser::new(&data);
+    /// let token = parser.read_compressed_token()?;
+    /// assert_eq!(token.value(), 0x01000001); // TypeRef table with index 1
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn read_compressed_token(&mut self) -> Result<Token> {
         let compressed_token = self.read_compressed_uint()?;
 
@@ -265,10 +594,32 @@ impl<'a> Parser<'a> {
         Ok(Token::new(table + table_index))
     }
 
-    /// Read a 7-bit encoded integer (used in .NET for variable-length encoding)
+    /// Read a 7-bit encoded integer (used in .NET for variable-length encoding).
+    ///
+    /// This encoding uses the most significant bit of each byte as a continuation flag.
+    /// If set, the next byte is part of the value. The value is reconstructed by
+    /// concatenating the lower 7 bits of each byte in little-endian order.
     ///
     /// # Errors
-    /// Returns [`OutOfBounds`] if reading would exceed the data length or [`crate::Error::Malformed`] for invalid encoding
+    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or
+    /// [`crate::Error::Malformed`] for invalid encoding (overflow).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    ///
+    /// // Single byte: 127 (0x7F)
+    /// let data = [0x7F];
+    /// let mut parser = Parser::new(&data);
+    /// assert_eq!(parser.read_7bit_encoded_int()?, 127);
+    ///
+    /// // Two bytes: 128 (0x80 0x01)
+    /// let data = [0x80, 0x01];
+    /// let mut parser = Parser::new(&data);
+    /// assert_eq!(parser.read_7bit_encoded_int()?, 128);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn read_7bit_encoded_int(&mut self) -> Result<u32> {
         let mut value = 0u32;
         let mut shift = 0;
@@ -296,10 +647,30 @@ impl<'a> Parser<'a> {
         Ok(value)
     }
 
-    /// Reads a UTF-8 encoded null-terminated string
+    /// Read a UTF-8 encoded null-terminated string.
+    ///
+    /// Reads bytes from the current position until a null terminator (0x00) is found,
+    /// then decodes the bytes as UTF-8. The position is advanced past the null terminator.
     ///
     /// # Errors
-    /// Returns [`OutOfBounds`] if reading would exceed the data length or [`crate::Error::Malformed`] for invalid UTF-8
+    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or
+    /// [`crate::Error::Malformed`] for invalid UTF-8 encoding.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    ///
+    /// let data = b"Hello\0World\0";
+    /// let mut parser = Parser::new(data);
+    ///
+    /// let first = parser.read_string_utf8()?;
+    /// assert_eq!(first, "Hello");
+    ///
+    /// let second = parser.read_string_utf8()?;
+    /// assert_eq!(second, "World");
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn read_string_utf8(&mut self) -> Result<String> {
         let start = self.position;
         let mut end = start;
@@ -320,10 +691,28 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Read a length-prefixed string (encoded as a 7-bit encoded length followed by UTF-8 bytes)
+    /// Read a length-prefixed UTF-8 string.
+    ///
+    /// The string length is encoded as a 7-bit encoded integer, followed by that many
+    /// UTF-8 bytes. This format is commonly used in .NET metadata streams.
     ///
     /// # Errors
-    /// Returns [`OutOfBounds`] if reading would exceed the data length or [`crate::Error::Malformed`] for invalid UTF-8
+    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or
+    /// [`crate::Error::Malformed`] for invalid UTF-8 encoding.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    ///
+    /// // Length 5, followed by "Hello"
+    /// let data = [5, b'H', b'e', b'l', b'l', b'o'];
+    /// let mut parser = Parser::new(&data);
+    ///
+    /// let result = parser.read_prefixed_string_utf8()?;
+    /// assert_eq!(result, "Hello");
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn read_prefixed_string_utf8(&mut self) -> Result<String> {
         let length = self.read_7bit_encoded_int()? as usize;
 
@@ -344,10 +733,29 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Read a length-prefixed string (encoded as a 7-bit encoded length followed by UTF-16 bytes)
+    /// Read a length-prefixed UTF-16 string.
+    ///
+    /// The string length is encoded as a 7-bit encoded integer (in bytes), followed by
+    /// that many UTF-16 bytes in little-endian format. This format is used for wide
+    /// character strings in .NET metadata.
     ///
     /// # Errors
-    /// Returns [`OutOfBounds`] if reading would exceed the data length or [`crate::Error::Malformed`] for invalid UTF-16
+    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or
+    /// [`crate::Error::Malformed`] for invalid UTF-16 encoding or odd byte length.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    ///
+    /// // Length 10 bytes (5 UTF-16 chars), followed by "Hello" in UTF-16 LE
+    /// let data = [10, 0x48, 0x00, 0x65, 0x00, 0x6C, 0x00, 0x6C, 0x00, 0x6F, 0x00];
+    /// let mut parser = Parser::new(&data);
+    ///
+    /// let result = parser.read_prefixed_string_utf16()?;
+    /// assert_eq!(result, "Hello");
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn read_prefixed_string_utf16(&mut self) -> Result<String> {
         let length = self.read_7bit_encoded_int()? as usize;
         if self.position + length > self.data.len() {

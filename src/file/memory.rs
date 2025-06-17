@@ -1,17 +1,142 @@
+//! In-memory file backend for parsing from byte buffers.
+//!
+//! This module provides the [`Memory`] backend that implements the [`crate::file::Backend`]
+//! trait for parsing .NET assemblies directly from memory buffers. This approach is ideal
+//! when working with embedded data, network streams, or scenarios where file data is
+//! already loaded into memory, offering fast random access to any part of the file.
+//!
+//! # Architecture
+//!
+//! The memory backend uses a simple design centered around a single [`Vec<u8>`] that stores
+//! the entire file contents. This provides several advantages:
+//!
+//! - **Direct Access**: No file system calls needed after initialization
+//! - **Fast Random Access**: Constant-time access to any byte range
+//! - **Thread Safety**: Can be safely shared across threads when wrapped appropriately
+//! - **Simplicity**: Minimal overhead compared to file-based backends
+//!
+//! # Key Components
+//!
+//! ## Core Types
+//! - [`Memory`] - Main backend struct implementing [`crate::file::Backend`]
+//!
+//! ## Core Methods
+//! - [`Memory::new`] - Creates backend from a byte vector
+//! - [`crate::file::Backend::data_slice`] - Retrieves byte slices with bounds checking
+//! - [`crate::file::Backend::data`] - Returns the complete file data
+//! - [`crate::file::Backend::len`] - Returns total file size
+//!
+//! # Usage Examples
+//!
+//! ## Basic Usage
+//!
+//! ```rust,ignore
+//! use dotscope::file::{File, memory::Memory};
+//!
+//! // Create from a byte vector
+//! let data = vec![/* PE file bytes */];
+//! let backend = Memory::new(data);
+//! let file = File::new(Box::new(backend))?;
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! ## Loading from File System
+//!
+//! ```rust,ignore
+//! use dotscope::file::{File, memory::Memory};
+//! use std::fs;
+//!
+//! // Load entire file into memory first
+//! let file_data = fs::read("assembly.dll")?;
+//! let backend = Memory::new(file_data);
+//! let file = File::new(Box::new(backend))?;
+//!
+//! // Fast access to any part of the file
+//! println!("File size: {} bytes", file.len());
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! ## Processing Network Data
+//!
+//! ```rust,ignore
+//! use dotscope::file::{File, memory::Memory};
+//!
+//! // Hypothetical function that downloads assembly
+//! fn download_assembly() -> Vec<u8> { vec![] }
+//!
+//! let downloaded_data = download_assembly();
+//! let backend = Memory::new(downloaded_data);
+//! let file = File::new(Box::new(backend))?;
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::file`] - Provides the [`crate::file::Backend`] trait implementation
+//! - [`crate::file::File`] - Uses memory backend for file parsing operations
+//! - [`crate::metadata::cilobject`] - Can parse CIL objects from memory-backed files
+//!
+//! The memory backend is one of several backend options, alongside file-based backends,
+//! providing flexibility in how assembly data is accessed and processed.
+
 use super::Backend;
 use crate::{Error::OutOfBounds, Result};
 
-/// Input file backed by Memory
+/// In-memory file backend for parsing .NET assemblies from byte buffers.
+///
+/// This backend implementation stores the entire file contents in memory, providing
+/// fast random access to any part of the file. It's ideal for scenarios where the
+/// file data is already available in memory or when working with smaller files
+/// where memory usage isn't a concern.
+///
+/// The backend takes ownership of the provided byte vector and uses it directly
+/// as the backing store, avoiding any unnecessary copying of data. All access
+/// operations are bounds-checked to ensure memory safety.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use dotscope::file::{File, memory::Memory};
+/// use std::fs;
+///
+/// // Load file into memory first
+/// let file_data = fs::read("assembly.dll")?;
+/// let backend = Memory::new(file_data);
+/// let file = File::new(Box::new(backend))?;
+///
+/// // Now you can parse the assembly from memory
+/// println!("File size: {} bytes", file.len());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 pub struct Memory {
+    /// The in-memory data buffer
     data: Vec<u8>,
 }
 
 impl Memory {
-    /// Create a new memory backend
+    /// Creates a new memory backend from a byte vector.
     ///
-    /// ## Arguments
-    /// * 'data' - The data buffer to consume
+    /// Takes ownership of the provided byte vector and uses it as the backing store
+    /// for the file backend. The data is moved into the backend, so no copying occurs.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The byte vector containing the file data to parse
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::file::memory::Memory;
+    ///
+    /// // From a vector of bytes
+    /// let file_bytes = vec![0x4D, 0x5A, /* ... rest of PE file ... */];
+    /// let backend = Memory::new(file_bytes);
+    ///
+    /// // The original vector is consumed and cannot be used anymore
+    /// // println!("{:?}", file_bytes); // This would be a compile error
+    /// ```
     pub fn new(data: Vec<u8>) -> Memory {
         Memory { data }
     }

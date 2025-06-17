@@ -1,9 +1,84 @@
+//! AssemblyRef Hash module.
+//!
+//! This module provides cryptographic hash support for AssemblyRef metadata table entries in
+//! .NET assemblies. The [`crate::metadata::tables::assemblyref::assemblyrefhash::AssemblyRefHash`]
+//! struct encapsulates hash values used for assembly identity verification, supporting both MD5
+//! and SHA1 hash algorithms as specified in ECMA-335.
+//!
+//! # Architecture
+//!
+//! The module implements cryptographic hash handling for assembly reference verification,
+//! providing utilities to create, validate, and format hash values from metadata blob data.
+//! Hash algorithm detection is performed automatically based on data length.
+//!
+//! # Key Components
+//!
+//! - [`crate::metadata::tables::assemblyref::assemblyrefhash::AssemblyRefHash`] - Main hash wrapper structure
+//! - [`crate::metadata::tables::assemblyref::assemblyrefhash::bytes_to_hex`] - Hex formatting utility
+//!
+//! # Assembly Reference Hashing
+//!
+//! AssemblyRef hash values serve as cryptographic fingerprints for referenced assemblies, enabling:
+//! - **Assembly Identity Verification**: Confirming referenced assemblies match expected versions
+//! - **Integrity Checking**: Detecting assembly tampering or corruption
+//! - **Version Binding**: Ensuring strong name references resolve to correct assemblies
+//! - **Security Analysis**: Identifying potentially malicious assembly substitution
+//!
+//! # Supported Hash Algorithms
+//!
+//! This module supports the standard hash algorithms used in .NET assemblies:
+//! - **MD5**: 128-bit (16 bytes) hash values (legacy, security deprecated)
+//! - **SHA1**: 160-bit (20 bytes) hash values (legacy, security deprecated)
+//! - **Custom/Unknown**: Other hash lengths for extensibility
+//!
+//! # Hash Format
+//!
+//! Hash data is stored as raw bytes in the metadata blob heap, accessed through
+//! [`crate::metadata::tables::assemblyref::AssemblyRef`] entries. The hash algorithm is identified
+//! by examining the hash length and cross-referencing with assembly metadata.
+//!
+//! # Security Considerations
+//!
+//! Both MD5 and SHA1 are cryptographically broken and should not be used for new applications.
+//! Modern .NET assemblies use SHA256 or stronger algorithms. This module supports legacy
+//! algorithms for compatibility with older assemblies and forensic analysis.
+//!
+//! # Thread Safety
+//!
+//! All operations are thread-safe and do not modify shared state. Hash verification operations
+//! create temporary hasher instances and do not affect global state.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::tables::assemblyref`] - AssemblyRef table entries that reference hash data
+//! - [`crate::metadata::streams::Blob`] - Blob heap storage for hash data
+//! - [`crate::metadata::tables::assembly`] - Hash algorithm identifiers
+//!
+//! # References
+//!
+//! - [ECMA-335 II.23.1.16](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyRef table specification
+//! - [RFC 1321](https://tools.ietf.org/html/rfc1321) - MD5 Message-Digest Algorithm (deprecated)
+//! - [RFC 3174](https://tools.ietf.org/html/rfc3174) - SHA-1 Hash Function (deprecated)
+
 use crate::Result;
 use md5::Md5;
 use sha1::{Digest, Sha1};
 use std::fmt::Write;
 
-/// Helper function to convert bytes to lowercase hex string
+/// Convert bytes to lowercase hexadecimal string representation
+///
+/// Utility function that transforms raw bytes into a lowercase hexadecimal string.
+/// Each byte is converted to exactly two lowercase hex characters.
+///
+/// # Arguments
+/// * `bytes` - Slice of bytes to convert
+///
+/// # Returns
+/// String with lowercase hex representation. Length is `bytes.len() * 2`.
+///
+/// # Performance
+/// Pre-allocates output string with exact capacity to avoid reallocations.
 fn bytes_to_hex(bytes: &[u8]) -> String {
     let mut hex_string = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -12,20 +87,49 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
     hex_string
 }
 
-/// The hash of a reference, is a variant of `AssemblyHashAlgorithm`
+/// Cryptographic hash for AssemblyRef metadata table entries
+///
+/// Encapsulates hash values used for assembly identity verification and integrity checking
+/// in .NET assembly references. Supports MD5 (16 bytes) and SHA1 (20 bytes) hash algorithms
+/// as commonly found in .NET assembly metadata, with extensibility for custom hash formats.
+///
+/// Hash data originates from the blob heap and serves as a cryptographic fingerprint
+/// for referenced assemblies, enabling strong-name binding and tamper detection.
+///
+/// # Hash Algorithm Detection
+///
+/// The hash algorithm is inferred from the data length:
+/// - **16 bytes**: MD5 hash (legacy, cryptographically broken)
+/// - **20 bytes**: SHA1 hash (legacy, cryptographically broken)
+/// - **Other lengths**: Custom or unknown hash algorithms
+///
+/// # Security Notice
+///
+/// Both MD5 and SHA1 are cryptographically compromised and should not be used for
+/// security-critical applications. This implementation exists for compatibility with
+/// legacy .NET assemblies and forensic analysis purposes.
 #[derive(Debug)]
 pub struct AssemblyRefHash {
+    /// Raw hash bytes (MD5, SHA1, or other)
     data: Vec<u8>,
 }
 
 impl AssemblyRefHash {
-    /// Create a new `AssemblyRefHash` from the input data
+    /// Create a new `AssemblyRefHash` from hash data bytes
     ///
-    /// ## Arguments
-    /// * 'data' - The data to parse from
+    /// Constructs an AssemblyRefHash instance from raw hash bytes, typically obtained
+    /// from the metadata blob heap. The hash algorithm is inferred from the data length.
+    ///
+    /// # Arguments
+    /// * `data` - Raw hash bytes from the blob heap
+    ///
+    /// # Returns
+    /// * `Ok(AssemblyRefHash)` - Successfully created hash wrapper
+    /// * `Err(Error)` - If input data is empty (invalid per ECMA-335)
     ///
     /// # Errors
-    /// Returns an error if the input data is empty
+    /// Returns [`crate::Error`] if the input data is empty, as AssemblyRef hash entries
+    /// are required to contain actual hash data per ECMA-335 specification.
     pub fn new(data: &[u8]) -> Result<AssemblyRefHash> {
         if data.is_empty() {
             return Err(malformed_error!(
@@ -38,19 +142,46 @@ impl AssemblyRefHash {
         })
     }
 
-    /// Get the underlying data
+    /// Get the underlying hash data bytes
+    ///
+    /// Returns a reference to the raw hash bytes stored in this instance. The data
+    /// represents the cryptographic hash value as stored in the assembly metadata.
+    ///
+    /// # Returns
+    /// Slice containing the raw hash bytes. Length indicates hash algorithm:
+    /// - 16 bytes: MD5 hash
+    /// - 20 bytes: SHA1 hash  
+    /// - Other: Custom/unknown hash algorithm
     #[must_use]
     pub fn data(&self) -> &[u8] {
         &self.data
     }
 
-    /// Get a formatted hex representation of the hash
+    /// Get a lowercase hexadecimal representation of the hash
+    ///
+    /// Converts the hash bytes to a lowercase hexadecimal string representation,
+    /// suitable for display, logging, and comparison operations.
+    ///
+    /// # Returns
+    /// String containing lowercase hexadecimal representation of hash bytes.
+    /// Length is exactly `data().len() * 2` characters.
     #[must_use]
     pub fn hex(&self) -> String {
         bytes_to_hex(&self.data)
     }
 
-    /// Return a human-readable representation
+    /// Get a human-readable string representation with algorithm identification
+    ///
+    /// Returns a formatted string that includes both the detected hash algorithm
+    /// and the hexadecimal hash value, suitable for debugging and user display.
+    ///
+    /// Algorithm detection is based on hash length:
+    /// - 16 bytes: "MD5: {hex}"
+    /// - 20 bytes: "SHA1: {hex}"
+    /// - Other: "Unknown: {hex}"
+    ///
+    /// # Returns
+    /// Formatted string with algorithm prefix and lowercase hex hash value.
     #[must_use]
     pub fn to_string_pretty(&self) -> String {
         let hex = self.hex();
@@ -63,7 +194,20 @@ impl AssemblyRefHash {
         format!("{}: {}", algorithm, hex)
     }
 
-    /// Verify if the hash matches the expected value using MD5
+    /// Verify if this hash matches input data using MD5 algorithm
+    ///
+    /// Computes the MD5 hash of the provided input data and compares it against
+    /// the stored hash value. Only valid for 16-byte (MD5) hashes.
+    ///
+    /// **Security Warning**: MD5 is cryptographically broken and should not be used
+    /// for security purposes. This method exists for compatibility with legacy assemblies.
+    ///
+    /// # Arguments
+    /// * `expected` - Input data to hash and verify against stored hash
+    ///
+    /// # Returns
+    /// * `true` - Hash matches (stored hash is 16 bytes and MD5 computation matches)
+    /// * `false` - Hash doesn't match or stored hash is not 16 bytes
     #[must_use]
     pub fn verify_md5(&self, expected: &[u8]) -> bool {
         if self.data.len() != 16 {
@@ -77,7 +221,20 @@ impl AssemblyRefHash {
         self.data == result.as_slice()
     }
 
-    /// Verify if the hash matches the expected value using SHA1
+    /// Verify if this hash matches input data using SHA1 algorithm
+    ///
+    /// Computes the SHA1 hash of the provided input data and compares it against
+    /// the stored hash value. Only valid for 20-byte (SHA1) hashes.
+    ///
+    /// **Security Warning**: SHA1 is cryptographically broken and should not be used
+    /// for security purposes. This method exists for compatibility with legacy assemblies.
+    ///
+    /// # Arguments
+    /// * `expected` - Input data to hash and verify against stored hash
+    ///
+    /// # Returns
+    /// * `true` - Hash matches (stored hash is 20 bytes and SHA1 computation matches)
+    /// * `false` - Hash doesn't match or stored hash is not 20 bytes
     #[must_use]
     pub fn verify_sha1(&self, expected: &[u8]) -> bool {
         if self.data.len() != 20 {

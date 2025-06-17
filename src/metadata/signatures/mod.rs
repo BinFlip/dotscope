@@ -1,64 +1,265 @@
-//! Method and type signature parsing for .NET metadata.
+//! Method and type signature parsing for .NET metadata according to ECMA-335.
 //!
-//! This module provides comprehensive parsing of .NET metadata signatures according to
-//! the ECMA-335 standard. Signatures encode type information, method parameters,
-//! generic constraints, and calling conventions in a compact binary format.
+//! This module provides comprehensive parsing of .NET metadata signatures, which encode
+//! type information, method parameters, generic constraints, and calling conventions in a
+//! compact binary format. Signatures are fundamental to the .NET type system and are used
+//! throughout assembly metadata to describe types, methods, and their relationships.
 //!
-//! # Signature Types
+//! # .NET Signature System Overview
 //!
-//! The .NET metadata format defines several signature types, each with specific purposes:
+//! The .NET metadata format defines signatures as binary-encoded type descriptions that
+//! provide complete type information for methods, fields, properties, and local variables.
+//! These signatures enable the CLR to understand type relationships, perform type checking,
+//! and support generic type instantiation.
 //!
-//! - **Method Signatures** - Parameter types, return types, and calling conventions
-//! - **Field Signatures** - Field type information and modifiers
-//! - **Property Signatures** - Property type and parameter information
-//! - **LocalVar Signatures** - Local variable types within method bodies
-//! - **TypeSpec Signatures** - Generic type instantiations and complex type references
+//! ## Signature Categories
 //!
-//! # Binary Format
+//! The .NET metadata format defines several signature types, each serving specific purposes:
 //!
-//! Signatures use a compressed binary encoding with the following characteristics:
-//! - Calling conventions encoded as single bytes
-//! - Parameter counts using compressed integers
-//! - Type references using element type tokens
-//! - Generic parameters encoded with positional indices
+//! ### Method Signatures
+//! - **Purpose**: Describe method parameter types, return types, and calling conventions
+//! - **Usage**: Method definitions, method references, and method specifications
+//! - **Features**: Support for instance methods, static methods, generic methods, and varargs
+//! - **Calling Conventions**: Default, varargs, C calling convention, stdcall, fastcall
 //!
-//! # Examples
+//! ### Field Signatures  
+//! - **Purpose**: Describe field type information and custom modifiers
+//! - **Usage**: Field definitions and field references
+//! - **Features**: Support for custom modifiers (modreq/modopt), array types, and generic types
+//! - **Modifiers**: Required and optional custom modifiers for advanced type scenarios
 //!
-//! ```rust,no_run
+//! ### Property Signatures
+//! - **Purpose**: Describe property type and indexer parameter information
+//! - **Usage**: Property definitions with getter/setter methods
+//! - **Features**: Support for indexed properties, instance properties, and generic property types
+//! - **Indexers**: Multi-dimensional indexers with complex parameter types
+//!
+//! ### Local Variable Signatures
+//! - **Purpose**: Describe local variable types within method bodies
+//! - **Usage**: Method body metadata for JIT compilation and debugging
+//! - **Features**: Support for pinned variables, byref variables, and complex local types
+//! - **Memory Management**: Pinned locals for interop scenarios and unsafe code
+//!
+//! ### Type Specification Signatures
+//! - **Purpose**: Define generic type instantiations and complex type references
+//! - **Usage**: Generic type instantiations like `List<int>` or `Dictionary<string, object>`
+//! - **Features**: Nested generic types, generic method instantiations, and type constraints
+//! - **Instantiation**: Runtime type creation from generic type definitions
+//!
+//! ### Method Specification Signatures
+//! - **Purpose**: Provide type arguments for generic method instantiations
+//! - **Usage**: Generic method calls with specific type arguments
+//! - **Features**: Multiple type arguments, nested generic types, and method constraints
+//! - **Resolution**: Runtime method resolution for generic method calls
+//!
+//! # Binary Encoding Format
+//!
+//! Signatures use a compressed binary encoding optimized for space efficiency while
+//! maintaining complete type information. The encoding follows ECMA-335 specifications
+//! and includes several key characteristics:
+//!
+//! ## Encoding Characteristics
+//! - **Calling Conventions**: Encoded as single-byte prefixes (0x00-0x0F range)
+//! - **Parameter Counts**: Use compressed integer encoding for space efficiency
+//! - **Type References**: Element type tokens and metadata table references
+//! - **Generic Parameters**: Positional indices into generic parameter lists
+//! - **Custom Modifiers**: Inline encoding with type information for advanced scenarios
+//!
+//! ## Compression Techniques
+//! - **Compressed Integers**: Variable-length encoding for counts and indices
+//! - **Element Types**: Single-byte encoding for primitive types (int32, string, etc.)
+//! - **Token Compression**: Compressed encoding for metadata table references
+//! - **Recursive Encoding**: Nested type information for complex generic types
+//!
+//! # Common Usage Patterns
+//!
+//! ## Basic Method Signature Analysis
+//!
+//! ```rust
 //! use dotscope::metadata::signatures::parse_method_signature;
 //!
-//! // Parse a method signature from blob data
-//! let signature_data = &[0x20, 0x01, 0x01, 0x0E]; // Example signature bytes
+//! # fn analyze_method_signature() -> Result<(), Box<dyn std::error::Error>> {
+//! // Parse a simple method signature: void Method()
+//! let signature_data = &[0x00, 0x00, 0x01]; // DEFAULT, 0 params, VOID return
 //! let method_sig = parse_method_signature(signature_data)?;
 //!
-//! println!("Method Body {:?}", method_sig);
-//! # Ok::<(), dotscope::Error>(())
+//! println!("Method has {} parameters", method_sig.params.len());
+//! println!("Return type: {:?}", method_sig.return_type.base);
+//! println!("Has 'this' parameter: {}", method_sig.has_this);
+//! println!("Generic parameter count: {}", method_sig.param_count_generic);
+//! # Ok(())
+//! # }
 //! ```
 //!
-//! ```rust,no_run
+//! ## Generic Method Signature Analysis
+//!
+//! ```rust
+//! use dotscope::metadata::signatures::{parse_method_signature, TypeSignature};
+//!
+//! # fn analyze_generic_method() -> Result<(), Box<dyn std::error::Error>> {
+//! // Parse generic method: T Method<T>(T item)
+//! let signature_data = &[
+//!     0x30, // HASTHIS | GENERIC
+//!     0x01, // 1 generic parameter
+//!     0x01, // 1 method parameter  
+//!     0x13, 0x00, // GenericParam(0) - return type
+//!     0x13, 0x00, // GenericParam(0) - parameter type
+//! ];
+//! let method_sig = parse_method_signature(signature_data)?;
+//!
+//! if method_sig.param_count_generic > 0 {
+//!     println!("Generic method with {} type parameters", method_sig.param_count_generic);
+//! }
+//!
+//! // Check if return type is a generic parameter
+//! if let TypeSignature::GenericParamType(index) = method_sig.return_type.base {
+//!     println!("Return type is generic parameter {}", index);
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Field Type Analysis
+//!
+//! ```rust
+//! use dotscope::metadata::signatures::{parse_field_signature, TypeSignature};
+//!
+//! # fn analyze_field_type() -> Result<(), Box<dyn std::error::Error>> {
+//! // Parse array field signature: string[] field
+//! let signature_data = &[0x06, 0x1D, 0x0E]; // FIELD, SZARRAY, String
+//! let field_sig = parse_field_signature(signature_data)?;
+//!
+//! match &field_sig.base {
+//!     TypeSignature::SzArray(element_type) => {
+//!         println!("Array field with element type: {:?}", element_type.base);
+//!     },
+//!     TypeSignature::String => {
+//!         println!("String field");
+//!     },
+//!     TypeSignature::I4 => {
+//!         println!("Integer field");
+//!     },
+//!     _ => {
+//!         println!("Other field type: {:?}", field_sig.base);
+//!     }
+//! }
+//!
+//! if !field_sig.modifiers.is_empty() {
+//!     println!("Field has {} custom modifiers", field_sig.modifiers.len());
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Local Variable Analysis
+//!
+//! ```rust
 //! use dotscope::metadata::signatures::parse_local_var_signature;
 //!
-//! // Parse local variable signature
-//! let locals_data = &[0x07, 0x02, 0x08, 0x0E]; // 2 locals: int32, string
-//! let locals_sig = parse_local_var_signature(locals_data)?;
+//! # fn analyze_local_variables() -> Result<(), Box<dyn std::error::Error>> {
+//! // Parse locals: int a; ref string b; pinned byte* c;
+//! let signature_data = &[
+//!     0x07, // LOCAL_SIG
+//!     0x03, // 3 variables
+//!     0x08, // I4 (int)
+//!     0x10, 0x0E, // BYREF String (ref string)
+//!     0x45, 0x0F, // PINNED PTR (pinned byte*)
+//! ];
+//! let locals_sig = parse_local_var_signature(signature_data)?;
 //!
-//! for (i, local_type) in locals_sig.locals.iter().enumerate() {
-//!     println!("Local {}: {:?}", i, local_type);
+//! for (i, local) in locals_sig.locals.iter().enumerate() {
+//!     println!("Local {}: {:?}", i, local.base);
+//!     
+//!     if local.is_byref {
+//!         println!("  -> Passed by reference");
+//!     }
+//!     if local.is_pinned {
+//!         println!("  -> Pinned in memory (for interop)");
+//!     }
 //! }
-//! # Ok::<(), dotscope::Error>(())
+//! # Ok(())
+//! # }
 //! ```
 //!
-//! # Implementation Notes
+//! ## Generic Type Instantiation Analysis
 //!
-//! - All signatures begin with a calling convention or signature type byte
-//! - Complex types (arrays, generics) use recursive encoding
-//! - Custom modifiers (modreq/modopt) are encoded inline with type information
-//! - Generic type parameters reference their declaring type or method
+//! ```rust
+//! use dotscope::metadata::signatures::{parse_type_spec_signature, TypeSignature};
 //!
-//! # References
+//! # fn analyze_generic_instantiation() -> Result<(), Box<dyn std::error::Error>> {
+//! // Parse List<int> type specification
+//! let signature_data = &[
+//!     0x15, // GENERICINST
+//!     0x12, 0x49, // Class token reference
+//!     0x01, // 1 type argument
+//!     0x08, // I4 (int)
+//! ];
+//! let type_spec = parse_type_spec_signature(signature_data)?;
 //!
-//! - ECMA-335 6th Edition, Partition II, Section 23.2 - Blobs and Signatures
-//! - ECMA-335 6th Edition, Partition II, Section 23.1 - Metadata Validation
+//! if let TypeSignature::GenericInst(class_type, args) = &type_spec.base {
+//!     println!("Generic type instantiation:");
+//!     println!("  Base type: {:?}", class_type);
+//!     println!("  Type arguments: {} types", args.len());
+//!     
+//!     for (i, arg) in args.iter().enumerate() {
+//!         println!("    [{}]: {:?}", i, arg);
+//!     }
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Advanced Features
+//!
+//! ## Custom Modifiers (modreq/modopt)
+//!
+//! Custom modifiers provide additional type information for advanced scenarios:
+//! - **modreq**: Required modifiers that affect type identity and compatibility
+//! - **modopt**: Optional modifiers that provide hints but don't affect compatibility
+//! - **Usage**: C++/CLI interop, volatile fields, const fields, and custom type constraints
+//!
+//! ## Calling Conventions
+//!
+//! Different calling conventions are supported for platform interop:
+//! - **DEFAULT**: Standard managed calling convention
+//! - **VARARG**: Variable argument lists (params arrays)
+//! - **C**: C-style calling convention for P/Invoke
+//! - **STDCALL**: Windows standard calling convention
+//! - **FASTCALL**: Fast calling convention for performance-critical code
+//!
+//! ## Memory Layout Specifications
+//!
+//! Signatures include information for memory management:
+//! - **Pinned Variables**: Fixed memory location for interop scenarios
+//! - **ByRef Parameters**: Reference semantics for value types
+//! - **Pointer Types**: Unsafe pointer types for low-level operations
+//! - **Array Bounds**: Multi-dimensional array layout information
+//!
+//! # Thread Safety
+//!
+//! All parsing functions in this module are thread-safe:
+//! - Stateless parsing functions can be called concurrently
+//! - Parsed signature structures are immutable and shareable
+//! - No global state or shared mutable data
+//!
+//! # Error Handling
+//!
+//! Parsing can fail for several reasons:
+//! - **Malformed Data**: Invalid signature encoding or truncated data
+//! - **Unsupported Features**: Unknown element types or calling conventions
+//! - **Version Incompatibility**: Signatures from newer .NET versions
+//! - **Corrupted Metadata**: Damaged assembly files or invalid token references
+//!
+//! # ECMA-335 Compliance
+//!
+//! This implementation follows ECMA-335 6th Edition specifications:
+//! - **Partition II, Section 23.2**: Blobs and signature encoding formats
+//! - **Partition II, Section 23.1**: Metadata validation and well-formedness rules
+//! - **Partition I, Section 8**: Type system fundamentals and signature semantics
+//! - **Partition III, Section 1.6**: Calling conventions and method signatures
+//!
+//! The implementation handles all standard signature types and element types
+//! defined in the specification, including legacy formats for backward compatibility.
 
 mod parser;
 mod types;
@@ -68,73 +269,467 @@ pub use types::*;
 
 use crate::Result;
 
-/// Parse a `MethodSignature` from a byte slice
+/// Parse a method signature from binary signature data.
 ///
-/// ## Arguments
-/// * 'data' - The input slice to parse
+/// Parses .NET method signatures that define method parameter types, return types,
+/// and calling conventions. Method signatures are used in method definitions,
+/// method references, and generic method instantiations throughout .NET metadata.
+///
+/// # Method Signature Format
+///
+/// Method signatures begin with a calling convention byte followed by parameter
+/// count and type information:
+/// ```text
+/// [CallingConvention] [GenericParamCount?] [ParamCount] [ReturnType] [Param1] [Param2] ...
+/// ```
+///
+/// ## Calling Conventions
+/// - `0x00`: DEFAULT - Standard managed method
+/// - `0x05`: VARARG - Variable argument method  
+/// - `0x20`: HASTHIS - Instance method (has implicit 'this' parameter)
+/// - `0x30`: HASTHIS | GENERIC - Generic instance method
+/// - `0x10`: GENERIC - Static generic method
+///
+/// # Examples
+///
+/// ```rust
+/// use dotscope::metadata::signatures::{parse_method_signature, TypeSignature};
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Parse "void Method()" - static method with no parameters
+/// let signature = parse_method_signature(&[
+///     0x00, // DEFAULT calling convention
+///     0x00, // 0 parameters
+///     0x01, // VOID return type
+/// ])?;
+///
+/// assert_eq!(signature.params.len(), 0);
+/// assert_eq!(signature.return_type.base, TypeSignature::Void);
+/// assert!(!signature.has_this);
+///
+/// // Parse "int Method(string s)" - instance method with parameters
+/// let signature = parse_method_signature(&[
+///     0x20, // HASTHIS calling convention
+///     0x01, // 1 parameter
+///     0x08, // I4 (int) return type
+///     0x0E, // String parameter type
+/// ])?;
+///
+/// assert!(signature.has_this);
+/// assert_eq!(signature.params.len(), 1);
+/// assert_eq!(signature.return_type.base, TypeSignature::I4);
+/// assert_eq!(signature.params[0].base, TypeSignature::String);
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Parameters
+/// - `data`: Binary signature data from a .NET assembly's blob heap
+///
+/// # Returns
+/// A [`crate::metadata::signatures::SignatureMethod`] containing:
+/// - Parameter types and modifiers
+/// - Return type information
+/// - Calling convention details
+/// - Generic parameter count (for generic methods)
 ///
 /// # Errors
-/// Returns an error if the signature data is malformed or parsing fails
+/// Returns [`crate::Error`] if:
+/// - Signature data is malformed or truncated
+/// - Unknown calling convention or element types
+/// - Invalid compressed integer encoding
+/// - Recursive type references exceed depth limits
 pub fn parse_method_signature(data: &[u8]) -> Result<SignatureMethod> {
     let mut parser = SignatureParser::new(data);
     parser.parse_method_signature()
 }
 
-/// Parse a `FieldSignature` from a byte slice
+/// Parse a field signature from binary signature data.
 ///
-/// ## Arguments
-/// * 'data' - The input slice to parse
+/// Parses .NET field signatures that define field types and custom modifiers.
+/// Field signatures are used in field definitions and field references to
+/// specify the exact type and any custom modifiers applied to the field.
+///
+/// # Field Signature Format
+///
+/// Field signatures begin with a field signature marker followed by optional
+/// custom modifiers and the field type:
+/// ```text
+/// [FIELD_SIG] [CustomModifier*] [FieldType]
+/// ```
+///
+/// ## Custom Modifiers
+/// - `modreq`: Required modifiers that affect type identity
+/// - `modopt`: Optional modifiers that provide additional type information
+/// - Common uses: `volatile`, `const`, interop type constraints
+///
+/// # Examples
+///
+/// ```rust
+/// use dotscope::metadata::signatures::{parse_field_signature, TypeSignature};
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Parse "int field" - simple integer field
+/// let signature = parse_field_signature(&[
+///     0x06, // FIELD signature marker
+///     0x08, // I4 (int) field type
+/// ])?;
+///
+/// assert_eq!(signature.base, TypeSignature::I4);
+/// assert!(signature.modifiers.is_empty());
+///
+/// // Parse "string[] array" - array field
+/// let signature = parse_field_signature(&[
+///     0x06, // FIELD signature marker
+///     0x1D, // SZARRAY (single-dimensional array)
+///     0x0E, // String element type
+/// ])?;
+///
+/// # if let TypeSignature::SzArray(element_type) = &signature.base {
+///     assert_eq!(*element_type.base, TypeSignature::String);
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Parameters
+/// - `data`: Binary signature data from a .NET assembly's blob heap
+///
+/// # Returns
+/// A [`crate::metadata::signatures::SignatureField`] containing:
+/// - Field type information
+/// - Custom modifiers (modreq/modopt)
+/// - Type constraints and annotations
 ///
 /// # Errors
-/// Returns an error if the signature data is malformed or parsing fails
+/// Returns [`crate::Error`] if:
+/// - Signature data is malformed or doesn't start with field marker
+/// - Unknown element types or custom modifier tokens
+/// - Invalid type encoding or recursive type depth exceeded
+/// - Corrupted metadata references
+///
+/// # Custom Modifier Usage
+/// Custom modifiers are commonly used for:
+/// - **volatile**: Memory barrier semantics for multithreading
+/// - **const**: Compile-time constant fields
+/// - **Interop**: C++/CLI and native interop type constraints
+/// - **Security**: Type-based security annotations
 pub fn parse_field_signature(data: &[u8]) -> Result<SignatureField> {
     let mut parser = SignatureParser::new(data);
     parser.parse_field_signature()
 }
 
-/// Parse a `PropertySignature` from a byte slice
+/// Parse a property signature from binary signature data.
 ///
-/// ## Arguments
-/// * 'data' - The input slice to parse
+/// Parses .NET property signatures that define property types and indexer parameters.
+/// Property signatures are used in property definitions to specify the property type
+/// and any parameters for indexed properties (indexers).
+///
+/// # Property Signature Format
+///
+/// Property signatures specify whether the property is an instance property and
+/// include parameter information for indexed properties:
+/// ```text
+/// [PROPERTY] [HASTHIS?] [ParamCount] [PropertyType] [Param1] [Param2] ...
+/// ```
+///
+/// ## Property Types
+/// - **Simple Properties**: `int Property { get; set; }`
+/// - **Indexed Properties**: `string this[int index] { get; set; }`
+/// - **Multi-dimensional Indexers**: `T this[int x, int y] { get; set; }`
+///
+/// # Examples
+///
+/// ```rust
+/// use dotscope::metadata::signatures::{parse_property_signature, TypeSignature};
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Parse "int Property { get; set; }" - simple instance property
+/// let signature = parse_property_signature(&[
+///     0x28, // PROPERTY | HASTHIS
+///     0x00, // 0 parameters (not indexed)
+///     0x08, // I4 (int) property type
+/// ])?;
+///
+/// assert!(signature.has_this);
+/// assert_eq!(signature.base, TypeSignature::I4);
+/// assert!(signature.params.is_empty());
+///
+/// // Parse "string this[int index] { get; set; }" - indexed property
+/// let signature = parse_property_signature(&[
+///     0x28, // PROPERTY | HASTHIS  
+///     0x01, // 1 parameter (index)
+///     0x0E, // String property type
+///     0x08, // I4 (int) index parameter type
+/// ])?;
+///
+/// assert!(signature.has_this);
+/// assert_eq!(signature.base, TypeSignature::String);
+/// assert_eq!(signature.params.len(), 1);
+/// assert_eq!(signature.params[0].base, TypeSignature::I4);
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Parameters
+/// - `data`: Binary signature data from a .NET assembly's blob heap
+///
+/// # Returns
+/// A [`crate::metadata::signatures::SignatureProperty`] containing:
+/// - Property type information
+/// - Indexer parameter types (if applicable)
+/// - Instance vs. static property indication
 ///
 /// # Errors
-/// Returns an error if the signature data is malformed or parsing fails
+/// Returns [`crate::Error`] if:
+/// - Signature data is malformed or doesn't start with property marker
+/// - Invalid parameter count or type encoding
+/// - Unknown element types in property or parameter types
+/// - Corrupted signature data or invalid metadata references
+///
+/// # Indexer Support
+/// Multi-dimensional indexers are fully supported:
+/// - Parameter types can be any valid .NET type
+/// - Custom modifiers are supported on parameters
+/// - Generic type parameters are resolved in context
 pub fn parse_property_signature(data: &[u8]) -> Result<SignatureProperty> {
     let mut parser = SignatureParser::new(data);
     parser.parse_property_signature()
 }
 
-/// Parse a `LocalVarSignature` from a byte slice
+/// Parse a local variable signature from binary signature data.
 ///
-/// ## Arguments
-/// * 'data' - The input slice to parse
+/// Parses .NET local variable signatures that define the types of local variables
+/// within method bodies. These signatures are used by the JIT compiler for type
+/// checking and memory management, and by debuggers for variable inspection.
+///
+/// # Local Variable Signature Format
+///
+/// Local variable signatures specify the count and types of all local variables:
+/// ```text
+/// [LOCAL_SIG] [LocalCount] [Local1Type] [Local2Type] ...
+/// ```
+///
+/// ## Local Variable Modifiers
+/// - **BYREF**: Reference to another variable (`ref` in C#)
+/// - **PINNED**: Fixed memory location for interop scenarios
+/// - **TYPEDBYREF**: Special runtime type for reflection scenarios
+///
+/// # Examples
+///
+/// ```rust
+/// use dotscope::metadata::signatures::{parse_local_var_signature, TypeSignature};
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Parse "int a; string b;" - simple local variables
+/// let signature = parse_local_var_signature(&[
+///     0x07, // LOCAL_SIG marker
+///     0x02, // 2 local variables
+///     0x08, // I4 (int) - first local
+///     0x0E, // String - second local
+/// ])?;
+///
+/// assert_eq!(signature.locals.len(), 2);
+/// assert_eq!(signature.locals[0].base, TypeSignature::I4);
+/// assert_eq!(signature.locals[1].base, TypeSignature::String);
+///
+/// // Parse "ref int a; pinned byte* b;" - advanced local types
+/// let signature = parse_local_var_signature(&[
+///     0x07, // LOCAL_SIG marker
+///     0x02, // 2 local variables
+///     0x10, 0x08, // BYREF I4 (ref int)
+///     0x45, 0x0F, // PINNED PTR (pinned byte*)
+/// ])?;
+///
+/// assert!(signature.locals[0].is_byref);
+/// assert!(!signature.locals[0].is_pinned);
+/// assert_eq!(signature.locals[0].base, TypeSignature::I4);
+///
+/// assert!(!signature.locals[1].is_byref);
+/// assert!(signature.locals[1].is_pinned);
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Parameters
+/// - `data`: Binary signature data from a .NET assembly's blob heap
+///
+/// # Returns
+/// A [`crate::metadata::signatures::SignatureLocalVariables`] containing:
+/// - Array of local variable type information
+/// - Byref and pinned modifiers for each local
+/// - Type information for debugging and JIT compilation
 ///
 /// # Errors
-/// Returns an error if the signature data is malformed or parsing fails
+/// Returns [`crate::Error`] if:
+/// - Signature data is malformed or doesn't start with local variable marker
+/// - Invalid local count or type encoding
+/// - Unknown element types or modifiers
+/// - Inconsistent signature length vs. declared local count
+///
+/// # Memory Management
+/// Local variable signatures include critical information for memory management:
+/// - **Pinned locals**: Fixed memory addresses for P/Invoke and unsafe code
+/// - **ByRef locals**: Reference semantics that affect garbage collection
+/// - **Type layout**: Information needed for stack frame construction
+/// - **Lifetime tracking**: GC root analysis for reference types
 pub fn parse_local_var_signature(data: &[u8]) -> Result<SignatureLocalVariables> {
     let mut parser = SignatureParser::new(data);
     parser.parse_local_var_signature()
 }
 
-/// Parse a `TypeSpecSignature` from a byte slice
+/// Parse a type specification signature from binary signature data.
 ///
-/// ## Arguments
-/// * 'data' - The input slice to parse
+/// Parses .NET type specification signatures that define generic type instantiations
+/// and complex type references. Type specifications are used to represent constructed
+/// generic types like `List<int>`, `Dictionary<string, object>`, and nested generic types.
+///
+/// # Type Specification Format
+///
+/// Type specifications encode complete type information including generic arguments:
+/// ```text
+/// [TypeSpec] [GenericArgCount?] [TypeArg1] [TypeArg2] ...
+/// ```
+///
+/// ## Common Type Specifications
+/// - **Generic Instantiations**: `List<T>`, `Dictionary<K,V>`
+/// - **Array Types**: `T[]`, `T[,]`, `T[,,]`
+/// - **Pointer Types**: `T*`, `void*`
+/// - **ByRef Types**: `ref T`, `out T`
+///
+/// # Examples
+///
+/// ```rust
+/// use dotscope::metadata::signatures::{parse_type_spec_signature, TypeSignature};
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Parse "List<int>" - generic type instantiation
+/// let signature = parse_type_spec_signature(&[
+///     0x15, // GENERICINST marker
+///     0x12, 0x49, // CLASS token reference to List<T>
+///     0x01, // 1 type argument
+///     0x08, // I4 (int) type argument
+/// ])?;
+///
+/// if let TypeSignature::GenericInst(class_type, args) = &signature.base {
+///     assert_eq!(args.len(), 1);
+///     assert_eq!(args[0], TypeSignature::I4);
+/// }
+///
+/// // Parse "int[]" - single-dimensional array
+/// let signature = parse_type_spec_signature(&[
+///     0x1D, // SZARRAY marker
+///     0x08, // I4 (int) element type
+/// ])?;
+///
+/// # if let TypeSignature::SzArray(element_type) = &signature.base {
+///     assert_eq!(*element_type.base, TypeSignature::I4);
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Parameters
+/// - `data`: Binary signature data from a .NET assembly's blob heap
+///
+/// # Returns
+/// A [`crate::metadata::signatures::SignatureTypeSpec`] containing:
+/// - Complete type specification information
+/// - Generic type arguments (if applicable)
+/// - Array dimension information (if applicable)
+/// - Custom modifiers and type constraints
 ///
 /// # Errors
-/// Returns an error if the signature data is malformed or parsing fails
+/// Returns [`crate::Error`] if:
+/// - Signature data is malformed or has invalid type encoding
+/// - Unknown element types or generic instantiation format
+/// - Invalid generic argument count or recursive type depth exceeded
+/// - Corrupted metadata token references
+///
+/// # Generic Type Support
+/// Full support for complex generic scenarios:
+/// - **Nested Generics**: `List<Dictionary<string, int>>`
+/// - **Generic Constraints**: Type parameter constraints and variance
+/// - **Open Generic Types**: Uninstantiated generic type definitions
+/// - **Recursive Generics**: Self-referential generic types
 pub fn parse_type_spec_signature(data: &[u8]) -> Result<SignatureTypeSpec> {
     let mut parser = SignatureParser::new(data);
     parser.parse_type_spec_signature()
 }
 
-/// Parse a `MethodSpecSignature` from a byte slice
+/// Parse a method specification signature from binary signature data.
 ///
-/// ## Arguments
-/// * 'data' - The input slice to parse
+/// Parses .NET method specification signatures that provide type arguments for
+/// generic method instantiations. Method specifications are used when calling
+/// generic methods with specific type arguments, enabling the runtime to create
+/// specialized method implementations.
+///
+/// # Method Specification Format
+///
+/// Method specifications provide type arguments for generic method calls:
+/// ```text
+/// [METHODSPEC] [GenericArgCount] [TypeArg1] [TypeArg2] ...
+/// ```
+///
+/// ## Generic Method Instantiation
+/// - **Generic Methods**: `Method<T>(T item)` becomes `Method<int>(int item)`
+/// - **Multiple Type Args**: `Method<T,U>(T first, U second)`
+/// - **Nested Generics**: `Method<List<T>>(List<T> items)`
+/// - **Constrained Types**: Type arguments satisfying method constraints
+///
+/// # Examples
+///
+/// ```rust
+/// use dotscope::metadata::signatures::{parse_method_spec_signature, TypeSignature};
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Parse "Method<int>" - single type argument
+/// let signature = parse_method_spec_signature(&[
+///     0x0A, // METHODSPEC marker
+///     0x01, // 1 type argument
+///     0x08, // I4 (int) type argument
+/// ])?;
+///
+/// assert_eq!(signature.generic_args.len(), 1);
+/// assert_eq!(signature.generic_args[0], TypeSignature::I4);
+///
+/// // Parse "Method<int, string>" - multiple type arguments
+/// let signature = parse_method_spec_signature(&[
+///     0x0A, // METHODSPEC marker
+///     0x02, // 2 type arguments
+///     0x08, // I4 (int) first type argument
+///     0x0E, // String second type argument
+/// ])?;
+///
+/// assert_eq!(signature.generic_args.len(), 2);
+/// assert_eq!(signature.generic_args[0], TypeSignature::I4);
+/// assert_eq!(signature.generic_args[1], TypeSignature::String);
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Parameters
+/// - `data`: Binary signature data from a .NET assembly's blob heap
+///
+/// # Returns
+/// A [`crate::metadata::signatures::SignatureMethodSpec`] containing:
+/// - Array of type arguments for generic method instantiation
+/// - Type information for runtime method specialization
+/// - Generic constraint validation data
 ///
 /// # Errors
-/// Returns an error if the signature data is malformed or parsing fails
+/// Returns [`crate::Error`] if:
+/// - Signature data is malformed or doesn't start with method spec marker
+/// - Invalid type argument count or type encoding
+/// - Unknown element types in type arguments
+/// - Recursive type references exceed maximum depth
+///
+/// # Runtime Behavior
+/// Method specifications enable the runtime to:
+/// - **Create Specialized Methods**: Generate type-specific IL code
+/// - **Validate Constraints**: Ensure type arguments satisfy generic constraints  
+/// - **Optimize Performance**: Enable type-specific optimizations
+/// - **Support Reflection**: Provide complete type information for introspection
 pub fn parse_method_spec_signature(data: &[u8]) -> Result<SignatureMethodSpec> {
     let mut parser = SignatureParser::new(data);
     parser.parse_method_spec_signature()

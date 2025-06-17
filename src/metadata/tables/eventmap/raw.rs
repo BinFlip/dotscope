@@ -1,3 +1,30 @@
+//! Raw EventMap table representation.
+//!
+//! This module provides the [`crate::metadata::tables::eventmap::raw::EventMapRaw`] struct
+//! for low-level access to EventMap metadata table data with unresolved indexes and table references.
+//! This represents the binary format of EventMap records as they appear in the metadata tables stream,
+//! requiring resolution to create usable data structures.
+//!
+//! # EventMap Table Format
+//!
+//! The EventMap table (0x12) establishes ownership relationships between types and events
+//! with these fields:
+//! - **Parent** (2/4 bytes): TypeDef table index for the type that owns the events
+//! - **EventList** (2/4 bytes): Event table index pointing to the first owned event
+//!
+//! EventMap entries define contiguous ranges of events owned by specific types. The range
+//! for type N extends from EventList\[N\] to EventList\[N+1\]-1, enabling efficient enumeration
+//! of all events belonging to a particular type.
+//!
+//! # Sorted Table Structure
+//!
+//! EventMap tables are sorted by Parent token for efficient binary search lookup.
+//! This enables O(log n) lookup of events by owning type and efficient range-based
+//! iteration through all events owned by a specific type.
+//!
+//! # Reference
+//! - [ECMA-335 II.22.12](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - EventMap table specification
+
 use std::sync::Arc;
 
 use crate::{
@@ -14,24 +41,89 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-/// The `EventMap` table maps events to their parent types. `TableId` = 0x12
+/// Raw EventMap table row with unresolved indexes and table references
+///
+/// Represents the binary format of an EventMap metadata table entry (table ID 0x12) as stored
+/// in the metadata tables stream. All type and event references are stored as table indexes
+/// that must be resolved using the appropriate tables and registries.
+///
+/// EventMap entries establish ownership relationships between types and their events by
+/// defining contiguous ranges in the Event table. This enables efficient enumeration
+/// of all events declared by a particular type.
+///
+/// # Range Resolution
+///
+/// EventMap entries define event ranges implicitly:
+/// - Events from EventList\[i\] to EventList\[i+1\]-1 belong to Parent\[i\]
+/// - The final entry's range extends to the end of the Event table
+/// - Empty ranges are valid and indicate types with no events
+///
+/// # Reference
+/// - [ECMA-335 II.22.12](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - EventMap table specification
 pub struct EventMapRaw {
-    /// `RowID`
+    /// Row identifier within the EventMap metadata table
+    ///
+    /// The 1-based index of this EventMap row. Used for metadata token generation
+    /// and cross-referencing with other metadata structures.
     pub rid: u32,
-    /// Token
+
+    /// Metadata token for this EventMap row
+    ///
+    /// Combines the table identifier (0x12 for EventMap) with the row ID to create
+    /// a unique token. Format: `0x12000000 | rid`
     pub token: Token,
-    /// Offset
+
+    /// Byte offset of this row within the metadata tables stream
+    ///
+    /// Physical location of the raw EventMap data within the metadata binary format.
+    /// Used for debugging and low-level metadata analysis.
     pub offset: usize,
-    /// an index into the `TypeDef` table
+
+    /// Parent type table index (unresolved)
+    ///
+    /// Index into the TypeDef table identifying the type that owns the events
+    /// in this range. Must be resolved using the type registry to obtain the
+    /// actual type reference.
     pub parent: u32,
-    /// an index into the Event table
+
+    /// Event list starting index (unresolved)
+    ///
+    /// Index into the Event table pointing to the first event owned by the parent
+    /// type. The range extends to the next EventMap entry's event_list value (or
+    /// end of Event table for the final entry).
     pub event_list: u32,
 }
 
 impl EventMapRaw {
-    /// Helper method to resolve event list range and build the event vector
+    /// Resolve event list range and build the event vector
     ///
-    /// This logic is shared between `apply()` and `to_owned()` methods to avoid duplication.
+    /// This helper method resolves the contiguous range of events owned by the parent
+    /// type and builds a thread-safe collection of resolved event references. The range
+    /// is determined by this entry's event_list index and the next entry's event_list
+    /// index (or end of Event table).
+    ///
+    /// # Range Calculation
+    ///
+    /// - **Start**: `self.event_list` (inclusive)
+    /// - **End**: Next EventMap entry's `event_list` (exclusive) or end of Event table
+    /// - **EventPtr Indirection**: Handles EventPtr table if present for level of indirection
+    ///
+    /// # Arguments
+    ///
+    /// * `events` - Event table for resolving event references
+    /// * `event_ptr` - EventPtr table for indirection resolution (if present)
+    /// * `map` - EventMap table for determining range boundaries
+    ///
+    /// # Returns
+    ///
+    /// Returns a thread-safe collection of resolved events in the specified range.
+    ///
+    /// # Errors
+    ///
+    /// - Range calculation fails due to invalid next row lookup
+    /// - Event token resolution fails
+    /// - EventPtr indirection resolution fails
+    /// - Event lookup in the Event table fails
     fn resolve_event_list(
         &self,
         events: &EventMap,
@@ -112,19 +204,31 @@ impl EventMapRaw {
         Ok(event_list)
     }
 
-    /// Convert an `EventMapRaw` into an `EventMapEntry` which has indexes resolved and owns the referenced data.
+    /// Convert to owned EventMapEntry with resolved references and owned data
     ///
-    /// The `EventMap` table maps types to their events. The resolved variant contains the parent type
-    /// reference and the actual list of resolved Event entries.
+    /// This method converts the raw EventMap entry into a fully resolved [`EventMapEntry`]
+    /// structure with owned data and resolved cross-references. The resulting structure
+    /// provides immediate access to the parent type and owned events without requiring
+    /// additional table lookups.
     ///
-    /// ## Arguments
-    /// * 'types' - The type registry for resolving parent types
-    /// * 'events' - The event map for resolving event references
-    /// * '`event_ptr`' - All parsed `EventPtr` entries for indirection resolution
-    /// * 'map' - The `MetadataTable` for `EventMapRaw` entries (needed for list range resolution)
+    /// # Arguments
+    ///
+    /// * `types` - The type registry for resolving the parent type reference
+    /// * `events` - The Event table for resolving event references in the range
+    /// * `event_ptr` - The EventPtr table for indirection resolution (if present)
+    /// * `map` - The EventMap table for determining event range boundaries
+    ///
+    /// # Returns
+    ///
+    /// Returns [`EventMapEntryRc`] (Arc-wrapped [`EventMapEntry`]) on success, providing
+    /// shared ownership of the resolved EventMap data.
     ///
     /// # Errors
-    /// Returns an error if the referenced type or events cannot be resolved.
+    ///
+    /// - The parent type lookup fails in the type registry
+    /// - Event range resolution fails due to invalid boundaries
+    /// - Event lookup fails for any event in the resolved range
+    /// - EventPtr indirection resolution fails
     pub fn to_owned(
         &self,
         types: &TypeRegistry,
@@ -151,16 +255,32 @@ impl EventMapRaw {
         }))
     }
 
-    /// Apply an `EventMapRaw` to the relevant entries of types (e.g. fields, methods and parameters)
+    /// Apply this EventMap entry during metadata loading
     ///
-    /// ## Arguments
-    /// * 'types'   - All parsed `TypeDef` entries
-    /// * 'events'  - All parsed `Event` entries
-    /// * '`event_ptr`' - All parsed `EventPtr` entries for indirection resolution
-    /// * 'map'     - The `MetadataTable` for `EventMapRaw` entries
+    /// Processes the raw EventMap entry and establishes the ownership relationship
+    /// between the parent type and its events. This method resolves the event range,
+    /// looks up all events in that range, and adds them to the parent type's event
+    /// collection.
+    ///
+    /// # Arguments
+    ///
+    /// * `types` - The type registry containing all parsed TypeDef entries
+    /// * `events` - The Event table containing all parsed Event entries
+    /// * `event_ptr` - The EventPtr table for indirection resolution (if present)
+    /// * `map` - The EventMap table for determining event range boundaries
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on successful event assignment, or an error if:
+    /// - Event list resolution fails due to invalid range boundaries
+    /// - Event list validation fails (inconsistent with table state)
+    /// - Parent type lookup fails in the type registry
+    /// - Event assignment to parent type fails
     ///
     /// # Errors
-    /// Returns an error if the event list is invalid or if type lookup fails
+    ///
+    /// Returns [`crate::Error`] if the event list is invalid, parent type lookup
+    /// fails, or event assignment encounters metadata inconsistencies.
     pub fn apply(
         &self,
         types: &TypeRegistry,
@@ -190,6 +310,24 @@ impl EventMapRaw {
 }
 
 impl<'a> RowDefinition<'a> for EventMapRaw {
+    /// Calculate the byte size of an EventMap table row
+    ///
+    /// Computes the total size in bytes required to store one EventMap table row
+    /// based on the table size information. The size depends on whether large
+    /// table indexes are required for TypeDef and Event tables.
+    ///
+    /// # Row Structure
+    ///
+    /// - **parent**: 2 or 4 bytes (TypeDef table index)
+    /// - **event_list**: 2 or 4 bytes (Event table index)
+    ///
+    /// # Arguments
+    ///
+    /// * `sizes` - Table size information determining index byte sizes
+    ///
+    /// # Returns
+    ///
+    /// Returns the total byte size required for one EventMap table row.
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
@@ -198,6 +336,29 @@ impl<'a> RowDefinition<'a> for EventMapRaw {
         )
     }
 
+    /// Read an EventMap row from the metadata tables stream
+    ///
+    /// Parses one EventMap table row from the binary metadata stream, handling
+    /// variable-size indexes based on table size information. Advances the offset
+    /// to point to the next row after successful parsing.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The metadata tables stream binary data
+    /// * `offset` - Current position in the stream (updated after reading)
+    /// * `rid` - Row identifier for this EventMap entry (1-based)
+    /// * `sizes` - Table size information for determining index sizes
+    ///
+    /// # Returns
+    ///
+    /// Returns a parsed [`EventMapRaw`] instance with all fields populated
+    /// from the binary data.
+    ///
+    /// # Errors
+    ///
+    /// - The data stream is truncated or corrupted
+    /// - Index values exceed expected ranges
+    /// - Binary parsing encounters invalid data
     fn read_row(
         data: &'a [u8],
         offset: &mut usize,

@@ -1,3 +1,142 @@
+//! Type signature resolution for .NET metadata analysis.
+//!
+//! This module provides the `TypeResolver`, which converts abstract type signatures from
+//! .NET metadata into concrete type instances within the type registry. It handles the
+//! complex process of resolving type references, generic instantiations, arrays, pointers,
+//! and modified types according to ECMA-335 specifications.
+//!
+//! # Key Components
+//!
+//! - [`TypeResolver`] - Main resolver for converting type signatures to concrete types
+//! - Context management for source tracking and parent type relationships
+//! - Recursive resolution with depth protection against circular references
+//! - Support for all ECMA-335 type signature constructs
+//!
+//! # Type Signature Resolution
+//!
+//! The resolver handles the full spectrum of .NET type signatures:
+//!
+//! ## Primitive Types
+//! - Built-in types (void, bool, int32, string, etc.)
+//! - Direct mapping to primitive type registry entries
+//!
+//! ## Complex Types
+//! - **Array types**: Multi-dimensional arrays with size specifications
+//! - **Pointer types**: Managed and unmanaged pointer references
+//! - **Modified types**: Required and optional type modifiers
+//! - **Generic instances**: Instantiated generic types with type arguments
+//! - **Function pointers**: Method signature type references
+//!
+//! ## Reference Resolution
+//! - **Class/ValueType tokens**: Lookup in type registry by metadata token
+//! - **Cross-assembly references**: Resolution through source context
+//! - **Generic parameters**: Type and method parameter substitution
+//!
+//! # Resolution Context
+//!
+//! The resolver maintains contextual information during resolution:
+//! - **Source context**: Origin of types being resolved (current module, external assembly)
+//! - **Parent relationships**: For modifier types that need parent type context
+//! - **Token initialization**: For creating new composite types
+//!
+//! # Recursion Protection
+//!
+//! The resolver includes protection against infinite recursion:
+//! - Maximum depth limit prevents stack overflow
+//! - Circular reference detection
+//! - Graceful error handling for malformed signatures
+//!
+//! # Examples
+//!
+//! ## Basic Type Resolution
+//!
+//! ```rust,no_run
+//! use dotscope::metadata::{
+//!     typesystem::{TypeResolver, TypeRegistry},
+//!     signatures::TypeSignature
+//! };
+//! use std::sync::Arc;
+//!
+//! # fn example() -> dotscope::Result<()> {
+//! let registry = Arc::new(TypeRegistry::new()?);
+//! let mut resolver = TypeResolver::new(registry.clone());
+//!
+//! // Resolve a primitive type
+//! let int_type = resolver.resolve(&TypeSignature::I4)?;
+//! println!("Resolved: {}.{}", int_type.namespace, int_type.name);
+//!
+//! // Resolve a string type
+//! let string_type = resolver.resolve(&TypeSignature::String)?;
+//! assert_eq!(string_type.name, "String");
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Array Type Resolution
+//!
+//! ```rust,ignore
+//! use dotscope::metadata::{
+//!     typesystem::{TypeResolver, ArrayDimensions},
+//!     signatures::{TypeSignature, ArraySpecification}
+//! };
+//!
+//! # fn example(mut resolver: TypeResolver) -> dotscope::Result<()> {
+//! // Create array signature: int[]
+//! let array_sig = TypeSignature::Array(Box::new(ArraySpecification {
+//!     base: TypeSignature::I4,
+//!     rank: 1,
+//!     dimensions: ArrayDimensions::default(),
+//! }));
+//!
+//! let array_type = resolver.resolve(&array_sig)?;
+//! assert_eq!(array_type.name, "Int32[]");
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Context-Aware Resolution
+//!
+//! ```rust,no_run
+//! use dotscope::metadata::{
+//!     typesystem::{TypeResolver, TypeSource},
+//!     token::Token
+//! };
+//!
+//! # fn example(resolver: TypeResolver) -> dotscope::Result<()> {
+//! // Set up context for external assembly resolution
+//! let external_source = TypeSource::AssemblyRef(Token::new(0x23000001));
+//! let mut context_resolver = resolver
+//!     .with_source(external_source)
+//!     .with_parent(Token::new(0x02000001));
+//!
+//! // Resolution will now use the external context
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Error Handling
+//!
+//! The resolver provides comprehensive error reporting:
+//! - **TypeNotFound**: Referenced types don't exist in registry
+//! - **RecursionLimit**: Maximum recursion depth exceeded
+//! - **TypeMissingParent**: Modifier types without required parent context
+//! - **TypeError**: General type system inconsistencies
+//!
+//! # Performance Characteristics
+//!
+//! - **Primitive resolution**: O(1) direct registry lookup
+//! - **Complex types**: O(log n) registry operations plus signature complexity
+//! - **Recursive structures**: Protected by depth limits
+//! - **Memory usage**: Minimal allocation, leverages reference counting
+//!
+//! # ECMA-335 Compliance
+//!
+//! The resolver implements the complete ECMA-335 type signature specification:
+//! - Element type constants (§II.23.2.12)
+//! - Type signature encoding (§II.23.2.14)
+//! - Generic type instantiation (§II.23.2.15)
+//! - Array and pointer type construction (§II.23.2.13)
+
 use std::sync::Arc;
 
 use crate::{
@@ -14,26 +153,113 @@ use crate::{
     Result,
 };
 
-/// Maximum recursion depth for type signature resolution
+/// Maximum recursion depth for type signature resolution to prevent stack overflow
 const MAX_RECURSION_DEPTH: usize = 100;
 
-/// Resolves type signatures to concrete types in the registry
+/// Converts abstract type signatures into concrete type instances.
+///
+/// `TypeResolver` is the core component responsible for transforming type signatures
+/// from .NET metadata into fully resolved type objects within the type registry.
+/// It handles complex type constructions, maintains resolution context, and provides
+/// protection against circular references.
+///
+/// # Resolution Process
+///
+/// The resolver follows a systematic approach to type resolution:
+/// 1. **Context setup**: Source, parent, and initialization token configuration
+/// 2. **Signature analysis**: Pattern matching on signature structure
+/// 3. **Registry lookup**: Finding existing types or creating new ones
+/// 4. **Relationship building**: Establishing inheritance and modifier relationships
+/// 5. **Result caching**: Storing resolved types for future reference
+///
+/// # Context Management
+///
+/// The resolver maintains several pieces of contextual information:
+/// - **Source context**: Determines where types originate (current module, external assembly)
+/// - **Parent token**: Required for modifier types that need parent relationships
+/// - **Initialization token**: Used when creating new composite types
+///
+/// # Thread Safety
+///
+/// While the resolver itself is not `Send`/`Sync`, it operates on thread-safe
+/// registry and type structures. Create separate resolver instances for
+/// concurrent resolution operations.
+///
+/// # Examples
+///
+/// ## Basic Usage
+///
+/// ```rust,no_run
+/// use dotscope::metadata::{
+///     typesystem::{TypeResolver, TypeRegistry},
+///     signatures::TypeSignature
+/// };
+/// use std::sync::Arc;
+///
+/// # fn example() -> dotscope::Result<()> {
+/// let registry = Arc::new(TypeRegistry::new()?);
+/// let mut resolver = TypeResolver::new(registry);
+///
+/// // Resolve primitive types
+/// let void_type = resolver.resolve(&TypeSignature::Void)?;
+/// let int_type = resolver.resolve(&TypeSignature::I4)?;
+/// let string_type = resolver.resolve(&TypeSignature::String)?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Context Configuration
+///
+/// ```rust,no_run
+/// use dotscope::metadata::{
+///     typesystem::{TypeResolver, TypeSource},
+///     token::Token
+/// };
+///
+/// # fn example(registry: std::sync::Arc<dotscope::metadata::typesystem::TypeRegistry>) {
+/// let resolver = TypeResolver::new(registry)
+///     .with_source(TypeSource::AssemblyRef(Token::new(0x23000001)))
+///     .with_parent(Token::new(0x02000001))
+///     .with_token_init(Token::new(0x1B000001));
+/// # }
+/// ```
 pub struct TypeResolver {
-    /// Reference to the type registry
+    /// Reference to the central type registry for lookups and storage
     registry: Arc<TypeRegistry>,
-    /// Current source context
+    /// Current source context determining type origin (current module, external assembly, etc.)
     current_source: TypeSource,
-    /// Token of the parent type (if applicable)
+    /// Token of the parent type, required for resolving modifier types
     token_parent: Option<Token>,
-    /// Token for the initial type (if applicable)
+    /// Initial token for creating new composite types during resolution
     token_init: Option<Token>,
 }
 
 impl TypeResolver {
-    /// Create a new resolver with the given registry
+    /// Create a new type resolver with the specified registry.
     ///
-    /// ## Arguments
-    /// * 'registry' - The type registry to use
+    /// Initializes a resolver with default context settings:
+    /// - Source: CurrentModule (resolving types in the current assembly)
+    /// - Parent token: None (no parent type context)
+    /// - Initialization token: None (registry will generate tokens as needed)
+    ///
+    /// # Arguments
+    /// * `registry` - Shared reference to the type registry for lookups and storage
+    ///
+    /// # Returns
+    /// A new `TypeResolver` instance ready for type signature resolution
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::typesystem::{TypeResolver, TypeRegistry};
+    /// use std::sync::Arc;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let registry = Arc::new(TypeRegistry::new()?);
+    /// let resolver = TypeResolver::new(registry);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn new(registry: Arc<TypeRegistry>) -> Self {
         TypeResolver {
             registry,
@@ -43,56 +269,232 @@ impl TypeResolver {
         }
     }
 
-    /// Set the current source context
+    /// Set the source context for type resolution.
     ///
-    /// ## Arguments
-    /// * 'source' - The source to set for the current context
+    /// The source context determines where resolved types are considered to originate.
+    /// This affects how type references are resolved and where new types are registered.
+    ///
+    /// # Arguments
+    /// * `source` - The type source context to use for subsequent resolutions
+    ///
+    /// # Returns
+    /// Self with the new source context, enabling method chaining
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::typesystem::{TypeResolver, TypeSource};
+    /// use dotscope::metadata::token::Token;
+    ///
+    /// # fn example(resolver: TypeResolver) {
+    /// // Set up for resolving external assembly types
+    /// let external_resolver = resolver
+    ///     .with_source(TypeSource::AssemblyRef(Token::new(0x23000001)));
+    ///
+    /// // Set up for resolving current module types  
+    /// // Note: resolver is consumed by the first call, so you'd typically
+    /// // create separate resolver instances for different contexts
+    /// # }
+    /// # fn example2() -> dotscope::Result<()> {
+    /// # use std::sync::Arc;
+    /// # use dotscope::metadata::typesystem::TypeRegistry;
+    /// let registry = Arc::new(TypeRegistry::new()?);
+    /// let resolver = TypeResolver::new(registry);
+    /// let local_resolver = resolver
+    ///     .with_source(TypeSource::CurrentModule);
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
     pub fn with_source(mut self, source: TypeSource) -> Self {
         self.current_source = source;
         self
     }
 
-    /// Set the parent token
+    /// Set the parent type token for modifier type resolution.
     ///
-    /// ## Arguments
-    /// * 'token' - The token of the parent
+    /// Some type signatures (like modified types) require a parent type context
+    /// to be properly resolved. This method sets the parent token that will be
+    /// used when resolving such types.
+    ///
+    /// # Arguments
+    /// * `token` - The metadata token of the parent type
+    ///
+    /// # Returns
+    /// Self with the parent token set, enabling method chaining
+    ///
+    /// # Use Cases
+    ///
+    /// - Resolving required/optional modifier types
+    /// - Processing nested type definitions
+    /// - Handling type parameter constraints
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::{typesystem::TypeResolver, token::Token};
+    ///
+    /// # fn example(resolver: TypeResolver) {
+    /// let resolver_with_parent = resolver
+    ///     .with_parent(Token::new(0x02000001)); // TypeDef token
+    /// # }
+    /// ```
     #[must_use]
     pub fn with_parent(mut self, token: Token) -> Self {
         self.token_parent = Some(token);
         self
     }
 
-    /// Set the initial token
+    /// Set the initialization token for new type creation.
     ///
-    /// ## Arguments
-    /// * 'token' - The token for the first type
+    /// When the resolver needs to create new composite types (arrays, pointers,
+    /// generic instances), it can use this token as a starting point instead of
+    /// generating a completely new token from the registry.
+    ///
+    /// # Arguments
+    /// * `token` - The token to use for initializing new types
+    ///
+    /// # Returns
+    /// Self with the initialization token set, enabling method chaining
+    ///
+    /// # Use Cases
+    ///
+    /// - Creating array types with specific tokens
+    /// - Building generic instantiations with predetermined tokens
+    /// - Constructing pointer types with known identity
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::{typesystem::TypeResolver, token::Token};
+    ///
+    /// # fn example(resolver: TypeResolver) {
+    /// let resolver_with_init = resolver
+    ///     .with_token_init(Token::new(0x1B000001)); // TypeSpec token
+    /// # }
+    /// ```
     #[must_use]
     pub fn with_token_init(mut self, token: Token) -> Self {
         self.token_init = Some(token);
         self
     }
 
-    /// Resolve a type signature to a concrete type
+    /// Resolve a type signature to a concrete type instance.
     ///
-    /// ## Arguments
-    /// * 'signature' - The signature to resolve
+    /// This is the main entry point for type resolution. It takes an abstract type
+    /// signature from .NET metadata and converts it into a concrete type object
+    /// stored in the registry. The method handles all types of signatures from
+    /// simple primitives to complex generic instantiations.
+    ///
+    /// # Arguments
+    /// * `signature` - The type signature to resolve (from metadata parsing)
+    ///
+    /// # Returns
+    /// * `Ok(CilTypeRc)` - Successfully resolved concrete type
+    /// * `Err(Error)` - Resolution failed due to various reasons
     ///
     /// # Errors
-    /// Returns an error if:
-    /// - Type references cannot be found in the registry
-    /// - Recursion depth exceeds the maximum limit
-    /// - Required parent types are missing for modifier types
-    /// - Type creation or modification fails
+    ///
+    /// The method can fail with several error types:
+    /// - [`TypeNotFound`] - Referenced types don't exist in the registry
+    /// - [`RecursionLimit`] - Maximum recursion depth exceeded (circular references)
+    /// - [`TypeMissingParent`] - Modifier types require parent context
+    /// - [`TypeError`] - General type system inconsistencies
+    ///
+    /// # Resolution Strategy
+    ///
+    /// The resolver handles different signature types:
+    /// - **Primitives**: Direct lookup in primitive type registry
+    /// - **Class/ValueType**: Token-based lookup in main registry
+    /// - **Arrays**: Element type resolution + array construction
+    /// - **Pointers**: Base type resolution + pointer wrapper
+    /// - **Generic instances**: Type argument resolution + instantiation
+    /// - **Modifiers**: Parent type lookup + modifier application
+    ///
+    /// # Examples
+    ///
+    /// ## Primitive Type Resolution
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::{
+    ///     typesystem::TypeResolver,
+    ///     signatures::TypeSignature
+    /// };
+    ///
+    /// # fn example(mut resolver: TypeResolver) -> dotscope::Result<()> {
+    /// // Resolve basic types
+    /// let int_type = resolver.resolve(&TypeSignature::I4)?;
+    /// let string_type = resolver.resolve(&TypeSignature::String)?;
+    /// let void_type = resolver.resolve(&TypeSignature::Void)?;
+    ///
+    /// assert_eq!(int_type.name, "Int32");
+    /// assert_eq!(string_type.name, "String");
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// ## Complex Type Resolution
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::{
+    ///     signatures::{TypeSignature, ArraySpecification},
+    ///     typesystem::ArrayDimensions,
+    ///     token::Token
+    /// };
+    ///
+    /// # fn example(mut resolver: dotscope::metadata::typesystem::TypeResolver) -> dotscope::Result<()> {
+    /// // Resolve class reference
+    /// let class_sig = TypeSignature::Class(Token::new(0x02000001));
+    /// let class_type = resolver.resolve(&class_sig)?;
+    ///
+    /// // Resolve array type
+    /// let array_sig = TypeSignature::Array(Box::new(ArraySpecification {
+    ///     base: TypeSignature::I4,
+    ///     rank: 1,
+    ///     dimensions: ArrayDimensions::default(),
+    /// }));
+    /// let array_type = resolver.resolve(&array_sig)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is not thread-safe due to mutable state. Use separate
+    /// resolver instances for concurrent resolution operations.
     pub fn resolve(&mut self, signature: &TypeSignature) -> Result<CilTypeRc> {
         self.resolve_with_depth(signature, 0)
     }
 
-    /// Internal recursive resolver with depth tracking
+    /// Internal recursive resolver with depth tracking and overflow protection.
     ///
-    /// ## Arguments
-    /// * 'signature'   - The signature to resolve
-    /// * 'depth'       - Indicator of recursion level
+    /// This method performs the actual resolution work while tracking recursion
+    /// depth to prevent stack overflow from circular type references. It implements
+    /// the core resolution logic for all type signature variants.
+    ///
+    /// # Arguments
+    /// * `signature` - The type signature to resolve
+    /// * `depth` - Current recursion depth (0 for initial call)
+    ///
+    /// # Returns
+    /// * `Ok(CilTypeRc)` - Successfully resolved type
+    /// * `Err(RecursionLimit)` - Maximum depth exceeded
+    /// * `Err(...)` - Other resolution errors
+    ///
+    /// # Recursion Protection
+    ///
+    /// The method enforces a maximum recursion depth of [`MAX_RECURSION_DEPTH`]
+    /// to prevent stack overflow. This protects against:
+    /// - Circular type references in malformed metadata
+    /// - Deeply nested generic type instantiations
+    /// - Complex array-of-array-of-array constructions
+    ///
+    /// # Implementation Details
+    ///
+    /// The resolver uses pattern matching to handle each signature type:
+    /// - Direct registry lookups for primitives and simple references
+    /// - Recursive resolution for composite types (arrays, pointers)
+    /// - Complex construction for generic instances and modifiers
     fn resolve_with_depth(&mut self, signature: &TypeSignature, depth: usize) -> Result<CilTypeRc> {
         if depth >= MAX_RECURSION_DEPTH {
             return Err(RecursionLimit(MAX_RECURSION_DEPTH));

@@ -1,8 +1,62 @@
-//! `LoaderContext` - Centralized storage for all metadata table maps during loading.
+//! Centralized metadata loading context for .NET assembly processing.
 //!
-//! This module provides the `LoaderContext` structure that holds all table maps
-//! during the metadata loading process. The context is created in `CilObjectData::from_file`,
-//! passed to `execute_loaders_in_parallel`, and dropped after loading completes.
+//! This module provides the [`LoaderContext`] structure that serves as the central hub
+//! for all metadata table maps during the assembly loading process. It coordinates
+//! parallel loading operations and provides unified access to metadata streams,
+//! tables, and registries throughout the loading pipeline.
+//!
+//! # Loading Architecture
+//!
+//! The context follows a specific lifecycle:
+//! 1. **Creation**: Built in [`crate::metadata::loader::data::CilObjectData::from_file`]
+//! 2. **Population**: Passed to parallel loaders via `execute_loaders_in_parallel`
+//! 3. **Resolution**: Provides coded index resolution and cross-table lookups
+//! 4. **Cleanup**: Automatically dropped after loading completes
+//!
+//! # Key Responsibilities
+//!
+//! - **Stream Access**: Provides unified access to metadata streams (strings, blobs, etc.)
+//! - **Table Management**: Holds maps for all metadata tables during loading
+//! - **Cross-References**: Resolves coded indices between different table types
+//! - **Type Registry**: Coordinates with the central type system
+//! - **Import/Export**: Manages assembly dependency relationships
+//!
+//! # Parallel Loading Support
+//!
+//! The context is designed for concurrent access during parallel loading:
+//! - Reference-counted data structures for shared access
+//! - Thread-safe maps and registries
+//! - Immutable stream references
+//! - Lock-based coordination for critical sections
+//!
+//! # Examples
+//!
+//! ```rust,ignore
+//! # use dotscope::metadata::loader::context::LoaderContext;
+//! # use dotscope::metadata::tables::CodedIndex;
+//! # fn example_usage(context: &LoaderContext) {
+//! // Resolve a coded index to a type reference
+//! let coded_index = CodedIndex { /* ... */ };
+//! let type_ref = context.get_ref(&coded_index);
+//!
+//! // Access metadata streams
+//! if let Some(strings) = context.strings {
+//!     // Use string heap for name resolution
+//! }
+//!
+//! // Access specific table maps
+//! let method_count = context.method_def.len();
+//! println!("Assembly contains {} methods", method_count);
+//! # }
+//! ```
+//!
+//! # Memory Management
+//!
+//! The context uses careful memory management strategies:
+//! - **Borrowed References**: Most data is borrowed from the parent CilObject
+//! - **Reference Counting**: Shared data uses Arc for safe concurrent access
+//! - **Lazy Initialization**: Some tables use OnceLock for deferred loading
+//! - **Scoped Lifetime**: Context is dropped immediately after loading
 
 use std::sync::{Arc, OnceLock};
 
@@ -30,91 +84,252 @@ use crate::{
     },
 };
 
-/// Context structure that holds maps for all metadata tables during the loading process.
+/// Centralized context for metadata table maps during assembly loading.
 ///
-/// This structure is created in `CilObjectData::from_file`, passed to all loaders during
-/// `execute_loaders_in_parallel`, and dropped after loading completes. Each loader converts
-/// raw table rows to owned structures using `to_owned()` and inserts them into these maps,
-/// then calls `apply()` methods to build semantic relationships.
+/// This structure serves as the central coordination point for all metadata loading
+/// operations in a .NET assembly. It provides unified access to metadata streams,
+/// table maps, and cross-reference resolution capabilities required by parallel
+/// loading operations.
+///
+/// # Lifecycle Management
+///
+/// The context follows a specific lifecycle pattern:
+/// 1. **Initialization**: Created with references to parsed metadata streams
+/// 2. **Population**: Parallel loaders populate table maps via `to_owned()` conversions
+/// 3. **Resolution**: Cross-table references resolved via [`get_ref`](Self::get_ref) method
+/// 4. **Application**: Loaders call `apply()` methods to build semantic relationships
+/// 5. **Disposal**: Context automatically dropped after loading completes
+///
+/// # Data Organization
+///
+/// **Core Metadata**: Assembly header, streams, and basic structures
+/// **Table Maps**: Concurrent containers for all metadata table types
+/// **Registries**: Type system and import/export management
+/// **References**: Cross-table relationship resolution
+///
+/// # Thread Safety
+///
+/// Designed for safe concurrent access during parallel loading:
+/// - All maps use thread-safe data structures ([`crossbeam_skiplist::SkipMap`], [`dashmap::DashMap`])
+/// - Metadata streams are immutable references
+/// - Registries provide atomic operations
+/// - Critical sections use `Arc<OnceLock>` for coordination
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # use dotscope::metadata::loader::context::LoaderContext;
+/// # use dotscope::metadata::tables::{CodedIndex, TableId};
+/// # use dotscope::metadata::token::Token;
+/// # fn loader_example(context: &LoaderContext) -> dotscope::Result<()> {
+/// // Resolve a coded index during loading
+/// let coded_index = CodedIndex {
+///     tag: TableId::TypeDef,
+///     token: Token::new(0x02000001),
+/// };
+/// let type_reference = context.get_ref(&coded_index);
+///
+/// // Access metadata streams for name resolution
+/// if let Some(strings) = context.strings {
+///     let name = strings.get(123)?; // Get string at index 123
+/// }
+///
+/// // Query loaded metadata
+/// println!("Methods loaded: {}", context.method_def.len());
+/// println!("Types registered: {}", context.types.len());
+/// # Ok(())
+/// # }
+/// ```
 pub(crate) struct LoaderContext<'a> {
+    // === Core Assembly Data ===
+    /// Input file reference for the assembly being loaded.
     pub input: Arc<File>,
+    /// Raw binary data of the assembly file.
     pub data: &'a [u8],
+    /// CLR 2.0 header containing metadata root and stream information.
     pub header: &'a Cor20Header,
+    /// Metadata root header with stream definitions and signatures.
     pub header_root: &'a Root,
+
+    // === Metadata Streams ===
+    /// Tables stream containing all metadata table definitions.
     pub meta: &'a Option<TablesHeader<'a>>,
+    /// String heap containing UTF-8 encoded names and identifiers.
     pub strings: &'a Option<Strings<'a>>,
+    /// User string heap containing literal string constants.
     pub userstrings: &'a Option<UserStrings<'a>>,
+    /// GUID heap containing unique identifiers for types and assemblies.
     pub guids: &'a Option<Guid<'a>>,
+    /// Blob heap containing binary data (signatures, custom attributes, etc.).
     pub blobs: &'a Option<Blob<'a>>,
 
+    // === Assembly and Module Tables ===
+    /// Assembly definition (single entry per assembly).
     pub assembly: &'a Arc<OnceLock<AssemblyRc>>,
+    /// Assembly operating system information.
     pub assembly_os: &'a Arc<OnceLock<AssemblyOsRc>>,
+    /// Assembly processor architecture information.
     pub assembly_processor: &'a Arc<OnceLock<AssemblyProcessorRc>>,
+    /// Assembly references to external assemblies.
     pub assembly_ref: &'a AssemblyRefMap,
+    /// Operating system information for assembly references.
     pub assembly_ref_os: AssemblyRefOsMap,
+    /// Processor information for assembly references.
     pub assembly_ref_processor: AssemblyRefProcessorMap,
+    /// Module definition (primary module of the assembly).
     pub module: &'a Arc<OnceLock<ModuleRc>>,
+    /// Module references to external modules.
     pub module_ref: &'a ModuleRefMap,
+
+    // === Type System Tables ===
+    /// Type specifications for instantiated generic types.
     pub type_spec: TypeSpecMap,
+
+    // === Method and Field Tables ===
+    /// Method definitions in the assembly.
     pub method_def: &'a MethodMap,
+    /// Method implementations for interface/virtual methods.
     pub method_impl: MethodImplMap,
+    /// Method semantics (property getters/setters, event handlers).
     pub method_semantics: MethodSemanticsMap,
+    /// Method specifications for generic method instantiations.
     pub method_spec: &'a MethodSpecMap,
+    /// Field definitions in types.
     pub field: FieldMap,
+    /// Field pointer indirection table.
     pub field_ptr: FieldPtrMap,
+    /// Method pointer indirection table.
     pub method_ptr: MethodPtrMap,
+    /// Field layout information for explicit layout types.
     pub field_layout: FieldLayoutMap,
+    /// Field marshalling information for interop.
     pub field_marshal: FieldMarshalMap,
+    /// Field relative virtual addresses for initialized data.
     pub field_rva: FieldRVAMap,
+
+    // === Parameter and Generic Tables ===
+    /// Parameter definitions for methods.
     pub param: ParamMap,
+    /// Parameter pointer indirection table.
     pub param_ptr: ParamPtrMap,
+    /// Generic parameter definitions for generic types and methods.
     pub generic_param: GenericParamMap,
+    /// Constraints on generic parameters.
     pub generic_param_constraint: GenericParamConstraintMap,
+
+    // === Property and Event Tables ===
+    /// Property definitions in types.
     pub property: PropertyMap,
+    /// Property pointer indirection table.
     pub property_ptr: PropertyPtrMap,
+    /// Property map linking types to their properties.
     pub property_map: PropertyMapEntryMap,
+    /// Event definitions in types.
     pub event: EventMap,
+    /// Event pointer indirection table.
     pub event_ptr: EventPtrMap,
+    /// Event map linking types to their events.
     pub event_map: EventMapEntryMap,
+
+    // === Reference and Relationship Tables ===
+    /// Member references to external methods and fields.
     pub member_ref: &'a MemberRefMap,
+    /// Class layout information for explicit layout types.
     pub class_layout: ClassLayoutMap,
+    /// Nested class relationships.
     pub nested_class: NestedClassMap,
+    /// Interface implementation relationships.
     pub interface_impl: InterfaceImplMap,
+
+    // === Metadata and Security Tables ===
+    /// Constant values for fields, parameters, and properties.
     pub constant: ConstantMap,
+    /// Custom attribute definitions.
     pub custom_attribute: CustomAttributeMap,
+    /// Declarative security attributes.
     pub decl_security: DeclSecurityMap,
-    //pub impl_map: ImplMapMap,
+    /// File definitions for multi-file assemblies.
     pub file: &'a FileMap,
+    /// Exported type definitions.
     pub exported_type: &'a Exports,
-    //pub manifest_resource: ManifestResourceMap,
+    /// Standalone signature definitions.
     pub standalone_sig: StandAloneSigMap,
 
+    // === High-Level Registries ===
+    /// Import tracking for external dependencies.
     pub imports: &'a Imports,
+    /// Resource management for embedded resources.
     pub resources: &'a Resources,
+    /// Central type registry for all loaded types.
     pub types: &'a Arc<TypeRegistry>,
 }
 
 impl LoaderContext<'_> {
-    /// Resolve a coded index to a `CilTypeReference`
+    /// Resolve a coded index to a [`crate::metadata::typesystem::CilTypeReference`].
     ///
-    /// This method provides unified coded index resolution across all metadata tables.
-    /// It uses the `CodedIndex`'s table ID (.tag) and token (.token) to look up the
-    /// corresponding object in the appropriate map, then converts it to the correct
-    /// `CilTypeReference` variant.
+    /// This method provides unified coded index resolution across all metadata tables
+    /// during the loading process. It uses the [`crate::metadata::tables::CodedIndex`]'s table identifier
+    /// and token to look up the corresponding entity in the appropriate table map,
+    /// then converts it to the correct [`crate::metadata::typesystem::CilTypeReference`] variant.
+    ///
+    /// # Supported Tables
+    ///
+    /// The method handles resolution for all major metadata table types:
+    /// - **Type Tables**: TypeDef, TypeRef, TypeSpec
+    /// - **Method Tables**: MethodDef, MemberRef, MethodSpec  
+    /// - **Field/Property Tables**: Field, Property, Param, Event
+    /// - **Assembly Tables**: Assembly, AssemblyRef, Module, ModuleRef
+    /// - **Generic Tables**: GenericParam, GenericParamConstraint
+    /// - **Other Tables**: File, ExportedType, StandAloneSig, DeclSecurity, InterfaceImpl
+    ///
+    /// # Resolution Strategy
+    ///
+    /// 1. **Table Identification**: Uses the coded index's `tag` field to determine target table
+    /// 2. **Token Lookup**: Searches the appropriate table map using the `token` field
+    /// 3. **Reference Creation**: Converts the found entity to the correct reference type
+    /// 4. **Fallback Handling**: Returns [`crate::metadata::typesystem::CilTypeReference::None`] for unresolved references
     ///
     /// # Arguments
-    /// * `coded_index` - The coded index containing table ID and token to resolve
+    /// * `coded_index` - The [`crate::metadata::tables::CodedIndex`] containing table ID and token to resolve
     ///
     /// # Returns
-    /// Returns the corresponding `CilTypeReference` variant or `CilTypeReference::None`
-    /// if the coded index cannot be resolved.
+    /// The corresponding [`crate::metadata::typesystem::CilTypeReference`] variant, or
+    /// [`crate::metadata::typesystem::CilTypeReference::None`] if the coded index cannot be resolved.
     ///
     /// # Examples
-    /// ```rust, ignore
-    /// // Resolve a TypeDef coded index
-    /// let type_ref = context.get_ref(&some_coded_index);
     ///
-    /// // The method automatically handles the table lookup based on coded_index.tag
+    /// ```rust,ignore
+    /// use dotscope::metadata::loader::context::LoaderContext;
+    /// use dotscope::metadata::tables::{CodedIndex, TableId};
+    /// use dotscope::metadata::token::Token;
+    /// use dotscope::metadata::typesystem::CilTypeReference;
+    ///
+    /// # fn resolve_example(context: &LoaderContext) {
+    /// // Resolve a TypeDef coded index
+    /// let coded_index = CodedIndex {
+    ///     tag: TableId::TypeDef,
+    ///     token: Token::new(0x02000001),
+    /// };
+    ///
+    /// match context.get_ref(&coded_index) {
+    ///     CilTypeReference::TypeDef(type_def) => {
+    ///         println!("Resolved TypeDef: {}", type_def.name);
+    ///     }
+    ///     CilTypeReference::None => {
+    ///         println!("Could not resolve coded index");
+    ///     }
+    ///     _ => {
+    ///         println!("Unexpected reference type");
+    ///     }
+    /// }
+    ///
+    /// // The method automatically handles different table types
+    /// let method_index = CodedIndex {
+    ///     tag: TableId::MethodDef,
+    ///     token: Token::new(0x06000001),
+    /// };
+    /// let method_ref = context.get_ref(&method_index);
+    /// # }
     /// ```
     pub fn get_ref(&self, coded_index: &CodedIndex) -> CilTypeReference {
         match coded_index.tag {
