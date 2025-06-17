@@ -67,7 +67,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! dotscope = "0.3.1"
+//! dotscope = "0.3.2"
 //! ```
 //!
 //! ### Using the Prelude
