@@ -73,12 +73,12 @@ use crate::{
         tables::{
             AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, AssemblyRefOsMap,
             AssemblyRefProcessorMap, ClassLayoutMap, CodedIndex, ConstantMap, CustomAttributeMap,
-            DeclSecurityMap, EventMap, EventMapEntryMap, EventPtrMap, FieldLayoutMap, FieldMap,
-            FieldMarshalMap, FieldPtrMap, FieldRVAMap, FileMap, GenericParamConstraintMap,
-            GenericParamMap, InterfaceImplMap, MemberRefMap, MethodImplMap, MethodPtrMap,
-            MethodSemanticsMap, MethodSpecMap, ModuleRc, ModuleRefMap, NestedClassMap, ParamMap,
-            ParamPtrMap, PropertyMap, PropertyMapEntryMap, PropertyPtrMap, StandAloneSigMap,
-            TableId, TypeSpecMap,
+            DeclSecurityMap, EncLogMap, EncMapMap, EventMap, EventMapEntryMap, EventPtrMap,
+            FieldLayoutMap, FieldMap, FieldMarshalMap, FieldPtrMap, FieldRVAMap, FileMap,
+            GenericParamConstraintMap, GenericParamMap, InterfaceImplMap, MemberRefMap,
+            MethodImplMap, MethodPtrMap, MethodSemanticsMap, MethodSpecMap, ModuleRc, ModuleRefMap,
+            NestedClassMap, ParamMap, ParamPtrMap, PropertyMap, PropertyMapEntryMap,
+            PropertyPtrMap, StandAloneSigMap, TableId, TypeSpecMap,
         },
         typesystem::{CilTypeReference, TypeRegistry},
     },
@@ -206,6 +206,12 @@ pub(crate) struct LoaderContext<'a> {
     pub field_marshal: FieldMarshalMap,
     /// Field relative virtual addresses for initialized data.
     pub field_rva: FieldRVAMap,
+
+    // === Edit-and-Continue Tables ===
+    /// Edit-and-Continue log entries tracking debugging modifications.
+    pub enc_log: EncLogMap,
+    /// Edit-and-Continue token mapping for debugging scenarios.
+    pub enc_map: EncMapMap,
 
     // === Parameter and Generic Tables ===
     /// Parameter definitions for methods.

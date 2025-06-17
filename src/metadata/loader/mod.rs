@@ -39,7 +39,7 @@ pub(crate) use data::CilObjectData;
 
 /// Static registry of all metadata table loaders.
 ///
-/// This array contains references to all 43 metadata table loaders that are part of the .NET metadata
+/// This array contains references to all 45 metadata table loaders that are part of the .NET metadata
 /// specification. Each loader is responsible for processing a specific metadata table type and declaring
 /// its dependencies on other tables.
 ///
@@ -75,7 +75,7 @@ pub(crate) use data::CilObjectData;
 /// 2. Add the loader to this array
 /// 3. Update any loaders that depend on the new table
 /// 4. Test that the dependency graph remains acyclic
-static LOADERS: [&'static dyn MetadataLoader; 43] = [
+static LOADERS: [&'static dyn MetadataLoader; 45] = [
     &crate::metadata::tables::AssemblyLoader,
     &crate::metadata::tables::AssemblyOsLoader,
     &crate::metadata::tables::AssemblyProcessorLoader,
@@ -86,6 +86,8 @@ static LOADERS: [&'static dyn MetadataLoader; 43] = [
     &crate::metadata::tables::ConstantLoader,
     &crate::metadata::tables::CustomAttributeLoader,
     &crate::metadata::tables::DeclSecurityLoader,
+    &crate::metadata::tables::EncLogLoader,
+    &crate::metadata::tables::EncMapLoader,
     &crate::metadata::tables::EventLoader,
     &crate::metadata::tables::EventMapLoader,
     &crate::metadata::tables::EventPtrLoader,
