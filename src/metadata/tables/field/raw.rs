@@ -5,8 +5,8 @@
 //! data members for types, including instance fields, static fields, and literals.
 //!
 //! # Table Structure
-//! The Field table (TableId = 0x04) contains these columns:
-//! - `Flags`: 2-byte FieldAttributes bitmask
+//! The Field table (`TableId` = 0x04) contains these columns:
+//! - `Flags`: 2-byte `FieldAttributes` bitmask
 //! - `Name`: Index into String heap for field name
 //! - `Signature`: Index into Blob heap for field type signature
 //!
@@ -71,14 +71,14 @@ pub struct FieldRaw {
     /// This includes accessibility, static/instance designation, and special flags.
     ///
     /// Common values:
-    /// - `0x0001`: CompilerControlled
+    /// - `0x0001`: `CompilerControlled`
     /// - `0x0002`: Private
     /// - `0x0007`: Public  
     /// - `0x0010`: Static
     /// - `0x0020`: Literal
-    /// - `0x0080`: HasFieldRVA
-    /// - `0x1000`: HasDefault
-    /// - `0x2000`: HasFieldMarshal
+    /// - `0x0080`: `HasFieldRVA`
+    /// - `0x1000`: `HasDefault`
+    /// - `0x2000`: `HasFieldMarshal`
     pub flags: u32,
 
     /// Index into the String heap for the field name.
@@ -137,6 +137,10 @@ impl FieldRaw {
     ///
     /// # Returns
     /// Always returns `Ok(())` as Field entries don't directly modify other tables.
+    ///
+    /// # Errors
+    /// This function never returns an error but maintains the standard `apply()` signature
+    /// for consistency with other metadata table implementations.
     pub fn apply(&self) -> Result<()> {
         Ok(())
     }

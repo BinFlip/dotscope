@@ -18,9 +18,9 @@
 //!
 //! Security actions determine when and how the CLR enforces permission checks:
 //!
-//! - **Runtime Actions**: Demand, Assert, Deny, PermitOnly (checked during execution)
-//! - **Link-Time Actions**: LinkDemand, InheritanceDemand (checked during JIT compilation)
-//! - **Assembly Request Actions**: RequestMinimum, RequestOptional, RequestRefuse (legacy)
+//! - **Runtime Actions**: `Demand`, `Assert`, `Deny`, `PermitOnly` (checked during execution)
+//! - **Link-Time Actions**: `LinkDemand`, `InheritanceDemand` (checked during JIT compilation)
+//! - **Assembly Request Actions**: `RequestMinimum`, `RequestOptional`, `RequestRefuse` (legacy)
 //!
 //! # Common Use Cases
 //!
@@ -162,7 +162,7 @@
 //!
 //! ## .NET Framework 1.0-3.5
 //! - Full CAS implementation with all security actions
-//! - Assembly-level security requests (RequestMinimum, RequestOptional, RequestRefuse)
+//! - Assembly-level security requests (`RequestMinimum`, `RequestOptional`, `RequestRefuse`)
 //! - Extensive use of link-time and inheritance demands
 //!
 //! ## .NET Framework 4.0+
@@ -185,7 +185,7 @@
 //! # ECMA-335 Compliance
 //!
 //! This implementation follows ECMA-335 specifications for declarative security:
-//! - **Partition II, Section 22.11**: DeclSecurity table format
+//! - **Partition II, Section 22.11**: `DeclSecurity` table format
 //! - **Partition II, Section 23.1.16**: Security action values
 //! - **Partition I, Section 10**: Security model overview
 
@@ -197,7 +197,7 @@ use crate::metadata::security::PermissionSet;
 /// Security information wrapper for storing declarative security attributes.
 ///
 /// Represents a single declarative security entry that combines a security action
-/// with a permission set. These entries are stored in the DeclSecurity metadata table
+/// with a permission set. These entries are stored in the `DeclSecurity` metadata table
 /// and define security requirements for assemblies, types, and methods.
 ///
 /// # Examples
@@ -249,7 +249,7 @@ pub struct Security {
 ///
 /// Security actions define the enforcement semantics for declarative security attributes.
 /// Each action specifies when the CLR should check permissions and what happens when
-/// permission checks fail. These correspond directly to the SecurityAction enumeration
+/// permission checks fail. These correspond directly to the `SecurityAction` enumeration
 /// in the .NET Framework and ECMA-335 specifications.
 ///
 /// # Action Categories
@@ -306,7 +306,7 @@ pub struct Security {
 /// # ECMA-335 References
 ///
 /// - **Partition II, Section 23.1.16**: Security action enumeration values
-/// - **Partition II, Section 22.11**: DeclSecurity table structure
+/// - **Partition II, Section 22.11**: `DeclSecurity` table structure
 /// - **Partition I, Section 10**: Security model overview
 ///
 /// # Binary Representation
@@ -895,7 +895,7 @@ impl fmt::Display for ArgumentValue {
 /// }
 /// ```
 pub mod security_classes {
-    /// FileIOPermission - Controls access to files and directories.
+    /// `FileIOPermission` - Controls access to files and directories.
     ///
     /// This permission controls read, write, append, and path discovery operations
     /// on the file system. It can specify individual files, directories, or use
@@ -909,7 +909,7 @@ pub mod security_classes {
     /// - `Unrestricted`: Grants full file system access
     pub const FILE_IO_PERMISSION: &str = "System.Security.Permissions.FileIOPermission";
 
-    /// SecurityPermission - Controls access to security-sensitive operations.
+    /// `SecurityPermission` - Controls access to security-sensitive operations.
     ///
     /// This is one of the most powerful permissions, controlling fundamental security
     /// operations like asserting permissions, skipping verification, executing unsafe
@@ -924,7 +924,7 @@ pub mod security_classes {
     /// - `ControlPrincipal`: Can manipulate principal objects
     pub const SECURITY_PERMISSION: &str = "System.Security.Permissions.SecurityPermission";
 
-    /// RegistryPermission - Controls access to Windows registry keys.
+    /// `RegistryPermission` - Controls access to Windows registry keys.
     ///
     /// This permission controls reading, writing, and creating registry keys and values.
     /// It can specify individual keys or entire registry hives.
@@ -936,7 +936,7 @@ pub mod security_classes {
     /// - `Unrestricted`: Full registry access
     pub const REGISTRY_PERMISSION: &str = "System.Security.Permissions.RegistryPermission";
 
-    /// EnvironmentPermission - Controls access to environment variables.
+    /// `EnvironmentPermission` - Controls access to environment variables.
     ///
     /// This permission controls reading and writing system and user environment
     /// variables. It can specify individual variables or patterns.
@@ -947,7 +947,7 @@ pub mod security_classes {
     /// - `Unrestricted`: Access to all environment variables
     pub const ENVIRONMENT_PERMISSION: &str = "System.Security.Permissions.EnvironmentPermission";
 
-    /// ReflectionPermission - Controls use of reflection.
+    /// `ReflectionPermission` - Controls use of reflection.
     ///
     /// This permission controls the ability to reflect over types, access non-public
     /// members, and perform other reflection operations that could bypass normal
@@ -960,7 +960,7 @@ pub mod security_classes {
     /// - `MemberAccess`: Can access non-public members
     pub const REFLECTION_PERMISSION: &str = "System.Security.Permissions.ReflectionPermission";
 
-    /// UIPermission - Controls user interface operations.
+    /// `UIPermission` - Controls user interface operations.
     ///
     /// This permission controls clipboard access, window manipulation, and other
     /// user interface operations that could be used for social engineering attacks.
@@ -972,7 +972,7 @@ pub mod security_classes {
     /// - `Clipboard`: Can access clipboard
     pub const UI_PERMISSION: &str = "System.Security.Permissions.UIPermission";
 
-    /// IdentityPermission - Controls identity verification operations.
+    /// `IdentityPermission` - Controls identity verification operations.
     ///
     /// This permission is used to verify the identity of assemblies and can control
     /// access based on strong names, publisher certificates, or other identity markers.
@@ -982,7 +982,7 @@ pub mod security_classes {
     /// access controls for sensitive operations.
     pub const IDENTITY_PERMISSION: &str = "System.Security.Permissions.IdentityPermission";
 
-    /// PrincipalPermission - Controls role-based security operations.
+    /// `PrincipalPermission` - Controls role-based security operations.
     ///
     /// This permission works with the .NET role-based security system to control
     /// access based on user identity and role membership.
@@ -993,7 +993,7 @@ pub mod security_classes {
     /// - `Authenticated`: Requires authenticated user
     pub const PRINCIPAL_PERMISSION: &str = "System.Security.Permissions.PrincipalPermission";
 
-    /// DnsPermission - Controls DNS resolution operations.
+    /// `DnsPermission` - Controls DNS resolution operations.
     ///
     /// This permission controls the ability to resolve domain names to IP addresses
     /// using the Domain Name System. It can specify allowed or denied hostnames.
@@ -1003,7 +1003,7 @@ pub mod security_classes {
     /// - Individual hostnames or patterns can be specified
     pub const DNS_PERMISSION: &str = "System.Net.DnsPermission";
 
-    /// SocketPermission - Controls socket-based network access.
+    /// `SocketPermission` - Controls socket-based network access.
     ///
     /// This permission controls low-level network access through sockets, including
     /// TCP and UDP connections. It can specify hosts, ports, and connection types.
@@ -1014,7 +1014,7 @@ pub mod security_classes {
     /// - `Unrestricted`: Full socket access
     pub const SOCKET_PERMISSION: &str = "System.Net.SocketPermission";
 
-    /// WebPermission - Controls web-based network access.
+    /// `WebPermission` - Controls web-based network access.
     ///
     /// This permission controls high-level web access through HTTP and HTTPS protocols.
     /// It can specify allowed URLs and connection patterns.
@@ -1025,7 +1025,7 @@ pub mod security_classes {
     /// - `Unrestricted`: Can access any web resource
     pub const WEB_PERMISSION: &str = "System.Net.WebPermission";
 
-    /// IsolatedStorageFilePermission - Controls isolated storage access.
+    /// `IsolatedStorageFilePermission` - Controls isolated storage access.
     ///
     /// This permission controls access to the .NET isolated storage system, which
     /// provides secure per-application or per-user storage areas.
@@ -1038,7 +1038,7 @@ pub mod security_classes {
     pub const STORAGE_PERMISSION: &str =
         "System.Security.Permissions.IsolatedStorageFilePermission";
 
-    /// KeyContainerPermission - Controls cryptographic key container access.
+    /// `KeyContainerPermission` - Controls cryptographic key container access.
     ///
     /// This permission controls access to cryptographic key containers in the
     /// Cryptographic Service Provider (CSP) system. It can specify individual
@@ -1050,17 +1050,17 @@ pub mod security_classes {
     /// - `Unrestricted`: Access to all key containers
     pub const KEY_CONTAINER_PERMISSION: &str = "System.Security.Permissions.KeyContainerPermission";
 
-    /// StorePermission - Controls X.509 certificate store access.
+    /// `StorePermission` - Controls X.509 certificate store access.
     ///
     /// This permission controls access to X.509 certificate stores, including
     /// reading, writing, and enumerating certificates in various store locations.
     ///
     /// # Common Parameters
-    /// - `Flags`: Store access flags (ReadStore, WriteStore, etc.)
+    /// - `Flags`: Store access flags (`ReadStore`, `WriteStore`, etc.)
     /// - `Unrestricted`: Full certificate store access
     pub const STORE_PERMISSION: &str = "System.Security.Permissions.StorePermission";
 
-    /// EventLogPermission - Controls Windows event log access.
+    /// `EventLogPermission` - Controls Windows event log access.
     ///
     /// This permission controls reading from and writing to Windows event logs.
     /// It can specify individual log names and access types.
@@ -1072,7 +1072,7 @@ pub mod security_classes {
     /// - `Unrestricted`: Full event log access
     pub const EVENT_LOG_PERMISSION: &str = "System.Diagnostics.EventLogPermission";
 
-    /// PerformanceCounterPermission - Controls performance counter access.
+    /// `PerformanceCounterPermission` - Controls performance counter access.
     ///
     /// This permission controls access to Windows performance counters, including
     /// reading counter values, creating custom counters, and managing counter categories.
@@ -1084,7 +1084,7 @@ pub mod security_classes {
     pub const PERF_COUNTER_PERMISSION: &str = "System.Diagnostics.PerformanceCounterPermission";
 }
 
-/// The supported PermissionSet serialization formats in .NET assemblies.
+/// The supported `PermissionSet` serialization formats in .NET assemblies.
 ///
 /// .NET has used different formats for serializing permission sets over its evolution,
 /// reflecting changes in the security model and performance requirements. This enum

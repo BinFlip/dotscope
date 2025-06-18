@@ -570,7 +570,7 @@ pub fn parse_property_signature(data: &[u8]) -> Result<SignatureProperty> {
 /// # Memory Management
 /// Local variable signatures include critical information for memory management:
 /// - **Pinned locals**: Fixed memory addresses for P/Invoke and unsafe code
-/// - **ByRef locals**: Reference semantics that affect garbage collection
+/// - **`ByRef` locals**: Reference semantics that affect garbage collection
 /// - **Type layout**: Information needed for stack frame construction
 /// - **Lifetime tracking**: GC root analysis for reference types
 pub fn parse_local_var_signature(data: &[u8]) -> Result<SignatureLocalVariables> {
@@ -595,7 +595,7 @@ pub fn parse_local_var_signature(data: &[u8]) -> Result<SignatureLocalVariables>
 /// - **Generic Instantiations**: `List<T>`, `Dictionary<K,V>`
 /// - **Array Types**: `T[]`, `T[,]`, `T[,,]`
 /// - **Pointer Types**: `T*`, `void*`
-/// - **ByRef Types**: `ref T`, `out T`
+/// - **`ByRef` Types**: `ref T`, `out T`
 ///
 /// # Examples
 ///

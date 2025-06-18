@@ -1,7 +1,7 @@
-//! Raw LocalVariable table representation for Portable PDB format
+//! Raw `LocalVariable` table representation for Portable PDB format
 //!
 //! This module provides the [`LocalVariableRaw`] struct that represents
-//! the binary format of LocalVariable table entries as they appear in
+//! the binary format of `LocalVariable` table entries as they appear in
 //! the metadata tables stream. This is the low-level representation used during
 //! the initial parsing phase, containing unresolved heap indices.
 
@@ -9,23 +9,26 @@ use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{
         streams::Strings,
-        tables::{types::*, LocalVariable, LocalVariableRc},
+        tables::{
+            types::{RowDefinition, TableInfoRef},
+            LocalVariable, LocalVariableRc,
+        },
         token::Token,
     },
     Result,
 };
 use std::sync::Arc;
 
-/// Raw binary representation of a LocalVariable table entry
+/// Raw binary representation of a `LocalVariable` table entry
 ///
-/// This structure matches the exact binary layout of LocalVariable table
+/// This structure matches the exact binary layout of `LocalVariable` table
 /// entries in the metadata tables stream. The Name field contains an unresolved
 /// index into the #Strings heap that must be resolved during conversion
 /// to the owned [`LocalVariable`] variant.
 ///
 /// # Binary Format
 ///
-/// Each LocalVariable table entry consists of:
+/// Each `LocalVariable` table entry consists of:
 /// - Attributes: 2-byte unsigned integer with variable flags
 /// - Index: 2-byte unsigned integer (variable index within method)
 /// - Name: Index into #Strings heap for the variable name
@@ -34,7 +37,7 @@ pub struct LocalVariableRaw {
     /// Row identifier (1-based index in the table)
     pub rid: u32,
 
-    /// Metadata token for this LocalVariable entry
+    /// Metadata token for this `LocalVariable` entry
     pub token: Token,
 
     /// Byte offset of this row in the original metadata stream
@@ -63,9 +66,9 @@ pub struct LocalVariableRaw {
 }
 
 impl LocalVariableRaw {
-    /// Converts this raw LocalVariable entry to an owned [`LocalVariable`] instance
+    /// Converts this raw `LocalVariable` entry to an owned [`LocalVariable`] instance
     ///
-    /// This method resolves the raw LocalVariable entry to create a complete LocalVariable
+    /// This method resolves the raw `LocalVariable` entry to create a complete `LocalVariable`
     /// object by resolving the name string from the #Strings heap.
     ///
     /// # Parameters
@@ -74,6 +77,9 @@ impl LocalVariableRaw {
     /// # Returns
     /// Returns `Ok(LocalVariableRc)` with the resolved variable data, or an error if
     /// the name index is invalid or points to malformed string data.
+    ///
+    /// # Errors
+    /// Returns an error if the name index is invalid or points to malformed string data.
     ///
     /// # Example
     ///

@@ -5,8 +5,8 @@
 //! that make up multi-file assemblies including modules, resources, and libraries.
 //!
 //! # Table Structure
-//! The File table (TableId = 0x26) contains these columns:
-//! - `Flags`: 4-byte FileAttributes bitmask indicating file type
+//! The File table (`TableId` = 0x26) contains these columns:
+//! - `Flags`: 4-byte `FileAttributes` bitmask indicating file type
 //! - `Name`: Index into String heap containing filename
 //! - `HashValue`: Index into Blob heap containing cryptographic hash
 //!
@@ -63,12 +63,12 @@ use crate::{
 /// - **Satellite assemblies**: Localization and culture-specific content
 ///
 /// # File Attributes
-/// The Flags field contains FileAttributes values:
-/// - **CONTAINS_META_DATA (0x0000)**: File contains .NET metadata
-/// - **CONTAINS_NO_META_DATA (0x0001)**: Resource file without metadata
+/// The Flags field contains `FileAttributes` values:
+/// - **`CONTAINS_META_DATA` (0x0000)**: File contains .NET metadata
+/// - **`CONTAINS_NO_META_DATA` (0x0001)**: Resource file without metadata
 ///
 /// # Hash Security
-/// The HashValue provides integrity verification:
+/// The `HashValue` provides integrity verification:
 /// - **SHA-1 or SHA-256**: Algorithm depends on assembly version
 /// - **Tamper detection**: Verifies file hasn't been modified
 /// - **Loading validation**: Runtime can verify file authenticity
@@ -100,7 +100,7 @@ pub struct FileRaw {
 
     /// File attribute flags indicating type and characteristics.
     ///
-    /// A 4-byte bitmask of FileAttributes values that specify the nature
+    /// A 4-byte bitmask of `FileAttributes` values that specify the nature
     /// of the file, particularly whether it contains .NET metadata.
     pub flags: u32,
 
@@ -134,6 +134,9 @@ impl FileRaw {
     /// - Blob heap lookup fails for the hash value
     /// - Hash data parsing encounters issues
     ///
+    /// # Errors
+    ///
+    /// Returns an error if string or blob heap lookups fail, or if hash data parsing fails.
     pub fn to_owned(&self, blob: &Blob, strings: &Strings) -> Result<FileRc> {
         Ok(Arc::new(File {
             rid: self.rid,
@@ -155,6 +158,10 @@ impl FileRaw {
     /// # Returns
     /// Always returns `Ok(())` since File entries don't modify other metadata tables.
     /// The file information is purely descriptive and used for assembly composition.
+    ///
+    /// # Errors
+    ///
+    /// This function never returns an error; it always returns `Ok(())`.
     pub fn apply(&self) -> Result<()> {
         Ok(())
     }

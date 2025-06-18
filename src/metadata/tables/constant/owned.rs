@@ -44,7 +44,7 @@ use crate::{
 /// # Constant Value Storage
 ///
 /// Constants contain compile-time literal values that are embedded in the metadata:
-/// - **Element type**: The primitive type of the constant (ELEMENT_TYPE_*)
+/// - **Element type**: The primitive type of the constant (`ELEMENT_TYPE`_*)
 /// - **Parent reference**: The field, property, or parameter that owns this constant
 /// - **Binary value**: The actual constant data stored as a primitive value
 /// - **Type safety**: Ensures constant types match their target containers
@@ -74,15 +74,15 @@ pub struct Constant {
 
     /// Element type of the constant value
     ///
-    /// Specifies the primitive type of the constant using ELEMENT_TYPE_* enumeration values
+    /// Specifies the primitive type of the constant using `ELEMENT_TYPE`_* enumeration values
     /// (see ECMA-335 II.23.1.16). This determines how the constant value should be interpreted.
-    /// For null reference constants, this is ELEMENT_TYPE_CLASS with a 4-byte zero value.
+    /// For null reference constants, this is `ELEMENT_TYPE_CLASS` with a 4-byte zero value.
     pub c_type: u8,
 
     /// Resolved reference to the parent metadata element
     ///
     /// Points to the field, property, or parameter that owns this constant. This is resolved
-    /// from the original HasConstant coded index to provide direct access to the parent entity.
+    /// from the original `HasConstant` coded index to provide direct access to the parent entity.
     pub parent: CilTypeReference,
 
     /// The constant value data

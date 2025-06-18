@@ -9,7 +9,10 @@ use crate::{
     file::io::read_le_at_dyn,
     metadata::{
         streams::Blob,
-        tables::{types::*, MethodDebugInformation, MethodDebugInformationRc},
+        tables::{
+            types::{RowDefinition, TableId, TableInfoRef},
+            MethodDebugInformation, MethodDebugInformationRc,
+        },
         token::Token,
     },
     Result,

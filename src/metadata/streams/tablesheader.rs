@@ -345,27 +345,27 @@ use crate::{
 ///
 /// ### Core Tables (Always Present)
 /// - **Module**: Assembly module identification and versioning
-/// - **TypeDef**: Type definitions declared in this assembly
-/// - **MethodDef**: Method definitions and IL code references
-/// - **Field**: Field definitions and attributes
+/// - **`TypeDef`**: Type definitions declared in this assembly
+/// - **`MethodDef`**: Method definitions and IL code references
+/// - **`Field`**: Field definitions and attributes
 ///
 /// ### Reference Tables (External Dependencies)
-/// - **TypeRef**: References to types in other assemblies
-/// - **MemberRef**: References to methods/fields in external types
-/// - **AssemblyRef**: External assembly dependencies
-/// - **ModuleRef**: Multi-module assembly references
+/// - **`TypeRef`**: References to types in other assemblies
+/// - **`MemberRef`**: References to methods/fields in external types
+/// - **`AssemblyRef`**: External assembly dependencies
+/// - **`ModuleRef`**: Multi-module assembly references
 ///
 /// ### Relationship Tables (Type System Structure)
-/// - **InterfaceImpl**: Interface implementation relationships
-/// - **NestedClass**: Nested type parent-child relationships
-/// - **GenericParam**: Generic type and method parameters
-/// - **GenericParamConstraint**: Generic parameter constraints
+/// - **`InterfaceImpl`**: Interface implementation relationships
+/// - **`NestedClass`**: Nested type parent-child relationships
+/// - **`GenericParam`**: Generic type and method parameters
+/// - **`GenericParamConstraint`**: Generic parameter constraints
 ///
 /// ### Attribute and Metadata Tables
-/// - **CustomAttribute**: Custom attribute applications
-/// - **Constant**: Compile-time constant values
-/// - **DeclSecurity**: Declarative security permissions
-/// - **FieldMarshal**: Native interop marshalling specifications
+/// - **`CustomAttribute`**: Custom attribute applications
+/// - **`Constant`**: Compile-time constant values
+/// - **`DeclSecurity`**: Declarative security permissions
+/// - **`FieldMarshal`**: Native interop marshalling specifications
 ///
 /// ## Thread Safety and Concurrency
 ///
@@ -772,10 +772,10 @@ pub struct TablesHeader<'a> {
     ///
     /// ## Table ID Mapping
     /// - Bit 0: Module table
-    /// - Bit 1: TypeRef table  
-    /// - Bit 2: TypeDef table
+    /// - Bit 1: `TypeRef` table  
+    /// - Bit 2: `TypeDef` table
     /// - Bit 4: Field table
-    /// - Bit 6: MethodDef table
+    /// - Bit 6: `MethodDef` table
     /// - ... (see ECMA-335 II.22 for complete mapping)
     pub valid: u64,
 

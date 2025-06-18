@@ -1,7 +1,7 @@
-//! Raw LocalScope table representation for Portable PDB format
+//! Raw `LocalScope` table representation for Portable PDB format
 //!
 //! This module provides the [`LocalScopeRaw`] struct that represents
-//! the binary format of LocalScope table entries as they appear in
+//! the binary format of `LocalScope` table entries as they appear in
 //! the metadata tables stream. This is the low-level representation used during
 //! the initial parsing phase, containing unresolved table indices.
 
@@ -10,7 +10,8 @@ use crate::{
     metadata::{
         method::MethodMap,
         tables::{
-            types::*, ImportScopeMap, LocalConstantMap, LocalScope, LocalScopeRc, LocalVariableMap,
+            types::{MetadataTable, RowDefinition, TableId, TableInfoRef},
+            ImportScopeMap, LocalConstantMap, LocalScope, LocalScopeRc, LocalVariableMap,
         },
         token::Token,
     },
@@ -18,53 +19,53 @@ use crate::{
 };
 use std::sync::Arc;
 
-/// Raw binary representation of a LocalScope table entry
+/// Raw binary representation of a `LocalScope` table entry
 ///
-/// This structure matches the exact binary layout of LocalScope table
+/// This structure matches the exact binary layout of `LocalScope` table
 /// entries in the metadata tables stream. All table references remain as unresolved
 /// indices that must be resolved through the appropriate tables during the conversion
 /// to the owned [`LocalScope`] variant.
 ///
 /// # Binary Format
 ///
-/// Each LocalScope table entry consists of:
-/// - Method: Simple index into MethodDef table
-/// - ImportScope: Simple index into ImportScope table  
-/// - VariableList: Simple index into LocalVariable table
-/// - ConstantList: Simple index into LocalConstant table
-/// - StartOffset: 4-byte unsigned integer (IL offset)
-/// - Length: 4-byte unsigned integer (scope length in bytes)
+/// Each `LocalScope` table entry consists of:
+/// - Method: Simple index into `MethodDef` table
+/// - `ImportScope`: Simple index into `ImportScope` table  
+/// - `VariableList`: Simple index into `LocalVariable` table
+/// - `ConstantList`: Simple index into `LocalConstant` table
+/// - `StartOffset`: 4-byte unsigned integer (IL offset)
+/// - `Length`: 4-byte unsigned integer (scope length in bytes)
 #[derive(Debug, Clone)]
 pub struct LocalScopeRaw {
     /// Row identifier (1-based index in the table)
     pub rid: u32,
 
-    /// Metadata token for this LocalScope entry
+    /// Metadata token for this `LocalScope` entry
     pub token: Token,
 
     /// Byte offset of this row in the original metadata stream
     pub offset: usize,
 
-    /// Simple index into MethodDef table
+    /// Simple index into `MethodDef` table
     ///
     /// Identifies the method that contains this local scope. This is always
     /// a valid method reference as local scopes must belong to a method.
     pub method: u32,
 
-    /// Simple index into ImportScope table
+    /// Simple index into `ImportScope` table
     ///
     /// References the import scope that provides the namespace context for
     /// this local scope. May be 0 if no specific import context is required.
     pub import_scope: u32,
 
-    /// Simple index into LocalVariable table
+    /// Simple index into `LocalVariable` table
     ///
     /// Points to the first local variable that belongs to this scope.
     /// Variables are stored consecutively, so this serves as a range start.
     /// May be 0 if this scope contains no variables.
     pub variable_list: u32,
 
-    /// Simple index into LocalConstant table
+    /// Simple index into `LocalConstant` table
     ///
     /// Points to the first local constant that belongs to this scope.
     /// Constants are stored consecutively, so this serves as a range start.
@@ -80,14 +81,14 @@ pub struct LocalScopeRaw {
     /// Length of this scope in IL instruction bytes
     ///
     /// Specifies how many bytes of IL code this scope covers.
-    /// The scope extends from start_offset to (start_offset + length).
+    /// The scope extends from `start_offset` to (`start_offset` + `length`).
     pub length: u32,
 }
 
 impl LocalScopeRaw {
-    /// Converts this raw LocalScope entry to an owned [`LocalScope`] instance
+    /// Converts this raw `LocalScope` entry to an owned [`LocalScope`] instance
     ///
-    /// This method resolves the raw LocalScope entry to create a complete LocalScope
+    /// This method resolves the raw `LocalScope` entry to create a complete `LocalScope`
     /// object by resolving all table references and building the variable and constant lists
     /// using range determination based on the next scope's starting indices.
     ///
@@ -96,11 +97,14 @@ impl LocalScopeRaw {
     /// - `import_scopes`: Map of resolved import scopes for import scope resolution
     /// - `variables`: Map of resolved local variables for building variable lists
     /// - `constants`: Map of resolved local constants for building constant lists
-    /// - `scope_table`: The raw LocalScope table for looking up next scope indices
+    /// - `scope_table`: The raw `LocalScope` table for looking up next scope indices
     ///
     /// # Returns
     /// Returns `Ok(LocalScopeRc)` with the resolved scope data, or an error if
     /// any references are invalid or point to malformed data.
+    ///
+    /// # Errors
+    /// Returns an error if any references are invalid or point to malformed data.
     pub fn to_owned(
         &self,
         methods: &MethodMap,
@@ -139,7 +143,7 @@ impl LocalScopeRaw {
         } else {
             let start = self.variable_list;
 
-            // Find the next scope to determine range end
+            #[allow(clippy::cast_possible_truncation)]
             let end = if let Some(next_scope) = scope_table.get(self.rid + 1) {
                 if next_scope.variable_list != 0 {
                     next_scope.variable_list
@@ -165,6 +169,7 @@ impl LocalScopeRaw {
         } else {
             let start = self.constant_list;
 
+            #[allow(clippy::cast_possible_truncation)]
             let end = if let Some(next_scope) = scope_table.get(self.rid + 1) {
                 if next_scope.constant_list != 0 {
                     next_scope.constant_list

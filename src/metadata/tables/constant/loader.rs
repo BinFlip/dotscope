@@ -20,7 +20,7 @@
 //! # Table Structure
 //!
 //! The Constant table contains zero or more rows that define constant values:
-//! - **Type**: Element type of the constant (ELEMENT_TYPE_* values from ECMA-335)
+//! - **Type**: Element type of the constant (`ELEMENT_TYPE_*` values from ECMA-335)
 //! - **Parent**: Coded index referencing Field, Property, or Param tables
 //! - **Value**: Blob heap reference containing the constant's binary representation
 //!

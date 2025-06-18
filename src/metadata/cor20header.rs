@@ -140,9 +140,9 @@ pub struct Cor20Header {
     pub meta_data_rva: u32,
     /// Size of the metadata in bytes.
     pub meta_data_size: u32,
-    /// Runtime flags describing assembly characteristics (IL_ONLY, 32BIT_REQUIRED, etc.).
+    /// Runtime flags describing assembly characteristics (`IL_ONLY`, `32BIT_REQUIRED`, etc.).
     pub flags: u32,
-    /// Metadata token for the entry point method (MethodDef) or file for executables.
+    /// Metadata token for the entry point method (`MethodDef`) or file for executables.
     pub entry_point_token: u32,
     /// RVA of implementation-specific resources (typically .NET resources).
     pub resource_rva: u32,
@@ -156,9 +156,9 @@ pub struct Cor20Header {
     pub code_manager_table_rva: u32,
     /// Reserved field (always 0) - code manager table size.
     pub code_manager_table_size: u32,
-    /// RVA of VTable fixups array for COM interop (mixed-mode assemblies).
+    /// RVA of `VTable` fixups array for COM interop (mixed-mode assemblies).
     pub vtable_fixups_rva: u32,
-    /// Size of VTable fixups array in bytes.
+    /// Size of `VTable` fixups array in bytes.
     pub vtable_fixups_size: u32,
     /// Reserved field (always 0) - export address table jump RVA.
     pub export_address_table_jmp_rva: u32,

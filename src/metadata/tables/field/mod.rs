@@ -45,8 +45,8 @@
 //! - **Special Behavior**: Marshaling, P/Invoke, RVA, serialization
 //!
 //! # Reference
-//! - [ECMA-335 II.22.15](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Field table specification
-//! - [ECMA-335 II.23.1.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - FieldAttributes specification
+//! - [ECMA-335 II.22.15](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `Field` table specification
+//! - [ECMA-335 II.23.1.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `FieldAttributes` specification
 
 use crate::metadata::token::Token;
 use crossbeam_skiplist::SkipMap;
@@ -84,7 +84,7 @@ pub type FieldRc = Arc<Field>;
 #[allow(non_snake_case)]
 /// Field attribute constants for controlling field characteristics and behavior
 ///
-/// This module provides constants for the FieldAttributes bitmask that controls
+/// This module provides constants for the `FieldAttributes` bitmask that controls
 /// various aspects of field behavior including access control, storage type,
 /// mutability, and special runtime characteristics. These attributes are defined
 /// in the ECMA-335 specification and control how the runtime handles field access
@@ -105,7 +105,7 @@ pub type FieldRc = Arc<Field>;
 /// Provides additional runtime behavior and metadata information.
 ///
 /// # Reference
-/// - [ECMA-335 II.23.1.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - FieldAttributes specification
+/// - [ECMA-335 II.23.1.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `FieldAttributes` specification
 pub mod FieldAttributes {
     /// Mask for extracting access control bits from field attributes
     ///
@@ -215,7 +215,7 @@ pub mod FieldAttributes {
     /// Field has associated marshaling information
     ///
     /// Indicates that the field has marshaling information defined in
-    /// the FieldMarshal table, specifying how the field should be
+    /// the `FieldMarshal` table, specifying how the field should be
     /// marshaled when crossing managed/unmanaged boundaries.
     pub const HAS_FIELD_MARSHAL: u32 = 0x1000;
 
@@ -229,7 +229,7 @@ pub mod FieldAttributes {
     /// Field has associated RVA (Relative Virtual Address)
     ///
     /// Indicates that the field has an associated RVA defined in the
-    /// FieldRVA table, typically used for fields that map to specific
+    /// `FieldRVA` table, typically used for fields that map to specific
     /// memory locations or contain pre-initialized data.
     pub const HAS_FIELD_RVA: u32 = 0x0100;
 }

@@ -9,11 +9,11 @@
 //! # Table Structure
 //!
 //! The Event table contains event definitions with these fields:
-//! - **EventFlags**: Attributes controlling event behavior (specialname, RTSpecialName)
+//! - **`EventFlags`**: Attributes controlling event behavior (specialname, `RTSpecialName`)
 //! - **Name**: Event name (string heap reference)
-//! - **EventType**: Type of the event (TypeDef, TypeRef, or TypeSpec coded index)
+//! - **`EventType`**: Type of the event (`TypeDef`, `TypeRef`, or `TypeSpec` coded index)
 //!
-//! Events are associated with methods through the MethodSemantics table, which defines
+//! Events are associated with methods through the `MethodSemantics` table, which defines
 //! the add, remove, and optionally raise accessor methods for each event.
 //!
 //! # Event Characteristics
@@ -91,7 +91,7 @@ impl MetadataLoader for EventLoader {
     /// Returns the table dependencies required before loading events
     ///
     /// Events depend on type system tables for resolving event handler types through
-    /// coded indices. The EventType field can reference TypeDef, TypeRef, or TypeSpec
+    /// coded indices. The `EventType` field can reference `TypeDef`, `TypeRef`, or `TypeSpec`
     /// tables, so all must be processed before event loading.
     ///
     /// # Returns

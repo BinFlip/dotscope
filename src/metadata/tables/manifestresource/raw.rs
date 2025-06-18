@@ -1,11 +1,11 @@
-//! Raw ManifestResource table structure with unresolved coded indexes.
+//! Raw `ManifestResource` table structure with unresolved coded indexes.
 //!
 //! This module provides the [`ManifestResourceRaw`] struct, which represents resource entries
 //! as stored in the metadata stream. The structure contains unresolved coded indexes
 //! and heap references that require processing to establish resource access mechanisms.
 //!
 //! # Purpose
-//! [`ManifestResourceRaw`] serves as the direct representation of ManifestResource table entries
+//! [`ManifestResourceRaw`] serves as the direct representation of `ManifestResource` table entries
 //! from the binary metadata stream, before reference resolution and resource data access
 //! establishment. This raw format is processed during metadata loading to create
 //! [`ManifestResource`] instances with resolved references and direct resource access.
@@ -32,7 +32,7 @@ use crate::{
     Result,
 };
 
-/// Raw ManifestResource table entry with unresolved indexes and heap references.
+/// Raw `ManifestResource` table entry with unresolved indexes and heap references.
 ///
 /// This structure represents a resource entry as stored directly in the metadata stream.
 /// All references are unresolved coded indexes or heap offsets that require processing
@@ -49,24 +49,24 @@ use crate::{
 /// # Coded Index Resolution
 /// The `implementation` field uses the Implementation coded index encoding:
 /// - **Tag 0**: File table (external file resources)
-/// - **Tag 1**: AssemblyRef table (external assembly resources)
-/// - **Tag 2**: ExportedType table (rarely used for resources)
+/// - **Tag 1**: `AssemblyRef` table (external assembly resources)
+/// - **Tag 2**: `ExportedType` table (rarely used for resources)
 /// - **Row 0**: Special case indicating embedded resource in current assembly
 ///
 /// # Resource Location Logic
 /// Resource data location is determined by the implementation field:
 /// - **Embedded**: implementation.row == 0, data in current assembly at offset
 /// - **File-based**: implementation references File table entry
-/// - **Assembly-based**: implementation references AssemblyRef table entry
+/// - **Assembly-based**: implementation references `AssemblyRef` table entry
 #[derive(Clone, Debug)]
 pub struct ManifestResourceRaw {
-    /// Row identifier within the ManifestResource table.
+    /// Row identifier within the `ManifestResource` table.
     ///
     /// Unique identifier for this resource entry, used for internal
     /// table management and token generation.
     pub rid: u32,
 
-    /// Metadata token for this ManifestResource entry (TableId 0x28).
+    /// Metadata token for this `ManifestResource` entry (`TableId` 0x28).
     ///
     /// Computed as `0x28000000 | rid` to create the full token value
     /// for referencing this resource from other metadata structures.
@@ -100,7 +100,7 @@ pub struct ManifestResourceRaw {
 
     /// Implementation coded index for resource location.
     ///
-    /// Points to File, AssemblyRef, or ExportedType tables to specify resource location.
+    /// Points to File, `AssemblyRef`, or `ExportedType` tables to specify resource location.
     /// A row value of 0 indicates an embedded resource in the current assembly.
     /// Requires coded index resolution during processing to determine actual resource source.
     pub implementation: CodedIndex,

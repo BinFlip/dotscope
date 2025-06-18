@@ -201,9 +201,9 @@ pub enum ImportType {
 /// # Source Categories
 ///
 /// - **Module/ModuleRef**: Types and methods from separate compilation units
-/// - **AssemblyRef**: Types from external .NET assemblies
+/// - **`AssemblyRef`**: Types from external .NET assemblies
 /// - **File**: Resources and types from external files
-/// - **TypeRef**: Nested types under other type references
+/// - **`TypeRef`**: Nested types under other type references
 ///
 /// # Examples
 ///
@@ -576,10 +576,10 @@ impl Imports {
     /// 2. Creates appropriate source identifier
     /// 3. Registers the source entity if needed
     /// 4. Updates all lookup indices
-    /// 5. Handles special cases (TypeRef nesting)
+    /// 5. Handles special cases (`TypeRef` nesting)
     ///
     /// # Special Handling
-    /// - **TypeRef**: Nested types are added to parent's nested collection, not tracked as imports
+    /// - **`TypeRef`**: Nested types are added to parent's nested collection, not tracked as imports
     /// - **Source Registration**: External sources are automatically registered for tracking
     /// - **Index Updates**: All name, namespace, and source indices are updated atomically
     ///
@@ -929,7 +929,7 @@ impl Imports {
     ///
     /// # Name Format
     /// - **With Namespace**: "Namespace.TypeName" or "Namespace.Subnamespace.TypeName"
-    /// - **Global Namespace**: Just "TypeName" for imports in the global namespace
+    /// - **Global Namespace**: Just "`TypeName`" for imports in the global namespace
     ///
     /// # Examples
     ///

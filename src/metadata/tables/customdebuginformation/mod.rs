@@ -1,17 +1,17 @@
-//! CustomDebugInformation table implementation for Portable PDB format
+//! `CustomDebugInformation` table implementation for Portable PDB format
 //!
-//! This module provides access to CustomDebugInformation table data, which contains
+//! This module provides access to `CustomDebugInformation` table data, which contains
 //! custom debugging metadata that can be defined by compilers or tools. This table
 //! provides extensibility for debugging scenarios beyond the standard Portable PDB tables.
 //!
-//! The CustomDebugInformation table follows the dual-representation pattern used throughout
+//! The `CustomDebugInformation` table follows the dual-representation pattern used throughout
 //! the dotscope library:
 //! - [`CustomDebugInformationRaw`] for raw binary data with unresolved indices
 //! - [`CustomDebugInformation`] for processed data with resolved token values
 //!
 //! # Architecture
 //!
-//! The CustomDebugInformation table allows tools to store additional debugging information
+//! The `CustomDebugInformation` table allows tools to store additional debugging information
 //! that is specific to their implementation or language features. This information is
 //! associated with various metadata elements (methods, types, fields, etc.) through
 //! the Parent column and identified by a GUID in the Kind column.

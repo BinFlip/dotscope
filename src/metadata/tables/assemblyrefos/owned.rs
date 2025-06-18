@@ -1,4 +1,4 @@
-//! Owned AssemblyRefOS table representation.
+//! Owned `AssemblyRefOS` table representation.
 //!
 //! This module provides the [`crate::metadata::tables::assemblyrefos::owned::AssemblyRefOs`] struct
 //! which contains fully resolved operating system compatibility information for external assembly
@@ -7,7 +7,7 @@
 //!
 //! # Architecture
 //!
-//! The owned representation stores fully resolved data from the AssemblyRefOS metadata table,
+//! The owned representation stores fully resolved data from the `AssemblyRefOS` metadata table,
 //! including resolved references to assembly dependencies. This eliminates the need for table
 //! lookups during runtime access, providing immediate access to OS compatibility metadata.
 //!
@@ -32,13 +32,13 @@ use crate::{
 
 /// Represents operating system compatibility information for an external assembly reference
 ///
-/// This structure contains OS targeting information from the AssemblyRefOS metadata table (0x25),
+/// This structure contains OS targeting information from the `AssemblyRefOS` metadata table (0x25),
 /// with all references resolved to owned data. Unlike [`crate::metadata::tables::assemblyrefos::raw::AssemblyRefOsRaw`],
 /// this provides immediate access to the referenced assembly without requiring table lookups.
 ///
 /// # Operating System Targeting
 ///
-/// The AssemblyRefOS table allows specifying explicit OS requirements for external assemblies:
+/// The `AssemblyRefOS` table allows specifying explicit OS requirements for external assemblies:
 /// - **Platform ID**: Operating system family identifier
 /// - **Major Version**: Target OS major version number  
 /// - **Minor Version**: Target OS minor version number
@@ -57,22 +57,22 @@ use crate::{
 /// reference data.
 ///
 /// # References
-/// - [ECMA-335 II.22.7](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyRefOS table specification
+/// - [ECMA-335 II.22.7](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyRefOS` table specification
 pub struct AssemblyRefOs {
-    /// Row identifier within the AssemblyRefOS metadata table
+    /// Row identifier within the `AssemblyRefOS` metadata table
     ///
-    /// The 1-based index of this AssemblyRefOS row within the table.
+    /// The 1-based index of this `AssemblyRefOS` row within the table.
     pub rid: u32,
 
-    /// Metadata token for this AssemblyRefOS entry
+    /// Metadata token for this `AssemblyRefOS` entry
     ///
-    /// Combines the table identifier (0x25 for AssemblyRefOS) with the row ID to create
+    /// Combines the table identifier (0x25 for `AssemblyRefOS`) with the row ID to create
     /// a unique token that can be used to reference this entry from other metadata.
     pub token: Token,
 
-    /// Byte offset of this AssemblyRefOS row within the metadata tables stream
+    /// Byte offset of this `AssemblyRefOS` row within the metadata tables stream
     ///
-    /// Physical location of the raw AssemblyRefOS data within the metadata binary format.
+    /// Physical location of the raw `AssemblyRefOS` data within the metadata binary format.
     /// Used for debugging and low-level metadata analysis.
     pub offset: usize,
 
@@ -105,12 +105,16 @@ impl AssemblyRefOs {
     /// Apply operating system compatibility information to the referenced assembly
     ///
     /// Updates the referenced assembly with OS platform and version information from this
-    /// AssemblyRefOS entry. The assembly reference already contains atomic fields for storing
+    /// `AssemblyRefOS` entry. The assembly reference already contains atomic fields for storing
     /// OS data, allowing thread-safe updates without additional synchronization.
     ///
     /// # Returns
     ///
     /// * `Ok(())` - OS information successfully applied to assembly reference
+    ///
+    /// # Errors
+    ///
+    /// This function never returns an error as atomic operations cannot fail.
     ///
     /// # Thread Safety
     ///

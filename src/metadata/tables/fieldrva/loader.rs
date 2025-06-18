@@ -1,11 +1,11 @@
-//! FieldRva table loader implementation.
+//! `FieldRva` table loader implementation.
 //!
 //! This module provides the [`crate::metadata::tables::fieldrva::loader::FieldRvaLoader`] responsible for loading and processing
-//! FieldRva metadata table entries. The FieldRva table specifies Relative Virtual Addresses
+//! `FieldRva` metadata table entries. The `FieldRva` table specifies Relative Virtual Addresses
 //! (RVAs) for fields that have initial data stored in the PE file image.
 //!
 //! # Purpose
-//! The FieldRva table is used for fields with static initial data:
+//! The `FieldRva` table is used for fields with static initial data:
 //! - **Static field initialization**: Initial values for static fields
 //! - **Constant data**: Read-only data embedded in the PE file
 //! - **Global variables**: Module-level data with specific initial values
@@ -23,7 +23,7 @@
 //! - **Field table**: Required for field reference resolution
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.19 for the FieldRva table specification.
+//! See ECMA-335, Partition II, §22.19 for the `FieldRva` table specification.
 
 use crate::{
     metadata::{
@@ -34,9 +34,9 @@ use crate::{
     Result,
 };
 
-/// Loader implementation for the FieldRva metadata table.
+/// Loader implementation for the `FieldRva` metadata table.
 ///
-/// This loader processes FieldRva table entries which specify Relative Virtual Addresses
+/// This loader processes `FieldRva` table entries which specify Relative Virtual Addresses
 /// for fields that have initial data stored in the PE file. These RVAs point to binary
 /// data that serves as initial values for static fields and constant data.
 ///
@@ -48,13 +48,13 @@ use crate::{
 /// - PE file structure is malformed
 ///
 /// # ECMA-335 Reference
-/// See ECMA-335, Partition II, §22.19 for complete FieldRva table specification.
+/// See ECMA-335, Partition II, §22.19 for complete `FieldRva` table specification.
 pub(crate) struct FieldRvaLoader;
 
 impl MetadataLoader for FieldRvaLoader {
-    /// Load and process all FieldRva table entries.
+    /// Load and process all `FieldRva` table entries.
     ///
-    /// This method iterates through the FieldRva table, resolving field references
+    /// This method iterates through the `FieldRva` table, resolving field references
     /// and processing RVA information for fields that have initial data stored in
     /// the PE file. Each entry associates a field with its data location.
     ///
@@ -83,17 +83,17 @@ impl MetadataLoader for FieldRvaLoader {
         Ok(())
     }
 
-    /// Returns the table identifier for the FieldRva table.
+    /// Returns the table identifier for the `FieldRva` table.
     ///
     /// # Returns
-    /// Returns [`crate::prelude::TableId::FieldRVA`] indicating this loader handles the FieldRva table.
+    /// Returns [`crate::prelude::TableId::FieldRVA`] indicating this loader handles the `FieldRva` table.
     fn table_id(&self) -> TableId {
         TableId::FieldRVA
     }
 
-    /// Returns the table dependencies for FieldRva loading.
+    /// Returns the table dependencies for `FieldRva` loading.
     ///
-    /// The FieldRva table depends on the Field table since each RVA entry
+    /// The `FieldRva` table depends on the Field table since each RVA entry
     /// references a specific field and provides its data location information.
     ///
     /// # Returns

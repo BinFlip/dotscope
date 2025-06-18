@@ -93,7 +93,7 @@ impl MetadataLoader for MethodImplLoader {
     /// - [`TableId::MemberRef`] - For resolving external method references in mappings
     ///
     /// # Returns
-    /// Array of table identifiers that must be loaded before MethodImpl processing.
+    /// Array of table identifiers that must be loaded before `MethodImpl` processing.
     fn dependencies(&self) -> &'static [TableId] {
         &[
             TableId::TypeDef,

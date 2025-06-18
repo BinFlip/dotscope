@@ -1,4 +1,4 @@
-//! Owned ClassLayout table representation.
+//! Owned `ClassLayout` table representation.
 //!
 //! This module provides the [`crate::metadata::tables::classlayout::owned::ClassLayout`] struct
 //! which contains fully resolved memory layout information for types with owned data and resolved
@@ -7,7 +7,7 @@
 //!
 //! # Architecture
 //!
-//! The owned representation stores fully resolved data from the ClassLayout metadata table,
+//! The owned representation stores fully resolved data from the `ClassLayout` metadata table,
 //! including resolved references to type definitions. This eliminates the need for table
 //! lookups during runtime access, providing immediate access to memory layout metadata.
 //!
@@ -31,22 +31,22 @@ use crate::{
 
 /// Represents explicit memory layout information for a .NET type
 ///
-/// This structure contains the complete layout specification from the ClassLayout
+/// This structure contains the complete layout specification from the `ClassLayout`
 /// metadata table (0x0F), with all table references resolved to owned type instances.
 /// Unlike [`crate::metadata::tables::classlayout::raw::ClassLayoutRaw`], this provides
 /// immediate access to the type data without requiring table lookups.
 ///
 /// # Memory Layout Control
 ///
-/// ClassLayout provides explicit control over type memory layout:
-/// - **Field alignment**: PackingSize specifies byte boundary alignment for fields
-/// - **Total size**: ClassSize can override automatic size calculation
+/// `ClassLayout` provides explicit control over type memory layout:
+/// - **Field alignment**: `PackingSize` specifies byte boundary alignment for fields
+/// - **Total size**: `ClassSize` can override automatic size calculation
 /// - **Layout kind**: Works with Sequential and Explicit layout attributes
 /// - **Interop support**: Enables precise control for native interoperability
 ///
 /// # Usage Context
 ///
-/// ClassLayout is primarily used for:
+/// `ClassLayout` is primarily used for:
 /// - **P/Invoke scenarios**: Matching native C/C++ struct layouts
 /// - **Performance optimization**: Controlling cache alignment and padding
 /// - **Binary compatibility**: Ensuring consistent layout across platforms
@@ -55,8 +55,8 @@ use crate::{
 /// # Layout Validation
 ///
 /// Layout parameters are validated during application to ensure:
-/// - PackingSize is a power of 2 or 0 (for default)
-/// - ClassSize is reasonable and not conflicting
+/// - `PackingSize` is a power of 2 or 0 (for default)
+/// - `ClassSize` is reasonable and not conflicting
 /// - No duplicate layout specifications exist
 ///
 /// # Thread Safety
@@ -66,22 +66,22 @@ use crate::{
 /// definition data.
 ///
 /// # References
-/// - [ECMA-335 II.22.8](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - ClassLayout table specification
+/// - [ECMA-335 II.22.8](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `ClassLayout` table specification
 pub struct ClassLayout {
-    /// Row identifier within the ClassLayout metadata table
+    /// Row identifier within the `ClassLayout` metadata table
     ///
-    /// The 1-based index of this ClassLayout row within the table.
+    /// The 1-based index of this `ClassLayout` row within the table.
     pub rid: u32,
 
-    /// Metadata token for this ClassLayout entry
+    /// Metadata token for this `ClassLayout` entry
     ///
-    /// Combines the table identifier (0x0F for ClassLayout) with the row ID to create
+    /// Combines the table identifier (0x0F for `ClassLayout`) with the row ID to create
     /// a unique token that can be used to reference this entry from other metadata.
     pub token: Token,
 
-    /// Byte offset of this ClassLayout row within the metadata tables stream
+    /// Byte offset of this `ClassLayout` row within the metadata tables stream
     ///
-    /// Physical location of the raw ClassLayout data within the metadata binary format.
+    /// Physical location of the raw `ClassLayout` data within the metadata binary format.
     /// Used for debugging and low-level metadata analysis.
     pub offset: usize,
 
@@ -118,7 +118,7 @@ impl ClassLayout {
     /// Apply memory layout information to the parent type
     ///
     /// Updates the parent type with explicit layout specifications from this
-    /// ClassLayout entry. This includes setting the class size and packing size
+    /// `ClassLayout` entry. This includes setting the class size and packing size
     /// on the type definition, after validating the layout parameters through
     /// the metadata validation framework.
     ///
@@ -137,8 +137,8 @@ impl ClassLayout {
     /// - Layout validation fails (invalid packing size, unreasonable class size)
     /// - Class size has already been set on the target type (duplicate application)
     /// - Packing size has already been set on the target type (duplicate application)
-    /// - PackingSize is not a power of 2 (when non-zero)
-    /// - ClassSize would create invalid memory layout
+    /// - `PackingSize` is not a power of 2 (when non-zero)
+    /// - `ClassSize` would create invalid memory layout
     ///
     /// # Thread Safety
     ///

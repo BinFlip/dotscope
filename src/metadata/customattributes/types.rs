@@ -104,7 +104,7 @@
 //!
 //! This module integrates with:
 //! - [`crate::metadata::customattributes::parser`] - Parsing implementation using these types
-//! - [`crate::metadata::typesystem`] - Type system integration for CilFlavor mapping
+//! - [`crate::metadata::typesystem`] - Type system integration for `CilFlavor` mapping
 //! - [`crate::metadata::tables`] - Metadata table storage and retrieval
 //! - [`crate::metadata::streams`] - Blob and string heap access
 //!
@@ -120,7 +120,7 @@
 //! - **ECMA-335**: Full compliance with custom attribute specification (II.23.3)
 //! - **Type Safety**: Strongly typed argument values prevent runtime errors
 //! - **Memory Efficiency**: Reference counting and concurrent collections minimize overhead
-//! - **.NET Compatibility**: Direct mapping to runtime CorSerializationType enumeration
+//! - **.NET Compatibility**: Direct mapping to runtime `CorSerializationType` enumeration
 
 use std::sync::Arc;
 
@@ -141,8 +141,8 @@ pub type CustomAttributeValueList = Arc<boxcar::Vec<CustomAttributeValueRc>>;
 /// Represents a complete parsed custom attribute with fixed and named arguments.
 ///
 /// This is the top-level structure for custom attribute data parsed from .NET metadata.
-/// It contains both constructor arguments (fixed_args) and field/property assignments
-/// (named_args) as specified in ECMA-335 II.23.3.
+/// It contains both constructor arguments (`fixed_args`) and field/property assignments
+/// (`named_args`) as specified in ECMA-335 II.23.3.
 ///
 /// # Structure
 /// - **Fixed Arguments**: Parsed using constructor method parameter types, appear in declaration order
@@ -306,8 +306,8 @@ pub struct CustomAttributeNamedArgument {
 ///
 /// # References
 ///
-/// - ECMA-335 II.23.3 CustomAttribute specification
-/// - .NET Runtime corhdr.h CorSerializationType enumeration
+/// - ECMA-335 II.23.3 `CustomAttribute` specification
+/// - .NET Runtime corhdr.h `CorSerializationType` enumeration
 /// - CLI Standard Partition II Metadata definition
 ///
 /// # Examples

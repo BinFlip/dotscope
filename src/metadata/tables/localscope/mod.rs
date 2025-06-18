@@ -1,10 +1,10 @@
-//! LocalScope table implementation for Portable PDB format
+//! `LocalScope` table implementation for Portable PDB format
 //!
-//! This module provides access to LocalScope table data, which defines the scope ranges
+//! This module provides access to `LocalScope` table data, which defines the scope ranges
 //! where local variables and constants are active within methods. Used by debuggers to
 //! determine variable and constant visibility at different execution points.
 //!
-//! The LocalScope table follows the dual-representation pattern used throughout
+//! The `LocalScope` table follows the dual-representation pattern used throughout
 //! the dotscope library:
 //! - [`LocalScopeRaw`] for raw binary data with unresolved indices
 //! - [`LocalScope`] for processed data with resolved scope information
@@ -20,19 +20,19 @@
 //!
 //! - [`LocalScopeRaw`] - Raw table structure with unresolved indices
 //! - [`LocalScope`] - Owned variant with resolved references and scope information
-//! - [`LocalScopeLoader`] - Internal loader for processing LocalScope table data
+//! - [`LocalScopeLoader`] - Internal loader for processing `LocalScope` table data
 //! - [`LocalScopeMap`] - Thread-safe concurrent map for caching scope entries
 //! - [`LocalScopeList`] - Thread-safe append-only vector for scope collections
 //! - [`LocalScopeRc`] - Reference-counted pointer for shared ownership
 //!
-//! # LocalScope Table Structure
+//! # `LocalScope` Table Structure
 //!
-//! Each LocalScope table row contains these fields:
-//! - **Method**: Simple index into MethodDef table (method containing scope)
-//! - **ImportScope**: Simple index into ImportScope table (import context)
-//! - **VariableList**: Simple index into LocalVariable table (first variable)
-//! - **ConstantList**: Simple index into LocalConstant table (first constant)
-//! - **StartOffset**: IL instruction offset where scope begins
+//! Each `LocalScope` table row contains these fields:
+//! - **Method**: Simple index into `MethodDef` table (method containing scope)
+//! - **`ImportScope`**: Simple index into `ImportScope` table (import context)
+//! - **`VariableList`**: Simple index into `LocalVariable` table (first variable)
+//! - **`ConstantList`**: Simple index into `LocalConstant` table (first constant)
+//! - **`StartOffset`**: IL instruction offset where scope begins
 //! - **Length**: Length of scope in IL instruction bytes
 //!
 //! # Usage Examples
@@ -102,7 +102,7 @@ pub type LocalScopeList = Arc<boxcar::Vec<LocalScopeRc>>;
 /// Multiple references can safely point to the same local scope data across threads.
 pub type LocalScopeRc = Arc<LocalScope>;
 
-/// Weak reference to a LocalScope to avoid circular dependencies
+/// Weak reference to a `LocalScope` to avoid circular dependencies
 ///
 /// Since scopes can form tree structures where parent scopes might reference
 /// child scopes or vice versa, we use weak references to prevent memory leaks
@@ -115,6 +115,7 @@ pub struct LocalScopeRef {
 
 impl LocalScopeRef {
     /// Create a new `LocalScopeRef` from a strong reference
+    #[must_use]
     pub fn new(strong_ref: &LocalScopeRc) -> Self {
         Self {
             weak_ref: Arc::downgrade(strong_ref),
@@ -122,6 +123,7 @@ impl LocalScopeRef {
     }
 
     /// Upgrade the weak reference to a strong reference if still valid
+    #[must_use]
     pub fn upgrade(&self) -> Option<LocalScopeRc> {
         self.weak_ref.upgrade()
     }

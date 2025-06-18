@@ -1,7 +1,7 @@
-//! Raw ImportScope table representation for Portable PDB format
+//! Raw `ImportScope` table representation for Portable PDB format
 //!
 //! This module provides the [`ImportScopeRaw`] struct that represents
-//! the binary format of ImportScope table entries as they appear in
+//! the binary format of `ImportScope` table entries as they appear in
 //! the metadata tables stream. This is the low-level representation used during
 //! the initial parsing phase, containing unresolved heap indices.
 
@@ -10,38 +10,41 @@ use crate::{
     metadata::{
         importscope::{parse_imports_blob, ImportsInfo},
         streams::Blob,
-        tables::{types::*, ImportScope, ImportScopeRc},
+        tables::{
+            types::{RowDefinition, TableId, TableInfoRef},
+            ImportScope, ImportScopeRc,
+        },
         token::Token,
     },
     Result,
 };
 use std::sync::Arc;
 
-/// Raw binary representation of an ImportScope table entry
+/// Raw binary representation of an `ImportScope` table entry
 ///
-/// This structure matches the exact binary layout of ImportScope table
+/// This structure matches the exact binary layout of `ImportScope` table
 /// entries in the metadata tables stream. The Parent field contains an
-/// unresolved index to another ImportScope entry, and the Imports field contains
+/// unresolved index to another `ImportScope` entry, and the Imports field contains
 /// an unresolved index into the #Blob heap that must be resolved during
 /// conversion to the owned [`ImportScope`] variant.
 ///
 /// # Binary Format
 ///
-/// Each ImportScope table entry consists of:
-/// - Parent: Index into ImportScope table for parent scope (may be 0)
+/// Each `ImportScope` table entry consists of:
+/// - Parent: Index into `ImportScope` table for parent scope (may be 0)
 /// - Imports: Index into #Blob heap for import information
 #[derive(Debug, Clone)]
 pub struct ImportScopeRaw {
     /// Row identifier (1-based index in the table)
     pub rid: u32,
 
-    /// Metadata token for this ImportScope entry
+    /// Metadata token for this `ImportScope` entry
     pub token: Token,
 
     /// Byte offset of this row in the original metadata stream
     pub offset: usize,
 
-    /// Index into ImportScope table for parent scope
+    /// Index into `ImportScope` table for parent scope
     ///
     /// Points to the parent import scope that encloses this scope, or 0 if
     /// this is a root-level import scope. Import scopes form a tree structure
@@ -57,11 +60,11 @@ pub struct ImportScopeRaw {
 }
 
 impl ImportScopeRaw {
-    /// Converts this raw ImportScope entry to an owned [`ImportScope`] instance
+    /// Converts this raw `ImportScope` entry to an owned [`ImportScope`] instance
     ///
-    /// This method resolves the raw ImportScope entry to create a complete ImportScope
+    /// This method resolves the raw `ImportScope` entry to create a complete `ImportScope`
     /// object by resolving the imports blob data from the #Blob heap. The parent
-    /// reference is kept as an index that can be resolved through the ImportScope table.
+    /// reference is kept as an index that can be resolved through the `ImportScope` table.
     ///
     /// # Parameters
     /// - `blobs`: Reference to the #Blob heap for resolving the imports index
@@ -88,6 +91,9 @@ impl ImportScopeRaw {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    /// Returns an error if the blob index is invalid, the blob cannot be parsed, or memory allocation fails during conversion.
     pub fn to_owned(&self, blobs: &Blob) -> Result<ImportScopeRc> {
         let imports = if self.imports == 0 {
             ImportsInfo::new()

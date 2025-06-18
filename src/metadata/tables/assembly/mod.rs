@@ -14,10 +14,10 @@
 //! # Assembly Table Structure
 //!
 //! The Assembly table contains exactly one row (if present) with these fields:
-//! - **HashAlgId**: Hash algorithm identifier (see [`crate::metadata::tables::assembly::AssemblyHashAlgorithm`])
+//! - **`HashAlgId`**: Hash algorithm identifier (see [`crate::metadata::tables::assembly::AssemblyHashAlgorithm`])
 //! - **Version**: Four-part version number (Major.Minor.Build.Revision)
 //! - **Flags**: Assembly attributes (see [`crate::metadata::tables::assembly::AssemblyFlags`])
-//! - **PublicKey**: Strong name public key for assembly verification
+//! - **`PublicKey`**: Strong name public key for assembly verification
 //! - **Name**: Simple assembly name (e.g., "System.Core")
 //! - **Culture**: Localization culture (empty for culture-neutral assemblies)
 //!
@@ -62,12 +62,12 @@ pub type AssemblyRc = Arc<Assembly>;
 /// and can be combined using bitwise OR operations.
 ///
 /// # Reference
-/// - [ECMA-335 II.23.1.2](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyFlags enumeration
+/// - [ECMA-335 II.23.1.2](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyFlags` enumeration
 pub mod AssemblyFlags {
     /// The assembly reference holds the full (unhashed) public key
     ///
-    /// When set, the PublicKey field contains the complete public key.
-    /// When clear, the PublicKey field contains only the public key token (last 8 bytes of hash).
+    /// When set, the `PublicKey` field contains the complete public key.
+    /// When clear, the `PublicKey` field contains only the public key token (last 8 bytes of hash).
     pub const PUBLIC_KEY: u32 = 0x0001;
 
     /// The implementation of this assembly used at runtime is not expected to match the version seen at compile time
@@ -91,7 +91,7 @@ pub mod AssemblyFlags {
 /// Assembly hash algorithm constants
 ///
 /// Defines cryptographic hash algorithms used for assembly integrity verification.
-/// The hash algorithm is specified in the Assembly table's HashAlgId field and
+/// The hash algorithm is specified in the Assembly table's `HashAlgId` field and
 /// determines how file hashes in the manifest are computed.
 ///
 /// # Security Note
@@ -101,7 +101,7 @@ pub mod AssemblyFlags {
 /// hash algorithms, though ECMA-335 hasn't been updated to reflect this.
 ///
 /// # Reference
-/// - [ECMA-335 II.23.1.1](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyHashAlgorithm enumeration
+/// - [ECMA-335 II.23.1.1](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyHashAlgorithm` enumeration
 // TODO: Microsoft has extended this enumeration in newer versions without updating ECMA-335
 pub mod AssemblyHashAlgorithm {
     /// No hash algorithm specified

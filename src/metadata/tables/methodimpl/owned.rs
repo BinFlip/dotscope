@@ -1,4 +1,4 @@
-//! Owned MethodImpl table structure with resolved references and implementation mappings.
+//! Owned `MethodImpl` table structure with resolved references and implementation mappings.
 //!
 //! This module provides the [`MethodImpl`] struct, which represents method implementation
 //! mappings with all coded indexes resolved and type references established. Unlike
@@ -16,7 +16,7 @@ use crate::{
     Result,
 };
 
-/// Owned MethodImpl table entry with resolved references and implementation mappings.
+/// Owned `MethodImpl` table entry with resolved references and implementation mappings.
 ///
 /// This structure represents a method implementation mapping with all coded indexes resolved
 /// to their target structures and type references established. It provides complete
@@ -24,7 +24,7 @@ use crate::{
 /// and virtual dispatch support in object-oriented programming.
 ///
 /// # Implementation Mapping Types
-/// MethodImpl entries support various implementation scenarios:
+/// `MethodImpl` entries support various implementation scenarios:
 /// - **Interface implementation**: Maps interface method declarations to concrete class implementations
 /// - **Virtual method override**: Specifies derived class methods that override base class methods
 /// - **Explicit interface implementation**: Handles explicit implementation of interface members

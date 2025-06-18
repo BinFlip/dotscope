@@ -1,11 +1,11 @@
-//! FieldMarshal metadata table implementation.
+//! `FieldMarshal` metadata table implementation.
 //!
-//! This module provides structures and utilities for working with the FieldMarshal metadata table,
+//! This module provides structures and utilities for working with the `FieldMarshal` metadata table,
 //! which specifies marshalling behavior for fields and parameters when crossing managed/unmanaged
 //! boundaries. This is essential for proper interop with native code and COM components.
 //!
 //! # Overview
-//! The FieldMarshal table defines how specific fields and parameters should be marshalled:
+//! The `FieldMarshal` table defines how specific fields and parameters should be marshalled:
 //! - **P/Invoke marshalling**: Converting parameters for native function calls
 //! - **COM interop**: Field and parameter handling for COM objects
 //! - **Custom marshalling**: User-defined marshalling behavior through custom marshallers
@@ -21,19 +21,19 @@
 //! - [`crate::metadata::tables::fieldmarshal::FieldMarshalRc`]: Reference-counted field marshal for shared ownership
 //!
 //! # Table Structure
-//! Each FieldMarshal entry contains:
-//! - **Parent**: HasFieldMarshal coded index (Field or Param reference)
-//! - **NativeType**: Blob heap index containing marshalling signature
+//! Each `FieldMarshal` entry contains:
+//! - **Parent**: `HasFieldMarshal` coded index (Field or Param reference)
+//! - **`NativeType`**: Blob heap index containing marshalling signature
 //!
 //! # Marshalling Types
 //! Common marshalling specifications include:
-//! - **NATIVE_TYPE_BOOLEAN**: Boolean marshalling (1/4 bytes)
-//! - **NATIVE_TYPE_I1/I2/I4/I8**: Signed integer marshalling
-//! - **NATIVE_TYPE_U1/U2/U4/U8**: Unsigned integer marshalling
-//! - **NATIVE_TYPE_R4/R8**: Floating-point marshalling
-//! - **NATIVE_TYPE_LPSTR/LPWSTR**: String marshalling with encoding
-//! - **NATIVE_TYPE_ARRAY**: Array marshalling with element type and size
-//! - **NATIVE_TYPE_CUSTOMMARSHALER**: Custom marshaller specification
+//! - **`NATIVE_TYPE_BOOLEAN`**: Boolean marshalling (1/4 bytes)
+//! - **`NATIVE_TYPE_I1/I2/I4/I8`**: Signed integer marshalling
+//! - **`NATIVE_TYPE_U1/U2/U4/U8`**: Unsigned integer marshalling
+//! - **`NATIVE_TYPE_R4/R8`**: Floating-point marshalling
+//! - **`NATIVE_TYPE_LPSTR/LPWSTR`**: String marshalling with encoding
+//! - **`NATIVE_TYPE_ARRAY`**: Array marshalling with element type and size
+//! - **`NATIVE_TYPE_CUSTOMMARSHALER`**: Custom marshaller specification
 //!
 //! # Interop Scenarios
 //! - **P/Invoke**: Native function parameter marshalling
@@ -43,7 +43,7 @@
 //! - **Structure Marshalling**: Complex type layout preservation
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.17 for the complete FieldMarshal table specification.
+//! See ECMA-335, Partition II, §22.17 for the complete `FieldMarshal` table specification.
 
 use crate::metadata::token::Token;
 use crossbeam_skiplist::SkipMap;

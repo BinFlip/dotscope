@@ -158,10 +158,10 @@ pub enum ResourceType {
     /// Decimal resource value (type code 0x0E) - not yet implemented
     /* 0xE */
     Decimal,
-    /// DateTime resource value (type code 0x0F) - not yet implemented
+    /// `DateTime` resource value (type code 0x0F) - not yet implemented
     /* 0xF */
     DateTime,
-    /// TimeSpan resource value (type code 0x10) - not yet implemented
+    /// `TimeSpan` resource value (type code 0x10) - not yet implemented
     /* 0x10 */
     TimeSpan,
 

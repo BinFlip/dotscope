@@ -1,23 +1,23 @@
-//! Raw FieldLayout structures for the FieldLayout metadata table.
+//! Raw `FieldLayout` structures for the `FieldLayout` metadata table.
 //!
 //! This module provides the [`crate::metadata::tables::fieldlayout::raw::FieldLayoutRaw`] struct for reading field layout data
-//! directly from metadata tables before index resolution. The FieldLayout table specifies
+//! directly from metadata tables before index resolution. The `FieldLayout` table specifies
 //! explicit field positioning within types that use explicit layout.
 //!
 //! # Table Structure
-//! The FieldLayout table (TableId = 0x10) contains these columns:
+//! The `FieldLayout` table (`TableId` = 0x10) contains these columns:
 //! - `Offset`: 4-byte field offset within the containing type
 //! - `Field`: Index into Field table identifying the positioned field
 //!
 //! # Usage Context
-//! FieldLayout entries are only present for types that require explicit field positioning:
+//! `FieldLayout` entries are only present for types that require explicit field positioning:
 //! - **Interop types**: Types for P/Invoke or COM interop
 //! - **Performance-critical types**: Cache-optimized data structures
 //! - **Legacy compatibility**: Matching existing binary layouts
 //! - **Platform-specific layouts**: Architecture-dependent positioning
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.16 for the FieldLayout table specification.
+//! See ECMA-335, Partition II, §22.16 for the `FieldLayout` table specification.
 
 use std::sync::Arc;
 
@@ -31,14 +31,14 @@ use crate::{
     Result,
 };
 
-/// Raw field layout data read directly from the FieldLayout metadata table.
+/// Raw field layout data read directly from the `FieldLayout` metadata table.
 ///
 /// This structure represents a field layout entry before index resolution and field
 /// dereferencing. Field layouts specify the explicit byte offset of fields within
 /// types that use explicit layout attributes.
 ///
 /// # Binary Format
-/// Each row in the FieldLayout table has this layout:
+/// Each row in the `FieldLayout` table has this layout:
 /// ```text
 /// Offset | Size | Field      | Description
 /// -------|------|------------|----------------------------------
@@ -49,19 +49,19 @@ use crate::{
 /// The Field index size depends on the number of entries in the Field table.
 ///
 /// # Layout Context
-/// FieldLayout entries are created for types with explicit layout control:
+/// `FieldLayout` entries are created for types with explicit layout control:
 /// - **C# StructLayout(LayoutKind.Explicit)**: Explicitly positioned fields
 /// - **C++ CLI types**: Native interop data structures
 /// - **P/Invoke types**: Matching native struct layouts
 /// - **Performance types**: Cache-line aligned data structures
 ///
 /// # ECMA-335 Reference
-/// See ECMA-335, Partition II, §22.16 for the complete FieldLayout table specification.
+/// See ECMA-335, Partition II, §22.16 for the complete `FieldLayout` table specification.
 #[derive(Clone, Debug)]
 pub struct FieldLayoutRaw {
-    /// The row identifier in the FieldLayout table.
+    /// The row identifier in the `FieldLayout` table.
     ///
-    /// This 1-based index uniquely identifies this field layout within the FieldLayout table.
+    /// This 1-based index uniquely identifies this field layout within the `FieldLayout` table.
     pub rid: u32,
 
     /// The metadata token for this field layout.

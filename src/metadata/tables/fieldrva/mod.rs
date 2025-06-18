@@ -1,11 +1,11 @@
-//! FieldRva metadata table implementation.
+//! `FieldRva` metadata table implementation.
 //!
-//! This module provides structures and utilities for working with the FieldRva metadata table,
+//! This module provides structures and utilities for working with the `FieldRva` metadata table,
 //! which specifies Relative Virtual Addresses (RVAs) for fields that have initial data stored
 //! in the PE file. This enables static field initialization and constant data embedding.
 //!
 //! # Overview
-//! The FieldRva table associates fields with their initial data locations:
+//! The `FieldRva` table associates fields with their initial data locations:
 //! - **Static field initialization**: Pre-computed initial values for static fields
 //! - **Constant data**: Read-only data embedded directly in the PE file
 //! - **Global variables**: Module-level data with specific initial states
@@ -21,7 +21,7 @@
 //! - [`crate::metadata::tables::fieldrva::FieldRVARc`]: Reference-counted field RVA for shared ownership
 //!
 //! # Table Structure
-//! Each FieldRva entry contains:
+//! Each `FieldRva` entry contains:
 //! - **RVA**: Relative Virtual Address pointing to field data in PE file
 //! - **Field**: Reference to the field in the Field table
 //!
@@ -40,14 +40,14 @@
 //! - **Configuration data**: Default settings and parameters
 //!
 //! # PE File Integration
-//! FieldRva entries integrate with PE file structure:
+//! `FieldRva` entries integrate with PE file structure:
 //! - **Section mapping**: RVAs resolve to specific PE sections
 //! - **Memory layout**: Data positioned for efficient runtime access
 //! - **File alignment**: Data aligned according to PE requirements
 //! - **Protection flags**: Data sections with appropriate read/write permissions
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.19 for the complete FieldRva table specification.
+//! See ECMA-335, Partition II, §22.19 for the complete `FieldRva` table specification.
 
 use crate::metadata::token::Token;
 use crossbeam_skiplist::SkipMap;

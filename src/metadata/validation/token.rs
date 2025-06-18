@@ -23,8 +23,8 @@
 //! ### Token Categories
 //! - **Type Tokens**: TypeDef, TypeRef, TypeSpec (tables 0x02, 0x01, 0x1B)
 //! - **Member Tokens**: MethodDef, FieldDef, PropertyDef, EventDef
-//! - **Reference Tokens**: MemberRef, MethodSpec, signatures
-//! - **Special Tokens**: String, UserString, Blob, Guid references
+//! - **Reference Tokens**: `MemberRef`, `MethodSpec`, signatures
+//! - **Special Tokens**: String, `UserString`, Blob, Guid references
 //!
 //! ## Validation Philosophy
 //!
@@ -221,7 +221,7 @@ use crate::metadata::{
 /// ## Usage Patterns
 ///
 /// ### Standalone Validation
-/// The TokenValidator can be used standalone to perform token
+/// The `TokenValidator` can be used standalone to perform token
 /// validation and collect error messages for processing.
 ///
 /// ### Integrated Validation
@@ -603,7 +603,7 @@ impl TokenValidator {
     /// # Integration with CLR Behavior
     ///
     /// The validation aligns with CLR type loading behavior:
-    /// - **Error Conditions**: Matches conditions that cause CLR TypeLoadException
+    /// - **Error Conditions**: Matches conditions that cause CLR `TypeLoadException`
     /// - **Validation Timing**: Performed at same logical point as CLR validation
     /// - **Error Messages**: Similar context and information as CLR error messages
     /// - **Resolution Strategy**: Uses same token resolution approach as CLR

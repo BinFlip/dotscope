@@ -7,10 +7,10 @@
 //! # Table Structure
 //!
 //! The Assembly table contains exactly one row (if present) that defines the current assembly:
-//! - **HashAlgId**: Hash algorithm used for file integrity
-//! - **MajorVersion**, **MinorVersion**, **BuildNumber**, **RevisionNumber**: Version components
+//! - **`HashAlgId`**: Hash algorithm used for file integrity
+//! - **`MajorVersion`**, **`MinorVersion`**, **`BuildNumber`**, **`RevisionNumber`**: Version components
 //! - **Flags**: Assembly attributes and loading hints
-//! - **PublicKey**: Strong name public key (blob heap reference)
+//! - **`PublicKey`**: Strong name public key (blob heap reference)
 //! - **Name**: Assembly simple name (string heap reference)
 //! - **Culture**: Localization culture (string heap reference)
 //!

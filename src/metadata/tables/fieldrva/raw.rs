@@ -1,16 +1,16 @@
-//! Raw FieldRva structures for the FieldRva metadata table.
+//! Raw `FieldRva` structures for the `FieldRva` metadata table.
 //!
 //! This module provides the [`FieldRvaRaw`] struct for reading field RVA data
-//! directly from metadata tables before index resolution. The FieldRva table specifies
+//! directly from metadata tables before index resolution. The `FieldRva` table specifies
 //! Relative Virtual Addresses for fields that have initial data stored in the PE file.
 //!
 //! # Table Structure
-//! The FieldRva table (TableId = 0x1D) contains these columns:
+//! The `FieldRva` table (`TableId` = 0x1D) contains these columns:
 //! - `RVA`: 4-byte Relative Virtual Address pointing to field data
 //! - `Field`: Index into Field table identifying the field with initial data
 //!
 //! # RVA Purpose
-//! FieldRva entries enable static field initialization and data embedding:
+//! `FieldRva` entries enable static field initialization and data embedding:
 //! - **Static field initialization**: Pre-computed values for static fields
 //! - **Constant data**: Read-only data embedded in the PE file
 //! - **Global variables**: Module-level data with specific initial states
@@ -18,7 +18,7 @@
 //! - **Resource embedding**: Binary resources accessible through fields
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.19 for the FieldRva table specification.
+//! See ECMA-335, Partition II, §22.19 for the `FieldRva` table specification.
 
 use std::sync::Arc;
 
@@ -31,14 +31,14 @@ use crate::{
     Result,
 };
 
-/// Raw field RVA data read directly from the FieldRva metadata table.
+/// Raw field RVA data read directly from the `FieldRva` metadata table.
 ///
 /// This structure represents a field RVA entry before index resolution and field
 /// dereferencing. Field RVAs specify the location of initial data for fields that
 /// have pre-computed values stored in the PE file.
 ///
 /// # Binary Format
-/// Each row in the FieldRva table has this layout:
+/// Each row in the `FieldRva` table has this layout:
 /// ```text
 /// Offset | Size | Field | Description
 /// -------|------|-------|----------------------------------
@@ -49,7 +49,7 @@ use crate::{
 /// The Field index size depends on the number of entries in the Field table.
 ///
 /// # RVA Context
-/// FieldRva entries define data locations for:
+/// `FieldRva` entries define data locations for:
 /// - **Static arrays**: Pre-initialized array data embedded in PE file
 /// - **Constant strings**: String literals stored in read-only sections
 /// - **Numeric constants**: Pre-computed values for mathematical constants
@@ -64,12 +64,12 @@ use crate::{
 /// - **Protection flags**: Sections marked with appropriate permissions
 ///
 /// # ECMA-335 Reference
-/// See ECMA-335, Partition II, §22.19 for the complete FieldRva table specification.
+/// See ECMA-335, Partition II, §22.19 for the complete `FieldRva` table specification.
 #[derive(Clone, Debug)]
 pub struct FieldRvaRaw {
-    /// The row identifier in the FieldRva table.
+    /// The row identifier in the `FieldRva` table.
     ///
-    /// This 1-based index uniquely identifies this field RVA within the FieldRva table.
+    /// This 1-based index uniquely identifies this field RVA within the `FieldRva` table.
     pub rid: u32,
 
     /// The metadata token for this field RVA.

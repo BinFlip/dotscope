@@ -1,7 +1,7 @@
-//! Raw CustomDebugInformation table representation for Portable PDB format
+//! Raw `CustomDebugInformation` table representation for Portable PDB format
 //!
 //! This module provides the [`CustomDebugInformationRaw`] struct that represents
-//! the binary format of CustomDebugInformation table entries as they appear in
+//! the binary format of `CustomDebugInformation` table entries as they appear in
 //! the metadata tables stream. This is the low-level representation used during
 //! the initial parsing phase, containing unresolved indices.
 
@@ -10,7 +10,10 @@ use crate::{
     metadata::{
         customdebuginformation::{parse_custom_debug_blob, CustomDebugKind},
         streams::{Blob, Guid},
-        tables::{types::*, CustomDebugInformation, CustomDebugInformationRc, RowDefinition},
+        tables::{
+            types::{CodedIndex, CodedIndexType, TableInfoRef},
+            CustomDebugInformation, CustomDebugInformationRc, RowDefinition,
+        },
         token::Token,
         typesystem::CilTypeReference,
     },
@@ -18,26 +21,26 @@ use crate::{
 };
 use std::sync::Arc;
 
-/// Raw binary representation of a CustomDebugInformation table entry
+/// Raw binary representation of a `CustomDebugInformation` table entry
 ///
-/// This structure matches the exact binary layout of CustomDebugInformation table
+/// This structure matches the exact binary layout of `CustomDebugInformation` table
 /// entries in the metadata tables stream. All fields contain unresolved indices
 /// that must be resolved during conversion to the owned [`CustomDebugInformation`] variant.
 ///
 /// # Binary Format
 ///
-/// Each CustomDebugInformation table entry consists of:
-/// - **Parent** (variable bytes): HasCustomDebugInformation coded index to the metadata element
+/// Each `CustomDebugInformation` table entry consists of:
+/// - **Parent** (variable bytes): `HasCustomDebugInformation` coded index to the metadata element
 /// - **Kind** (variable bytes): GUID heap index identifying the type of custom debug information
 /// - **Value** (variable bytes): Blob heap index containing the custom debug information data
 ///
-/// # Coded Index: HasCustomDebugInformation
+/// # Coded Index: `HasCustomDebugInformation`
 ///
-/// The Parent field uses the HasCustomDebugInformation coded index which can reference:
-/// - MethodDef, Field, TypeRef, TypeDef, Param, InterfaceImpl, MemberRef, Module
-/// - DeclSecurity, Property, Event, StandAloneSig, ModuleRef, TypeSpec, Assembly
-/// - AssemblyRef, File, ExportedType, ManifestResource, GenericParam, GenericParamConstraint
-/// - MethodSpec, Document, LocalScope, LocalVariable, LocalConstant, ImportScope
+/// The Parent field uses the `HasCustomDebugInformation` coded index which can reference:
+/// - `MethodDef`, `Field`, `TypeRef`, `TypeDef`, `Param`, `InterfaceImpl`, `MemberRef`, `Module`
+/// - `DeclSecurity`, `Property`, `Event`, `StandAloneSig`, `ModuleRef`, `TypeSpec`, `Assembly`
+/// - `AssemblyRef`, `File`, `ExportedType`, `ManifestResource`, `GenericParam`, `GenericParamConstraint`
+/// - `MethodSpec`, `Document`, `LocalScope`, `LocalVariable`, `LocalConstant`, `ImportScope`
 ///
 /// # Custom Debug Information Types
 ///
@@ -64,13 +67,13 @@ pub struct CustomDebugInformationRaw {
     /// Row identifier (1-based index in the table)
     pub rid: u32,
 
-    /// Metadata token for this CustomDebugInformation entry
+    /// Metadata token for this `CustomDebugInformation` entry
     pub token: Token,
 
     /// Byte offset of this row in the original metadata stream
     pub offset: usize,
 
-    /// HasCustomDebugInformation coded index to the metadata element
+    /// `HasCustomDebugInformation` coded index to the metadata element
     ///
     /// References the metadata element (method, type, field, etc.) that this
     /// custom debug information is associated with. The coded index allows
@@ -92,14 +95,14 @@ pub struct CustomDebugInformationRaw {
 }
 
 impl CustomDebugInformationRaw {
-    /// Converts this raw CustomDebugInformation entry to an owned [`CustomDebugInformation`] instance
+    /// Converts this raw `CustomDebugInformation` entry to an owned [`CustomDebugInformation`] instance
     ///
-    /// This method resolves the raw CustomDebugInformation entry to create a complete CustomDebugInformation
+    /// This method resolves the raw `CustomDebugInformation` entry to create a complete `CustomDebugInformation`
     /// object by resolving indices to actual data from the provided heaps and parsing the custom debug
     /// information blob into structured data.
     ///
     /// # Processing Steps
-    /// 1. **Parent Resolution**: Resolves the HasCustomDebugInformation coded index to a type reference
+    /// 1. **Parent Resolution**: Resolves the `HasCustomDebugInformation` coded index to a type reference
     /// 2. **GUID Resolution**: Resolves the kind index to get the debug information type GUID
     /// 3. **Blob Resolution**: Resolves the value index to get the raw debug information blob
     /// 4. **Blob Parsing**: Parses the blob according to the GUID type to create structured debug information
@@ -114,7 +117,7 @@ impl CustomDebugInformationRaw {
     /// or an error if any heap reference cannot be resolved or blob parsing fails.
     ///
     /// # Parsing Behavior
-    /// - **Known GUIDs**: Parsed into structured data (SourceLink, EmbeddedSource, etc.)
+    /// - **Known GUIDs**: Parsed into structured data (`SourceLink`, `EmbeddedSource`, etc.)
     /// - **Unknown GUIDs**: Preserved as raw data in Unknown variant for future processing
     /// - **Empty Blobs**: Handled gracefully with appropriate default values
     ///
@@ -142,6 +145,13 @@ impl CustomDebugInformationRaw {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error`] if:
+    /// - The GUID heap index is invalid or out of bounds
+    /// - The blob heap index is invalid or out of bounds  
+    /// - The blob data cannot be parsed for known debug info types
     pub fn to_owned<F>(
         &self,
         get_ref: F,

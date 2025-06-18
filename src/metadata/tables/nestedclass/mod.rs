@@ -79,6 +79,6 @@ pub type NestedClassList = Arc<boxcar::Vec<NestedClassRc>>;
 
 /// Reference-counted pointer to a [`NestedClass`] entry.
 ///
-/// Enables efficient sharing of NestedClass data across multiple contexts
+/// Enables efficient sharing of `NestedClass` data across multiple contexts
 /// while maintaining memory safety through automatic reference counting.
 pub type NestedClassRc = Arc<NestedClass>;

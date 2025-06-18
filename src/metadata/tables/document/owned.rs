@@ -82,6 +82,7 @@ impl Document {
     /// * `hash_algorithm` - Hash algorithm GUID
     /// * `hash` - Document content hash bytes
     /// * `language` - Source language GUID
+    #[must_use]
     pub fn new(
         rid: u32,
         token: Token,
@@ -103,6 +104,7 @@ impl Document {
     }
 
     /// Check if this document has a hash
+    #[must_use]
     pub fn has_hash(&self) -> bool {
         !self.hash.is_empty()
     }
@@ -110,8 +112,8 @@ impl Document {
     /// Check if this is a C# document based on the language GUID
     ///
     /// C# language GUID: {3F5162F8-07C6-11D3-9053-00C04FA302A1}
+    #[must_use]
     pub fn is_csharp(&self) -> bool {
-        // C# GUID
         const CSHARP_GUID: uguid::Guid = uguid::guid!("3F5162F8-07C6-11D3-9053-00C04FA302A1");
         self.language == CSHARP_GUID
     }
@@ -119,8 +121,8 @@ impl Document {
     /// Check if this is a Visual Basic document based on the language GUID
     ///
     /// VB.NET language GUID: {3A12D0B8-C26C-11D0-B442-00A0244A1DD2}
+    #[must_use]
     pub fn is_visual_basic(&self) -> bool {
-        // VB.NET GUID
         const VB_GUID: uguid::Guid = uguid::guid!("3A12D0B8-C26C-11D0-B442-00A0244A1DD2");
         self.language == VB_GUID
     }
@@ -128,15 +130,15 @@ impl Document {
     /// Check if this is an F# document based on the language GUID
     ///
     /// F# language GUID: {AB4F38C9-B6E6-43BA-BE3B-58080B2CCCE3}
+    #[must_use]
     pub fn is_fsharp(&self) -> bool {
-        // F# GUID
         const FSHARP_GUID: uguid::Guid = uguid::guid!("AB4F38C9-B6E6-43BA-BE3B-58080B2CCCE3");
         self.language == FSHARP_GUID
     }
 
     /// Get a human-readable description of the hash algorithm
+    #[must_use]
     pub fn hash_algorithm_name(&self) -> &'static str {
-        // Common hash algorithm GUIDs
         const SHA1_GUID: uguid::Guid = uguid::guid!("FF1816EC-AA5E-4D10-87F7-6F4963833460");
         const SHA256_GUID: uguid::Guid = uguid::guid!("8829D00F-11B8-4213-878B-770E8597AC16");
 
@@ -148,6 +150,7 @@ impl Document {
     }
 
     /// Get a human-readable description of the programming language
+    #[must_use]
     pub fn language_name(&self) -> &'static str {
         if self.is_csharp() {
             "C#"

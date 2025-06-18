@@ -8,9 +8,9 @@
 //! # Constant Table Format
 //!
 //! The Constant table (0x0B) contains zero or more rows with these fields:
-//! - **Type** (1 byte): Element type of the constant (ELEMENT_TYPE_* enumeration)
+//! - **Type** (1 byte): Element type of the constant (`ELEMENT_TYPE`_* enumeration)
 //! - **Padding** (1 byte): Reserved padding byte (must be zero)
-//! - **Parent** (2/4 bytes): HasConstant coded index into Field, Property, or Param tables  
+//! - **Parent** (2/4 bytes): `HasConstant` coded index into Field, Property, or Param tables  
 //! - **Value** (2/4 bytes): Blob heap index containing the constant's binary data
 //!
 //! # Reference
@@ -40,7 +40,7 @@ use super::owned::Constant;
 /// # Table Structure
 ///
 /// Each Constant row contains:
-/// - **Element type**: Primitive type identifier (ELEMENT_TYPE_*)
+/// - **Element type**: Primitive type identifier (`ELEMENT_TYPE`_*)
 /// - **Parent relationship**: Coded index to Field, Property, or Param table
 /// - **Value data**: Binary representation stored in the blob heap
 /// - **Type validation**: Ensures constant types match their containers
@@ -65,13 +65,13 @@ pub struct ConstantRaw {
 
     /// Element type of the constant value
     ///
-    /// Specifies the primitive type of the constant using ELEMENT_TYPE_* enumeration values
+    /// Specifies the primitive type of the constant using `ELEMENT_TYPE_*` enumeration values
     /// (see ECMA-335 II.23.1.16). This determines how the blob value data should be interpreted.
-    /// Common values include ELEMENT_TYPE_I4 for integers, ELEMENT_TYPE_STRING for strings, etc.
-    /// For null reference constants, this is ELEMENT_TYPE_CLASS with a 4-byte zero value.
+    /// Common values include `ELEMENT_TYPE_I4` for integers, `ELEMENT_TYPE_STRING` for strings, etc.
+    /// For null reference constants, this is `ELEMENT_TYPE_CLASS` with a 4-byte zero value.
     pub base: u8,
 
-    /// HasConstant coded index to the parent metadata element
+    /// `HasConstant` coded index to the parent metadata element
     ///
     /// Points to the field, property, or parameter that owns this constant. This is a coded
     /// index that must be decoded to determine the target table and row. The coding scheme

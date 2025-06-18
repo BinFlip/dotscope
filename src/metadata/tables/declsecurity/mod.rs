@@ -1,6 +1,6 @@
-//! DeclSecurity table module.
+//! `DeclSecurity` table module.
 //!
-//! This module provides complete support for the ECMA-335 DeclSecurity metadata table (0x0E),
+//! This module provides complete support for the ECMA-335 `DeclSecurity` metadata table (0x0E),
 //! which contains declarative security declarations for assemblies, types, and methods. It includes
 //! raw table access, resolved data structures, permission set parsing for .NET Code Access Security (CAS),
 //! and integration with the broader metadata system.
@@ -9,18 +9,18 @@
 //!
 //! - [`DeclSecurityRaw`]: Raw table structure with unresolved coded indexes
 //! - [`DeclSecurity`]: Owned variant with resolved references and parsed permission sets
-//! - [`DeclSecurityLoader`]: Internal loader for processing DeclSecurity table data
+//! - [`DeclSecurityLoader`]: Internal loader for processing `DeclSecurity` table data
 //! - Type aliases for efficient collections and reference management
 //!
-//! # DeclSecurity Table Structure
+//! # `DeclSecurity` Table Structure
 //!
-//! Each DeclSecurity table row contains these fields:
+//! Each `DeclSecurity` table row contains these fields:
 //! - **Action**: Security action type (Demand, Assert, Deny, etc.)
 //! - **Parent**: Target element where security is applied (coded index)
-//! - **PermissionSet**: Serialized security permissions (blob)
+//! - **`PermissionSet`**: Serialized security permissions (blob)
 //!
 //! The parent can be any metadata element that supports the `HasDeclSecurity` coded index,
-//! including assemblies, types (TypeDef), and methods (MethodDef).
+//! including assemblies, types (`TypeDef`), and methods (`MethodDef`).
 //!
 //! # Security Actions
 //!
@@ -28,13 +28,13 @@
 //! - **Demand**: Require callers to have specific permissions at runtime
 //! - **Assert**: Temporarily escalate permissions for trusted code paths
 //! - **Deny**: Prevent code from using certain permissions even if granted
-//! - **LinkDemand**: Check permissions at JIT compilation time
-//! - **InheritanceDemand**: Require permissions for type inheritance
-//! - **PermitOnly**: Restrict permissions to only those specified
+//! - **`LinkDemand`**: Check permissions at JIT compilation time
+//! - **`InheritanceDemand`**: Require permissions for type inheritance
+//! - **`PermitOnly`**: Restrict permissions to only those specified
 //!
 //! # Reference
-//! - [ECMA-335 II.22.11](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - DeclSecurity table specification
-//! - [ECMA-335 II.23.1.16](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - SecurityAction enumeration
+//! - [ECMA-335 II.22.11](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `DeclSecurity` table specification
+//! - [ECMA-335 II.23.1.16](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `SecurityAction` enumeration
 
 use crate::metadata::token::Token;
 use crossbeam_skiplist::SkipMap;

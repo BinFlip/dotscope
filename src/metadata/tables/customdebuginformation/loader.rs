@@ -1,8 +1,8 @@
-//! CustomDebugInformation table loader for efficient metadata processing
+//! `CustomDebugInformation` table loader for efficient metadata processing
 //!
 //! This module provides the [`CustomDebugInformationLoader`] implementation that handles
-//! loading and processing CustomDebugInformation table entries from Portable PDB metadata.
-//! The loader follows the established MetadataLoader pattern for consistent parallel
+//! loading and processing `CustomDebugInformation` table entries from Portable PDB metadata.
+//! The loader follows the established `MetadataLoader` pattern for consistent parallel
 //! processing and efficient memory utilization.
 
 use crate::{
@@ -13,9 +13,9 @@ use crate::{
     Result,
 };
 
-/// Metadata loader for CustomDebugInformation table entries
+/// Metadata loader for `CustomDebugInformation` table entries
 ///
-/// This loader processes CustomDebugInformation table data to build efficient lookup
+/// This loader processes `CustomDebugInformation` table data to build efficient lookup
 /// structures for custom debugging information access. The loader handles:
 ///
 /// - Parallel processing of table rows for optimal performance
@@ -25,7 +25,7 @@ use crate::{
 ///
 /// # Custom Debug Information Context
 ///
-/// The CustomDebugInformation table provides extensibility for debugging scenarios
+/// The `CustomDebugInformation` table provides extensibility for debugging scenarios
 /// beyond the standard Portable PDB tables. It allows compilers and tools to store
 /// implementation-specific debugging metadata such as:
 ///

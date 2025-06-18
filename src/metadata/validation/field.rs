@@ -68,7 +68,7 @@
 //! ## References
 //!
 //! - ECMA-335, Partition II, Section 10.7 - Controlling instance layout
-//! - ECMA-335, Partition II, Section 23.2.5 - FieldLayout table
+//! - ECMA-335, Partition II, Section 23.2.5 - `FieldLayout` table
 //! - .NET Core Runtime: `coreclr/vm/classlayoutinfo.cpp`
 //! - .NET Type Layout documentation
 

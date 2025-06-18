@@ -1,4 +1,4 @@
-//! Custom debug information parser for Portable PDB CustomDebugInformation table.
+//! Custom debug information parser for Portable PDB `CustomDebugInformation` table.
 //!
 //! This module provides parsing capabilities for the custom debug information blob format used
 //! in Portable PDB files. The blob format varies depending on the GUID kind, supporting various
@@ -7,7 +7,7 @@
 //!
 //! # Custom Debug Information Blob Format
 //!
-//! The blob format depends on the Kind GUID from the CustomDebugInformation table:
+//! The blob format depends on the Kind GUID from the `CustomDebugInformation` table:
 //!
 //! ## Source Link Format
 //! ```text
@@ -43,7 +43,11 @@
 //! }
 //! ```
 
-use crate::{file::parser::Parser, metadata::customdebuginformation::types::*, Result};
+use crate::{
+    file::parser::Parser,
+    metadata::customdebuginformation::types::{CustomDebugInfo, CustomDebugKind},
+    Result,
+};
 
 /// Parser for custom debug information blob binary data implementing the Portable PDB specification.
 ///
@@ -87,37 +91,37 @@ impl<'a> CustomDebugParser<'a> {
     /// - **Truncated Data**: Insufficient data for expected format
     /// - **Invalid UTF-8**: String data that cannot be decoded as UTF-8
     /// - **Malformed Blob**: Invalid blob structure for the specified kind
-    pub fn parse_debug_info(&mut self) -> Result<CustomDebugInfo> {
+    pub fn parse_debug_info(&mut self) -> CustomDebugInfo {
         match self.kind {
             CustomDebugKind::SourceLink => {
-                let document = self.read_utf8_string()?;
-                Ok(CustomDebugInfo::SourceLink { document })
+                let document = self.read_utf8_string();
+                CustomDebugInfo::SourceLink { document }
             }
             CustomDebugKind::EmbeddedSource => {
                 // For embedded source, we need to handle the filename and content
                 // For now, treat the entire blob as content
-                let content = self.read_utf8_string()?;
-                Ok(CustomDebugInfo::EmbeddedSource {
+                let content = self.read_utf8_string();
+                CustomDebugInfo::EmbeddedSource {
                     filename: String::new(), // TODO: Extract filename if available
                     content,
-                })
+                }
             }
             CustomDebugKind::CompilationMetadata => {
-                let metadata = self.read_utf8_string()?;
-                Ok(CustomDebugInfo::CompilationMetadata { metadata })
+                let metadata = self.read_utf8_string();
+                CustomDebugInfo::CompilationMetadata { metadata }
             }
             CustomDebugKind::CompilationOptions => {
-                let options = self.read_utf8_string()?;
-                Ok(CustomDebugInfo::CompilationOptions { options })
+                let options = self.read_utf8_string();
+                CustomDebugInfo::CompilationOptions { options }
             }
             CustomDebugKind::Unknown(_) => {
                 // For unknown kinds, return the raw data
                 let remaining_data = &self.parser.data()[self.parser.pos()..];
                 let data = remaining_data.to_vec();
-                Ok(CustomDebugInfo::Unknown {
+                CustomDebugInfo::Unknown {
                     kind: self.kind,
                     data,
-                })
+                }
             }
         }
     }
@@ -126,18 +130,17 @@ impl<'a> CustomDebugParser<'a> {
     ///
     /// Many custom debug information formats store UTF-8 strings with an optional
     /// compressed length prefix. This method handles both cases.
-    fn read_utf8_string(&mut self) -> Result<String> {
-        // Try to read compressed length first
+    fn read_utf8_string(&mut self) -> String {
+        // ToDo: Try to read compressed length first
+        //       For many formats, the blob contains the raw UTF-8 string
+        //       Some formats may have a compressed length prefix
         if self.parser.has_more_data() {
-            // For many formats, the blob contains the raw UTF-8 string
-            // Some formats may have a compressed length prefix
             let remaining_data = &self.parser.data()[self.parser.pos()..];
 
             // Try to decode as UTF-8
-            let string_data = String::from_utf8_lossy(remaining_data).into_owned();
-            Ok(string_data)
+            String::from_utf8_lossy(remaining_data).into_owned()
         } else {
-            Ok(String::new())
+            String::new()
         }
     }
 }
@@ -187,7 +190,7 @@ pub fn parse_custom_debug_blob(data: &[u8], kind: CustomDebugKind) -> Result<Cus
     }
 
     let mut parser = CustomDebugParser::new(data, kind);
-    parser.parse_debug_info()
+    Ok(parser.parse_debug_info())
 }
 
 #[cfg(test)]

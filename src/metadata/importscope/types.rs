@@ -1,4 +1,4 @@
-//! Import declaration types for Portable PDB ImportScope format.
+//! Import declaration types for Portable PDB `ImportScope` format.
 //!
 //! This module defines all the types used to represent import declarations
 //! from Portable PDB files. These types provide structured access to the
@@ -36,7 +36,7 @@ pub enum ImportKind {
 }
 
 impl ImportKind {
-    /// Create an ImportKind from a compressed unsigned integer value.
+    /// Create an `ImportKind` from a compressed unsigned integer value.
     ///
     /// # Arguments
     /// * `value` - The kind value from the imports blob (1-9)
@@ -44,6 +44,7 @@ impl ImportKind {
     /// # Returns
     /// * [`Some`](ImportKind) - Valid import kind
     /// * [`None`] - Invalid or unsupported kind value
+    #[must_use]
     pub fn from_u32(value: u32) -> Option<Self> {
         match value {
             1 => Some(ImportKind::ImportNamespace),
@@ -81,7 +82,7 @@ pub enum ImportDeclaration {
     },
     /// Import type members
     ImportType {
-        /// Type reference token (TypeDefOrRefOrSpecEncoded)
+        /// Type reference token (`TypeDefOrRefOrSpecEncoded`)
         type_ref: Token,
     },
     /// Import XML namespace with prefix
@@ -123,7 +124,7 @@ pub enum ImportDeclaration {
     DefineTypeAlias {
         /// Alias name (resolved from blob heap)
         alias: String,
-        /// Type reference token (TypeDefOrRefOrSpecEncoded)
+        /// Type reference token (`TypeDefOrRefOrSpecEncoded`)
         type_ref: Token,
     },
 }
@@ -139,7 +140,7 @@ pub struct ImportsInfo {
 }
 
 impl ImportsInfo {
-    /// Create a new empty ImportsInfo.
+    /// Create a new empty `ImportsInfo`.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -147,7 +148,7 @@ impl ImportsInfo {
         }
     }
 
-    /// Create ImportsInfo with the given declarations.
+    /// Create `ImportsInfo` with the given declarations.
     #[must_use]
     pub fn with_declarations(declarations: Vec<ImportDeclaration>) -> Self {
         Self { declarations }

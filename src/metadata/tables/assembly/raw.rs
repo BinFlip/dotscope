@@ -7,13 +7,13 @@
 //! # Assembly Table Format
 //!
 //! The Assembly table (0x20) contains exactly one row (if present) with these fields:
-//! - **HashAlgId** (4 bytes): Hash algorithm identifier  
-//! - **MajorVersion** (2 bytes): Major version number
-//! - **MinorVersion** (2 bytes): Minor version number
-//! - **BuildNumber** (2 bytes): Build number
-//! - **RevisionNumber** (2 bytes): Revision number
+//! - **`HashAlgId`** (4 bytes): Hash algorithm identifier  
+//! - **`MajorVersion`** (2 bytes): Major version number
+//! - **`MinorVersion`** (2 bytes): Minor version number
+//! - **`BuildNumber`** (2 bytes): Build number
+//! - **`RevisionNumber`** (2 bytes): Revision number
 //! - **Flags** (4 bytes): Assembly flags bitmask
-//! - **PublicKey** (2/4 bytes): Blob heap index for public key data
+//! - **`PublicKey`** (2/4 bytes): Blob heap index for public key data
 //! - **Name** (2/4 bytes): String heap index for assembly name
 //! - **Culture** (2/4 bytes): String heap index for culture name
 //!
@@ -129,6 +129,11 @@ impl AssemblyRaw {
     /// * `Ok(`[`crate::metadata::tables::AssemblyRc`]`)` - Reference-counted owned assembly
     /// * `Err(`[`crate::Error`]`)` - If heap resolution fails
     ///
+    /// # Errors
+    /// This function will return an error if:
+    /// - String heap lookup fails for the assembly name or culture
+    /// - Blob heap lookup fails for the public key data
+    ///
     /// # Heap Resolution
     /// - `name`: Resolved to owned String from string heap
     /// - `culture`: Resolved to optional String (None if index is 0)
@@ -175,6 +180,9 @@ impl AssemblyRaw {
     /// # Note
     /// This is part of the internal metadata loading infrastructure and should not
     /// be called directly by user code.
+    ///
+    /// # Errors
+    /// Currently returns `Ok(())` in all cases as this is a placeholder implementation.
     pub fn apply(&self) -> Result<()> {
         Ok(())
     }
@@ -187,15 +195,15 @@ impl<'a> RowDefinition<'a> for AssemblyRaw {
     /// The size depends on whether the metadata uses 2-byte or 4-byte heap indexes.
     ///
     /// # Row Layout
-    /// - hash_alg_id: 4 bytes (fixed)
-    /// - major_version: 2 bytes (fixed)
-    /// - minor_version: 2 bytes (fixed)
-    /// - build_number: 2 bytes (fixed)
-    /// - revision_number: 2 bytes (fixed)
-    /// - flags: 4 bytes (fixed)
-    /// - public_key: 2 or 4 bytes (blob heap index)
-    /// - name: 2 or 4 bytes (string heap index)
-    /// - culture: 2 or 4 bytes (string heap index)
+    /// - `hash_alg_id`: 4 bytes (fixed)
+    /// - `major_version`: 2 bytes (fixed)
+    /// - `minor_version`: 2 bytes (fixed)
+    /// - `build_number`: 2 bytes (fixed)
+    /// - `revision_number`: 2 bytes (fixed)
+    /// - `flags`: 4 bytes (fixed)
+    /// - `public_key`: 2 or 4 bytes (blob heap index)
+    /// - `name`: 2 or 4 bytes (string heap index)
+    /// - `culture`: 2 or 4 bytes (string heap index)
     ///
     /// # Arguments
     /// * `sizes` - Table sizing information for heap index widths

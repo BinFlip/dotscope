@@ -30,7 +30,7 @@
 //!
 //! Each Document table row contains these fields:
 //! - **Name**: Document name/path stored as blob (typically a file path)
-//! - **HashAlgorithm**: Hash algorithm identifier stored as GUID
+//! - **`HashAlgorithm`**: Hash algorithm identifier stored as GUID
 //! - **Hash**: Document content hash stored as blob
 //! - **Language**: Source language identifier stored as GUID
 //!

@@ -1,6 +1,6 @@
-//! LocalVariable table module for Portable PDB format
+//! `LocalVariable` table module for Portable PDB format
 //!
-//! This module provides complete support for the Portable PDB LocalVariable metadata table (0x33),
+//! This module provides complete support for the Portable PDB `LocalVariable` metadata table (0x33),
 //! which stores information about local variables within method scopes, including their names,
 //! signatures, and attributes. It includes raw table access, resolved data structures, variable
 //! analysis, and integration with the broader metadata system.
@@ -9,12 +9,12 @@
 //!
 //! - [`LocalVariableRaw`]: Raw table structure with unresolved heap indices
 //! - [`LocalVariable`]: Owned variant with resolved references and variable information
-//! - [`LocalVariableLoader`]: Internal loader for processing LocalVariable table data
+//! - [`LocalVariableLoader`]: Internal loader for processing `LocalVariable` table data
 //! - Type aliases for efficient collections and reference management
 //!
-//! # LocalVariable Table Structure
+//! # `LocalVariable` Table Structure
 //!
-//! Each LocalVariable table row contains these fields:
+//! Each `LocalVariable` table row contains these fields:
 //! - **Attributes**: 2-byte flags indicating variable characteristics
 //! - **Index**: 2-byte variable index within the method
 //! - **Name**: Index into #Strings heap for the variable name

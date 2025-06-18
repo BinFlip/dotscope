@@ -1,6 +1,6 @@
-//! CustomAttribute table module.
+//! `CustomAttribute` table module.
 //!
-//! This module provides complete support for the ECMA-335 CustomAttribute metadata table (0x0C),
+//! This module provides complete support for the ECMA-335 `CustomAttribute` metadata table (0x0C),
 //! which associates custom attributes with elements throughout the metadata system. It includes
 //! raw table access, resolved data structures, attribute value parsing, and integration
 //! with the broader metadata system.
@@ -9,12 +9,12 @@
 //!
 //! - [`CustomAttributeRaw`]: Raw table structure with unresolved coded indexes
 //! - [`CustomAttribute`]: Owned variant with resolved references and parsed attribute values
-//! - [`CustomAttributeLoader`]: Internal loader for processing CustomAttribute table data
+//! - [`CustomAttributeLoader`]: Internal loader for processing `CustomAttribute` table data
 //! - Type aliases for efficient collections and reference management
 //!
-//! # CustomAttribute Table Structure
+//! # `CustomAttribute` Table Structure
 //!
-//! Each CustomAttribute table row contains these fields:
+//! Each `CustomAttribute` table row contains these fields:
 //! - **Parent**: Target element that the attribute is applied to (coded index)
 //! - **Type**: Constructor method for the custom attribute (coded index)
 //! - **Value**: Serialized attribute arguments and named parameters (blob)
@@ -23,7 +23,7 @@
 //! including types, methods, fields, assemblies, modules, and parameters.
 //!
 //! # Reference
-//! - [ECMA-335 II.22.10](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - CustomAttribute table specification
+//! - [ECMA-335 II.22.10](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `CustomAttribute` table specification
 //! - [ECMA-335 II.23.3](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Custom attribute encoding
 use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;

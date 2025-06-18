@@ -39,7 +39,7 @@
 //! The structure uses careful memory management:
 //! - **Zero-Copy Streams**: Metadata streams reference original file data
 //! - **Reference Counting**: Shared ownership of complex objects
-//! - **Lazy Loading**: Some components use OnceLock for deferred initialization
+//! - **Lazy Loading**: Some components use `OnceLock` for deferred initialization
 //! - **Concurrent Access**: Thread-safe data structures for parallel loading
 //!
 //! # Error Handling
@@ -85,7 +85,7 @@ use crate::{
 /// # Structure Organization
 ///
 /// **File Context**: Original file reference and raw binary data
-/// **Headers**: CLR header and metadata root information  
+/// **Headers**: CLR header and metadata root information\
 /// **Streams**: Parsed metadata streams (strings, blobs, GUIDs, etc.)
 /// **Tables**: Concurrent maps for all metadata table types
 /// **Registries**: Type system, imports, exports, and resource management

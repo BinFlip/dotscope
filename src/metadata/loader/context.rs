@@ -301,12 +301,12 @@ impl LoaderContext<'_> {
     /// # Supported Tables
     ///
     /// The method handles resolution for all major metadata table types:
-    /// - **Type Tables**: TypeDef, TypeRef, TypeSpec
-    /// - **Method Tables**: MethodDef, MemberRef, MethodSpec  
-    /// - **Field/Property Tables**: Field, Property, Param, Event
-    /// - **Assembly Tables**: Assembly, AssemblyRef, Module, ModuleRef
-    /// - **Generic Tables**: GenericParam, GenericParamConstraint
-    /// - **Other Tables**: File, ExportedType, StandAloneSig, DeclSecurity, InterfaceImpl
+    /// - **Type Tables**: `TypeDef`, `TypeRef`, `TypeSpec`
+    /// - **Method Tables**: `MethodDef`, `MemberRef`, `MethodSpec`  
+    /// - **Field/Property Tables**: `Field`, `Property`, `Param`, `Event`
+    /// - **Assembly Tables**: `Assembly`, `AssemblyRef`, Module, `ModuleRef`
+    /// - **Generic Tables**: `GenericParam`, `GenericParamConstraint`
+    /// - **Other Tables**: `File`, `ExportedType`, `StandAloneSig`, `DeclSecurity`, `InterfaceImpl`
     ///
     /// # Resolution Strategy
     ///

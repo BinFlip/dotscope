@@ -1,21 +1,21 @@
-//! Raw FieldMarshal structures for the FieldMarshal metadata table.
+//! Raw `FieldMarshal` structures for the `FieldMarshal` metadata table.
 //!
 //! This module provides the [`crate::metadata::tables::fieldmarshal::raw::FieldMarshalRaw`] struct for reading field marshal data
-//! directly from metadata tables before index resolution. The FieldMarshal table specifies
+//! directly from metadata tables before index resolution. The `FieldMarshal` table specifies
 //! marshalling behavior for fields and parameters when crossing managed/unmanaged boundaries.
 //!
 //! # Table Structure
-//! The FieldMarshal table (TableId = 0x0D) contains these columns:
-//! - `Parent`: HasFieldMarshal coded index (Field or Param reference)
+//! The `FieldMarshal` table (`TableId` = 0x0D) contains these columns:
+//! - `Parent`: `HasFieldMarshal` coded index (Field or Param reference)
 //! - `NativeType`: Blob heap index containing marshalling signature
 //!
 //! # Coded Index Types
-//! The Parent field uses the HasFieldMarshal coded index which can reference:
+//! The Parent field uses the `HasFieldMarshal` coded index which can reference:
 //! - **Field table entries**: For field marshalling specifications
 //! - **Param table entries**: For parameter marshalling specifications
 //!
 //! # Marshalling Context
-//! FieldMarshal entries are essential for interop scenarios:
+//! `FieldMarshal` entries are essential for interop scenarios:
 //! - **P/Invoke calls**: Parameter conversion for native function calls
 //! - **COM interop**: Field and parameter handling for COM objects
 //! - **Custom marshalling**: User-defined conversion behavior
@@ -23,7 +23,7 @@
 //! - **String processing**: Character encoding and memory management
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.17 for the FieldMarshal table specification.
+//! See ECMA-335, Partition II, §22.17 for the `FieldMarshal` table specification.
 
 use std::sync::Arc;
 
@@ -42,14 +42,14 @@ use crate::{
     Result,
 };
 
-/// Raw field marshal data read directly from the FieldMarshal metadata table.
+/// Raw field marshal data read directly from the `FieldMarshal` metadata table.
 ///
 /// This structure represents a field marshal entry before index resolution and blob
 /// parsing. Field marshals specify how fields and parameters should be converted
 /// when crossing managed/unmanaged boundaries during interop operations.
 ///
 /// # Binary Format
-/// Each row in the FieldMarshal table has this layout:
+/// Each row in the `FieldMarshal` table has this layout:
 /// ```text
 /// Offset | Size | Field      | Description
 /// -------|------|------------|----------------------------------
@@ -60,7 +60,7 @@ use crate::{
 /// The field sizes depend on the coded index size and blob heap size.
 ///
 /// # Marshalling Context
-/// FieldMarshal entries define conversion rules for:
+/// `FieldMarshal` entries define conversion rules for:
 /// - **P/Invoke parameters**: Method parameter conversion for native calls
 /// - **Interop fields**: Struct field marshalling for COM/native interop
 /// - **Custom marshallers**: User-defined conversion classes
@@ -68,17 +68,17 @@ use crate::{
 /// - **String marshalling**: Character encoding and memory strategies
 ///
 /// # Parent Entity Types
-/// The HasFieldMarshal coded index can reference:
+/// The `HasFieldMarshal` coded index can reference:
 /// - **Field entities**: For field marshalling in interop structures
 /// - **Parameter entities**: For parameter marshalling in P/Invoke methods
 ///
 /// # ECMA-335 Reference
-/// See ECMA-335, Partition II, §22.17 for the complete FieldMarshal table specification.
+/// See ECMA-335, Partition II, §22.17 for the complete `FieldMarshal` table specification.
 #[derive(Clone, Debug)]
 pub struct FieldMarshalRaw {
-    /// The row identifier in the FieldMarshal table.
+    /// The row identifier in the `FieldMarshal` table.
     ///
-    /// This 1-based index uniquely identifies this field marshal within the FieldMarshal table.
+    /// This 1-based index uniquely identifies this field marshal within the `FieldMarshal` table.
     pub rid: u32,
 
     /// The metadata token for this field marshal.
@@ -93,7 +93,7 @@ pub struct FieldMarshalRaw {
     /// metadata tables stream, used for binary parsing and navigation.
     pub offset: usize,
 
-    /// HasFieldMarshal coded index referencing the target entity.
+    /// `HasFieldMarshal` coded index referencing the target entity.
     ///
     /// A [`crate::metadata::tables::CodedIndex`] that can reference either a Field or Param table entry.
     /// This determines which entity the marshalling specification applies to.

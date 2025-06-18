@@ -9,7 +9,9 @@ use crate::{
     file::io::read_le_at_dyn,
     metadata::{
         method::MethodMap,
-        tables::{types::*, RowDefinition, StateMachineMethod, StateMachineMethodRc, TableId},
+        tables::{
+            types::TableInfoRef, RowDefinition, StateMachineMethod, StateMachineMethodRc, TableId,
+        },
         token::Token,
     },
     Error::TypeNotFound,

@@ -34,23 +34,23 @@
 //! The .NET Framework provides numerous permission classes, each controlling specific resource access:
 //!
 //! ### File System Permissions
-//! - **FileIOPermission**: Controls file system access (read, write, append, path discovery)
-//! - **IsolatedStoragePermission**: Controls isolated storage access
+//! - **`FileIOPermission`**: Controls file system access (read, write, append, path discovery)
+//! - **`IsolatedStoragePermission`**: Controls isolated storage access
 //!
 //! ### System Access Permissions
-//! - **SecurityPermission**: Controls security-sensitive operations (unmanaged code, reflection)
-//! - **RegistryPermission**: Controls Windows registry access
-//! - **EnvironmentPermission**: Controls environment variable access
+//! - **`SecurityPermission`**: Controls security-sensitive operations (unmanaged code, reflection)
+//! - **`RegistryPermission`**: Controls Windows registry access
+//! - **`EnvironmentPermission`**: Controls environment variable access
 //!
 //! ### Network and Communication
-//! - **SocketPermission**: Controls network socket operations
-//! - **WebPermission**: Controls HTTP web access
-//! - **DnsPermission**: Controls DNS resolution
+//! - **`SocketPermission`**: Controls network socket operations
+//! - **`WebPermission`**: Controls HTTP web access
+//! - **`DnsPermission`**: Controls DNS resolution
 //!
 //! ### Code Access Permissions
-//! - **ReflectionPermission**: Controls reflection and code analysis capabilities
-//! - **FileDialogPermission**: Controls file dialog operations
-//! - **UIPermission**: Controls user interface operations
+//! - **`ReflectionPermission`**: Controls reflection and code analysis capabilities
+//! - **`FileDialogPermission`**: Controls file dialog operations
+//! - **`UIPermission`**: Controls user interface operations
 //!
 //! ## Named Arguments Structure
 //! Each permission can have multiple named arguments that configure its behavior:
@@ -138,7 +138,7 @@
 //! println!("Argument count: {}", permission.named_arguments.len());
 //! ```
 //!
-//! ## Extracting File Paths from FileIOPermission
+//! ## Extracting File Paths from `FileIOPermission`
 //!
 //! ```rust,no_run
 //! use dotscope::metadata::security::Permission;
@@ -184,13 +184,13 @@
 //! - Support both static analysis and runtime security enforcement
 //!
 //! ## With Security Actions
-//! - Permissions work with security actions like Demand, Assert, Deny, PermitOnly
+//! - Permissions work with security actions like Demand, Assert, Deny, `PermitOnly`
 //! - Each action modifies how the permission is enforced at runtime
 //! - Actions determine whether permissions grant or restrict access
 //!
 //! # Binary Format
 //!
-//! Permissions are stored in DeclSecurity metadata using a custom binary format:
+//! Permissions are stored in `DeclSecurity` metadata using a custom binary format:
 //! ```text
 //! - Permission class name (string)
 //! - Assembly name (string)  
@@ -288,7 +288,7 @@ use std::fmt;
 ///
 /// # Binary Format Support
 ///
-/// Permissions are parsed from DeclSecurity metadata using the binary format defined
+/// Permissions are parsed from `DeclSecurity` metadata using the binary format defined
 /// in ECMA-335. The format includes the permission class name, assembly name, and
 /// a variable number of named arguments with their types and values.
 ///
@@ -325,7 +325,7 @@ pub struct Permission {
     /// Collection of named property/field arguments that configure this permission.
     ///
     /// Each named argument represents a property or field setting on the permission
-    /// instance, such as file paths for FileIOPermission or flags for SecurityPermission.
+    /// instance, such as file paths for `FileIOPermission` or flags for `SecurityPermission`.
     /// The collection may be empty for permissions that grant unrestricted access.
     pub named_arguments: Vec<NamedArgument>,
 }
@@ -371,12 +371,12 @@ impl Permission {
 
     /// Checks if this is a `FileIOPermission`.
     ///
-    /// FileIOPermissions control access to file system resources including read, write,
+    /// `FileIOPermissions` control access to file system resources including read, write,
     /// append, and path discovery operations.
     ///
     /// # Returns
     ///
-    /// `true` if this permission's class name matches the FileIOPermission type.
+    /// `true` if this permission's class name matches the `FileIOPermission` type.
     ///
     /// # Examples
     ///
@@ -399,13 +399,13 @@ impl Permission {
 
     /// Checks if this is a `SecurityPermission`.
     ///
-    /// SecurityPermissions control access to security-sensitive operations such as
+    /// `SecurityPermissions` control access to security-sensitive operations such as
     /// executing unmanaged code, skipping verification, controlling threads, and
     /// other runtime security features.
     ///
     /// # Returns
     ///
-    /// `true` if this permission's class name matches the SecurityPermission type.
+    /// `true` if this permission's class name matches the `SecurityPermission` type.
     ///
     /// # Examples
     ///
@@ -430,12 +430,12 @@ impl Permission {
 
     /// Checks if this is a `ReflectionPermission`.
     ///
-    /// ReflectionPermissions control access to reflection capabilities such as
+    /// `ReflectionPermissions` control access to reflection capabilities such as
     /// emitting IL code, invoking non-public members, and accessing type information.
     ///
     /// # Returns
     ///
-    /// `true` if this permission's class name matches the ReflectionPermission type.
+    /// `true` if this permission's class name matches the `ReflectionPermission` type.
     ///
     /// # Examples
     ///
@@ -458,12 +458,12 @@ impl Permission {
 
     /// Checks if this is a `RegistryPermission`.
     ///
-    /// RegistryPermissions control access to Windows registry operations including
+    /// `RegistryPermissions` control access to Windows registry operations including
     /// reading and writing registry keys and values.
     ///
     /// # Returns
     ///
-    /// `true` if this permission's class name matches the RegistryPermission type.
+    /// `true` if this permission's class name matches the `RegistryPermission` type.
     ///
     /// # Examples
     ///
@@ -486,12 +486,12 @@ impl Permission {
 
     /// Checks if this is a `UIPermission`.
     ///
-    /// UIPermissions control access to user interface operations such as
+    /// `UIPermissions` control access to user interface operations such as
     /// clipboard access, safe printing, and window manipulation.
     ///
     /// # Returns
     ///
-    /// `true` if this permission's class name matches the UIPermission type.
+    /// `true` if this permission's class name matches the `UIPermission` type.
     ///
     /// # Examples
     ///
@@ -514,12 +514,12 @@ impl Permission {
 
     /// Checks if this is an `EnvironmentPermission`.
     ///
-    /// EnvironmentPermissions control access to environment variable operations
+    /// `EnvironmentPermissions` control access to environment variable operations
     /// including reading and writing system and user environment variables.
     ///
     /// # Returns
     ///
-    /// `true` if this permission's class name matches the EnvironmentPermission type.
+    /// `true` if this permission's class name matches the `EnvironmentPermission` type.
     ///
     /// # Examples
     ///
@@ -575,16 +575,16 @@ impl Permission {
         self.named_arguments.iter().find(|arg| arg.name == name)
     }
 
-    /// Extracts file paths granted read access from a FileIOPermission.
+    /// Extracts file paths granted read access from a `FileIOPermission`.
     ///
-    /// This method specifically looks for the "Read" argument in FileIOPermissions
+    /// This method specifically looks for the "Read" argument in `FileIOPermissions`
     /// and extracts the file paths specified for read access. The paths can be
     /// specified as a single string or an array of strings.
     ///
     /// # Returns
     ///
-    /// - `Some(Vec<String>)` containing the read paths if this is a FileIOPermission with a "Read" argument
-    /// - `None` if this is not a FileIOPermission or has no "Read" argument
+    /// - `Some(Vec<String>)` containing the read paths if this is a `FileIOPermission` with a "Read" argument
+    /// - `None` if this is not a `FileIOPermission` or has no "Read" argument
     ///
     /// # Examples
     ///
@@ -633,16 +633,16 @@ impl Permission {
         }
     }
 
-    /// Extracts file paths granted write access from a FileIOPermission.
+    /// Extracts file paths granted write access from a `FileIOPermission`.
     ///
-    /// This method specifically looks for the "Write" argument in FileIOPermissions
+    /// This method specifically looks for the "Write" argument in `FileIOPermissions`
     /// and extracts the file paths specified for write access. The paths can be
     /// specified as a single string or an array of strings.
     ///
     /// # Returns
     ///
-    /// - `Some(Vec<String>)` containing the write paths if this is a FileIOPermission with a "Write" argument
-    /// - `None` if this is not a FileIOPermission or has no "Write" argument
+    /// - `Some(Vec<String>)` containing the write paths if this is a `FileIOPermission` with a "Write" argument
+    /// - `None` if this is not a `FileIOPermission` or has no "Write" argument
     ///
     /// # Examples
     ///
@@ -696,16 +696,16 @@ impl Permission {
         }
     }
 
-    /// Extracts file paths granted path discovery access from a FileIOPermission.
+    /// Extracts file paths granted path discovery access from a `FileIOPermission`.
     ///
     /// Path discovery permission allows code to determine if a file or directory exists
     /// and to retrieve path information, but not to read the actual contents.
-    /// This method looks for the "PathDiscovery" argument in FileIOPermissions.
+    /// This method looks for the "`PathDiscovery`" argument in `FileIOPermissions`.
     ///
     /// # Returns
     ///
-    /// - `Some(Vec<String>)` containing the path discovery paths if this is a FileIOPermission with a "PathDiscovery" argument
-    /// - `None` if this is not a FileIOPermission or has no "PathDiscovery" argument
+    /// - `Some(Vec<String>)` containing the path discovery paths if this is a `FileIOPermission` with a "`PathDiscovery`" argument
+    /// - `None` if this is not a `FileIOPermission` or has no "`PathDiscovery`" argument
     ///
     /// # Examples
     ///
@@ -804,16 +804,16 @@ impl Permission {
         false
     }
 
-    /// Extracts security permission flags from a SecurityPermission.
+    /// Extracts security permission flags from a `SecurityPermission`.
     ///
-    /// SecurityPermissions use a flags enumeration to specify which security-sensitive
+    /// `SecurityPermissions` use a flags enumeration to specify which security-sensitive
     /// operations are allowed. This method parses the "Flags" argument and returns
     /// the corresponding [`crate::metadata::security::SecurityPermissionFlags`].
     ///
     /// # Returns
     ///
-    /// - `Some(SecurityPermissionFlags)` if this is a SecurityPermission with valid flags
-    /// - `None` if this is not a SecurityPermission or has no flags argument
+    /// - `Some(SecurityPermissionFlags)` if this is a `SecurityPermission` with valid flags
+    /// - `None` if this is not a `SecurityPermission` or has no flags argument
     ///
     /// # Supported Flag Formats
     ///
@@ -847,11 +847,11 @@ impl Permission {
     /// # Common Security Flags
     ///
     /// - **Execution**: Allows code execution
-    /// - **UnmanagedCode**: Allows calling unmanaged code
-    /// - **SkipVerification**: Allows skipping IL verification
+    /// - **`UnmanagedCode`**: Allows calling unmanaged code
+    /// - **`SkipVerification`**: Allows skipping IL verification
     /// - **Assertion**: Allows asserting permissions
-    /// - **ControlThread**: Allows thread manipulation
-    /// - **ControlPolicy**: Allows security policy control
+    /// - **`ControlThread`**: Allows thread manipulation
+    /// - **`ControlPolicy`**: Allows security policy control
     #[must_use]
     pub fn get_security_flags(&self) -> Option<SecurityPermissionFlags> {
         if !self.is_security() {
@@ -875,11 +875,11 @@ impl Permission {
     ///
     /// This internal method handles the conversion of string-based flag specifications
     /// to the corresponding [`crate::metadata::security::SecurityPermissionFlags`] bitfield.
-    /// It supports both individual flag names and the special "AllFlags" value.
+    /// It supports both individual flag names and the special "`AllFlags`" value.
     ///
     /// # Arguments
     ///
-    /// * `flags_str` - A string containing comma-separated flag names or "AllFlags"
+    /// * `flags_str` - A string containing comma-separated flag names or "`AllFlags`"
     ///
     /// # Returns
     ///

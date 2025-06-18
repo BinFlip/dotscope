@@ -1,18 +1,18 @@
-//! Raw GenericParam structures for the GenericParam metadata table.
+//! Raw `GenericParam` structures for the `GenericParam` metadata table.
 //!
 //! This module provides the [`GenericParamRaw`] struct for reading generic parameter data
-//! directly from metadata tables before index resolution. The GenericParam table defines
+//! directly from metadata tables before index resolution. The `GenericParam` table defines
 //! generic type and method parameters for .NET generic programming support.
 //!
 //! # Table Structure
-//! The GenericParam table (TableId = 0x2A) contains these columns:
+//! The `GenericParam` table (`TableId` = 0x2A) contains these columns:
 //! - `Number`: 2-byte ordinal position of the parameter (0-based)
-//! - `Flags`: 2-byte GenericParamAttributes bitmask
-//! - `Owner`: Coded index into TypeOrMethodDef (TypeDef or MethodDef)
+//! - `Flags`: 2-byte `GenericParamAttributes` bitmask
+//! - `Owner`: Coded index into `TypeOrMethodDef` (`TypeDef` or `MethodDef`)
 //! - `Name`: Index into String heap containing parameter name
 //!
 //! # Generic Parameter Context
-//! GenericParam entries enable generic programming scenarios:
+//! `GenericParam` entries enable generic programming scenarios:
 //! - **Generic types**: Type parameters for classes and interfaces (`List<T>`)
 //! - **Generic methods**: Method-level type parameters (`Method<U>()`)
 //! - **Constraint specification**: Base class and interface constraints
@@ -20,7 +20,7 @@
 //! - **Reflection metadata**: Runtime access to parameter information
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.20 for the GenericParam table specification.
+//! See ECMA-335, Partition II, §22.20 for the `GenericParam` table specification.
 
 use std::sync::{Arc, OnceLock};
 
@@ -37,14 +37,14 @@ use crate::{
     Result,
 };
 
-/// Raw generic parameter data read directly from the GenericParam metadata table.
+/// Raw generic parameter data read directly from the `GenericParam` metadata table.
 ///
 /// This structure represents a generic parameter entry before index resolution and
 /// reference dereferencing. Generic parameters define type and method parameters
 /// that enable generic programming with type safety and performance benefits.
 ///
 /// # Binary Format
-/// Each row in the GenericParam table has this layout:
+/// Each row in the `GenericParam` table has this layout:
 /// ```text
 /// Offset | Size | Field  | Description
 /// -------|------|--------|----------------------------------
@@ -57,7 +57,7 @@ use crate::{
 /// Owner and Name index sizes depend on table and heap sizes.
 ///
 /// # Generic Parameter Context
-/// GenericParam entries are used for:
+/// `GenericParam` entries are used for:
 /// - **Type parameters**: Defined on generic types (`class List<T>`)
 /// - **Method parameters**: Defined on generic methods (`void Method<U>()`)
 /// - **Constraint definitions**: Specifying parameter constraints
@@ -65,23 +65,23 @@ use crate::{
 /// - **Name resolution**: Parameter names for signatures and reflection
 ///
 /// # Parameter Attributes
-/// The Flags field contains GenericParamAttributes values:
+/// The Flags field contains `GenericParamAttributes` values:
 /// - **Variance**: COVARIANT, CONTRAVARIANT for assignment compatibility
 /// - **Constraints**: Reference type, value type, constructor constraints
 /// - **Special flags**: Additional constraint and variance information
 ///
 /// # Owner Types
-/// The Owner field uses TypeOrMethodDef coded index:
-/// - **TypeDef**: For type-level generic parameters (`class Generic<T>`)
-/// - **MethodDef**: For method-level generic parameters (`Method<U>()`)
+/// The Owner field uses `TypeOrMethodDef` coded index:
+/// - **`TypeDef`**: For type-level generic parameters (`class Generic<T>`)
+/// - **`MethodDef`**: For method-level generic parameters (`Method<U>()`)
 ///
 /// # ECMA-335 Reference
-/// See ECMA-335, Partition II, §22.20 for the complete GenericParam table specification.
+/// See ECMA-335, Partition II, §22.20 for the complete `GenericParam` table specification.
 #[derive(Clone, Debug)]
 pub struct GenericParamRaw {
-    /// The row identifier in the GenericParam table.
+    /// The row identifier in the `GenericParam` table.
     ///
-    /// This 1-based index uniquely identifies this generic parameter within the GenericParam table.
+    /// This 1-based index uniquely identifies this generic parameter within the `GenericParam` table.
     pub rid: u32,
 
     /// The metadata token for this generic parameter.
@@ -106,15 +106,15 @@ pub struct GenericParamRaw {
 
     /// Generic parameter attribute flags indicating constraints and variance.
     ///
-    /// A 2-byte bitmask of GenericParamAttributes values that specify variance,
+    /// A 2-byte bitmask of `GenericParamAttributes` values that specify variance,
     /// constraints, and other parameter characteristics.
     pub flags: u32,
 
-    /// Coded index into the TypeOrMethodDef tables for the parameter owner.
+    /// Coded index into the `TypeOrMethodDef` tables for the parameter owner.
     ///
     /// A [`CodedIndex`] that references either:
-    /// - **TypeDef**: For type-level generic parameters
-    /// - **MethodDef**: For method-level generic parameters
+    /// - **`TypeDef`**: For type-level generic parameters
+    /// - **`MethodDef`**: For method-level generic parameters
     ///
     /// [`CodedIndex`]: crate::metadata::tables::CodedIndex
     pub owner: CodedIndex,
@@ -139,9 +139,12 @@ impl GenericParamRaw {
     ///
     /// # Returns
     /// Returns a reference-counted [`GenericParam`] with resolved data, or an error if:
-    /// - Owner reference resolution fails (returns CilTypeReference::None)
+    /// - Owner reference resolution fails (returns `CilTypeReference::None`)
     /// - String heap lookup fails for the parameter name
     /// - Memory allocation fails during conversion
+    ///
+    /// # Errors
+    /// Returns an error if the owner reference cannot be resolved, the parameter name cannot be found in the string heap, or if memory allocation fails during conversion.
     pub fn to_owned<F>(&self, get_ref: F, strings: &Strings) -> Result<GenericParamRc>
     where
         F: Fn(&CodedIndex) -> CilTypeReference,

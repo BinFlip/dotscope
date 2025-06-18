@@ -1,7 +1,7 @@
-//! MemberRef table implementation for external member references.
+//! `MemberRef` table implementation for external member references.
 //!
-//! This module provides complete support for the MemberRef metadata table, which defines
-//! references to members (fields and methods) in external assemblies or modules. The MemberRef
+//! This module provides complete support for the `MemberRef` metadata table, which defines
+//! references to members (fields and methods) in external assemblies or modules. The `MemberRef`
 //! table is essential for cross-assembly interoperability, late binding, and dynamic member
 //! access in .NET applications.
 //!
@@ -15,12 +15,12 @@
 //! # Table Structure (ECMA-335 §22.25)
 //! | Column | Type | Description |
 //! |--------|------|-------------|
-//! | Class | MemberRefParent coded index | Declaring type or module reference |
+//! | Class | `MemberRefParent` coded index | Declaring type or module reference |
 //! | Name | String heap index | Member name identifier |
 //! | Signature | Blob heap index | Member signature (method or field) |
 //!
 //! # Member Reference Types
-//! The MemberRef table supports references to different kinds of external members:
+//! The `MemberRef` table supports references to different kinds of external members:
 //! - **Field references**: External field access with type information and metadata
 //! - **Method references**: External method calls with parameter and return type signatures
 //! - **Constructor references**: Object creation with parameter specifications
@@ -28,12 +28,12 @@
 //! - **Vararg method references**: Variable argument method calls with parameter lists
 //!
 //! # Parent Reference Types
-//! The Class column uses MemberRefParent coded index encoding to specify the declaring context:
-//! - **TypeDef**: Members declared in the current assembly's types
-//! - **TypeRef**: Members declared in external assembly types
-//! - **ModuleRef**: Global members declared in external modules
-//! - **MethodDef**: Vararg method signatures referencing specific method definitions
-//! - **TypeSpec**: Members of generic type instantiations
+//! The Class column uses `MemberRefParent` coded index encoding to specify the declaring context:
+//! - **`TypeDef`**: Members declared in the current assembly's types
+//! - **`TypeRef`**: Members declared in external assembly types
+//! - **`ModuleRef`**: Global members declared in external modules
+//! - **`MethodDef`**: Vararg method signatures referencing specific method definitions
+//! - **`TypeSpec`**: Members of generic type instantiations
 //!
 //! # Signature Resolution
 //! Member signatures in the blob heap are parsed according to their type:
@@ -43,8 +43,8 @@
 //! - **Vararg signatures**: Include fixed and variable parameter specifications
 //!
 //! # ECMA-335 References
-//! - ECMA-335, Partition II, §22.25: MemberRef table specification
-//! - ECMA-335, Partition II, §23.2.6: MemberRefParent coded index encoding
+//! - ECMA-335, Partition II, §22.25: `MemberRef` table specification
+//! - ECMA-335, Partition II, §23.2.6: `MemberRefParent` coded index encoding
 //! - ECMA-335, Partition II, §23.2: Method and field signature specifications
 use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;

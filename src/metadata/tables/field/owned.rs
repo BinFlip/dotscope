@@ -2,7 +2,7 @@
 //!
 //! This module provides the [`crate::metadata::tables::field::owned::Field`] struct which represents field definitions
 //! with resolved references and owned data. Fields define the data members of types
-//! in the TypeDef table, including instance fields, static fields, and literals.
+//! in the `TypeDef` table, including instance fields, static fields, and literals.
 //!
 //! # ECMA-335 Reference
 //! See ECMA-335, Partition II, §22.15 for the Field table specification.
@@ -51,22 +51,22 @@ pub struct Field {
     ///
     /// A 2-byte bitmask of type `FieldAttributes` as defined in ECMA-335, §II.23.1.5.
     /// This includes accessibility modifiers, static/instance designation, and
-    /// special flags like HasDefault, HasFieldRVA, and HasFieldMarshal.
+    /// special flags like `HasDefault`, `HasFieldRVA`, and `HasFieldMarshal`.
     ///
     /// Common flag values:
-    /// - `0x0001`: CompilerControlled
-    /// - `0x0002`: Private  
-    /// - `0x0003`: FamANDAssem
-    /// - `0x0004`: Assembly
-    /// - `0x0005`: Family
-    /// - `0x0006`: FamORAssem
-    /// - `0x0007`: Public
-    /// - `0x0010`: Static
-    /// - `0x0020`: Literal
-    /// - `0x0040`: NotSerialized
-    /// - `0x0080`: HasFieldRVA
-    /// - `0x1000`: HasDefault
-    /// - `0x2000`: HasFieldMarshal
+    /// - `0x0001`: `CompilerControlled`
+    /// - `0x0002`: `Private`  
+    /// - `0x0003`: `FamANDAssem`
+    /// - `0x0004`: `Assembly`
+    /// - `0x0005`: `Family`
+    /// - `0x0006`: `FamORAssem`
+    /// - `0x0007`: `Public`
+    /// - `0x0010`: `Static`
+    /// - `0x0020`: `Literal`
+    /// - `0x0040`: `NotSerialized`
+    /// - `0x0080`: `HasFieldRVA`
+    /// - `0x1000`: `HasDefault`
+    /// - `0x2000`: `HasFieldMarshal`
     pub flags: u32,
 
     /// The name of the field.
@@ -99,7 +99,7 @@ pub struct Field {
     /// Field layout offset within the containing type (lazy-loaded).
     ///
     /// A 4-byte value specifying the byte offset of the field within its
-    /// containing class or value type. This is loaded from the FieldLayout
+    /// containing class or value type. This is loaded from the `FieldLayout`
     /// table when explicit field positioning is used.
     pub layout: OnceLock<u32>,
 

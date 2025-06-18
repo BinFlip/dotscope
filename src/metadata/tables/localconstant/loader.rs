@@ -1,7 +1,7 @@
-//! LocalConstant table loader for metadata processing
+//! `LocalConstant` table loader for metadata processing
 //!
 //! This module provides the [`LocalConstantLoader`] implementation for processing
-//! LocalConstant table data during metadata loading. The loader handles parallel
+//! `LocalConstant` table data during metadata loading. The loader handles parallel
 //! processing and integration with the broader loader context.
 
 use crate::{
@@ -12,9 +12,9 @@ use crate::{
     Result,
 };
 
-/// Loader for the LocalConstant metadata table
+/// Loader for the `LocalConstant` metadata table
 ///
-/// Implements [`MetadataLoader`] to process the LocalConstant table (0x34)
+/// Implements [`MetadataLoader`] to process the `LocalConstant` table (0x34)
 /// which stores information about local constants within method scopes,
 /// including their names, signatures, and constant values in Portable PDB format.
 /// This loader handles the conversion from raw binary data to structured constant

@@ -1,7 +1,7 @@
-//! Raw LocalConstant table representation for Portable PDB format
+//! Raw `LocalConstant` table representation for Portable PDB format
 //!
 //! This module provides the [`LocalConstantRaw`] struct that represents
-//! the binary format of LocalConstant table entries as they appear in
+//! the binary format of `LocalConstant` table entries as they appear in
 //! the metadata tables stream. This is the low-level representation used during
 //! the initial parsing phase, containing unresolved heap indices.
 
@@ -10,23 +10,26 @@ use crate::{
     metadata::{
         signatures::{parse_field_signature, SignatureField, TypeSignature},
         streams::{Blob, Strings},
-        tables::{types::*, LocalConstant, LocalConstantRc},
+        tables::{
+            types::{RowDefinition, TableInfoRef},
+            LocalConstant, LocalConstantRc,
+        },
         token::Token,
     },
     Result,
 };
 use std::sync::Arc;
 
-/// Raw binary representation of a LocalConstant table entry
+/// Raw binary representation of a `LocalConstant` table entry
 ///
-/// This structure matches the exact binary layout of LocalConstant table
+/// This structure matches the exact binary layout of `LocalConstant` table
 /// entries in the metadata tables stream. Both Name and Signature fields contain
 /// unresolved indices into their respective heaps that must be resolved during
 /// conversion to the owned [`LocalConstant`] variant.
 ///
 /// # Binary Format
 ///
-/// Each LocalConstant table entry consists of:
+/// Each `LocalConstant` table entry consists of:
 /// - Name: Index into #Strings heap for the constant name
 /// - Signature: Index into #Blob heap for the constant signature
 #[derive(Debug, Clone)]
@@ -34,7 +37,7 @@ pub struct LocalConstantRaw {
     /// Row identifier (1-based index in the table)
     pub rid: u32,
 
-    /// Metadata token for this LocalConstant entry
+    /// Metadata token for this `LocalConstant` entry
     pub token: Token,
 
     /// Byte offset of this row in the original metadata stream
@@ -56,9 +59,9 @@ pub struct LocalConstantRaw {
 }
 
 impl LocalConstantRaw {
-    /// Converts this raw LocalConstant entry to an owned [`LocalConstant`] instance
+    /// Converts this raw `LocalConstant` entry to an owned [`LocalConstant`] instance
     ///
-    /// This method resolves the raw LocalConstant entry to create a complete LocalConstant
+    /// This method resolves the raw `LocalConstant` entry to create a complete `LocalConstant`
     /// object by resolving the name string from the #Strings heap and signature data
     /// from the #Blob heap.
     ///
@@ -69,6 +72,9 @@ impl LocalConstantRaw {
     /// # Returns
     /// Returns `Ok(LocalConstantRc)` with the resolved constant data, or an error if
     /// the name or signature indices are invalid or point to malformed data.
+    ///
+    /// # Errors
+    /// Returns an error if the name or signature indices are invalid or if the data is malformed.
     ///
     /// # Example
     ///

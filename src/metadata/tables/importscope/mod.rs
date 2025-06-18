@@ -1,11 +1,11 @@
-//! ImportScope table implementation for Portable PDB format
+//! `ImportScope` table implementation for Portable PDB format
 //!
-//! This module provides access to ImportScope table data, which contains information
+//! This module provides access to `ImportScope` table data, which contains information
 //! about import scopes that define the set of namespaces and types that are accessible
 //! within a lexical scope. Import scopes are used by debuggers to resolve symbol names
 //! within the context of a specific scope.
 //!
-//! The ImportScope table follows the dual-representation pattern used throughout
+//! The `ImportScope` table follows the dual-representation pattern used throughout
 //! the dotscope library:
 //! - [`ImportScopeRaw`] for raw binary data with unresolved heap indices
 //! - [`ImportScope`] for processed data with resolved string and blob values

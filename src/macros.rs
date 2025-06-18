@@ -18,8 +18,8 @@
 //! # Key Components
 //!
 //! - `lock!` - Acquire a mutex lock with panic on failure
-//! - `read_lock!` - Acquire a read lock on an RwLock with panic on failure
-//! - `write_lock!` - Acquire a write lock on an RwLock with panic on failure
+//! - `read_lock!` - Acquire a read lock on an `RwLock` with panic on failure
+//! - `write_lock!` - Acquire a write lock on an `RwLock` with panic on failure
 //! - `with_read!` - Execute a closure with a read lock
 //! - `with_write!` - Execute a closure with a write lock
 //! - `map_get_read!` - Get an item from a map and acquire a read lock

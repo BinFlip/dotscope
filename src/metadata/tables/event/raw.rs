@@ -8,12 +8,12 @@
 //! # Event Table Format
 //!
 //! The Event table (0x14) contains event definitions with these fields:
-//! - **EventFlags** (2 bytes): Event attributes bitmask
+//! - **`EventFlags`** (2 bytes): Event attributes bitmask
 //! - **Name** (2/4 bytes): String heap index for event name
-//! - **EventType** (2/4 bytes): TypeDefOrRef coded index for event handler type
+//! - **`EventType`** (2/4 bytes): `TypeDefOrRef` coded index for event handler type
 //!
 //! Events define notification mechanisms that types can expose. They are associated
-//! with accessor methods (add/remove/raise/other) through the MethodSemantics table.
+//! with accessor methods (add/remove/raise/other) through the `MethodSemantics` table.
 //!
 //! # Reference
 //! - [ECMA-335 II.22.13](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Event table specification
@@ -78,8 +78,8 @@ pub struct EventRaw {
 
     /// Event handler type coded index (unresolved)
     ///
-    /// TypeDefOrRef coded index referencing the delegate type that defines the
-    /// event handler signature. Can point to TypeDef, TypeRef, or TypeSpec tables.
+    /// `TypeDefOrRef` coded index referencing the delegate type that defines the
+    /// event handler signature. Can point to `TypeDef`, `TypeRef`, or `TypeSpec` tables.
     /// Must be resolved using the type registry to obtain the actual type reference.
     pub event_type: CodedIndex,
 }
@@ -142,13 +142,16 @@ impl EventRaw {
     ///
     /// Events define notification interfaces but don't create direct relationships
     /// with other metadata during initial loading. Event accessor methods (add/remove/raise/other)
-    /// are resolved separately through the MethodSemantics table processing, which occurs
+    /// are resolved separately through the `MethodSemantics` table processing, which occurs
     /// after basic table loading is complete.
     ///
     /// # Returns
     ///
     /// Always returns `Ok(())` since events don't perform cross-table modifications
     /// during the initial loading phase.
+    ///
+    /// # Errors
+    /// This function never returns an error.
     pub fn apply(&self) -> Result<()> {
         Ok(())
     }

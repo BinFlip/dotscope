@@ -1,8 +1,8 @@
-//! Raw AssemblyRefProcessor table representation.
+//! Raw `AssemblyRefProcessor` table representation.
 //!
 //! This module provides the [`crate::metadata::tables::assemblyrefprocessor::raw::AssemblyRefProcessorRaw`] struct
-//! for low-level access to AssemblyRefProcessor metadata table data with unresolved table indexes.
-//! This represents the binary format of AssemblyRefProcessor records as they appear in the metadata
+//! for low-level access to `AssemblyRefProcessor` metadata table data with unresolved table indexes.
+//! This represents the binary format of `AssemblyRefProcessor` records as they appear in the metadata
 //! tables stream, requiring resolution to create usable data structures.
 //!
 //! # Architecture
@@ -17,11 +17,11 @@
 //! - [`crate::metadata::tables::assemblyrefprocessor::raw::AssemblyRefProcessorRaw::to_owned`] - Resolution to owned representation
 //! - [`crate::metadata::tables::assemblyrefprocessor::raw::AssemblyRefProcessorRaw::apply`] - Direct application of processor data
 //!
-//! # AssemblyRefProcessor Table Format
+//! # `AssemblyRefProcessor` Table Format
 //!
-//! The AssemblyRefProcessor table (0x24) contains zero or more rows with these fields:
+//! The `AssemblyRefProcessor` table (0x24) contains zero or more rows with these fields:
 //! - **Processor** (4 bytes): Processor architecture identifier
-//! - **AssemblyRef** (2/4 bytes): Table index into AssemblyRef table
+//! - **`AssemblyRef`** (2/4 bytes): Table index into `AssemblyRef` table
 //!
 //! # Usage Examples
 //!
@@ -41,7 +41,7 @@
 //! # Error Handling
 //!
 //! Raw table operations can fail if:
-//! - Referenced AssemblyRef entries are missing from the provided map
+//! - Referenced `AssemblyRef` entries are missing from the provided map
 //! - Assembly reference tokens are invalid or malformed
 //! - Table data is corrupted or incomplete
 //!
@@ -60,7 +60,7 @@
 //!
 //! # References
 //!
-//! - [ECMA-335 II.22.8](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyRefProcessor table specification
+//! - [ECMA-335 II.22.8](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyRefProcessor` table specification
 
 use std::sync::{atomic::Ordering, Arc};
 
@@ -77,20 +77,20 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-/// Raw AssemblyRefProcessor table row with unresolved table indexes
+/// Raw `AssemblyRefProcessor` table row with unresolved table indexes
 ///
-/// Represents the binary format of an AssemblyRefProcessor metadata table entry (table ID 0x24) as stored
-/// in the metadata tables stream. The AssemblyRef field contains a table index that must be
+/// Represents the binary format of an `AssemblyRefProcessor` metadata table entry (table ID 0x24) as stored
+/// in the metadata tables stream. The `AssemblyRef` field contains a table index that must be
 /// resolved using the [`crate::metadata::tables::assemblyref::AssemblyRefMap`] to access the
 /// referenced assembly data.
 ///
-/// The AssemblyRefProcessor table specifies processor architecture requirements for external
+/// The `AssemblyRefProcessor` table specifies processor architecture requirements for external
 /// assembly references, allowing assemblies to declare explicit processor compatibility dependencies.
 /// This table is rarely used in modern .NET assemblies and is considered legacy.
 ///
 /// # Processor Architecture Targeting
 ///
-/// The AssemblyRefProcessor entry contains processor identification requirements:
+/// The `AssemblyRefProcessor` entry contains processor identification requirements:
 /// - **Processor**: Architecture identifier (x86, x64, ARM, etc.)
 /// - **Assembly Reference**: Link to the external assembly requiring these processor constraints
 ///
@@ -107,22 +107,22 @@ use crate::{
 ///
 /// # References
 ///
-/// - [ECMA-335 II.22.8](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyRefProcessor table specification
+/// - [ECMA-335 II.22.8](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyRefProcessor` table specification
 pub struct AssemblyRefProcessorRaw {
-    /// Row identifier within the AssemblyRefProcessor metadata table
+    /// Row identifier within the `AssemblyRefProcessor` metadata table
     ///
-    /// The 1-based index of this AssemblyRefProcessor row within the table.
+    /// The 1-based index of this `AssemblyRefProcessor` row within the table.
     pub rid: u32,
 
-    /// Metadata token for this AssemblyRefProcessor entry
+    /// Metadata token for this `AssemblyRefProcessor` entry
     ///
-    /// Combines the table identifier (0x24 for AssemblyRefProcessor) with the row ID to create
+    /// Combines the table identifier (0x24 for `AssemblyRefProcessor`) with the row ID to create
     /// a unique token that can be used to reference this entry from other metadata.
     pub token: Token,
 
-    /// Byte offset of this AssemblyRefProcessor row within the metadata tables stream
+    /// Byte offset of this `AssemblyRefProcessor` row within the metadata tables stream
     ///
-    /// Physical location of the raw AssemblyRefProcessor data within the metadata binary format.
+    /// Physical location of the raw `AssemblyRefProcessor` data within the metadata binary format.
     /// Used for debugging and low-level metadata analysis.
     pub offset: usize,
 
@@ -138,7 +138,7 @@ pub struct AssemblyRefProcessorRaw {
     /// See processor architecture constants in PE specification for standard values.
     pub processor: u32,
 
-    /// Table index into the AssemblyRef table
+    /// Table index into the `AssemblyRef` table
     ///
     /// 1-based index referencing the [`crate::metadata::tables::assemblyref::AssemblyRefRaw`]
     /// entry that represents the external assembly these processor requirements apply to.
@@ -147,10 +147,10 @@ pub struct AssemblyRefProcessorRaw {
 }
 
 impl AssemblyRefProcessorRaw {
-    /// Convert raw AssemblyRefProcessor data to owned representation with resolved references
+    /// Convert raw `AssemblyRefProcessor` data to owned representation with resolved references
     ///
     /// Creates an [`crate::metadata::tables::assemblyrefprocessor::AssemblyRefProcessorRc`] from this raw data
-    /// by resolving the AssemblyRef table index to the actual assembly reference. The resulting
+    /// by resolving the `AssemblyRef` table index to the actual assembly reference. The resulting
     /// structure contains all necessary data for representing processor compatibility requirements in
     /// a usable form without requiring further table lookups.
     ///
@@ -165,15 +165,15 @@ impl AssemblyRefProcessorRaw {
     ///
     /// # Returns
     ///
-    /// * `Ok(`[`crate::metadata::tables::assemblyrefprocessor::AssemblyRefProcessorRc`]`)` - Successfully resolved AssemblyRefProcessor data
+    /// * `Ok(`[`crate::metadata::tables::assemblyrefprocessor::AssemblyRefProcessorRc`]`)` - Successfully resolved `AssemblyRefProcessor` data
     /// * `Err(`[`crate::Error`]`)` - Assembly reference resolution failed
     ///
     /// # Errors
     ///
     /// Returns [`crate::Error`] if:
-    /// - The referenced AssemblyRef entry cannot be found in the provided map
+    /// - The referenced `AssemblyRef` entry cannot be found in the provided map
     /// - The assembly reference token is invalid or malformed
-    /// - The AssemblyRef table index is out of bounds
+    /// - The `AssemblyRef` table index is out of bounds
     ///
     /// # Thread Safety
     ///
@@ -200,11 +200,11 @@ impl AssemblyRefProcessorRaw {
     /// Apply processor architecture information directly to the referenced assembly
     ///
     /// Updates the assembly reference with processor architecture information from this
-    /// AssemblyRefProcessor entry without creating an owned representation. This is used when
-    /// only the processor data needs to be applied without retaining the AssemblyRefProcessor structure,
+    /// `AssemblyRefProcessor` entry without creating an owned representation. This is used when
+    /// only the processor data needs to be applied without retaining the `AssemblyRefProcessor` structure,
     /// providing a more efficient path for bulk processor data application.
     ///
-    /// The method resolves the AssemblyRef table index and uses atomic operations to update
+    /// The method resolves the `AssemblyRef` table index and uses atomic operations to update
     /// the processor compatibility field in the referenced assembly entry, ensuring thread-safe
     /// modifications without requiring external synchronization.
     ///
@@ -221,15 +221,15 @@ impl AssemblyRefProcessorRaw {
     /// # Errors
     ///
     /// Returns [`crate::Error`] if:
-    /// - The referenced AssemblyRef entry cannot be found in the provided map
+    /// - The referenced `AssemblyRef` entry cannot be found in the provided map
     /// - The assembly reference token is invalid or malformed
-    /// - The AssemblyRef table index is out of bounds
+    /// - The `AssemblyRef` table index is out of bounds
     ///
     /// # Thread Safety
     ///
     /// This method is thread-safe and uses atomic operations ([`std::sync::atomic::Ordering::Relaxed`])
     /// to update assembly reference fields. Multiple threads can safely call this method
-    /// concurrently on different AssemblyRefProcessor entries.
+    /// concurrently on different `AssemblyRefProcessor` entries.
     pub fn apply(&self, refs: &AssemblyRefMap) -> Result<()> {
         match refs.get(&Token::new(self.assembly_ref | 0x2300_0000)) {
             Some(refs) => {

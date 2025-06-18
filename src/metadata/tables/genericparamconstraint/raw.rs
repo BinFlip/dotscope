@@ -1,16 +1,16 @@
-//! Raw GenericParamConstraint structures for the GenericParamConstraint metadata table.
+//! Raw `GenericParamConstraint` structures for the `GenericParamConstraint` metadata table.
 //!
 //! This module provides the [`GenericParamConstraintRaw`] struct for reading constraint data
-//! directly from metadata tables before index resolution. The GenericParamConstraint table
+//! directly from metadata tables before index resolution. The `GenericParamConstraint` table
 //! defines constraints that apply to generic parameters, specifying type requirements.
 //!
 //! # Table Structure
-//! The GenericParamConstraint table (TableId = 0x2C) contains these columns:
-//! - `Owner`: Index into GenericParam table for the constrained parameter
-//! - `Constraint`: Coded index into TypeDefOrRef for the constraint type
+//! The `GenericParamConstraint` table (`TableId` = 0x2C) contains these columns:
+//! - `Owner`: Index into `GenericParam` table for the constrained parameter
+//! - `Constraint`: Coded index into `TypeDefOrRef` for the constraint type
 //!
 //! # Constraint Context
-//! GenericParamConstraint entries enable constraint-based generic programming:
+//! `GenericParamConstraint` entries enable constraint-based generic programming:
 //! - **Base class constraints**: Inheritance requirements for type arguments
 //! - **Interface constraints**: Implementation requirements for type arguments
 //! - **Multiple constraints**: Parameters can have multiple constraint entries
@@ -18,7 +18,7 @@
 //! - **Code optimization**: Enabling specialized code generation for constrained types
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.21 for the GenericParamConstraint table specification.
+//! See ECMA-335, Partition II, §22.21 for the `GenericParamConstraint` table specification.
 use std::sync::Arc;
 
 use crate::{
@@ -35,14 +35,14 @@ use crate::{
     Result,
 };
 
-/// Raw generic parameter constraint data read directly from the GenericParamConstraint metadata table.
+/// Raw generic parameter constraint data read directly from the `GenericParamConstraint` metadata table.
 ///
 /// This structure represents a constraint entry before index resolution and reference
 /// dereferencing. Generic parameter constraints specify type requirements that must
 /// be satisfied by type arguments for generic parameters.
 ///
 /// # Binary Format
-/// Each row in the GenericParamConstraint table has this layout:
+/// Each row in the `GenericParamConstraint` table has this layout:
 /// ```text
 /// Offset | Size | Field      | Description
 /// -------|------|------------|----------------------------------
@@ -53,7 +53,7 @@ use crate::{
 /// Index sizes depend on table sizes.
 ///
 /// # Constraint Context
-/// GenericParamConstraint entries are used for:
+/// `GenericParamConstraint` entries are used for:
 /// - **Base class constraints**: `where T : BaseClass` (inheritance requirement)
 /// - **Interface constraints**: `where T : IInterface` (implementation requirement)
 /// - **Multiple constraints**: Parameters can have multiple constraint entries
@@ -61,10 +61,10 @@ use crate::{
 /// - **Nested generic constraints**: `where T : IList<U>` (constraints with generic arguments)
 ///
 /// # Constraint Types
-/// The Constraint field uses TypeDefOrRef coded index:
-/// - **TypeDef**: For internal types defined in the assembly
-/// - **TypeRef**: For external types from other assemblies
-/// - **TypeSpec**: For complex type specifications (generics, arrays, etc.)
+/// The Constraint field uses `TypeDefOrRef` coded index:
+/// - **`TypeDef`**: For internal types defined in the assembly
+/// - **`TypeRef`**: For external types from other assemblies
+/// - **`TypeSpec`**: For complex type specifications (generics, arrays, etc.)
 ///
 /// # Validation Process
 /// Constraints undergo validation during application:
@@ -74,12 +74,12 @@ use crate::{
 /// - **Attribute consistency**: Validates constraint compatibility with parameter attributes
 ///
 /// # ECMA-335 Reference
-/// See ECMA-335, Partition II, §22.21 for the complete GenericParamConstraint table specification.
+/// See ECMA-335, Partition II, §22.21 for the complete `GenericParamConstraint` table specification.
 #[derive(Clone, Debug)]
 pub struct GenericParamConstraintRaw {
-    /// The row identifier in the GenericParamConstraint table.
+    /// The row identifier in the `GenericParamConstraint` table.
     ///
-    /// This 1-based index uniquely identifies this constraint within the GenericParamConstraint table.
+    /// This 1-based index uniquely identifies this constraint within the `GenericParamConstraint` table.
     pub rid: u32,
 
     /// The metadata token for this generic parameter constraint.
@@ -96,18 +96,18 @@ pub struct GenericParamConstraintRaw {
     /// metadata tables stream, used for binary parsing and navigation.
     pub offset: usize,
 
-    /// Index into the GenericParam table for the constrained parameter.
+    /// Index into the `GenericParam` table for the constrained parameter.
     ///
     /// This index points to the generic parameter that this constraint applies to,
     /// which needs to be resolved during conversion to owned data.
     pub owner: u32,
 
-    /// Coded index into the TypeDefOrRef tables for the constraint type.
+    /// Coded index into the `TypeDefOrRef` tables for the constraint type.
     ///
     /// A [`CodedIndex`] that references the type that serves as the constraint:
-    /// - **TypeDef**: For internal types defined in the assembly
-    /// - **TypeRef**: For external types from other assemblies
-    /// - **TypeSpec**: For complex type specifications
+    /// - **`TypeDef`**: For internal types defined in the assembly
+    /// - **`TypeRef`**: For external types from other assemblies
+    /// - **`TypeSpec`**: For complex type specifications
     ///
     /// [`CodedIndex`]: crate::metadata::tables::CodedIndex
     pub constraint: CodedIndex,
@@ -130,6 +130,9 @@ impl GenericParamConstraintRaw {
     /// - Generic parameter owner cannot be found
     /// - Constraint compatibility validation fails
     /// - Constraint application to parameter fails
+    ///
+    /// # Errors
+    /// Returns an error if the constraint type reference cannot be resolved, the generic parameter owner cannot be found, constraint compatibility validation fails, or constraint application to the parameter fails.
     pub fn apply(&self, generic_params: &GenericParamMap, types: &TypeRegistry) -> Result<()> {
         let Some(constraint) = types.get(&self.constraint.token) else {
             return Err(malformed_error!(
@@ -181,13 +184,16 @@ impl GenericParamConstraintRaw {
     /// 4. Initializes empty custom attributes collection
     ///
     /// # Reference Resolution
-    /// - **Parameter resolution**: Uses token calculation (owner | 0x2A000000) for GenericParam lookup
+    /// - **Parameter resolution**: Uses token calculation (owner | 0x2A000000) for `GenericParam` lookup
     /// - **Type resolution**: Uses coded index token for type registry lookup
     /// - **Error handling**: Returns detailed error messages for failed resolutions
     ///
     /// [`GenericParamConstraint`]: crate::metadata::tables::GenericParamConstraint
     /// [`GenericParamMap`]: crate::metadata::tables::GenericParamMap
     /// [`TypeRegistry`]: crate::metadata::typesystem::TypeRegistry
+    ///
+    /// # Errors
+    /// Returns an error if the generic parameter owner or constraint type cannot be resolved, or if any step in the conversion process fails.
     pub fn to_owned(
         &self,
         generic_params: &GenericParamMap,

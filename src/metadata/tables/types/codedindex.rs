@@ -9,7 +9,7 @@
 //! Coded indices combine a table identifier and row index into a single value by using the
 //! lower bits to encode which table type is being referenced, and the remaining bits for
 //! the actual row index. This allows metadata to reference different types of entities
-//! (e.g., TypeDef, TypeRef, or TypeSpec) using a unified format.
+//! (e.g., `TypeDef`, `TypeRef`, or `TypeSpec`) using a unified format.
 //!
 //! ## Key Components
 //!
@@ -46,8 +46,8 @@ use crate::{
 ///
 /// ## Examples
 ///
-/// - `TypeDefOrRef` can reference TypeDef, TypeRef, or TypeSpec tables
-/// - `HasConstant` can reference Field, Param, or Property tables
+/// - `TypeDefOrRef` can reference `TypeDef`, `TypeRef`, or `TypeSpec` tables
+/// - `HasConstant` can reference `Field`, `Param`, or `Property` tables
 /// - `HasCustomAttribute` can reference any of 22 different table types
 ///
 /// ## Reference

@@ -1,8 +1,8 @@
-//! ExportedType metadata table implementation.
+//! `ExportedType` metadata table implementation.
 //!
-//! This module provides comprehensive support for the ECMA-335 ExportedType metadata table (0x27),
+//! This module provides comprehensive support for the ECMA-335 `ExportedType` metadata table (0x27),
 //! which defines types that are exported from assemblies for visibility to other assemblies.
-//! ExportedType entries enable cross-assembly type access, type forwarding during assembly
+//! `ExportedType` entries enable cross-assembly type access, type forwarding during assembly
 //! refactoring, and public interface definition for complex assembly structures. It includes raw
 //! table access, resolved data structures, and integration with the broader metadata system.
 //!
@@ -17,21 +17,21 @@
 //! - **Raw Representation**: [`crate::metadata::tables::exportedtype::raw::ExportedTypeRaw`] - Direct binary table format with unresolved indexes
 //! - **Owned Data**: [`crate::metadata::tables::exportedtype::owned::ExportedType`] - Resolved entries with owned data and cross-references  
 //! - **Loading Infrastructure**: [`crate::metadata::tables::exportedtype::loader::ExportedTypeLoader`] - Processes raw entries during metadata loading
-//! - **Type Aliases**: Collection types for managing ExportedType entries efficiently
+//! - **Type Aliases**: Collection types for managing `ExportedType` entries efficiently
 //!
 //! # Integration
 //!
 //! - Raw entries are processed by [`crate::metadata::tables::exportedtype::loader::ExportedTypeLoader`] during metadata loading
 //! - Integrates with [`crate::metadata::streams::Strings`] for name resolution
 //! - References [`crate::metadata::tables::file`] and [`crate::metadata::tables::assemblyref`] tables for implementation resolution
-//! # ExportedType Table Structure
+//! # `ExportedType` Table Structure
 //!
-//! Each ExportedType entry contains:
+//! Each `ExportedType` entry contains:
 //! - **Flags** (4 bytes): Type visibility and export attributes
-//! - **TypeDefId** (4 bytes): Type identifier for forwarded types
-//! - **TypeName** (2/4 bytes): String heap index for the type name
-//! - **TypeNamespace** (2/4 bytes): String heap index for the type namespace
-//! - **Implementation** (2/4 bytes): Implementation coded index (File or AssemblyRef)
+//! - **`TypeDefId`** (4 bytes): Type identifier for forwarded types
+//! - **`TypeName`** (2/4 bytes): String heap index for the type name
+//! - **`TypeNamespace`** (2/4 bytes): String heap index for the type namespace
+//! - **Implementation** (2/4 bytes): Implementation coded index (File or `AssemblyRef`)
 //!
 //! The Implementation field determines where the type is actually defined, supporting
 //! both multi-module assemblies and type forwarding scenarios.
@@ -39,12 +39,12 @@
 //! # Implementation Resolution
 //!
 //! The Implementation coded index can point to:
-//! - **File**: Type defined in another file within this assembly
-//! - **AssemblyRef**: Type forwarded to a different assembly
-//! - **ExportedType**: Nested type export (rare)
+//! - **`File`**: Type defined in another file within this assembly
+//! - **`AssemblyRef`**: Type forwarded to a different assembly
+//! - **`ExportedType`**: Nested type export (rare)
 //!
 //! # Reference
-//! - [ECMA-335 II.22.14](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - ExportedType table specification
+//! - [ECMA-335 II.22.14](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `ExportedType` table specification
 
 use crate::metadata::token::Token;
 use crossbeam_skiplist::SkipMap;
@@ -58,23 +58,23 @@ pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;
 
-/// Thread-safe map of metadata tokens to ExportedType entries
+/// Thread-safe map of metadata tokens to `ExportedType` entries
 ///
-/// Provides efficient concurrent access to ExportedType entries indexed by their
+/// Provides efficient concurrent access to `ExportedType` entries indexed by their
 /// metadata tokens. Uses a lock-free skip list implementation for high-performance
 /// concurrent reads and writes during metadata loading.
 pub type ExportedTypeMap = SkipMap<Token, ExportedTypeRc>;
 
-/// Thread-safe vector of ExportedType entries
+/// Thread-safe vector of `ExportedType` entries
 ///
-/// Provides a growable collection of ExportedType entries with thread-safe append
+/// Provides a growable collection of `ExportedType` entries with thread-safe append
 /// operations. Used for collecting entries during parallel processing phases
 /// of metadata loading.
 pub type ExportedTypeList = Arc<boxcar::Vec<ExportedTypeRc>>;
 
-/// Reference-counted pointer to an ExportedType entry
+/// Reference-counted pointer to an `ExportedType` entry
 ///
 /// Provides shared ownership of [`ExportedType`] instances across multiple
 /// threads and data structures. Enables efficient memory usage and safe
-/// concurrent access to ExportedType metadata.
+/// concurrent access to `ExportedType` metadata.
 pub type ExportedTypeRc = Arc<ExportedType>;

@@ -62,5 +62,6 @@ pub struct MethodDebugInformation {
     /// IL instruction offsets to source code locations. None indicates no sequence
     /// points are available for this method. The data format is specific to the
     /// Portable PDB specification and requires specialized parsing.
+    // ToDo: Parse and process this data into a more usable form
     pub sequence_points: Option<Vec<u8>>,
 }

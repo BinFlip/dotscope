@@ -1,8 +1,8 @@
-//! ImplMap table implementation for Platform Invoke (P/Invoke) mappings.
+//! `ImplMap` table implementation for Platform Invoke (P/Invoke) mappings.
 //!
-//! This module provides complete support for the ImplMap metadata table, which defines
+//! This module provides complete support for the `ImplMap` metadata table, which defines
 //! Platform Invoke mappings that enable managed code to call unmanaged functions in
-//! native libraries. The ImplMap table is essential for native interoperability scenarios.
+//! native libraries. The `ImplMap` table is essential for native interoperability scenarios.
 //!
 //! # Module Components
 //! - [`ImplMapRaw`] - Raw table structure with unresolved coded indexes
@@ -14,30 +14,30 @@
 //! # Table Structure (ECMA-335 §22.22)
 //! | Column | Type | Description |
 //! |--------|------|-------------|
-//! | MappingFlags | 2-byte flags | P/Invoke attributes (calling convention, charset, etc.) |
-//! | MemberForwarded | 2-byte coded index | Member being forwarded to native function |
-//! | ImportName | String heap index | Name of the target function in the native library |
-//! | ImportScope | ModuleRef index | Target module (native library) containing the function |
+//! | `MappingFlags` | 2-byte flags | P/Invoke attributes (calling convention, charset, etc.) |
+//! | `MemberForwarded` | 2-byte coded index | Member being forwarded to native function |
+//! | `ImportName` | String heap index | Name of the target function in the native library |
+//! | `ImportScope` | `ModuleRef` index | Target module (native library) containing the function |
 //!
 //! # P/Invoke Functionality
-//! The ImplMap table enables native interoperability through:
+//! The `ImplMap` table enables native interoperability through:
 //! - **Method mapping**: Associates managed methods with native functions
-//! - **Library specification**: Identifies target native libraries via ModuleRef
+//! - **Library specification**: Identifies target native libraries via `ModuleRef`
 //! - **Calling conventions**: Specifies how parameters are passed and cleaned up
 //! - **Character encoding**: Controls string marshalling (ANSI, Unicode, Auto)
-//! - **Error handling**: Manages GetLastError() propagation and exception mapping
+//! - **Error handling**: Manages `GetLastError()` propagation and exception mapping
 //!
 //! # Mapping Flags
 //! The [`PInvokeAttributes`] module defines flags controlling P/Invoke behavior:
 //! - **Name mangling**: [`NO_MANGLE`] preserves exact function names
 //! - **Character sets**: [`CHAR_SET_ANSI`], [`CHAR_SET_UNICODE`], [`CHAR_SET_AUTO`]
 //! - **Calling conventions**: [`CALL_CONV_CDECL`], [`CALL_CONV_STDCALL`], etc.
-//! - **Error handling**: [`SUPPORTS_LAST_ERROR`] for GetLastError() support
+//! - **Error handling**: [`SUPPORTS_LAST_ERROR`] for `GetLastError()` support
 //! - **String mapping**: [`BEST_FIT_ENABLED`], [`THROW_ON_UNMAPPABLE_ENABLED`]
 //!
 //! # ECMA-335 References
-//! - ECMA-335, Partition II, §22.22: ImplMap table specification
-//! - ECMA-335, Partition II, §23.1.8: MemberForwarded coded index encoding
+//! - ECMA-335, Partition II, §22.22: `ImplMap` table specification
+//! - ECMA-335, Partition II, §23.1.8: `MemberForwarded` coded index encoding
 //! - ECMA-335, Partition II, §15.5: Platform invoke attributes and marshalling
 //!
 //! [`NO_MANGLE`]: PInvokeAttributes::NO_MANGLE
@@ -62,13 +62,13 @@ pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;
 
-/// Concurrent map for storing ImplMap entries indexed by [`Token`].
+/// Concurrent map for storing `ImplMap` entries indexed by [`Token`].
 ///
 /// This thread-safe map enables efficient lookup of P/Invoke mappings by their
 /// associated member tokens during metadata processing and runtime method resolution.
 pub type ImplMapMap = SkipMap<Token, ImplMapRc>;
 
-/// Thread-safe list for storing collections of ImplMap entries.
+/// Thread-safe list for storing collections of `ImplMap` entries.
 ///
 /// Used for maintaining ordered sequences of P/Invoke mappings during metadata
 /// loading and for iteration over all native interop declarations in a module.
@@ -90,7 +90,7 @@ pub type ImplMapRc = Arc<ImplMap>;
 /// - **Name mangling**: Controls whether function names are modified during lookup
 /// - **Character sets**: Specifies string encoding for parameter marshalling  
 /// - **Calling conventions**: Defines parameter passing and stack cleanup behavior
-/// - **Error handling**: Controls GetLastError() propagation and exception mapping
+/// - **Error handling**: Controls `GetLastError()` propagation and exception mapping
 /// - **String mapping**: Configures character conversion and unmappable character handling
 ///
 /// # Usage in P/Invoke Declarations
@@ -131,10 +131,10 @@ pub mod PInvokeAttributes {
     /// Use this mask to isolate character encoding flags from other attributes.
     pub const CHAR_SET_MASK: u32 = 0x0006;
 
-    /// Enable GetLastError() support for error propagation.
+    /// Enable `GetLastError()` support for error propagation.
     ///
     /// When set, the runtime preserves the thread's last error value after
-    /// the native call, making it available via Marshal.GetLastWin32Error().
+    /// the native call, making it available via `Marshal.GetLastWin32Error()`.
     pub const SUPPORTS_LAST_ERROR: u32 = 0x0040;
 
     /// Bit mask for extracting calling convention flags.
@@ -142,10 +142,10 @@ pub mod PInvokeAttributes {
     /// Use this mask to isolate calling convention flags from other attributes.
     pub const CALL_CONV_MASK: u32 = 0x0700;
 
-    /// Use platform default calling convention (WinAPI).
+    /// Use platform default calling convention (`WinAPI`).
     ///
-    /// On Windows, this typically resolves to StdCall on x86 and the standard
-    /// calling convention on x64. Equivalent to CALL_CONV_STDCALL on most platforms.
+    /// On Windows, this typically resolves to `StdCall` on x86 and the standard
+    /// calling convention on x64. Equivalent to `CALL_CONV_STDCALL` on most platforms.
     pub const CALL_CONV_WINAPI: u32 = 0x0100;
 
     /// Use C calling convention (caller cleans stack).

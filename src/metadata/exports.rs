@@ -150,6 +150,11 @@ impl Exports {
     /// assert_eq!(exports.len(), 1);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// This method currently does not return any errors but maintains a `Result` return type
+    /// for future compatibility with potential validation or storage constraints.
     pub fn insert(&self, token: Token, export: ExportedTypeRc) -> Result<()> {
         self.data.insert(token, export);
 
@@ -307,8 +312,8 @@ impl Exports {
     /// # Implementation Matching
     /// Compares tokens for each reference type:
     /// - **File**: Matches [`crate::metadata::typesystem::CilTypeReference::File`] tokens
-    /// - **AssemblyRef**: Matches [`crate::metadata::typesystem::CilTypeReference::AssemblyRef`] tokens  
-    /// - **ExportedType**: Matches [`crate::metadata::typesystem::CilTypeReference::ExportedType`] tokens
+    /// - **`AssemblyRef`**: Matches [`crate::metadata::typesystem::CilTypeReference::AssemblyRef`] tokens  
+    /// - **`ExportedType`**: Matches [`crate::metadata::typesystem::CilTypeReference::ExportedType`] tokens
     ///
     /// # Examples
     ///

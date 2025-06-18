@@ -3,7 +3,7 @@
 //! This module provides the [`PermissionSet`] type, which represents collections of security
 //! permissions in .NET assemblies. Permission sets define the complete security context
 //! for assemblies, types, and methods through declarative security attributes stored
-//! in the DeclSecurity metadata table.
+//! in the `DeclSecurity` metadata table.
 //!
 //! # Architecture
 //!
@@ -183,7 +183,7 @@
 //! Permission sets integrate with the broader .NET security and metadata infrastructure:
 //!
 //! ## With Assembly Metadata
-//! - Stored in the DeclSecurity metadata table
+//! - Stored in the `DeclSecurity` metadata table
 //! - Referenced by assembly, type, and method security declarations
 //! - Linked to security actions that define enforcement behavior
 //! - Support both IL-level and attribute-based declarations
@@ -192,9 +192,9 @@
 //! - **Demand**: Requires callers to have specified permissions
 //! - **Assert**: Elevates permissions for downstream calls
 //! - **Deny**: Explicitly denies specified permissions
-//! - **PermitOnly**: Restricts permissions to only those specified
-//! - **LinkDemand**: Checked at JIT compilation time
-//! - **InheritanceDemand**: Required for inheritance scenarios
+//! - **`PermitOnly`**: Restricts permissions to only those specified
+//! - **`LinkDemand`**: Checked at JIT compilation time
+//! - **`InheritanceDemand`**: Required for inheritance scenarios
 //!
 //! ## With .NET Security Infrastructure
 //! - Used by the Common Language Runtime (CLR) for security enforcement
@@ -288,7 +288,7 @@ use std::fmt;
 /// Represents a collection of .NET security permissions in a permission set.
 ///
 /// A `PermissionSet` contains all the security permissions that define the complete security
-/// context for an assembly, type, or method. These are parsed from the DeclSecurity metadata
+/// context for an assembly, type, or method. These are parsed from the `DeclSecurity` metadata
 /// table and represent declarative security attributes in .NET assemblies.
 ///
 /// # Structure

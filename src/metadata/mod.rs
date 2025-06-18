@@ -178,7 +178,7 @@ pub mod identity;
 pub mod imports;
 /// Implementation of import scope parsing for Portable PDB format
 pub mod importscope;
-/// Implementation of our MetaDataTable loader
+/// Implementation of our `MetaDataTable` loader
 pub(crate) mod loader;
 /// Implementation of the type marshalling for native code invokations
 pub mod marshalling;

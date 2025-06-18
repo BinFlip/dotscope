@@ -1,23 +1,23 @@
-//! Owned FieldLayout structures for the FieldLayout metadata table.
+//! Owned `FieldLayout` structures for the `FieldLayout` metadata table.
 //!
 //! This module provides the [`crate::metadata::tables::fieldlayout::owned::FieldLayout`] struct which represents field layout
 //! definitions with resolved references and owned data. Field layouts specify
 //! the explicit byte offset of fields within types that use explicit layout.
 //!
 //! # Purpose
-//! The FieldLayout table is used when precise control over field positioning is needed:
+//! The `FieldLayout` table is used when precise control over field positioning is needed:
 //! - **Interop scenarios**: Matching native struct layouts for P/Invoke
 //! - **Performance optimization**: Controlling memory layout for cache efficiency
 //! - **Platform compatibility**: Ensuring consistent layouts across architectures
 //! - **Legacy compatibility**: Matching existing binary data formats
 //!
 //! # Layout Types
-//! - **Sequential**: Default .NET layout (no FieldLayout entries needed)
-//! - **Explicit**: Programmer-specified field offsets (requires FieldLayout entries)
-//! - **Auto**: Runtime-optimized layout (no FieldLayout entries)
+//! - **Sequential**: Default .NET layout (no `FieldLayout` entries needed)
+//! - **Explicit**: Programmer-specified field offsets (requires `FieldLayout` entries)
+//! - **Auto**: Runtime-optimized layout (no `FieldLayout` entries)
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.16 for the FieldLayout table specification.
+//! See ECMA-335, Partition II, §22.16 for the `FieldLayout` table specification.
 
 use crate::{
     metadata::{tables::FieldRc, token::Token, validation::FieldValidator},
@@ -37,20 +37,20 @@ use crate::{
 /// - **Performance-critical types**: Types optimized for specific memory access patterns
 ///
 /// # ECMA-335 Reference
-/// See ECMA-335, Partition II, §22.16 for the complete FieldLayout table specification.
+/// See ECMA-335, Partition II, §22.16 for the complete `FieldLayout` table specification.
 ///
 /// [`Arc`]: std::sync::Arc
 pub struct FieldLayout {
-    /// The row identifier in the FieldLayout table.
+    /// The row identifier in the `FieldLayout` table.
     ///
-    /// This 1-based index uniquely identifies this field layout within the FieldLayout table.
+    /// This 1-based index uniquely identifies this field layout within the `FieldLayout` table.
     /// Combined with the table type, it forms the layout entry's unique identity.
     pub rid: u32,
 
     /// The metadata token for this field layout.
     ///
     /// A [`crate::metadata::token::Token`] that uniquely identifies this field layout across the entire assembly.
-    /// The token encodes both the table type (FieldLayout) and the row ID.
+    /// The token encodes both the table type (`FieldLayout`) and the row ID.
     pub token: Token,
 
     /// The byte offset of this field layout in the metadata tables stream.

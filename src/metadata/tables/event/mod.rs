@@ -16,11 +16,11 @@
 //! # Event Table Structure
 //!
 //! The Event table contains event definitions with these fields:
-//! - **EventFlags**: Attributes controlling event behavior (see [`EventAttributes`])
+//! - **`EventFlags`**: Attributes controlling event behavior (see [`EventAttributes`])
 //! - **Name**: Event name identifier (string heap reference)
-//! - **EventType**: Type of the event handler (TypeDef, TypeRef, or TypeSpec coded index)
+//! - **`EventType`**: Type of the event handler (`TypeDef`, `TypeRef`, or `TypeSpec` coded index)
 //!
-//! Events are associated with accessor methods through the MethodSemantics table, which
+//! Events are associated with accessor methods through the `MethodSemantics` table, which
 //! defines the standard add/remove pattern and optional custom methods.
 //!
 //! # .NET Event Model
@@ -68,11 +68,11 @@ pub type EventRc = Arc<Event>;
 /// Event flags bit field constants
 ///
 /// Defines event-level attributes that control event behavior and special naming conventions.
-/// These flags are stored in the Event table's EventFlags field and indicate whether the
+/// These flags are stored in the Event table's `EventFlags` field and indicate whether the
 /// event has special meaning or requires special handling by the runtime.
 ///
 /// # Reference
-/// - [ECMA-335 II.23.1.4](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - EventAttributes enumeration
+/// - [ECMA-335 II.23.1.4](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `EventAttributes` enumeration
 pub mod EventAttributes {
     /// Event has a special name
     ///

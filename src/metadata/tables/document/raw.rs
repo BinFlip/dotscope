@@ -8,10 +8,10 @@
 //! # Document Table Format
 //!
 //! The Document table (0x30) contains rows with these fields:
-//! - **Name** (2/4 bytes): Blob heap index for the document name/path
-//! - **HashAlgorithm** (2/4 bytes): GUID heap index for the hash algorithm identifier
-//! - **Hash** (2/4 bytes): Blob heap index for the document content hash
-//! - **Language** (2/4 bytes): GUID heap index for the source language identifier
+//! - **`Name`** (2/4 bytes): Blob heap index for the document name/path
+//! - **`HashAlgorithm`** (2/4 bytes): GUID heap index for the hash algorithm identifier
+//! - **`Hash`** (2/4 bytes): Blob heap index for the document content hash
+//! - **`Language`** (2/4 bytes): GUID heap index for the source language identifier
 //!
 //! # Reference
 //! - [Portable PDB Format - Document Table](https://github.com/dotnet/core/blob/main/Documentation/diagnostics/portable_pdb.md#document-table-0x30)
@@ -112,6 +112,13 @@ impl DocumentRaw {
     /// - The document name blob has an invalid format
     /// - Required heap data is missing or corrupted
     ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Blob heap access fails for name or hash data
+    /// - GUID heap access fails for hash algorithm or language GUIDs
+    /// - Any heap index is out of bounds
+    ///
     /// # Example
     ///
     /// ```rust,ignore
@@ -132,6 +139,9 @@ impl DocumentRaw {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    /// Returns an error if heap lookups fail or if the data is malformed.
     pub fn to_owned(&self, _strings: &Strings, blobs: &Blob, guids: &Guid) -> Result<DocumentRc> {
         let name_blob = blobs.get(self.name as usize)?;
         let name = String::from_utf8_lossy(name_blob).to_string();

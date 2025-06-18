@@ -1,14 +1,14 @@
-//! Owned LocalVariable table representation
+//! Owned `LocalVariable` table representation
 //!
 //! This module provides the [`LocalVariable`] struct that represents
-//! the high-level, resolved form of LocalVariable table entries with
+//! the high-level, resolved form of `LocalVariable` table entries with
 //! all heap references resolved to actual string data.
 
 use crate::metadata::token::Token;
 
-/// High-level representation of a LocalVariable table entry
+/// High-level representation of a `LocalVariable` table entry
 ///
-/// This structure provides the resolved form of LocalVariable table data
+/// This structure provides the resolved form of `LocalVariable` table data
 /// with all heap indices resolved to their actual values. The name field
 /// contains the resolved string data from the #Strings heap.
 ///
@@ -26,7 +26,7 @@ pub struct LocalVariable {
     /// Row identifier (1-based index in the table)
     pub rid: u32,
 
-    /// Metadata token for this LocalVariable entry
+    /// Metadata token for this `LocalVariable` entry
     pub token: Token,
 
     /// Byte offset of this row in the original metadata stream

@@ -1,7 +1,7 @@
-//! Raw AssemblyRef table representation.
+//! Raw `AssemblyRef` table representation.
 //!
 //! This module provides the [`crate::metadata::tables::assemblyref::raw::AssemblyRefRaw`] struct
-//! for low-level access to AssemblyRef metadata table data with unresolved heap indexes. This
+//! for low-level access to `AssemblyRef` metadata table data with unresolved heap indexes. This
 //! represents the binary format of assembly reference records as they appear in the metadata
 //! tables stream before heap resolution.
 //!
@@ -17,18 +17,18 @@
 //! - [`crate::metadata::tables::assemblyref::AssemblyRefRc`] - Reference-counted owned representation
 //! - [`crate::metadata::tables::RowDefinition`] - Table parsing interface implementation
 //!
-//! # AssemblyRef Table Format
+//! # `AssemblyRef` Table Format
 //!
-//! The AssemblyRef table (0x23) contains zero or more rows with these fields:
-//! - **MajorVersion** (2 bytes): Major version number
-//! - **MinorVersion** (2 bytes): Minor version number  
-//! - **BuildNumber** (2 bytes): Build number
-//! - **RevisionNumber** (2 bytes): Revision number
+//! The `AssemblyRef` table (0x23) contains zero or more rows with these fields:
+//! - **`MajorVersion`** (2 bytes): Major version number
+//! - **`MinorVersion`** (2 bytes): Minor version number  
+//! - **`BuildNumber`** (2 bytes): Build number
+//! - **`RevisionNumber`** (2 bytes): Revision number
 //! - **Flags** (4 bytes): Assembly flags bitmask
-//! - **PublicKeyOrToken** (2/4 bytes): Blob heap index for public key/token data
+//! - **`PublicKeyOrToken`** (2/4 bytes): Blob heap index for public key/token data
 //! - **Name** (2/4 bytes): String heap index for assembly name
 //! - **Culture** (2/4 bytes): String heap index for culture name
-//! - **HashValue** (2/4 bytes): Blob heap index for hash data
+//! - **`HashValue`** (2/4 bytes): Blob heap index for hash data
 //!
 //! # Integration
 //!
@@ -40,7 +40,7 @@
 //!
 //! # References
 //!
-//! - [ECMA-335 II.22.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyRef table specification
+//! - [ECMA-335 II.22.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyRef` table specification
 
 use std::sync::{atomic::AtomicU32, Arc};
 
@@ -58,23 +58,23 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-/// Raw AssemblyRef table row with unresolved heap indexes
+/// Raw `AssemblyRef` table row with unresolved heap indexes
 ///
-/// Represents the binary format of an AssemblyRef metadata table entry (table ID 0x23) as stored
+/// Represents the binary format of an `AssemblyRef` metadata table entry (table ID 0x23) as stored
 /// in the metadata tables stream. All string and blob references are stored as heap indexes
 /// that must be resolved using the appropriate heaps to access the actual data.
 ///
-/// The AssemblyRef table contains dependency information for external assemblies required by
+/// The `AssemblyRef` table contains dependency information for external assemblies required by
 /// the current assembly, including version requirements and strong name verification data.
 ///
 /// # Table Layout
 ///
-/// Each AssemblyRef table row occupies a fixed number of bytes determined by the heap index sizes:
+/// Each `AssemblyRef` table row occupies a fixed number of bytes determined by the heap index sizes:
 /// - Version fields: 8 bytes (4 × 2-byte values)
 /// - Flags: 4 bytes
 /// - Heap indexes: Variable size based on heap sizes (2 or 4 bytes each)
 pub struct AssemblyRefRaw {
-    /// Row identifier within the AssemblyRef table
+    /// Row identifier within the `AssemblyRef` table
     ///
     /// Unique identifier for this row within the metadata table. Used for internal
     /// referencing and debugging purposes.
@@ -89,7 +89,7 @@ pub struct AssemblyRefRaw {
     /// File offset where this table entry begins
     ///
     /// Byte offset from the start of the PE file to the beginning of this
-    /// AssemblyRef table entry. Used for low-level file analysis.
+    /// `AssemblyRef` table entry. Used for low-level file analysis.
     pub offset: usize,
 
     /// Major version number (first component of version)
@@ -124,7 +124,7 @@ pub struct AssemblyRefRaw {
 
     /// Blob heap index for public key or public key token
     ///
-    /// Index into the #Blob heap containing either the full public key (when PUBLIC_KEY flag is set)
+    /// Index into the #Blob heap containing either the full public key (when `PUBLIC_KEY` flag is set)
     /// or the 8-byte public key token. A value of 0 indicates no strong name information.
     pub public_key_or_token: u32,
 
@@ -220,24 +220,24 @@ impl AssemblyRefRaw {
 }
 
 impl<'a> RowDefinition<'a> for AssemblyRefRaw {
-    /// Calculate the byte size of an AssemblyRef table row
+    /// Calculate the byte size of an `AssemblyRef` table row
     ///
-    /// Returns the size in bytes for an AssemblyRef table row, accounting for variable-width
+    /// Returns the size in bytes for an `AssemblyRef` table row, accounting for variable-width
     /// heap indexes. The size depends on whether the string and blob heaps require 2 or 4-byte indexes.
     ///
     /// # Row Layout
     /// - Version fields: 8 bytes (4 × 2-byte values)
     /// - Flags: 4 bytes
-    /// - PublicKeyOrToken: 2 or 4 bytes (blob heap index)
+    /// - `PublicKeyOrToken`: 2 or 4 bytes (blob heap index)
     /// - Name: 2 or 4 bytes (string heap index)
     /// - Culture: 2 or 4 bytes (string heap index)
-    /// - HashValue: 2 or 4 bytes (blob heap index)
+    /// - `HashValue`: 2 or 4 bytes (blob heap index)
     ///
     /// # Arguments
     /// * `sizes` - Table size information containing heap index widths
     ///
     /// # Returns
-    /// Total size in bytes for one AssemblyRef table row
+    /// Total size in bytes for one `AssemblyRef` table row
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
@@ -253,20 +253,20 @@ impl<'a> RowDefinition<'a> for AssemblyRefRaw {
         )
     }
 
-    /// Read and parse an AssemblyRef table row from binary data
+    /// Read and parse an `AssemblyRef` table row from binary data
     ///
-    /// Deserializes one AssemblyRef table entry from the metadata tables stream.
-    /// AssemblyRef rows have a mixed layout with fixed-size version fields and
+    /// Deserializes one `AssemblyRef` table entry from the metadata tables stream.
+    /// `AssemblyRef` rows have a mixed layout with fixed-size version fields and
     /// variable-size heap indexes.
     ///
     /// # Arguments
     /// * `data` - Binary metadata tables stream data
     /// * `offset` - Current read position (updated after reading)
-    /// * `rid` - Row identifier for this AssemblyRef entry
+    /// * `rid` - Row identifier for this `AssemblyRef` entry
     /// * `sizes` - Table size information for heap index widths
     ///
     /// # Returns
-    /// * `Ok(AssemblyRefRaw)` - Successfully parsed AssemblyRef row
+    /// * `Ok(AssemblyRefRaw)` - Successfully parsed `AssemblyRef` row
     /// * `Err(`[`crate::Error`]`)` - If data is malformed or insufficient
     fn read_row(
         data: &'a [u8],

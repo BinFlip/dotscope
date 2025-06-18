@@ -1,4 +1,4 @@
-//! Import declarations parser for Portable PDB ImportScope table.
+//! Import declarations parser for Portable PDB `ImportScope` table.
 //!
 //! This module provides parsing capabilities for the imports blob format used in Portable PDB files.
 //! The imports blob contains encoded import declarations that define the set of namespaces, types,
@@ -15,9 +15,9 @@
 //! Each import declaration consists of:
 //! - **kind**: Compressed unsigned integer (1-9) defining the import type
 //! - **alias**: Optional blob heap index for UTF8 alias name
-//! - **target-assembly**: Optional AssemblyRef row id for assembly references
+//! - **target-assembly**: Optional `AssemblyRef` row id for assembly references
 //! - **target-namespace**: Optional blob heap index for UTF8 namespace name
-//! - **target-type**: Optional TypeDefOrRefOrSpecEncoded type reference
+//! - **target-type**: Optional `TypeDefOrRefOrSpecEncoded` type reference
 //!
 //! # Examples
 //!
@@ -50,7 +50,11 @@
 
 use crate::{
     file::parser::Parser,
-    metadata::{importscope::types::*, streams::Blob, token::Token},
+    metadata::{
+        importscope::types::{ImportDeclaration, ImportKind, ImportsInfo},
+        streams::Blob,
+        token::Token,
+    },
     Result,
 };
 
@@ -177,7 +181,7 @@ impl<'a> ImportsParser<'a> {
         Ok(String::from_utf8_lossy(blob_data).into_owned())
     }
 
-    /// Read an AssemblyRef token as a compressed unsigned integer.
+    /// Read an `AssemblyRef` token as a compressed unsigned integer.
     fn read_assembly_ref_token(&mut self) -> Result<Token> {
         let row_id = self.parser.read_compressed_uint()?;
         Ok(Token::new(0x2300_0000 + row_id)) // AssemblyRef table

@@ -1,11 +1,11 @@
-//! ImplMap table loader implementation.
+//! `ImplMap` table loader implementation.
 //!
 //! This module provides the [`ImplMapLoader`] responsible for loading and processing
-//! ImplMap metadata table entries. The ImplMap table defines Platform Invoke (P/Invoke)
+//! `ImplMap` metadata table entries. The `ImplMap` table defines Platform Invoke (P/Invoke)
 //! mappings that enable managed code to call unmanaged functions in native libraries.
 //!
 //! # Purpose
-//! The ImplMap table is used for native interoperability scenarios:
+//! The `ImplMap` table is used for native interoperability scenarios:
 //! - **P/Invoke declarations**: Mapping managed methods to native functions
 //! - **Native library integration**: Calling functions in unmanaged DLLs
 //! - **System API access**: Accessing operating system APIs from managed code
@@ -13,7 +13,7 @@
 //! - **Performance optimization**: Direct native calls for critical operations
 //!
 //! # P/Invoke Context
-//! ImplMap entries enable native interoperability:
+//! `ImplMap` entries enable native interoperability:
 //! - **Function mapping**: Associates managed methods with native functions
 //! - **Library specification**: Identifies target native libraries
 //! - **Calling conventions**: Specifies parameter passing and stack management
@@ -21,13 +21,13 @@
 //! - **Error handling**: Manages exceptions and error codes across boundaries
 //!
 //! # Table Dependencies
-//! - **MethodDef**: Required for resolving managed method declarations
-//! - **ModuleRef**: Required for resolving target native library references
-//! - **Module**: Required for module context resolution
-//! - **MemberRef**: Required for member reference resolution
+//! - **`MethodDef`**: Required for resolving managed method declarations
+//! - **`ModuleRef`**: Required for resolving target native library references
+//! - **`Module`**: Required for module context resolution
+//! - **`MemberRef`**: Required for member reference resolution
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.22 for the ImplMap table specification.
+//! See ECMA-335, Partition II, §22.22 for the `ImplMap` table specification.
 use crate::{
     metadata::{
         loader::{LoaderContext, MetadataLoader},
@@ -36,7 +36,7 @@ use crate::{
     Result,
 };
 
-/// Loader implementation for the ImplMap metadata table.
+/// Loader implementation for the `ImplMap` metadata table.
 ///
 /// This loader processes P/Invoke mapping metadata, enabling managed code to call
 /// native functions in unmanaged libraries. It resolves method and library references,
@@ -44,9 +44,9 @@ use crate::{
 pub(crate) struct ImplMapLoader;
 
 impl MetadataLoader for ImplMapLoader {
-    /// Loads ImplMap table entries and processes P/Invoke mappings.
+    /// Loads `ImplMap` table entries and processes P/Invoke mappings.
     ///
-    /// This method iterates through all ImplMap table entries, resolving member references,
+    /// This method iterates through all `ImplMap` table entries, resolving member references,
     /// string references for import names, and module references for target libraries.
     /// Each entry is converted to an owned structure and applied to establish P/Invoke mappings.
     ///
@@ -54,7 +54,7 @@ impl MetadataLoader for ImplMapLoader {
     /// * `context` - The loading context containing metadata tables, strings, and references
     ///
     /// # Returns
-    /// * `Ok(())` - If all ImplMap entries were processed successfully
+    /// * `Ok(())` - If all `ImplMap` entries were processed successfully
     /// * `Err(_)` - If reference resolution or mapping application fails
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
@@ -80,7 +80,7 @@ impl MetadataLoader for ImplMapLoader {
         Ok(())
     }
 
-    /// Returns the table identifier for ImplMap.
+    /// Returns the table identifier for `ImplMap`.
     ///
     /// # Returns
     /// The [`TableId::ImplMap`] identifier for this table type.
@@ -88,16 +88,16 @@ impl MetadataLoader for ImplMapLoader {
         TableId::ImplMap
     }
 
-    /// Returns the dependencies required for loading ImplMap entries.
+    /// Returns the dependencies required for loading `ImplMap` entries.
     ///
-    /// ImplMap table loading requires several other tables to resolve references:
+    /// `ImplMap` table loading requires several other tables to resolve references:
     /// - [`TableId::MethodDef`] - For managed method declarations being mapped
     /// - [`TableId::ModuleRef`] - For target native library references  
     /// - [`TableId::Module`] - For module context resolution
     /// - [`TableId::MemberRef`] - For member reference resolution
     ///
     /// # Returns
-    /// Array of table identifiers that must be loaded before ImplMap processing.
+    /// Array of table identifiers that must be loaded before `ImplMap` processing.
     fn dependencies(&self) -> &'static [TableId] {
         &[
             TableId::MethodDef,

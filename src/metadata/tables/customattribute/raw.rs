@@ -1,19 +1,19 @@
-//! Raw CustomAttribute table representation.
+//! Raw `CustomAttribute` table representation.
 //!
 //! This module provides the [`crate::metadata::tables::customattribute::raw::CustomAttributeRaw`] struct
-//! for low-level access to CustomAttribute metadata table data with unresolved coded indexes and blob references.
+//! for low-level access to `CustomAttribute` metadata table data with unresolved coded indexes and blob references.
 //! This represents the binary format of custom attribute records as they appear in the metadata tables stream,
 //! requiring resolution to create usable data structures.
 //!
-//! # CustomAttribute Table Format
+//! # `CustomAttribute` Table Format
 //!
-//! The CustomAttribute table (0x0C) contains rows with these fields:
-//! - **Parent** (2/4 bytes): HasCustomAttribute coded index to the target metadata element
-//! - **Type** (2/4 bytes): CustomAttributeType coded index to the constructor method
+//! The `CustomAttribute` table (0x0C) contains rows with these fields:
+//! - **Parent** (2/4 bytes): `HasCustomAttribute` coded index to the target metadata element
+//! - **Type** (2/4 bytes): `CustomAttributeType` coded index to the constructor method
 //! - **Value** (2/4 bytes): Blob heap index for the serialized attribute arguments
 //!
 //! # Reference
-//! - [ECMA-335 II.22.10](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - CustomAttribute table specification
+//! - [ECMA-335 II.22.10](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `CustomAttribute` table specification
 //! - [ECMA-335 II.23.3](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Custom attribute encoding
 
 use std::sync::Arc;
@@ -34,21 +34,21 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-/// Raw CustomAttribute table row with unresolved coded indexes and blob references
+/// Raw `CustomAttribute` table row with unresolved coded indexes and blob references
 ///
-/// Represents the binary format of a CustomAttribute metadata table entry (table ID 0x0C) as stored
+/// Represents the binary format of a `CustomAttribute` metadata table entry (table ID 0x0C) as stored
 /// in the metadata tables stream. All coded indexes and blob references are stored as raw values
 /// that must be resolved using the appropriate context and heaps to access the actual data.
 ///
-/// The CustomAttribute table associates custom attributes with metadata elements throughout the
+/// The `CustomAttribute` table associates custom attributes with metadata elements throughout the
 /// assembly, providing a mechanism for storing declarative information about types, methods,
 /// fields, and other metadata entities.
 ///
 /// # Reference
-/// - [ECMA-335 II.22.10](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - CustomAttribute table specification
+/// - [ECMA-335 II.22.10](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `CustomAttribute` table specification
 /// - [ECMA-335 II.23.3](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Custom attribute encoding
 pub struct CustomAttributeRaw {
-    /// Row identifier within the CustomAttribute metadata table
+    /// Row identifier within the `CustomAttribute` metadata table
     ///
     /// The 1-based index of this custom attribute row within the table.
     /// Used to generate the metadata token and for table iteration.
@@ -56,7 +56,7 @@ pub struct CustomAttributeRaw {
 
     /// Metadata token for this custom attribute row
     ///
-    /// Combines the table identifier (0x0C for CustomAttribute) with the row ID to create
+    /// Combines the table identifier (0x0C for `CustomAttribute`) with the row ID to create
     /// a unique token. Format: `0x0C000000 | rid`
     pub token: Token,
 
@@ -66,16 +66,16 @@ pub struct CustomAttributeRaw {
     /// Used for debugging and low-level metadata analysis.
     pub offset: usize,
 
-    /// HasCustomAttribute coded index to the target metadata element (unresolved)
+    /// `HasCustomAttribute` coded index to the target metadata element (unresolved)
     ///
     /// Identifies the metadata element to which this custom attribute is applied.
     /// This can reference types, methods, fields, assemblies, modules, parameters,
     /// and many other metadata entities. Must be resolved using coded index lookup.
     pub parent: CodedIndex,
 
-    /// CustomAttributeType coded index to the constructor method (unresolved)
+    /// `CustomAttributeType` coded index to the constructor method (unresolved)
     ///
-    /// References the constructor method (MethodDef or MemberRef) used to instantiate
+    /// References the constructor method (`MethodDef` or `MemberRef`) used to instantiate
     /// this custom attribute. The constructor's signature determines how to interpret
     /// the attribute's value blob. Must be resolved using coded index lookup.
     pub constructor: CodedIndex,
@@ -89,13 +89,13 @@ pub struct CustomAttributeRaw {
 }
 
 impl CustomAttributeRaw {
-    /// Convert a raw CustomAttribute to an owned CustomAttribute with resolved indexes and parsed value data
+    /// Convert a raw `CustomAttribute` to an owned `CustomAttribute` with resolved indexes and parsed value data
     ///
     /// This method transforms the raw table entry into a fully usable custom attribute by:
     /// 1. Resolving the parent and constructor coded indexes to concrete type references
     /// 2. Validating that the constructor is indeed a constructor method (.ctor or .cctor)
     /// 3. Parsing the binary attribute blob using the constructor's parameter signature
-    /// 4. Creating an owned CustomAttribute with all resolved data
+    /// 4. Creating an owned `CustomAttribute` with all resolved data
     ///
     /// The method performs comprehensive validation to ensure metadata integrity, including
     /// constructor name validation and type checking to prevent malformed custom attributes.
@@ -110,7 +110,7 @@ impl CustomAttributeRaw {
     ///
     /// Returns an error if:
     /// - Coded index resolution fails for parent or constructor references
-    /// - The constructor reference is not a MethodDef or MemberRef
+    /// - The constructor reference is not a `MethodDef` or `MemberRef`
     /// - The constructor is not actually a constructor method (.ctor or .cctor)
     /// - The constructor name is empty (indicating malformed metadata)
     /// - Binary blob parsing fails due to corrupted or invalid data

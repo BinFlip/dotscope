@@ -32,13 +32,14 @@ pub enum CustomDebugKind {
 }
 
 impl CustomDebugKind {
-    /// Create a CustomDebugKind from a GUID byte array.
+    /// Create a `CustomDebugKind` from a GUID byte array.
     ///
     /// # Arguments
     /// * `guid_bytes` - The 16-byte GUID identifying the debug information kind
     ///
     /// # Returns
     /// The corresponding [`CustomDebugKind`] variant
+    #[must_use]
     pub fn from_guid(guid_bytes: [u8; 16]) -> Self {
         match guid_bytes {
             // Source Link: CC110556-A091-4D38-9FEC-25AB9A351A6A
@@ -66,6 +67,7 @@ impl CustomDebugKind {
     ///
     /// # Returns
     /// The 16-byte GUID as a byte array
+    #[must_use]
     pub fn to_guid_bytes(&self) -> [u8; 16] {
         match self {
             CustomDebugKind::SourceLink => [
@@ -136,6 +138,7 @@ impl CustomDebugInfo {
     ///
     /// # Returns
     /// The [`CustomDebugKind`] that this debug information represents
+    #[must_use]
     pub fn kind(&self) -> CustomDebugKind {
         match self {
             CustomDebugInfo::SourceLink { .. } => CustomDebugKind::SourceLink,
@@ -150,6 +153,7 @@ impl CustomDebugInfo {
     ///
     /// # Returns
     /// `true` if this is a known type, `false` for unknown types
+    #[must_use]
     pub fn is_known(&self) -> bool {
         !matches!(self, CustomDebugInfo::Unknown { .. })
     }
@@ -158,6 +162,7 @@ impl CustomDebugInfo {
     ///
     /// # Returns
     /// The size of the debug data
+    #[must_use]
     pub fn data_size(&self) -> usize {
         match self {
             CustomDebugInfo::SourceLink { document } => document.len(),

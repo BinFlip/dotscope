@@ -307,16 +307,16 @@ impl TypeDefRaw {
         )))
     }
 
-    /// Applies this TypeDef entry to update related metadata structures.
+    /// Applies this `TypeDef` entry to update related metadata structures.
     ///
-    /// TypeDef entries define types within the current assembly and serve as primary
-    /// metadata containers. Unlike some other table types, TypeDef entries don't
+    /// `TypeDef` entries define types within the current assembly and serve as primary
+    /// metadata containers. Unlike some other table types, `TypeDef` entries don't
     /// directly modify other metadata structures during the dual variant resolution
     /// phase. Type-specific metadata (fields, methods, properties, events, etc.)
     /// is resolved through separate table processing.
     ///
     /// ## Returns
-    /// Always returns [`Ok(())`] as TypeDef entries don't modify other tables directly.
+    /// Always returns [`Ok(())`] as `TypeDef` entries don't modify other tables directly.
     ///
     /// ## ECMA-335 Reference
     /// See ECMA-335, Partition II, Section 22.37 for TypeDef table semantics.

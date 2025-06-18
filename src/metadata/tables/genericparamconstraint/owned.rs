@@ -1,11 +1,11 @@
-//! Owned GenericParamConstraint structures for the GenericParamConstraint metadata table.
+//! Owned `GenericParamConstraint` structures for the `GenericParamConstraint` metadata table.
 //!
 //! This module provides the [`GenericParamConstraint`] struct which represents constraint
 //! definitions with resolved references and owned data. Generic parameter constraints
 //! specify base classes and interfaces that type arguments must satisfy.
 //!
 //! # Purpose
-//! The GenericParamConstraint table enables constraint-based generic programming:
+//! The `GenericParamConstraint` table enables constraint-based generic programming:
 //! - **Base class constraints**: Inheritance requirements for type arguments
 //! - **Interface constraints**: Implementation requirements for type arguments
 //! - **Type safety**: Compile-time verification of constraint satisfaction
@@ -21,7 +21,7 @@
 //! - **API contracts**: Document type requirements for generic APIs
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.21 for the GenericParamConstraint table specification.
+//! See ECMA-335, Partition II, §22.21 for the `GenericParamConstraint` table specification.
 
 use crate::{
     metadata::{
@@ -74,18 +74,18 @@ use crate::{
 /// - **Documented**: Accessible through reflection APIs
 ///
 /// # ECMA-335 Reference
-/// See ECMA-335, Partition II, §22.21 for the complete GenericParamConstraint table specification.
+/// See ECMA-335, Partition II, §22.21 for the complete `GenericParamConstraint` table specification.
 pub struct GenericParamConstraint {
-    /// The row identifier in the GenericParamConstraint table.
+    /// The row identifier in the `GenericParamConstraint` table.
     ///
-    /// This 1-based index uniquely identifies this constraint within the GenericParamConstraint table.
+    /// This 1-based index uniquely identifies this constraint within the `GenericParamConstraint` table.
     /// Combined with the table type, it forms the constraint's unique identity.
     pub rid: u32,
 
     /// The metadata token for this generic parameter constraint.
     ///
     /// A [`Token`] that uniquely identifies this constraint across the entire assembly.
-    /// The token encodes both the table type (GenericParamConstraint) and the row ID.
+    /// The token encodes both the table type (`GenericParamConstraint`) and the row ID.
     ///
     /// [`Token`]: crate::metadata::token::Token
     pub token: Token,

@@ -554,9 +554,9 @@ impl<'a> Parser<'a> {
     ///
     /// Compressed tokens encode type references using 2 tag bits and the table index.
     /// The tag bits determine which metadata table the token refers to:
-    /// - 0x0: TypeDef table
-    /// - 0x1: TypeRef table  
-    /// - 0x2: TypeSpec table
+    /// - 0x0: `TypeDef` table
+    /// - 0x1: `TypeRef` table  
+    /// - 0x2: `TypeSpec` table
     ///
     /// # Errors
     /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or

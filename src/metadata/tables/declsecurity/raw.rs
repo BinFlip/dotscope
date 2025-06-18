@@ -1,17 +1,17 @@
-//! Raw DeclSecurity table representation.
+//! Raw `DeclSecurity` table representation.
 //!
 //! This module provides the [`crate::metadata::tables::declsecurity::raw::DeclSecurityRaw`] struct
-//! for low-level access to DeclSecurity metadata table data with unresolved heap indexes and coded indices.
+//! for low-level access to `DeclSecurity` metadata table data with unresolved heap indexes and coded indices.
 //! This represents the binary format of security declaration records as they appear in the metadata
 //! tables stream, requiring resolution to create usable data structures.
 //!
-//! # DeclSecurity Table Format
+//! # `DeclSecurity` Table Format
 //!
-//! The DeclSecurity table (0x0E) contains security declarations for assemblies, types, and methods
+//! The `DeclSecurity` table (0x0E) contains security declarations for assemblies, types, and methods
 //! with these fields:
 //! - **Action** (2 bytes): Security action enumeration value
-//! - **Parent** (2/4 bytes): HasDeclSecurity coded index to target entity
-//! - **PermissionSet** (2/4 bytes): Blob heap index for serialized permission data
+//! - **Parent** (2/4 bytes): `HasDeclSecurity` coded index to target entity
+//! - **`PermissionSet`** (2/4 bytes): Blob heap index for serialized permission data
 //!
 //! # Usage
 //!
@@ -21,7 +21,7 @@
 //! without creating intermediate owned structures.
 //!
 //! # Reference
-//! - [ECMA-335 II.22.11](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - DeclSecurity table specification
+//! - [ECMA-335 II.22.11](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `DeclSecurity` table specification
 
 use std::sync::Arc;
 
@@ -40,9 +40,9 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-/// Raw DeclSecurity table row with unresolved indexes and coded indices
+/// Raw `DeclSecurity` table row with unresolved indexes and coded indices
 ///
-/// Represents the binary format of a DeclSecurity metadata table entry (table ID 0x0E) as stored
+/// Represents the binary format of a `DeclSecurity` metadata table entry (table ID 0x0E) as stored
 /// in the metadata tables stream. All blob references and parent entity references are stored as
 /// indexes that must be resolved using the appropriate heaps and coded index resolution.
 ///
@@ -51,9 +51,9 @@ use crate::{
 /// (assembly, type, or method) and specifies how certain permissions should be handled.
 ///
 /// # Reference
-/// - [ECMA-335 II.22.11](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - DeclSecurity table specification
+/// - [ECMA-335 II.22.11](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `DeclSecurity` table specification
 pub struct DeclSecurityRaw {
-    /// Row identifier within the DeclSecurity metadata table
+    /// Row identifier within the `DeclSecurity` metadata table
     ///
     /// The 1-based index of this security declaration row. Used for metadata
     /// token generation and cross-referencing with other metadata structures.
@@ -61,7 +61,7 @@ pub struct DeclSecurityRaw {
 
     /// Metadata token for this security declaration row
     ///
-    /// Combines the table identifier (0x0E for DeclSecurity) with the row ID to create
+    /// Combines the table identifier (0x0E for `DeclSecurity`) with the row ID to create
     /// a unique token. Format: `0x0E000000 | rid`
     pub token: Token,
 
@@ -78,10 +78,10 @@ pub struct DeclSecurityRaw {
     /// demanded, asserted, denied, etc.
     pub action: u16,
 
-    /// HasDeclSecurity coded index to the target entity (unresolved)
+    /// `HasDeclSecurity` coded index to the target entity (unresolved)
     ///
     /// References the entity this security declaration applies to through a coded index.
-    /// Can point to TypeDef, MethodDef, or Assembly tables. Must be resolved using
+    /// Can point to `TypeDef`, `MethodDef`, or Assembly tables. Must be resolved using
     /// appropriate coded index resolution to obtain the actual target reference.
     pub parent: CodedIndex,
 
@@ -169,7 +169,7 @@ impl DeclSecurityRaw {
         }
     }
 
-    /// Convert to owned DeclSecurity with resolved references and owned data
+    /// Convert to owned `DeclSecurity` with resolved references and owned data
     ///
     /// This method converts the raw security declaration into a fully resolved
     /// [`DeclSecurity`] structure with owned data and resolved references. The resulting

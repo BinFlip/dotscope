@@ -1,7 +1,7 @@
-//! ImportScope table loader for metadata processing
+//! `ImportScope` table loader for metadata processing
 //!
 //! This module provides the [`ImportScopeLoader`] implementation for processing
-//! ImportScope table data during metadata loading. The loader handles parallel
+//! `ImportScope` table data during metadata loading. The loader handles parallel
 //! processing and integration with the broader loader context.
 
 use crate::{
@@ -12,9 +12,9 @@ use crate::{
     Result,
 };
 
-/// Loader for the ImportScope metadata table
+/// Loader for the `ImportScope` metadata table
 ///
-/// Implements [`MetadataLoader`] to process the ImportScope table (0x35)
+/// Implements [`MetadataLoader`] to process the `ImportScope` table (0x35)
 /// which defines the import scopes that organize imported namespaces and types
 /// in Portable PDB format. Import scopes enable hierarchical organization of
 /// debugging information for namespace resolution and type lookup.
