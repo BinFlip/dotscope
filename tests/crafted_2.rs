@@ -527,6 +527,7 @@ fn crafted_2() {
     test_table_count_validation(&asm);
     test_custom_attribute_validation(&asm);
     test_xml_permission_set_parsing(&asm);
+    //    test_portable_pdb_features(&asm);
 }
 
 /// Verify the cor20 header matches the values of '`crafted_2.exe`' on disk
@@ -3204,3 +3205,148 @@ fn test_xml_permission_set_parsing(asm: &CilObject) {
 
     println!("✓ XML permission set parsing tested");
 }
+
+// fn test_portable_pdb_features(asm: &CilObject) {
+//     println!("=== Testing Portable PDB Features ===");
+
+//     if let Some(tables_header) = asm.tables() {
+//         // Test Document table (if present)
+//         if tables_header.has_table(TableId::Document) {
+//             println!(
+//                 "✓ Found Document table with {} entries",
+//                 tables_header.table_row_count(TableId::Document)
+//             );
+//         } else {
+//             println!("ℹ Document table not present (expected for regular .exe files)");
+//         }
+
+//         // Test MethodDebugInformation table (if present)
+//         if tables_header.has_table(TableId::MethodDebugInformation) {
+//             println!(
+//                 "✓ Found MethodDebugInformation table with {} entries",
+//                 tables_header.table_row_count(TableId::MethodDebugInformation)
+//             );
+//         } else {
+//             println!(
+//                 "ℹ MethodDebugInformation table not present (expected for regular .exe files)"
+//             );
+//         }
+
+//         // Test LocalScope table (if present)
+//         if tables_header.has_table(TableId::LocalScope) {
+//             println!(
+//                 "✓ Found LocalScope table with {} entries",
+//                 tables_header.table_row_count(TableId::LocalScope)
+//             );
+//         } else {
+//             println!("ℹ LocalScope table not present (expected for regular .exe files)");
+//         }
+
+//         // Test LocalVariable table (if present)
+//         if tables_header.has_table(TableId::LocalVariable) {
+//             println!(
+//                 "✓ Found LocalVariable table with {} entries",
+//                 tables_header.table_row_count(TableId::LocalVariable)
+//             );
+//         } else {
+//             println!("ℹ LocalVariable table not present (expected for regular .exe files)");
+//         }
+
+//         // Test LocalConstant table (if present)
+//         if tables_header.has_table(TableId::LocalConstant) {
+//             println!(
+//                 "✓ Found LocalConstant table with {} entries",
+//                 tables_header.table_row_count(TableId::LocalConstant)
+//             );
+//         } else {
+//             println!("ℹ LocalConstant table not present (expected for regular .exe files)");
+//         }
+
+//         // Test ImportScope table (if present)
+//         if tables_header.has_table(TableId::ImportScope) {
+//             println!(
+//                 "✓ Found ImportScope table with {} entries",
+//                 tables_header.table_row_count(TableId::ImportScope)
+//             );
+//         } else {
+//             println!("ℹ ImportScope table not present (expected for regular .exe files)");
+//         }
+
+//         // Test StateMachineMethod table (if present)
+//         if tables_header.has_table(TableId::StateMachineMethod) {
+//             println!(
+//                 "✓ Found StateMachineMethod table with {} entries",
+//                 tables_header.table_row_count(TableId::StateMachineMethod)
+//             );
+//         } else {
+//             println!("ℹ StateMachineMethod table not present (expected for regular .exe files)");
+//         }
+
+//         // Test CustomDebugInformation table (if present)
+//         if tables_header.has_table(TableId::CustomDebugInformation) {
+//             println!(
+//                 "✓ Found CustomDebugInformation table with {} entries",
+//                 tables_header.table_row_count(TableId::CustomDebugInformation)
+//             );
+
+//             // Try to access the table and verify we can read entries
+//             use dotscope::metadata::tables::CustomDebugInformationRaw;
+//             if let Some(custom_debug_table) =
+//                 tables_header.table::<CustomDebugInformationRaw>(TableId::CustomDebugInformation)
+//             {
+//                 println!("✓ Successfully accessed CustomDebugInformation table");
+
+//                 // Test iterating over entries (if any)
+//                 for (index, entry) in custom_debug_table.iter().enumerate().take(5) {
+//                     println!(
+//                         "  Custom debug info {}: parent={:?}, kind={}, value={}",
+//                         index + 1,
+//                         entry.parent,
+//                         entry.kind,
+//                         entry.value
+//                     );
+//                 }
+
+//                 // Test random access
+//                 if let Some(first_entry) = custom_debug_table.get(1) {
+//                     println!(
+//                         "✓ Random access to first entry successful: token={:?}",
+//                         first_entry.token
+//                     );
+//                 }
+//             }
+//         } else {
+//             println!(
+//                 "ℹ CustomDebugInformation table not present (expected for regular .exe files)"
+//             );
+//         }
+
+//         // Test that all tables can be loaded without panicking
+//         let pdb_table_ids = [
+//             TableId::Document,
+//             TableId::MethodDebugInformation,
+//             TableId::LocalScope,
+//             TableId::LocalVariable,
+//             TableId::LocalConstant,
+//             TableId::ImportScope,
+//             TableId::StateMachineMethod,
+//             TableId::CustomDebugInformation,
+//         ];
+
+//         for table_id in &pdb_table_ids {
+//             if tables_header.has_table(*table_id) {
+//                 let row_count = tables_header.table_row_count(*table_id);
+//                 println!(
+//                     "✓ Table {:?} is properly loaded with {} rows",
+//                     table_id, row_count
+//                 );
+//             }
+//         }
+
+//         println!("✓ All Portable PDB table implementations are functioning");
+//     } else {
+//         println!("⚠ No metadata tables header found");
+//     }
+
+//     println!("✓ Portable PDB features test completed");
+// }

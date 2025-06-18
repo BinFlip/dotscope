@@ -365,4 +365,60 @@ pub enum TableId {
     /// constraints, interface constraints, and special constraints
     /// (`new()`, class, struct).
     GenericParamConstraint = 0x2C,
+
+    /// `Document` table (0x30) - Portable PDB document information.
+    ///
+    /// Contains information about source documents referenced in debug information,
+    /// including document names, languages, hash algorithms, and source text.
+    /// Part of the Portable PDB format for enhanced debugging support.
+    Document = 0x30,
+
+    /// `MethodDebugInformation` table (0x31) - Method debugging details.
+    ///
+    /// Contains debugging information for methods, including sequence points
+    /// that map IL instructions to source code locations. Essential for
+    /// stepping through code during debugging sessions.
+    MethodDebugInformation = 0x31,
+
+    /// `LocalScope` table (0x32) - Local variable scope information.
+    ///
+    /// Defines the scope ranges where local variables and constants are active
+    /// within methods. Used by debuggers to determine variable visibility
+    /// and lifetime at different execution points.
+    LocalScope = 0x32,
+
+    /// `LocalVariable` table (0x33) - Local variable debug information.
+    ///
+    /// Contains debugging information for local variables, including their
+    /// names, signatures, and attributes. Enables debuggers to display
+    /// meaningful variable information during debugging.
+    LocalVariable = 0x33,
+
+    /// `LocalConstant` table (0x34) - Local constant debug information.
+    ///
+    /// Contains debugging information for local constants, including their
+    /// names, signatures, and compile-time values. Allows debuggers to
+    /// display constant values during debugging sessions.
+    LocalConstant = 0x34,
+
+    /// `ImportScope` table (0x35) - Namespace import scope information.
+    ///
+    /// Defines the scope ranges where namespace imports (`using` statements
+    /// in C#) are active. Enables debuggers to resolve type names and
+    /// provide proper IntelliSense support during debugging.
+    ImportScope = 0x35,
+
+    /// `StateMachineMethod` table (0x36) - Async/iterator state machine info.
+    ///
+    /// Links state machine methods (generated for async/await and iterators)
+    /// back to their original user-written methods. Critical for providing
+    /// a seamless debugging experience with async and iterator methods.
+    StateMachineMethod = 0x36,
+
+    /// `CustomDebugInformation` table (0x37) - Custom debugging metadata.
+    ///
+    /// Contains custom debugging information that can be defined by compilers
+    /// or tools. Provides extensibility for debugging scenarios beyond the
+    /// standard Portable PDB tables.
+    CustomDebugInformation = 0x37,
 }

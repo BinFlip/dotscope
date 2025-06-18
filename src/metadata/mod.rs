@@ -168,12 +168,16 @@ pub mod cilobject;
 pub mod cor20header;
 /// Implementation of custom attribute parsing and representation
 pub mod customattributes;
+/// Implementation of custom debug information parsing for Portable PDB format
+pub mod customdebuginformation;
 /// Implementation of 'Exports' by the loaded binary
 pub mod exports;
 /// Implementation of the verification mechanism of an `Assembly`
 pub mod identity;
 /// Implementation of methods that are imported from other binaries (native or .net)
 pub mod imports;
+/// Implementation of import scope parsing for Portable PDB format
+pub mod importscope;
 /// Implementation of our MetaDataTable loader
 pub(crate) mod loader;
 /// Implementation of the type marshalling for native code invokations

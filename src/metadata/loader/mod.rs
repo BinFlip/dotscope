@@ -75,7 +75,7 @@ pub(crate) use data::CilObjectData;
 /// 2. Add the loader to this array
 /// 3. Update any loaders that depend on the new table
 /// 4. Test that the dependency graph remains acyclic
-static LOADERS: [&'static dyn MetadataLoader; 45] = [
+static LOADERS: [&'static dyn MetadataLoader; 53] = [
     &crate::metadata::tables::AssemblyLoader,
     &crate::metadata::tables::AssemblyOsLoader,
     &crate::metadata::tables::AssemblyProcessorLoader,
@@ -86,6 +86,14 @@ static LOADERS: [&'static dyn MetadataLoader; 45] = [
     &crate::metadata::tables::ConstantLoader,
     &crate::metadata::tables::CustomAttributeLoader,
     &crate::metadata::tables::DeclSecurityLoader,
+    &crate::metadata::tables::DocumentLoader,
+    &crate::metadata::tables::MethodDebugInformationLoader,
+    &crate::metadata::tables::LocalScopeLoader,
+    &crate::metadata::tables::LocalVariableLoader,
+    &crate::metadata::tables::LocalConstantLoader,
+    &crate::metadata::tables::ImportScopeLoader,
+    &crate::metadata::tables::StateMachineMethodLoader,
+    &crate::metadata::tables::CustomDebugInformationLoader,
     &crate::metadata::tables::EncLogLoader,
     &crate::metadata::tables::EncMapLoader,
     &crate::metadata::tables::EventLoader,
