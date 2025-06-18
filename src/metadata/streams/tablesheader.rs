@@ -307,14 +307,15 @@ use crate::{
     metadata::tables::{
         AssemblyOsRaw, AssemblyProcessorRaw, AssemblyRaw, AssemblyRefOsRaw,
         AssemblyRefProcessorRaw, AssemblyRefRaw, ClassLayoutRaw, ConstantRaw, CustomAttributeRaw,
-        DeclSecurityRaw, EncLogRaw, EncMapRaw, EventMapRaw, EventPtrRaw, EventRaw, ExportedTypeRaw,
-        FieldLayoutRaw, FieldMarshalRaw, FieldPtrRaw, FieldRaw, FieldRvaRaw, FileRaw,
-        GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw, InterfaceImplRaw,
-        ManifestResourceRaw, MemberRefRaw, MetadataTable, MethodDefRaw, MethodImplRaw,
-        MethodPtrRaw, MethodSemanticsRaw, MethodSpecRaw, ModuleRaw, ModuleRefRaw, NestedClassRaw,
-        ParamPtrRaw, ParamRaw, PropertyMapRaw, PropertyPtrRaw, PropertyRaw, RowDefinition,
-        StandAloneSigRaw, TableData, TableId, TableInfo, TableInfoRef, TypeDefRaw, TypeRefRaw,
-        TypeSpecRaw,
+        CustomDebugInformationRaw, DeclSecurityRaw, DocumentRaw, EncLogRaw, EncMapRaw, EventMapRaw,
+        EventPtrRaw, EventRaw, ExportedTypeRaw, FieldLayoutRaw, FieldMarshalRaw, FieldPtrRaw,
+        FieldRaw, FieldRvaRaw, FileRaw, GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw,
+        ImportScopeRaw, InterfaceImplRaw, LocalConstantRaw, LocalScopeRaw, LocalVariableRaw,
+        ManifestResourceRaw, MemberRefRaw, MetadataTable, MethodDebugInformationRaw, MethodDefRaw,
+        MethodImplRaw, MethodPtrRaw, MethodSemanticsRaw, MethodSpecRaw, ModuleRaw, ModuleRefRaw,
+        NestedClassRaw, ParamPtrRaw, ParamRaw, PropertyMapRaw, PropertyPtrRaw, PropertyRaw,
+        RowDefinition, StandAloneSigRaw, StateMachineMethodRaw, TableData, TableId, TableInfo,
+        TableInfoRef, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
     },
     Error::OutOfBounds,
     Result,
@@ -1114,14 +1115,14 @@ impl<'a> TablesHeader<'a> {
             sorted: read_le::<u64>(&data[16..])?,
             info: Arc::new(TableInfo::new(data, valid_bitvec)?),
             tables_offset: (24 + valid_bitvec.count_ones() * 4) as usize,
-            tables: Vec::with_capacity(TableId::GenericParamConstraint as usize + 1),
+            tables: Vec::with_capacity(TableId::CustomDebugInformation as usize + 1),
         };
 
         // with_capacity has allocated the buffer, but we can't 'insert' elements, only push
         // to make the vector grow - as .insert doesn't adjust length, only push does.
         tables_header
             .tables
-            .resize_with(TableId::GenericParamConstraint as usize + 1, || None);
+            .resize_with(TableId::CustomDebugInformation as usize + 1, || None);
 
         let mut current_offset = tables_header.tables_offset as usize;
         for table_id in TableId::iter() {
@@ -1235,6 +1236,9 @@ impl<'a> TablesHeader<'a> {
                 TableData::DeclSecurity(table) => unsafe {
                     Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
                 },
+                TableData::Document(table) => unsafe {
+                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
+                },
                 TableData::EncLog(table) => unsafe {
                     Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
                 },
@@ -1323,6 +1327,27 @@ impl<'a> TablesHeader<'a> {
                     Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
                 },
                 TableData::GenericParamConstraint(table) => unsafe {
+                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
+                },
+                TableData::MethodDebugInformation(table) => unsafe {
+                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
+                },
+                TableData::LocalScope(table) => unsafe {
+                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
+                },
+                TableData::LocalVariable(table) => unsafe {
+                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
+                },
+                TableData::LocalConstant(table) => unsafe {
+                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
+                },
+                TableData::ImportScope(table) => unsafe {
+                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
+                },
+                TableData::StateMachineMethod(table) => unsafe {
+                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
+                },
+                TableData::CustomDebugInformation(table) => unsafe {
                     Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
                 },
             },
@@ -1445,6 +1470,13 @@ impl<'a> TablesHeader<'a> {
                 *current_offset += table.size() as usize;
 
                 TableData::DeclSecurity(table)
+            }
+            TableId::Document => {
+                let table =
+                    MetadataTable::<DocumentRaw>::new(data, t_info.rows, self.info.clone())?;
+                *current_offset += table.size() as usize;
+
+                TableData::Document(table)
             }
             TableId::EncLog => {
                 let table = MetadataTable::<EncLogRaw>::new(data, t_info.rows, self.info.clone())?;
@@ -1662,6 +1694,64 @@ impl<'a> TablesHeader<'a> {
                 *current_offset += table.size() as usize;
 
                 TableData::GenericParamConstraint(table)
+            }
+            TableId::MethodDebugInformation => {
+                let table = MetadataTable::<MethodDebugInformationRaw>::new(
+                    data,
+                    t_info.rows,
+                    self.info.clone(),
+                )?;
+                *current_offset += table.size() as usize;
+
+                TableData::MethodDebugInformation(table)
+            }
+            TableId::LocalScope => {
+                let table =
+                    MetadataTable::<LocalScopeRaw>::new(data, t_info.rows, self.info.clone())?;
+                *current_offset += table.size() as usize;
+
+                TableData::LocalScope(table)
+            }
+            TableId::LocalVariable => {
+                let table =
+                    MetadataTable::<LocalVariableRaw>::new(data, t_info.rows, self.info.clone())?;
+                *current_offset += table.size() as usize;
+
+                TableData::LocalVariable(table)
+            }
+            TableId::LocalConstant => {
+                let table =
+                    MetadataTable::<LocalConstantRaw>::new(data, t_info.rows, self.info.clone())?;
+                *current_offset += table.size() as usize;
+
+                TableData::LocalConstant(table)
+            }
+            TableId::ImportScope => {
+                let table =
+                    MetadataTable::<ImportScopeRaw>::new(data, t_info.rows, self.info.clone())?;
+                *current_offset += table.size() as usize;
+
+                TableData::ImportScope(table)
+            }
+            TableId::StateMachineMethod => {
+                let table = MetadataTable::<StateMachineMethodRaw>::new(
+                    data,
+                    t_info.rows,
+                    self.info.clone(),
+                )?;
+                *current_offset += table.size() as usize;
+
+                TableData::StateMachineMethod(table)
+            }
+            TableId::CustomDebugInformation => {
+                let table = MetadataTable::<CustomDebugInformationRaw>::new(
+                    data,
+                    t_info.rows,
+                    self.info.clone(),
+                )?;
+                *current_offset += table.size() as usize;
+
+                TableData::CustomDebugInformation(table)
             }
         };
 

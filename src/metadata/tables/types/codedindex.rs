@@ -133,6 +133,18 @@ pub enum CodedIndexType {
     /// Used to reference either type or method definitions in contexts
     /// where both are valid targets.
     TypeOrMethodDef,
+
+    /// References any entity that can have custom debug information attached.
+    ///
+    /// This coded index supports references to various metadata tables for Portable PDB
+    /// custom debug information. According to the Portable PDB specification, this can
+    /// reference any of the following tables:
+    /// `MethodDef`, `Field`, `TypeRef`, `TypeDef`, `Param`, `InterfaceImpl`, `MemberRef`,
+    /// `Module`, `DeclSecurity`, `Property`, `Event`, `StandAloneSig`, `ModuleRef`, `TypeSpec`,
+    /// `Assembly`, `AssemblyRef`, `File`, `ExportedType`, `ManifestResource`, `GenericParam`,
+    /// `GenericParamConstraint`, `MethodSpec`, `Document`, `LocalScope`, `LocalVariable`,
+    /// `LocalConstant`, `ImportScope`.
+    HasCustomDebugInformation,
 }
 
 impl CodedIndexType {
@@ -210,6 +222,35 @@ impl CodedIndexType {
                 TableId::TypeRef,
             ],
             CodedIndexType::TypeOrMethodDef => &[TableId::TypeDef, TableId::MethodDef],
+            CodedIndexType::HasCustomDebugInformation => &[
+                TableId::MethodDef,
+                TableId::Field,
+                TableId::TypeRef,
+                TableId::TypeDef,
+                TableId::Param,
+                TableId::InterfaceImpl,
+                TableId::MemberRef,
+                TableId::Module,
+                TableId::DeclSecurity,
+                TableId::Property,
+                TableId::Event,
+                TableId::StandAloneSig,
+                TableId::ModuleRef,
+                TableId::TypeSpec,
+                TableId::Assembly,
+                TableId::AssemblyRef,
+                TableId::File,
+                TableId::ExportedType,
+                TableId::ManifestResource,
+                TableId::GenericParam,
+                TableId::GenericParamConstraint,
+                TableId::MethodSpec,
+                TableId::Document,
+                TableId::LocalScope,
+                TableId::LocalVariable,
+                TableId::LocalConstant,
+                TableId::ImportScope,
+            ],
         }
     }
 }
@@ -359,6 +400,14 @@ impl CodedIndex {
                 TableId::GenericParam => Token::new(row | 0x2A00_0000),
                 TableId::MethodSpec => Token::new(row | 0x2B00_0000),
                 TableId::GenericParamConstraint => Token::new(row | 0x2C00_0000),
+                TableId::Document => Token::new(row | 0x3000_0000),
+                TableId::MethodDebugInformation => Token::new(row | 0x3100_0000),
+                TableId::LocalScope => Token::new(row | 0x3200_0000),
+                TableId::LocalVariable => Token::new(row | 0x3300_0000),
+                TableId::LocalConstant => Token::new(row | 0x3400_0000),
+                TableId::ImportScope => Token::new(row | 0x3500_0000),
+                TableId::StateMachineMethod => Token::new(row | 0x3600_0000),
+                TableId::CustomDebugInformation => Token::new(row | 0x3700_0000),
             },
         }
     }

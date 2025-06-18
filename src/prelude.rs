@@ -324,6 +324,63 @@ pub use crate::metadata::tables::{
 pub use crate::metadata::tables::{StandAloneSig, StandAloneSigRc};
 
 // ================================================================================================
+// Portable PDB Debug Information Tables
+// ================================================================================================
+//
+// This section provides access to Portable PDB format debug information tables. These tables
+// enable rich debugging experiences with source line mapping, local variable information,
+// scope tracking, and custom debug data. Essential for debugger integration and development
+// tool support.
+
+/// Document and source file information.
+///
+/// Document table entries provide information about source files referenced in debug information,
+/// including file names, language identifiers, hash algorithms, and source content.
+pub use crate::metadata::tables::{Document, DocumentRc};
+
+/// Method debugging information.
+///
+/// Links methods to their sequence points for source code mapping and debugging.
+/// Essential for providing line-by-line debugging and source code visualization.
+pub use crate::metadata::tables::{MethodDebugInformation, MethodDebugInformationRc};
+
+/// Local variable and constant scope tracking.
+///
+/// LocalScope defines the IL instruction ranges where local variables and constants are active.
+/// Critical for proper variable visibility and lifetime tracking during debugging.
+pub use crate::metadata::tables::{LocalScope, LocalScopeRc, LocalScopeRef};
+
+/// Local variable debug information.
+///
+/// Provides names, signatures, and debugging attributes for local variables within methods.
+/// Enables debuggers to display meaningful variable information during execution.
+pub use crate::metadata::tables::{LocalVariable, LocalVariableRc};
+
+/// Local constant debug information.
+///
+/// Contains information about local constants including names, signatures, and values.
+/// Allows debuggers to display constant values and provide comprehensive local state information.
+pub use crate::metadata::tables::{LocalConstant, LocalConstantRc};
+
+/// Namespace import scope information.
+///
+/// Tracks namespace imports (using statements) and their active ranges for proper name resolution
+/// during debugging and IntelliSense operations.
+pub use crate::metadata::tables::{ImportScope, ImportScopeRc};
+
+/// State machine method mappings.
+///
+/// Links compiler-generated state machine methods (async/await, iterators) back to their original
+/// user-written methods for seamless debugging experiences.
+pub use crate::metadata::tables::{StateMachineMethod, StateMachineMethodRc};
+
+/// Custom debugging information.
+///
+/// Extensible debug information that can be defined by compilers or tools for specialized
+/// debugging scenarios beyond the standard Portable PDB format.
+pub use crate::metadata::tables::{CustomDebugInformation, CustomDebugInformationRc};
+
+// ================================================================================================
 // Raw Metadata Table Types
 // ================================================================================================
 //

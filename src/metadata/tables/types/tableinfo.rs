@@ -221,7 +221,7 @@ impl TableInfo {
     /// * [ECMA-335 Partition II, Section 24.2.6](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - #~ Stream
     pub fn new(data: &[u8], valid_bitvec: u64) -> Result<Self> {
         let mut table_info =
-            vec![TableRowInfo::default(); TableId::GenericParamConstraint as usize + 1];
+            vec![TableRowInfo::default(); TableId::CustomDebugInformation as usize + 1];
         let mut next_row_offset = 24;
 
         for table_id in TableId::iter() {
@@ -281,7 +281,7 @@ impl TableInfo {
         large_guid: bool,
     ) -> Self {
         let mut table_info = TableInfo {
-            rows: vec![TableRowInfo::default(); TableId::GenericParamConstraint as usize + 1],
+            rows: vec![TableRowInfo::default(); TableId::CustomDebugInformation as usize + 1],
             coded_indexes: vec![0; CodedIndexType::COUNT],
             is_large_index_str: large_str,
             is_large_index_guid: large_guid,

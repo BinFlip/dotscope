@@ -45,13 +45,15 @@
 
 use crate::metadata::tables::{
     AssemblyOsRaw, AssemblyProcessorRaw, AssemblyRaw, AssemblyRefOsRaw, AssemblyRefProcessorRaw,
-    AssemblyRefRaw, ClassLayoutRaw, ConstantRaw, CustomAttributeRaw, DeclSecurityRaw, EncLogRaw,
-    EncMapRaw, EventMapRaw, EventPtrRaw, EventRaw, ExportedTypeRaw, FieldLayoutRaw,
-    FieldMarshalRaw, FieldPtrRaw, FieldRaw, FieldRvaRaw, FileRaw, GenericParamConstraintRaw,
-    GenericParamRaw, ImplMapRaw, InterfaceImplRaw, ManifestResourceRaw, MemberRefRaw,
-    MetadataTable, MethodDefRaw, MethodImplRaw, MethodPtrRaw, MethodSemanticsRaw, MethodSpecRaw,
-    ModuleRaw, ModuleRefRaw, NestedClassRaw, ParamPtrRaw, ParamRaw, PropertyMapRaw, PropertyPtrRaw,
-    PropertyRaw, StandAloneSigRaw, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
+    AssemblyRefRaw, ClassLayoutRaw, ConstantRaw, CustomAttributeRaw, CustomDebugInformationRaw,
+    DeclSecurityRaw, DocumentRaw, EncLogRaw, EncMapRaw, EventMapRaw, EventPtrRaw, EventRaw,
+    ExportedTypeRaw, FieldLayoutRaw, FieldMarshalRaw, FieldPtrRaw, FieldRaw, FieldRvaRaw, FileRaw,
+    GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw, ImportScopeRaw, InterfaceImplRaw,
+    LocalConstantRaw, LocalScopeRaw, LocalVariableRaw, ManifestResourceRaw, MemberRefRaw,
+    MetadataTable, MethodDebugInformationRaw, MethodDefRaw, MethodImplRaw, MethodPtrRaw,
+    MethodSemanticsRaw, MethodSpecRaw, ModuleRaw, ModuleRefRaw, NestedClassRaw, ParamPtrRaw,
+    ParamRaw, PropertyMapRaw, PropertyPtrRaw, PropertyRaw, StandAloneSigRaw, StateMachineMethodRaw,
+    TypeDefRaw, TypeRefRaw, TypeSpecRaw,
 };
 
 /// Unified enumeration representing all possible metadata tables in a CLI assembly.
@@ -189,6 +191,61 @@ pub enum TableData<'a> {
     /// This table stores declarative security attributes applied to types
     /// or methods, including permission sets and security actions.
     DeclSecurity(MetadataTable<'a, DeclSecurityRaw>),
+
+    /// Document table containing Portable PDB document information.
+    ///
+    /// This table contains information about source documents referenced in debug information,
+    /// including document names, hash algorithms, hashes, and source language identifiers.
+    Document(MetadataTable<'a, DocumentRaw>),
+
+    /// MethodDebugInformation table containing method debugging details.
+    ///
+    /// This table contains debugging information for methods, including sequence points
+    /// that map IL instructions to source code locations. Essential for stepping
+    /// through code during debugging sessions in Portable PDB format.
+    MethodDebugInformation(MetadataTable<'a, MethodDebugInformationRaw>),
+
+    /// LocalScope table containing local variable scope information.
+    ///
+    /// This table defines the scope ranges where local variables and constants are active
+    /// within methods. Used by debuggers to determine variable visibility and lifetime
+    /// at different execution points in Portable PDB format.
+    LocalScope(MetadataTable<'a, LocalScopeRaw>),
+
+    /// LocalVariable table containing local variable information.
+    ///
+    /// This table stores information about local variables within method scopes,
+    /// including their names, signatures, and attributes. Used by debuggers to
+    /// display variable names and values during code execution in Portable PDB format.
+    LocalVariable(MetadataTable<'a, LocalVariableRaw>),
+
+    /// LocalConstant table containing local constant information.
+    ///
+    /// This table stores information about local constants within method scopes,
+    /// including their names, signatures, and constant values. Used by debuggers to
+    /// display constant names and values during code execution in Portable PDB format.
+    LocalConstant(MetadataTable<'a, LocalConstantRaw>),
+
+    /// ImportScope table containing namespace import scope information.
+    ///
+    /// This table defines import scopes that specify which namespaces, types, and
+    /// assemblies are accessible within a lexical scope. Used by debuggers to resolve
+    /// type names and provide proper IntelliSense support during debugging in Portable PDB format.
+    ImportScope(MetadataTable<'a, ImportScopeRaw>),
+
+    /// StateMachineMethod table containing async/iterator method mappings.
+    ///
+    /// This table maps compiler-generated state machine MoveNext methods back to their
+    /// original user-written async/await and iterator methods. Essential for providing
+    /// a seamless debugging experience with modern C# and VB.NET features in Portable PDB format.
+    StateMachineMethod(MetadataTable<'a, StateMachineMethodRaw>),
+
+    /// CustomDebugInformation table containing extensible debug information.
+    ///
+    /// This table allows compilers and tools to store additional debugging metadata
+    /// beyond the standard Portable PDB tables. Each entry contains a GUID identifying
+    /// the information type and a blob containing the actual data.
+    CustomDebugInformation(MetadataTable<'a, CustomDebugInformationRaw>),
 
     /// EncLog table containing Edit-and-Continue log information.
     ///

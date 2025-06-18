@@ -73,12 +73,14 @@ use crate::{
         tables::{
             AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, AssemblyRefOsMap,
             AssemblyRefProcessorMap, ClassLayoutMap, CodedIndex, ConstantMap, CustomAttributeMap,
-            DeclSecurityMap, EncLogMap, EncMapMap, EventMap, EventMapEntryMap, EventPtrMap,
-            FieldLayoutMap, FieldMap, FieldMarshalMap, FieldPtrMap, FieldRVAMap, FileMap,
-            GenericParamConstraintMap, GenericParamMap, InterfaceImplMap, MemberRefMap,
-            MethodImplMap, MethodPtrMap, MethodSemanticsMap, MethodSpecMap, ModuleRc, ModuleRefMap,
-            NestedClassMap, ParamMap, ParamPtrMap, PropertyMap, PropertyMapEntryMap,
-            PropertyPtrMap, StandAloneSigMap, TableId, TypeSpecMap,
+            CustomDebugInformationMap, DeclSecurityMap, DocumentMap, EncLogMap, EncMapMap,
+            EventMap, EventMapEntryMap, EventPtrMap, FieldLayoutMap, FieldMap, FieldMarshalMap,
+            FieldPtrMap, FieldRVAMap, FileMap, GenericParamConstraintMap, GenericParamMap,
+            ImportScopeMap, InterfaceImplMap, LocalConstantMap, LocalScopeMap, LocalVariableMap,
+            MemberRefMap, MethodDebugInformationMap, MethodImplMap, MethodPtrMap,
+            MethodSemanticsMap, MethodSpecMap, ModuleRc, ModuleRefMap, NestedClassMap, ParamMap,
+            ParamPtrMap, PropertyMap, PropertyMapEntryMap, PropertyPtrMap, StandAloneSigMap,
+            StateMachineMethodMap, TableId, TypeSpecMap,
         },
         typesystem::{CilTypeReference, TypeRegistry},
     },
@@ -212,6 +214,24 @@ pub(crate) struct LoaderContext<'a> {
     pub enc_log: EncLogMap,
     /// Edit-and-Continue token mapping for debugging scenarios.
     pub enc_map: EncMapMap,
+
+    // === Portable PDB Debug Tables ===
+    /// Document information for source file mapping in Portable PDB format.
+    pub document: DocumentMap,
+    /// Method debugging information including sequence points.
+    pub method_debug_information: MethodDebugInformationMap,
+    /// Local variable scope information for debugging.
+    pub local_scope: LocalScopeMap,
+    /// Local variable information for debugging.
+    pub local_variable: LocalVariableMap,
+    /// Local constant information for debugging.
+    pub local_constant: LocalConstantMap,
+    /// Import scope information for debugging.
+    pub import_scope: ImportScopeMap,
+    /// State machine method mapping for async/iterator debugging.
+    pub state_machine_method: StateMachineMethodMap,
+    /// Custom debug information for extensible debugging metadata.
+    pub custom_debug_information: CustomDebugInformationMap,
 
     // === Parameter and Generic Tables ===
     /// Parameter definitions for methods.
