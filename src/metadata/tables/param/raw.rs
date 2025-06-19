@@ -115,6 +115,9 @@ impl ParamRaw {
     /// ## Returns
     ///
     /// Always returns `Ok(())` as Param entries don't require cross-table updates.
+    ///
+    /// # Errors
+    /// This function does not return an error under normal circumstances.
     pub fn apply(&self) -> Result<()> {
         Ok(())
     }

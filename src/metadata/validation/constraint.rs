@@ -37,7 +37,7 @@
 //! ## References
 //!
 //! - ECMA-335, Partition II, Section 10.1.7 - Generic parameters
-//! - ECMA-335, Partition II, Section 23.2.15 - GenericParamConstraint table
+//! - ECMA-335, Partition II, Section 23.2.15 - `GenericParamConstraint` table
 //! - .NET Generic Constraints documentation
 //!
 //! ## Thread Safety

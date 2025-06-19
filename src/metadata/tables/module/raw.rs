@@ -156,6 +156,10 @@ impl ModuleRaw {
     /// ## Returns
     ///
     /// Always returns `Ok(())` as Module entries don't modify other tables.
+    ///
+    /// # Errors
+    ///
+    /// This function does not return an error.
     pub fn apply(&self) -> Result<()> {
         Ok(())
     }
@@ -193,8 +197,8 @@ impl<'a> RowDefinition<'a> for ModuleRaw {
     /// 1. **Generation** (2 bytes): Reserved field, always zero
     /// 2. **Name** (2-4 bytes): Index into string heap containing module name
     /// 3. **Mvid** (2-4 bytes): Index into GUID heap containing module version identifier
-    /// 4. **EncId** (2-4 bytes): Index into GUID heap for Edit and Continue
-    /// 5. **EncBaseId** (2-4 bytes): Index into GUID heap for ENC base
+    /// 4. **`EncId`** (2-4 bytes): Index into GUID heap for Edit and Continue
+    /// 5. **`EncBaseId`** (2-4 bytes): Index into GUID heap for ENC base
     ///
     /// ## Arguments
     /// * `data` - Binary data containing the table

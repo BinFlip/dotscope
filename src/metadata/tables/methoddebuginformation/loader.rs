@@ -1,15 +1,15 @@
-//! MethodDebugInformation table loader implementation
+//! `MethodDebugInformation` table loader implementation
 //!
 //! Provides the [`MethodDebugInformationLoader`] implementation for loading method debugging
-//! metadata from the Portable PDB MethodDebugInformation table (0x31). This loader is responsible
+//! metadata from the Portable PDB `MethodDebugInformation` table (0x31). This loader is responsible
 //! for processing debugging information that maps IL instructions to source code locations,
 //! essential for providing step-through debugging capabilities.
 //!
 //! # Table Structure
 //!
-//! The MethodDebugInformation table contains debugging information for methods:
+//! The `MethodDebugInformation` table contains debugging information for methods:
 //! - **Document**: Coded index reference to the source document
-//! - **SequencePoints**: Blob heap reference containing encoded sequence point data
+//! - **`SequencePoints`**: Blob heap reference containing encoded sequence point data
 //!
 //! # Loading Process
 //!
@@ -28,9 +28,9 @@ use crate::{
     Result,
 };
 
-/// Loader for the MethodDebugInformation metadata table
+/// Loader for the `MethodDebugInformation` metadata table
 ///
-/// Implements [`MetadataLoader`] to process the MethodDebugInformation table (0x31)
+/// Implements [`MetadataLoader`] to process the `MethodDebugInformation` table (0x31)
 /// which contains debugging information for methods in Portable PDB format. This loader
 /// handles the conversion from raw binary data to structured debugging metadata that
 /// can be used by development tools and debuggers.
@@ -47,7 +47,7 @@ use crate::{
 /// heap data and coded indices that are resolved during the loading process.
 ///
 /// # Reference
-/// * [Portable PDB Format - MethodDebugInformation Table](https://github.com/dotnet/core/blob/main/Documentation/diagnostics/portable_pdb.md#methoddebuginformation-table-0x31)
+/// * [Portable PDB Format - `MethodDebugInformation` Table](https://github.com/dotnet/core/blob/main/Documentation/diagnostics/portable_pdb.md#methoddebuginformation-table-0x31)
 pub struct MethodDebugInformationLoader;
 
 impl MetadataLoader for MethodDebugInformationLoader {

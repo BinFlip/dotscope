@@ -76,7 +76,7 @@ pub type CilTypeList = Arc<boxcar::Vec<CilTypeRc>>;
 /// while maintaining thread safety for concurrent access scenarios.
 pub type CilTypeRc = Arc<CilType>;
 
-/// Represents a unified type definition combining information from TypeDef, TypeRef, and TypeSpec tables.
+/// Represents a unified type definition combining information from `TypeDef`, `TypeRef`, and `TypeSpec` tables.
 ///
 /// `CilType` provides a complete representation of a .NET type, merging metadata from multiple
 /// tables into a single coherent structure. This eliminates the need to navigate between
@@ -99,7 +99,7 @@ pub type CilTypeRc = Arc<CilType>;
 /// Basic type information access is available through the type registry.
 /// Complex iteration patterns may require understanding the current iterator implementation.
 pub struct CilType {
-    /// Metadata token identifying this type (TypeDef, TypeRef, TypeSpec, or artificial)
+    /// Metadata token identifying this type (`TypeDef`, `TypeRef`, `TypeSpec`, or artificial)
     pub token: Token,
     /// Computed type flavor - lazily determined from context and inheritance chain
     flavor: OnceLock<CilFlavor>,
@@ -107,11 +107,11 @@ pub struct CilType {
     pub namespace: String,
     /// Type name (class name, interface name, etc.)
     pub name: String,
-    /// External type reference for imported types (from AssemblyRef, File, ModuleRef)
+    /// External type reference for imported types (from `AssemblyRef`, `File`, `ModuleRef`)
     pub external: Option<CilTypeReference>,
     /// Base type reference - the type this type inherits from (for classes) or extends (for interfaces)
     base: OnceLock<CilTypeRef>,
-    /// Type attributes flags - 4-byte bitmask from TypeAttributes (ECMA-335 §II.23.1.15)
+    /// Type attributes flags - 4-byte bitmask from `TypeAttributes` (ECMA-335 §II.23.1.15)
     pub flags: u32,
     /// All fields defined in this type
     pub fields: FieldList,
@@ -121,7 +121,7 @@ pub struct CilType {
     pub properties: PropertyList,
     /// All events defined in this type
     pub events: EventList,
-    /// All interfaces this type implements (from InterfaceImpl table)
+    /// All interfaces this type implements (from `InterfaceImpl` table)
     pub interfaces: CilTypeRefList,
     /// All method overwrites this type implements (explicit interface implementations)
     pub overwrites: Arc<boxcar::Vec<CilTypeReference>>,
@@ -133,13 +133,13 @@ pub struct CilType {
     pub generic_args: MethodSpecList,
     /// Custom attributes applied to this type (annotations, decorators)
     pub custom_attributes: CustomAttributeValueList,
-    /// Field layout packing size - alignment of fields in memory (from ClassLayout table)
+    /// Field layout packing size - alignment of fields in memory (from `ClassLayout` table)
     pub packing_size: OnceLock<u16>,
-    /// Total size of the class in bytes (from ClassLayout table)
+    /// Total size of the class in bytes (from `ClassLayout` table)
     pub class_size: OnceLock<u32>,
-    /// TypeSpec specifiers providing additional type information for complex types
+    /// `TypeSpec` specifiers providing additional type information for complex types
     pub spec: OnceLock<CilFlavor>,
-    /// Type modifiers from TypeSpec (required/optional modifiers, pinned types, etc.)
+    /// Type modifiers from `TypeSpec` (required/optional modifiers, pinned types, etc.)
     pub modifiers: Arc<boxcar::Vec<CilModifier>>,
     /// Security declarations and permissions associated with this type
     pub security: OnceLock<Security>,
@@ -166,7 +166,7 @@ impl CilType {
     /// * `name` - The name of the type  
     /// * `external` - External type reference if this is an imported type
     /// * `base` - Base type reference if this type inherits from another (optional)
-    /// * `flags` - Type attributes flags from TypeAttributes
+    /// * `flags` - Type attributes flags from `TypeAttributes`
     /// * `fields` - Fields belonging to this type
     /// * `methods` - Methods belonging to this type
     /// * `flavor` - Optional explicit flavor. If None, flavor will be computed lazily
@@ -256,6 +256,11 @@ impl CilType {
     /// # Returns
     /// * `Ok(())` if the base type was set successfully
     /// * `Err(base_type)` if a base type was already set for this type
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if a base type was already set for this type.
+    /// The error contains the base type that was attempted to be set.
     ///
     /// # Thread Safety
     ///

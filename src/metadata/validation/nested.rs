@@ -15,7 +15,7 @@
 //!
 //! ### Relationship Validation
 //! - **Self-Reference Prevention**: Types cannot be nested within themselves
-//! - **Token Validation**: Ensures proper TypeDef token usage
+//! - **Token Validation**: Ensures proper `TypeDef` token usage
 //! - **RID Validation**: Validates non-zero row identifiers
 //!
 //! ### Structural Validation
@@ -32,7 +32,7 @@
 //!
 //! ### Basic Rules
 //! 1. **No Self-Nesting**: A type cannot be nested within itself
-//! 2. **TypeDef Only**: Both nested and enclosing types must be TypeDef tokens
+//! 2. **`TypeDef` Only**: Both nested and enclosing types must be `TypeDef` tokens
 //! 3. **Valid RIDs**: Token row identifiers must be non-zero
 //! 4. **Single Enclosing**: Each nested type can have only one direct enclosing type
 //!
@@ -67,7 +67,7 @@
 //! | Error Category | Description | Example |
 //! |----------------|-------------|---------|
 //! | **Self-Reference** | Type nested within itself | `ClassA` nested in `ClassA` |
-//! | **Invalid Token** | Non-TypeDef token used | MethodDef token for nested type |
+//! | **Invalid Token** | Non-TypeDef token used | `MethodDef` token for nested type |
 //! | **Zero RID** | Invalid row identifier | Token with RID = 0 |
 //! | **Circular Reference** | Cycle in nesting chain | A→B→C→A |
 //! | **Depth Exceeded** | Too many nesting levels | 65+ levels of nesting |
@@ -75,7 +75,7 @@
 //! ## Runtime Compliance
 //!
 //! The validation follows .NET runtime behavior:
-//! - **Token Validation**: Matches CoreCLR token validation rules
+//! - **Token Validation**: Matches `CoreCLR` token validation rules
 //! - **Structural Validation**: Prevents runtime loading failures
 //! - **Error Messages**: Provides runtime-style error descriptions
 //! - **Performance**: Efficient validation suitable for production use
@@ -88,7 +88,7 @@
 //! ## References
 //!
 //! - ECMA-335, Partition II, Section 10.6 - Nested types
-//! - ECMA-335, Partition II, Section 23.2.11 - NestedClass table
+//! - ECMA-335, Partition II, Section 23.2.11 - `NestedClass` table
 //! - .NET Core Runtime: Nested type validation implementation
 //! - C# Language Specification: Nested type declarations
 
@@ -139,14 +139,14 @@ impl NestedClassValidator {
     /// - Validates that nested and enclosing tokens are different
     ///
     /// ### Token Format Validation
-    /// - Verifies both tokens are TypeDef tokens (table ID 0x02)
+    /// - Verifies both tokens are `TypeDef` tokens (table ID 0x02)
     /// - Ensures row identifiers (RIDs) are non-zero and valid
     /// - Validates token structure and format compliance
     ///
     /// ## Token Requirements
     ///
     /// Both nested and enclosing class tokens must be:
-    /// - **TypeDef tokens**: Table ID must be 0x02 (not MethodDef, FieldDef, etc.)
+    /// - **`TypeDef` tokens**: Table ID must be 0x02 (not `MethodDef`, `FieldDef`, etc.)
     /// - **Valid RIDs**: Row identifier must be > 0 (1-based indexing)
     /// - **Different tokens**: Cannot be the same token (no self-nesting)
     ///
@@ -164,14 +164,14 @@ impl NestedClassValidator {
     ///
     /// Returns [`crate::Error`] in these cases:
     /// - **Self-Referential Nesting**: Nested and enclosing tokens are identical
-    /// - **Invalid Token Type**: Token is not a TypeDef token (wrong table ID)
+    /// - **Invalid Token Type**: Token is not a `TypeDef` token (wrong table ID)
     /// - **Invalid RID**: Token has zero row identifier (invalid reference)
     ///
     /// # .NET Runtime Reference
     ///
     /// This validation is based on the .NET runtime's nested class processing logic
     /// that prevents structural anomalies and ensures proper type loading behavior.
-    /// The validation matches CoreCLR's token validation and relationship checking.
+    /// The validation matches `CoreCLR`'s token validation and relationship checking.
     pub fn validate_nested_relationship(
         nested_class_token: Token,
         enclosing_class_token: Token,

@@ -1,11 +1,11 @@
-//! Raw MemberRef table structure with unresolved coded indexes and blob references.
+//! Raw `MemberRef` table structure with unresolved coded indexes and blob references.
 //!
 //! This module provides the [`MemberRefRaw`] struct, which represents external member references
 //! as stored in the metadata stream. The structure contains unresolved coded indexes
 //! and blob heap references that require processing to establish member access information.
 //!
 //! # Purpose
-//! [`MemberRefRaw`] serves as the direct representation of MemberRef table entries from the
+//! [`MemberRefRaw`] serves as the direct representation of `MemberRef` table entries from the
 //! binary metadata stream, before reference resolution and signature parsing. This raw format
 //! is processed during metadata loading to create [`MemberRef`] instances with resolved
 //! references and parsed signature information.
@@ -31,7 +31,7 @@ use crate::{
     Result,
 };
 
-/// Raw MemberRef table entry with unresolved indexes and blob references.
+/// Raw `MemberRef` table entry with unresolved indexes and blob references.
 ///
 /// This structure represents an external member reference as stored directly in the metadata
 /// stream. All references are unresolved coded indexes or heap offsets that require processing
@@ -40,17 +40,17 @@ use crate::{
 /// # Table Structure (ECMA-335 §22.25)
 /// | Column | Size | Description |
 /// |--------|------|-------------|
-/// | Class | MemberRefParent coded index | Declaring type or module reference |
+/// | Class | `MemberRefParent` coded index | Declaring type or module reference |
 /// | Name | String index | Member name identifier |
 /// | Signature | Blob index | Member signature (method or field) |
 ///
 /// # Coded Index Resolution
-/// The `class` field uses the MemberRefParent coded index encoding:
-/// - **Tag 0**: TypeDef table (current assembly types)
-/// - **Tag 1**: TypeRef table (external assembly types)
-/// - **Tag 2**: ModuleRef table (external modules)
-/// - **Tag 3**: MethodDef table (vararg method signatures)
-/// - **Tag 4**: TypeSpec table (generic type instantiations)
+/// The `class` field uses the `MemberRefParent` coded index encoding:
+/// - **Tag 0**: `TypeDef` table (current assembly types)
+/// - **Tag 1**: `TypeRef` table (external assembly types)
+/// - **Tag 2**: `ModuleRef` table (external modules)
+/// - **Tag 3**: `MethodDef` table (vararg method signatures)
+/// - **Tag 4**: `TypeSpec` table (generic type instantiations)
 ///
 /// # Signature Parsing
 /// Member signatures in the blob heap are parsed according to their type:
@@ -60,13 +60,13 @@ use crate::{
 /// - **Property signatures**: Start with 0x08, handled as field signatures
 #[derive(Clone, Debug)]
 pub struct MemberRefRaw {
-    /// Row identifier within the MemberRef table.
+    /// Row identifier within the `MemberRef` table.
     ///
     /// Unique identifier for this member reference entry, used for internal
     /// table management and token generation.
     pub rid: u32,
 
-    /// Metadata token for this MemberRef entry (TableId 0x0A).
+    /// Metadata token for this `MemberRef` entry (`TableId` 0x0A).
     ///
     /// Computed as `0x0A000000 | rid` to create the full token value
     /// for referencing this member from other metadata structures.
@@ -77,9 +77,9 @@ pub struct MemberRefRaw {
     /// Used for efficient table navigation and binary metadata processing.
     pub offset: usize,
 
-    /// MemberRefParent coded index for the declaring type or module.
+    /// `MemberRefParent` coded index for the declaring type or module.
     ///
-    /// Points to TypeDef, TypeRef, ModuleRef, MethodDef, or TypeSpec tables
+    /// Points to `TypeDef`, `TypeRef`, `ModuleRef`, `MethodDef`, or `TypeSpec` tables
     /// to specify the context where this member is declared. Requires
     /// coded index resolution during processing to determine the actual parent.
     pub class: CodedIndex,
@@ -110,11 +110,11 @@ impl MemberRefRaw {
     /// The created parameter collection includes:
     /// - **Return parameter**: Sequence 0, contains return type information
     /// - **Method parameters**: Sequence 1-N, contain parameter type information
-    /// - **Placeholder metadata**: Names are None as MemberRef parameters lack names
+    /// - **Placeholder metadata**: Names are None as `MemberRef` parameters lack names
     ///
     /// # Arguments
     /// * `method_sig` - The parsed method signature containing parameter and return type information
-    /// * `_strings` - The strings heap (unused as MemberRef parameters don't have names)
+    /// * `_strings` - The strings heap (unused as `MemberRef` parameters don't have names)
     ///
     /// # Returns
     /// Thread-safe collection of parameter metadata structures with type information applied.
@@ -164,11 +164,11 @@ impl MemberRefRaw {
         params
     }
 
-    /// Applies a MemberRefRaw entry to update related metadata structures.
+    /// Applies a `MemberRefRaw` entry to update related metadata structures.
     ///
-    /// MemberRef entries represent references to external members and don't require
+    /// `MemberRef` entries represent references to external members and don't require
     /// cross-table modifications during the dual variant resolution phase. Unlike
-    /// definition tables (TypeDef, MethodDef, etc.), reference tables are primarily
+    /// definition tables (`TypeDef`, `MethodDef`, etc.), reference tables are primarily
     /// descriptive and don't modify other metadata structures.
     ///
     /// # Design Rationale
@@ -177,13 +177,17 @@ impl MemberRefRaw {
     /// relationships with other metadata tables.
     ///
     /// # Returns
-    /// * `Ok(())` - Always succeeds as MemberRef entries don't modify other tables
+    /// * `Ok(())` - Always succeeds as `MemberRef` entries don't modify other tables
     /// * `Err(_)` - Reserved for future error conditions (currently infallible)
+    ///
+    /// # Errors
+    ///
+    /// This function is infallible and always returns `Ok(())`. Reserved for future error conditions.
     pub fn apply(&self) -> Result<()> {
         Ok(())
     }
 
-    /// Converts a MemberRefRaw entry into a MemberRef with resolved references and parsed signatures.
+    /// Converts a `MemberRefRaw` entry into a `MemberRef` with resolved references and parsed signatures.
     ///
     /// This method performs complete member reference resolution, including parent type resolution,
     /// signature parsing, and parameter metadata creation. The resulting owned structure provides
@@ -203,6 +207,10 @@ impl MemberRefRaw {
     /// Signature type is determined by the first byte of blob data:
     /// - `0x06`: Field signature with type information
     /// - Other values: Method signature with calling convention and parameters
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if signature parsing, parent resolution, or name retrieval fails.
     pub fn to_owned<F>(
         &self,
         strings: &Strings,

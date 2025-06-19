@@ -13,8 +13,8 @@
 //!
 //! # Key Components
 //!
-//! - **Types**: Custom debug information types and enums ([`CustomDebugKind`], [`CustomDebugInfo`])
-//! - **Parser**: Binary blob parsing functionality ([`parse_custom_debug_blob`])
+//! - **Types**: Custom debug information types and enums ([`crate::metadata::customdebuginformation::CustomDebugKind`], [`crate::metadata::customdebuginformation::CustomDebugInfo`])
+//! - **Parser**: Binary blob parsing functionality ([`crate::metadata::customdebuginformation::parse_custom_debug_blob`])
 //! - **Integration**: Seamless integration with the broader metadata system
 //!
 //! # Examples

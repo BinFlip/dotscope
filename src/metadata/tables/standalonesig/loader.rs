@@ -1,13 +1,13 @@
-//! # StandAloneSig Table Loader
+//! # `StandAloneSig` Table Loader
 //!
-//! This module provides loading functionality for the StandAloneSig metadata table (ID 0x11).
-//! The StandAloneSig table contains standalone signatures that are not directly associated
+//! This module provides loading functionality for the `StandAloneSig` metadata table (ID 0x11).
+//! The `StandAloneSig` table contains standalone signatures that are not directly associated
 //! with methods, fields, or properties, but are referenced from CIL instructions or used
 //! in complex signature scenarios throughout .NET assemblies.
 //!
 //! ## Purpose
 //!
-//! The StandAloneSig table serves several critical functions:
+//! The `StandAloneSig` table serves several critical functions:
 //! - **Method Signatures**: Stores signatures for method pointers and function calls
 //! - **Local Variable Signatures**: Contains local variable type information for methods
 //! - **Dynamic Signatures**: Supports runtime signature generation and manipulation
@@ -15,14 +15,14 @@
 //!
 //! ## Dependencies
 //!
-//! - **TypeDef Table**: Required for type definition resolution
-//! - **TypeRef Table**: Required for external type resolution
-//! - **TypeSpec Table**: Required for constructed type resolution
-//! - **MethodDef Table**: Required for method context during signature processing
+//! - **`TypeDef` Table**: Required for type definition resolution
+//! - **`TypeRef` Table**: Required for external type resolution
+//! - **`TypeSpec` Table**: Required for constructed type resolution
+//! - **`MethodDef` Table**: Required for method context during signature processing
 //!
 //! ## Signature Types
 //!
-//! StandAloneSig entries can contain:
+//! `StandAloneSig` entries can contain:
 //! - **Method Signatures**: Function pointer and delegate signatures
 //! - **Local Variable Signatures**: Local variable type declarations
 //! - **Field Signatures**: Standalone field type information
@@ -30,7 +30,7 @@
 //!
 //! ## References
 //!
-//! - ECMA-335, Partition II, §22.39 - StandAloneSig table specification
+//! - ECMA-335, Partition II, §22.39 - `StandAloneSig` table specification
 //! - [`crate::metadata::tables::StandAloneSigRaw`] - Raw table entry structure
 //! - [`crate::metadata::tables::StandAloneSig`] - Owned table entry type
 
@@ -47,9 +47,9 @@ use crate::{
 };
 use rayon::iter::{ParallelBridge, ParallelIterator};
 
-/// Loader implementation for the StandAloneSig metadata table.
+/// Loader implementation for the `StandAloneSig` metadata table.
 ///
-/// This loader processes StandAloneSig table entries (ID 0x11) that contain standalone
+/// This loader processes `StandAloneSig` table entries (ID 0x11) that contain standalone
 /// signatures for method pointers, local variables, and other signature scenarios.
 /// It handles the loading, parsing, and integration of signatures with method definitions
 /// and type system components.
@@ -65,7 +65,7 @@ use rayon::iter::{ParallelBridge, ParallelIterator};
 pub(crate) struct StandAloneSigLoader;
 
 impl MetadataLoader for StandAloneSigLoader {
-    /// Loads and processes all StandAloneSig table entries from the metadata.
+    /// Loads and processes all `StandAloneSig` table entries from the metadata.
     ///
     /// ## Arguments
     ///
@@ -111,7 +111,7 @@ impl MetadataLoader for StandAloneSigLoader {
         Ok(())
     }
 
-    /// Returns the table identifier for the StandAloneSig table.
+    /// Returns the table identifier for the `StandAloneSig` table.
     ///
     /// ## Returns
     ///
@@ -120,15 +120,15 @@ impl MetadataLoader for StandAloneSigLoader {
         TableId::StandAloneSig
     }
 
-    /// Returns the dependency list for StandAloneSig table loading.
+    /// Returns the dependency list for `StandAloneSig` table loading.
     ///
-    /// The StandAloneSig table depends on multiple other tables for proper
+    /// The `StandAloneSig` table depends on multiple other tables for proper
     /// signature resolution and type system integration:
     ///
-    /// - **TypeDef**: Required for resolving type definitions in signatures
-    /// - **TypeRef**: Required for resolving external type references
-    /// - **TypeSpec**: Required for resolving constructed and generic types
-    /// - **MethodDef**: Required for method context during signature processing
+    /// - **`TypeDef`**: Required for resolving type definitions in signatures
+    /// - **`TypeRef`**: Required for resolving external type references
+    /// - **`TypeSpec`**: Required for resolving constructed and generic types
+    /// - **`MethodDef`**: Required for method context during signature processing
     ///
     /// ## Returns
     ///

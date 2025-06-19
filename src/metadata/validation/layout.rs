@@ -54,7 +54,7 @@
 //! This implementation follows .NET runtime validation behavior to ensure
 //! compatibility with actual runtime loading and execution:
 //!
-//! - **Packing validation** matches CoreCLR packing size constraints
+//! - **Packing validation** matches `CoreCLR` packing size constraints
 //! - **Type restrictions** follow ECMA-335 layout specifications
 //! - **Size limits** prevent excessive memory allocation
 //! - **Error messages** provide runtime-style diagnostics
@@ -66,13 +66,13 @@
 //! ## Related Modules
 //!
 //! - [`crate::metadata::validation::field`] - Field-level layout validation
-//! - [`crate::metadata::tables::ClassLayout`] - ClassLayout table structures
+//! - [`crate::metadata::tables::ClassLayout`] - `ClassLayout` table structures
 //! - [`crate::metadata::typesystem`] - Type system components
 //!
 //! ## References
 //!
 //! - ECMA-335, Partition II, Section 10.7 - Controlling instance layout
-//! - ECMA-335, Partition II, Section 23.2.3 - ClassLayout table
+//! - ECMA-335, Partition II, Section 23.2.3 - `ClassLayout` table
 //! - .NET Core Runtime: Layout validation implementation
 
 use crate::{
@@ -167,7 +167,7 @@ impl LayoutValidator {
     /// | Type Flavor | Explicit Layout | Notes |
     /// |-------------|-----------------|-------|
     /// | Class       | ✅ Supported    | Reference types |
-    /// | ValueType   | ✅ Supported    | Structs |
+    /// | `ValueType`   | ✅ Supported    | Structs |
     /// | Interface   | ❌ Not allowed  | No physical layout |
     /// | Primitive   | ❌ Not allowed  | Fixed runtime layout |
     /// | Array       | ❌ Not allowed  | Runtime-managed |

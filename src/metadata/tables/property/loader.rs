@@ -8,15 +8,15 @@
 //!
 //! The Property table serves as the foundation for .NET property system:
 //! - Defines property names and signatures for types
-//! - Provides property attributes and flags (special name, RTSpecialName, etc.)
+//! - Provides property attributes and flags (special name, `RTSpecialName`, etc.)
 //! - Enables property-based reflection and metadata queries
-//! - Supports property mapping through PropertyMap table relationships
+//! - Supports property mapping through `PropertyMap` table relationships
 //!
 //! ## Dependencies
 //!
 //! - **String Heap**: Required for property name resolution
 //! - **Blob Heap**: Required for property signature parsing
-//! - **PropertyMap Table**: Links properties to their declaring types
+//! - **`PropertyMap` Table**: Links properties to their declaring types
 //!
 //! ## References
 //!

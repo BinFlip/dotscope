@@ -138,11 +138,11 @@ use std::hash::{Hash, Hasher};
 /// ## Table Identification
 ///
 /// The high byte identifies the metadata table type according to ECMA-335:
-/// - 0x01: TypeRef - References to external types
-/// - 0x02: TypeDef - Type definitions within this assembly
-/// - 0x04: FieldDef - Field definitions
-/// - 0x06: MethodDef - Method definitions
-/// - 0x0A: MemberRef - References to external members
+/// - 0x01: `TypeRef` - References to external types
+/// - 0x02: `TypeDef` - Type definitions within this assembly
+/// - 0x04: `FieldDef` - Field definitions
+/// - 0x06: `MethodDef` - Method definitions
+/// - 0x0A: `MemberRef` - References to external members
 /// - And many others...
 ///
 /// ## Row Addressing
@@ -205,13 +205,13 @@ impl Token {
     ///
     /// ## Common Table IDs
     ///
-    /// - 0x01: TypeRef
-    /// - 0x02: TypeDef  
-    /// - 0x04: FieldDef
-    /// - 0x06: MethodDef
-    /// - 0x0A: MemberRef
-    /// - 0x1B: TypeSpec
-    /// - 0x2B: MethodSpec
+    /// - 0x01: `TypeRef`
+    /// - 0x02: `TypeDef`  
+    /// - 0x04: `FieldDef`
+    /// - 0x06: `MethodDef`
+    /// - 0x0A: `MemberRef`
+    /// - 0x1B: `TypeSpec`
+    /// - 0x2B: `MethodSpec`
     #[must_use]
     pub fn table(&self) -> u8 {
         (self.0 >> 24) as u8

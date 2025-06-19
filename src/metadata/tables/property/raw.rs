@@ -28,7 +28,7 @@ use crate::{
 /// The Property table provides the foundation for .NET property system:
 /// - **Property Definition**: Defines property names, types, and characteristics
 /// - **Type Integration**: Associates properties with their declaring types
-/// - **Method Binding**: Links properties to getter/setter methods via MethodSemantics
+/// - **Method Binding**: Links properties to getter/setter methods via `MethodSemantics`
 /// - **Reflection Foundation**: Enables property-based reflection and metadata queries
 ///
 /// ## Raw vs Owned
@@ -42,9 +42,9 @@ use crate::{
 /// ## Property Attributes
 ///
 /// Properties can have various attributes that control their behavior:
-/// - **SpecialName**: Property has special naming conventions (0x0200)
-/// - **RTSpecialName**: Runtime should verify name encoding (0x0400)
-/// - **HasDefault**: Property has a default value defined (0x1000)
+/// - **`SpecialName`**: Property has special naming conventions (0x0200)
+/// - **`RTSpecialName`**: Runtime should verify name encoding (0x0400)
+/// - **`HasDefault`**: Property has a default value defined (0x1000)
 ///
 /// ## References
 ///
@@ -74,7 +74,7 @@ pub struct PropertyRaw {
 
     /// Property attribute flags defining characteristics and behavior.
     ///
-    /// A 2-byte bitmask of PropertyAttributes (ECMA-335 §II.23.1.14) that controls
+    /// A 2-byte bitmask of `PropertyAttributes` (ECMA-335 §II.23.1.14) that controls
     /// various aspects of the property including special naming, default values,
     /// and runtime behavior. See [`super::PropertyAttributes`] for flag definitions.
     pub flags: u32,
@@ -134,7 +134,7 @@ impl PropertyRaw {
     /// Property entries define properties that types can expose but do not directly
     /// modify other metadata structures during the loading process. Property method
     /// associations (getter, setter, other) are resolved separately through the
-    /// MethodSemantics table during higher-level metadata resolution.
+    /// `MethodSemantics` table during higher-level metadata resolution.
     ///
     /// This method is provided for consistency with the table loading framework
     /// but performs no operations for Property entries.
@@ -142,6 +142,9 @@ impl PropertyRaw {
     /// ## Returns
     ///
     /// * `Ok(())` - Always succeeds as no processing is required
+    ///
+    /// # Errors
+    /// This function does not return errors. It always returns `Ok(())`.
     pub fn apply(&self) -> Result<()> {
         Ok(())
     }
@@ -151,7 +154,7 @@ impl<'a> RowDefinition<'a> for PropertyRaw {
     /// Calculates the byte size of a single Property table row.
     ///
     /// The size depends on the metadata heap size configuration:
-    /// - **flags**: 2 bytes (PropertyAttributes bitmask)
+    /// - **flags**: 2 bytes (`PropertyAttributes` bitmask)
     /// - **name**: String heap index size (2 or 4 bytes)
     /// - **signature**: Blob heap index size (2 or 4 bytes)
     ///

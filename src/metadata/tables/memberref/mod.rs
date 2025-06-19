@@ -62,13 +62,13 @@ pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;
 
-/// Concurrent map for storing MemberRef entries indexed by [`Token`].
+/// Concurrent map for storing `MemberRef` entries indexed by [`Token`].
 ///
 /// This thread-safe map enables efficient lookup of member references by their
 /// associated tokens during metadata processing and member resolution operations.
 pub type MemberRefMap = SkipMap<Token, MemberRefRc>;
 
-/// Thread-safe list for storing collections of MemberRef entries.
+/// Thread-safe list for storing collections of `MemberRef` entries.
 ///
 /// Used for maintaining ordered sequences of member references during metadata
 /// loading and for iteration over all members in an assembly.
@@ -80,7 +80,7 @@ pub type MemberRefList = Arc<boxcar::Vec<MemberRefRc>>;
 /// without duplication, supporting concurrent access patterns in member resolution.
 pub type MemberRefRc = Arc<MemberRef>;
 
-/// Member signature type union for MemberRef entries.
+/// Member signature type union for `MemberRef` entries.
 ///
 /// This enum represents the two possible signature types for member references:
 /// method signatures (including constructors) and field signatures. The signature

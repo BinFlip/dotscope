@@ -1,13 +1,12 @@
-///// This module provides comprehensive access to the PropertyPtr metadata table (ID 0x16), # PropertyPtr Table Module
 //!
-//! This module provides comprehensive access to the PropertyPtr metadata table (ID 0x26),
+//! This module provides comprehensive access to the `PropertyPtr` metadata table (ID 0x26),
 //! which implements property indirection for optimized metadata layouts in .NET assemblies.
-//! The PropertyPtr table enables efficient property access patterns and supports property
+//! The `PropertyPtr` table enables efficient property access patterns and supports property
 //! table compression in optimized assembly configurations.
 //!
 //! ## Table Purpose
 //!
-//! The PropertyPtr table provides:
+//! The `PropertyPtr` table provides:
 //! - **Property Indirection**: Maps logical property indexes to physical table positions
 //! - **Optimization Support**: Enables property table compression and reordering
 //! - **Metadata Efficiency**: Reduces metadata size in optimized assemblies
@@ -31,14 +30,14 @@
 //!
 //! ## Property Indirection Architecture
 //!
-//! PropertyPtr entries establish one-to-one mappings:
+//! `PropertyPtr` entries establish one-to-one mappings:
 //! - **Logical Index**: The position where a property appears in logical order
 //! - **Physical Index**: The actual position in the Property table
 //! - **Indirection Mapping**: The relationship between logical and physical positions
 //!
 //! ## Optimization Context
 //!
-//! PropertyPtr tables are present when:
+//! `PropertyPtr` tables are present when:
 //! - The assembly uses uncompressed metadata streams (`#-`)
 //! - Property table ordering differs from logical declaration order
 //! - Property table compression has been applied during compilation
@@ -46,7 +45,7 @@
 //!
 //! ## References
 //!
-//! - ECMA-335, Partition II, §22.38 - PropertyPtr table specification
+//! - ECMA-335, Partition II, §22.38 - `PropertyPtr` table specification
 //! - [`crate::metadata::tables::Property`] - Target property table
 //! - [`crate::metadata::streams`] - Metadata stream formats and compression
 

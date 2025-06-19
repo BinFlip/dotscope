@@ -1,23 +1,23 @@
-//! TypeDef table support for .NET metadata.
+//! `TypeDef` table support for .NET metadata.
 //!
-//! This module provides comprehensive support for the TypeDef metadata table (ID 0x02), which
+//! This module provides comprehensive support for the `TypeDef` metadata table (ID 0x02), which
 //! defines all types (classes, interfaces, value types, enums, delegates) within the current
-//! assembly. The TypeDef table is fundamental to the .NET type system and serves as the primary
+//! assembly. The `TypeDef` table is fundamental to the .NET type system and serves as the primary
 //! source of type definitions for metadata consumers.
 //!
 //! ## Table Structure
 //!
-//! The TypeDef table contains the following columns as specified in ECMA-335:
+//! The `TypeDef` table contains the following columns as specified in ECMA-335:
 //! - **Flags** (4-byte bitmask): [`TypeAttributes`] controlling visibility, layout, and semantics
-//! - **TypeName** (string heap index): Simple name of the type (without namespace)
-//! - **TypeNamespace** (string heap index): Namespace containing the type (empty for global types)
-//! - **Extends** (coded index): Base type reference (TypeDef, TypeRef, or TypeSpec)
-//! - **FieldList** (Field table index): First field belonging to this type
-//! - **MethodList** (MethodDef table index): First method belonging to this type
+//! - **`TypeName`** (string heap index): Simple name of the type (without namespace)
+//! - **`TypeNamespace`** (string heap index): Namespace containing the type (empty for global types)
+//! - **`Extends`** (coded index): Base type reference (`TypeDef`, `TypeRef`, or `TypeSpec`)
+//! - **`FieldList`** (Field table index): First field belonging to this type
+//! - **`MethodList`** (`MethodDef` table index): First method belonging to this type
 //!
 //! ## Type System Integration
 //!
-//! TypeDef entries are processed and converted into [`crate::metadata::typesystem::CilType`]
+//! `TypeDef` entries are processed and converted into [`crate::metadata::typesystem::CilType`]
 //! instances that provide high-level type system operations:
 //! - Type hierarchy navigation and inheritance resolution
 //! - Member enumeration (fields, methods, properties, events)
@@ -27,7 +27,7 @@
 //! ## Member Organization
 //!
 //! Types own contiguous ranges of fields and methods in their respective tables.
-//! The range for each type is determined by comparing its field_list/method_list
+//! The range for each type is determined by comparing its `field_list`/`method_list`
 //! values with the next type's values:
 //! ```text
 //! // Type A owns fields [A.field_list .. B.field_list)
@@ -51,7 +51,7 @@
 //!
 //! ## ECMA-335 Reference
 //!
-//! See ECMA-335, Partition II, Section 22.37 for the complete TypeDef table specification.
+//! See ECMA-335, Partition II, Section 22.37 for the complete `TypeDef` table specification.
 //!
 //! **Table ID**: `0x02`
 
@@ -62,9 +62,9 @@ pub(crate) use loader::*;
 pub use raw::*;
 
 #[allow(non_snake_case)]
-/// Type attribute flag constants for TypeDef entries.
+/// Type attribute flag constants for `TypeDef` entries.
 ///
-/// This module provides all the flag constants used in the TypeDef.Flags field
+/// This module provides all the flag constants used in the `TypeDef.Flags` field
 /// to control type visibility, layout, semantics, and interoperability characteristics.
 /// The flags are organized into logical groups with corresponding mask constants
 /// for efficient bit manipulation.

@@ -126,7 +126,7 @@
 //! ## Runtime Alignment
 //!
 //! The validation rules align with .NET runtime behavior:
-//! - **CLR Type Loading**: Matches type loading validation in CoreCLR
+//! - **CLR Type Loading**: Matches type loading validation in `CoreCLR`
 //! - **JIT Constraints**: Validates constraints enforced during JIT compilation
 //! - **Reflection Safety**: Ensures types are safe for reflection and dynamic loading
 //! - **Interop Compatibility**: Validates types suitable for interop scenarios
@@ -797,32 +797,32 @@ impl SemanticValidator {
 /// - **Char**: Unicode character, 2 bytes (UTF-16 code unit)
 ///
 /// ### Signed Integer Types
-/// - **SByte**: Signed 8-bit integer (-128 to 127)
-/// - **Int16**: Signed 16-bit integer (-32,768 to 32,767)
-/// - **Int32**: Signed 32-bit integer (-2,147,483,648 to 2,147,483,647)
-/// - **Int64**: Signed 64-bit integer (large range)
+/// - **`SByte`**: Signed 8-bit integer (-128 to 127)
+/// - **`Int16`**: Signed 16-bit integer (-32,768 to 32,767)
+/// - **`Int32`**: Signed 32-bit integer (-2,147,483,648 to 2,147,483,647)
+/// - **`Int64`**: Signed 64-bit integer (large range)
 ///
 /// ### Unsigned Integer Types
-/// - **Byte**: Unsigned 8-bit integer (0 to 255)
-/// - **UInt16**: Unsigned 16-bit integer (0 to 65,535)
-/// - **UInt32**: Unsigned 32-bit integer (0 to 4,294,967,295)
-/// - **UInt64**: Unsigned 64-bit integer (large range)
+/// - **`Byte`**: Unsigned 8-bit integer (0 to 255)
+/// - **`UInt16`**: Unsigned 16-bit integer (0 to 65,535)
+/// - **`UInt32`**: Unsigned 32-bit integer (0 to 4,294,967,295)
+/// - **`UInt64`**: Unsigned 64-bit integer (large range)
 ///
 /// ### Floating Point Types
 /// - **Single**: 32-bit floating point (IEEE 754)
 /// - **Double**: 64-bit floating point (IEEE 754)
 ///
 /// ### Platform-Dependent Types
-/// - **IntPtr**: Platform-specific signed integer pointer
-/// - **UIntPtr**: Platform-specific unsigned integer pointer
+/// - **`IntPtr`**: Platform-specific signed integer pointer
+/// - **`UIntPtr`**: Platform-specific unsigned integer pointer
 ///
 /// ### Special Runtime Types
-/// - **TypedReference**: Type-safe reference with runtime type information
+/// - **`TypedReference`**: Type-safe reference with runtime type information
 ///
 /// ## Inheritance Context
 ///
 /// These primitive types have special inheritance characteristics:
-/// - **Direct ValueType Inheritance**: Inherit directly from `System.ValueType`
+/// - **Direct `ValueType` Inheritance**: Inherit directly from `System.ValueType`
 /// - **Runtime Implementation**: Implemented directly by the CLR
 /// - **Special Handling**: Receive special treatment during type loading
 /// - **Validation Exemption**: Exempt from normal value type inheritance rules
@@ -831,7 +831,7 @@ impl SemanticValidator {
 ///
 /// This function is used in semantic validation to:
 /// - **Exempt Primitives**: Skip inheritance validation for primitive types
-/// - **Allow Special Patterns**: Permit primitive inheritance from ValueType
+/// - **Allow Special Patterns**: Permit primitive inheritance from `ValueType`
 /// - **Prevent False Positives**: Avoid reporting valid primitive inheritance as errors
 /// - **Maintain Accuracy**: Ensure validation reflects actual runtime behavior
 ///

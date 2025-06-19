@@ -1,7 +1,7 @@
-//! # MethodSpec Table Loader
+//! # `MethodSpec` Table Loader
 //!
 //! This module provides the loader implementation for the [`MethodSpec`](crate::metadata::tables::MethodSpec) table,
-//! which represents instantiations of generic methods in .NET metadata. The MethodSpec table is essential
+//! which represents instantiations of generic methods in .NET metadata. The `MethodSpec` table is essential
 //! for resolving generic method calls with concrete type arguments.
 //!
 //! ## Purpose
@@ -12,7 +12,7 @@
 //!
 //! ## Table Dependencies
 //!
-//! The MethodSpec table depends on:
+//! The `MethodSpec` table depends on:
 //! - [`crate::metadata::tables::TypeDefRaw`] - For type definition resolution
 //! - [`crate::metadata::tables::TypeRefRaw`] - For external type references
 //! - [`crate::metadata::tables::TypeSpec`] - For constructed type specifications
@@ -28,7 +28,7 @@ use crate::{
     Result,
 };
 
-/// Loader implementation for the MethodSpec metadata table.
+/// Loader implementation for the `MethodSpec` metadata table.
 ///
 /// This loader processes [`crate::metadata::tables::MethodSpecRaw`] entries, converting them to
 /// owned [`crate::metadata::tables::MethodSpec`] instances with resolved references, parsed generic
@@ -36,14 +36,14 @@ use crate::{
 pub(crate) struct MethodSpecLoader;
 
 impl MetadataLoader for MethodSpecLoader {
-    /// Loads and processes all MethodSpec table entries.
+    /// Loads and processes all `MethodSpec` table entries.
     ///
     /// ## Arguments
     /// * `context` - The loader context containing metadata tables and storage
     ///
     /// ## Errors
     ///
-    /// - Method references cannot be resolved (invalid MethodDefOrRef coded index)
+    /// - Method references cannot be resolved (invalid `MethodDefOrRef` coded index)
     /// - Blob heap entries are malformed or missing
     /// - Generic type signatures cannot be parsed
     /// - Type registry cannot resolve generic arguments
@@ -66,7 +66,7 @@ impl MetadataLoader for MethodSpecLoader {
         Ok(())
     }
 
-    /// Returns the table identifier for MethodSpec.
+    /// Returns the table identifier for `MethodSpec`.
     ///
     /// ## Returns
     /// [`crate::metadata::tables::TableId::MethodSpec`] (0x2B)
@@ -74,9 +74,9 @@ impl MetadataLoader for MethodSpecLoader {
         TableId::MethodSpec
     }
 
-    /// Returns the table dependencies for MethodSpec loading.
+    /// Returns the table dependencies for `MethodSpec` loading.
     ///
-    /// The MethodSpec table requires these tables to be loaded first for proper
+    /// The `MethodSpec` table requires these tables to be loaded first for proper
     /// reference resolution and generic type instantiation:
     /// - [`TypeDef`](crate::metadata::tables::TableId::TypeDef) - For type definition resolution
     /// - [`TypeRef`](crate::metadata::tables::TableId::TypeRef) - For external type references

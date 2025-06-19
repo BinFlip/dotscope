@@ -461,7 +461,7 @@ impl TypeBuilder {
     /// ## Arguments
     ///
     /// * `namespace` - The namespace containing the interface (e.g., "System.Collections")
-    /// * `name` - The name of the interface (e.g., "IEnumerable")
+    /// * `name` - The name of the interface (e.g., `IEnumerable`)
     ///
     /// ## Returns
     ///

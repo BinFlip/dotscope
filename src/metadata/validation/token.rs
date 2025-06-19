@@ -21,8 +21,8 @@
 //! - **Token Value**: 32-bit value encoding both table and row information
 //!
 //! ### Token Categories
-//! - **Type Tokens**: TypeDef, TypeRef, TypeSpec (tables 0x02, 0x01, 0x1B)
-//! - **Member Tokens**: MethodDef, FieldDef, PropertyDef, EventDef
+//! - **Type Tokens**: `TypeDef`, `TypeRef`, `TypeSpec` (tables 0x02, 0x01, 0x1B)
+//! - **Member Tokens**: `MethodDef`, `FieldDef`, `PropertyDef`, `EventDef`
 //! - **Reference Tokens**: `MemberRef`, `MethodSpec`, signatures
 //! - **Special Tokens**: String, `UserString`, Blob, Guid references
 //!

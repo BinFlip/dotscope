@@ -1,10 +1,10 @@
-//! TypeSpec table loader implementation for .NET metadata parsing.
+//! `TypeSpec` table loader implementation for .NET metadata parsing.
 //!
 //! This module provides loading functionality for the `TypeSpec` metadata table, which contains
 //! type specifications for generic type instantiations and complex type constructions that
 //! cannot be represented by simple `TypeRef` or `TypeDef` entries.
 //!
-//! ## TypeSpec Table Overview
+//! ## `TypeSpec` Table Overview
 //!
 //! The `TypeSpec` table stores signatures for:
 //! - **Generic Type Instantiations**: `List<string>`, `Dictionary<int, string>`, etc.
@@ -22,7 +22,7 @@
 //!
 //! ## Reference
 //!
-//! * [ECMA-335 Partition II, Section 22.39](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - TypeSpec Table
+//! * [ECMA-335 Partition II, Section 22.39](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `TypeSpec` Table
 
 use crate::{
     metadata::loader::{LoaderContext, MetadataLoader},
@@ -85,7 +85,7 @@ impl MetadataLoader for TypeSpecLoader {
     ///
     /// ## Returns
     ///
-    /// [`TableId::TypeSpec`] - The identifier for the TypeSpec metadata table (0x1B)
+    /// [`TableId::TypeSpec`] - The identifier for the `TypeSpec` metadata table (0x1B)
     fn table_id(&self) -> TableId {
         TableId::TypeSpec
     }

@@ -125,7 +125,7 @@ pub mod ParamAttributes {
     /// Parameter has marshalling information defined.
     ///
     /// This flag indicates that the parameter has custom marshalling information
-    /// defined in the FieldMarshal table for interop scenarios.
+    /// defined in the `FieldMarshal` table for interop scenarios.
     pub const HAS_FIELD_MARSHAL: u32 = 0x2000;
 
     /// Reserved bits that shall be zero in conforming implementations.

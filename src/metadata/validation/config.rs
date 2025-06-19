@@ -193,7 +193,7 @@ impl ValidationConfig {
     ///
     /// This configuration mirrors the validation performed by the .NET runtime,
     /// focusing on checks that would cause actual runtime failures. Based on
-    /// analysis of CoreCLR and runtime source code.
+    /// analysis of `CoreCLR` and runtime source code.
     ///
     /// ## Validation Profile
     ///

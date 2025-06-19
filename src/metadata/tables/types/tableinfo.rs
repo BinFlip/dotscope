@@ -206,7 +206,7 @@ impl TableInfo {
     /// ## Arguments
     ///
     /// * `data` - Raw metadata tables header bytes starting from the tables header
-    /// * `valid_bitvec` - 64-bit mask indicating which tables are present (bit N = TableId N)
+    /// * `valid_bitvec` - 64-bit mask indicating which tables are present (bit N = `TableId` N)
     ///
     /// ## Returns
     ///

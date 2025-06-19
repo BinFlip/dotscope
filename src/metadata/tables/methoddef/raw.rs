@@ -1,4 +1,4 @@
-//! Raw MethodDef table structure with unresolved indexes and heap references.
+//! Raw `MethodDef` table structure with unresolved indexes and heap references.
 //!
 //! This module provides the [`MethodDefRaw`] struct, which represents method definitions
 //! as stored in the metadata stream. The structure contains unresolved indexes
@@ -6,7 +6,7 @@
 //! with parameter metadata and signature details.
 //!
 //! # Purpose
-//! [`MethodDefRaw`] serves as the direct representation of MethodDef table entries from the
+//! [`MethodDefRaw`] serves as the direct representation of `MethodDef` table entries from the
 //! binary metadata stream, before parameter resolution and signature parsing. This raw format
 //! is processed during metadata loading to create [`Method`] instances with resolved
 //! parameters and complete method implementation information.
@@ -34,7 +34,7 @@ use crate::{
     Result,
 };
 
-/// Raw MethodDef table entry with unresolved indexes and heap references.
+/// Raw `MethodDef` table entry with unresolved indexes and heap references.
 ///
 /// This structure represents a method definition as stored directly in the metadata stream.
 /// All references are unresolved indexes or heap offsets that require processing during
@@ -45,13 +45,13 @@ use crate::{
 /// | Column | Size | Description |
 /// |--------|------|-------------|
 /// | RVA | 4 bytes | Relative virtual address of method implementation |
-/// | ImplFlags | 2 bytes | Method implementation attributes |
+/// | `ImplFlags` | 2 bytes | Method implementation attributes |
 /// | Flags | 2 bytes | Method attributes and access modifiers |
 /// | Name | String index | Method name identifier |
 /// | Signature | Blob index | Method signature (calling convention, parameters, return type) |
-/// | ParamList | Param index | First parameter in the parameter list |
+/// | `ParamList` | Param index | First parameter in the parameter list |
 ///
-/// # Implementation Attributes (ImplFlags)
+/// # Implementation Attributes (`ImplFlags`)
 /// The `impl_flags` field contains method implementation characteristics:
 /// - **Code type**: IL, native, OPTIL, or runtime implementation
 /// - **Management**: Managed, unmanaged, or mixed execution model
@@ -70,7 +70,7 @@ use crate::{
 /// - **Parameter range**: Contiguous range in the Param table for this method
 /// - **Return parameter**: Special parameter at sequence 0 for return type information
 /// - **Parameter metadata**: Names, types, default values, and custom attributes
-/// - **Indirect access**: Optional ParamPtr table for parameter pointer indirection
+/// - **Indirect access**: Optional `ParamPtr` table for parameter pointer indirection
 ///
 /// # RVA and Implementation
 /// The `rva` field specifies method implementation location:
@@ -79,13 +79,13 @@ use crate::{
 /// - **Implementation type**: Determined by combination of RVA and implementation flags
 #[derive(Clone, Debug)]
 pub struct MethodDefRaw {
-    /// Row identifier within the MethodDef table.
+    /// Row identifier within the `MethodDef` table.
     ///
     /// Unique identifier for this method definition entry, used for internal
     /// table management and token generation.
     pub rid: u32,
 
-    /// Metadata token for this MethodDef entry (TableId 0x06).
+    /// Metadata token for this `MethodDef` entry (`TableId` 0x06).
     ///
     /// Computed as `0x06000000 | rid` to create the full token value
     /// for referencing this method from other metadata structures.
@@ -133,13 +133,13 @@ pub struct MethodDefRaw {
     /// Index into the Param table for the first parameter.
     ///
     /// Specifies the starting position of this method's parameters in the Param table.
-    /// Parameter lists are contiguous ranges ending at the next method's param_list
+    /// Parameter lists are contiguous ranges ending at the next method's `param_list`
     /// or the end of the table. A value of 0 indicates no parameters.
     pub param_list: u32,
 }
 
 impl MethodDefRaw {
-    /// Converts a MethodDefRaw entry into a Method with resolved parameters and parsed signature.
+    /// Converts a `MethodDefRaw` entry into a Method with resolved parameters and parsed signature.
     ///
     /// This method performs complete method definition resolution, including parameter
     /// range calculation, signature parsing, and method attribute processing. The resulting
@@ -150,12 +150,16 @@ impl MethodDefRaw {
     /// * `strings` - The string heap for resolving method names
     /// * `blob` - The blob heap for signature data retrieval
     /// * `params_map` - Collection of all Param entries for parameter resolution
-    /// * `param_ptr_map` - Collection of ParamPtr entries for indirection (if present)
-    /// * `table` - The MethodDef table for parameter range calculation
+    /// * `param_ptr_map` - Collection of `ParamPtr` entries for indirection (if present)
+    /// * `table` - The `MethodDef` table for parameter range calculation
     ///
     /// # Returns
     /// * `Ok(MethodRc)` - Successfully resolved method with complete parameter metadata
     /// * `Err(_)` - If signature parsing, parameter resolution, or name retrieval fails
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if signature parsing, parameter resolution, or name retrieval fails.
     ///
     pub fn to_owned(
         &self,

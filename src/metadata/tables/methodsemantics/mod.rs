@@ -1,13 +1,13 @@
-//! # MethodSemantics Table Module  
+//! # `MethodSemantics` Table Module  
 //!
-//! This module provides comprehensive access to the **MethodSemantics** metadata table (ID 0x18),
+//! This module provides comprehensive access to the **`MethodSemantics`** metadata table (ID 0x18),
 //! which specifies the relationship between methods and events or properties in .NET assemblies.
 //! The table defines which methods serve as getters, setters, adders, removers, and other
 //! semantic roles for properties and events.
 //!
 //! ## Overview
 //!
-//! The MethodSemantics table establishes the semantic binding between:
+//! The `MethodSemantics` table establishes the semantic binding between:
 //! - **Methods**: Individual method definitions that implement semantic behavior
 //! - **Properties**: Property definitions requiring getter/setter methods
 //! - **Events**: Event definitions requiring add/remove/fire methods
@@ -30,8 +30,8 @@
 //! | Field | Type | Description |
 //! |-------|------|-------------|
 //! | `Semantics` | `u16` | Bitmask defining the semantic relationship type |
-//! | `Method` | `u32` | Index into MethodDef table identifying the method |
-//! | `Association` | `u32` | HasSemantics coded index to property or event |
+//! | `Method` | `u32` | Index into `MethodDef` table identifying the method |
+//! | `Association` | `u32` | `HasSemantics` coded index to property or event |
 //!
 //! The `Semantics` field uses [`MethodSemanticsAttributes`] constants:
 //! - `SETTER` (0x0001) - Property setter method
@@ -44,9 +44,9 @@
 //! ## ECMA-335 Specification
 //!
 //! This implementation follows the ECMA-335 specification:
-//! - **§II.22.28** - MethodSemantics table structure and semantics
-//! - **§II.23.1.12** - MethodSemanticsAttributes enumeration
-//! - **§II.24.2.6** - HasSemantics coded index encoding
+//! - **§II.22.28** - `MethodSemantics` table structure and semantics
+//! - **§II.23.1.12** - `MethodSemanticsAttributes` enumeration
+//! - **§II.24.2.6** - `HasSemantics` coded index encoding
 //!
 //! For detailed specifications, see [ECMA-335 6th Edition](https://www.ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf).
 
@@ -81,7 +81,7 @@ pub type MethodSemanticsList = Arc<boxcar::Vec<MethodSemanticsRc>>;
 pub type MethodSemanticsRc = Arc<MethodSemantics>;
 
 #[allow(non_snake_case)]
-/// Constants defining method semantic relationship types for the MethodSemantics table.
+/// Constants defining method semantic relationship types for the `MethodSemantics` table.
 ///
 /// These flags specify the role a method plays in relation to a property or event,
 /// as defined in ECMA-335 §II.23.1.12. Multiple flags can be combined using bitwise OR.
@@ -113,12 +113,12 @@ pub mod MethodSemanticsAttributes {
     /// the associated property or event beyond the standard operations.
     pub const OTHER: u32 = 0x0004;
 
-    /// AddOn method for event (0x0008).
+    /// `AddOn` method for event (0x0008).
     ///
     /// Indicates the method adds event handlers (subscription functionality).
     pub const ADD_ON: u32 = 0x0008;
 
-    /// RemoveOn method for event (0x0010).
+    /// `RemoveOn` method for event (0x0010).
     ///
     /// Indicates the method removes event handlers (unsubscription functionality).
     pub const REMOVE_ON: u32 = 0x0010;

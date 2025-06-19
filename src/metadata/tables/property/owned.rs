@@ -21,7 +21,7 @@ use crate::metadata::{
 /// The Property table serves as the foundation for .NET property system:
 /// - **Property Definition**: Defines property names, types, and characteristics
 /// - **Method Association**: Links to getter, setter, and other associated methods
-/// - **Type Integration**: Integrates properties into the type system through PropertyMap
+/// - **Type Integration**: Integrates properties into the type system through `PropertyMap`
 /// - **Reflection Support**: Enables property-based reflection and metadata queries
 ///
 /// ## Owned vs Raw
@@ -36,8 +36,8 @@ use crate::metadata::{
 /// ## Property Methods
 ///
 /// Properties can be associated with various methods:
-/// - **Getter**: Method that retrieves the property value (get_PropertyName)
-/// - **Setter**: Method that sets the property value (set_PropertyName)
+/// - **Getter**: Method that retrieves the property value (`get_PropertyName`)
+/// - **Setter**: Method that sets the property value (`set_PropertyName`)
 /// - **Other**: Additional methods related to property functionality
 ///
 /// ## References
@@ -55,7 +55,7 @@ pub struct Property {
 
     /// Property attribute flags defining characteristics and behavior.
     ///
-    /// A 2-byte bitmask of PropertyAttributes (§II.23.1.14) that controls various
+    /// A 2-byte bitmask of `PropertyAttributes` (§II.23.1.14) that controls various
     /// aspects of the property including special naming, default values, and runtime
     /// behavior. See [`super::PropertyAttributes`] for flag definitions.
     pub flags: u32,
@@ -83,14 +83,14 @@ pub struct Property {
     /// The setter method for this property (lazy-loaded).
     ///
     /// Reference to the method that sets this property value, typically named
-    /// `set_PropertyName`. Loaded on-demand from the MethodSemantics table
+    /// `set_PropertyName`. Loaded on-demand from the `MethodSemantics` table
     /// when property method access is required.
     pub fn_setter: OnceLock<MethodRef>,
 
     /// The getter method for this property (lazy-loaded).
     ///
     /// Reference to the method that retrieves this property value, typically named
-    /// `get_PropertyName`. Loaded on-demand from the MethodSemantics table
+    /// `get_PropertyName`. Loaded on-demand from the `MethodSemantics` table
     /// when property method access is required.
     pub fn_getter: OnceLock<MethodRef>,
 
@@ -98,7 +98,7 @@ pub struct Property {
     ///
     /// Reference to additional methods associated with this property beyond
     /// the standard getter/setter pattern. Loaded on-demand from the
-    /// MethodSemantics table when complete property method information is needed.
+    /// `MethodSemantics` table when complete property method information is needed.
     pub fn_other: OnceLock<MethodRef>,
 
     /// Custom attributes applied to this property.

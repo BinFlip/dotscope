@@ -811,82 +811,6 @@ pub struct TablesHeader<'a> {
     tables: Vec<Option<TableData<'a>>>,
 }
 
-/// Summary information for a metadata table providing table identity and size information.
-///
-/// [`crate::metadata::streams::tablesheader::TableSummary`] is used by [`crate::metadata::streams::tablesheader::TablesHeader::table_summary`] to provide an overview
-/// of all present tables in the metadata without requiring full table access. This
-/// is useful for assembly analysis, diagnostics, and determining what metadata is
-/// available before processing specific tables.
-///
-/// # Examples
-///
-/// ## Basic Usage with Table Summary
-/// ```rust
-/// use dotscope::metadata::streams::TablesHeader;
-///
-/// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
-/// let tables = TablesHeader::from(tables_data)?;
-///
-/// // Get overview of all tables
-/// let summaries = tables.table_summary();
-///
-/// for summary in summaries {
-///     println!("Table {:?} has {} rows", summary.table_id, summary.row_count);
-///     
-///     // Make decisions based on table size
-///     if summary.row_count > 1000 {
-///         println!("  ↳ Large table - consider parallel processing");
-///     }
-/// }
-/// # Ok(())
-/// # }
-/// ```
-///
-/// ## Filtering and Analysis
-/// ```rust
-/// use dotscope::metadata::{streams::TablesHeader, tables::TableId};
-///
-/// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
-/// let tables = TablesHeader::from(tables_data)?;
-/// let summaries = tables.table_summary();
-///
-/// // Find the largest tables
-/// let mut large_tables: Vec<_> = summaries.iter()
-///     .filter(|s| s.row_count > 100)
-///     .collect();
-/// large_tables.sort_by_key(|s| std::cmp::Reverse(s.row_count));
-///
-/// println!("Largest metadata tables:");
-/// for summary in large_tables.iter().take(5) {
-///     println!("  {:?}: {} rows", summary.table_id, summary.row_count);
-/// }
-///
-/// // Check for specific features
-/// let has_generics = summaries.iter()
-///     .any(|s| s.table_id == TableId::GenericParam && s.row_count > 0);
-/// if has_generics {
-///     println!("Assembly uses generic types");
-/// }
-/// # Ok(())
-/// # }
-/// ```
-#[derive(Debug, Clone)]
-pub struct TableSummary {
-    /// The type/ID of the metadata table.
-    ///
-    /// Identifies which specific metadata table this summary describes using the
-    /// ECMA-335 table enumeration. This corresponds to table IDs 0-44 as defined
-    /// in the specification.
-    pub table_id: TableId,
-
-    /// The number of rows present in this table.
-    ///
-    /// Indicates the count of data rows in the table. A value of 0 means the table
-    /// is present in the assembly but contains no data. Tables not present in the
-    /// assembly will not appear in the summary at all.
-    pub row_count: u32,
-}
-
 impl<'a> TablesHeader<'a> {
     /// Parse and construct a metadata tables header from binary data.
     ///
@@ -1889,6 +1813,82 @@ impl<'a> TablesHeader<'a> {
             })
             .collect()
     }
+}
+
+/// Summary information for a metadata table providing table identity and size information.
+///
+/// [`crate::metadata::streams::tablesheader::TableSummary`] is used by [`crate::metadata::streams::tablesheader::TablesHeader::table_summary`] to provide an overview
+/// of all present tables in the metadata without requiring full table access. This
+/// is useful for assembly analysis, diagnostics, and determining what metadata is
+/// available before processing specific tables.
+///
+/// # Examples
+///
+/// ## Basic Usage with Table Summary
+/// ```rust
+/// use dotscope::metadata::streams::TablesHeader;
+///
+/// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
+/// let tables = TablesHeader::from(tables_data)?;
+///
+/// // Get overview of all tables
+/// let summaries = tables.table_summary();
+///
+/// for summary in summaries {
+///     println!("Table {:?} has {} rows", summary.table_id, summary.row_count);
+///     
+///     // Make decisions based on table size
+///     if summary.row_count > 1000 {
+///         println!("  ↳ Large table - consider parallel processing");
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Filtering and Analysis
+/// ```rust
+/// use dotscope::metadata::{streams::TablesHeader, tables::TableId};
+///
+/// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
+/// let tables = TablesHeader::from(tables_data)?;
+/// let summaries = tables.table_summary();
+///
+/// // Find the largest tables
+/// let mut large_tables: Vec<_> = summaries.iter()
+///     .filter(|s| s.row_count > 100)
+///     .collect();
+/// large_tables.sort_by_key(|s| std::cmp::Reverse(s.row_count));
+///
+/// println!("Largest metadata tables:");
+/// for summary in large_tables.iter().take(5) {
+///     println!("  {:?}: {} rows", summary.table_id, summary.row_count);
+/// }
+///
+/// // Check for specific features
+/// let has_generics = summaries.iter()
+///     .any(|s| s.table_id == TableId::GenericParam && s.row_count > 0);
+/// if has_generics {
+///     println!("Assembly uses generic types");
+/// }
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone)]
+pub struct TableSummary {
+    /// The type/ID of the metadata table.
+    ///
+    /// Identifies which specific metadata table this summary describes using the
+    /// ECMA-335 table enumeration. This corresponds to table IDs 0-44 as defined
+    /// in the specification.
+    pub table_id: TableId,
+
+    /// The number of rows present in this table.
+    ///
+    /// Indicates the count of data rows in the table. A value of 0 means the table
+    /// is present in the assembly but contains no data. Tables not present in the
+    /// assembly will not appear in the summary at all.
+    pub row_count: u32,
 }
 
 #[cfg(test)]

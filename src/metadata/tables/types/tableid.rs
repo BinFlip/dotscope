@@ -405,7 +405,7 @@ pub enum TableId {
     ///
     /// Defines the scope ranges where namespace imports (`using` statements
     /// in C#) are active. Enables debuggers to resolve type names and
-    /// provide proper IntelliSense support during debugging.
+    /// provide proper `IntelliSense` support during debugging.
     ImportScope = 0x35,
 
     /// `StateMachineMethod` table (0x36) - Async/iterator state machine info.

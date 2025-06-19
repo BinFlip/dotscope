@@ -1,7 +1,7 @@
-//! Raw MethodDebugInformation table representation for Portable PDB format
+//! Raw `MethodDebugInformation` table representation for Portable PDB format
 //!
 //! This module provides the [`MethodDebugInformationRaw`] struct that represents
-//! the binary format of MethodDebugInformation table entries as they appear in
+//! the binary format of `MethodDebugInformation` table entries as they appear in
 //! the metadata tables stream. This is the low-level representation used during
 //! the initial parsing phase, containing unresolved heap indices.
 
@@ -19,18 +19,18 @@ use crate::{
 };
 use std::sync::Arc;
 
-/// Raw binary representation of a MethodDebugInformation table entry
+/// Raw binary representation of a `MethodDebugInformation` table entry
 ///
-/// This structure matches the exact binary layout of MethodDebugInformation table
+/// This structure matches the exact binary layout of `MethodDebugInformation` table
 /// entries in the metadata tables stream. All heap references remain as unresolved
 /// indices that must be resolved through the appropriate heap during the conversion
 /// to the owned [`MethodDebugInformation`] variant.
 ///
 /// # Binary Format
 ///
-/// Each MethodDebugInformation table entry consists of:
+/// Each `MethodDebugInformation` table entry consists of:
 /// - Document: Simple index into Document table
-/// - SequencePoints: Blob heap index containing sequence point data
+/// - `SequencePoints`: Blob heap index containing sequence point data
 ///
 /// The exact byte size depends on whether large heap indices are used, determined
 /// by the heap size flags in the metadata header.
@@ -41,10 +41,10 @@ use std::sync::Arc;
 /// - `sequence_points`: Must be resolved through blob heap to get encoded sequence data
 ///
 /// # Reference
-/// * [Portable PDB Format - MethodDebugInformation Table](https://github.com/dotnet/core/blob/main/Documentation/diagnostics/portable_pdb.md#methoddebuginformation-table-0x31)
+/// * [Portable PDB Format - `MethodDebugInformation` Table](https://github.com/dotnet/core/blob/main/Documentation/diagnostics/portable_pdb.md#methoddebuginformation-table-0x31)
 #[derive(Debug, Clone)]
 pub struct MethodDebugInformationRaw {
-    /// Row identifier within the MethodDebugInformation metadata table
+    /// Row identifier within the `MethodDebugInformation` metadata table
     pub rid: u32,
 
     /// Metadata token for this method debug information entry
@@ -96,6 +96,10 @@ impl MethodDebugInformationRaw {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blob heap index for sequence points is invalid or cannot be resolved.
     pub fn to_owned(&self, blobs: &Blob) -> Result<MethodDebugInformationRc> {
         let sequence_points = if self.sequence_points == 0 {
             None

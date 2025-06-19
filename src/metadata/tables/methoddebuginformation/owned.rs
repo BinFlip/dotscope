@@ -1,4 +1,4 @@
-//! Owned MethodDebugInformation table representation for Portable PDB format
+//! Owned `MethodDebugInformation` table representation for Portable PDB format
 //!
 //! This module provides the [`MethodDebugInformation`] struct which contains
 //! fully resolved method debugging metadata with owned data and resolved heap references.
@@ -11,7 +11,7 @@ use crate::metadata::token::Token;
 /// Represents a Portable PDB method debug information entry with fully resolved metadata
 ///
 /// This structure contains the complete debugging information for a method from the
-/// MethodDebugInformation metadata table (0x31), with all heap indices resolved to
+/// `MethodDebugInformation` metadata table (0x31), with all heap indices resolved to
 /// concrete data values. Unlike [`crate::metadata::tables::methoddebuginformation::raw::MethodDebugInformationRaw`],
 /// this provides immediate access to structured debug data without requiring additional parsing.
 ///
@@ -28,9 +28,9 @@ use crate::metadata::token::Token;
 /// accurate step-through debugging by correlating executable code with source text.
 ///
 /// # Reference
-/// - [Portable PDB Format - MethodDebugInformation Table](https://github.com/dotnet/core/blob/main/Documentation/diagnostics/portable_pdb.md#methoddebuginformation-table-0x31)
+/// - [Portable PDB Format - `MethodDebugInformation` Table](https://github.com/dotnet/core/blob/main/Documentation/diagnostics/portable_pdb.md#methoddebuginformation-table-0x31)
 pub struct MethodDebugInformation {
-    /// Row identifier within the MethodDebugInformation metadata table
+    /// Row identifier within the `MethodDebugInformation` metadata table
     ///
     /// The 1-based index of this method debug information row. Used to uniquely
     /// identify this specific debugging entry within the table.
@@ -38,7 +38,7 @@ pub struct MethodDebugInformation {
 
     /// Metadata token for this method debug information entry
     ///
-    /// Combines the table identifier (0x31 for MethodDebugInformation) with the row ID
+    /// Combines the table identifier (0x31 for `MethodDebugInformation`) with the row ID
     /// to create a unique token that can be used to reference this debug information
     /// from other metadata.
     pub token: Token,

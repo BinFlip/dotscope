@@ -12,8 +12,8 @@
 //!
 //! # Key Components
 //!
-//! - **Types**: Import declaration types and enums ([`ImportKind`], [`ImportDeclaration`], [`ImportsInfo`])
-//! - **Parser**: Binary blob parsing functionality ([`parse_imports_blob`])
+//! - **Types**: Import declaration types and enums ([`crate::metadata::importscope::ImportKind`], [`crate::metadata::importscope::ImportDeclaration`], [`crate::metadata::importscope::ImportsInfo`])
+//! - **Parser**: Binary blob parsing functionality ([`crate::metadata::importscope::parse_imports_blob`])
 //! - **Integration**: Seamless integration with the broader metadata system
 //!
 //! # Examples

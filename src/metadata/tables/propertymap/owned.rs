@@ -1,6 +1,6 @@
-//! # PropertyMap Owned Implementation
+//! # `PropertyMap` Owned Implementation
 //!
-//! This module provides the owned variant of PropertyMap table entries with resolved
+//! This module provides the owned variant of `PropertyMap` table entries with resolved
 //! references and complete metadata context for application use.
 
 use crate::{
@@ -8,16 +8,16 @@ use crate::{
     Result,
 };
 
-/// Owned representation of a PropertyMap table entry with complete metadata context.
+/// Owned representation of a `PropertyMap` table entry with complete metadata context.
 ///
-/// This structure represents a fully processed entry from the PropertyMap metadata table
+/// This structure represents a fully processed entry from the `PropertyMap` metadata table
 /// (ID 0x15), which establishes the relationship between types and their properties.
 /// It contains resolved type and property references, enabling efficient property
 /// enumeration and type-property binding operations.
 ///
 /// ## Purpose
 ///
-/// The PropertyMap table serves as the foundation for type-property relationships:
+/// The `PropertyMap` table serves as the foundation for type-property relationships:
 /// - **Type-Property Binding**: Links types to their associated properties
 /// - **Property Enumeration**: Enables discovery of all properties for a given type
 /// - **Inheritance Support**: Facilitates property inheritance and override resolution
@@ -34,34 +34,34 @@ use crate::{
 ///
 /// ## References
 ///
-/// - ECMA-335, Partition II, §22.35 - PropertyMap table specification
+/// - ECMA-335, Partition II, §22.35 - `PropertyMap` table specification
 /// - [`crate::metadata::tables::PropertyMapRaw`] - Raw variant for comparison
 /// - [`crate::metadata::tables::Property`] - Property definitions
 /// - [`crate::metadata::typesystem::CilTypeRef`] - Type reference details
 pub struct PropertyMapEntry {
-    /// Row identifier within the PropertyMap table (1-based indexing).
+    /// Row identifier within the `PropertyMap` table (1-based indexing).
     ///
-    /// This field provides the logical position of this entry within the PropertyMap table,
+    /// This field provides the logical position of this entry within the `PropertyMap` table,
     /// following the standard 1-based indexing convention used throughout .NET metadata.
     pub rid: u32,
 
-    /// Metadata token uniquely identifying this PropertyMap entry.
+    /// Metadata token uniquely identifying this `PropertyMap` entry.
     ///
-    /// The token combines the table identifier (PropertyMap = 0x15) with the row ID,
+    /// The token combines the table identifier (`PropertyMap` = 0x15) with the row ID,
     /// providing a unique reference for this property mapping across the entire
     /// metadata system.
     pub token: Token,
 
     /// Byte offset of this entry within the metadata stream.
     ///
-    /// This offset indicates the exact position of this PropertyMap entry within the
+    /// This offset indicates the exact position of this `PropertyMap` entry within the
     /// metadata stream, enabling direct access to the raw table data and supporting
     /// metadata analysis and debugging operations.
     pub offset: usize,
 
     /// The parent type that owns these properties.
     ///
-    /// This field contains a resolved reference to the type (TypeDef, TypeRef, or TypeSpec)
+    /// This field contains a resolved reference to the type (`TypeDef`, `TypeRef`, or `TypeSpec`)
     /// that declares and owns the properties in this mapping. The reference provides
     /// access to the complete type information and integration with the type system.
     pub parent: CilTypeRef,
@@ -70,7 +70,7 @@ pub struct PropertyMapEntry {
     ///
     /// This field contains the resolved list of properties associated with the parent
     /// type, enabling efficient property enumeration and access. Properties are
-    /// resolved from the Property table with potential indirection through PropertyPtr.
+    /// resolved from the `Property` table with potential indirection through `PropertyPtr`.
     pub properties: PropertyList,
 }
 

@@ -300,7 +300,7 @@ impl<'a, T: RowDefinition<'a>> MetadataTable<'a, T> {
     ///
     /// ## Arguments
     ///
-    /// * `index` - The 1-based row index to retrieve (must be between 1 and row_count inclusive)
+    /// * `index` - The 1-based row index to retrieve (must be between 1 and `row_count` inclusive)
     ///
     /// ## Returns
     ///
@@ -461,6 +461,14 @@ impl<'a, T: RowDefinition<'a> + Send + Sync + 'a> TableParIterator<'a, T> {
     ///
     /// Returns `Ok(())` if all operations complete successfully, or the first error
     /// encountered during parallel processing.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if the mutex is poisoned during error handling.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any operation applied to an item returns an error. The first error encountered is returned.
     pub fn try_for_each<F>(self, op: F) -> crate::Result<()>
     where
         F: Fn(T) -> crate::Result<()> + Send + Sync,

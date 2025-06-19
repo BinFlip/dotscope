@@ -1,11 +1,11 @@
-//! StateMachineMethod table implementation for Portable PDB format
+//! `StateMachineMethod` table implementation for Portable PDB format
 //!
-//! This module provides access to StateMachineMethod table data, which maps
-//! compiler-generated state machine methods (MoveNext) back to their original
+//! This module provides access to `StateMachineMethod` table data, which maps
+//! compiler-generated state machine methods (`MoveNext`) back to their original
 //! user-written async/await and iterator methods. This mapping is essential for
 //! providing a seamless debugging experience with modern C# and VB.NET features.
 //!
-//! The StateMachineMethod table follows the dual-representation pattern used throughout
+//! The `StateMachineMethod` table follows the dual-representation pattern used throughout
 //! the dotscope library:
 //! - [`StateMachineMethodRaw`] for raw binary data with unresolved indices
 //! - [`StateMachineMethod`] for processed data with resolved token values
@@ -13,8 +13,8 @@
 //! # State Machine Context
 //!
 //! When C# or VB.NET compilers encounter async/await patterns or yield return
-//! statements, they generate complex state machine types with MoveNext methods
-//! that implement the actual logic. The StateMachineMethod table provides the
+//! statements, they generate complex state machine types with `MoveNext` methods
+//! that implement the actual logic. The `StateMachineMethod` table provides the
 //! crucial mapping that allows debuggers to:
 //!
 //! - Show the original method name in stack traces

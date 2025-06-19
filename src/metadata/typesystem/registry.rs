@@ -93,17 +93,10 @@
 //! The registry provides multiple lookup methods by name, namespace, and token.
 //! Each method returns the appropriate collection type for the query.
 //!
-//! # Performance Characteristics
-//!
-//! - **Lookup by token**: O(log n) using skip list
-//! - **Lookup by name**: O(1) average case using hash maps
-//! - **Registration**: O(log n) for insertion plus O(1) for index updates
-//! - **Memory overhead**: Minimal due to reference counting and deduplication
-//!
 //! # ECMA-335 Compliance
 //!
 //! The registry handles all type reference mechanisms defined in ECMA-335:
-//! - TypeDef, TypeRef, and TypeSpec tokens
+//! - `TypeDef`, `TypeRef`, and `TypeSpec` tokens
 //! - Assembly, Module, and File references
 //! - Generic type instantiations
 //! - Cross-assembly type resolution
@@ -140,7 +133,7 @@ use crate::{
 /// # Type Resolution
 ///
 /// Different sources require different resolution strategies:
-/// - **CurrentModule**: Direct access to type definition
+/// - **`CurrentModule`**: Direct access to type definition
 /// - **External sources**: Resolution through metadata references
 /// - **Primitive**: Built-in CLR types with artificial tokens
 ///
@@ -527,21 +520,26 @@ impl TypeRegistry {
     ///
     /// Constructs a complete type registry with all .NET primitive types
     /// pre-registered and ready for use. The registry starts with artificial
-    /// tokens in the 0xF000_0020+ range for new type registration.
+    /// tokens in the `0xF000_0020`+ range for new type registration.
     ///
     /// # Primitive Types
     ///
     /// The following primitive types are automatically registered:
-    /// - System.Void, System.Boolean, System.Char
-    /// - Integer types: SByte, Byte, Int16, UInt16, Int32, UInt32, Int64, UInt64
-    /// - Floating point: Single, Double
-    /// - Platform types: IntPtr, UIntPtr
-    /// - Reference types: Object, String
-    /// - Special types: TypedReference, ValueType
+    /// - `System.Void`, `System.Boolean`, `System.Char`
+    /// - Integer types: `SByte`, `Byte`, `Int16`, `UInt16`, `Int32`, `UInt32`, `Int64`, `UInt64`
+    /// - Floating point: `Single`, `Double`
+    /// - Platform types: `IntPtr`, `UIntPtr`
+    /// - Reference types: `Object`, `String`
+    /// - Special types: `TypedReference`, `ValueType`
     ///
     /// # Returns
     /// * `Ok(TypeRegistry)` - Fully initialized registry with primitive types
     /// * `Err(Error)` - If primitive type initialization fails
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the primitive type initialization fails,
+    /// which could happen due to internal inconsistencies during registry setup.
     ///
     /// # Thread Safety
     ///
@@ -1025,7 +1023,7 @@ impl TypeRegistry {
     ///
     /// The fullname should be in the format:
     /// - "Namespace.TypeName" for namespaced types
-    /// - "TypeName" for types in the global namespace
+    /// - "`TypeName`" for types in the global namespace
     ///
     /// # Examples
     ///
