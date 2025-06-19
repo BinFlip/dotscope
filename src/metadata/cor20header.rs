@@ -66,6 +66,12 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
+//! # Thread Safety
+//!
+//! All types and functions in this module are thread-safe. The [`crate::metadata::cor20header::Cor20Header`]
+//! struct contains only primitive types and is [`std::marker::Send`] and [`std::marker::Sync`].
+//! The parsing function is stateless and can be called concurrently from multiple threads.
+//!
 //! # Integration
 //!
 //! This module integrates with:
@@ -129,6 +135,11 @@ use crate::{file::parser::Parser, Error::OutOfBounds, Result};
 ///     header.meta_data_rva, header.meta_data_size);
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// [`Cor20Header`] is [`std::marker::Send`] and [`std::marker::Sync`] as it contains only primitive types.
+/// Instances can be safely shared across threads and accessed concurrently.
 pub struct Cor20Header {
     /// Size of the CLI header in bytes (always 72).
     pub cb: u32,
@@ -216,6 +227,10 @@ impl Cor20Header {
     ///     header.minor_runtime_version);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn read(data: &[u8]) -> Result<Cor20Header> {
         const VALID_FLAGS: u32 = 0x0000_001F; // Based on ECMA-335 defined flags
 

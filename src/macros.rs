@@ -69,6 +69,8 @@
 //! The macros themselves do not impose additional thread safety requirements beyond
 //! the underlying synchronization primitives. All operations preserve the thread safety
 //! guarantees of the wrapped [`std::sync::Mutex`] and [`std::sync::RwLock`] types.
+//! All macros are thread-safe as they operate on already thread-safe synchronization
+//! primitives and do not introduce additional shared state.
 //!
 //! # Integration
 //!

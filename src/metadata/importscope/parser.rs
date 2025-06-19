@@ -19,6 +19,12 @@
 //! - **target-namespace**: Optional blob heap index for UTF8 namespace name
 //! - **target-type**: Optional `TypeDefOrRefOrSpecEncoded` type reference
 //!
+//! # Thread Safety
+//!
+//! All parsing functions and types in this module are thread-safe. The [`crate::metadata::importscope::parser::ImportsParser`]
+//! and [`crate::metadata::importscope::parser::parse_imports_blob`] function are [`std::marker::Send`] and [`std::marker::Sync`],
+//! enabling safe concurrent parsing of import declarations across multiple threads.
+//!
 //! # Examples
 //!
 //! ## Parsing Imports Blob
@@ -64,6 +70,11 @@ use crate::{
 /// (like `SignatureParser` and `MarshallingParser`) with proper error handling and
 /// state management. It provides a structured approach to parsing the complex binary
 /// format of imports blobs.
+///
+/// # Thread Safety
+///
+/// [`ImportsParser`] is [`std::marker::Send`] and [`std::marker::Sync`] as it contains only borrowed data.
+/// Instances can be safely used across threads and accessed concurrently.
 pub struct ImportsParser<'a> {
     /// Binary data parser for reading blob data
     parser: Parser<'a>,
@@ -80,6 +91,10 @@ impl<'a> ImportsParser<'a> {
     ///
     /// # Returns
     /// A new [`ImportsParser`] ready to parse the provided data.
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn new(data: &'a [u8], blobs: &'a Blob) -> Self {
         ImportsParser {
@@ -104,6 +119,10 @@ impl<'a> ImportsParser<'a> {
     /// - **Truncated Data**: Insufficient data for expected parameters
     /// - **Invalid Blob**: Blob heap references that cannot be resolved
     /// - **Malformed Tokens**: Invalid compressed token encoding
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn parse_imports(&mut self) -> Result<ImportsInfo> {
         let mut declarations = Vec::new();
 
@@ -222,6 +241,10 @@ impl<'a> ImportsParser<'a> {
 ///     assert_eq!(namespace, "Tests");
 /// }
 /// ```
+///
+/// # Thread Safety
+///
+/// This function is thread-safe and can be called concurrently from multiple threads.
 pub fn parse_imports_blob(data: &[u8], blobs: &Blob) -> Result<ImportsInfo> {
     if data.is_empty() {
         return Ok(ImportsInfo::new());

@@ -1,35 +1,43 @@
-///
-/// This module provides the core infrastructure for loading and processing .NET metadata tables in a dependency-aware and parallelized manner.
-/// It exposes the [`crate::metadata::loader::MetadataLoader`] trait, dependency graph construction, and parallel execution utilities for all table loaders.
-///
-/// # Architecture
-///
-/// The loader system is built around several key concepts:
-///
-/// - **Dependency Management**: Each loader declares its dependencies via [`crate::metadata::loader::MetadataLoader::dependencies`]
-/// - **Graph Construction**: Dependencies are modeled as a directed acyclic graph using [`crate::metadata::loader::graph::LoaderGraph`]
-/// - **Parallel Execution**: Loaders are executed in topologically sorted levels, enabling maximum parallelism
-/// - **Context Sharing**: All loaders share a common [`crate::metadata::loader::context::LoaderContext`] containing loaded table data
-///
-/// # Execution Model
-///
-/// 1. **Registration**: All loaders are statically registered in the [`crate::metadata::loader::LOADERS`] array
-/// 2. **Graph Building**: [`crate::metadata::loader::build_dependency_graph`] constructs the dependency graph and validates for cycles
-/// 3. **Level Generation**: The graph is topologically sorted into execution levels
-/// 4. **Parallel Execution**: Each level is executed in parallel using rayon
-/// 5. **Error Handling**: Any loader failure immediately aborts the entire process
-///
-/// # Thread Safety
-///
-/// - **Loaders**: All implementations must be [`Send`] + [`Sync`] for parallel execution
-/// - **Context**: [`crate::metadata::loader::context::LoaderContext`] provides thread-safe access to shared metadata
-/// - **Synchronization**: Level-based execution provides natural synchronization points
-///
-/// # Modules
-///
-/// - [`crate::metadata::loader::graph`]: Dependency graph and topological sorting for loader execution
-/// - [`crate::metadata::loader::data`]: Contains the [`crate::metadata::loader::data::CilObjectData`] struct used by all loaders
-/// - [`crate::metadata::loader::context`]: Provides the [`crate::metadata::loader::context::LoaderContext`] for sharing data between loaders
+//! Core infrastructure for loading and processing .NET metadata tables in a dependency-aware and parallelized manner.
+//!
+//! This module provides the foundation for parallel metadata loading operations across all .NET metadata
+//! tables as defined by ECMA-335. It exposes the [`crate::metadata::loader::MetadataLoader`] trait,
+//! dependency graph construction, and parallel execution utilities for coordinating the loading of
+//! 53 different metadata table types.
+//!
+//! # Architecture
+//!
+//! The loader system is built around several key concepts:
+//!
+//! - **Dependency Management**: Each loader declares its dependencies via [`crate::metadata::loader::MetadataLoader::dependencies`]
+//! - **Graph Construction**: Dependencies are modeled as a directed acyclic graph using [`crate::metadata::loader::graph::LoaderGraph`]
+//! - **Parallel Execution**: Loaders are executed in topologically sorted levels, enabling maximum parallelism
+//! - **Context Sharing**: All loaders share a common [`crate::metadata::loader::context::LoaderContext`] containing loaded table data
+//!
+//! # Execution Model
+//!
+//! 1. **Registration**: All loaders are statically registered in the [`crate::metadata::loader::LOADERS`] array
+//! 2. **Graph Building**: [`crate::metadata::loader::build_dependency_graph`] constructs the dependency graph and validates for cycles
+//! 3. **Level Generation**: The graph is topologically sorted into execution levels
+//! 4. **Parallel Execution**: Each level is executed in parallel using rayon
+//! 5. **Error Handling**: Any loader failure immediately aborts the entire process
+//!
+//! # Thread Safety
+//!
+//! All components in this module are designed for safe concurrent access during parallel loading:
+//! - **Loaders**: All implementations must be [`std::marker::Send`] + [`std::marker::Sync`] for parallel execution
+//! - **Context**: [`crate::metadata::loader::context::LoaderContext`] provides thread-safe access to shared metadata
+//! - **Synchronization**: Level-based execution provides natural synchronization points between dependency levels
+//! - **Static Data**: [`crate::metadata::loader::LOADERS`] array and [`crate::metadata::loader::EXECUTION_LEVELS`] cache are immutable after initialization
+//! - **Error Isolation**: Loader failures are properly isolated and propagated without affecting concurrent operations
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::loader::graph`]: Dependency graph and topological sorting for loader execution
+//! - [`crate::metadata::loader::data`]: Contains the [`crate::metadata::loader::data::CilObjectData`] struct used by all loaders
+//! - [`crate::metadata::loader::context`]: Provides the [`crate::metadata::loader::context::LoaderContext`] for sharing data between loaders
+//! - [`crate::metadata::tables`]: All metadata table implementations and loader definitions
 mod context;
 mod data;
 mod graph;

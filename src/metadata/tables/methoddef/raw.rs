@@ -1,17 +1,63 @@
 //! Raw `MethodDef` table structure with unresolved indexes and heap references.
 //!
-//! This module provides the [`MethodDefRaw`] struct, which represents method definitions
+//! This module provides the [`crate::metadata::tables::methoddef::raw::MethodDefRaw`] struct, which represents method definitions
 //! as stored in the metadata stream. The structure contains unresolved indexes
 //! and heap references that require processing to establish complete method information
 //! with parameter metadata and signature details.
 //!
 //! # Purpose
-//! [`MethodDefRaw`] serves as the direct representation of `MethodDef` table entries from the
+//! [`crate::metadata::tables::methoddef::raw::MethodDefRaw`] serves as the direct representation of `MethodDef` table entries from the
 //! binary metadata stream, before parameter resolution and signature parsing. This raw format
-//! is processed during metadata loading to create [`Method`] instances with resolved
+//! is processed during metadata loading to create [`crate::metadata::method::Method`] instances with resolved
 //! parameters and complete method implementation information.
 //!
-//! [`Method`]: crate::metadata::method::Method
+//! # Architecture
+//!
+//! The raw implementation provides the foundation for method definition parsing:
+//! - **Unresolved References**: Contains raw heap indices and table references
+//! - **Memory Efficiency**: Minimal footprint during initial parsing phases
+//! - **Binary Format**: Direct representation of ECMA-335 table structure
+//! - **Batch Processing**: Optimized for parsing multiple method entries efficiently
+//!
+//! # Binary Format
+//!
+//! Each `MethodDef` table row follows the ECMA-335 §22.26 specification:
+//!
+//! ```text
+//! Offset | Size    | Field      | Description
+//! -------|---------|------------|--------------------------------------------
+//! 0x00   | 4 bytes | RVA        | Relative virtual address of implementation
+//! 0x04   | 2 bytes | ImplFlags  | Method implementation attributes
+//! 0x06   | 2 bytes | Flags      | Method attributes and access modifiers
+//! 0x08   | 2-4     | Name       | String heap index for method name
+//! 0x0A   | 2-4     | Signature  | Blob heap index for method signature
+//! 0x0C   | 2-4     | ParamList  | Index into Param table for first parameter
+//! ```
+//!
+//! # Processing Pipeline
+//!
+//! 1. **Binary Parsing**: Raw entries are read from metadata tables stream
+//! 2. **Validation**: RVA, flags, and indices are validated for consistency
+//! 3. **Resolution**: Heap indices are resolved to actual data values
+//! 4. **Parameter Processing**: Parameter ranges are calculated and resolved
+//! 5. **Signature Parsing**: Method signatures are parsed from blob heap
+//! 6. **Conversion**: Raw entries are converted to owned method representations
+//!
+//! # Thread Safety
+//!
+//! All types in this module are thread-safe for concurrent read access:
+//! - [`crate::metadata::tables::methoddef::raw::MethodDefRaw`] is [`std::marker::Send`] and [`std::marker::Sync`]
+//! - Raw parsing operations can be performed concurrently
+//! - Conversion methods are thread-safe with proper heap synchronization
+//! - No shared mutable state during parsing operations
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::tables::methoddef`] - Method definition module and owned representations
+//! - [`crate::metadata::tables::param`] - Parameter table for method parameter resolution
+//! - [`crate::metadata::method`] - Method definition types and containers
+//! - [`crate::metadata::signatures`] - Method signature parsing and validation
 
 use std::sync::{atomic::AtomicU32, Arc, OnceLock};
 
@@ -73,10 +119,41 @@ use crate::{
 /// - **Indirect access**: Optional `ParamPtr` table for parameter pointer indirection
 ///
 /// # RVA and Implementation
+///
 /// The `rva` field specifies method implementation location:
 /// - **Zero RVA**: Abstract methods, interface methods, or extern methods without implementation
 /// - **Non-zero RVA**: Concrete methods with IL code or native implementation at specified address
-/// - **Implementation type**: Determined by combination of RVA and implementation flags
+/// - **Implementation Type**: Determined by combination of RVA and implementation flags
+///
+/// # Usage Patterns
+///
+/// ```rust,ignore
+/// use dotscope::metadata::tables::methoddef::raw::MethodDefRaw;
+/// use dotscope::metadata::streams::{Strings, Blob};
+///
+/// # fn process_method_entry(raw_entry: &MethodDefRaw, strings: &Strings, blob: &Blob) -> dotscope::Result<()> {
+/// // Check method implementation type
+/// if raw_entry.rva == 0 {
+///     println!(\"Abstract or interface method: {}\", raw_entry.rid);
+/// } else {
+///     println!(\"Concrete method at RVA: 0x{:08X}\", raw_entry.rva);
+/// }
+///
+/// // Access method name
+/// let method_name = strings.get(raw_entry.name as usize)?;
+/// println!(\"Method name: {}\", method_name);
+///
+/// // Access method signature
+/// let signature_data = blob.get(raw_entry.signature as usize)?;
+/// println!(\"Signature has {} bytes\", signature_data.len());
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Thread Safety
+///
+/// [`MethodDefRaw`] is [`std::marker::Send`] and [`std::marker::Sync`] as it contains only primitive data types.
+/// Instances can be safely shared across threads and accessed concurrently without synchronization.
 #[derive(Clone, Debug)]
 pub struct MethodDefRaw {
     /// Row identifier within the `MethodDef` table.

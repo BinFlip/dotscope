@@ -57,6 +57,21 @@
 //! - **Reference Counting**: Shared data uses Arc for safe concurrent access
 //! - **Lazy Initialization**: Some tables use OnceLock for deferred loading
 //! - **Scoped Lifetime**: Context is dropped immediately after loading
+//!
+//! # Thread Safety
+//!
+//! All components in this module are designed for safe concurrent access during parallel loading.
+//! The [`crate::metadata::loader::context::LoaderContext`] contains thread-safe data structures and
+//! is [`std::marker::Send`] and [`std::marker::Sync`], enabling efficient parallel processing
+//! of metadata tables across multiple threads.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::loader::data`] - Assembly data loading and context creation
+//! - [`crate::metadata::typesystem`] - Type registry and reference resolution
+//! - [`crate::metadata::tables`] - All metadata table types and coded index resolution
+//! - [`crate::metadata::streams`] - Metadata stream access and heap operations
 
 use std::sync::{Arc, OnceLock};
 
@@ -111,11 +126,12 @@ use crate::{
 ///
 /// # Thread Safety
 ///
-/// Designed for safe concurrent access during parallel loading:
+/// [`LoaderContext`] is [`std::marker::Send`] and [`std::marker::Sync`], designed for safe concurrent access:
 /// - All maps use thread-safe data structures ([`crossbeam_skiplist::SkipMap`], [`dashmap::DashMap`])
 /// - Metadata streams are immutable references
 /// - Registries provide atomic operations
-/// - Critical sections use `Arc<OnceLock>` for coordination
+/// - Critical sections use [`std::sync::Arc`]<[`std::sync::OnceLock`]> for coordination
+/// - Reference-counted data enables safe sharing across parallel loaders
 ///
 /// # Examples
 ///
@@ -357,6 +373,10 @@ impl LoaderContext<'_> {
     /// let method_ref = context.get_ref(&method_index);
     /// # }
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads during parallel loading.
     pub fn get_ref(&self, coded_index: &CodedIndex) -> CilTypeReference {
         match coded_index.tag {
             TableId::TypeDef => {

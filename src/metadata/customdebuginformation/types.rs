@@ -2,13 +2,150 @@
 //!
 //! This module defines all the types used to represent custom debug information
 //! from Portable PDB files. These types provide structured access to various
-//! kinds of debugging metadata that can be embedded in .NET assemblies.
+//! kinds of debugging metadata that can be embedded in .NET assemblies according
+//! to the Portable PDB specification.
+//!
+//! # Architecture
+//!
+//! The module implements a type-safe representation of custom debug information
+//! with strong GUID-based typing and format-aware parsing. The architecture includes:
+//!
+//! - **Kind Identification**: GUID-based debug information type identification
+//! - **Structured Data**: Type-safe access to different debug information formats
+//! - **Format Support**: Built-in support for standard .NET debug information types
+//! - **Extensibility**: Unknown format handling for future compatibility
+//!
+//! # Key Components
+//!
+//! - [`crate::metadata::customdebuginformation::types::CustomDebugKind`] - GUID-based debug information type enumeration
+//! - [`crate::metadata::customdebuginformation::types::CustomDebugInfo`] - Parsed debug information data structures
+//! - GUID mapping functions for standard Microsoft debug information types
+//!
+//! # Supported Debug Information Types
+//!
+//! ## Source Link Information
+//! Provides JSON-formatted source server mapping information for symbol servers.
+//! GUID: `CC110556-A091-4D38-9FEC-25AB9A351A6A`
+//!
+//! ## Embedded Source Files
+//! Contains full source file content embedded directly in the PDB.
+//! GUID: `0E8A571B-6926-466E-B4AD-8AB04611F5FE`
+//!
+//! ## Compilation Metadata
+//! Stores compiler and build-time metadata information.
+//! GUID: `B5FEEC05-8CD0-4A83-96DA-466284BB4BD8`
+//!
+//! ## Compilation Options
+//! Contains the compiler options used during compilation.
+//! GUID: `B1C2ABE1-8BF0-497A-A9B1-02FA8571E544`
+//!
+//! # Usage Examples
+//!
+//! ## Working with Debug Information Types
+//!
+//! ```rust
+//! use dotscope::metadata::customdebuginformation::{CustomDebugKind, CustomDebugInfo};
+//!
+//! // Create from a known GUID
+//! let sourcelink_guid = [0x56, 0x05, 0x11, 0xCC, 0x91, 0xA0, 0x38, 0x4D,
+//!                        0x9F, 0xEC, 0x25, 0xAB, 0x9A, 0x35, 0x1A, 0x6A];
+//! let kind = CustomDebugKind::from_guid(sourcelink_guid);
+//! assert_eq!(kind, CustomDebugKind::SourceLink);
+//!
+//! // Create debug information
+//! let debug_info = CustomDebugInfo::SourceLink {
+//!     document: r#"{"documents":{"src/main.cs":"https://example.com/src/main.cs"}}"#.to_string(),
+//! };
+//!
+//! // Access information
+//! println!("Debug info kind: {:?}", debug_info.kind());
+//! println!("Is known type: {}", debug_info.is_known());
+//! println!("Data size: {} bytes", debug_info.data_size());
+//! ```
+//!
+//! ## Pattern Matching on Debug Information
+//!
+//! ```rust
+//! use dotscope::metadata::customdebuginformation::CustomDebugInfo;
+//!
+//! # fn process_debug_info(debug_info: CustomDebugInfo) {
+//! match debug_info {
+//!     CustomDebugInfo::SourceLink { document } => {
+//!         println!("Source Link JSON: {}", document);
+//!     }
+//!     CustomDebugInfo::EmbeddedSource { filename, content } => {
+//!         println!("Embedded source '{}': {} chars", filename, content.len());
+//!     }
+//!     CustomDebugInfo::CompilationMetadata { metadata } => {
+//!         println!("Compilation metadata: {}", metadata);
+//!     }
+//!     CustomDebugInfo::CompilationOptions { options } => {
+//!         println!("Compiler options: {}", options);
+//!     }
+//!     CustomDebugInfo::Unknown { kind, data } => {
+//!         println!("Unknown debug info {:?}: {} bytes", kind, data.len());
+//!     }
+//! }
+//! # }
+//! ```
+//!
+//! # Thread Safety
+//!
+//! All types in this module are thread-safe and implement [`std::marker::Send`] and [`std::marker::Sync`].
+//! The debug information types contain only owned data and can be safely shared across threads.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::customdebuginformation::parser`] - Parsing implementation using these types
+//! - [`crate::metadata::streams::Guid`] - GUID heap access for debug information type identification
+//! - [`crate::metadata::streams::Blob`] - Blob heap access for debug information data
+//! - [`crate::metadata::tables`] - CustomDebugInformation table integration
+//!
+//! # Standards Compliance
+//!
+//! - **Portable PDB**: Full compliance with Portable PDB custom debug information specification
+//! - **Microsoft Standards**: Support for all standard Microsoft debug information GUIDs
+//! - **Extensibility**: Forward compatibility with unknown debug information types
+//! - **Type Safety**: Strong typing prevents GUID/data format mismatches
 
 /// Well-known custom debug information kinds identified by GUID.
 ///
 /// These constants represent the standard GUIDs used to identify different
 /// types of custom debug information in Portable PDB files. Each kind
-/// determines the format and interpretation of the associated blob data.
+/// determines the format and interpretation of the associated blob data
+/// according to the Portable PDB specification.
+///
+/// The GUID-based identification system allows tools and compilers to store
+/// custom debugging metadata in a standardized way while maintaining
+/// compatibility with existing debugging infrastructure.
+///
+/// # GUID Format
+///
+/// All GUIDs are stored in little-endian byte order as defined by the
+/// Portable PDB specification. The mapping between GUID strings and
+/// byte arrays follows Microsoft's standard GUID encoding.
+///
+/// # Examples
+///
+/// ```rust
+/// use dotscope::metadata::customdebuginformation::CustomDebugKind;
+///
+/// // Create from known GUID bytes
+/// let sourcelink_guid = [0x56, 0x05, 0x11, 0xCC, 0x91, 0xA0, 0x38, 0x4D,
+///                        0x9F, 0xEC, 0x25, 0xAB, 0x9A, 0x35, 0x1A, 0x6A];
+/// let kind = CustomDebugKind::from_guid(sourcelink_guid);
+/// assert_eq!(kind, CustomDebugKind::SourceLink);
+///
+/// // Convert back to GUID bytes
+/// let guid_bytes = kind.to_guid_bytes();
+/// assert_eq!(guid_bytes, sourcelink_guid);
+/// ```
+///
+/// # Thread Safety
+///
+/// [`CustomDebugKind`] is [`std::marker::Send`] and [`std::marker::Sync`] as it contains only primitive data.
+/// Instances can be safely shared across threads and accessed concurrently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CustomDebugKind {
     /// Source Link information for source file mapping
@@ -34,11 +171,36 @@ pub enum CustomDebugKind {
 impl CustomDebugKind {
     /// Create a `CustomDebugKind` from a GUID byte array.
     ///
+    /// This method maps standard Microsoft debug information GUIDs to their
+    /// corresponding enum variants. Unknown GUIDs are preserved in the
+    /// [`CustomDebugKind::Unknown`] variant for future compatibility.
+    ///
     /// # Arguments
     /// * `guid_bytes` - The 16-byte GUID identifying the debug information kind
     ///
     /// # Returns
     /// The corresponding [`CustomDebugKind`] variant
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::customdebuginformation::CustomDebugKind;
+    ///
+    /// // Known Source Link GUID
+    /// let sourcelink_guid = [0x56, 0x05, 0x11, 0xCC, 0x91, 0xA0, 0x38, 0x4D,
+    ///                        0x9F, 0xEC, 0x25, 0xAB, 0x9A, 0x35, 0x1A, 0x6A];
+    /// let kind = CustomDebugKind::from_guid(sourcelink_guid);
+    /// assert_eq!(kind, CustomDebugKind::SourceLink);
+    ///
+    /// // Unknown GUID
+    /// let unknown_guid = [0x00; 16];
+    /// let kind = CustomDebugKind::from_guid(unknown_guid);
+    /// assert!(matches!(kind, CustomDebugKind::Unknown(_)));
+    /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn from_guid(guid_bytes: [u8; 16]) -> Self {
         match guid_bytes {
@@ -65,8 +227,28 @@ impl CustomDebugKind {
 
     /// Get the GUID bytes for this debug information kind.
     ///
+    /// Converts the debug information kind back to its corresponding
+    /// 16-byte GUID representation for storage or comparison purposes.
+    ///
     /// # Returns
     /// The 16-byte GUID as a byte array
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::customdebuginformation::CustomDebugKind;
+    ///
+    /// let kind = CustomDebugKind::SourceLink;
+    /// let guid_bytes = kind.to_guid_bytes();
+    ///
+    /// // Verify round-trip conversion
+    /// let recovered_kind = CustomDebugKind::from_guid(guid_bytes);
+    /// assert_eq!(kind, recovered_kind);
+    /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn to_guid_bytes(&self) -> [u8; 16] {
         match self {
@@ -95,7 +277,48 @@ impl CustomDebugKind {
 ///
 /// Each variant corresponds to a specific debug information kind and contains
 /// the appropriate parsed data for that type. This provides structured access
-/// to various debugging metadata formats.
+/// to various debugging metadata formats according to the Portable PDB specification.
+///
+/// The enum design ensures type safety by matching debug information kinds
+/// with their expected data formats, preventing misinterpretation of blob data.
+///
+/// # Format Details
+///
+/// Different debug information types use different blob formats:
+/// - **SourceLink**: UTF-8 JSON document with source server mappings
+/// - **EmbeddedSource**: UTF-8 source file content with optional filename
+/// - **CompilationMetadata**: UTF-8 text containing compilation metadata
+/// - **CompilationOptions**: UTF-8 text containing compiler options
+/// - **Unknown**: Raw binary data for unsupported or future formats
+///
+/// # Examples
+///
+/// ```rust
+/// use dotscope::metadata::customdebuginformation::{CustomDebugInfo, CustomDebugKind};
+///
+/// // Create Source Link debug information
+/// let source_link = CustomDebugInfo::SourceLink {
+///     document: r#"{"documents":{"Program.cs":"https://github.com/user/repo/raw/main/Program.cs"}}"#.to_string(),
+/// };
+///
+/// // Access debug information properties
+/// assert_eq!(source_link.kind(), CustomDebugKind::SourceLink);
+/// assert!(source_link.is_known());
+/// println!("Source Link JSON size: {} bytes", source_link.data_size());
+///
+/// // Pattern match on debug information
+/// match source_link {
+///     CustomDebugInfo::SourceLink { document } => {
+///         println!("Source Link document: {}", document);
+///     }
+///     _ => unreachable!(),
+/// }
+/// ```
+///
+/// # Thread Safety
+///
+/// [`CustomDebugInfo`] is [`std::marker::Send`] and [`std::marker::Sync`] as all variants contain only owned data.
+/// Instances can be safely shared across threads and accessed concurrently.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CustomDebugInfo {
     /// Source Link mapping information
@@ -136,8 +359,28 @@ pub enum CustomDebugInfo {
 impl CustomDebugInfo {
     /// Get the debug information kind for this data.
     ///
+    /// Extracts the debug information kind from the parsed data structure,
+    /// enabling callers to determine the type of debug information without
+    /// pattern matching on the enum variants.
+    ///
     /// # Returns
     /// The [`CustomDebugKind`] that this debug information represents
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::customdebuginformation::{CustomDebugInfo, CustomDebugKind};
+    ///
+    /// let debug_info = CustomDebugInfo::SourceLink {
+    ///     document: "{}".to_string(),
+    /// };
+    ///
+    /// assert_eq!(debug_info.kind(), CustomDebugKind::SourceLink);
+    /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn kind(&self) -> CustomDebugKind {
         match self {

@@ -85,6 +85,13 @@
 //! }
 //! ```
 //!
+//! # Thread Safety
+//!
+//! All error types in this module are thread-safe. The [`crate::Error`] enum implements
+//! [`std::marker::Send`] and [`std::marker::Sync`], allowing errors to be safely passed
+//! between threads and shared across thread boundaries. This enables proper error
+//! propagation in concurrent parsing and analysis operations.
+//!
 //! # Integration
 //!
 //! This module integrates with:
@@ -181,6 +188,12 @@ macro_rules! malformed_error {
 /// - [`crate::Error::RecursionLimit`] - Maximum recursion depth exceeded
 /// - [`crate::Error::LockError`] - Thread synchronization failure
 /// - [`crate::Error::GraphError`] - Dependency graph analysis error
+///
+/// # Thread Safety
+///
+/// [`Error`] is [`std::marker::Send`] and [`std::marker::Sync`] as all variants contain thread-safe types.
+/// This includes owned strings, primitive values, and errors from external crates that are themselves
+/// thread-safe. Errors can be safely passed between threads and shared across thread boundaries.
 #[derive(Error, Debug)]
 pub enum Error {
     // File parsing Errors

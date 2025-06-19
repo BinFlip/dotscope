@@ -67,8 +67,16 @@ use crate::{
     Result,
 };
 
-/// A stateful decoder instance, that exposes the more complex disassembly algorithm
-/// in a simple manner to be used by the framework and exposed methods
+/// A stateful decoder instance that exposes complex disassembly algorithms.
+///
+/// The [`Decoder`] maintains context during CIL bytecode disassembly, tracking visited
+/// addresses and building control flow relationships between basic blocks. It provides
+/// the core implementation for all higher-level disassembly functions.
+///
+/// # Thread Safety
+///
+/// [`Decoder`] is not [`std::marker::Send`] or [`std::marker::Sync`] due to mutable references
+/// to parser state. Each thread should use its own decoder instance.
 struct Decoder<'a> {
     /// Collection of decoded basic blocks
     blocks: Vec<BasicBlock>,
@@ -87,7 +95,7 @@ struct Decoder<'a> {
 }
 
 impl<'a> Decoder<'a> {
-    /// Create a new stateful Decoder
+    /// Create a new stateful decoder for CIL bytecode disassembly.
     ///
     /// Initializes a decoder instance for processing CIL bytecode into basic blocks.
     /// The decoder maintains state during disassembly, tracking visited addresses
@@ -109,6 +117,10 @@ impl<'a> Decoder<'a> {
     /// # Errors
     ///
     /// Returns [`crate::Error::OutOfBounds`] if the offset exceeds the parser's data length.
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn new(
         parser: &'a mut Parser<'a>,
         offset: usize,
@@ -139,7 +151,7 @@ impl<'a> Decoder<'a> {
     ///
     /// # Returns
     ///
-    /// A slice containing all decoded [`crate::disassembler::block::BasicBlock`] instances.
+    /// A slice containing all decoded [`crate::disassembler::BasicBlock`] instances.
     ///
     /// # Examples
     ///
@@ -149,6 +161,10 @@ impl<'a> Decoder<'a> {
     /// let blocks = decoder.blocks();
     /// println!("Decoded {} basic blocks", blocks.len());
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn blocks(&self) -> &[BasicBlock] {
         &self.blocks
     }
@@ -185,6 +201,10 @@ impl<'a> Decoder<'a> {
     ///
     /// Note: [`crate::disassembler::decode_blocks`] function internally uses this method to return ownership
     /// of the blocks to the caller.
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn into_blocks(self) -> Vec<BasicBlock> {
         self.blocks
     }
@@ -207,10 +227,15 @@ impl<'a> Decoder<'a> {
         Ok(())
     }
 
-    /// Process a single block, adding its instructions and successor blocks
+    /// Process a single block, adding its instructions and successor blocks.
     ///
-    /// ## Arguments
+    /// # Arguments
+    ///
     /// * `block_id` - The id of the block to decode
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::OutOfBounds`] if the block offset exceeds parser bounds.
     fn decode_block(&mut self, block_id: usize) -> Result<()> {
         if self.blocks[block_id].offset > self.parser.len() {
             return Err(OutOfBounds);
@@ -619,6 +644,11 @@ pub fn decode_stream(parser: &mut Parser, rva: u64) -> Result<Vec<Instruction>> 
 /// }
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// This function is thread-safe and can be called concurrently from multiple threads
+/// with different parser instances.
 ///
 /// # Implementation Notes
 ///

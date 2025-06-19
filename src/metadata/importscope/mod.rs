@@ -47,8 +47,17 @@
 //!
 //! # Thread Safety
 //!
-//! All types and functions in this module are thread-safe and can be used
-//! concurrently across multiple threads.
+//! All types and functions in this module are thread-safe. The import parsing functions
+//! and data structures are [`std::marker::Send`] and [`std::marker::Sync`], enabling safe
+//! concurrent access and processing of import declarations across multiple threads.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::tables`] - ImportScope table processing
+//! - [`crate::metadata::streams::Blob`] - Binary data parsing for imports blob
+//! - [`crate::metadata::streams::Strings`] - String resolution for namespace and type names
+//! - [`crate::metadata::token`] - Token-based type reference resolution
 
 mod parser;
 mod types;

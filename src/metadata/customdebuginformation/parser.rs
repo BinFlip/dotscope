@@ -42,6 +42,12 @@
 //!     _ => println!("Other debug info type"),
 //! }
 //! ```
+//!
+//! # Thread Safety
+//!
+//! All functions in this module are thread-safe and stateless. The parser implementation
+//! can be called concurrently from multiple threads as it operates only on immutable
+//! input data and produces owned output structures.
 
 use crate::{
     file::parser::Parser,
@@ -53,6 +59,11 @@ use crate::{
 ///
 /// This parser handles different blob formats based on the debug information kind GUID.
 /// It provides structured parsing of various debugging metadata formats.
+///
+/// # Thread Safety
+///
+/// [`CustomDebugParser`] is not [`std::marker::Send`] or [`std::marker::Sync`] due to mutable state.
+/// Each thread should create its own parser instance for concurrent parsing operations.
 pub struct CustomDebugParser<'a> {
     /// Binary data parser for reading blob data
     parser: Parser<'a>,
@@ -181,6 +192,10 @@ impl<'a> CustomDebugParser<'a> {
 ///     _ => println!("Unexpected debug info type"),
 /// }
 /// ```
+///
+/// # Thread Safety
+///
+/// This function is thread-safe and can be called concurrently from multiple threads.
 pub fn parse_custom_debug_blob(data: &[u8], kind: CustomDebugKind) -> Result<CustomDebugInfo> {
     if data.is_empty() {
         return Ok(CustomDebugInfo::Unknown {

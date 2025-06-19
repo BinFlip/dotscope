@@ -49,6 +49,20 @@
 //! - **Version Incompatibility**: Unsupported metadata format versions
 //! - **Resource Constraints**: Memory allocation failures
 //! - **File Corruption**: Inconsistent or damaged assembly files
+//!
+//! # Thread Safety
+//!
+//! All components in this module are designed for safe concurrent access during parallel loading.
+//! The [`crate::metadata::loader::data::CilObjectData`] structure is [`std::marker::Send`] and [`std::marker::Sync`],
+//! enabling parallel metadata processing across multiple threads with lock-free data structures.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::loader::context`] - Loading context creation and parallel coordination
+//! - [`crate::metadata::streams`] - Metadata stream parsing and validation
+//! - [`crate::metadata::typesystem`] - Type registry initialization and management
+//! - [`crate::metadata::tables`] - Metadata table loading and cross-reference resolution
 
 use std::sync::{Arc, OnceLock};
 
@@ -108,11 +122,12 @@ use crate::{
 ///
 /// # Thread Safety
 ///
-/// Designed for safe concurrent access during parallel loading:
+/// [`CilObjectData`] is [`std::marker::Send`] and [`std::marker::Sync`], designed for safe concurrent access:
 /// - Metadata streams are immutable after parsing
-/// - Table maps use concurrent data structures
-/// - Reference counting enables safe sharing
-/// - Atomic operations coordinate loader synchronization
+/// - Table maps use concurrent data structures ([`crossbeam_skiplist::SkipMap`])
+/// - Reference counting enables safe sharing via [`std::sync::Arc`]
+/// - Atomic operations coordinate loader synchronization using [`std::sync::OnceLock`]
+/// - Lock-free access patterns minimize contention during parallel loading
 ///
 /// # Internal Use
 ///
@@ -229,6 +244,11 @@ impl<'a> CilObjectData<'a> {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe but should only be called once per assembly file.
+    /// The resulting [`CilObjectData`] can be safely accessed from multiple threads.
     pub(crate) fn from_file(file: Arc<File>, data: &'a [u8]) -> Result<Self> {
         let (clr_rva, clr_size) = file.clr();
         let clr_slice = file.data_slice(file.rva_to_offset(clr_rva)?, clr_size)?;
@@ -380,6 +400,11 @@ impl<'a> CilObjectData<'a> {
     /// ├── Stream Header 4 → #Blob
     /// └── Stream Header 5 → #~
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is not thread-safe and should only be called during initialization
+    /// before the data structure is shared across threads.
     fn load_streams(&mut self, meta_root_offset: usize) -> Result<()> {
         for stream in &self.header_root.stream_headers {
             let Some(start) = usize::checked_add(meta_root_offset, stream.offset as usize) else {

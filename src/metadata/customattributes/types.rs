@@ -100,6 +100,13 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
+//! # Thread Safety
+//!
+//! All types in this module are thread-safe and implement [`std::marker::Send`] and [`std::marker::Sync`].
+//! The custom attribute value types contain only owned data, and the reference-counted types
+//! ([`crate::metadata::customattributes::types::CustomAttributeValueRc`] and
+//! [`crate::metadata::customattributes::types::CustomAttributeValueList`]) provide safe concurrent access.
+//!
 //! # Integration
 //!
 //! This module integrates with:
@@ -167,6 +174,11 @@ pub type CustomAttributeValueList = Arc<boxcar::Vec<CustomAttributeValueRc>>;
 /// }
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// [`CustomAttributeValue`] is [`std::marker::Send`] and [`std::marker::Sync`] as it contains only owned data.
+/// Instances can be safely shared across threads and accessed concurrently.
 #[derive(Debug, Clone)]
 pub struct CustomAttributeValue {
     /// Fixed arguments from the constructor signature, parsed using parameter type information
@@ -209,6 +221,11 @@ pub struct CustomAttributeValue {
 /// );
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// [`CustomAttributeArgument`] is [`std::marker::Send`] and [`std::marker::Sync`] as all variants contain only owned data.
+/// Instances can be safely shared across threads and accessed concurrently.
 #[derive(Debug, Clone)]
 pub enum CustomAttributeArgument {
     /// Void type (for completeness, rarely used in custom attributes)
@@ -281,6 +298,11 @@ pub enum CustomAttributeArgument {
 ///          named_arg.name, named_arg.value);
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// [`CustomAttributeNamedArgument`] is [`std::marker::Send`] and [`std::marker::Sync`] as it contains only owned data.
+/// Instances can be safely shared across threads and accessed concurrently.
 #[derive(Debug, Clone)]
 pub struct CustomAttributeNamedArgument {
     /// Whether this is a field (true) or property (false)

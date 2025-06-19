@@ -1,7 +1,69 @@
-//! # `MethodSemantics` Raw Implementation
+//! Raw `MethodSemantics` table implementation for .NET metadata parsing.
 //!
-//! This module provides the raw variant of `MethodSemantics` table entries with unresolved
-//! indexes for initial parsing and memory-efficient storage.
+//! This module provides the raw variant of [`crate::metadata::tables::methodsemantics::raw::MethodSemanticsRaw`] table entries with unresolved
+//! indexes for initial parsing and memory-efficient storage. The `MethodSemantics` table is a critical
+//! component of .NET metadata that defines the semantic relationships between methods and properties/events,
+//! enabling the .NET runtime to understand accessor patterns and event handling mechanisms.
+//!
+//! # Architecture
+//!
+//! The raw implementation provides the foundation for method semantic parsing:
+//! - **Unresolved References**: Contains raw table indices that require resolution
+//! - **Memory Efficiency**: Minimal footprint during initial parsing phases
+//! - **Binary Format**: Direct representation of ECMA-335 table structure
+//! - **Batch Processing**: Optimized for parsing multiple entries efficiently
+//!
+//! # Binary Format
+//!
+//! Each `MethodSemantics` table row follows the ECMA-335 §II.22.28 specification:
+//!
+//! ```text
+//! Offset | Size    | Field       | Description
+//! -------|---------|-------------|--------------------------------------------
+//! 0x00   | 2 bytes | Semantics   | Bitmask of semantic attributes
+//! 0x02   | 2-4     | Method      | Index into MethodDef table
+//! 0x04   | 2-4     | Association | HasSemantics coded index (Event/Property)
+//! ```
+//!
+//! # Semantic Types
+//!
+//! The table supports the following semantic relationships:
+//!
+//! **Property Semantics**:
+//! - `SETTER` (0x0001) - Property setter method
+//! - `GETTER` (0x0002) - Property getter method
+//! - `OTHER` (0x0004) - Other property-related method
+//!
+//! **Event Semantics**:
+//! - `ADD_ON` (0x0008) - Event subscription method
+//! - `REMOVE_ON` (0x0010) - Event unsubscription method
+//! - `FIRE` (0x0020) - Event trigger method
+//! - `OTHER` (0x0004) - Other event-related method
+//!
+//! # Processing Pipeline
+//!
+//! 1. **Parsing**: Raw entries are read from metadata tables stream
+//! 2. **Validation**: Semantic attributes and indices are validated
+//! 3. **Resolution**: Raw indices are resolved to actual metadata objects
+//! 4. **Application**: Semantic relationships are applied to properties/events
+//! 5. **Conversion**: Raw entries are converted to owned representations
+//!
+//! # Thread Safety
+//!
+//! All types in this module are thread-safe for concurrent read access:
+//! - [`crate::metadata::tables::methodsemantics::raw::MethodSemanticsRaw`] is [`std::marker::Send`] and [`std::marker::Sync`]
+//! - Raw parsing operations can be performed concurrently
+//! - Conversion methods are thread-safe with proper synchronization
+//! - No shared mutable state during parsing operations
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::tables::methodsemantics`] - Owned representation for runtime use
+//! - [`crate::metadata::method`] - Method definition resolution and access
+//! - [`crate::metadata::tables::property`] - Property table for semantic application
+//! - [`crate::metadata::tables::event`] - Event table for semantic application
+//! - [`crate::metadata::typesystem`] - Type reference resolution for coded indices
 
 use std::sync::Arc;
 
@@ -26,25 +88,59 @@ use crate::{
 /// (ID 0x18), which specifies the relationship between methods and events or properties.
 /// It contains raw index values that require resolution to actual metadata objects.
 ///
-/// ## Purpose
+/// # Purpose
 ///
 /// The `MethodSemantics` table defines which methods serve specific semantic roles for
 /// properties and events:
-/// - Property getters, setters, and other methods
-/// - Event add, remove, fire, and other methods
+/// - **Property Accessors**: Getters, setters, and other property-related methods
+/// - **Event Handlers**: Add, remove, fire, and other event-related methods
+/// - **Runtime Binding**: Enables proper method dispatch for property/event operations
+/// - **Language Integration**: Supports C#, VB.NET, and other language property/event syntax
 ///
-/// ## Raw vs Owned
+/// # Raw vs Owned
 ///
 /// This raw variant is used during initial metadata parsing and contains:
-/// - Unresolved table indexes requiring lookup
-/// - Minimal memory footprint for storage
-/// - Direct representation of file format
+/// - **Unresolved Indexes**: Table indices requiring lookup in related tables
+/// - **Memory Efficiency**: Minimal footprint for large-scale parsing operations
+/// - **Binary Compatibility**: Direct representation of ECMA-335 file format
+/// - **Batch Processing**: Optimized for processing multiple entries sequentially
 ///
-/// Use [`MethodSemantics`] for resolved references and runtime access.
+/// Use [`crate::metadata::tables::methodsemantics::MethodSemantics`] for resolved references and runtime access.
 ///
-/// ## ECMA-335 Reference
+/// # Usage Patterns
+///
+/// ```rust,ignore
+/// use dotscope::metadata::tables::methodsemantics::raw::MethodSemanticsRaw;
+/// use dotscope::metadata::tables::MethodSemanticsAttributes;
+///
+/// # fn process_semantic_entry(raw_entry: &MethodSemanticsRaw) {
+/// // Check semantic type
+/// match raw_entry.semantics {
+///     MethodSemanticsAttributes::GETTER => {
+///         println!("Property getter method: {}", raw_entry.method);
+///     }
+///     MethodSemanticsAttributes::ADD_ON => {
+///         println!("Event add method: {}", raw_entry.method);
+///     }
+///     _ => println!("Other semantic type"),
+/// }
+///
+/// // Access coded index for association
+/// println!("Associated with: {:?}", raw_entry.association.tag);
+/// # }
+/// ```
+///
+/// # Thread Safety
+///
+/// [`MethodSemanticsRaw`] is [`std::marker::Send`] and [`std::marker::Sync`] as it contains only primitive data types.
+/// Instances can be safely shared across threads and accessed concurrently without synchronization.
+///
+/// # ECMA-335 Reference
 ///
 /// Corresponds to ECMA-335 §II.22.28 `MethodSemantics` table structure.
+/// - [ECMA-335 Standard](https://www.ecma-international.org/publications-and-standards/standards/ecma-335/)
+/// - Table ID: 0x18
+/// - Purpose: Define semantic relationships between methods and properties/events
 pub struct MethodSemanticsRaw {
     /// Row identifier within the `MethodSemantics` table.
     ///

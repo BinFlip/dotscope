@@ -81,6 +81,12 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
+//! # Thread Safety
+//!
+//! All functions in this module are thread-safe and stateless. The parser implementation
+//! can be called concurrently from multiple threads as it operates only on immutable
+//! input data and produces owned output structures.
+//!
 //! # Integration
 //!
 //! This module integrates with:
@@ -172,6 +178,10 @@ const MAX_RECURSION_DEPTH: usize = 50;
 /// }
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// This function is thread-safe and can be called concurrently from multiple threads.
 pub fn parse_custom_attribute_blob(
     blob: &Blob,
     index: u32,
@@ -245,6 +255,10 @@ pub fn parse_custom_attribute_blob(
 /// println!("Named arguments: {}", result.named_args.len());
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// This function is thread-safe and can be called concurrently from multiple threads.
 pub fn parse_custom_attribute_data(
     data: &[u8],
     params: &Arc<boxcar::Vec<ParamRc>>,
@@ -263,6 +277,11 @@ pub fn parse_custom_attribute_data(
 /// The parser handles both fixed arguments (based on constructor parameters) and named
 /// arguments (with embedded type information) while maintaining compatibility with
 /// real-world .NET assemblies through graceful degradation strategies.
+///
+/// # Thread Safety
+///
+/// [`CustomAttributeParser`] is not [`std::marker::Send`] or [`std::marker::Sync`] due to mutable state.
+/// Each thread should create its own parser instance for concurrent parsing operations.
 pub struct CustomAttributeParser<'a> {
     /// Binary data parser for reading attribute blob
     parser: Parser<'a>,

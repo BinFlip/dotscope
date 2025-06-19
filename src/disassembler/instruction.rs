@@ -66,6 +66,11 @@ use std::fmt::{self, UpperHex};
 /// let token_operand = OperandType::Token;  // ldtoken takes a metadata token
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// [`OperandType`] is [`std::marker::Send`] and [`std::marker::Sync`] as it only contains primitive data.
+/// All variants are safe to share across threads without synchronization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperandType {
     /// No operand present
@@ -117,6 +122,11 @@ pub enum OperandType {
 /// assert_eq!(as_u64, 42);
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// [`Immediate`] is [`std::marker::Send`] and [`std::marker::Sync`] as it only contains primitive data.
+/// All numeric and floating-point values are safe to share across threads.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Immediate {
     /// Signed 8-bit immediate value
@@ -198,6 +208,11 @@ impl From<Immediate> for u64 {
 /// let metadata_ref = Operand::Token(Token::new(0x06000001));
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// [`Operand`] is [`std::marker::Send`] and [`std::marker::Sync`] as all variants contain thread-safe types.
+/// This includes primitives, [`crate::disassembler::instruction::Immediate`], [`crate::metadata::token::Token`], and [`std::vec::Vec`].
 #[derive(Debug, Clone)]
 pub enum Operand {
     /// No operand present
@@ -233,6 +248,11 @@ pub enum Operand {
 /// let ret = FlowType::Return;                 // ret instruction
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// [`FlowType`] is [`std::marker::Send`] and [`std::marker::Sync`] as it only contains unit variants.
+/// All variants are safe to share across threads without synchronization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlowType {
     /// Normal execution continues to next instruction
@@ -280,6 +300,11 @@ pub enum FlowType {
 /// };
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// [`StackBehavior`] is [`std::marker::Send`] and [`std::marker::Sync`] as it only contains primitive integer fields.
+/// All instances can be safely shared across threads without synchronization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StackBehavior {
     /// Number of items popped from stack
@@ -306,6 +331,11 @@ pub struct StackBehavior {
 /// let load_store = InstructionCategory::LoadStore;      // ldloc, stfld
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// [`InstructionCategory`] is [`std::marker::Send`] and [`std::marker::Sync`] as it only contains unit variants.
+/// All variants are safe to share across threads without synchronization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstructionCategory {
     /// Arithmetic operations (add, sub, mul, div, rem, neg)
@@ -356,6 +386,11 @@ pub enum InstructionCategory {
 /// println!("Stack effect: {:?}", instruction.stack_behavior);
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// [`Instruction`] is [`std::marker::Send`] and [`std::marker::Sync`] as all fields contain thread-safe types.
+/// This includes primitives, static string references, and owned collections that can be safely shared across threads.
 #[derive(Clone)]
 pub struct Instruction {
     // Core fields
@@ -418,6 +453,10 @@ impl Instruction {
     /// assert!(instruction.is_branch());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn is_branch(&self) -> bool {
         matches!(
@@ -454,6 +493,10 @@ impl Instruction {
     /// assert!(ret_instruction.is_terminal());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn is_terminal(&self) -> bool {
         matches!(
@@ -497,6 +540,10 @@ impl Instruction {
     /// assert_eq!(targets, vec![0x2000]);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn get_targets(&self) -> Vec<u64> {
         match self.flow_type {

@@ -167,6 +167,11 @@ pub type ImportRc = Arc<Import>;
 /// }
 /// # }
 /// ```
+///
+/// # Thread Safety
+///
+/// [`ImportType`] is [`std::marker::Send`] and [`std::marker::Sync`] as it contains only reference-counted data.
+/// Instances can be safely shared across threads and accessed concurrently.
 pub enum ImportType {
     /// Importing a method from external source (typically native DLL via P/Invoke).
     ///
@@ -222,6 +227,11 @@ pub enum ImportType {
 ///     println!("Processing imports from: {:?}", source);
 /// }
 /// ```
+///
+/// # Thread Safety
+///
+/// [`ImportSourceId`] is [`std::marker::Send`] and [`std::marker::Sync`] as it contains only primitive data.
+/// Instances can be safely shared across threads and accessed concurrently.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Debug)]
 pub enum ImportSourceId {
     /// Import from a module within the same assembly (by metadata token).
@@ -282,6 +292,11 @@ pub enum ImportSourceId {
 /// }
 /// # }
 /// ```
+///
+/// # Thread Safety
+///
+/// [`Import`] is [`std::marker::Send`] and [`std::marker::Sync`] as it contains only owned data and reference-counted imports.
+/// Instances can be safely shared across threads and accessed concurrently.
 pub struct Import {
     /// The metadata token identifying this import in the assembly.
     pub token: Token,
@@ -322,6 +337,10 @@ impl Import {
     /// // assert_eq!(global_import.fullname(), "GlobalFunction");
     /// # }
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn fullname(&self) -> String {
         if self.namespace.is_empty() {
@@ -498,6 +517,10 @@ impl Imports {
     /// assert!(imports.is_empty());
     /// assert_eq!(imports.len(), 0);
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn new() -> Self {
         Imports {
@@ -540,6 +563,10 @@ impl Imports {
     /// let assembly_ref = get_assembly_ref();
     /// imports.register_source(&assembly_ref);
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn register_source(&self, source: &CilTypeReference) {
         match source {
             CilTypeReference::Module(module) => {
@@ -603,6 +630,10 @@ impl Imports {
     /// - External reference type is invalid or unrecognized
     /// - Source registration fails
     /// - Internal data structure operations fail
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn add_type(&self, cil_type: &CilTypeRc) -> Result<()> {
         if let Some(external) = &cil_type.external {
             // Create the source ID from the external reference
@@ -697,6 +728,10 @@ impl Imports {
     /// # Errors
     /// Returns [`crate::Error`] if internal data structure operations fail.
     /// Currently does not validate method signatures or module compatibility.
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn add_method(
         &self,
         name: String,
@@ -772,6 +807,10 @@ impl Imports {
     /// add_some_imports(&imports);
     /// println!("Container now has {} imports", imports.len());
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn len(&self) -> usize {
         self.data.len()
     }
@@ -794,6 +833,10 @@ impl Imports {
     /// assert!(!imports.is_empty());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
@@ -831,6 +874,10 @@ impl Imports {
     ///     }
     /// }
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn iter(&self) -> crossbeam_skiplist::map::Iter<Token, ImportRc> {
         self.data.iter()
     }

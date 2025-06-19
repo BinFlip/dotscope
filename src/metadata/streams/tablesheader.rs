@@ -740,12 +740,6 @@ use crate::{
 /// # }
 /// ```
 ///
-/// ## Performance Notes
-///
-/// - All table access uses reference-based parsing - no data is duplicated in memory
-/// - Row access via `get()` and iteration is lazy - rows are parsed only when requested
-/// - Parallel iteration with `par_iter()` can significantly speed up processing of large tables
-/// - The lifetime parameter `'a` ensures memory safety by tying table references to the original data
 ///
 /// ## Reference
 /// * '<https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf>' - II.24.2.6 && II.22
@@ -1060,25 +1054,45 @@ impl<'a> TablesHeader<'a> {
         Ok(tables_header)
     }
 
-    /// Get the table count
+    /// Get the total number of metadata tables present in this assembly.
+    ///
+    /// Returns the count of tables that are actually present and contain data.
+    /// This is equivalent to the number of set bits in the `valid` field.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::streams::TablesHeader;
+    ///
+    /// # fn example(tables: &TablesHeader) {
+    /// println!("Assembly contains {} metadata tables", tables.table_count());
+    /// # }
+    /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn table_count(&self) -> u32 {
         self.valid.count_ones()
     }
 
-    /// Get a specific table for efficient access
+    /// Get a specific table for efficient access to metadata table rows.
     ///
     /// This method provides type-safe access to metadata tables without copying data.
     /// The returned table reference allows efficient iteration and random access to rows.
     ///
-    /// ## Arguments
-    /// * `table_id` - The type of table to lookup
+    /// # Arguments
     ///
-    /// ## Returns
-    /// * `Some(&MetadataTable<T>)` - Reference to the table if present
+    /// * `table_id` - The type of table to lookup from [`crate::metadata::tables::TableId`]
+    ///
+    /// # Returns
+    ///
+    /// * `Some(&MetadataTable<T>)` - Reference to the [`crate::metadata::tables::MetadataTable`] if present
     /// * `None` - If the table is not present in this assembly
     ///
-    /// ## Example
+    /// # Examples
+    ///
     /// ```rust,no_run
     /// use dotscope::metadata::{streams::TablesHeader, tables::{TableId, TypeDefRaw}};
     ///
@@ -1100,13 +1114,19 @@ impl<'a> TablesHeader<'a> {
     /// # }
     /// ```
     ///
-    /// ## Safety Note
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
+    /// The returned table reference is also safe for concurrent read access.
+    ///
+    /// # Safety
+    ///
     /// The generic type parameter `T` must match the table type for `table_id`.
     /// Using the wrong type will result in undefined behavior due to the internal cast.
     /// Always use the corresponding `*Raw` types:
-    /// - `TableId::TypeDef` → `TypeDefRaw`
-    /// - `TableId::MethodDef` → `MethodDefRaw`
-    /// - `TableId::Field` → `FieldRaw`
+    /// - [`crate::metadata::tables::TableId::TypeDef`] → [`crate::metadata::tables::TypeDefRaw`]
+    /// - [`crate::metadata::tables::TableId::MethodDef`] → [`crate::metadata::tables::MethodDefRaw`]
+    /// - [`crate::metadata::tables::TableId::Field`] → [`crate::metadata::tables::FieldRaw`]
     /// - etc.
     #[must_use]
     pub fn table<T: RowDefinition<'a>>(
@@ -1683,16 +1703,18 @@ impl<'a> TablesHeader<'a> {
         Ok(())
     }
 
-    /// Check if a specific table is present
+    /// Check if a specific metadata table is present in this assembly.
     ///
     /// Use this method to safely check for table presence before accessing it.
     /// This avoids potential panics when working with assemblies that may not
     /// contain all possible metadata tables.
     ///
-    /// ## Arguments
-    /// * `table_id` - The table ID to check for presence
+    /// # Arguments
     ///
-    /// ## Example
+    /// * `table_id` - The [`crate::metadata::tables::TableId`] to check for presence
+    ///
+    /// # Examples
+    ///
     /// ```rust,no_run
     /// use dotscope::metadata::{streams::TablesHeader, tables::{TableId, EventRaw}};
     ///
@@ -1708,24 +1730,31 @@ impl<'a> TablesHeader<'a> {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn has_table(&self, table_id: TableId) -> bool {
         (self.valid & (1u64 << (table_id as u8))) != 0
     }
 
-    /// Check if a table is present by its numeric ID
+    /// Check if a metadata table is present by its numeric ID.
     ///
     /// This method provides a way to check for table presence using the raw
     /// numeric table identifiers (0-63) as defined in the ECMA-335 specification.
     ///
-    /// ## Arguments
+    /// # Arguments
+    ///
     /// * `table_id` - The numeric table ID (0-63) to check for presence
     ///
-    /// ## Returns
+    /// # Returns
+    ///
     /// * `true` - If the table is present
     /// * `false` - If the table is not present or `table_id` > 63
     ///
-    /// ## Example
+    /// # Examples
+    ///
     /// ```rust,no_run
     /// use dotscope::metadata::streams::TablesHeader;
     ///
@@ -1742,6 +1771,10 @@ impl<'a> TablesHeader<'a> {
     /// }
     /// # }
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn has_table_by_id(&self, table_id: u8) -> bool {
         if table_id > 63 {
@@ -1750,13 +1783,14 @@ impl<'a> TablesHeader<'a> {
         (self.valid & (1u64 << table_id)) != 0
     }
 
-    /// Get an iterator over all present tables
+    /// Get an iterator over all present metadata tables.
     ///
-    /// This method returns an iterator that yields `TableId` values for all tables
+    /// This method returns an iterator that yields [`crate::metadata::tables::TableId`] values for all tables
     /// that are present in this assembly's metadata. Useful for discovering what
     /// metadata is available without having to check each table individually.
     ///
-    /// ## Example
+    /// # Examples
+    ///
     /// ```rust,no_run
     /// use dotscope::metadata::streams::TablesHeader;
     ///
@@ -1768,22 +1802,29 @@ impl<'a> TablesHeader<'a> {
     /// }
     /// # }
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn present_tables(&self) -> impl Iterator<Item = TableId> + '_ {
         TableId::iter().filter(|&table_id| self.has_table(table_id))
     }
 
-    /// Get the row count for a specific table
+    /// Get the row count for a specific metadata table.
     ///
     /// Returns the number of rows in the specified table. This information
     /// is available even if you don't access the table data itself.
     ///
-    /// ## Arguments
-    /// * `table_id` - The table to get the row count for
+    /// # Arguments
     ///
-    /// ## Returns
-    /// * Row count (0 if table is not present)
+    /// * `table_id` - The [`crate::metadata::tables::TableId`] to get the row count for
     ///
-    /// ## Example
+    /// # Returns
+    ///
+    /// Row count (0 if table is not present)
+    ///
+    /// # Examples
+    ///
     /// ```rust,no_run
     /// use dotscope::metadata::{streams::TablesHeader, tables::TableId};
     ///
@@ -1798,12 +1839,37 @@ impl<'a> TablesHeader<'a> {
     /// println!("  {} fields", field_count);
     /// # }
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn table_row_count(&self, table_id: TableId) -> u32 {
         self.info.get(table_id).rows
     }
 
-    /// Get a summary of all present tables with their row counts
+    /// Get a summary of all present metadata tables with their row counts.
+    ///
+    /// Returns a vector of [`TableSummary`] structs containing the table ID and row count
+    /// for each table present in this assembly. This provides an efficient way to get an
+    /// overview of the assembly's metadata structure without accessing individual tables.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::streams::TablesHeader;
+    ///
+    /// # fn example(tables: &TablesHeader) {
+    /// let summaries = tables.table_summary();
+    /// for summary in summaries {
+    ///     println!("Table {:?}: {} rows", summary.table_id, summary.row_count);
+    /// }
+    /// # }
+    /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn table_summary(&self) -> Vec<TableSummary> {
         self.present_tables()

@@ -157,9 +157,10 @@ use crate::{
 ///
 /// # Thread Safety
 ///
-/// `CilObject` is designed to be thread-safe for concurrent read access.
+/// [`CilObject`] is [`std::marker::Send`] and [`std::marker::Sync`] for thread-safe concurrent read access.
 /// Internal caching and lazy loading use appropriate synchronization primitives
-/// to ensure correctness in multi-threaded scenarios.
+/// to ensure correctness in multi-threaded scenarios. All accessor methods can be
+/// safely called concurrently from multiple threads.
 pub struct CilObject {
     // Holds the input data, either as memory buffer or mmaped file
     file: Arc<File>,
@@ -204,6 +205,10 @@ impl CilObject {
     /// # Errors
     ///
     /// Returns [`crate::Error`] if the file cannot be read or parsed as a valid .NET assembly.
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn from_file(file: &Path) -> Result<Self> {
         Self::from_file_with_validation(file, ValidationConfig::minimal())
     }
@@ -242,6 +247,10 @@ impl CilObject {
     ///
     /// Returns [`crate::Error`] if the file cannot be read, parsed as a valid .NET assembly,
     /// or if validation checks fail.
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn from_file_with_validation(
         file: &Path,
         validation_config: ValidationConfig,
@@ -287,6 +296,10 @@ impl CilObject {
     /// # Errors
     ///
     /// Returns [`crate::Error`] if the memory buffer cannot be parsed as a valid .NET assembly.
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn from_mem(data: Vec<u8>) -> Result<Self> {
         Self::from_mem_with_validation(data, ValidationConfig::minimal())
     }
@@ -320,6 +333,10 @@ impl CilObject {
     ///
     /// Returns [`crate::Error`] if the memory buffer cannot be parsed as a valid .NET assembly
     /// or if validation checks fail.
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn from_mem_with_validation(
         data: Vec<u8>,
         validation_config: ValidationConfig,
