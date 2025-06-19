@@ -108,6 +108,7 @@
 //! - Purpose: Define method implementations within types
 mod loader;
 mod raw;
+mod reader;
 
 pub(crate) use loader::*;
 pub use raw::*;

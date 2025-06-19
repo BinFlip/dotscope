@@ -10,18 +10,41 @@
 //! format is processed during metadata loading to create [`MethodImpl`] instances with resolved
 //! references and complete implementation mapping information.
 //!
+//! # Thread Safety
+//!
+//! All components in this module are designed for safe concurrent access during metadata processing:
+//!
+//! - **[`MethodImplRaw`]**: All fields are immutable after construction, enabling safe concurrent read access
+//! - **Clone Operations**: [`Clone`] implementation is thread-safe and supports parallel processing
+//! - **Index Resolution**: Coded index processing can be performed concurrently across multiple threads
+//! - **Type System Updates**: The [`apply`](MethodImplRaw::apply) method performs atomic updates to concurrent collections
+//! - **Memory Management**: Reference counting in [`to_owned`](MethodImplRaw::to_owned) ensures safe sharing
+//!
+//! Raw implementation mappings can be safely processed and converted from multiple threads simultaneously,
+//! enabling efficient parallel metadata loading and type system construction.
+//!
+//! # Integration
+//!
+//! This module integrates with several core components of the metadata system:
+//!
+//! - **[`crate::metadata::tables::methodimpl::owned`]**: Target for owned structure conversion via [`to_owned`](MethodImplRaw::to_owned)
+//! - **[`crate::metadata::tables::methodimpl::loader`]**: Coordinates the parsing and processing of raw table data
+//! - **[`crate::metadata::typesystem`]**: Provides type registry for class resolution and type reference management
+//! - **[`crate::metadata::tables::methoddef`]**: Resolves local method definitions for implementation mappings
+//! - **[`crate::metadata::tables::memberref`]**: Handles external method references for cross-assembly scenarios
+//! - **[`crate::metadata::loader::context::LoaderContext`]**: Provides coded index resolution during conversion
+//!
+//! The raw implementation mapping system serves as the foundation layer for method implementation processing,
+//! enabling the transformation from binary metadata to semantic type system relationships.
+//!
 //! [`MethodImpl`]: crate::metadata::tables::MethodImpl
 
 use std::sync::Arc;
 
 use crate::{
-    file::io::read_le_at_dyn,
     metadata::{
         method::MethodMap,
-        tables::{
-            CodedIndex, CodedIndexType, MemberRefMap, MethodImpl, MethodImplRc, RowDefinition,
-            TableId, TableInfoRef,
-        },
+        tables::{CodedIndex, MemberRefMap, MethodImpl, MethodImplRc, TableId},
         token::Token,
         typesystem::{CilTypeReference, TypeRegistry},
     },
@@ -247,153 +270,5 @@ impl MethodImplRaw {
                 result
             },
         }))
-    }
-}
-
-impl<'a> RowDefinition<'a> for MethodImplRaw {
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* class */               sizes.table_index_bytes(TableId::TypeDef) +
-            /* method_body */         sizes.coded_index_bytes(CodedIndexType::MethodDefOrRef) +
-            /* method_declaration */  sizes.coded_index_bytes(CodedIndexType::MethodDefOrRef)
-        )
-    }
-
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
-        Ok(MethodImplRaw {
-            rid,
-            token: Token::new(0x1900_0000 + rid),
-            offset: *offset,
-            class: read_le_at_dyn(data, offset, sizes.is_large(TableId::TypeDef))?,
-            method_body: CodedIndex::read(data, offset, sizes, CodedIndexType::MethodDefOrRef)?,
-            method_declaration: CodedIndex::read(
-                data,
-                offset,
-                sizes,
-                CodedIndexType::MethodDefOrRef,
-            )?,
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::metadata::tables::{MetadataTable, TableId, TableInfo};
-
-    #[test]
-    fn crafted_short() {
-        let data = vec![
-            0x01, 0x01, // class
-            0x02, 0x00, // method_body (tag 0 = MethodDef, index = 1)
-            0x02, 0x00, // method_declaration (tag 0 = MethodDef, index = 1)
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[
-                (TableId::MethodImpl, 1),
-                (TableId::TypeDef, 10),
-                (TableId::MethodDef, 10),
-                (TableId::MemberRef, 10),
-            ],
-            false,
-            false,
-            false,
-        ));
-        let table = MetadataTable::<MethodImplRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: MethodImplRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x19000001);
-            assert_eq!(row.class, 0x0101);
-            assert_eq!(
-                row.method_body,
-                CodedIndex {
-                    tag: TableId::MethodDef,
-                    row: 1,
-                    token: Token::new(1 | 0x06000000),
-                }
-            );
-            assert_eq!(
-                row.method_declaration,
-                CodedIndex {
-                    tag: TableId::MethodDef,
-                    row: 1,
-                    token: Token::new(1 | 0x06000000),
-                }
-            );
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
-    }
-
-    #[test]
-    fn crafted_long() {
-        let data = vec![
-            0x01, 0x01, 0x01, 0x01, // class
-            0x02, 0x00, 0x00, 0x00, // method_body (tag 0 = MethodDef, index = 1)
-            0x02, 0x00, 0x00, 0x00, // method_declaration (tag 0 = MethodDef, index = 1)
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[
-                (TableId::MethodImpl, u16::MAX as u32 + 3),
-                (TableId::TypeDef, u16::MAX as u32 + 3),
-                (TableId::MethodDef, u16::MAX as u32 + 3),
-                (TableId::MemberRef, u16::MAX as u32 + 3),
-            ],
-            true,
-            true,
-            true,
-        ));
-        let table = MetadataTable::<MethodImplRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: MethodImplRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x19000001);
-            assert_eq!(row.class, 0x01010101);
-            assert_eq!(
-                row.method_body,
-                CodedIndex {
-                    tag: TableId::MethodDef,
-                    row: 1,
-                    token: Token::new(1 | 0x06000000),
-                }
-            );
-            assert_eq!(
-                row.method_declaration,
-                CodedIndex {
-                    tag: TableId::MethodDef,
-                    row: 1,
-                    token: Token::new(1 | 0x06000000),
-                }
-            );
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
     }
 }

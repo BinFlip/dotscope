@@ -44,11 +44,7 @@
 use std::sync::Arc;
 
 use crate::{
-    file::io::read_le_at,
-    metadata::{
-        tables::{AssemblyOsRc, RowDefinition, TableInfoRef},
-        token::Token,
-    },
+    metadata::{tables::AssemblyOsRc, token::Token},
     Result,
 };
 
@@ -142,102 +138,5 @@ impl AssemblyOsRaw {
     /// This function never returns an error as no operations are performed.
     pub fn apply(&self) -> Result<()> {
         Ok(())
-    }
-}
-
-impl<'a> RowDefinition<'a> for AssemblyOsRaw {
-    /// Calculate the byte size of an `AssemblyOS` table row
-    ///
-    /// Returns the fixed size since `AssemblyOS` contains only primitive integer fields
-    /// with no variable-size heap indexes. Total size is always 12 bytes (3 × 4-byte integers).
-    ///
-    /// # Row Layout
-    /// - `os_platform_id`: 4 bytes (fixed)
-    /// - `os_major_version`: 4 bytes (fixed)
-    /// - `os_minor_version`: 4 bytes (fixed)
-    ///
-    /// # Arguments
-    /// * `_sizes` - Unused for `AssemblyOS` since no heap indexes are present
-    ///
-    /// # Returns
-    /// Fixed size of 12 bytes for all `AssemblyOS` rows
-    #[rustfmt::skip]
-    fn row_size(_sizes: &TableInfoRef) -> u32 {
-        /* os_platform_id */   4_u32 +
-        /* os_major_version */ 4_u32 +
-        /* os_minor_version */ 4_u32
-    }
-
-    /// Read and parse an `AssemblyOS` table row from binary data
-    ///
-    /// Deserializes one `AssemblyOS` table entry from the metadata tables stream.
-    /// Unlike other tables with variable-width heap indexes, `AssemblyOS` has a fixed
-    /// 12-byte layout with three 4-byte integer fields.
-    ///
-    /// # Arguments
-    /// * `data` - Binary metadata tables stream data
-    /// * `offset` - Current read position (updated after reading)
-    /// * `rid` - Row identifier for this `AssemblyOS` entry
-    /// * `_sizes` - Unused since `AssemblyOS` has no heap indexes
-    ///
-    /// # Returns
-    /// * `Ok(AssemblyOsRaw)` - Successfully parsed `AssemblyOS` row
-    /// * `Err(`[`crate::Error`]`)` - If data is malformed or insufficient
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        _sizes: &TableInfoRef,
-    ) -> Result<Self> {
-        Ok(AssemblyOsRaw {
-            rid,
-            token: Token::new(0x2200_0000 + rid),
-            offset: *offset,
-            os_platform_id: read_le_at::<u32>(data, offset)?,
-            os_major_version: read_le_at::<u32>(data, offset)?,
-            os_minor_version: read_le_at::<u32>(data, offset)?,
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::metadata::tables::{MetadataTable, TableId, TableInfo};
-
-    #[test]
-    fn crafted_short() {
-        let data = vec![
-            0x01, 0x01, 0x01, 0x01, // os_platform_id
-            0x02, 0x02, 0x02, 0x02, // os_major_version
-            0x03, 0x03, 0x03, 0x03, // os_minor_version
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[(TableId::AssemblyOS, 1)],
-            false,
-            false,
-            false,
-        ));
-        let table = MetadataTable::<AssemblyOsRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: AssemblyOsRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x22000001);
-            assert_eq!(row.os_platform_id, 0x01010101);
-            assert_eq!(row.os_major_version, 0x02020202);
-            assert_eq!(row.os_minor_version, 0x03030303);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
     }
 }

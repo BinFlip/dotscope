@@ -49,6 +49,7 @@ use std::sync::Arc;
 mod loader;
 mod owned;
 mod raw;
+mod reader;
 
 pub(crate) use loader::*;
 pub use owned::*;

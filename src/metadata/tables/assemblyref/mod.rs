@@ -60,6 +60,7 @@ mod assemblyrefhash;
 mod loader;
 mod owned;
 mod raw;
+mod reader;
 
 pub use assemblyrefhash::*;
 pub(crate) use loader::*;

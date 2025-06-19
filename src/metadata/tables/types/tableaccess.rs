@@ -5,7 +5,7 @@
 //! This eliminates the need for unsafe code in table access while maintaining
 //! type safety and performance.
 
-use crate::metadata::tables::{MetadataTable, RowDefinition};
+use crate::metadata::tables::{MetadataTable, RowReadable};
 
 /// Trait for safe, type-safe access to metadata tables.
 ///
@@ -29,7 +29,7 @@ use crate::metadata::tables::{MetadataTable, RowDefinition};
 /// # Ok(())
 /// # }
 /// ```
-pub trait TableAccess<'a, T: RowDefinition<'a>> {
+pub trait TableAccess<'a, T: RowReadable<'a>> {
     /// Retrieve a table of the specified type if present.
     ///
     /// # Returns

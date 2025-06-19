@@ -315,7 +315,7 @@ use crate::{
         ManifestResourceRaw, MemberRefRaw, MetadataTable, MethodDebugInformationRaw, MethodDefRaw,
         MethodImplRaw, MethodPtrRaw, MethodSemanticsRaw, MethodSpecRaw, ModuleRaw, ModuleRefRaw,
         NestedClassRaw, ParamPtrRaw, ParamRaw, PropertyMapRaw, PropertyPtrRaw, PropertyRaw,
-        RowDefinition, StandAloneSigRaw, StateMachineMethodRaw, TableAccess, TableData, TableId,
+        RowReadable, StandAloneSigRaw, StateMachineMethodRaw, TableAccess, TableData, TableId,
         TableInfo, TableInfoRef, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
     },
     Error::OutOfBounds,
@@ -1130,7 +1130,7 @@ impl<'a> TablesHeader<'a> {
     /// maps each table type to its corresponding table ID, ensuring type safety without
     /// runtime overhead. No unsafe code is required.
     #[must_use]
-    pub fn table<T: RowDefinition<'a>>(&'a self) -> Option<&'a MetadataTable<'a, T>>
+    pub fn table<T: RowReadable<'a>>(&'a self) -> Option<&'a MetadataTable<'a, T>>
     where
         Self: TableAccess<'a, T>,
     {
