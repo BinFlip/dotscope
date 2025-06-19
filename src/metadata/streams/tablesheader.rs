@@ -107,7 +107,7 @@
 //! println!("Assembly contains {} metadata tables", tables.table_count());
 //!
 //! // Access type definitions
-//! if let Some(typedef_table) = tables.table::<TypeDefRaw>(TableId::TypeDef) {
+//! if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
 //!     println!("Found {} type definitions", typedef_table.row_count());
 //!     
 //!     // Examine first few types
@@ -118,7 +118,7 @@
 //! }
 //!
 //! // Access method definitions
-//! if let Some(method_table) = tables.table::<MethodDefRaw>(TableId::MethodDef) {
+//! if let Some(method_table) = tables.table::<MethodDefRaw>() {
 //!     println!("Found {} method definitions", method_table.row_count());
 //!     
 //!     // Find methods by characteristics
@@ -140,8 +140,8 @@
 //!
 //! // Analyze types and their fields together
 //! if let (Some(typedef_table), Some(field_table)) = (
-//!     tables.table::<TypeDefRaw>(TableId::TypeDef),
-//!     tables.table::<FieldRaw>(TableId::Field)
+//!     tables.table::<TypeDefRaw>(),
+//!     tables.table::<FieldRaw>()
 //! ) {
 //!     for (type_idx, type_def) in typedef_table.iter().enumerate().take(10) {
 //!         // Calculate field range for this type
@@ -174,7 +174,7 @@
 //! let tables = TablesHeader::from(tables_data)?;
 //!
 //! // Process custom attributes in parallel for large assemblies
-//! if let Some(ca_table) = tables.table::<CustomAttributeRaw>(TableId::CustomAttribute) {
+//! if let Some(ca_table) = tables.table::<CustomAttributeRaw>() {
 //!     println!("Processing {} custom attributes in parallel", ca_table.row_count());
 //!     
 //!     // Parallel analysis using rayon
@@ -201,7 +201,7 @@
 //! let tables = TablesHeader::from(tables_data)?;
 //!
 //! // Process large tables in chunks to manage memory usage
-//! if let Some(memberref_table) = tables.table::<MemberRefRaw>(TableId::MemberRef) {
+//! if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
 //!     const CHUNK_SIZE: u32 = 1000;
 //!     let total_rows = memberref_table.row_count();
 //!     
@@ -304,18 +304,22 @@ use strum::IntoEnumIterator;
 
 use crate::{
     file::io::read_le,
-    metadata::tables::{
-        AssemblyOsRaw, AssemblyProcessorRaw, AssemblyRaw, AssemblyRefOsRaw,
-        AssemblyRefProcessorRaw, AssemblyRefRaw, ClassLayoutRaw, ConstantRaw, CustomAttributeRaw,
-        CustomDebugInformationRaw, DeclSecurityRaw, DocumentRaw, EncLogRaw, EncMapRaw, EventMapRaw,
-        EventPtrRaw, EventRaw, ExportedTypeRaw, FieldLayoutRaw, FieldMarshalRaw, FieldPtrRaw,
-        FieldRaw, FieldRvaRaw, FileRaw, GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw,
-        ImportScopeRaw, InterfaceImplRaw, LocalConstantRaw, LocalScopeRaw, LocalVariableRaw,
-        ManifestResourceRaw, MemberRefRaw, MetadataTable, MethodDebugInformationRaw, MethodDefRaw,
-        MethodImplRaw, MethodPtrRaw, MethodSemanticsRaw, MethodSpecRaw, ModuleRaw, ModuleRefRaw,
-        NestedClassRaw, ParamPtrRaw, ParamRaw, PropertyMapRaw, PropertyPtrRaw, PropertyRaw,
-        RowDefinition, StandAloneSigRaw, StateMachineMethodRaw, TableData, TableId, TableInfo,
-        TableInfoRef, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
+    metadata::{
+        streams::tableaccess::{impl_table_access, TableAccess},
+        tables::{
+            AssemblyOsRaw, AssemblyProcessorRaw, AssemblyRaw, AssemblyRefOsRaw,
+            AssemblyRefProcessorRaw, AssemblyRefRaw, ClassLayoutRaw, ConstantRaw,
+            CustomAttributeRaw, CustomDebugInformationRaw, DeclSecurityRaw, DocumentRaw, EncLogRaw,
+            EncMapRaw, EventMapRaw, EventPtrRaw, EventRaw, ExportedTypeRaw, FieldLayoutRaw,
+            FieldMarshalRaw, FieldPtrRaw, FieldRaw, FieldRvaRaw, FileRaw,
+            GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw, ImportScopeRaw,
+            InterfaceImplRaw, LocalConstantRaw, LocalScopeRaw, LocalVariableRaw,
+            ManifestResourceRaw, MemberRefRaw, MetadataTable, MethodDebugInformationRaw,
+            MethodDefRaw, MethodImplRaw, MethodPtrRaw, MethodSemanticsRaw, MethodSpecRaw,
+            ModuleRaw, ModuleRefRaw, NestedClassRaw, ParamPtrRaw, ParamRaw, PropertyMapRaw,
+            PropertyPtrRaw, PropertyRaw, RowDefinition, StandAloneSigRaw, StateMachineMethodRaw,
+            TableData, TableId, TableInfo, TableInfoRef, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
+        },
     },
     Error::OutOfBounds,
     Result,
@@ -386,7 +390,7 @@ use crate::{
 ///
 /// // Safe table presence checking
 /// if tables.has_table(TableId::TypeDef) {
-///     let typedef_table = tables.table::<TypeDefRaw>(TableId::TypeDef).unwrap();
+///     let typedef_table = tables.table::<TypeDefRaw>().unwrap();
 ///     
 ///     println!("Assembly defines {} types", typedef_table.row_count());
 ///     
@@ -413,9 +417,9 @@ use crate::{
 ///
 /// // Analyze complete type structure with members
 /// if let (Some(typedef_table), Some(field_table), Some(method_table)) = (
-///     tables.table::<TypeDefRaw>(TableId::TypeDef),
-///     tables.table::<FieldRaw>(TableId::Field),
-///     tables.table::<MethodDefRaw>(TableId::MethodDef)
+///     tables.table::<TypeDefRaw>(),
+///     tables.table::<FieldRaw>(),
+///     tables.table::<MethodDefRaw>()
 /// ) {
 ///     for (type_idx, type_def) in typedef_table.iter().enumerate().take(5) {
 ///         // Calculate member ranges for this type
@@ -451,7 +455,7 @@ use crate::{
 /// let tables = TablesHeader::from(tables_data)?;
 ///
 /// // Parallel analysis of custom attributes
-/// if let Some(ca_table) = tables.table::<CustomAttributeRaw>(TableId::CustomAttribute) {
+/// if let Some(ca_table) = tables.table::<CustomAttributeRaw>() {
 ///     // Process attributes in parallel for large assemblies
 ///     let attribute_analysis: HashMap<u32, u32> = ca_table.par_iter()
 ///         .map(|attr| {
@@ -484,7 +488,7 @@ use crate::{
 /// let tables = TablesHeader::from(tables_data)?;
 ///
 /// // Process large tables without loading all data into memory
-/// if let Some(memberref_table) = tables.table::<MemberRefRaw>(TableId::MemberRef) {
+/// if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
 ///     const CHUNK_SIZE: u32 = 1000;
 ///     let total_rows = memberref_table.row_count();
 ///     
@@ -612,7 +616,7 @@ use crate::{
 /// // Check if a table is present before accessing it
 /// if tables_header.has_table(TableId::TypeDef) {
 ///     // Get efficient access to the TypeDef table
-///     if let Some(typedef_table) = tables_header.table::<TypeDefRaw>(TableId::TypeDef) {
+///     if let Some(typedef_table) = tables_header.table::<TypeDefRaw>() {
 ///         println!("TypeDef table has {} rows", typedef_table.row_count());
 ///         
 ///         // Access individual rows by index (0-based)
@@ -632,7 +636,7 @@ use crate::{
 ///
 /// # fn example(tables_header: &TablesHeader) -> dotscope::Result<()> {
 /// // Iterate over all methods in the assembly
-/// if let Some(method_table) = tables_header.table::<MethodDefRaw>(TableId::MethodDef) {
+/// if let Some(method_table) = tables_header.table::<MethodDefRaw>() {
 ///     for (index, method) in method_table.iter().enumerate() {
 ///         println!("Method {}: RVA={:#x}, impl_flags={}, flags={}, name_idx={}",
 ///                 index, method.rva, method.impl_flags, method.flags, method.name);
@@ -652,7 +656,7 @@ use crate::{
 ///
 /// # fn example(tables_header: &TablesHeader) -> dotscope::Result<()> {
 /// // Process field metadata in parallel
-/// if let Some(field_table) = tables_header.table::<FieldRaw>(TableId::Field) {
+/// if let Some(field_table) = tables_header.table::<FieldRaw>() {
 ///     let field_count = field_table.par_iter()
 ///         .filter(|field| field.flags & 0x0010 != 0) // FieldAttributes.Static
 ///         .count();
@@ -670,8 +674,8 @@ use crate::{
 /// # fn example(tables_header: &TablesHeader) -> dotscope::Result<()> {
 /// // Analyze types and their methods together
 /// if let (Some(typedef_table), Some(method_table)) = (
-///     tables_header.table::<TypeDefRaw>(TableId::TypeDef),
-///     tables_header.table::<MethodDefRaw>(TableId::MethodDef)
+///     tables_header.table::<TypeDefRaw>(),
+///     tables_header.table::<MethodDefRaw>()
 /// ) {
 ///     for (type_idx, type_def) in typedef_table.iter().enumerate().take(5) {
 ///         println!("Type {}: methods {}-{}",
@@ -714,7 +718,7 @@ use crate::{
 ///
 /// # fn example(tables_header: &TablesHeader) -> dotscope::Result<()> {
 /// // Process large tables without loading all data at once
-/// if let Some(ca_table) = tables_header.table::<CustomAttributeRaw>(TableId::CustomAttribute) {
+/// if let Some(ca_table) = tables_header.table::<CustomAttributeRaw>() {
 ///     println!("Processing {} custom attributes", ca_table.row_count());
 ///     
 ///     // Process in chunks to manage memory usage
@@ -1079,12 +1083,15 @@ impl<'a> TablesHeader<'a> {
 
     /// Get a specific table for efficient access to metadata table rows.
     ///
-    /// This method provides type-safe access to metadata tables without copying data.
+    /// This method provides safe, type-driven access to metadata tables without copying data.
     /// The returned table reference allows efficient iteration and random access to rows.
+    /// The table type is automatically determined from the generic parameter, eliminating
+    /// the need to specify table IDs and preventing type mismatches.
     ///
-    /// # Arguments
+    /// # Type Parameter
     ///
-    /// * `table_id` - The type of table to lookup from [`crate::metadata::tables::TableId`]
+    /// * `T` - The table row type (e.g., [`crate::metadata::tables::TypeDefRaw`])
+    ///   The table ID is automatically inferred from the type parameter.
     ///
     /// # Returns
     ///
@@ -1094,11 +1101,11 @@ impl<'a> TablesHeader<'a> {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use dotscope::metadata::{streams::TablesHeader, tables::{TableId, TypeDefRaw}};
+    /// use dotscope::metadata::{streams::TablesHeader, tables::TypeDefRaw};
     ///
     /// # fn example(tables: &TablesHeader) -> dotscope::Result<()> {
-    /// // Safe access with type checking
-    /// if let Some(typedef_table) = tables.table::<TypeDefRaw>(TableId::TypeDef) {
+    /// // Safe, ergonomic access with automatic type inference
+    /// if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
     ///     // Efficient access to all type definitions
     ///     for type_def in typedef_table.iter().take(5) {
     ///         println!("Type: flags={:#x}, name_idx={}, namespace_idx={}",
@@ -1119,184 +1126,18 @@ impl<'a> TablesHeader<'a> {
     /// This method is thread-safe and can be called concurrently from multiple threads.
     /// The returned table reference is also safe for concurrent read access.
     ///
-    /// # Safety
+    /// # Implementation Details
     ///
-    /// The generic type parameter `T` must match the table type for `table_id`.
-    /// Using the wrong type will result in undefined behavior due to the internal cast.
-    /// Always use the corresponding `*Raw` types:
-    /// - [`crate::metadata::tables::TableId::TypeDef`] → [`crate::metadata::tables::TypeDefRaw`]
-    /// - [`crate::metadata::tables::TableId::MethodDef`] → [`crate::metadata::tables::MethodDefRaw`]
-    /// - [`crate::metadata::tables::TableId::Field`] → [`crate::metadata::tables::FieldRaw`]
-    /// - etc.
+    /// This method uses the [`crate::metadata::streams::TableAccess`] trait to provide
+    /// safe, compile-time verified table access. The trait implementation automatically
+    /// maps each table type to its corresponding table ID, ensuring type safety without
+    /// runtime overhead. No unsafe code is required.
     #[must_use]
-    pub fn table<T: RowDefinition<'a>>(
-        &self,
-        table_id: TableId,
-    ) -> Option<&'a MetadataTable<'a, T>> {
-        match &self.tables.get(table_id as usize).unwrap_or(&None) {
-            Some(t) => match t {
-                TableData::Module(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::TypeRef(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::TypeDef(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::FieldPtr(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::Field(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::MethodPtr(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::MethodDef(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::ParamPtr(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::Param(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::InterfaceImpl(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::MemberRef(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::Constant(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::CustomAttribute(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::FieldMarshal(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::DeclSecurity(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::Document(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::EncLog(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::EncMap(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::ClassLayout(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::FieldLayout(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::StandAloneSig(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::EventMap(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::EventPtr(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::Event(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::PropertyMap(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::PropertyPtr(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::Property(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::MethodSemantics(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::MethodImpl(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::ModuleRef(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::TypeSpec(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::ImplMap(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::FieldRVA(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::Assembly(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::AssemblyProcessor(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::AssemblyOS(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::AssemblyRef(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::AssemblyRefProcessor(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::AssemblyRefOS(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::File(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::ExportedType(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::ManifestResource(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::NestedClass(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::GenericParam(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::MethodSpec(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::GenericParamConstraint(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::MethodDebugInformation(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::LocalScope(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::LocalVariable(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::LocalConstant(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::ImportScope(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::StateMachineMethod(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::CustomDebugInformation(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-            },
-            None => None,
-        }
+    pub fn table<T: RowDefinition<'a>>(&'a self) -> Option<&'a MetadataTable<'a, T>>
+    where
+        Self: TableAccess<'a, T>,
+    {
+        <Self as TableAccess<'a, T>>::table(self)
     }
 
     /// Add a table to the tables header
@@ -1719,9 +1560,9 @@ impl<'a> TablesHeader<'a> {
     /// use dotscope::metadata::{streams::TablesHeader, tables::{TableId, EventRaw}};
     ///
     /// # fn example(tables: &TablesHeader) -> dotscope::Result<()> {
-    /// // Safe pattern: check before access
+    /// /// Safe pattern: check before access
     /// if tables.has_table(TableId::Event) {
-    ///     if let Some(event_table) = tables.table::<EventRaw>(TableId::Event) {
+    ///     if let Some(event_table) = tables.table::<EventRaw>() {
     ///         println!("Assembly has {} events", event_table.row_count());
     ///     }
     /// } else {
@@ -1956,6 +1797,97 @@ pub struct TableSummary {
     /// assembly will not appear in the summary at all.
     pub row_count: u32,
 }
+
+// Generate safe TableAccess trait implementations for all metadata table types
+impl_table_access!(ModuleRaw, TableId::Module, Module);
+impl_table_access!(TypeRefRaw, TableId::TypeRef, TypeRef);
+impl_table_access!(TypeDefRaw, TableId::TypeDef, TypeDef);
+impl_table_access!(FieldPtrRaw, TableId::FieldPtr, FieldPtr);
+impl_table_access!(FieldRaw, TableId::Field, Field);
+impl_table_access!(MethodPtrRaw, TableId::MethodPtr, MethodPtr);
+impl_table_access!(MethodDefRaw, TableId::MethodDef, MethodDef);
+impl_table_access!(ParamPtrRaw, TableId::ParamPtr, ParamPtr);
+impl_table_access!(ParamRaw, TableId::Param, Param);
+impl_table_access!(InterfaceImplRaw, TableId::InterfaceImpl, InterfaceImpl);
+impl_table_access!(MemberRefRaw, TableId::MemberRef, MemberRef);
+impl_table_access!(ConstantRaw, TableId::Constant, Constant);
+impl_table_access!(
+    CustomAttributeRaw,
+    TableId::CustomAttribute,
+    CustomAttribute
+);
+impl_table_access!(FieldMarshalRaw, TableId::FieldMarshal, FieldMarshal);
+impl_table_access!(DeclSecurityRaw, TableId::DeclSecurity, DeclSecurity);
+impl_table_access!(ClassLayoutRaw, TableId::ClassLayout, ClassLayout);
+impl_table_access!(FieldLayoutRaw, TableId::FieldLayout, FieldLayout);
+impl_table_access!(StandAloneSigRaw, TableId::StandAloneSig, StandAloneSig);
+impl_table_access!(EventMapRaw, TableId::EventMap, EventMap);
+impl_table_access!(EventPtrRaw, TableId::EventPtr, EventPtr);
+impl_table_access!(EventRaw, TableId::Event, Event);
+impl_table_access!(PropertyMapRaw, TableId::PropertyMap, PropertyMap);
+impl_table_access!(PropertyPtrRaw, TableId::PropertyPtr, PropertyPtr);
+impl_table_access!(PropertyRaw, TableId::Property, Property);
+impl_table_access!(
+    MethodSemanticsRaw,
+    TableId::MethodSemantics,
+    MethodSemantics
+);
+impl_table_access!(MethodImplRaw, TableId::MethodImpl, MethodImpl);
+impl_table_access!(ModuleRefRaw, TableId::ModuleRef, ModuleRef);
+impl_table_access!(TypeSpecRaw, TableId::TypeSpec, TypeSpec);
+impl_table_access!(ImplMapRaw, TableId::ImplMap, ImplMap);
+impl_table_access!(FieldRvaRaw, TableId::FieldRVA, FieldRVA);
+impl_table_access!(AssemblyRaw, TableId::Assembly, Assembly);
+impl_table_access!(
+    AssemblyProcessorRaw,
+    TableId::AssemblyProcessor,
+    AssemblyProcessor
+);
+impl_table_access!(AssemblyOsRaw, TableId::AssemblyOS, AssemblyOS);
+impl_table_access!(AssemblyRefRaw, TableId::AssemblyRef, AssemblyRef);
+impl_table_access!(
+    AssemblyRefProcessorRaw,
+    TableId::AssemblyRefProcessor,
+    AssemblyRefProcessor
+);
+impl_table_access!(AssemblyRefOsRaw, TableId::AssemblyRefOS, AssemblyRefOS);
+impl_table_access!(FileRaw, TableId::File, File);
+impl_table_access!(ExportedTypeRaw, TableId::ExportedType, ExportedType);
+impl_table_access!(
+    ManifestResourceRaw,
+    TableId::ManifestResource,
+    ManifestResource
+);
+impl_table_access!(NestedClassRaw, TableId::NestedClass, NestedClass);
+impl_table_access!(GenericParamRaw, TableId::GenericParam, GenericParam);
+impl_table_access!(MethodSpecRaw, TableId::MethodSpec, MethodSpec);
+impl_table_access!(
+    GenericParamConstraintRaw,
+    TableId::GenericParamConstraint,
+    GenericParamConstraint
+);
+impl_table_access!(DocumentRaw, TableId::Document, Document);
+impl_table_access!(
+    MethodDebugInformationRaw,
+    TableId::MethodDebugInformation,
+    MethodDebugInformation
+);
+impl_table_access!(LocalScopeRaw, TableId::LocalScope, LocalScope);
+impl_table_access!(LocalVariableRaw, TableId::LocalVariable, LocalVariable);
+impl_table_access!(LocalConstantRaw, TableId::LocalConstant, LocalConstant);
+impl_table_access!(ImportScopeRaw, TableId::ImportScope, ImportScope);
+impl_table_access!(
+    StateMachineMethodRaw,
+    TableId::StateMachineMethod,
+    StateMachineMethod
+);
+impl_table_access!(
+    CustomDebugInformationRaw,
+    TableId::CustomDebugInformation,
+    CustomDebugInformation
+);
+impl_table_access!(EncLogRaw, TableId::EncLog, EncLog);
+impl_table_access!(EncMapRaw, TableId::EncMap, EncMap);
 
 #[cfg(test)]
 mod tests {

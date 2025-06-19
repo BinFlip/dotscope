@@ -98,9 +98,7 @@ impl MetadataLoader for AssemblyRefProcessorLoader {
     /// Updates to assembly references are handled through atomic operations.
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) =
-                header.table::<AssemblyRefProcessorRaw>(TableId::AssemblyRefProcessor)
-            {
+            if let Some(table) = header.table::<AssemblyRefProcessorRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned = row.to_owned(context.assembly_ref)?;
                     owned.apply()?;

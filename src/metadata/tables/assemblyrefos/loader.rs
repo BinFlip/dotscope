@@ -92,7 +92,7 @@ impl MetadataLoader for AssemblyRefOsLoader {
     /// Updates to assembly references are handled through atomic operations.
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(ref header) = context.meta {
-            if let Some(table) = header.table::<AssemblyRefOsRaw>(TableId::AssemblyRefOS) {
+            if let Some(table) = header.table::<AssemblyRefOsRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned = row.to_owned(context.assembly_ref)?;
                     owned.apply()?;

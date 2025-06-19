@@ -71,7 +71,7 @@ impl MetadataLoader for FieldMarshalLoader {
     /// - Parallel processing encounters errors
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(blob)) = (context.meta, context.blobs) {
-            if let Some(table) = header.table::<FieldMarshalRaw>(TableId::FieldMarshal) {
+            if let Some(table) = header.table::<FieldMarshalRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let res = row.to_owned(|coded_index| context.get_ref(coded_index), blob)?;
                     res.apply()?;

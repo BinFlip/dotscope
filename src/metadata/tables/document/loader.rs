@@ -56,7 +56,7 @@ impl MetadataLoader for DocumentLoader {
         if let (Some(header), Some(strings), Some(blob), Some(guid)) =
             (context.meta, context.strings, context.blobs, context.guids)
         {
-            if let Some(table) = header.table::<DocumentRaw>(TableId::Document) {
+            if let Some(table) = header.table::<DocumentRaw>() {
                 table
                     .par_iter()
                     .map(|row| {

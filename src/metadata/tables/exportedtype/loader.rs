@@ -62,7 +62,7 @@ impl MetadataLoader for ExportedTypeLoader {
     /// - Entry registration fails
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
-            if let Some(table) = header.table::<ExportedTypeRaw>(TableId::ExportedType) {
+            if let Some(table) = header.table::<ExportedTypeRaw>() {
                 for row in table {
                     let owned =
                         row.to_owned(|coded_index| context.get_ref(coded_index), strings)?;

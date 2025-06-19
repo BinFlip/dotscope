@@ -48,7 +48,7 @@ impl MetadataLoader for CustomAttributeLoader {
     /// Returns `Ok(())` on successful completion, or [`crate::Error`] if any step fails.
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(blob)) = (context.meta, context.blobs) {
-            if let Some(table) = header.table::<CustomAttributeRaw>(TableId::CustomAttribute) {
+            if let Some(table) = header.table::<CustomAttributeRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned = row.to_owned(|coded_index| context.get_ref(coded_index), blob)?;
                     owned.apply()?;

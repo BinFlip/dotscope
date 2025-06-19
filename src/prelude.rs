@@ -98,7 +98,7 @@
 //! // Token-based navigation
 //! let typedef_token = Token::new(0x02000001);
 //! if let Some(tables) = assembly.tables() {
-//!     if let Some(typedef_table) = tables.table::<TypeDefRaw>(TableId::TypeDef) {
+//!     if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
 //!         let row_index = typedef_token.row();
 //!         if let Some(typedef) = typedef_table.get(row_index) {
 //!             println!("Type name index: {}", typedef.type_name);

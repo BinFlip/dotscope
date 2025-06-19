@@ -50,7 +50,7 @@ impl MetadataLoader for EncLogLoader {
     /// * `Err(`[`crate::Error`]`)` - Malformed data or processing error
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) = header.table::<EncLogRaw>(TableId::EncLog) {
+            if let Some(table) = header.table::<EncLogRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned = row.to_owned()?;
 

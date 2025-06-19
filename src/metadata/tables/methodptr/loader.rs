@@ -67,7 +67,7 @@ impl MetadataLoader for MethodPtrLoader {
     /// * `Err(_)` - If entry conversion or indirection mapping application fails
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) = header.table::<MethodPtrRaw>(TableId::MethodPtr) {
+            if let Some(table) = header.table::<MethodPtrRaw>() {
                 for row in table {
                     let owned = row.to_owned()?;
                     row.apply()?;

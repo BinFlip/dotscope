@@ -612,7 +612,7 @@ fn verify_tableheader(asm: &CilObject) {
     assert_eq!(tables_header.sorted, 0x16003301FA00);
     assert_eq!(tables_header.table_count(), 31);
 
-    match tables_header.table::<ModuleRaw>(TableId::Module) {
+    match tables_header.table::<ModuleRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 1);
 
@@ -633,7 +633,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<TypeRefRaw>(TableId::TypeRef) {
+    match tables_header.table::<TypeRefRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 65);
 
@@ -652,7 +652,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<TypeDefRaw>(TableId::TypeDef) {
+    match tables_header.table::<TypeDefRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 36);
 
@@ -670,7 +670,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<FieldRaw>(TableId::Field) {
+    match tables_header.table::<FieldRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 48);
 
@@ -685,7 +685,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<MethodDefRaw>(TableId::MethodDef) {
+    match tables_header.table::<MethodDefRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 97);
 
@@ -703,7 +703,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<ParamRaw>(TableId::Param) {
+    match tables_header.table::<ParamRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 72);
 
@@ -718,7 +718,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<InterfaceImplRaw>(TableId::InterfaceImpl) {
+    match tables_header.table::<InterfaceImplRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 5);
 
@@ -732,7 +732,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<MemberRefRaw>(TableId::MemberRef) {
+    match tables_header.table::<MemberRefRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 67);
 
@@ -747,7 +747,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<ConstantRaw>(TableId::Constant) {
+    match tables_header.table::<ConstantRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 7);
 
@@ -763,7 +763,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<CustomAttributeRaw>(TableId::CustomAttribute) {
+    match tables_header.table::<CustomAttributeRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 88);
 
@@ -778,7 +778,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<FieldMarshalRaw>(TableId::FieldMarshal) {
+    match tables_header.table::<FieldMarshalRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 1);
 
@@ -792,7 +792,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<DeclSecurityRaw>(TableId::DeclSecurity) {
+    match tables_header.table::<DeclSecurityRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 2);
 
@@ -807,7 +807,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<ClassLayoutRaw>(TableId::ClassLayout) {
+    match tables_header.table::<ClassLayoutRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 3);
 
@@ -822,7 +822,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<FieldLayoutRaw>(TableId::FieldLayout) {
+    match tables_header.table::<FieldLayoutRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 3);
 
@@ -836,7 +836,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<StandAloneSigRaw>(TableId::StandAloneSig) {
+    match tables_header.table::<StandAloneSigRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 11);
 
@@ -849,7 +849,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<EventMapRaw>(TableId::EventMap) {
+    match tables_header.table::<EventMapRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 2);
 
@@ -863,7 +863,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<EventRaw>(TableId::Event) {
+    match tables_header.table::<EventRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 3);
 
@@ -878,7 +878,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<PropertyMapRaw>(TableId::PropertyMap) {
+    match tables_header.table::<PropertyMapRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 8);
 
@@ -892,7 +892,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<PropertyRaw>(TableId::Property) {
+    match tables_header.table::<PropertyRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 13);
 
@@ -907,7 +907,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<MethodSemanticsRaw>(TableId::MethodSemantics) {
+    match tables_header.table::<MethodSemanticsRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 31);
 
@@ -922,7 +922,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<MethodImplRaw>(TableId::MethodImpl) {
+    match tables_header.table::<MethodImplRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 4);
 
@@ -940,7 +940,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<ModuleRefRaw>(TableId::ModuleRef) {
+    match tables_header.table::<ModuleRefRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 2);
 
@@ -953,7 +953,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<TypeSpecRaw>(TableId::TypeSpec) {
+    match tables_header.table::<TypeSpecRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 16);
 
@@ -966,7 +966,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<ImplMapRaw>(TableId::ImplMap) {
+    match tables_header.table::<ImplMapRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 2);
 
@@ -982,7 +982,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<FieldRvaRaw>(TableId::FieldRVA) {
+    match tables_header.table::<FieldRvaRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 1);
 
@@ -995,7 +995,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<AssemblyRaw>(TableId::Assembly) {
+    match tables_header.table::<AssemblyRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 1);
 
@@ -1015,7 +1015,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<AssemblyRefRaw>(TableId::AssemblyRef) {
+    match tables_header.table::<AssemblyRefRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 2);
 
@@ -1035,7 +1035,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<NestedClassRaw>(TableId::NestedClass) {
+    match tables_header.table::<NestedClassRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 10);
 
@@ -1049,7 +1049,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<GenericParamRaw>(TableId::GenericParam) {
+    match tables_header.table::<GenericParamRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 19);
 
@@ -1065,7 +1065,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<MethodSpecRaw>(TableId::MethodSpec) {
+    match tables_header.table::<MethodSpecRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 7);
 
@@ -1079,7 +1079,7 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<GenericParamConstraintRaw>(TableId::GenericParamConstraint) {
+    match tables_header.table::<GenericParamConstraintRaw>() {
         Some(table) => {
             assert_eq!(table.row_count(), 16);
 
@@ -1097,11 +1097,7 @@ fn verify_tableheader(asm: &CilObject) {
 /// Verify custom attributes match the expected values from the crafted_2.exe source code
 fn verify_custom_attributes(asm: &CilObject) {
     // Verify we have the expected number of custom attributes in total
-    let custom_attr_table = asm
-        .tables()
-        .unwrap()
-        .table::<CustomAttributeRaw>(TableId::CustomAttribute)
-        .unwrap();
+    let custom_attr_table = asm.tables().unwrap().table::<CustomAttributeRaw>().unwrap();
     assert_eq!(
         custom_attr_table.row_count(),
         88,
@@ -1127,11 +1123,7 @@ fn verify_custom_attributes(asm: &CilObject) {
 /// Verify assembly-level custom attributes
 fn verify_assembly_custom_attributes(asm: &CilObject) {
     // Count assembly-level custom attributes by iterating through the custom attribute table
-    let custom_attr_table = asm
-        .tables()
-        .unwrap()
-        .table::<CustomAttributeRaw>(TableId::CustomAttribute)
-        .unwrap();
+    let custom_attr_table = asm.tables().unwrap().table::<CustomAttributeRaw>().unwrap();
     let mut assembly_attr_count = 0;
 
     for attr_row in custom_attr_table.iter() {
@@ -1153,11 +1145,7 @@ fn verify_assembly_custom_attributes(asm: &CilObject) {
 
 /// Verify module-level custom attributes  
 fn verify_module_custom_attributes(asm: &CilObject) {
-    let custom_attr_table = asm
-        .tables()
-        .unwrap()
-        .table::<CustomAttributeRaw>(TableId::CustomAttribute)
-        .unwrap();
+    let custom_attr_table = asm.tables().unwrap().table::<CustomAttributeRaw>().unwrap();
     let mut module_attr_count = 0;
 
     for attr_row in custom_attr_table.iter() {
@@ -1316,7 +1304,7 @@ fn verify_specialized_attribute_tables(asm: &CilObject) {
     let tables = asm.tables().unwrap();
 
     // Test FieldLayout table (stores FieldOffset attributes)
-    if let Some(field_layout_table) = tables.table::<FieldLayoutRaw>(TableId::FieldLayout) {
+    if let Some(field_layout_table) = tables.table::<FieldLayoutRaw>() {
         let layout_count = field_layout_table.row_count();
         assert!(
             layout_count > 0,
@@ -1331,7 +1319,7 @@ fn verify_specialized_attribute_tables(asm: &CilObject) {
     }
 
     // Test FieldMarshal table (stores MarshalAs attributes)
-    if let Some(field_marshal_table) = tables.table::<FieldMarshalRaw>(TableId::FieldMarshal) {
+    if let Some(field_marshal_table) = tables.table::<FieldMarshalRaw>() {
         let marshal_count = field_marshal_table.row_count();
         assert!(
             marshal_count > 0,
@@ -1374,7 +1362,7 @@ fn verify_specialized_attribute_tables(asm: &CilObject) {
     }
 
     // Test DeclSecurity table (stores security attributes)
-    if let Some(decl_security_table) = tables.table::<DeclSecurityRaw>(TableId::DeclSecurity) {
+    if let Some(decl_security_table) = tables.table::<DeclSecurityRaw>() {
         let security_count = decl_security_table.row_count();
         assert!(
             security_count > 0,
@@ -2207,7 +2195,7 @@ fn test_nested_type_relationships(asm: &CilObject) {
 
     // Also check the raw NestedClass table to see if relationships are stored there
     let tables = asm.tables().unwrap();
-    if let Some(nested_table) = tables.table::<NestedClassRaw>(TableId::NestedClass) {
+    if let Some(nested_table) = tables.table::<NestedClassRaw>() {
         println!(
             "NestedClass table has {} entries:",
             nested_table.row_count()
@@ -2276,7 +2264,7 @@ fn test_enum_and_constant_validation(asm: &CilObject) {
 
     // Test constant table validation - should have exact number of constants
     let tables = asm.tables().unwrap();
-    if let Some(constant_table) = tables.table::<ConstantRaw>(TableId::Constant) {
+    if let Some(constant_table) = tables.table::<ConstantRaw>() {
         println!("Constant table has {} entries", constant_table.row_count());
         assert_eq!(
             constant_table.row_count(),
@@ -2515,7 +2503,7 @@ fn test_pinvoke_and_security_validation(asm: &CilObject) {
 
     // Test ImplMap table (stores P/Invoke information)
     let tables = asm.tables().unwrap();
-    if let Some(implmap_table) = tables.table::<ImplMapRaw>(TableId::ImplMap) {
+    if let Some(implmap_table) = tables.table::<ImplMapRaw>() {
         println!("ImplMap table has {} entries", implmap_table.row_count());
         assert_eq!(
             implmap_table.row_count(),
@@ -2537,7 +2525,7 @@ fn test_pinvoke_and_security_validation(asm: &CilObject) {
     // Test security attributes - expected from C# source:
     // - Assembly level: SecurityPermission, FileIOPermission
     // - Method level: SecureMethod with SecurityCritical + FileIOPermission
-    if let Some(declsecurity_table) = tables.table::<DeclSecurityRaw>(TableId::DeclSecurity) {
+    if let Some(declsecurity_table) = tables.table::<DeclSecurityRaw>() {
         println!(
             "DeclSecurity table has {} entries",
             declsecurity_table.row_count()
@@ -2815,7 +2803,7 @@ fn test_table_count_validation(asm: &CilObject) {
     let tables = asm.tables().unwrap();
 
     // Test TypeDef table count
-    if let Some(typedef_table) = tables.table::<TypeDefRaw>(TableId::TypeDef) {
+    if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
         let typedef_count = typedef_table.row_count();
         println!("TypeDef table has {} entries", typedef_count);
         assert!(
@@ -2825,7 +2813,7 @@ fn test_table_count_validation(asm: &CilObject) {
     }
 
     // Test MethodDef table count
-    if let Some(methoddef_table) = tables.table::<MethodDefRaw>(TableId::MethodDef) {
+    if let Some(methoddef_table) = tables.table::<MethodDefRaw>() {
         let methoddef_count = methoddef_table.row_count();
         println!("MethodDef table has {} entries", methoddef_count);
         assert!(
@@ -2835,7 +2823,7 @@ fn test_table_count_validation(asm: &CilObject) {
     }
 
     // Test Field table count
-    if let Some(field_table) = tables.table::<FieldRaw>(TableId::Field) {
+    if let Some(field_table) = tables.table::<FieldRaw>() {
         let field_count = field_table.row_count();
         println!("Field table has {} entries", field_count);
         assert!(
@@ -2845,7 +2833,7 @@ fn test_table_count_validation(asm: &CilObject) {
     }
 
     // Test Param table count
-    if let Some(param_table) = tables.table::<ParamRaw>(TableId::Param) {
+    if let Some(param_table) = tables.table::<ParamRaw>() {
         let param_count = param_table.row_count();
         println!("Param table has {} entries", param_count);
         assert!(
@@ -2855,7 +2843,7 @@ fn test_table_count_validation(asm: &CilObject) {
     }
 
     // Test GenericParam table count
-    if let Some(generic_param_table) = tables.table::<GenericParamRaw>(TableId::GenericParam) {
+    if let Some(generic_param_table) = tables.table::<GenericParamRaw>() {
         let generic_param_count = generic_param_table.row_count();
         println!("GenericParam table has {} entries", generic_param_count);
         assert!(
@@ -2865,7 +2853,7 @@ fn test_table_count_validation(asm: &CilObject) {
     }
 
     // Test MemberRef table count
-    if let Some(memberref_table) = tables.table::<MemberRefRaw>(TableId::MemberRef) {
+    if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
         let memberref_count = memberref_table.row_count();
         println!("MemberRef table has {} entries", memberref_count);
         assert!(
@@ -2875,7 +2863,7 @@ fn test_table_count_validation(asm: &CilObject) {
     }
 
     // Test TypeRef table count
-    if let Some(typeref_table) = tables.table::<TypeRefRaw>(TableId::TypeRef) {
+    if let Some(typeref_table) = tables.table::<TypeRefRaw>() {
         let typeref_count = typeref_table.row_count();
         println!("TypeRef table has {} entries", typeref_count);
         assert!(
@@ -2959,7 +2947,7 @@ fn test_assembly_metadata_validation(asm: &CilObject) {
 
     // Test basic assembly information
     let tables = asm.tables().unwrap();
-    if let Some(assembly_table) = tables.table::<AssemblyRaw>(TableId::Assembly) {
+    if let Some(assembly_table) = tables.table::<AssemblyRaw>() {
         let assembly_count = assembly_table.row_count();
         println!("Assembly table has {} entries", assembly_count);
         assert_eq!(assembly_count, 1, "Should have exactly 1 assembly entry");
@@ -2989,7 +2977,7 @@ fn test_assembly_metadata_validation(asm: &CilObject) {
     }
 
     // Test module information
-    if let Some(module_table) = tables.table::<ModuleRaw>(TableId::Module) {
+    if let Some(module_table) = tables.table::<ModuleRaw>() {
         let module_count = module_table.row_count();
         println!("Module table has {} entries", module_count);
         assert!(module_count >= 1, "Should have at least 1 module");
@@ -3073,7 +3061,7 @@ fn test_xml_permission_set_parsing(asm: &CilObject) {
     // Look for DeclSecurity entries with XML permission sets
     let tables = asm.tables().unwrap();
 
-    if let Some(decl_security_table) = tables.table::<DeclSecurityRaw>(TableId::DeclSecurity) {
+    if let Some(decl_security_table) = tables.table::<DeclSecurityRaw>() {
         let mut found_xml_permission_set = false;
 
         // Iterate through DeclSecurity entries
@@ -3292,7 +3280,7 @@ fn test_xml_permission_set_parsing(asm: &CilObject) {
 //             // Try to access the table and verify we can read entries
 //             use dotscope::metadata::tables::CustomDebugInformationRaw;
 //             if let Some(custom_debug_table) =
-//                 tables_header.table::<CustomDebugInformationRaw>(TableId::CustomDebugInformation)
+//                 tables_header.table::<CustomDebugInformationRaw>()
 //             {
 //                 println!("✓ Successfully accessed CustomDebugInformation table");
 

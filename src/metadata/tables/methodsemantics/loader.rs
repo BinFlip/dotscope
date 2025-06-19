@@ -55,7 +55,7 @@ impl MetadataLoader for MethodSemanticsLoader {
     /// - Required dependency tables are missing
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) = header.table::<MethodSemanticsRaw>(TableId::MethodSemantics) {
+            if let Some(table) = header.table::<MethodSemanticsRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned = row.to_owned(
                         |coded_index| context.get_ref(coded_index),

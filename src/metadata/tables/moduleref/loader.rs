@@ -54,7 +54,7 @@ impl MetadataLoader for ModuleRefLoader {
     /// - Storage operations fail due to token conflicts
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
-            if let Some(table) = header.table::<ModuleRefRaw>(TableId::ModuleRef) {
+            if let Some(table) = header.table::<ModuleRefRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let res = row.to_owned(strings)?;
 

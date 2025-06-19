@@ -110,7 +110,7 @@ impl MetadataLoader for TypeDefLoader {
     /// * `Err(_)` - Type loading or validation failed
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
-            if let Some(table) = header.table::<TypeDefRaw>(TableId::TypeDef) {
+            if let Some(table) = header.table::<TypeDefRaw>() {
                 for row in table {
                     let res = row.to_owned(
                         |coded_index| context.get_ref(coded_index),

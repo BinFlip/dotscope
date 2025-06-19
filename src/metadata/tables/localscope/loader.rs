@@ -40,9 +40,7 @@ pub struct LocalScopeLoader;
 impl MetadataLoader for LocalScopeLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) =
-                header.table::<crate::metadata::tables::LocalScopeRaw>(TableId::LocalScope)
-            {
+            if let Some(table) = header.table::<crate::metadata::tables::LocalScopeRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let local_scope = row.to_owned(
                         context.method_def,

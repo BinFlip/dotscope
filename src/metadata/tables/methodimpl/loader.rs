@@ -142,7 +142,7 @@ impl MetadataLoader for MethodImplLoader {
     /// This method is thread-safe and uses parallel processing internally for optimal efficiency.
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) = header.table::<MethodImplRaw>(TableId::MethodImpl) {
+            if let Some(table) = header.table::<MethodImplRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned =
                         row.to_owned(|coded_index| context.get_ref(coded_index), context.types)?;

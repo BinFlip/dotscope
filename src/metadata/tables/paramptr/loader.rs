@@ -50,7 +50,7 @@ impl MetadataLoader for ParamPtrLoader {
     /// * `Err(Error)` - Conversion or storage error occurred
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) = header.table::<ParamPtrRaw>(TableId::ParamPtr) {
+            if let Some(table) = header.table::<ParamPtrRaw>() {
                 for row in table {
                     let owned = row.to_owned()?;
                     context.param_ptr.insert(row.token, owned);

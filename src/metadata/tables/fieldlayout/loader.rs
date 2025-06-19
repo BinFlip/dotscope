@@ -62,7 +62,7 @@ impl MetadataLoader for FieldLayoutLoader {
     /// - Parallel processing encounters errors
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) = header.table::<FieldLayoutRaw>(TableId::FieldLayout) {
+            if let Some(table) = header.table::<FieldLayoutRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned = row.to_owned(&context.field)?;
                     owned.apply()?;

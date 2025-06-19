@@ -83,7 +83,7 @@ impl MetadataLoader for StandAloneSigLoader {
     ///
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(blobs)) = (context.meta, context.blobs) {
-            if let Some(table) = header.table::<StandAloneSigRaw>(TableId::StandAloneSig) {
+            if let Some(table) = header.table::<StandAloneSigRaw>() {
                 let shared_visited = Arc::new(VisitedMap::new(context.input.data().len()));
                 let results: Vec<Result<()>> = context
                     .method_def

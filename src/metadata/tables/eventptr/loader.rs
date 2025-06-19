@@ -63,7 +63,7 @@ impl MetadataLoader for EventPtrLoader {
     /// the necessary indirection to maintain logical event ordering.
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) = header.table::<EventPtrRaw>(TableId::EventPtr) {
+            if let Some(table) = header.table::<EventPtrRaw>() {
                 for row in table {
                     let owned = row.to_owned()?;
                     context.event_ptr.insert(row.token, owned);

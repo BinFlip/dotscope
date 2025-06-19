@@ -62,7 +62,7 @@ impl MetadataLoader for PropertyMapLoader {
     /// * `Err(Error)` - Missing dependencies, validation error, or storage error
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta.as_ref() {
-            if let Some(table) = header.table::<PropertyMapRaw>(TableId::PropertyMap) {
+            if let Some(table) = header.table::<PropertyMapRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned = row.to_owned(
                         context.types,

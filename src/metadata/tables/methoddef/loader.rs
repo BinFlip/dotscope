@@ -143,7 +143,7 @@ impl MetadataLoader for MethodDefLoader {
         if let (Some(header), Some(strings), Some(blobs)) =
             (context.meta, context.strings, context.blobs)
         {
-            if let Some(table) = header.table::<MethodDefRaw>(TableId::MethodDef) {
+            if let Some(table) = header.table::<MethodDefRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned =
                         row.to_owned(strings, blobs, &context.param, &context.param_ptr, table)?;

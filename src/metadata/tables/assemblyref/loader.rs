@@ -111,7 +111,7 @@ impl MetadataLoader for AssemblyRefLoader {
         if let (Some(header), Some(blob), Some(strings)) =
             (context.meta, context.blobs, context.strings)
         {
-            if let Some(table) = header.table::<AssemblyRefRaw>(TableId::AssemblyRef) {
+            if let Some(table) = header.table::<AssemblyRefRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let res = row.to_owned(strings, blob)?;
                     context.assembly_ref.insert(row.token, res.clone());

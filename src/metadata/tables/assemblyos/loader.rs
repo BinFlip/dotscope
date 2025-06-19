@@ -50,7 +50,7 @@ impl MetadataLoader for AssemblyOsLoader {
     /// * `Err(`[`crate::Error`]`)` - Malformed data or duplicate `AssemblyOS` information
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) = header.table::<AssemblyOsRaw>(TableId::AssemblyOS) {
+            if let Some(table) = header.table::<AssemblyOsRaw>() {
                 if let Some(row) = table.get(1) {
                     let owned = row.to_owned()?;
 

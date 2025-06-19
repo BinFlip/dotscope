@@ -61,7 +61,7 @@ impl MetadataLoader for PropertyPtrLoader {
     /// * `Err(_)` - Property pointer loading or validation failed
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) = header.table::<PropertyPtrRaw>(TableId::PropertyPtr) {
+            if let Some(table) = header.table::<PropertyPtrRaw>() {
                 for row in table {
                     let owned = row.to_owned()?;
                     context.property_ptr.insert(row.token, owned);

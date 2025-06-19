@@ -8,7 +8,7 @@
 use crate::{
     metadata::{
         loader::{LoaderContext, MetadataLoader},
-        tables::TableId,
+        tables::{StateMachineMethodRaw, TableId},
     },
     Result,
 };
@@ -46,9 +46,7 @@ pub struct StateMachineMethodLoader;
 impl MetadataLoader for StateMachineMethodLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) = header.table::<crate::metadata::tables::StateMachineMethodRaw>(
-                TableId::StateMachineMethod,
-            ) {
+            if let Some(table) = header.table::<StateMachineMethodRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let state_machine_method = row.to_owned(context.method_def)?;
                     context

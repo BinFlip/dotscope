@@ -49,7 +49,7 @@ impl MetadataLoader for AssemblyLoader {
         if let (Some(header), Some(strings), Some(blob)) =
             (context.meta, context.strings, context.blobs)
         {
-            if let Some(table) = header.table::<AssemblyRaw>(TableId::Assembly) {
+            if let Some(table) = header.table::<AssemblyRaw>() {
                 if let Some(row) = table.get(1) {
                     let owned = row.to_owned(strings, blob)?;
 

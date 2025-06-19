@@ -38,9 +38,7 @@ pub struct LocalVariableLoader;
 impl MetadataLoader for LocalVariableLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) =
-                header.table::<crate::metadata::tables::LocalVariableRaw>(TableId::LocalVariable)
-            {
+            if let Some(table) = header.table::<crate::metadata::tables::LocalVariableRaw>() {
                 if let Some(strings) = context.strings {
                     table.par_iter().try_for_each(|row| {
                         let local_variable = row.to_owned(strings)?;

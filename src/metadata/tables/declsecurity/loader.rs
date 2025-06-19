@@ -82,7 +82,7 @@ impl MetadataLoader for DeclSecurityLoader {
     /// - JIT-time security validation
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(blob)) = (context.meta, context.blobs) {
-            if let Some(table) = header.table::<DeclSecurityRaw>(TableId::DeclSecurity) {
+            if let Some(table) = header.table::<DeclSecurityRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned = row.to_owned(|coded_index| context.get_ref(coded_index), blob)?;
                     owned.apply()?;

@@ -61,7 +61,7 @@ impl MetadataLoader for PropertyLoader {
         if let (Some(header), Some(strings), Some(blob)) =
             (context.meta, context.strings, context.blobs)
         {
-            if let Some(table) = header.table::<PropertyRaw>(TableId::Property) {
+            if let Some(table) = header.table::<PropertyRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let res = row.to_owned(strings, blob)?;
 

@@ -467,7 +467,7 @@ impl CilObject {
     ///     println!("Schema version: {}.{}", tables.major_version, tables.minor_version);
     ///     
     ///     // Access individual tables
-    ///     if let Some(typedef_table) = &tables.table::<TypeDefRaw>(TableId::TypeDef) {
+    ///     if let Some(typedef_table) = &tables.table::<TypeDefRaw>() {
     ///         println!("Number of types: {}", typedef_table.row_count());
     ///     }
     /// }

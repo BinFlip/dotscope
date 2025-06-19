@@ -37,9 +37,7 @@ pub struct ImportScopeLoader;
 impl MetadataLoader for ImportScopeLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) =
-                header.table::<crate::metadata::tables::ImportScopeRaw>(TableId::ImportScope)
-            {
+            if let Some(table) = header.table::<crate::metadata::tables::ImportScopeRaw>() {
                 if let Some(blobs) = context.blobs {
                     table.par_iter().try_for_each(|row| {
                         let import_scope = row.to_owned(blobs)?;

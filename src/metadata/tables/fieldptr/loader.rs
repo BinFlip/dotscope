@@ -59,7 +59,7 @@ impl MetadataLoader for FieldPtrLoader {
     /// - Memory allocation fails during processing
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) = header.table::<FieldPtrRaw>(TableId::FieldPtr) {
+            if let Some(table) = header.table::<FieldPtrRaw>() {
                 for row in table {
                     let owned = row.to_owned()?;
                     context.field_ptr.insert(row.token, owned);

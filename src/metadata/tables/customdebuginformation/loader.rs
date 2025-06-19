@@ -62,9 +62,7 @@ impl MetadataLoader for CustomDebugInformationLoader {
         if let (Some(header), Some(guids), Some(blobs)) =
             (context.meta, context.guids, context.blobs)
         {
-            if let Some(table) =
-                header.table::<CustomDebugInformationRaw>(TableId::CustomDebugInformation)
-            {
+            if let Some(table) = header.table::<CustomDebugInformationRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let custom_debug_info =
                         row.to_owned(|coded_index| context.get_ref(coded_index), guids, blobs)?;

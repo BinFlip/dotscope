@@ -58,7 +58,7 @@ impl MetadataLoader for ManifestResourceLoader {
     /// * `Err(_)` - If reference resolution or resource access setup fails
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
-            if let Some(table) = header.table::<ManifestResourceRaw>(TableId::ManifestResource) {
+            if let Some(table) = header.table::<ManifestResourceRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned = row.to_owned(
                         |coded_index| context.get_ref(coded_index),

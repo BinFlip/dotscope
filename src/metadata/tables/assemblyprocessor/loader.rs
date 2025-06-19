@@ -80,7 +80,7 @@ impl MetadataLoader for AssemblyProcessorLoader {
     /// atomic operations when setting the assembly processor data.
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(ref header) = context.meta {
-            if let Some(table) = header.table::<AssemblyProcessorRaw>(TableId::AssemblyProcessor) {
+            if let Some(table) = header.table::<AssemblyProcessorRaw>() {
                 if let Some(row) = table.get(1) {
                     let owned = row.to_owned()?;
 

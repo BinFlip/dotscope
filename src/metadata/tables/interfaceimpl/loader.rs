@@ -58,7 +58,7 @@ impl MetadataLoader for InterfaceImplLoader {
     /// * `Err(_)` - If type reference resolution or interface application fails
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) = header.table::<InterfaceImplRaw>(TableId::InterfaceImpl) {
+            if let Some(table) = header.table::<InterfaceImplRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let res = row.to_owned(context.types)?;
                     res.apply()?;

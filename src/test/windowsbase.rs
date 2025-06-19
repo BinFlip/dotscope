@@ -126,7 +126,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
     assert_eq!(tables_header.sorted, 0x16003301FA00);
     assert_eq!(tables_header.table_count(), 33);
 
-    match tables_header.table::<ModuleRaw>(TableId::Module) {
+    match tables_header.table::<ModuleRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 1);
 
@@ -143,7 +143,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<TypeRefRaw>(TableId::TypeRef) {
+    match tables_header.table::<TypeRefRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 472);
 
@@ -179,7 +179,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<TypeDefRaw>(TableId::TypeDef) {
+    match tables_header.table::<TypeDefRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 820);
 
@@ -215,7 +215,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<FieldRaw>(TableId::Field) {
+    match tables_header.table::<FieldRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 6241);
 
@@ -242,7 +242,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<MethodDefRaw>(TableId::MethodDef) {
+    match tables_header.table::<MethodDefRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 6496);
 
@@ -278,7 +278,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<ParamRaw>(TableId::Param) {
+    match tables_header.table::<ParamRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 7877);
 
@@ -305,7 +305,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<InterfaceImplRaw>(TableId::InterfaceImpl) {
+    match tables_header.table::<InterfaceImplRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 122);
 
@@ -329,7 +329,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<MemberRefRaw>(TableId::MemberRef) {
+    match tables_header.table::<MemberRefRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 1762);
 
@@ -356,7 +356,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<ConstantRaw>(TableId::Constant) {
+    match tables_header.table::<ConstantRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 4213);
 
@@ -384,7 +384,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<CustomAttributeRaw>(TableId::CustomAttribute) {
+    match tables_header.table::<CustomAttributeRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 914);
 
@@ -411,7 +411,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<FieldMarshalRaw>(TableId::FieldMarshal) {
+    match tables_header.table::<FieldMarshalRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 620);
 
@@ -435,7 +435,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<DeclSecurityRaw>(TableId::DeclSecurity) {
+    match tables_header.table::<DeclSecurityRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 1);
 
@@ -450,7 +450,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<ClassLayoutRaw>(TableId::ClassLayout) {
+    match tables_header.table::<ClassLayoutRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 13);
 
@@ -477,7 +477,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<FieldLayoutRaw>(TableId::FieldLayout) {
+    match tables_header.table::<FieldLayoutRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 83);
 
@@ -501,7 +501,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<StandAloneSigRaw>(TableId::StandAloneSig) {
+    match tables_header.table::<StandAloneSigRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 668);
 
@@ -522,7 +522,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<EventMapRaw>(TableId::EventMap) {
+    match tables_header.table::<EventMapRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 18);
 
@@ -546,7 +546,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<EventRaw>(TableId::Event) {
+    match tables_header.table::<EventRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 47);
 
@@ -573,7 +573,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<PropertyMapRaw>(TableId::PropertyMap) {
+    match tables_header.table::<PropertyMapRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 234);
 
@@ -597,7 +597,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<PropertyRaw>(TableId::Property) {
+    match tables_header.table::<PropertyRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 1511);
 
@@ -624,7 +624,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<MethodSemanticsRaw>(TableId::MethodSemantics) {
+    match tables_header.table::<MethodSemanticsRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 1848);
 
@@ -651,7 +651,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<MethodImplRaw>(TableId::MethodImpl) {
+    match tables_header.table::<MethodImplRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 174);
 
@@ -687,7 +687,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<ModuleRefRaw>(TableId::ModuleRef) {
+    match tables_header.table::<ModuleRefRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 29);
 
@@ -708,7 +708,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<TypeSpecRaw>(TableId::TypeSpec) {
+    match tables_header.table::<TypeSpecRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 234);
 
@@ -729,7 +729,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<ImplMapRaw>(TableId::ImplMap) {
+    match tables_header.table::<ImplMapRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 422);
 
@@ -768,7 +768,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<FieldRvaRaw>(TableId::FieldRVA) {
+    match tables_header.table::<FieldRvaRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 5);
 
@@ -787,7 +787,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<AssemblyRaw>(TableId::Assembly) {
+    match tables_header.table::<AssemblyRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 1);
 
@@ -807,7 +807,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<AssemblyRefRaw>(TableId::AssemblyRef) {
+    match tables_header.table::<AssemblyRefRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 32);
 
@@ -849,7 +849,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<ExportedTypeRaw>(TableId::ExportedType) {
+    match tables_header.table::<ExportedTypeRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 63);
 
@@ -888,7 +888,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<ManifestResourceRaw>(TableId::ManifestResource) {
+    match tables_header.table::<ManifestResourceRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 1);
 
@@ -903,7 +903,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<NestedClassRaw>(TableId::NestedClass) {
+    match tables_header.table::<NestedClassRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 379);
 
@@ -927,7 +927,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<GenericParamRaw>(TableId::GenericParam) {
+    match tables_header.table::<GenericParamRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 60);
 
@@ -957,7 +957,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<MethodSpecRaw>(TableId::MethodSpec) {
+    match tables_header.table::<MethodSpecRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 37);
 
@@ -981,7 +981,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
         }
     }
 
-    match tables_header.table::<GenericParamConstraintRaw>(TableId::GenericParamConstraint) {
+    match tables_header.table::<GenericParamConstraintRaw>() {
         Some(module) => {
             assert_eq!(module.row_count(), 3);
 

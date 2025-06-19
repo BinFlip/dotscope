@@ -65,7 +65,7 @@ impl MetadataLoader for MemberRefLoader {
         if let (Some(header), Some(strings), Some(blob)) =
             (context.meta, context.strings, context.blobs)
         {
-            if let Some(table) = header.table::<MemberRefRaw>(TableId::MemberRef) {
+            if let Some(table) = header.table::<MemberRefRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let res = row.to_owned(strings, blob, context.types, |coded_index| {
                         context.get_ref(coded_index)

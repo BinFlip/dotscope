@@ -38,9 +38,7 @@ pub(crate) struct LocalConstantLoader;
 impl MetadataLoader for LocalConstantLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) =
-                header.table::<crate::metadata::tables::LocalConstantRaw>(TableId::LocalConstant)
-            {
+            if let Some(table) = header.table::<crate::metadata::tables::LocalConstantRaw>() {
                 if let (Some(strings), Some(blobs)) = (context.strings, context.blobs) {
                     table.par_iter().try_for_each(|row| {
                         let local_constant = row.to_owned(strings, blobs)?;

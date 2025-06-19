@@ -87,9 +87,7 @@ impl MetadataLoader for GenericParamConstraintLoader {
     /// - Parallel processing encounters errors
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) =
-                header.table::<GenericParamConstraintRaw>(TableId::GenericParamConstraint)
-            {
+            if let Some(table) = header.table::<GenericParamConstraintRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let res = row.to_owned(&context.generic_param, context.types)?;
                     res.apply()?;

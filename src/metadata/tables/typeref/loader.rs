@@ -43,7 +43,7 @@ impl MetadataLoader for TypeRefLoader {
     /// * `Err(_)` - Type reference loading or registration failed
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
-            if let Some(table) = header.table::<TypeRefRaw>(TableId::TypeRef) {
+            if let Some(table) = header.table::<TypeRefRaw>() {
                 for row in table {
                     let new_entry =
                         row.to_owned(|coded_index| context.get_ref(coded_index), strings)?;

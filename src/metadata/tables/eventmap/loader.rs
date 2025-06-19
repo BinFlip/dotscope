@@ -54,7 +54,7 @@ impl MetadataLoader for EventMapLoader {
     /// - Entry registration fails
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta.as_ref() {
-            if let Some(table) = header.table::<EventMapRaw>(TableId::EventMap) {
+            if let Some(table) = header.table::<EventMapRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned =
                         row.to_owned(context.types, &context.event, &context.event_ptr, table)?;

@@ -35,7 +35,7 @@
 //! };
 //!
 //! // Access EncMap table from metadata stream
-//! if let Some(encmap_table) = tables.table::<EncMapRaw>(TableId::EncMap) {
+//! if let Some(encmap_table) = tables.table::<EncMapRaw>() {
 //!     println!("Found {} token mappings", encmap_table.row_count());
 //!     
 //!     // Iterate through token mappings

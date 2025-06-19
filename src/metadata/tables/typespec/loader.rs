@@ -60,7 +60,7 @@ impl MetadataLoader for TypeSpecLoader {
     /// - [`crate::Error::TypeError`] - Type specification violates semantic rules
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(blobs)) = (context.meta, context.blobs) {
-            if let Some(table) = header.table::<TypeSpecRaw>(TableId::TypeSpec) {
+            if let Some(table) = header.table::<TypeSpecRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned = row.to_owned(blobs)?;
 

@@ -58,7 +58,7 @@ impl MetadataLoader for ImplMapLoader {
     /// * `Err(_)` - If reference resolution or mapping application fails
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
-            if let Some(table) = header.table::<ImplMapRaw>(TableId::ImplMap) {
+            if let Some(table) = header.table::<ImplMapRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned = row.to_owned(
                         |coded_index| context.get_ref(coded_index),

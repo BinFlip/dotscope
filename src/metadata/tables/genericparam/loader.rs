@@ -76,7 +76,7 @@ impl MetadataLoader for GenericParamLoader {
     /// - Parallel processing encounters errors
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
-            if let Some(generics) = header.table::<GenericParamRaw>(TableId::GenericParam) {
+            if let Some(generics) = header.table::<GenericParamRaw>() {
                 generics.par_iter().try_for_each(|row| {
                     let owned =
                         row.to_owned(|coded_index| context.get_ref(coded_index), strings)?;

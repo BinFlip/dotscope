@@ -67,7 +67,7 @@ impl MetadataLoader for EventLoader {
     /// - Returns [`crate::Error`] if context storage operations fail
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
-            if let Some(table) = header.table::<EventRaw>(TableId::Event) {
+            if let Some(table) = header.table::<EventRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned = row.to_owned(strings, context.types)?;
 

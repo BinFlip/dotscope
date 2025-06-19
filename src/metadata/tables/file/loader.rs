@@ -78,7 +78,7 @@ impl MetadataLoader for FileLoader {
         if let (Some(header), Some(blob), Some(strings)) =
             (context.meta, context.blobs, context.strings)
         {
-            if let Some(table) = header.table::<FileRaw>(TableId::File) {
+            if let Some(table) = header.table::<FileRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let res = row.to_owned(blob, strings)?;
 

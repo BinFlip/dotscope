@@ -53,9 +53,7 @@ pub struct MethodDebugInformationLoader;
 impl MetadataLoader for MethodDebugInformationLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(blob)) = (context.meta, context.blobs) {
-            if let Some(table) =
-                header.table::<MethodDebugInformationRaw>(TableId::MethodDebugInformation)
-            {
+            if let Some(table) = header.table::<MethodDebugInformationRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let method_debug_info = row.to_owned(blob)?;
                     context

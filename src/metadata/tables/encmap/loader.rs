@@ -48,7 +48,7 @@ impl MetadataLoader for EncMapLoader {
     /// * `Err(`[`crate::Error`]`)` - Malformed data or processing error
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) = header.table::<EncMapRaw>(TableId::EncMap) {
+            if let Some(table) = header.table::<EncMapRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned = row.to_owned()?;
 

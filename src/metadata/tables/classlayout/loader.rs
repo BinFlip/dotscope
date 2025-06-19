@@ -109,7 +109,7 @@ impl MetadataLoader for ClassLayoutLoader {
     /// Updates to type definitions are handled through atomic operations.
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) = header.table::<ClassLayoutRaw>(TableId::ClassLayout) {
+            if let Some(table) = header.table::<ClassLayoutRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned = row.to_owned(context.types)?;
                     owned.apply()?;
