@@ -139,7 +139,7 @@ pub trait RowDefinition<'a>: Sized + Send {
     /// - The row data is malformed or contains invalid values
     /// - Heap indices reference invalid or out-of-bounds locations
     /// - The row structure doesn't match the expected format
-    fn read_row(data: &'a [u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef)
+    fn row_read(data: &'a [u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef)
         -> Result<Self>;
 }
 
@@ -315,7 +315,7 @@ impl<'a, T: RowDefinition<'a>> MetadataTable<'a, T> {
             return None;
         }
 
-        T::read_row(
+        T::row_read(
             self.data,
             &mut ((index as usize - 1) * self.row_size as usize),
             index,
@@ -400,7 +400,7 @@ impl<'a, T: RowDefinition<'a>> Iterator for TableIterator<'a, T> {
             return None;
         }
 
-        match T::read_row(
+        match T::row_read(
             self.table.data,
             &mut self.current_offset,
             self.current_row + 1,

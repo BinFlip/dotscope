@@ -198,7 +198,7 @@ impl<'a> RowDefinition<'a> for TypeRefRaw {
     ///
     /// ## Errors
     /// Returns an error if the binary data is insufficient or malformed.
-    fn read_row(
+    fn row_read(
         data: &'a [u8],
         offset: &mut usize,
         rid: u32,

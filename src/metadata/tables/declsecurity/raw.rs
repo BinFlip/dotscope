@@ -230,7 +230,7 @@ impl<'a> RowDefinition<'a> for DeclSecurityRaw {
         )
     }
 
-    fn read_row(
+    fn row_read(
         data: &'a [u8],
         offset: &mut usize,
         rid: u32,

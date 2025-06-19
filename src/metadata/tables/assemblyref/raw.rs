@@ -268,7 +268,7 @@ impl<'a> RowDefinition<'a> for AssemblyRefRaw {
     /// # Returns
     /// * `Ok(AssemblyRefRaw)` - Successfully parsed `AssemblyRef` row
     /// * `Err(`[`crate::Error`]`)` - If data is malformed or insufficient
-    fn read_row(
+    fn row_read(
         data: &'a [u8],
         offset: &mut usize,
         rid: u32,

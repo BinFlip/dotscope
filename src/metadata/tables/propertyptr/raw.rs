@@ -151,7 +151,7 @@ impl<'a> RowDefinition<'a> for PropertyPtrRaw {
     ///
     /// * [`crate::error::Error::OutOfBounds`] - Insufficient data for complete entry
     /// * [`crate::error::Error::Malformed`] - Malformed table entry structure
-    fn read_row(
+    fn row_read(
         data: &'a [u8],
         offset: &mut usize,
         rid: u32,

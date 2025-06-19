@@ -269,7 +269,7 @@ impl<'a> RowDefinition<'a> for ImplMapRaw {
     /// # Returns
     /// * `Ok(ImplMapRaw)` - Successfully parsed table row
     /// * `Err(_)` - Binary data reading or parsing error
-    fn read_row(
+    fn row_read(
         data: &'a [u8],
         offset: &mut usize,
         rid: u32,

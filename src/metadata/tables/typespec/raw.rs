@@ -220,7 +220,7 @@ impl<'a> RowDefinition<'a> for TypeSpecRaw {
     /// May return an error if:
     /// - The data buffer is too short for a complete table entry
     /// - Invalid data structure encountered during parsing
-    fn read_row(
+    fn row_read(
         data: &'a [u8],
         offset: &mut usize,
         rid: u32,

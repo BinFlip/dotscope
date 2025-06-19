@@ -178,7 +178,7 @@ impl<'a> RowDefinition<'a> for EncLogRaw {
     /// # Returns
     /// * `Ok(EncLogRaw)` - Successfully parsed `EncLog` row
     /// * `Err(`[`crate::Error`]`)` - If data is malformed or insufficient
-    fn read_row(
+    fn row_read(
         data: &'a [u8],
         offset: &mut usize,
         rid: u32,

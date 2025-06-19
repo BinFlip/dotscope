@@ -140,7 +140,7 @@ impl<'a> RowDefinition<'a> for MethodPtrRaw {
         )
     }
 
-    fn read_row(
+    fn row_read(
         data: &'a [u8],
         offset: &mut usize,
         rid: u32,

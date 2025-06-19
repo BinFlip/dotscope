@@ -214,7 +214,7 @@ impl<'a> RowDefinition<'a> for ModuleRaw {
     /// - Insufficient data remaining at offset
     /// - Data corruption or malformed structure
     /// - Invalid heap index values
-    fn read_row(
+    fn row_read(
         data: &'a [u8],
         offset: &mut usize,
         rid: u32,

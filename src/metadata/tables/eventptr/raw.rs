@@ -190,7 +190,7 @@ impl<'a> RowDefinition<'a> for EventPtrRaw {
     /// - The data stream is truncated or corrupted
     /// - Event index values exceed expected ranges
     /// - Binary parsing encounters invalid data
-    fn read_row(
+    fn row_read(
         data: &'a [u8],
         offset: &mut usize,
         rid: u32,

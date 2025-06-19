@@ -318,7 +318,7 @@ impl<'a> RowDefinition<'a> for PropertyMapRaw {
     ///
     /// ## Errors
     /// Returns an error if the data cannot be read or is malformed.
-    fn read_row(
+    fn row_read(
         data: &'a [u8],
         offset: &mut usize,
         rid: u32,

@@ -172,7 +172,7 @@ impl DocumentRaw {
 }
 
 impl<'a> RowDefinition<'a> for DocumentRaw {
-    fn read_row(
+    fn row_read(
         data: &'a [u8],
         offset: &mut usize,
         rid: u32,

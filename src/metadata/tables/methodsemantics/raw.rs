@@ -393,7 +393,7 @@ impl<'a> RowDefinition<'a> for MethodSemanticsRaw {
     /// - Insufficient data remaining at offset
     /// - Invalid coded index encoding
     /// - Data corruption or malformed structure
-    fn read_row(
+    fn row_read(
         data: &'a [u8],
         offset: &mut usize,
         rid: u32,
