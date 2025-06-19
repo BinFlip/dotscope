@@ -38,7 +38,7 @@
 //! - [`crate::metadata::streams`] - Metadata streams for heap data resolution
 //! - [`crate::metadata::token`] - Token system for metadata references
 
-use crate::metadata::token::Token;
+use crate::metadata::{sequencepoints::SequencePoints, token::Token};
 
 /// Represents a Portable PDB method debug information entry with fully resolved metadata.
 ///
@@ -122,6 +122,5 @@ pub struct MethodDebugInformation {
     /// IL instruction offsets to source code locations. None indicates no sequence
     /// points are available for this method. The data format is specific to the
     /// Portable PDB specification and requires specialized parsing.
-    // ToDo: Parse and process this data into a more usable form
-    pub sequence_points: Option<Vec<u8>>,
+    pub sequence_points: Option<SequencePoints>,
 }

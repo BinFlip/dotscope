@@ -190,6 +190,8 @@ pub mod resources;
 pub mod root;
 /// Implementation of the .NET security model
 pub mod security;
+/// Implementation of sequence points in methods
+pub mod sequencepoints;
 /// Implementation of method and type signatures
 pub mod signatures;
 /// Implementation of all metadata streams (tables, heaps, etc.)

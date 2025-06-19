@@ -63,6 +63,7 @@
 use crate::{
     file::io::read_le_at_dyn,
     metadata::{
+        sequencepoints::parse_sequence_points,
         streams::Blob,
         tables::{
             types::{RowDefinition, TableId, TableInfoRef},
@@ -188,9 +189,11 @@ impl MethodDebugInformationRaw {
     /// Returns an error if the blob heap index for sequence points is invalid or cannot be resolved.
     pub fn to_owned(&self, blobs: &Blob) -> Result<MethodDebugInformationRc> {
         let sequence_points = if self.sequence_points == 0 {
-            None
+            Some(parse_sequence_points(
+                blobs.get(self.sequence_points as usize)?,
+            )?)
         } else {
-            Some(blobs.get(self.sequence_points as usize)?.to_vec())
+            None
         };
 
         // ToDo: Resolve document index to actual Document entry if needed
