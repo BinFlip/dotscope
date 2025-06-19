@@ -66,6 +66,7 @@
 //! - [.NET Runtime Documentation](https://github.com/dotnet/runtime/tree/main/docs/design/coreclr/metadata)
 
 mod codedindex;
+mod tableaccess;
 mod tabledata;
 mod tableid;
 mod tableinfo;
@@ -81,6 +82,8 @@ pub use codedindex::{CodedIndex, CodedIndexType, CodedIndexTypeIter};
 pub use tabledata::TableData;
 pub use tableid::TableId;
 pub use tableinfo::{TableInfo, TableInfoRef, TableRowInfo};
+
+pub(crate) use tableaccess::TableAccess;
 
 /// Trait defining the interface for reading and parsing metadata table rows.
 ///

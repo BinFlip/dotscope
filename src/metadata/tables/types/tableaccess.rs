@@ -67,5 +67,3 @@ macro_rules! impl_table_access {
         }
     };
 }
-
-pub use impl_table_access;

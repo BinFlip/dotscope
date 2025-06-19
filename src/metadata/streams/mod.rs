@@ -337,13 +337,6 @@ pub use userstrings::{UserStrings, UserStringsIterator};
 mod tablesheader;
 pub use tablesheader::TablesHeader;
 
-/// Type-safe table access trait for safe metadata table retrieval.
-///
-/// Provides [`TableAccess`] trait for eliminating unsafe code in table access
-/// while maintaining type safety and ergonomic API design. And [`impl_table_access!`] macro for automatically generating
-/// trait implementations that map row types to table variants.
-mod tableaccess;
-
 /// 128-bit GUID array (`#GUID`) implementation.
 ///
 /// Provides [`crate::metadata::streams::guid::Guid`] and [`crate::metadata::streams::guid::GuidIterator`] for accessing globally unique
