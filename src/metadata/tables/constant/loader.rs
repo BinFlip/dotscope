@@ -20,7 +20,7 @@
 //! # Table Structure
 //!
 //! The Constant table contains zero or more rows that define constant values:
-//! - **Type**: Element type of the constant (ELEMENT_TYPE_* values from ECMA-335)
+//! - **Type**: Element type of the constant (`ELEMENT_TYPE_*` values from ECMA-335)
 //! - **Parent**: Coded index referencing Field, Property, or Param tables
 //! - **Value**: Blob heap reference containing the constant's binary representation
 //!
@@ -112,7 +112,7 @@ impl MetadataLoader for ConstantLoader {
     /// Updates to parent elements are handled through atomic operations.
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(blob)) = (context.meta, context.blobs) {
-            if let Some(table) = header.table::<ConstantRaw>(TableId::Constant) {
+            if let Some(table) = header.table::<ConstantRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned = row.to_owned(|coded_index| context.get_ref(coded_index), blob)?;
                     owned.apply()?;

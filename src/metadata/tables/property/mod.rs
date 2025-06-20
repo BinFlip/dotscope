@@ -9,8 +9,8 @@
 //!
 //! The Property table provides:
 //! - **Property Definitions**: Names, signatures, and attributes for type properties
-//! - **Method Association**: Links properties to their getter/setter methods via MethodSemantics
-//! - **Type Binding**: Associates properties with their declaring types through PropertyMap
+//! - **Method Association**: Links properties to their getter/setter methods via `MethodSemantics`
+//! - **Type Binding**: Associates properties with their declaring types through `PropertyMap`
 //! - **Reflection Support**: Enables property-based reflection and metadata queries
 //!
 //! ## Module Structure
@@ -32,9 +32,9 @@
 //! ## Property Attributes
 //!
 //! Properties can have various attributes that control their behavior:
-//! - **SpecialName**: Property has special naming conventions
-//! - **RTSpecialName**: Runtime should verify name encoding
-//! - **HasDefault**: Property has a default value defined
+//! - **`SpecialName`**: Property has special naming conventions
+//! - **`RTSpecialName`**: Runtime should verify name encoding
+//! - **`HasDefault`**: Property has a default value defined
 //!
 //! ## References
 //!
@@ -49,6 +49,7 @@ use std::sync::Arc;
 mod loader;
 mod owned;
 mod raw;
+mod reader;
 
 pub(crate) use loader::*;
 pub use owned::*;

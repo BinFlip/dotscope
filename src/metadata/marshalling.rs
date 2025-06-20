@@ -108,11 +108,11 @@
 use crate::{file::parser::Parser, Error::RecursionLimit, Result};
 
 #[allow(non_snake_case)]
-/// Native type constants as defined in ECMA-335 II.23.2.9 and CoreCLR extensions.
+/// Native type constants as defined in ECMA-335 II.23.2.9 and `CoreCLR` extensions.
 ///
 /// This module contains byte constants representing all native types used in .NET marshalling
 /// descriptors. The constants are organized according to the ECMA-335 specification with
-/// additional types from CoreCLR runtime and Windows Runtime (WinRT) support.
+/// additional types from `CoreCLR` runtime and Windows Runtime (`WinRT`) support.
 ///
 /// # Constant Categories
 ///
@@ -122,7 +122,7 @@ use crate::{file::parser::Parser, Error::RecursionLimit, Result};
 /// - **Array Types** (0x1d-0x1e, 0x2a): Fixed and variable arrays
 /// - **Pointer Types** (0x10, 0x2b): Raw and structured pointers
 /// - **Special Types** (0x17-0x2d): Structured types, interfaces, and custom marshaling
-/// - **WinRT Types** (0x2e-0x30): Windows Runtime specific types
+/// - **`WinRT` Types** (0x2e-0x30): Windows Runtime specific types
 ///
 /// # Usage in Marshalling Descriptors
 ///
@@ -192,9 +192,9 @@ pub mod NATIVE_TYPE {
     pub const FIXEDSYSSTRING: u8 = 0x17;
     /// Object reference (0x18) - Managed object reference
     pub const OBJECTREF: u8 = 0x18;
-    /// IUnknown interface (0x19) - COM IUnknown interface pointer
+    /// `IUnknown` interface (0x19) - COM `IUnknown` interface pointer
     pub const IUNKNOWN: u8 = 0x19;
-    /// IDispatch interface (0x1a) - COM IDispatch interface pointer
+    /// `IDispatch` interface (0x1a) - COM `IDispatch` interface pointer
     pub const IDISPATCH: u8 = 0x1a;
     /// Struct type (0x1b) - Native structure with optional packing/size info
     pub const STRUCT: u8 = 0x1b;
@@ -216,11 +216,11 @@ pub mod NATIVE_TYPE {
     pub const ANSIBSTR: u8 = 0x23;
     /// TBSTR type (0x24) - Platform-dependent BSTR (ANSI/Unicode)
     pub const TBSTR: u8 = 0x24;
-    /// Variant boolean (0x25) - COM VARIANT_BOOL (2-byte boolean)
+    /// Variant boolean (0x25) - COM `VARIANT_BOOL` (2-byte boolean)
     pub const VARIANTBOOL: u8 = 0x25;
     /// Function pointer (0x26) - Native function pointer
     pub const FUNC: u8 = 0x26;
-    /// AsAny type (0x28) - Marshal as any compatible type
+    /// `AsAny` type (0x28) - Marshal as any compatible type
     pub const ASANY: u8 = 0x28;
     /// Array type (0x2a) - Variable array with element type and optional parameters
     pub const ARRAY: u8 = 0x2a;
@@ -230,7 +230,7 @@ pub mod NATIVE_TYPE {
     pub const CUSTOMMARSHALER: u8 = 0x2c;
     /// Error type (0x2d) - HRESULT or error code
     pub const ERROR: u8 = 0x2d;
-    /// IInspectable interface (0x2e) - Windows Runtime IInspectable interface
+    /// `IInspectable` interface (0x2e) - Windows Runtime `IInspectable` interface
     pub const IINSPECTABLE: u8 = 0x2e;
     /// HSTRING type (0x2f) - Windows Runtime string handle
     pub const HSTRING: u8 = 0x2f;
@@ -295,15 +295,15 @@ pub mod VARIANT_TYPE {
     pub const DATE: u16 = 7;
     /// BSTR string (8) - Length-prefixed Unicode string
     pub const BSTR: u16 = 8;
-    /// IDispatch interface (9) - COM automation interface
+    /// `IDispatch` interface (9) - COM automation interface
     pub const DISPATCH: u16 = 9;
     /// Error code (10) - HRESULT or SCODE
     pub const ERROR: u16 = 10;
-    /// Boolean type (11) - VARIANT_BOOL (16-bit)
+    /// Boolean type (11) - `VARIANT_BOOL` (16-bit)
     pub const BOOL: u16 = 11;
     /// Variant type (12) - Nested VARIANT
     pub const VARIANT: u16 = 12;
-    /// IUnknown interface (13) - Base COM interface
+    /// `IUnknown` interface (13) - Base COM interface
     pub const UNKNOWN: u16 = 13;
     /// Decimal type (14) - 128-bit decimal number
     pub const DECIMAL: u16 = 14;
@@ -350,9 +350,9 @@ pub mod VARIANT_TYPE {
     pub const FILETIME: u16 = 64;
     /// Binary blob (65) - Arbitrary binary data
     pub const BLOB: u16 = 65;
-    /// Stream (66) - IStream interface
+    /// Stream (66) - `IStream` interface
     pub const STREAM: u16 = 66;
-    /// Storage (67) - IStorage interface
+    /// Storage (67) - `IStorage` interface
     pub const STORAGE: u16 = 67;
     /// Streamed object (68) - Object stored in stream
     pub const STREAMED_OBJECT: u16 = 68;
@@ -496,7 +496,7 @@ pub fn parse_marshalling_descriptor(data: &[u8]) -> Result<MarshallingInfo> {
 /// Represents a native type for marshalling between managed and unmanaged code.
 ///
 /// This enum encompasses all native types supported by .NET marshalling as defined in ECMA-335
-/// and extended by CoreCLR. Each variant represents a specific native type with associated
+/// and extended by `CoreCLR`. Each variant represents a specific native type with associated
 /// parameters for size information, element types, or other marshalling metadata.
 ///
 /// # Type Categories
@@ -505,45 +505,45 @@ pub fn parse_marshalling_descriptor(data: &[u8]) -> Result<MarshallingInfo> {
 /// Basic value types with direct managed-to-native mapping:
 /// - Integers: I1, U1, I2, U2, I4, U4, I8, U8
 /// - Floating Point: R4, R8
-/// - Platform Types: Int, UInt, SysChar
+/// - Platform Types: Int, `UInt`, `SysChar`
 /// - Special: Void, Boolean, Error
 ///
 /// ## String Types
 /// Various string encodings and formats:
-/// - Unicode: LPWStr, BStr, HString
-/// - ANSI: LPStr, AnsiBStr
-/// - Platform: LPTStr, TBStr
-/// - UTF-8: LPUtf8Str
-/// - Fixed: FixedSysString, ByValStr
+/// - Unicode: `LPWStr`, `BStr`, `HString`
+/// - ANSI: `LPStr`, `AnsiBStr`
+/// - Platform: `LPTStr`, `TBStr`
+/// - UTF-8: `LPUtf8Str`
+/// - Fixed: `FixedSysString`, `ByValStr`
 ///
 /// ## Array Types
 /// Collection types with size and element information:
-/// - FixedArray: Fixed-size arrays with compile-time size
+/// - `FixedArray`: Fixed-size arrays with compile-time size
 /// - Array: Variable arrays with runtime size parameters
-/// - SafeArray: COM safe arrays with variant type information
+/// - `SafeArray`: COM safe arrays with variant type information
 ///
 /// ## Interface Types
 /// COM and Windows Runtime interface pointers:
-/// - IUnknown, IDispatch: Base COM interfaces
-/// - IInspectable: Windows Runtime base interface
+/// - `IUnknown`, `IDispatch`: Base COM interfaces
+/// - `IInspectable`: Windows Runtime base interface
 /// - Interface: Generic interface with IID parameter
 ///
 /// ## Structured Types
 /// Complex types with layout information:
 /// - Struct: Native structures with packing and size
-/// - NestedStruct: Value type embedded in structure
-/// - LPStruct: Pointer to native structure
+/// - `NestedStruct`: Value type embedded in structure
+/// - `LPStruct`: Pointer to native structure
 ///
 /// ## Pointer Types
 /// Pointer and reference types:
 /// - Ptr: Raw pointer with optional target type
-/// - ObjectRef: Managed object reference
+/// - `ObjectRef`: Managed object reference
 ///
 /// ## Special Types
 /// Advanced marshalling scenarios:
-/// - CustomMarshaler: User-defined custom marshalling
+/// - `CustomMarshaler`: User-defined custom marshalling
 /// - Func: Function pointer
-/// - AsAny: Marshal as any compatible type
+/// - `AsAny`: Marshal as any compatible type
 /// - End: Descriptor termination marker
 ///
 /// # Usage Examples
@@ -651,7 +651,7 @@ pub enum NativeType {
         /// Fixed size of the string buffer in characters
         size: u32,
     },
-    /// Variant boolean - COM VARIANT_BOOL (16-bit boolean: 0 = false, -1 = true)
+    /// Variant boolean - COM `VARIANT_BOOL` (16-bit boolean: 0 = false, -1 = true)
     VariantBool,
 
     // Array types
@@ -687,11 +687,11 @@ pub enum NativeType {
     },
 
     // Interface types
-    /// IUnknown interface - Base COM interface for reference counting
+    /// `IUnknown` interface - Base COM interface for reference counting
     IUnknown,
-    /// IDispatch interface - COM automation interface for dynamic dispatch
+    /// `IDispatch` interface - COM automation interface for dynamic dispatch
     IDispatch,
-    /// IInspectable interface - Windows Runtime base interface
+    /// `IInspectable` interface - Windows Runtime base interface
     IInspectable,
     /// Generic interface - COM interface with runtime IID specification
     Interface {
@@ -732,7 +732,7 @@ pub enum NativeType {
     Func,
     /// As any - Marshal as any compatible native type
     AsAny,
-    /// Windows Runtime string - HSTRING handle for WinRT strings
+    /// Windows Runtime string - HSTRING handle for `WinRT` strings
     HString,
 
     // End marker

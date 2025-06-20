@@ -171,7 +171,7 @@ pub struct Root {
 
     /// Minor version number of the metadata format.
     ///
-    /// Usually 1 for .NET Framework 2.0+ assemblies. Combined with major_version,
+    /// Usually 1 for .NET Framework 2.0+ assemblies. Combined with `major_version`,
     /// this determines the exact metadata format specification being used.
     pub minor_version: u16,
 

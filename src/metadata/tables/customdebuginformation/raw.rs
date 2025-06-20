@@ -1,16 +1,25 @@
-//! Raw CustomDebugInformation table representation for Portable PDB format
+//! Raw `CustomDebugInformation` table representation for Portable PDB format.
 //!
-//! This module provides the [`CustomDebugInformationRaw`] struct that represents
-//! the binary format of CustomDebugInformation table entries as they appear in
+//! This module provides the [`crate::metadata::tables::customdebuginformation::CustomDebugInformationRaw`] struct that represents
+//! the binary format of `CustomDebugInformation` table entries as they appear in
 //! the metadata tables stream. This is the low-level representation used during
-//! the initial parsing phase, containing unresolved indices.
+//! the initial parsing phase, containing unresolved heap indices that require
+//! resolution to access actual data.
+//!
+//! # Key Components
+//!
+//! - [`crate::metadata::tables::customdebuginformation::CustomDebugInformationRaw`] - Raw binary representation with unresolved indices
+//!
+//! # Thread Safety
+//!
+//! All types in this module are [`Send`] and [`Clone`], enabling safe sharing
+//! across threads and efficient copying when needed.
 
 use crate::{
-    file::io::read_le_at_dyn,
     metadata::{
         customdebuginformation::{parse_custom_debug_blob, CustomDebugKind},
         streams::{Blob, Guid},
-        tables::{types::*, CustomDebugInformation, CustomDebugInformationRc, RowDefinition},
+        tables::{types::CodedIndex, CustomDebugInformation, CustomDebugInformationRc},
         token::Token,
         typesystem::CilTypeReference,
     },
@@ -18,26 +27,26 @@ use crate::{
 };
 use std::sync::Arc;
 
-/// Raw binary representation of a CustomDebugInformation table entry
+/// Raw binary representation of a `CustomDebugInformation` table entry
 ///
-/// This structure matches the exact binary layout of CustomDebugInformation table
+/// This structure matches the exact binary layout of `CustomDebugInformation` table
 /// entries in the metadata tables stream. All fields contain unresolved indices
-/// that must be resolved during conversion to the owned [`CustomDebugInformation`] variant.
+/// that must be resolved during conversion to the owned [`crate::metadata::tables::customdebuginformation::CustomDebugInformation`] variant.
 ///
 /// # Binary Format
 ///
-/// Each CustomDebugInformation table entry consists of:
-/// - **Parent** (variable bytes): HasCustomDebugInformation coded index to the metadata element
+/// Each `CustomDebugInformation` table entry consists of:
+/// - **Parent** (variable bytes): `HasCustomDebugInformation` coded index to the metadata element
 /// - **Kind** (variable bytes): GUID heap index identifying the type of custom debug information
 /// - **Value** (variable bytes): Blob heap index containing the custom debug information data
 ///
-/// # Coded Index: HasCustomDebugInformation
+/// # Coded Index: `HasCustomDebugInformation`
 ///
-/// The Parent field uses the HasCustomDebugInformation coded index which can reference:
-/// - MethodDef, Field, TypeRef, TypeDef, Param, InterfaceImpl, MemberRef, Module
-/// - DeclSecurity, Property, Event, StandAloneSig, ModuleRef, TypeSpec, Assembly
-/// - AssemblyRef, File, ExportedType, ManifestResource, GenericParam, GenericParamConstraint
-/// - MethodSpec, Document, LocalScope, LocalVariable, LocalConstant, ImportScope
+/// The Parent field uses the `HasCustomDebugInformation` coded index which can reference:
+/// - `MethodDef`, `Field`, `TypeRef`, `TypeDef`, `Param`, `InterfaceImpl`, `MemberRef`, `Module`
+/// - `DeclSecurity`, `Property`, `Event`, `StandAloneSig`, `ModuleRef`, `TypeSpec`, `Assembly`
+/// - `AssemblyRef`, `File`, `ExportedType`, `ManifestResource`, `GenericParam`, `GenericParamConstraint`
+/// - `MethodSpec`, `Document`, `LocalScope`, `LocalVariable`, `LocalConstant`, `ImportScope`
 ///
 /// # Custom Debug Information Types
 ///
@@ -64,13 +73,13 @@ pub struct CustomDebugInformationRaw {
     /// Row identifier (1-based index in the table)
     pub rid: u32,
 
-    /// Metadata token for this CustomDebugInformation entry
+    /// Metadata token for this `CustomDebugInformation` entry
     pub token: Token,
 
     /// Byte offset of this row in the original metadata stream
     pub offset: usize,
 
-    /// HasCustomDebugInformation coded index to the metadata element
+    /// `HasCustomDebugInformation` coded index to the metadata element
     ///
     /// References the metadata element (method, type, field, etc.) that this
     /// custom debug information is associated with. The coded index allows
@@ -92,14 +101,14 @@ pub struct CustomDebugInformationRaw {
 }
 
 impl CustomDebugInformationRaw {
-    /// Converts this raw CustomDebugInformation entry to an owned [`CustomDebugInformation`] instance
+    /// Converts this raw `CustomDebugInformation` entry to an owned [`crate::metadata::tables::customdebuginformation::CustomDebugInformation`] instance
     ///
-    /// This method resolves the raw CustomDebugInformation entry to create a complete CustomDebugInformation
+    /// This method resolves the raw `CustomDebugInformation` entry to create a complete `CustomDebugInformation`
     /// object by resolving indices to actual data from the provided heaps and parsing the custom debug
     /// information blob into structured data.
     ///
     /// # Processing Steps
-    /// 1. **Parent Resolution**: Resolves the HasCustomDebugInformation coded index to a type reference
+    /// 1. **Parent Resolution**: Resolves the `HasCustomDebugInformation` coded index to a type reference
     /// 2. **GUID Resolution**: Resolves the kind index to get the debug information type GUID
     /// 3. **Blob Resolution**: Resolves the value index to get the raw debug information blob
     /// 4. **Blob Parsing**: Parses the blob according to the GUID type to create structured debug information
@@ -114,25 +123,29 @@ impl CustomDebugInformationRaw {
     /// or an error if any heap reference cannot be resolved or blob parsing fails.
     ///
     /// # Parsing Behavior
-    /// - **Known GUIDs**: Parsed into structured data (SourceLink, EmbeddedSource, etc.)
+    /// - **Known GUIDs**: Parsed into structured data (`SourceLink`, `EmbeddedSource`, etc.)
     /// - **Unknown GUIDs**: Preserved as raw data in Unknown variant for future processing
     /// - **Empty Blobs**: Handled gracefully with appropriate default values
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// # use dotscope::metadata::tables::customdebuginformation::CustomDebugInformationRaw;
-    /// # use dotscope::metadata::token::Token;
+    /// ```rust,no_run
+    /// use dotscope::metadata::tables::{CustomDebugInformationRaw, CodedIndex};
+    /// use dotscope::metadata::token::Token;
+    /// use dotscope::metadata::typesystem::CilTypeReference;
+    /// use dotscope::metadata::streams::{Guid, Blob};
+    /// use dotscope::Result;
+    ///
     /// # fn example(
-    /// #     get_ref: impl Fn(&crate::metadata::tables::CodedIndex) -> crate::metadata::typesystem::CilTypeReference,
-    /// #     guid_heap: &crate::metadata::streams::Guid,
-    /// #     blob_heap: &crate::metadata::streams::Blob
-    /// # ) -> dotscope::Result<()> {
+    /// #     get_ref: impl Fn(&CodedIndex) -> CilTypeReference,
+    /// #     guid_heap: &Guid,
+    /// #     blob_heap: &Blob
+    /// # ) -> Result<()> {
     /// let custom_debug_raw = CustomDebugInformationRaw {
     ///     rid: 1,
     ///     token: Token::new(0x37000001),
     ///     offset: 0,
-    ///     parent: 6,      // HasCustomDebugInformation coded index
+    ///     parent: CodedIndex { tag: dotscope::metadata::tables::TableId::MethodDef, row: 6, token: Token::new(0x06000006) },  // HasCustomDebugInformation coded index
     ///     kind: 1,        // GUID heap index pointing to Source Link GUID
     ///     value: 10,      // Blob heap index pointing to JSON data
     /// };
@@ -142,6 +155,13 @@ impl CustomDebugInformationRaw {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error`] if:
+    /// - The GUID heap index is invalid or out of bounds
+    /// - The blob heap index is invalid or out of bounds  
+    /// - The blob data cannot be parsed for known debug info types
     pub fn to_owned<F>(
         &self,
         get_ref: F,
@@ -165,128 +185,5 @@ impl CustomDebugInformationRaw {
             kind: kind_guid,
             value: parsed_value,
         }))
-    }
-}
-
-impl<'a> RowDefinition<'a> for CustomDebugInformationRaw {
-    fn read_row(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
-        let offset_org = *offset;
-
-        let parent = CodedIndex::read(
-            data,
-            offset,
-            sizes,
-            CodedIndexType::HasCustomDebugInformation,
-        )?;
-        let kind = read_le_at_dyn(data, offset, sizes.is_large_guid())?;
-        let value = read_le_at_dyn(data, offset, sizes.is_large_blob())?;
-
-        Ok(CustomDebugInformationRaw {
-            rid,
-            token: Token::new(0x3700_0000 + rid),
-            offset: offset_org,
-            parent,
-            kind,
-            value,
-        })
-    }
-
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            sizes.coded_index_bytes(CodedIndexType::HasCustomDebugInformation) +  // parent (HasCustomDebugInformation coded index)
-            sizes.guid_bytes() +                                                  // kind (GUID heap index)
-            sizes.blob_bytes()                                                    // value (Blob heap index)
-        )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::metadata::tables::{MetadataTable, TableId, TableInfo};
-
-    #[test]
-    fn crafted_short() {
-        let data = vec![
-            0x06, 0x00, // parent (2 bytes, normal coded index) - 0x0006 (tag=6, row=0)
-            0x01, 0x00, // kind (2 bytes, normal GUID heap) - 0x0001
-            0x0A, 0x00, // value (2 bytes, normal blob heap) - 0x000A
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[
-                (TableId::CustomDebugInformation, 1),
-                (TableId::MethodDef, 1000),
-            ],
-            false,
-            false,
-            false,
-        ));
-        let table = MetadataTable::<CustomDebugInformationRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: CustomDebugInformationRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x37000001);
-            assert_eq!(row.parent.row, 0);
-            assert_eq!(row.kind, 0x0001);
-            assert_eq!(row.value, 0x000A);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
-    }
-
-    #[test]
-    fn crafted_long() {
-        let data = vec![
-            0x06, 0x01, 0x00,
-            0x00, // parent (4 bytes, large coded index) - 0x00000106 (tag=6, row=8)
-            0x01, 0x01, 0x00, 0x00, // kind (4 bytes, large GUID heap) - 0x00000101
-            0x0A, 0x02, 0x00, 0x00, // value (4 bytes, large blob heap) - 0x0000020A
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[
-                (TableId::CustomDebugInformation, 1),
-                (TableId::MethodDef, 100000),
-            ],
-            true,
-            true,
-            true,
-        ));
-        let table = MetadataTable::<CustomDebugInformationRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: CustomDebugInformationRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x37000001);
-            assert_eq!(row.parent.row, 8);
-            assert_eq!(row.kind, 0x00000101);
-            assert_eq!(row.value, 0x0000020A);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
     }
 }

@@ -1,11 +1,11 @@
-//! # TypeSpec Table - Owned Implementation
+//! # `TypeSpec` Table - Owned Implementation
 //!
 //! This module provides the owned [`TypeSpec`] struct representing parsed entries from
-//! the TypeSpec metadata table with resolved references and owned data.
+//! the `TypeSpec` metadata table with resolved references and owned data.
 //!
-//! ## Table Overview
+//! ## `TypeSpec` Table Overview
 //!
-//! The TypeSpec table (0x1B) defines type specifications through signatures. This table
+//! The `TypeSpec` table (0x1B) defines type specifications through signatures. This table
 //! provides type definitions that describe types in their most general form, allowing
 //! for generic type instantiation and complex type composition.
 //!
@@ -23,27 +23,27 @@
 //! ## References
 //!
 //! - [ECMA-335 §II.22.39 - TypeSpec Table](https://www.ecma-international.org/publications-and-standards/standards/ecma-335/)
-//! - [`crate::metadata::tables::typespec`] - TypeSpec table module
+//! - [`crate::metadata::tables::typespec`] - `TypeSpec` table module
 //! - [`crate::metadata::signatures::SignatureTypeSpec`] - Type specification signatures
 
 use crate::metadata::{signatures::SignatureTypeSpec, token::Token};
 
-/// Represents an owned TypeSpec table entry with resolved references and parsed signatures.
+/// Represents an owned `TypeSpec` table entry with resolved references and parsed signatures.
 ///
-/// The TypeSpec table defines type specifications through signatures, providing the foundation
+/// The `TypeSpec` table defines type specifications through signatures, providing the foundation
 /// for complex type definitions including generic types, arrays, pointers, and type modifiers.
 /// This struct contains fully resolved and owned data from the raw table entries.
 ///
 /// ## Fields Overview
 ///
-/// - `rid`: The 1-based row identifier within the TypeSpec table
-/// - `token`: The metadata token for this TypeSpec entry
+/// - `rid`: The 1-based row identifier within the `TypeSpec` table
+/// - `token`: The metadata token for this `TypeSpec` entry
 /// - `offset`: Byte offset of the signature within the blob heap
 /// - `signature`: Fully parsed type specification signature
 ///
 /// ## Type Specifications
 ///
-/// TypeSpec entries define types through their signatures and are used for:
+/// `TypeSpec` entries define types through their signatures and are used for:
 /// - Generic type instantiations (e.g., `List<T>`)
 /// - Array types with specific dimensions
 /// - Pointer and reference types
@@ -51,20 +51,20 @@ use crate::metadata::{signatures::SignatureTypeSpec, token::Token};
 ///
 /// ## Usage in Metadata
 ///
-/// TypeSpec entries are referenced by:
+/// `TypeSpec` entries are referenced by:
 /// - [`crate::metadata::tables::MethodDefRaw`] - Method signatures
 /// - [`crate::metadata::tables::Field`] - Field type specifications
 /// - [`crate::metadata::tables::MemberRef`] - Member references
 /// - Other tables requiring complex type definitions
 ///
 pub struct TypeSpec {
-    /// The 1-based row identifier within the TypeSpec table.
+    /// The 1-based row identifier within the `TypeSpec` table.
     ///
-    /// This identifier uniquely identifies the TypeSpec entry within the table
+    /// This identifier uniquely identifies the `TypeSpec` entry within the table
     /// and is used for cross-references from other metadata tables.
     pub rid: u32,
 
-    /// The metadata token for this TypeSpec entry.
+    /// The metadata token for this `TypeSpec` entry.
     ///
     /// Tokens provide a consistent way to reference metadata entries across
     /// different contexts and are used in IL instructions and other metadata.

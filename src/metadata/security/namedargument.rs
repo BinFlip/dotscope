@@ -34,17 +34,17 @@
 //! ## Common Permission Types
 //! Different security permissions use various named arguments:
 //!
-//! ### FileIOPermission
+//! ### `FileIOPermission`
 //! - `Read`: Specify readable file paths
 //! - `Write`: Specify writable file paths  
 //! - `PathDiscovery`: Control path enumeration access
 //!
-//! ### RegistryPermission
+//! ### `RegistryPermission`
 //! - `Read`: Registry keys that can be read
 //! - `Write`: Registry keys that can be modified
 //! - `Create`: Registry keys that can be created
 //!
-//! ### SecurityPermission
+//! ### `SecurityPermission`
 //! - `Flags`: Specific security operations allowed
 //! - `UnmanagedCode`: Allow calls to unmanaged code
 //! - `SkipVerification`: Skip IL verification
@@ -238,7 +238,7 @@ impl NamedArgument {
     /// Returns the name of this named argument.
     ///
     /// The name typically corresponds to a property or field name on the permission class,
-    /// such as "Read", "Write", "PathDiscovery" for file permissions, or "Flags" for
+    /// such as "Read", "Write", "`PathDiscovery`" for file permissions, or "Flags" for
     /// security permissions.
     ///
     /// # Examples

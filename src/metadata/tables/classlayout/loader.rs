@@ -1,7 +1,7 @@
-//! ClassLayout table loader implementation.
+//! `ClassLayout` table loader implementation.
 //!
 //! This module provides the [`crate::metadata::tables::classlayout::loader::ClassLayoutLoader`]
-//! implementation for loading ClassLayout metadata from the ECMA-335 ClassLayout table (0x0F).
+//! implementation for loading `ClassLayout` metadata from the ECMA-335 `ClassLayout` table (0x0F).
 //! The loader processes explicit memory layout information for value types and classes that
 //! require specific field positioning and packing, integrating this data with existing type definitions.
 //!
@@ -19,14 +19,14 @@
 //!
 //! # Table Structure
 //!
-//! The ClassLayout table contains zero or more rows that specify explicit layout for types:
-//! - **PackingSize**: Byte boundary alignment for fields (1, 2, 4, 8, 16, etc.)
-//! - **ClassSize**: Total size of the type in bytes (0 for auto-sizing)
-//! - **Parent**: Reference to the TypeDef table entry for the type
+//! The `ClassLayout` table contains zero or more rows that specify explicit layout for types:
+//! - **`PackingSize`**: Byte boundary alignment for fields (1, 2, 4, 8, 16, etc.)
+//! - **`ClassSize`**: Total size of the type in bytes (0 for auto-sizing)
+//! - **Parent**: Reference to the `TypeDef` table entry for the type
 //!
 //! # Memory Layout Control
 //!
-//! ClassLayout entries provide precise control over memory representation for types that need:
+//! `ClassLayout` entries provide precise control over memory representation for types that need:
 //! - **Native Interoperability**: Types that must match C/C++ struct layouts
 //! - **Performance Optimization**: Explicit packing to reduce memory overhead
 //! - **Binary Compatibility**: Fixed layouts for serialization or persistence
@@ -34,7 +34,7 @@
 //!
 //! # Dependencies
 //!
-//! This loader depends on the TypeDef table being loaded first, as it needs to update
+//! This loader depends on the `TypeDef` table being loaded first, as it needs to update
 //! existing type definition entries with memory layout information.
 //!
 //! # Integration
@@ -42,11 +42,11 @@
 //! This module integrates with:
 //! - [`crate::metadata::loader`] - Core metadata loading infrastructure
 //! - [`crate::metadata::tables::typedef`] - Type definition table entries
-//! - [`crate::metadata::tables::classlayout`] - ClassLayout table types
+//! - [`crate::metadata::tables::classlayout`] - `ClassLayout` table types
 //!
 //! # References
 //!
-//! - [ECMA-335 II.22.8](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - ClassLayout table specification
+//! - [ECMA-335 II.22.8](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `ClassLayout` table specification
 
 use crate::{
     metadata::{
@@ -57,32 +57,32 @@ use crate::{
     Result,
 };
 
-/// Loader for the ClassLayout metadata table
+/// Loader for the `ClassLayout` metadata table
 ///
-/// Implements [`crate::metadata::loader::MetadataLoader`] to process the ClassLayout table (0x0F)
+/// Implements [`crate::metadata::loader::MetadataLoader`] to process the `ClassLayout` table (0x0F)
 /// which contains explicit memory layout information for types that require specific field
 /// positioning and packing. This table is used primarily for value types and classes that
 /// interoperate with native code or have specific memory layout requirements.
 ///
 /// # Layout Types
 ///
-/// ClassLayout entries support various memory layout strategies:
+/// `ClassLayout` entries support various memory layout strategies:
 /// - **Sequential**: Fields laid out in declaration order with automatic padding
 /// - **Explicit**: Each field has an explicitly specified offset
-/// - **Auto**: Runtime determines optimal layout (no ClassLayout entry needed)
+/// - **Auto**: Runtime determines optimal layout (no `ClassLayout` entry needed)
 ///
 /// # Thread Safety
 ///
 /// This type is [`Send`] and [`Sync`] as it contains no mutable state and all operations
 /// are read-only during the metadata loading phase. The loader uses parallel iteration
-/// for performance when processing multiple ClassLayout entries.
+/// for performance when processing multiple `ClassLayout` entries.
 pub(crate) struct ClassLayoutLoader;
 
 impl MetadataLoader for ClassLayoutLoader {
-    /// Load ClassLayout metadata and integrate with type definitions
+    /// Load `ClassLayout` metadata and integrate with type definitions
     ///
-    /// Processes all rows in the ClassLayout table, resolving references to the
-    /// TypeDef table and updating existing type definitions with explicit
+    /// Processes all rows in the `ClassLayout` table, resolving references to the
+    /// `TypeDef` table and updating existing type definitions with explicit
     /// memory layout information. Each processed entry is stored in the
     /// loader context for subsequent access.
     ///
@@ -92,14 +92,14 @@ impl MetadataLoader for ClassLayoutLoader {
     ///
     /// # Returns
     ///
-    /// * `Ok(())` - All ClassLayout entries successfully processed and integrated
+    /// * `Ok(())` - All `ClassLayout` entries successfully processed and integrated
     /// * `Err(`[`crate::Error`]`)` - Processing failed due to malformed data or missing dependencies
     ///
     /// # Errors
     ///
     /// Returns [`crate::Error`] in the following cases:
-    /// - TypeDef table references are invalid or missing
-    /// - ClassLayout table structure is malformed
+    /// - `TypeDef` table references are invalid or missing
+    /// - `ClassLayout` table structure is malformed
     /// - Integration with existing type definitions fails
     /// - Invalid packing size or class size values
     ///
@@ -109,7 +109,7 @@ impl MetadataLoader for ClassLayoutLoader {
     /// Updates to type definitions are handled through atomic operations.
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) = header.table::<ClassLayoutRaw>(TableId::ClassLayout) {
+            if let Some(table) = header.table::<ClassLayoutRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned = row.to_owned(context.types)?;
                     owned.apply()?;
@@ -122,7 +122,7 @@ impl MetadataLoader for ClassLayoutLoader {
         Ok(())
     }
 
-    /// Returns the table identifier for ClassLayout
+    /// Returns the table identifier for `ClassLayout`
     ///
     /// Provides the [`crate::prelude::TableId::ClassLayout`] constant used to identify this table
     /// type within the metadata loading framework.
@@ -130,9 +130,9 @@ impl MetadataLoader for ClassLayoutLoader {
         TableId::ClassLayout
     }
 
-    /// Returns the table dependencies for ClassLayout loading
+    /// Returns the table dependencies for `ClassLayout` loading
     ///
-    /// Specifies that ClassLayout loading depends on the TypeDef table,
+    /// Specifies that `ClassLayout` loading depends on the `TypeDef` table,
     /// ensuring that type definitions are loaded before layout information
     /// is integrated. This dependency ordering prevents resolution failures
     /// during the loading process.

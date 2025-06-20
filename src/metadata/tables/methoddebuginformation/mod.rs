@@ -1,11 +1,11 @@
-//! MethodDebugInformation table implementation for Portable PDB format
+//! `MethodDebugInformation` table implementation for Portable PDB format
 //!
-//! This module provides access to MethodDebugInformation table data, which contains debugging
+//! This module provides access to `MethodDebugInformation` table data, which contains debugging
 //! information for methods including sequence points that map IL instructions to source code
 //! locations. Essential for step-through debugging by establishing the connection between
 //! compiled IL code and original source positions.
 //!
-//! The MethodDebugInformation table follows the dual-representation pattern used throughout
+//! The `MethodDebugInformation` table follows the dual-representation pattern used throughout
 //! the dotscope library:
 //! - [`MethodDebugInformationRaw`] for raw binary data with unresolved heap indices
 //! - [`MethodDebugInformation`] for processed data with resolved references
@@ -26,11 +26,11 @@
 //! - [`MethodDebugInformationList`] - Thread-safe append-only vector for collections
 //! - [`MethodDebugInformationRc`] - Reference-counted pointer for shared ownership
 //!
-//! # MethodDebugInformation Table Structure
+//! # `MethodDebugInformation` Table Structure
 //!
-//! Each MethodDebugInformation table row contains these fields:
+//! Each `MethodDebugInformation` table row contains these fields:
 //! - **Document**: Simple index into Document table (0 = no associated document)
-//! - **SequencePoints**: Blob heap index containing encoded sequence point data
+//! - **`SequencePoints`**: Blob heap index containing encoded sequence point data
 //!
 //! # Usage Examples
 //!
@@ -74,6 +74,7 @@ use std::sync::Arc;
 mod loader;
 mod owned;
 mod raw;
+mod reader;
 
 pub(crate) use loader::*;
 pub use owned::*;

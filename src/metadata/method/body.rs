@@ -35,7 +35,7 @@
 //! # Thread Safety
 //!
 //! All types in this module are thread-safe:
-//! - **MethodBody**: Immutable after construction
+//! - **`MethodBody`**: Immutable after construction
 //! - **Parsing**: No shared state during parsing operations
 //! - **Exception Handlers**: Read-only data structures
 //!

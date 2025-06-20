@@ -1,4 +1,4 @@
-//! Owned FieldPtr structures for the FieldPtr metadata table.
+//! Owned `FieldPtr` structures for the `FieldPtr` metadata table.
 //!
 //! This module provides the [`crate::metadata::tables::fieldptr::owned::FieldPtr`] struct which represents field pointer
 //! definitions with resolved references and owned data. Field pointers provide
@@ -6,7 +6,7 @@
 //! field ordering differs.
 //!
 //! # Purpose
-//! The FieldPtr table serves as an optimization mechanism in specific scenarios:
+//! The `FieldPtr` table serves as an optimization mechanism in specific scenarios:
 //! - **Field reordering**: When physical field layout differs from logical declaration order
 //! - **Metadata optimization**: Reducing overall metadata size through strategic organization
 //! - **Edit-and-continue**: Supporting field additions without breaking existing references
@@ -14,13 +14,13 @@
 //! - **Compressed metadata**: Optimizing field access patterns in compressed streams
 //!
 //! # Indirection Mechanism
-//! When FieldPtr table is present, field resolution follows this pattern:
+//! When `FieldPtr` table is present, field resolution follows this pattern:
 //! - **Logical index**: The index used in source code and IL
-//! - **FieldPtr entry**: Maps logical to physical index
+//! - **`FieldPtr` entry**: Maps logical to physical index
 //! - **Physical index**: Actual Field table entry location
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.18 for the FieldPtr table specification.
+//! See ECMA-335, Partition II, §22.18 for the `FieldPtr` table specification.
 
 use crate::metadata::token::Token;
 
@@ -40,18 +40,18 @@ use crate::metadata::token::Token;
 /// - **Platform optimization**: Field ordering based on target platform characteristics
 ///
 /// # ECMA-335 Reference
-/// See ECMA-335, Partition II, §22.18 for the complete FieldPtr table specification.
+/// See ECMA-335, Partition II, §22.18 for the complete `FieldPtr` table specification.
 pub struct FieldPtr {
-    /// The row identifier in the FieldPtr table.
+    /// The row identifier in the `FieldPtr` table.
     ///
-    /// This 1-based index uniquely identifies this field pointer within the FieldPtr table.
+    /// This 1-based index uniquely identifies this field pointer within the `FieldPtr` table.
     /// The RID represents the logical field index used for indirection.
     pub rid: u32,
 
     /// The metadata token for this field pointer.
     ///
     /// A [`crate::metadata::token::Token`] that uniquely identifies this field pointer across the entire assembly.
-    /// The token encodes both the table type (FieldPtr) and the row ID.
+    /// The token encodes both the table type (`FieldPtr`) and the row ID.
     pub token: Token,
 
     /// The byte offset of this field pointer in the metadata tables stream.
@@ -67,7 +67,7 @@ pub struct FieldPtr {
     /// index (RID) to physical field location.
     ///
     /// # Indirection Mapping
-    /// - **Logical index**: The RID of this FieldPtr entry
+    /// - **Logical index**: The RID of this `FieldPtr` entry
     /// - **Physical index**: This field value pointing to Field table
     /// - **Resolution**: `FieldPtr[logical_index].field → Field[physical_index]`
     pub field: u32,

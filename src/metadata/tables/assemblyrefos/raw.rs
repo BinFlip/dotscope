@@ -1,8 +1,8 @@
-//! Raw AssemblyRefOS table representation.
+//! Raw `AssemblyRefOS` table representation.
 //!
 //! This module provides the [`crate::metadata::tables::assemblyrefos::raw::AssemblyRefOsRaw`] struct
-//! for low-level access to AssemblyRefOS metadata table data with unresolved table indexes.
-//! This represents the binary format of AssemblyRefOS records as they appear in the metadata
+//! for low-level access to `AssemblyRefOS` metadata table data with unresolved table indexes.
+//! This represents the binary format of `AssemblyRefOS` records as they appear in the metadata
 //! tables stream, requiring resolution to create usable data structures.
 //!
 //! # Architecture
@@ -17,13 +17,13 @@
 //! - [`crate::metadata::tables::assemblyrefos::raw::AssemblyRefOsRaw::to_owned`] - Resolution to owned representation
 //! - [`crate::metadata::tables::assemblyrefos::raw::AssemblyRefOsRaw::apply`] - Direct application of OS data
 //!
-//! # AssemblyRefOS Table Format
+//! # `AssemblyRefOS` Table Format
 //!
-//! The AssemblyRefOS table (0x25) contains zero or more rows with these fields:
-//! - **OSPlatformId** (4 bytes): Operating system platform identifier
-//! - **OSMajorVersion** (4 bytes): Major version number of target OS
-//! - **OSMinorVersion** (4 bytes): Minor version number of target OS
-//! - **AssemblyRef** (2/4 bytes): Table index into AssemblyRef table
+//! The `AssemblyRefOS` table (0x25) contains zero or more rows with these fields:
+//! - **`OSPlatformId`** (4 bytes): Operating system platform identifier
+//! - **`OSMajorVersion`** (4 bytes): Major version number of target OS
+//! - **`OSMinorVersion`** (4 bytes): Minor version number of target OS
+//! - **`AssemblyRef`** (2/4 bytes): Table index into `AssemblyRef` table
 //!
 //! # Usage Examples
 //!
@@ -43,7 +43,7 @@
 //! # Error Handling
 //!
 //! Raw table operations can fail if:
-//! - Referenced AssemblyRef entries are missing from the provided map
+//! - Referenced `AssemblyRef` entries are missing from the provided map
 //! - Assembly reference tokens are invalid or malformed
 //! - Table data is corrupted or incomplete
 //!
@@ -62,36 +62,33 @@
 //!
 //! # References
 //!
-//! - [ECMA-335 II.22.7](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyRefOS table specification
+//! - [ECMA-335 II.22.7](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyRefOS` table specification
 
 use std::sync::{atomic::Ordering, Arc};
 
 use crate::{
-    file::io::{read_le_at, read_le_at_dyn},
     metadata::{
-        tables::{
-            AssemblyRefMap, AssemblyRefOs, AssemblyRefOsRc, RowDefinition, TableId, TableInfoRef,
-        },
+        tables::{AssemblyRefMap, AssemblyRefOs, AssemblyRefOsRc},
         token::Token,
     },
     Result,
 };
 
 #[derive(Clone, Debug)]
-/// Raw AssemblyRefOS table row with unresolved table indexes
+/// Raw `AssemblyRefOS` table row with unresolved table indexes
 ///
-/// Represents the binary format of an AssemblyRefOS metadata table entry (table ID 0x25) as stored
-/// in the metadata tables stream. The AssemblyRef field contains a table index that must be
+/// Represents the binary format of an `AssemblyRefOS` metadata table entry (table ID 0x25) as stored
+/// in the metadata tables stream. The `AssemblyRef` field contains a table index that must be
 /// resolved using the [`crate::metadata::tables::assemblyref::AssemblyRefMap`] to access the
 /// referenced assembly data.
 ///
-/// The AssemblyRefOS table specifies operating system compatibility requirements for external
+/// The `AssemblyRefOS` table specifies operating system compatibility requirements for external
 /// assembly references, allowing assemblies to declare explicit OS version dependencies.
 /// This table is rarely used in modern .NET assemblies and is considered legacy.
 ///
 /// # Operating System Targeting
 ///
-/// The AssemblyRefOS entry contains platform identification and version requirements:
+/// The `AssemblyRefOS` entry contains platform identification and version requirements:
 /// - **Platform ID**: Operating system family (Windows 32-bit, 64-bit, etc.)
 /// - **Major/Minor Version**: Target OS version numbers
 /// - **Assembly Reference**: Link to the external assembly requiring these OS constraints
@@ -109,22 +106,22 @@ use crate::{
 ///
 /// # References
 ///
-/// - [ECMA-335 II.22.7](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyRefOS table specification
+/// - [ECMA-335 II.22.7](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyRefOS` table specification
 pub struct AssemblyRefOsRaw {
-    /// Row identifier within the AssemblyRefOS metadata table
+    /// Row identifier within the `AssemblyRefOS` metadata table
     ///
-    /// The 1-based index of this AssemblyRefOS row within the table.
+    /// The 1-based index of this `AssemblyRefOS` row within the table.
     pub rid: u32,
 
-    /// Metadata token for this AssemblyRefOS entry
+    /// Metadata token for this `AssemblyRefOS` entry
     ///
-    /// Combines the table identifier (0x25 for AssemblyRefOS) with the row ID to create
+    /// Combines the table identifier (0x25 for `AssemblyRefOS`) with the row ID to create
     /// a unique token that can be used to reference this entry from other metadata.
     pub token: Token,
 
-    /// Byte offset of this AssemblyRefOS row within the metadata tables stream
+    /// Byte offset of this `AssemblyRefOS` row within the metadata tables stream
     ///
-    /// Physical location of the raw AssemblyRefOS data within the metadata binary format.
+    /// Physical location of the raw `AssemblyRefOS` data within the metadata binary format.
     /// Used for debugging and low-level metadata analysis.
     pub offset: usize,
 
@@ -146,7 +143,7 @@ pub struct AssemblyRefOsRaw {
     /// The minor version component of the required OS version (e.g., 1 for Windows 7).
     pub os_minor_version: u32,
 
-    /// Table index into the AssemblyRef table
+    /// Table index into the `AssemblyRef` table
     ///
     /// 1-based index referencing the [`crate::metadata::tables::assemblyref::AssemblyRefRaw`]
     /// entry that represents the external assembly these OS requirements apply to.
@@ -155,10 +152,10 @@ pub struct AssemblyRefOsRaw {
 }
 
 impl AssemblyRefOsRaw {
-    /// Convert raw AssemblyRefOS data to owned representation with resolved references
+    /// Convert raw `AssemblyRefOS` data to owned representation with resolved references
     ///
     /// Creates an [`crate::metadata::tables::assemblyrefos::AssemblyRefOsRc`] from this raw data
-    /// by resolving the AssemblyRef table index to the actual assembly reference. The resulting
+    /// by resolving the `AssemblyRef` table index to the actual assembly reference. The resulting
     /// structure contains all necessary data for representing OS compatibility requirements in
     /// a usable form without requiring further table lookups.
     ///
@@ -173,15 +170,15 @@ impl AssemblyRefOsRaw {
     ///
     /// # Returns
     ///
-    /// * `Ok(`[`crate::metadata::tables::assemblyrefos::AssemblyRefOsRc`]`)` - Successfully resolved AssemblyRefOS data
+    /// * `Ok(`[`crate::metadata::tables::assemblyrefos::AssemblyRefOsRc`]`)` - Successfully resolved `AssemblyRefOS` data
     /// * `Err(`[`crate::Error`]`)` - Assembly reference resolution failed
     ///
     /// # Errors
     ///
     /// Returns [`crate::Error`] if:
-    /// - The referenced AssemblyRef entry cannot be found in the provided map
+    /// - The referenced `AssemblyRef` entry cannot be found in the provided map
     /// - The assembly reference token is invalid or malformed
-    /// - The AssemblyRef table index is out of bounds
+    /// - The `AssemblyRef` table index is out of bounds
     ///
     /// # Thread Safety
     ///
@@ -210,11 +207,11 @@ impl AssemblyRefOsRaw {
     /// Apply operating system compatibility information directly to the referenced assembly
     ///
     /// Updates the assembly reference with OS platform and version information from this
-    /// AssemblyRefOS entry without creating an owned representation. This is used when
-    /// only the OS data needs to be applied without retaining the AssemblyRefOS structure,
+    /// `AssemblyRefOS` entry without creating an owned representation. This is used when
+    /// only the OS data needs to be applied without retaining the `AssemblyRefOS` structure,
     /// providing a more efficient path for bulk OS data application.
     ///
-    /// The method resolves the AssemblyRef table index and uses atomic operations to update
+    /// The method resolves the `AssemblyRef` table index and uses atomic operations to update
     /// the OS compatibility fields in the referenced assembly entry, ensuring thread-safe
     /// modifications without requiring external synchronization.
     ///
@@ -231,15 +228,15 @@ impl AssemblyRefOsRaw {
     /// # Errors
     ///
     /// Returns [`crate::Error`] if:
-    /// - The referenced AssemblyRef entry cannot be found in the provided map
+    /// - The referenced `AssemblyRef` entry cannot be found in the provided map
     /// - The assembly reference token is invalid or malformed  
-    /// - The AssemblyRef table index is out of bounds
+    /// - The `AssemblyRef` table index is out of bounds
     ///
     /// # Thread Safety
     ///
     /// This method is thread-safe and uses atomic operations ([`std::sync::atomic::Ordering::Relaxed`])
     /// to update assembly reference fields. Multiple threads can safely call this method
-    /// concurrently on different AssemblyRefOS entries.
+    /// concurrently on different `AssemblyRefOS` entries.
     pub fn apply(&self, refs: &AssemblyRefMap) -> Result<()> {
         match refs.get(&Token::new(self.assembly_ref | 0x2300_0000)) {
             Some(entry) => {
@@ -260,117 +257,6 @@ impl AssemblyRefOsRaw {
                 "Failed to resolve assemblyref token - {}",
                 self.assembly_ref | 0x2300_0000
             )),
-        }
-    }
-}
-
-impl<'a> RowDefinition<'a> for AssemblyRefOsRaw {
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* os_platform_id */   4 +
-            /* os_major_version */ 4 +
-            /* os_minor_version */ 4 +
-            /* assembly_ref */     sizes.table_index_bytes(TableId::AssemblyRef)
-        )
-    }
-
-    fn read_row(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
-        Ok(AssemblyRefOsRaw {
-            rid,
-            token: Token::new(0x2500_0000 + rid),
-            offset: *offset,
-            os_platform_id: read_le_at::<u32>(data, offset)?,
-            os_major_version: read_le_at::<u32>(data, offset)?,
-            os_minor_version: read_le_at::<u32>(data, offset)?,
-            assembly_ref: read_le_at_dyn(data, offset, sizes.is_large(TableId::AssemblyRef))?,
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::metadata::tables::{MetadataTable, TableId, TableInfo};
-
-    #[test]
-    fn crafted_short() {
-        let data = vec![
-            0x01, 0x01, 0x01, 0x01, // os_platform_id
-            0x02, 0x02, 0x02, 0x02, // os_major_version
-            0x03, 0x03, 0x03, 0x03, // os_minor_version
-            0x04, 0x04, // assembly_ref
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[(TableId::AssemblyRefOS, 1)],
-            false,
-            false,
-            false,
-        ));
-        let table = MetadataTable::<AssemblyRefOsRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: AssemblyRefOsRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x25000001);
-            assert_eq!(row.os_platform_id, 0x01010101);
-            assert_eq!(row.os_major_version, 0x02020202);
-            assert_eq!(row.os_minor_version, 0x03030303);
-            assert_eq!(row.assembly_ref, 0x0404);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
-    }
-
-    #[test]
-    fn crafted_long() {
-        let data = vec![
-            0x01, 0x01, 0x01, 0x01, // os_platform_id
-            0x02, 0x02, 0x02, 0x02, // os_major_version
-            0x03, 0x03, 0x03, 0x03, // os_minor_version
-            0x04, 0x04, 0x04, 0x04, // assembly_ref
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[(TableId::AssemblyRefOS, 1)],
-            true,
-            true,
-            true,
-        ));
-        let table = MetadataTable::<AssemblyRefOsRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: AssemblyRefOsRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x25000001);
-            assert_eq!(row.os_platform_id, 0x01010101);
-            assert_eq!(row.os_major_version, 0x02020202);
-            assert_eq!(row.os_minor_version, 0x03030303);
-            assert_eq!(row.assembly_ref, 0x0404);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
         }
     }
 }

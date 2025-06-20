@@ -8,12 +8,12 @@
 //! # Event Table Format
 //!
 //! The Event table (0x14) contains event definitions with these fields:
-//! - **EventFlags** (2 bytes): Event attributes bitmask
+//! - **`EventFlags`** (2 bytes): Event attributes bitmask
 //! - **Name** (2/4 bytes): String heap index for event name
-//! - **EventType** (2/4 bytes): TypeDefOrRef coded index for event handler type
+//! - **`EventType`** (2/4 bytes): `TypeDefOrRef` coded index for event handler type
 //!
 //! Events define notification mechanisms that types can expose. They are associated
-//! with accessor methods (add/remove/raise/other) through the MethodSemantics table.
+//! with accessor methods (add/remove/raise/other) through the `MethodSemantics` table.
 //!
 //! # Reference
 //! - [ECMA-335 II.22.13](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Event table specification
@@ -21,10 +21,9 @@
 use std::sync::{Arc, OnceLock};
 
 use crate::{
-    file::io::{read_le_at, read_le_at_dyn},
     metadata::{
         streams::Strings,
-        tables::{CodedIndex, CodedIndexType, Event, EventRc, RowDefinition, TableInfoRef},
+        tables::{CodedIndex, Event, EventRc},
         token::Token,
         typesystem::TypeRegistry,
     },
@@ -78,8 +77,8 @@ pub struct EventRaw {
 
     /// Event handler type coded index (unresolved)
     ///
-    /// TypeDefOrRef coded index referencing the delegate type that defines the
-    /// event handler signature. Can point to TypeDef, TypeRef, or TypeSpec tables.
+    /// `TypeDefOrRef` coded index referencing the delegate type that defines the
+    /// event handler signature. Can point to `TypeDef`, `TypeRef`, or `TypeSpec` tables.
     /// Must be resolved using the type registry to obtain the actual type reference.
     pub event_type: CodedIndex,
 }
@@ -142,148 +141,17 @@ impl EventRaw {
     ///
     /// Events define notification interfaces but don't create direct relationships
     /// with other metadata during initial loading. Event accessor methods (add/remove/raise/other)
-    /// are resolved separately through the MethodSemantics table processing, which occurs
+    /// are resolved separately through the `MethodSemantics` table processing, which occurs
     /// after basic table loading is complete.
     ///
     /// # Returns
     ///
     /// Always returns `Ok(())` since events don't perform cross-table modifications
     /// during the initial loading phase.
+    ///
+    /// # Errors
+    /// This function never returns an error.
     pub fn apply(&self) -> Result<()> {
         Ok(())
-    }
-}
-
-impl<'a> RowDefinition<'a> for EventRaw {
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* flags */      2 +
-            /* name */       sizes.str_bytes() +
-            /* event_type */ sizes.coded_index_bytes(CodedIndexType::TypeDefOrRef)
-        )
-    }
-
-    fn read_row(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
-        let offset_org = *offset;
-
-        let flags = u32::from(read_le_at::<u16>(data, offset)?);
-        let name = read_le_at_dyn(data, offset, sizes.is_large_str())?;
-        let event_type = CodedIndex::read(data, offset, sizes, CodedIndexType::TypeDefOrRef)?;
-
-        Ok(EventRaw {
-            rid,
-            token: Token::new(0x1400_0000 + rid),
-            offset: offset_org,
-            flags,
-            name,
-            event_type,
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::metadata::tables::{MetadataTable, TableId, TableInfo};
-
-    use super::*;
-
-    #[test]
-    fn crafted_short() {
-        let data = vec![
-            0x01, 0x01, // flags
-            0x02, 0x02, // name
-            0x00, 0x03, // event_type (tag 0 = TypeDef, index 3)
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[
-                (TableId::TypeDef, 1),
-                (TableId::TypeRef, 1),
-                (TableId::TypeSpec, 1),
-            ],
-            false,
-            false,
-            false,
-        ));
-        let table = MetadataTable::<EventRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: EventRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x14000001);
-            assert_eq!(row.flags, 0x0101);
-            assert_eq!(row.name, 0x0202);
-            assert_eq!(
-                row.event_type,
-                CodedIndex {
-                    tag: TableId::TypeDef,
-                    row: 192,
-                    token: Token::new(192 | 0x02000000),
-                }
-            );
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
-    }
-
-    #[test]
-    fn crafted_long() {
-        let data = vec![
-            0x01, 0x01, // flags
-            0x02, 0x02, 0x02, 0x02, // name
-            0x00, 0x03, 0x03, 0x03, // event_type (tag 0 = TypeDef, index 3)
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[
-                (TableId::TypeDef, u16::MAX as u32 + 3),
-                (TableId::TypeRef, 1),
-                (TableId::TypeSpec, 1),
-            ],
-            true,
-            true,
-            true,
-        ));
-        let table = MetadataTable::<EventRaw>::new(&data, u16::MAX as u32 + 3, sizes).unwrap();
-
-        let eval = |row: EventRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x14000001);
-            assert_eq!(row.flags, 0x0101);
-            assert_eq!(row.name, 0x02020202);
-            assert_eq!(
-                row.event_type,
-                CodedIndex {
-                    tag: TableId::TypeDef,
-                    row: 0xC0C0C0,
-                    token: Token::new(0xC0C0C0 | 0x02000000)
-                }
-            );
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
     }
 }

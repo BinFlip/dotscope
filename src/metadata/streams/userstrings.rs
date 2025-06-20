@@ -107,7 +107,9 @@ impl<'a> UserStrings<'a> {
     ///
     /// # Returns
     /// * `Ok(UserStrings)` - Valid heap accessor
-    /// * `Err(`[`crate::Error::OutOfBounds`]`)` - If data is empty or doesn't start with null byte
+    ///
+    /// # Errors
+    /// * [`crate::Error::OutOfBounds`] - If data is empty or doesn't start with null byte
     ///
     /// # Examples
     ///
@@ -138,8 +140,10 @@ impl<'a> UserStrings<'a> {
     ///
     /// # Returns
     /// * `Ok(&U16CStr)` - Reference to the UTF-16 string at the specified offset
-    /// * `Err(`[`crate::Error::OutOfBounds`]`)` - If index is out of bounds
-    /// * `Err(`[`crate::Error`]`)` - If string data is malformed or has invalid UTF-16 length
+    ///
+    /// # Errors
+    /// * [`crate::Error::OutOfBounds`] - If index is out of bounds
+    /// * [`crate::Error`] - If string data is malformed or has invalid UTF-16 length
     ///
     /// # Examples
     ///

@@ -58,7 +58,7 @@ impl MetadataLoader for FieldLoader {
         if let (Some(header), Some(strings), Some(blob)) =
             (context.meta, context.strings, context.blobs)
         {
-            if let Some(table) = header.table::<FieldRaw>(TableId::Field) {
+            if let Some(table) = header.table::<FieldRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let res = row.to_owned(blob, strings)?;
 

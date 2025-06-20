@@ -350,13 +350,20 @@ impl CilPrimitiveData {
     /// and validates data length for each primitive type.
     ///
     /// # Arguments
-    /// * `type_byte` - ELEMENT_TYPE constant identifying the primitive type
+    /// * `type_byte` - `ELEMENT_TYPE` constant identifying the primitive type
     /// * `data` - Raw byte data containing the encoded value
     ///
     /// # Returns
     /// * `Ok(CilPrimitiveData)` - Successfully parsed primitive value
     /// * `Err(OutOfBounds)` - Data buffer too short for the specified type
     /// * `Err(Error)` - Invalid data encoding or unsupported type
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// - The data buffer is too short for the specified primitive type
+    /// - The `type_byte` represents an unsupported or invalid primitive type
+    /// - The data encoding is malformed for the specified type
     ///
     /// # Encoding Format
     ///
@@ -483,11 +490,11 @@ pub struct CilPrimitive {
 ///
 /// `CilPrimitiveKind` provides a complete enumeration of built-in .NET primitive types
 /// as defined in the ECMA-335 specification. Each variant corresponds to a specific
-/// System type and ELEMENT_TYPE constant.
+/// System type and `ELEMENT_TYPE` constant.
 ///
 /// # ECMA-335 Mapping
 ///
-/// This enum directly maps to ELEMENT_TYPE constants (§II.23.1.16):
+/// This enum directly maps to `ELEMENT_TYPE` constants (§II.23.1.16):
 /// - Numeric types (I1, U1, I2, U2, I4, U4, I8, U8, R4, R8)
 /// - Platform types (I, U for native integers)
 /// - Character and string types (CHAR, STRING)
@@ -496,7 +503,7 @@ pub struct CilPrimitive {
 ///
 /// # Artificial Tokens
 ///
-/// Each primitive kind has an associated artificial token (0xF000_XXXX range)
+/// Each primitive kind has an associated artificial token (`0xF000_XXXX` range)
 /// for use in type resolution and metadata table operations.
 ///
 /// # Examples
@@ -515,39 +522,39 @@ pub struct CilPrimitive {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CilPrimitiveKind {
-    /// System.Void - represents no value or return type (ELEMENT_TYPE_VOID)
+    /// System.Void - represents no value or return type (`ELEMENT_TYPE_VOID`)
     Void,
-    /// System.Boolean - true/false value, single byte storage (ELEMENT_TYPE_BOOLEAN)
+    /// System.Boolean - true/false value, single byte storage (`ELEMENT_TYPE_BOOLEAN`)
     Boolean,
-    /// System.Char - Unicode UTF-16 code unit, 16-bit value (ELEMENT_TYPE_CHAR)
+    /// System.Char - Unicode UTF-16 code unit, 16-bit value (`ELEMENT_TYPE_CHAR`)
     Char,
-    /// System.SByte - signed 8-bit integer (-128 to 127) (ELEMENT_TYPE_I1)
+    /// System.SByte - signed 8-bit integer (-128 to 127) (`ELEMENT_TYPE_I1`)
     I1,
-    /// System.Byte - unsigned 8-bit integer (0 to 255) (ELEMENT_TYPE_U1)
+    /// System.Byte - unsigned 8-bit integer (0 to 255) (`ELEMENT_TYPE_U1`)
     U1,
-    /// System.Int16 - signed 16-bit integer (-32,768 to 32,767) (ELEMENT_TYPE_I2)
+    /// System.Int16 - signed 16-bit integer (-32,768 to 32,767) (`ELEMENT_TYPE_I2`)
     I2,
-    /// System.UInt16 - unsigned 16-bit integer (0 to 65,535) (ELEMENT_TYPE_U2)
+    /// System.UInt16 - unsigned 16-bit integer (0 to 65,535) (`ELEMENT_TYPE_U2`)
     U2,
-    /// System.Int32 - signed 32-bit integer (-2^31 to 2^31-1) (ELEMENT_TYPE_I4)
+    /// System.Int32 - signed 32-bit integer (-2^31 to 2^31-1) (`ELEMENT_TYPE_I4`)
     I4,
-    /// System.UInt32 - unsigned 32-bit integer (0 to 2^32-1) (ELEMENT_TYPE_U4)
+    /// System.UInt32 - unsigned 32-bit integer (0 to 2^32-1) (`ELEMENT_TYPE_U4`)
     U4,
-    /// System.Int64 - signed 64-bit integer (-2^63 to 2^63-1) (ELEMENT_TYPE_I8)
+    /// System.Int64 - signed 64-bit integer (-2^63 to 2^63-1) (`ELEMENT_TYPE_I8`)
     I8,
-    /// System.UInt64 - unsigned 64-bit integer (0 to 2^64-1) (ELEMENT_TYPE_U8)
+    /// System.UInt64 - unsigned 64-bit integer (0 to 2^64-1) (`ELEMENT_TYPE_U8`)
     U8,
-    /// System.Single - 32-bit IEEE 754 floating point (ELEMENT_TYPE_R4)
+    /// System.Single - 32-bit IEEE 754 floating point (`ELEMENT_TYPE_R4`)
     R4,
-    /// System.Double - 64-bit IEEE 754 floating point (ELEMENT_TYPE_R8)
+    /// System.Double - 64-bit IEEE 754 floating point (`ELEMENT_TYPE_R8`)
     R8,
-    /// System.IntPtr - platform-specific signed integer (pointer-sized) (ELEMENT_TYPE_I)
+    /// System.IntPtr - platform-specific signed integer (pointer-sized) (`ELEMENT_TYPE_I`)
     I,
-    /// System.UIntPtr - platform-specific unsigned integer (pointer-sized) (ELEMENT_TYPE_U)
+    /// System.UIntPtr - platform-specific unsigned integer (pointer-sized) (`ELEMENT_TYPE_U`)
     U,
-    /// System.Object - root of the .NET type hierarchy, all types derive from this (ELEMENT_TYPE_OBJECT)
+    /// System.Object - root of the .NET type hierarchy, all types derive from this (`ELEMENT_TYPE_OBJECT`)
     Object,
-    /// System.String - immutable sequence of UTF-16 characters (ELEMENT_TYPE_STRING)
+    /// System.String - immutable sequence of UTF-16 characters (`ELEMENT_TYPE_STRING`)
     String,
     /// Null reference constant - used for null literal values in metadata
     Null,
@@ -555,25 +562,25 @@ pub enum CilPrimitiveKind {
     TypedReference,
     /// System.ValueType - base class for all value types (structs, enums)
     ValueType,
-    /// Generic type parameter (T, U, etc.) from type definitions (ELEMENT_TYPE_VAR)
+    /// Generic type parameter (T, U, etc.) from type definitions (`ELEMENT_TYPE_VAR`)
     Var,
-    /// Generic method parameter (T, U, etc.) from method definitions (ELEMENT_TYPE_MVAR)
+    /// Generic method parameter (T, U, etc.) from method definitions (`ELEMENT_TYPE_MVAR`)
     MVar,
-    /// General class reference - used for non-primitive reference types (ELEMENT_TYPE_CLASS)
+    /// General class reference - used for non-primitive reference types (`ELEMENT_TYPE_CLASS`)
     Class,
 }
 
 impl CilPrimitiveKind {
     /// Get the artificial token for this primitive type.
     ///
-    /// Returns a unique artificial token in the 0xF000_XXXX range that can be used
+    /// Returns a unique artificial token in the `0xF000_XXXX` range that can be used
     /// to represent this primitive type in metadata operations and type resolution.
     /// These tokens do not correspond to actual metadata table entries but provide
     /// a consistent identifier for primitive types.
     ///
     /// # Token Range
     ///
-    /// All primitive tokens use the artificial range 0xF000_0001 to 0xF000_0017,
+    /// All primitive tokens use the artificial range `0xF000_0001` to `0xF000_0017`,
     /// which avoids conflicts with actual metadata table tokens.
     ///
     /// # Returns
@@ -619,22 +626,27 @@ impl CilPrimitiveKind {
         })
     }
 
-    /// Parse primitive type from ELEMENT_TYPE byte constant.
+    /// Parse primitive type from `ELEMENT_TYPE` byte constant.
     ///
-    /// Converts an ELEMENT_TYPE constant from ECMA-335 metadata into the corresponding
+    /// Converts an `ELEMENT_TYPE` constant from ECMA-335 metadata into the corresponding
     /// primitive type. This is used when parsing type signatures and metadata tables
     /// that contain element type specifications.
     ///
     /// # Arguments
-    /// * `type_byte` - ELEMENT_TYPE constant from metadata (see ECMA-335 §II.23.1.16)
+    /// * `type_byte` - `ELEMENT_TYPE` constant from metadata (see ECMA-335 §II.23.1.16)
     ///
     /// # Returns
     /// * `Ok(CilPrimitiveKind)` - Successfully parsed primitive type
     /// * `Err(TypeNotPrimitive)` - Byte does not represent a valid primitive type
     ///
-    /// # ELEMENT_TYPE Mapping
+    /// # Errors
     ///
-    /// Maps standard ELEMENT_TYPE constants to primitive kinds:
+    /// This function will return an error if the provided byte does not correspond
+    /// to a valid primitive type constant as defined in ECMA-335.
+    ///
+    /// # `ELEMENT_TYPE` Mapping
+    ///
+    /// Maps standard `ELEMENT_TYPE` constants to primitive kinds:
     /// - `ELEMENT_TYPE_BOOLEAN` (0x02) → `Boolean`
     /// - `ELEMENT_TYPE_I4` (0x08) → `I4`
     /// - `ELEMENT_TYPE_STRING` (0x0E) → `String`

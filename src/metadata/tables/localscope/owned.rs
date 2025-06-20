@@ -1,7 +1,7 @@
-//! Owned LocalScope representation for resolved metadata access
+//! Owned `LocalScope` representation for resolved metadata access
 //!
 //! This module provides the [`LocalScope`] struct which represents fully resolved
-//! LocalScope table data with convenient access methods for scope analysis and
+//! `LocalScope` table data with convenient access methods for scope analysis and
 //! debugging support.
 
 use crate::metadata::{
@@ -10,7 +10,7 @@ use crate::metadata::{
     token::Token,
 };
 
-/// Owned representation of a LocalScope table entry with resolved references
+/// Owned representation of a `LocalScope` table entry with resolved references
 ///
 /// This structure provides a fully resolved view of local scope information,
 /// containing all necessary data for scope analysis and debugging operations.
@@ -19,7 +19,7 @@ use crate::metadata::{
 ///
 /// # Scope Analysis
 ///
-/// LocalScope entries define the ranges where local variables and constants
+/// `LocalScope` entries define the ranges where local variables and constants
 /// are visible within method IL code. Each scope has:
 /// - Clear start and end boundaries (IL offsets)
 /// - Associated variables and constants (fully resolved)
@@ -29,16 +29,16 @@ use crate::metadata::{
 /// # Reference Resolution
 ///
 /// All table indices have been resolved to their actual objects:
-/// - `method`: Strong reference to the containing MethodDef
-/// - `import_scope`: Optional strong reference to ImportScope
-/// - `variables`: Complete vector of LocalVariable entries
-/// - `constants`: Complete vector of LocalConstant entries
+/// - `method`: Strong reference to the containing `MethodDef`
+/// - `import_scope`: Optional strong reference to `ImportScope`
+/// - `variables`: Complete vector of `LocalVariable` entries
+/// - `constants`: Complete vector of `LocalConstant` entries
 #[derive(Clone)]
 pub struct LocalScope {
-    /// Row identifier (1-based index in the LocalScope table)
+    /// Row identifier (1-based index in the `LocalScope` table)
     pub rid: u32,
 
-    /// Metadata token for this LocalScope entry (0x32000000 + rid)
+    /// Metadata token for this `LocalScope` entry (0x32000000 + rid)
     pub token: Token,
 
     /// Byte offset of this row in the original metadata stream
@@ -77,14 +77,14 @@ pub struct LocalScope {
     /// Length of this scope in IL instruction bytes
     ///
     /// Number of IL bytes that this scope covers. The scope extends
-    /// from start_offset to (start_offset + length - 1).
+    /// from `start_offset` to (`start_offset` + length - 1).
     pub length: u32,
 }
 
 impl LocalScope {
     /// Returns the IL offset where this scope ends
     ///
-    /// Calculates the end offset as start_offset + length, representing
+    /// Calculates the end offset as `start_offset` + length, representing
     /// the first IL offset that is no longer part of this scope.
     ///
     /// # Example
@@ -161,7 +161,7 @@ impl LocalScope {
 
     /// Checks if the given IL offset falls within this scope
     ///
-    /// Returns true if the offset is within the range [start_offset, end_offset).
+    /// Returns true if the offset is within the range [`start_offset`, `end_offset`).
     /// The end offset is exclusive, following standard range conventions.
     ///
     /// # Arguments

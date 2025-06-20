@@ -68,7 +68,7 @@ impl MetadataLoader for ParamLoader {
     /// Uses parallel iteration and concurrent storage operations for thread safety.
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
-            if let Some(table) = header.table::<ParamRaw>(TableId::Param) {
+            if let Some(table) = header.table::<ParamRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let res = row.to_owned(strings)?;
 

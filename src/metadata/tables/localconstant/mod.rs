@@ -1,6 +1,6 @@
-//! LocalConstant table module for Portable PDB format
+//! `LocalConstant` table module for Portable PDB format
 //!
-//! This module provides complete support for the Portable PDB LocalConstant metadata table (0x34),
+//! This module provides complete support for the Portable PDB `LocalConstant` metadata table (0x34),
 //! which stores information about local constants within method scopes, including their names,
 //! signatures, and constant values. It includes raw table access, resolved data structures, constant
 //! analysis, and integration with the broader metadata system.
@@ -9,12 +9,12 @@
 //!
 //! - [`LocalConstantRaw`]: Raw table structure with unresolved heap indices
 //! - [`LocalConstant`]: Owned variant with resolved references and constant information
-//! - [`LocalConstantLoader`]: Internal loader for processing LocalConstant table data
+//! - [`LocalConstantLoader`]: Internal loader for processing `LocalConstant` table data
 //! - Type aliases for efficient collections and reference management
 //!
-//! # LocalConstant Table Structure
+//! # `LocalConstant` Table Structure
 //!
-//! Each LocalConstant table row contains these fields:
+//! Each `LocalConstant` table row contains these fields:
 //! - **Name**: Index into #Strings heap for the constant name
 //! - **Signature**: Index into #Blob heap for the constant signature
 //!
@@ -51,6 +51,7 @@ use std::sync::Arc;
 mod loader;
 mod owned;
 mod raw;
+mod reader;
 
 pub(crate) use loader::*;
 pub use owned::*;

@@ -1,4 +1,4 @@
-//! Owned InterfaceImpl table structure with resolved type references.
+//! Owned `InterfaceImpl` table structure with resolved type references.
 //!
 //! This module provides the [`crate::metadata::tables::interfaceimpl::owned::InterfaceImpl`] struct, which represents interface implementation
 //! entries with all type references resolved and data owned. Unlike [`crate::metadata::tables::interfaceimpl::raw::InterfaceImplRaw`], this
@@ -12,7 +12,7 @@ use crate::{
     Result,
 };
 
-/// Owned InterfaceImpl table entry with resolved type references and owned data.
+/// Owned `InterfaceImpl` table entry with resolved type references and owned data.
 ///
 /// This structure represents an interface implementation relationship with all coded indexes
 /// resolved to their target type structures. It defines which types implement which interfaces,
@@ -21,15 +21,15 @@ use crate::{
 /// # Interface Implementation Types
 /// The structure handles two distinct relationship patterns:
 /// - **Class implements interface**: Standard interface implementation by concrete types
-/// - **Interface extends interface**: Interface inheritance (incorrectly placed in InterfaceImpl by compiler)
+/// - **Interface extends interface**: Interface inheritance (incorrectly placed in `InterfaceImpl` by compiler)
 pub struct InterfaceImpl {
-    /// Row identifier within the InterfaceImpl table.
+    /// Row identifier within the `InterfaceImpl` table.
     ///
     /// Unique identifier for this interface implementation entry, used for internal
     /// table management and cross-references.
     pub rid: u32,
 
-    /// Metadata token identifying this InterfaceImpl entry.
+    /// Metadata token identifying this `InterfaceImpl` entry.
     ///
     /// The token enables efficient lookup and reference to this interface implementation
     /// from other metadata structures and runtime systems.
@@ -69,9 +69,12 @@ impl InterfaceImpl {
     /// # Returns
     /// * `Ok(())` - Interface implementation applied successfully
     /// * `Err(_)` - Reserved for future error conditions (currently infallible)
+    /// # Errors
+    ///
+    /// This function never returns an error; it always returns `Ok(())`.
     pub fn apply(&self) -> Result<()> {
         // Check if this is interface inheritance (both class and interface are interfaces)
-        // The .NET compiler incorrectly puts interface inheritance in InterfaceImpl table
+        // The .NET compiler incorrectly puts interface inheritance in `InterfaceImpl` table
         let class_is_interface = self.class.flags & TypeAttributes::INTERFACE != 0;
         let interface_is_interface = self.interface.flags & TypeAttributes::INTERFACE != 0;
 

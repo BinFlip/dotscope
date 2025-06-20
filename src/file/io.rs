@@ -14,7 +14,6 @@
 //! - Automatic bounds checking to prevent buffer overruns
 //! - Support for both fixed-size and dynamic-size field reading
 //! - Consistent error handling through the [`crate::Result`] type
-//! - Zero-copy operations that work directly on byte slices
 //!
 //! # Key Components
 //!
@@ -100,6 +99,13 @@
 //! if there are insufficient bytes in the buffer to complete the read operation. This ensures
 //! memory safety and prevents buffer overruns during parsing.
 //!
+//! # Thread Safety
+//!
+//! All functions and types in this module are thread-safe. The [`crate::file::io::CilIO`] trait
+//! implementations are based on primitive types and standard library functions that are inherently
+//! thread-safe. All reading functions are pure operations that don't modify shared state,
+//! making them safe to call concurrently from multiple threads.
+//!
 //! # Integration
 //!
 //! This module integrates with:
@@ -145,6 +151,11 @@ use crate::{Error::OutOfBounds, Result};
 /// let value = u32::from_be_bytes(bytes);
 /// assert_eq!(value, 1);
 /// ```
+///
+/// # Thread Safety
+///
+/// All implementations of [`CilIO`] are thread-safe as they only work with primitive types
+/// and perform pure conversion operations without any shared state modification.
 pub trait CilIO: Sized {
     /// Associated type representing the byte array type for this numeric type.
     ///
@@ -340,6 +351,10 @@ impl CilIO for isize {
 /// assert_eq!(value, 1);
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// This function is thread-safe and can be called concurrently from multiple threads.
 pub fn read_le<T: CilIO>(data: &[u8]) -> Result<T> {
     let mut offset = 0_usize;
     read_le_at(data, &mut offset)
@@ -376,6 +391,11 @@ pub fn read_le<T: CilIO>(data: &[u8]) -> Result<T> {
 /// assert_eq!(offset, 4);
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// This function is thread-safe and can be called concurrently from multiple threads.
+/// Note that the offset parameter is modified, so each thread should use its own offset variable.
 pub fn read_le_at<T: CilIO>(data: &[u8], offset: &mut usize) -> Result<T> {
     let type_len = std::mem::size_of::<T>();
     if (type_len + *offset) > data.len() {
@@ -426,6 +446,11 @@ pub fn read_le_at<T: CilIO>(data: &[u8], offset: &mut usize) -> Result<T> {
 /// assert_eq!(offset, 6);
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// This function is thread-safe and can be called concurrently from multiple threads.
+/// Note that the offset parameter is modified, so each thread should use its own offset variable.
 pub fn read_le_at_dyn(data: &[u8], offset: &mut usize, is_large: bool) -> Result<u32> {
     let res = if is_large {
         read_le_at::<u32>(data, offset)?
@@ -460,6 +485,10 @@ pub fn read_le_at_dyn(data: &[u8], offset: &mut usize, is_large: bool) -> Result
 /// assert_eq!(value, 1);
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// This function is thread-safe and can be called concurrently from multiple threads.
 pub fn read_be<T: CilIO>(data: &[u8]) -> Result<T> {
     let mut offset = 0_usize;
     read_be_at(data, &mut offset)
@@ -497,6 +526,11 @@ pub fn read_be<T: CilIO>(data: &[u8]) -> Result<T> {
 /// assert_eq!(offset, 4);
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// This function is thread-safe and can be called concurrently from multiple threads.
+/// Note that the offset parameter is modified, so each thread should use its own offset variable.
 pub fn read_be_at<T: CilIO>(data: &[u8], offset: &mut usize) -> Result<T> {
     let type_len = std::mem::size_of::<T>();
     if (type_len + *offset) > data.len() {
@@ -548,6 +582,11 @@ pub fn read_be_at<T: CilIO>(data: &[u8], offset: &mut usize) -> Result<T> {
 /// assert_eq!(offset, 6);
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// This function is thread-safe and can be called concurrently from multiple threads.
+/// Note that the offset parameter is modified, so each thread should use its own offset variable.
 pub fn read_be_at_dyn(data: &[u8], offset: &mut usize, is_large: bool) -> Result<u32> {
     let res = if is_large {
         read_be_at::<u32>(data, offset)?

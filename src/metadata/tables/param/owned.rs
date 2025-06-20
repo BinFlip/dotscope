@@ -81,15 +81,15 @@ pub struct Param {
     /// May be None for compiler-generated or unnamed parameters.
     pub name: Option<String>,
 
-    /// Default value for this parameter when HAS_DEFAULT flag is set.
+    /// Default value for this parameter when `HAS_DEFAULT` flag is set.
     ///
     /// Thread-safe lazy initialization of default values from the Constant table.
     /// Only populated when [`ParamAttributes::HAS_DEFAULT`](crate::metadata::tables::ParamAttributes::HAS_DEFAULT) is set.
     pub default: OnceLock<CilPrimitive>,
 
-    /// Marshalling information for P/Invoke when HAS_FIELD_MARSHAL flag is set.
+    /// Marshalling information for P/Invoke when `HAS_FIELD_MARSHAL` flag is set.
     ///
-    /// Thread-safe lazy initialization of marshalling information from the FieldMarshal table.
+    /// Thread-safe lazy initialization of marshalling information from the `FieldMarshal` table.
     /// Only populated when [`ParamAttributes::HAS_FIELD_MARSHAL`](crate::metadata::tables::ParamAttributes::HAS_FIELD_MARSHAL) is set.
     pub marshal: OnceLock<MarshallingInfo>,
 

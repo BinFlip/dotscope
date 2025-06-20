@@ -1,40 +1,49 @@
-//! CustomDebugInformation table implementation for Portable PDB format
+//! `CustomDebugInformation` table module.
 //!
-//! This module provides access to CustomDebugInformation table data, which contains
-//! custom debugging metadata that can be defined by compilers or tools. This table
-//! provides extensibility for debugging scenarios beyond the standard Portable PDB tables.
-//!
-//! The CustomDebugInformation table follows the dual-representation pattern used throughout
-//! the dotscope library:
-//! - [`CustomDebugInformationRaw`] for raw binary data with unresolved indices
-//! - [`CustomDebugInformation`] for processed data with resolved token values
+//! This module provides complete support for the Portable PDB `CustomDebugInformation` metadata table (0x37),
+//! which contains custom debugging information that extends the standard debugging metadata with
+//! compiler and language-specific debugging data. It includes raw table access, resolved data structures,
+//! and integration with the broader debugging system.
 //!
 //! # Architecture
 //!
-//! The CustomDebugInformation table allows tools to store additional debugging information
-//! that is specific to their implementation or language features. This information is
-//! associated with various metadata elements (methods, types, fields, etc.) through
-//! the Parent column and identified by a GUID in the Kind column.
+//! The `CustomDebugInformation` module follows the standard dual variant pattern with raw and owned
+//! representations. Raw entries contain unresolved heap indexes, while owned entries
+//! provide fully resolved references integrated with target metadata elements and parsed
+//! debugging data.
 //!
 //! # Key Components
 //!
-//! - [`CustomDebugInformationRaw`] - Raw table structure with unresolved heap indices
-//! - [`CustomDebugInformation`] - Owned variant with resolved references and blob data
-//! - [`CustomDebugInformationLoader`] - Internal loader for processing table data
-//! - [`CustomDebugInformationMap`] - Thread-safe concurrent map for caching entries
-//! - [`CustomDebugInformationList`] - Thread-safe append-only vector for collections
-//! - [`CustomDebugInformationRc`] - Reference-counted pointer for shared ownership
+//! - [`crate::metadata::tables::customdebuginformation::raw::CustomDebugInformationRaw`] - Raw table structure with unresolved indexes
+//! - [`crate::metadata::tables::customdebuginformation::owned::CustomDebugInformation`] - Owned variant with resolved references
+//! - [`crate::metadata::tables::customdebuginformation::loader::CustomDebugInformationLoader`] - Internal loader for processing table data
+//! - [`crate::metadata::tables::customdebuginformation::CustomDebugInformationMap`] - Token-based lookup map
+//! - [`crate::metadata::tables::customdebuginformation::CustomDebugInformationList`] - Collection type
+//! - [`crate::metadata::tables::customdebuginformation::CustomDebugInformationRc`] - Reference-counted pointer
+//!
+//! # `CustomDebugInformation` Table Structure
+//!
+//! The `CustomDebugInformation` table contains zero or more rows with these fields:
+//! - **Parent**: Coded index referencing the metadata element with custom debug info
+//! - **Kind**: GUID heap reference identifying the custom debug info format
+//! - **Value**: Blob heap reference containing the custom debug data
+//!
+//! # Usage Context
+//!
+//! Custom debugging information is used for:
+//! - **State machine debugging**: Async/await and iterator state tracking
+//! - **Dynamic type debugging**: Information for dynamically typed variables
+//! - **Edit-and-continue**: Mapping information for debugging sessions
+//! - **Embedded sources**: Source code embedding for portable debugging
+//! - **Source link**: URL mapping for source server integration
+//! - **Language-specific data**: Compiler-specific debugging extensions
 //!
 //! # Common Custom Debug Information Types
 //!
 //! Several well-known custom debug information types are defined by Microsoft compilers:
-//!
-//! ### State Machine Information
 //! - **State Machine Hoisted Local Scopes**: Scope information for variables hoisted to state machine fields
 //! - **Edit and Continue Local Slot Map**: Maps local variables to their syntax positions for edit-and-continue
 //! - **Edit and Continue Lambda and Closure Map**: Maps lambdas and closures to their implementing methods
-//!
-//! ### Dynamic and Source Information  
 //! - **Dynamic Local Variables**: Tracks which types were originally declared as `dynamic` in C#
 //! - **Default Namespace**: VB.NET project default namespace information
 //! - **Embedded Source**: Source code embedded directly in the PDB
@@ -43,39 +52,45 @@
 //! # Usage Examples
 //!
 //! ```rust,ignore
-//! # use dotscope::metadata::loader::LoaderContext;
-//! # fn example(context: &LoaderContext) -> dotscope::Result<()> {
+//! # use dotscope::metadata::tables::customdebuginformation::CustomDebugInformation;
+//! # use dotscope::metadata::token::Token;
+//! # fn example(custom_info: &CustomDebugInformation) -> dotscope::Result<()> {
 //! // Access custom debug information for a method
-//! use crate::metadata::tables::CustomDebugInformation;
-//! use crate::metadata::token::Token;
-//!
 //! let method_token = Token::new(0x06000001); // MethodDef token
 //!
-//! for custom_info in context.custom_debug_information.values() {
-//!     if custom_info.parent_token() == method_token {
-//!         println!("Found custom debug info: {:?}", custom_info.kind);
-//!         // Process the custom information blob
-//!         let data = custom_info.value;
-//!         // ... interpret based on the GUID in custom_info.kind
-//!     }
+//! if custom_info.parent_token() == method_token {
+//!     println!("Found custom debug info kind: {:?}", custom_info.kind());
+//!     // Process the custom information blob
+//!     let data = custom_info.value();
+//!     // ... interpret based on the GUID in custom_info.kind()
 //! }
 //! # Ok(())
 //! # }
 //! ```
 //!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::tables`] - Core metadata table infrastructure
+//! - [`crate::metadata::token`] - Token-based metadata references
+//! - [`crate::metadata::loader`] - Metadata loading system
+//! - [`crate::metadata::streams::Guid`] - GUID heap for debug info kinds
+//! - [`crate::metadata::streams::Blob`] - Blob heap for debug data
+//!
 //! # Thread Safety
 //!
-//! All types in this module are [`Send`] and [`Sync`]. The [`CustomDebugInformationMap`]
-//! uses lock-free concurrent data structures for efficient multi-threaded access.
+//! All types in this module are thread-safe through the use of atomic operations
+//! and concurrent data structures. Custom debugging information can be safely accessed
+//! and processed from multiple threads simultaneously.
 //!
 //! # References
 //!
-//! - [Portable PDB Format - CustomDebugInformation Table](https://github.com/dotnet/corefx/blob/master/src/System.Reflection.Metadata/specs/PortablePdb-Metadata.md#customdebuginformation-table-0x37)
-//! - [Custom Debug Information Records](https://github.com/dotnet/corefx/blob/master/src/System.Reflection.Metadata/specs/PortablePdb-Metadata.md#language-specific-custom-debug-information-records)
+//! - [Portable PDB v1.1](https://github.com/dotnet/corefx/blob/master/src/System.Reflection.Metadata/specs/PortablePdb-Metadata.md#customdebuginformation-table-0x37) - `CustomDebugInformation` table specification
 
 mod loader;
 mod owned;
 mod raw;
+mod reader;
 
 pub(crate) use loader::*;
 pub use owned::*;
@@ -85,20 +100,20 @@ use crate::metadata::token::Token;
 use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
 
-/// A map that holds the mapping of [`crate::metadata::token::Token`] to parsed [`CustomDebugInformation`]
+/// Thread-safe map that holds the mapping of [`crate::metadata::token::Token`] to parsed [`crate::metadata::tables::customdebuginformation::CustomDebugInformation`] instances
 ///
-/// Thread-safe concurrent map using skip list data structure for efficient lookups
-/// and insertions. Used to cache resolved custom debug information by their metadata tokens.
+/// Concurrent skip list-based map providing efficient lookups and insertions for
+/// `CustomDebugInformation` entries indexed by their metadata tokens.
 pub type CustomDebugInformationMap = SkipMap<Token, CustomDebugInformationRc>;
 
-/// A vector that holds a list of [`CustomDebugInformation`] references
+/// Thread-safe vector that holds a list of [`crate::metadata::tables::customdebuginformation::CustomDebugInformation`] references for efficient access
 ///
-/// Thread-safe append-only vector for storing custom debug information collections. Uses atomic operations
-/// for lock-free concurrent access and is optimized for scenarios with frequent reads.
+/// Append-only vector using atomic operations for lock-free concurrent access,
+/// optimized for scenarios with frequent reads of `CustomDebugInformation` collections.
 pub type CustomDebugInformationList = Arc<boxcar::Vec<CustomDebugInformationRc>>;
 
-/// A reference-counted pointer to a [`CustomDebugInformation`]
+/// Reference-counted smart pointer to a [`crate::metadata::tables::customdebuginformation::CustomDebugInformation`] instance for shared ownership
 ///
-/// Provides shared ownership and automatic memory management for custom debug information instances.
-/// Multiple references can safely point to the same custom debug information data across threads.
+/// Provides shared ownership and automatic memory management for `CustomDebugInformation` instances,
+/// enabling safe sharing across multiple threads and contexts.
 pub type CustomDebugInformationRc = Arc<CustomDebugInformation>;

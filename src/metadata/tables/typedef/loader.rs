@@ -1,13 +1,13 @@
-//! # TypeDef Table Loader
+//! # `TypeDef` Table Loader
 //!
-//! This module provides loading functionality for the TypeDef metadata table (ID 0x02).
-//! The TypeDef table is the primary table for type definitions within a .NET assembly,
+//! This module provides loading functionality for the `TypeDef` metadata table (ID 0x02).
+//! The `TypeDef` table is the primary table for type definitions within a .NET assembly,
 //! containing all types (classes, interfaces, enums, structs, delegates) defined in
 //! the current assembly. This is one of the most critical tables in the metadata system.
 //!
 //! ## Purpose
 //!
-//! The TypeDef table serves as the foundation for type system operations:
+//! The `TypeDef` table serves as the foundation for type system operations:
 //! - **Type Definitions**: Contains all types defined within the assembly
 //! - **Type Hierarchy**: Establishes inheritance relationships and type structure
 //! - **Member Organization**: Links types to their fields, methods, properties, and events
@@ -15,7 +15,7 @@
 //!
 //! ## Loading Process
 //!
-//! 1. **Detection**: Checks if TypeDef table exists in metadata header
+//! 1. **Detection**: Checks if `TypeDef` table exists in metadata header
 //! 2. **Sequential Processing**: Loads type definitions in declaration order
 //! 3. **String Resolution**: Resolves type names from the string heap
 //! 4. **Member Linking**: Establishes connections to fields and methods
@@ -25,14 +25,14 @@
 //! ## Dependencies
 //!
 //! - **Field Table**: Required for field member resolution
-//! - **FieldPtr Table**: Required for field indirection resolution
-//! - **MethodDef Table**: Required for method member resolution
-//! - **MethodPtr Table**: Required for method indirection resolution
-//! - **TypeRef Table**: Required for base type and interface resolution
+//! - **`FieldPtr` Table**: Required for field indirection resolution
+//! - **`MethodDef` Table**: Required for method member resolution
+//! - **`MethodPtr` Table**: Required for method indirection resolution
+//! - **`TypeRef` Table**: Required for base type and interface resolution
 //!
 //! ## Type System Integration
 //!
-//! TypeDef entries are integrated into the type system registry:
+//! `TypeDef` entries are integrated into the type system registry:
 //! - **Global Registration**: Types are registered for cross-assembly access
 //! - **Inheritance Chains**: Base type relationships are established
 //! - **Generic Types**: Generic type definitions and constraints are processed
@@ -45,7 +45,7 @@
 //!
 //! ## References
 //!
-//! - ECMA-335, Partition II, §22.37 - TypeDef table specification
+//! - ECMA-335, Partition II, §22.37 - `TypeDef` table specification
 //! - [`crate::metadata::tables::TypeDefRaw`] - Raw table entry structure
 //! - [`crate::metadata::typesystem::CilType`] - Type system integration
 
@@ -57,9 +57,9 @@ use crate::{
     Result,
 };
 
-/// Loader implementation for the TypeDef metadata table.
+/// Loader implementation for the `TypeDef` metadata table.
 ///
-/// This loader processes TypeDef table entries (ID 0x02) that define all types
+/// This loader processes `TypeDef` table entries (ID 0x02) that define all types
 /// within the current assembly. It handles the loading, resolution, and integration
 /// of type definitions with the broader metadata type system, establishing the
 /// foundation for all type-related operations.
@@ -67,7 +67,7 @@ use crate::{
 /// ## Loading Strategy
 ///
 /// The loader employs a comprehensive type processing approach:
-/// - Iterates through all TypeDef entries in declaration order
+/// - Iterates through all `TypeDef` entries in declaration order
 /// - Resolves type names and namespaces from string heap
 /// - Links types to their field and method members
 /// - Handles field and method pointer indirection when present
@@ -98,7 +98,7 @@ use crate::{
 pub(crate) struct TypeDefLoader;
 
 impl MetadataLoader for TypeDefLoader {
-    /// Loads and processes all TypeDef table entries from the metadata.
+    /// Loads and processes all `TypeDef` table entries from the metadata.
     ///
     /// ## Arguments
     ///
@@ -110,7 +110,7 @@ impl MetadataLoader for TypeDefLoader {
     /// * `Err(_)` - Type loading or validation failed
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
-            if let Some(table) = header.table::<TypeDefRaw>(TableId::TypeDef) {
+            if let Some(table) = header.table::<TypeDefRaw>() {
                 for row in table {
                     let res = row.to_owned(
                         |coded_index| context.get_ref(coded_index),
@@ -129,7 +129,7 @@ impl MetadataLoader for TypeDefLoader {
         Ok(())
     }
 
-    /// Returns the table identifier for the TypeDef table.
+    /// Returns the table identifier for the `TypeDef` table.
     ///
     /// ## Returns
     ///
@@ -138,16 +138,16 @@ impl MetadataLoader for TypeDefLoader {
         TableId::TypeDef
     }
 
-    /// Returns the dependency list for TypeDef table loading.
+    /// Returns the dependency list for `TypeDef` table loading.
     ///
-    /// The TypeDef table depends on several other tables for proper type
+    /// The `TypeDef` table depends on several other tables for proper type
     /// definition resolution and member linking:
     ///
-    /// - **Field**: Required for field member resolution and type-field relationships
-    /// - **FieldPtr**: Required for field pointer indirection when present
-    /// - **MethodDef**: Required for method member resolution and type-method relationships
-    /// - **MethodPtr**: Required for method pointer indirection when present
-    /// - **TypeRef**: Required for base type and interface reference resolution
+    /// - **`Field`**: Required for field member resolution and type-field relationships
+    /// - **`FieldPtr`**: Required for field pointer indirection when present
+    /// - **`MethodDef`**: Required for method member resolution and type-method relationships
+    /// - **`MethodPtr`**: Required for method pointer indirection when present
+    /// - **`TypeRef`**: Required for base type and interface reference resolution
     ///
     /// ## Returns
     ///

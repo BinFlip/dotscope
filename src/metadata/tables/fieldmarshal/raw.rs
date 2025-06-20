@@ -1,21 +1,21 @@
-//! Raw FieldMarshal structures for the FieldMarshal metadata table.
+//! Raw `FieldMarshal` structures for the `FieldMarshal` metadata table.
 //!
 //! This module provides the [`crate::metadata::tables::fieldmarshal::raw::FieldMarshalRaw`] struct for reading field marshal data
-//! directly from metadata tables before index resolution. The FieldMarshal table specifies
+//! directly from metadata tables before index resolution. The `FieldMarshal` table specifies
 //! marshalling behavior for fields and parameters when crossing managed/unmanaged boundaries.
 //!
 //! # Table Structure
-//! The FieldMarshal table (TableId = 0x0D) contains these columns:
-//! - `Parent`: HasFieldMarshal coded index (Field or Param reference)
+//! The `FieldMarshal` table (`TableId` = 0x0D) contains these columns:
+//! - `Parent`: `HasFieldMarshal` coded index (Field or Param reference)
 //! - `NativeType`: Blob heap index containing marshalling signature
 //!
 //! # Coded Index Types
-//! The Parent field uses the HasFieldMarshal coded index which can reference:
+//! The Parent field uses the `HasFieldMarshal` coded index which can reference:
 //! - **Field table entries**: For field marshalling specifications
 //! - **Param table entries**: For parameter marshalling specifications
 //!
 //! # Marshalling Context
-//! FieldMarshal entries are essential for interop scenarios:
+//! `FieldMarshal` entries are essential for interop scenarios:
 //! - **P/Invoke calls**: Parameter conversion for native function calls
 //! - **COM interop**: Field and parameter handling for COM objects
 //! - **Custom marshalling**: User-defined conversion behavior
@@ -23,33 +23,29 @@
 //! - **String processing**: Character encoding and memory management
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.17 for the FieldMarshal table specification.
+//! See ECMA-335, Partition II, §22.17 for the `FieldMarshal` table specification.
 
 use std::sync::Arc;
 
 use crate::{
-    file::io::read_le_at_dyn,
     metadata::{
         marshalling::parse_marshalling_descriptor,
         streams::Blob,
-        tables::{
-            CodedIndex, CodedIndexType, FieldMap, FieldMarshal, FieldMarshalRc, ParamMap,
-            RowDefinition, TableId, TableInfoRef,
-        },
+        tables::{CodedIndex, FieldMap, FieldMarshal, FieldMarshalRc, ParamMap, TableId},
         token::Token,
         typesystem::CilTypeReference,
     },
     Result,
 };
 
-/// Raw field marshal data read directly from the FieldMarshal metadata table.
+/// Raw field marshal data read directly from the `FieldMarshal` metadata table.
 ///
 /// This structure represents a field marshal entry before index resolution and blob
 /// parsing. Field marshals specify how fields and parameters should be converted
 /// when crossing managed/unmanaged boundaries during interop operations.
 ///
 /// # Binary Format
-/// Each row in the FieldMarshal table has this layout:
+/// Each row in the `FieldMarshal` table has this layout:
 /// ```text
 /// Offset | Size | Field      | Description
 /// -------|------|------------|----------------------------------
@@ -60,7 +56,7 @@ use crate::{
 /// The field sizes depend on the coded index size and blob heap size.
 ///
 /// # Marshalling Context
-/// FieldMarshal entries define conversion rules for:
+/// `FieldMarshal` entries define conversion rules for:
 /// - **P/Invoke parameters**: Method parameter conversion for native calls
 /// - **Interop fields**: Struct field marshalling for COM/native interop
 /// - **Custom marshallers**: User-defined conversion classes
@@ -68,17 +64,17 @@ use crate::{
 /// - **String marshalling**: Character encoding and memory strategies
 ///
 /// # Parent Entity Types
-/// The HasFieldMarshal coded index can reference:
+/// The `HasFieldMarshal` coded index can reference:
 /// - **Field entities**: For field marshalling in interop structures
 /// - **Parameter entities**: For parameter marshalling in P/Invoke methods
 ///
 /// # ECMA-335 Reference
-/// See ECMA-335, Partition II, §22.17 for the complete FieldMarshal table specification.
+/// See ECMA-335, Partition II, §22.17 for the complete `FieldMarshal` table specification.
 #[derive(Clone, Debug)]
 pub struct FieldMarshalRaw {
-    /// The row identifier in the FieldMarshal table.
+    /// The row identifier in the `FieldMarshal` table.
     ///
-    /// This 1-based index uniquely identifies this field marshal within the FieldMarshal table.
+    /// This 1-based index uniquely identifies this field marshal within the `FieldMarshal` table.
     pub rid: u32,
 
     /// The metadata token for this field marshal.
@@ -93,7 +89,7 @@ pub struct FieldMarshalRaw {
     /// metadata tables stream, used for binary parsing and navigation.
     pub offset: usize,
 
-    /// HasFieldMarshal coded index referencing the target entity.
+    /// `HasFieldMarshal` coded index referencing the target entity.
     ///
     /// A [`crate::metadata::tables::CodedIndex`] that can reference either a Field or Param table entry.
     /// This determines which entity the marshalling specification applies to.
@@ -207,125 +203,5 @@ impl FieldMarshalRaw {
                 blob.get(self.native_type as usize)?,
             )?),
         }))
-    }
-}
-
-impl<'a> RowDefinition<'a> for FieldMarshalRaw {
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* parent */      sizes.coded_index_bytes(CodedIndexType::HasFieldMarshal) +
-            /* native_type */ sizes.blob_bytes()
-        )
-    }
-
-    fn read_row(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
-        let offset_org = *offset;
-
-        Ok(FieldMarshalRaw {
-            rid,
-            token: Token::new(0x0D00_0000 + rid),
-            offset: offset_org,
-            parent: CodedIndex::read(data, offset, sizes, CodedIndexType::HasFieldMarshal)?,
-            native_type: read_le_at_dyn(data, offset, sizes.is_large_blob())?,
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::metadata::tables::{MetadataTable, TableId, TableInfo};
-
-    use super::*;
-
-    #[test]
-    fn crafted_short() {
-        let data = vec![
-            0x02, 0x02, // parent
-            0x03, 0x03, // native_type
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[(TableId::Field, 1), (TableId::Param, 1)],
-            false,
-            false,
-            false,
-        ));
-        let table = MetadataTable::<FieldMarshalRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: FieldMarshalRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x0D000001);
-            assert_eq!(
-                row.parent,
-                CodedIndex {
-                    tag: TableId::Field,
-                    row: 257,
-                    token: Token::new(257 | 0x04000000),
-                }
-            );
-            assert_eq!(row.native_type, 0x303);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
-    }
-
-    #[test]
-    fn crafted_long() {
-        let data = vec![
-            0x02, 0x02, 0x02, 0x02, // parent
-            0x03, 0x03, 0x03, 0x03, // native_type
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[
-                (TableId::Field, u16::MAX as u32 + 3),
-                (TableId::Param, u16::MAX as u32 + 3),
-            ],
-            true,
-            true,
-            true,
-        ));
-        let table =
-            MetadataTable::<FieldMarshalRaw>::new(&data, u16::MAX as u32 + 3, sizes).unwrap();
-
-        let eval = |row: FieldMarshalRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x0D000001);
-            assert_eq!(
-                row.parent,
-                CodedIndex {
-                    tag: TableId::Field,
-                    row: 0x1010101,
-                    token: Token::new(0x1010101 | 0x04000000),
-                }
-            );
-            assert_eq!(row.native_type, 0x3030303);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
     }
 }

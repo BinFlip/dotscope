@@ -82,12 +82,6 @@
 //!
 //! The [`crate::metadata::streams::tablesheader::TablesHeader`] implementation prioritizes memory efficiency and performance:
 //!
-//! ### Zero-Copy Architecture
-//! - **Borrowed references**: All table data remains in original assembly buffer
-//! - **Lazy parsing**: Table rows parsed only when accessed
-//! - **Minimal overhead**: Table metadata cached, but data stays in place
-//! - **Lifetime safety**: Rust borrow checker prevents dangling references
-//!
 //! ### Optimized Access Patterns
 //! - **Direct indexing**: O(1) random access to any table row
 //! - **Sequential iteration**: Efficient streaming through large tables
@@ -107,8 +101,8 @@
 //! println!("Assembly contains {} metadata tables", tables.table_count());
 //!
 //! // Access type definitions
-//! if let Some(typedef_table) = tables.table::<TypeDefRaw>(TableId::TypeDef) {
-//!     println!("Found {} type definitions", typedef_table.row_count());
+//! if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
+//!     println!("Found {} type definitions", typedef_table.row_count);
 //!     
 //!     // Examine first few types
 //!     for (index, type_def) in typedef_table.iter().enumerate().take(5) {
@@ -118,8 +112,8 @@
 //! }
 //!
 //! // Access method definitions
-//! if let Some(method_table) = tables.table::<MethodDefRaw>(TableId::MethodDef) {
-//!     println!("Found {} method definitions", method_table.row_count());
+//! if let Some(method_table) = tables.table::<MethodDefRaw>() {
+//!     println!("Found {} method definitions", method_table.row_count);
 //!     
 //!     // Find methods by characteristics
 //!     let static_methods = method_table.iter()
@@ -140,20 +134,20 @@
 //!
 //! // Analyze types and their fields together
 //! if let (Some(typedef_table), Some(field_table)) = (
-//!     tables.table::<TypeDefRaw>(TableId::TypeDef),
-//!     tables.table::<FieldRaw>(TableId::Field)
+//!     tables.table::<TypeDefRaw>(),
+//!     tables.table::<FieldRaw>()
 //! ) {
 //!     for (type_idx, type_def) in typedef_table.iter().enumerate().take(10) {
 //!         // Calculate field range for this type
 //!         let field_start = type_def.field_list.saturating_sub(1) as usize;
 //!         
 //!         // Find field range end (next type's field_list or table end)
-//!         let field_end = if type_idx + 1 < typedef_table.row_count() as usize {
+//!         let field_end = if type_idx + 1 < typedef_table.row_count as usize {
 //!             typedef_table.get((type_idx + 1) as u32)
 //!                 .map(|next_type| next_type.field_list.saturating_sub(1) as usize)
-//!                 .unwrap_or(field_table.row_count() as usize)
+//!                 .unwrap_or(field_table.row_count as usize)
 //!         } else {
-//!             field_table.row_count() as usize
+//!             field_table.row_count as usize
 //!         };
 //!         
 //!         let field_count = field_end.saturating_sub(field_start);
@@ -174,8 +168,8 @@
 //! let tables = TablesHeader::from(tables_data)?;
 //!
 //! // Process custom attributes in parallel for large assemblies
-//! if let Some(ca_table) = tables.table::<CustomAttributeRaw>(TableId::CustomAttribute) {
-//!     println!("Processing {} custom attributes in parallel", ca_table.row_count());
+//! if let Some(ca_table) = tables.table::<CustomAttributeRaw>() {
+//!     println!("Processing {} custom attributes in parallel", ca_table.row_count);
 //!     
 //!     // Parallel analysis using rayon
 //!     let attribute_stats = ca_table.par_iter()
@@ -201,9 +195,9 @@
 //! let tables = TablesHeader::from(tables_data)?;
 //!
 //! // Process large tables in chunks to manage memory usage
-//! if let Some(memberref_table) = tables.table::<MemberRefRaw>(TableId::MemberRef) {
+//! if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
 //!     const CHUNK_SIZE: u32 = 1000;
-//!     let total_rows = memberref_table.row_count();
+//!     let total_rows = memberref_table.row_count;
 //!     
 //!     println!("Processing {} member references in chunks of {}", total_rows, CHUNK_SIZE);
 //!     
@@ -304,6 +298,7 @@ use strum::IntoEnumIterator;
 
 use crate::{
     file::io::read_le,
+    impl_table_access,
     metadata::tables::{
         AssemblyOsRaw, AssemblyProcessorRaw, AssemblyRaw, AssemblyRefOsRaw,
         AssemblyRefProcessorRaw, AssemblyRefRaw, ClassLayoutRaw, ConstantRaw, CustomAttributeRaw,
@@ -314,8 +309,8 @@ use crate::{
         ManifestResourceRaw, MemberRefRaw, MetadataTable, MethodDebugInformationRaw, MethodDefRaw,
         MethodImplRaw, MethodPtrRaw, MethodSemanticsRaw, MethodSpecRaw, ModuleRaw, ModuleRefRaw,
         NestedClassRaw, ParamPtrRaw, ParamRaw, PropertyMapRaw, PropertyPtrRaw, PropertyRaw,
-        RowDefinition, StandAloneSigRaw, StateMachineMethodRaw, TableData, TableId, TableInfo,
-        TableInfoRef, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
+        RowReadable, StandAloneSigRaw, StateMachineMethodRaw, TableAccess, TableData, TableId,
+        TableInfo, TableInfoRef, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
     },
     Error::OutOfBounds,
     Result,
@@ -329,10 +324,9 @@ use crate::{
 ///
 /// ## Architecture and Design
 ///
-/// [`crate::metadata::streams::tablesheader::TablesHeader`] implements a zero-copy, reference-based design that maximizes performance
+/// [`crate::metadata::streams::tablesheader::TablesHeader`] implements a lazy-loading design that maximizes performance
 /// while maintaining memory safety through Rust's lifetime system:
 ///
-/// - **Zero allocation**: All table data remains in the original assembly buffer
 /// - **Lazy parsing**: Table rows are parsed only when accessed
 /// - **Type safety**: Generic type parameters prevent incorrect table access
 /// - **Lifetime safety**: Rust borrow checker prevents dangling references
@@ -345,27 +339,27 @@ use crate::{
 ///
 /// ### Core Tables (Always Present)
 /// - **Module**: Assembly module identification and versioning
-/// - **TypeDef**: Type definitions declared in this assembly
-/// - **MethodDef**: Method definitions and IL code references
-/// - **Field**: Field definitions and attributes
+/// - **`TypeDef`**: Type definitions declared in this assembly
+/// - **`MethodDef`**: Method definitions and IL code references
+/// - **`Field`**: Field definitions and attributes
 ///
 /// ### Reference Tables (External Dependencies)
-/// - **TypeRef**: References to types in other assemblies
-/// - **MemberRef**: References to methods/fields in external types
-/// - **AssemblyRef**: External assembly dependencies
-/// - **ModuleRef**: Multi-module assembly references
+/// - **`TypeRef`**: References to types in other assemblies
+/// - **`MemberRef`**: References to methods/fields in external types
+/// - **`AssemblyRef`**: External assembly dependencies
+/// - **`ModuleRef`**: Multi-module assembly references
 ///
 /// ### Relationship Tables (Type System Structure)
-/// - **InterfaceImpl**: Interface implementation relationships
-/// - **NestedClass**: Nested type parent-child relationships
-/// - **GenericParam**: Generic type and method parameters
-/// - **GenericParamConstraint**: Generic parameter constraints
+/// - **`InterfaceImpl`**: Interface implementation relationships
+/// - **`NestedClass`**: Nested type parent-child relationships
+/// - **`GenericParam`**: Generic type and method parameters
+/// - **`GenericParamConstraint`**: Generic parameter constraints
 ///
 /// ### Attribute and Metadata Tables
-/// - **CustomAttribute**: Custom attribute applications
-/// - **Constant**: Compile-time constant values
-/// - **DeclSecurity**: Declarative security permissions
-/// - **FieldMarshal**: Native interop marshalling specifications
+/// - **`CustomAttribute`**: Custom attribute applications
+/// - **`Constant`**: Compile-time constant values
+/// - **`DeclSecurity`**: Declarative security permissions
+/// - **`FieldMarshal`**: Native interop marshalling specifications
 ///
 /// ## Thread Safety and Concurrency
 ///
@@ -386,9 +380,9 @@ use crate::{
 ///
 /// // Safe table presence checking
 /// if tables.has_table(TableId::TypeDef) {
-///     let typedef_table = tables.table::<TypeDefRaw>(TableId::TypeDef).unwrap();
+///     let typedef_table = tables.table::<TypeDefRaw>().unwrap();
 ///     
-///     println!("Assembly defines {} types", typedef_table.row_count());
+///     println!("Assembly defines {} types", typedef_table.row_count);
 ///     
 ///     // Analyze type characteristics
 ///     for (index, type_def) in typedef_table.iter().enumerate().take(10) {
@@ -413,9 +407,9 @@ use crate::{
 ///
 /// // Analyze complete type structure with members
 /// if let (Some(typedef_table), Some(field_table), Some(method_table)) = (
-///     tables.table::<TypeDefRaw>(TableId::TypeDef),
-///     tables.table::<FieldRaw>(TableId::Field),
-///     tables.table::<MethodDefRaw>(TableId::MethodDef)
+///     tables.table::<TypeDefRaw>(),
+///     tables.table::<FieldRaw>(),
+///     tables.table::<MethodDefRaw>()
 /// ) {
 ///     for (type_idx, type_def) in typedef_table.iter().enumerate().take(5) {
 ///         // Calculate member ranges for this type
@@ -424,12 +418,12 @@ use crate::{
 ///         let field_start = type_def.field_list.saturating_sub(1);
 ///         let field_end = next_type.as_ref()
 ///             .map(|t| t.field_list.saturating_sub(1))
-///             .unwrap_or(field_table.row_count());
+///             .unwrap_or(field_table.row_count);
 ///         
 ///         let method_start = type_def.method_list.saturating_sub(1);
 ///         let method_end = next_type.as_ref()
 ///             .map(|t| t.method_list.saturating_sub(1))
-///             .unwrap_or(method_table.row_count());
+///             .unwrap_or(method_table.row_count);
 ///         
 ///         println!("Type {}: {} fields, {} methods",
 ///                  type_idx,
@@ -451,7 +445,7 @@ use crate::{
 /// let tables = TablesHeader::from(tables_data)?;
 ///
 /// // Parallel analysis of custom attributes
-/// if let Some(ca_table) = tables.table::<CustomAttributeRaw>(TableId::CustomAttribute) {
+/// if let Some(ca_table) = tables.table::<CustomAttributeRaw>() {
 ///     // Process attributes in parallel for large assemblies
 ///     let attribute_analysis: HashMap<u32, u32> = ca_table.par_iter()
 ///         .map(|attr| {
@@ -484,9 +478,9 @@ use crate::{
 /// let tables = TablesHeader::from(tables_data)?;
 ///
 /// // Process large tables without loading all data into memory
-/// if let Some(memberref_table) = tables.table::<MemberRefRaw>(TableId::MemberRef) {
+/// if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
 ///     const CHUNK_SIZE: u32 = 1000;
-///     let total_rows = memberref_table.row_count();
+///     let total_rows = memberref_table.row_count;
 ///     
 ///     println!("Processing {} member references in {} chunks",
 ///              total_rows, (total_rows + CHUNK_SIZE - 1) / CHUNK_SIZE);
@@ -612,8 +606,8 @@ use crate::{
 /// // Check if a table is present before accessing it
 /// if tables_header.has_table(TableId::TypeDef) {
 ///     // Get efficient access to the TypeDef table
-///     if let Some(typedef_table) = tables_header.table::<TypeDefRaw>(TableId::TypeDef) {
-///         println!("TypeDef table has {} rows", typedef_table.row_count());
+///     if let Some(typedef_table) = tables_header.table::<TypeDefRaw>() {
+///         println!("TypeDef table has {} rows", typedef_table.row_count);
 ///         
 ///         // Access individual rows by index (0-based)
 ///         if let Some(first_type) = typedef_table.get(0) {
@@ -632,7 +626,7 @@ use crate::{
 ///
 /// # fn example(tables_header: &TablesHeader) -> dotscope::Result<()> {
 /// // Iterate over all methods in the assembly
-/// if let Some(method_table) = tables_header.table::<MethodDefRaw>(TableId::MethodDef) {
+/// if let Some(method_table) = tables_header.table::<MethodDefRaw>() {
 ///     for (index, method) in method_table.iter().enumerate() {
 ///         println!("Method {}: RVA={:#x}, impl_flags={}, flags={}, name_idx={}",
 ///                 index, method.rva, method.impl_flags, method.flags, method.name);
@@ -652,7 +646,7 @@ use crate::{
 ///
 /// # fn example(tables_header: &TablesHeader) -> dotscope::Result<()> {
 /// // Process field metadata in parallel
-/// if let Some(field_table) = tables_header.table::<FieldRaw>(TableId::Field) {
+/// if let Some(field_table) = tables_header.table::<FieldRaw>() {
 ///     let field_count = field_table.par_iter()
 ///         .filter(|field| field.flags & 0x0010 != 0) // FieldAttributes.Static
 ///         .count();
@@ -670,8 +664,8 @@ use crate::{
 /// # fn example(tables_header: &TablesHeader) -> dotscope::Result<()> {
 /// // Analyze types and their methods together
 /// if let (Some(typedef_table), Some(method_table)) = (
-///     tables_header.table::<TypeDefRaw>(TableId::TypeDef),
-///     tables_header.table::<MethodDefRaw>(TableId::MethodDef)
+///     tables_header.table::<TypeDefRaw>(),
+///     tables_header.table::<MethodDefRaw>()
 /// ) {
 ///     for (type_idx, type_def) in typedef_table.iter().enumerate().take(5) {
 ///         println!("Type {}: methods {}-{}",
@@ -714,12 +708,12 @@ use crate::{
 ///
 /// # fn example(tables_header: &TablesHeader) -> dotscope::Result<()> {
 /// // Process large tables without loading all data at once
-/// if let Some(ca_table) = tables_header.table::<CustomAttributeRaw>(TableId::CustomAttribute) {
-///     println!("Processing {} custom attributes", ca_table.row_count());
+/// if let Some(ca_table) = tables_header.table::<CustomAttributeRaw>() {
+///     println!("Processing {} custom attributes", ca_table.row_count);
 ///     
 ///     // Process in chunks to manage memory usage
 ///     const CHUNK_SIZE: u32 = 100;
-///     let total_rows = ca_table.row_count();
+///     let total_rows = ca_table.row_count;
 ///     
 ///     for chunk_start in (0..total_rows).step_by(CHUNK_SIZE as usize) {
 ///         let chunk_end = (chunk_start + CHUNK_SIZE).min(total_rows);
@@ -740,12 +734,6 @@ use crate::{
 /// # }
 /// ```
 ///
-/// ## Performance Notes
-///
-/// - All table access uses reference-based parsing - no data is duplicated in memory
-/// - Row access via `get()` and iteration is lazy - rows are parsed only when requested
-/// - Parallel iteration with `par_iter()` can significantly speed up processing of large tables
-/// - The lifetime parameter `'a` ensures memory safety by tying table references to the original data
 ///
 /// ## Reference
 /// * '<https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf>' - II.24.2.6 && II.22
@@ -772,10 +760,10 @@ pub struct TablesHeader<'a> {
     ///
     /// ## Table ID Mapping
     /// - Bit 0: Module table
-    /// - Bit 1: TypeRef table  
-    /// - Bit 2: TypeDef table
+    /// - Bit 1: `TypeRef` table  
+    /// - Bit 2: `TypeDef` table
     /// - Bit 4: Field table
-    /// - Bit 6: MethodDef table
+    /// - Bit 6: `MethodDef` table
     /// - ... (see ECMA-335 II.22 for complete mapping)
     pub valid: u64,
 
@@ -809,82 +797,6 @@ pub struct TablesHeader<'a> {
     /// stored as type-erased `TableData` enums to handle the heterogeneous table types
     /// while maintaining memory efficiency.
     tables: Vec<Option<TableData<'a>>>,
-}
-
-/// Summary information for a metadata table providing table identity and size information.
-///
-/// [`crate::metadata::streams::tablesheader::TableSummary`] is used by [`crate::metadata::streams::tablesheader::TablesHeader::table_summary`] to provide an overview
-/// of all present tables in the metadata without requiring full table access. This
-/// is useful for assembly analysis, diagnostics, and determining what metadata is
-/// available before processing specific tables.
-///
-/// # Examples
-///
-/// ## Basic Usage with Table Summary
-/// ```rust
-/// use dotscope::metadata::streams::TablesHeader;
-///
-/// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
-/// let tables = TablesHeader::from(tables_data)?;
-///
-/// // Get overview of all tables
-/// let summaries = tables.table_summary();
-///
-/// for summary in summaries {
-///     println!("Table {:?} has {} rows", summary.table_id, summary.row_count);
-///     
-///     // Make decisions based on table size
-///     if summary.row_count > 1000 {
-///         println!("  ↳ Large table - consider parallel processing");
-///     }
-/// }
-/// # Ok(())
-/// # }
-/// ```
-///
-/// ## Filtering and Analysis
-/// ```rust
-/// use dotscope::metadata::{streams::TablesHeader, tables::TableId};
-///
-/// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
-/// let tables = TablesHeader::from(tables_data)?;
-/// let summaries = tables.table_summary();
-///
-/// // Find the largest tables
-/// let mut large_tables: Vec<_> = summaries.iter()
-///     .filter(|s| s.row_count > 100)
-///     .collect();
-/// large_tables.sort_by_key(|s| std::cmp::Reverse(s.row_count));
-///
-/// println!("Largest metadata tables:");
-/// for summary in large_tables.iter().take(5) {
-///     println!("  {:?}: {} rows", summary.table_id, summary.row_count);
-/// }
-///
-/// // Check for specific features
-/// let has_generics = summaries.iter()
-///     .any(|s| s.table_id == TableId::GenericParam && s.row_count > 0);
-/// if has_generics {
-///     println!("Assembly uses generic types");
-/// }
-/// # Ok(())
-/// # }
-/// ```
-#[derive(Debug, Clone)]
-pub struct TableSummary {
-    /// The type/ID of the metadata table.
-    ///
-    /// Identifies which specific metadata table this summary describes using the
-    /// ECMA-335 table enumeration. This corresponds to table IDs 0-44 as defined
-    /// in the specification.
-    pub table_id: TableId,
-
-    /// The number of rows present in this table.
-    ///
-    /// Indicates the count of data rows in the table. A value of 0 means the table
-    /// is present in the assembly but contains no data. Tables not present in the
-    /// assembly will not appear in the summary at all.
-    pub row_count: u32,
 }
 
 impl<'a> TablesHeader<'a> {
@@ -1136,31 +1048,54 @@ impl<'a> TablesHeader<'a> {
         Ok(tables_header)
     }
 
-    /// Get the table count
+    /// Get the total number of metadata tables present in this assembly.
+    ///
+    /// Returns the count of tables that are actually present and contain data.
+    /// This is equivalent to the number of set bits in the `valid` field.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::streams::TablesHeader;
+    ///
+    /// # fn example(tables: &TablesHeader) {
+    /// println!("Assembly contains {} metadata tables", tables.table_count());
+    /// # }
+    /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn table_count(&self) -> u32 {
         self.valid.count_ones()
     }
 
-    /// Get a specific table for efficient access
+    /// Get a specific table for efficient access to metadata table rows.
     ///
-    /// This method provides type-safe access to metadata tables without copying data.
+    /// This method provides safe, type-driven access to metadata tables without copying data.
     /// The returned table reference allows efficient iteration and random access to rows.
+    /// The table type is automatically determined from the generic parameter, eliminating
+    /// the need to specify table IDs and preventing type mismatches.
     ///
-    /// ## Arguments
-    /// * `table_id` - The type of table to lookup
+    /// # Type Parameter
     ///
-    /// ## Returns
-    /// * `Some(&MetadataTable<T>)` - Reference to the table if present
+    /// * `T` - The table row type (e.g., [`crate::metadata::tables::TypeDefRaw`])
+    ///   The table ID is automatically inferred from the type parameter.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(&MetadataTable<T>)` - Reference to the [`crate::metadata::tables::MetadataTable`] if present
     /// * `None` - If the table is not present in this assembly
     ///
-    /// ## Example
+    /// # Examples
+    ///
     /// ```rust,no_run
-    /// use dotscope::metadata::{streams::TablesHeader, tables::{TableId, TypeDefRaw}};
+    /// use dotscope::metadata::{streams::TablesHeader, tables::TypeDefRaw};
     ///
     /// # fn example(tables: &TablesHeader) -> dotscope::Result<()> {
-    /// // Safe access with type checking
-    /// if let Some(typedef_table) = tables.table::<TypeDefRaw>(TableId::TypeDef) {
+    /// // Safe, ergonomic access with automatic type inference
+    /// if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
     ///     // Efficient access to all type definitions
     ///     for type_def in typedef_table.iter().take(5) {
     ///         println!("Type: flags={:#x}, name_idx={}, namespace_idx={}",
@@ -1176,183 +1111,22 @@ impl<'a> TablesHeader<'a> {
     /// # }
     /// ```
     ///
-    /// ## Safety Note
-    /// The generic type parameter `T` must match the table type for `table_id`.
-    /// Using the wrong type will result in undefined behavior due to the internal cast.
-    /// Always use the corresponding `*Raw` types:
-    /// - `TableId::TypeDef` → `TypeDefRaw`
-    /// - `TableId::MethodDef` → `MethodDefRaw`
-    /// - `TableId::Field` → `FieldRaw`
-    /// - etc.
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
+    /// The returned table reference is also safe for concurrent read access.
+    ///
+    /// # Implementation Details
+    ///
+    /// This method uses a trait to provide safe, compile-time verified table access.
+    /// The trait implementation automatically maps each table type to its corresponding
+    /// table ID, ensuring type safety without runtime overhead. No unsafe code is required.
     #[must_use]
-    pub fn table<T: RowDefinition<'a>>(
-        &self,
-        table_id: TableId,
-    ) -> Option<&'a MetadataTable<'a, T>> {
-        match &self.tables.get(table_id as usize).unwrap_or(&None) {
-            Some(t) => match t {
-                TableData::Module(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::TypeRef(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::TypeDef(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::FieldPtr(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::Field(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::MethodPtr(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::MethodDef(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::ParamPtr(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::Param(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::InterfaceImpl(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::MemberRef(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::Constant(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::CustomAttribute(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::FieldMarshal(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::DeclSecurity(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::Document(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::EncLog(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::EncMap(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::ClassLayout(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::FieldLayout(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::StandAloneSig(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::EventMap(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::EventPtr(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::Event(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::PropertyMap(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::PropertyPtr(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::Property(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::MethodSemantics(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::MethodImpl(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::ModuleRef(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::TypeSpec(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::ImplMap(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::FieldRVA(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::Assembly(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::AssemblyProcessor(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::AssemblyOS(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::AssemblyRef(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::AssemblyRefProcessor(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::AssemblyRefOS(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::File(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::ExportedType(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::ManifestResource(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::NestedClass(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::GenericParam(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::MethodSpec(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::GenericParamConstraint(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::MethodDebugInformation(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::LocalScope(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::LocalVariable(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::LocalConstant(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::ImportScope(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::StateMachineMethod(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-                TableData::CustomDebugInformation(table) => unsafe {
-                    Some(&*std::ptr::from_ref(table).cast::<MetadataTable<T>>())
-                },
-            },
-            None => None,
-        }
+    pub fn table<T: RowReadable>(&'a self) -> Option<&'a MetadataTable<'a, T>>
+    where
+        Self: TableAccess<'a, T>,
+    {
+        <Self as TableAccess<'a, T>>::table(self)
     }
 
     /// Add a table to the tables header
@@ -1759,24 +1533,26 @@ impl<'a> TablesHeader<'a> {
         Ok(())
     }
 
-    /// Check if a specific table is present
+    /// Check if a specific metadata table is present in this assembly.
     ///
     /// Use this method to safely check for table presence before accessing it.
     /// This avoids potential panics when working with assemblies that may not
     /// contain all possible metadata tables.
     ///
-    /// ## Arguments
-    /// * `table_id` - The table ID to check for presence
+    /// # Arguments
     ///
-    /// ## Example
+    /// * `table_id` - The [`crate::metadata::tables::TableId`] to check for presence
+    ///
+    /// # Examples
+    ///
     /// ```rust,no_run
     /// use dotscope::metadata::{streams::TablesHeader, tables::{TableId, EventRaw}};
     ///
     /// # fn example(tables: &TablesHeader) -> dotscope::Result<()> {
-    /// // Safe pattern: check before access
+    /// /// Safe pattern: check before access
     /// if tables.has_table(TableId::Event) {
-    ///     if let Some(event_table) = tables.table::<EventRaw>(TableId::Event) {
-    ///         println!("Assembly has {} events", event_table.row_count());
+    ///     if let Some(event_table) = tables.table::<EventRaw>() {
+    ///         println!("Assembly has {} events", event_table.row_count);
     ///     }
     /// } else {
     ///     println!("No events defined in this assembly");
@@ -1784,24 +1560,31 @@ impl<'a> TablesHeader<'a> {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn has_table(&self, table_id: TableId) -> bool {
         (self.valid & (1u64 << (table_id as u8))) != 0
     }
 
-    /// Check if a table is present by its numeric ID
+    /// Check if a metadata table is present by its numeric ID.
     ///
     /// This method provides a way to check for table presence using the raw
     /// numeric table identifiers (0-63) as defined in the ECMA-335 specification.
     ///
-    /// ## Arguments
+    /// # Arguments
+    ///
     /// * `table_id` - The numeric table ID (0-63) to check for presence
     ///
-    /// ## Returns
+    /// # Returns
+    ///
     /// * `true` - If the table is present
     /// * `false` - If the table is not present or `table_id` > 63
     ///
-    /// ## Example
+    /// # Examples
+    ///
     /// ```rust,no_run
     /// use dotscope::metadata::streams::TablesHeader;
     ///
@@ -1818,6 +1601,10 @@ impl<'a> TablesHeader<'a> {
     /// }
     /// # }
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn has_table_by_id(&self, table_id: u8) -> bool {
         if table_id > 63 {
@@ -1826,13 +1613,14 @@ impl<'a> TablesHeader<'a> {
         (self.valid & (1u64 << table_id)) != 0
     }
 
-    /// Get an iterator over all present tables
+    /// Get an iterator over all present metadata tables.
     ///
-    /// This method returns an iterator that yields `TableId` values for all tables
+    /// This method returns an iterator that yields [`crate::metadata::tables::TableId`] values for all tables
     /// that are present in this assembly's metadata. Useful for discovering what
     /// metadata is available without having to check each table individually.
     ///
-    /// ## Example
+    /// # Examples
+    ///
     /// ```rust,no_run
     /// use dotscope::metadata::streams::TablesHeader;
     ///
@@ -1844,22 +1632,29 @@ impl<'a> TablesHeader<'a> {
     /// }
     /// # }
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn present_tables(&self) -> impl Iterator<Item = TableId> + '_ {
         TableId::iter().filter(|&table_id| self.has_table(table_id))
     }
 
-    /// Get the row count for a specific table
+    /// Get the row count for a specific metadata table.
     ///
     /// Returns the number of rows in the specified table. This information
     /// is available even if you don't access the table data itself.
     ///
-    /// ## Arguments
-    /// * `table_id` - The table to get the row count for
+    /// # Arguments
     ///
-    /// ## Returns
-    /// * Row count (0 if table is not present)
+    /// * `table_id` - The [`crate::metadata::tables::TableId`] to get the row count for
     ///
-    /// ## Example
+    /// # Returns
+    ///
+    /// Row count (0 if table is not present)
+    ///
+    /// # Examples
+    ///
     /// ```rust,no_run
     /// use dotscope::metadata::{streams::TablesHeader, tables::TableId};
     ///
@@ -1874,12 +1669,37 @@ impl<'a> TablesHeader<'a> {
     /// println!("  {} fields", field_count);
     /// # }
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn table_row_count(&self, table_id: TableId) -> u32 {
         self.info.get(table_id).rows
     }
 
-    /// Get a summary of all present tables with their row counts
+    /// Get a summary of all present metadata tables with their row counts.
+    ///
+    /// Returns a vector of summary structs containing the table ID and row count
+    /// for each table present in this assembly. This provides an efficient way to get an
+    /// overview of the assembly's metadata structure without accessing individual tables.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::streams::TablesHeader;
+    ///
+    /// # fn example(tables: &TablesHeader) {
+    /// let summaries = tables.table_summary();
+    /// for summary in summaries {
+    ///     println!("Table {:?}: {} rows", summary.table_id, summary.row_count);
+    /// }
+    /// # }
+    /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn table_summary(&self) -> Vec<TableSummary> {
         self.present_tables()
@@ -1890,6 +1710,173 @@ impl<'a> TablesHeader<'a> {
             .collect()
     }
 }
+
+/// Summary information for a metadata table providing table identity and size information.
+///
+/// This struct is used by [`crate::metadata::streams::tablesheader::TablesHeader::table_summary`] to provide an overview
+/// of all present tables in the metadata without requiring full table access. This
+/// is useful for assembly analysis, diagnostics, and determining what metadata is
+/// available before processing specific tables.
+///
+/// # Examples
+///
+/// ## Basic Usage with Table Summary
+/// ```rust
+/// use dotscope::metadata::streams::TablesHeader;
+///
+/// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
+/// let tables = TablesHeader::from(tables_data)?;
+///
+/// // Get overview of all tables
+/// let summaries = tables.table_summary();
+///
+/// for summary in summaries {
+///     println!("Table {:?} has {} rows", summary.table_id, summary.row_count);
+///     
+///     // Make decisions based on table size
+///     if summary.row_count > 1000 {
+///         println!("  ↳ Large table - consider parallel processing");
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Filtering and Analysis
+/// ```rust
+/// use dotscope::metadata::{streams::TablesHeader, tables::TableId};
+///
+/// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
+/// let tables = TablesHeader::from(tables_data)?;
+/// let summaries = tables.table_summary();
+///
+/// // Find the largest tables
+/// let mut large_tables: Vec<_> = summaries.iter()
+///     .filter(|s| s.row_count > 100)
+///     .collect();
+/// large_tables.sort_by_key(|s| std::cmp::Reverse(s.row_count));
+///
+/// println!("Largest metadata tables:");
+/// for summary in large_tables.iter().take(5) {
+///     println!("  {:?}: {} rows", summary.table_id, summary.row_count);
+/// }
+///
+/// // Check for specific features
+/// let has_generics = summaries.iter()
+///     .any(|s| s.table_id == TableId::GenericParam && s.row_count > 0);
+/// if has_generics {
+///     println!("Assembly uses generic types");
+/// }
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone)]
+pub struct TableSummary {
+    /// The type/ID of the metadata table.
+    ///
+    /// Identifies which specific metadata table this summary describes using the
+    /// ECMA-335 table enumeration. This corresponds to table IDs 0-44 as defined
+    /// in the specification.
+    pub table_id: TableId,
+
+    /// The number of rows present in this table.
+    ///
+    /// Indicates the count of data rows in the table. A value of 0 means the table
+    /// is present in the assembly but contains no data. Tables not present in the
+    /// assembly will not appear in the summary at all.
+    pub row_count: u32,
+}
+
+// Generate safe TableAccess trait implementations for all metadata table types
+impl_table_access!(ModuleRaw, TableId::Module, Module);
+impl_table_access!(TypeRefRaw, TableId::TypeRef, TypeRef);
+impl_table_access!(TypeDefRaw, TableId::TypeDef, TypeDef);
+impl_table_access!(FieldPtrRaw, TableId::FieldPtr, FieldPtr);
+impl_table_access!(FieldRaw, TableId::Field, Field);
+impl_table_access!(MethodPtrRaw, TableId::MethodPtr, MethodPtr);
+impl_table_access!(MethodDefRaw, TableId::MethodDef, MethodDef);
+impl_table_access!(ParamPtrRaw, TableId::ParamPtr, ParamPtr);
+impl_table_access!(ParamRaw, TableId::Param, Param);
+impl_table_access!(InterfaceImplRaw, TableId::InterfaceImpl, InterfaceImpl);
+impl_table_access!(MemberRefRaw, TableId::MemberRef, MemberRef);
+impl_table_access!(ConstantRaw, TableId::Constant, Constant);
+impl_table_access!(
+    CustomAttributeRaw,
+    TableId::CustomAttribute,
+    CustomAttribute
+);
+impl_table_access!(FieldMarshalRaw, TableId::FieldMarshal, FieldMarshal);
+impl_table_access!(DeclSecurityRaw, TableId::DeclSecurity, DeclSecurity);
+impl_table_access!(ClassLayoutRaw, TableId::ClassLayout, ClassLayout);
+impl_table_access!(FieldLayoutRaw, TableId::FieldLayout, FieldLayout);
+impl_table_access!(StandAloneSigRaw, TableId::StandAloneSig, StandAloneSig);
+impl_table_access!(EventMapRaw, TableId::EventMap, EventMap);
+impl_table_access!(EventPtrRaw, TableId::EventPtr, EventPtr);
+impl_table_access!(EventRaw, TableId::Event, Event);
+impl_table_access!(PropertyMapRaw, TableId::PropertyMap, PropertyMap);
+impl_table_access!(PropertyPtrRaw, TableId::PropertyPtr, PropertyPtr);
+impl_table_access!(PropertyRaw, TableId::Property, Property);
+impl_table_access!(
+    MethodSemanticsRaw,
+    TableId::MethodSemantics,
+    MethodSemantics
+);
+impl_table_access!(MethodImplRaw, TableId::MethodImpl, MethodImpl);
+impl_table_access!(ModuleRefRaw, TableId::ModuleRef, ModuleRef);
+impl_table_access!(TypeSpecRaw, TableId::TypeSpec, TypeSpec);
+impl_table_access!(ImplMapRaw, TableId::ImplMap, ImplMap);
+impl_table_access!(FieldRvaRaw, TableId::FieldRVA, FieldRVA);
+impl_table_access!(AssemblyRaw, TableId::Assembly, Assembly);
+impl_table_access!(
+    AssemblyProcessorRaw,
+    TableId::AssemblyProcessor,
+    AssemblyProcessor
+);
+impl_table_access!(AssemblyOsRaw, TableId::AssemblyOS, AssemblyOS);
+impl_table_access!(AssemblyRefRaw, TableId::AssemblyRef, AssemblyRef);
+impl_table_access!(
+    AssemblyRefProcessorRaw,
+    TableId::AssemblyRefProcessor,
+    AssemblyRefProcessor
+);
+impl_table_access!(AssemblyRefOsRaw, TableId::AssemblyRefOS, AssemblyRefOS);
+impl_table_access!(FileRaw, TableId::File, File);
+impl_table_access!(ExportedTypeRaw, TableId::ExportedType, ExportedType);
+impl_table_access!(
+    ManifestResourceRaw,
+    TableId::ManifestResource,
+    ManifestResource
+);
+impl_table_access!(NestedClassRaw, TableId::NestedClass, NestedClass);
+impl_table_access!(GenericParamRaw, TableId::GenericParam, GenericParam);
+impl_table_access!(MethodSpecRaw, TableId::MethodSpec, MethodSpec);
+impl_table_access!(
+    GenericParamConstraintRaw,
+    TableId::GenericParamConstraint,
+    GenericParamConstraint
+);
+impl_table_access!(DocumentRaw, TableId::Document, Document);
+impl_table_access!(
+    MethodDebugInformationRaw,
+    TableId::MethodDebugInformation,
+    MethodDebugInformation
+);
+impl_table_access!(LocalScopeRaw, TableId::LocalScope, LocalScope);
+impl_table_access!(LocalVariableRaw, TableId::LocalVariable, LocalVariable);
+impl_table_access!(LocalConstantRaw, TableId::LocalConstant, LocalConstant);
+impl_table_access!(ImportScopeRaw, TableId::ImportScope, ImportScope);
+impl_table_access!(
+    StateMachineMethodRaw,
+    TableId::StateMachineMethod,
+    StateMachineMethod
+);
+impl_table_access!(
+    CustomDebugInformationRaw,
+    TableId::CustomDebugInformation,
+    CustomDebugInformation
+);
+impl_table_access!(EncLogRaw, TableId::EncLog, EncLog);
+impl_table_access!(EncMapRaw, TableId::EncMap, EncMap);
 
 #[cfg(test)]
 mod tests {

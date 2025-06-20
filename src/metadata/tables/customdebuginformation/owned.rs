@@ -1,17 +1,28 @@
-//! Owned CustomDebugInformation table representation for Portable PDB format
+//! Owned `CustomDebugInformation` table representation for Portable PDB format.
 //!
-//! This module provides the [`CustomDebugInformation`] struct that represents
-//! a fully resolved CustomDebugInformation table entry with all indices converted
-//! to actual data for immediate use in debugging scenarios.
+//! This module provides the [`crate::metadata::tables::customdebuginformation::CustomDebugInformation`] struct that represents
+//! a fully resolved `CustomDebugInformation` table entry with all indices converted
+//! to actual data for immediate use in debugging scenarios. The owned representation
+//! enables direct access to custom debug information without requiring additional
+//! heap lookups or index resolution.
+//!
+//! # Key Components
+//!
+//! - [`crate::metadata::tables::customdebuginformation::CustomDebugInformation`] - Main struct representing resolved custom debug information
+//!
+//! # Thread Safety
+//!
+//! All types in this module are [`Send`] and [`Clone`], enabling safe sharing
+//! across threads and efficient copying when needed.
 
 use crate::metadata::{
     customdebuginformation::CustomDebugInfo, token::Token, typesystem::CilTypeReference,
 };
 use uguid::Guid;
 
-/// Owned representation of a CustomDebugInformation table entry
+/// Owned representation of a `CustomDebugInformation` table entry
 ///
-/// This structure contains the processed CustomDebugInformation data with all heap indices
+/// This structure contains the processed `CustomDebugInformation` data with all heap indices
 /// resolved to their actual data. Custom debug information provides extensibility for
 /// debugging scenarios beyond the standard Portable PDB tables, allowing compilers
 /// and tools to store implementation-specific debugging metadata.
@@ -48,7 +59,7 @@ use uguid::Guid;
 ///
 /// The Parent field identifies which metadata element this custom debug information
 /// is associated with. It can reference methods, types, fields, parameters, and many
-/// other metadata elements through the HasCustomDebugInformation coded index.
+/// other metadata elements through the `HasCustomDebugInformation` coded index.
 ///
 /// # Usage Examples
 ///
@@ -56,7 +67,8 @@ use uguid::Guid;
 /// use dotscope::metadata::tables::CustomDebugInformation;
 /// use dotscope::metadata::customdebuginformation::types::CustomDebugInfo;
 ///
-/// // Example: Source Link information
+/// # fn process_custom_debug(custom_debug: &CustomDebugInformation) -> crate::Result<()> {
+/// // Example: Processing different types of custom debug information
 /// match &custom_debug.value {
 ///     CustomDebugInfo::SourceLink { document } => {
 ///         println!("Source Link JSON: {}", document);
@@ -75,6 +87,8 @@ use uguid::Guid;
 ///         // Handle custom or unsupported debug information types
 ///     }
 /// }
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # References
@@ -86,7 +100,7 @@ pub struct CustomDebugInformation {
     /// Row identifier (1-based index in the table)
     pub rid: u32,
 
-    /// Metadata token for this CustomDebugInformation entry
+    /// Metadata token for this `CustomDebugInformation` entry
     pub token: Token,
 
     /// Byte offset of this row in the original metadata stream
@@ -99,11 +113,11 @@ pub struct CustomDebugInformation {
     /// type of metadata element that supports custom debug information.
     ///
     /// Common parent types include:
-    /// - MethodDef: Method-specific debug information (most common)
+    /// - `MethodDef`: Method-specific debug information (most common)
     /// - Document: Document-specific information (embedded source, etc.)
     /// - Module: Module/assembly-wide information (default namespace, source link)
-    /// - LocalVariable/LocalConstant: Variable-specific information (dynamic flags)
-    /// - TypeDef: Type-specific debug information
+    /// - `LocalVariable`/`LocalConstant`: Variable-specific information (dynamic flags)
+    /// - `TypeDef`: Type-specific debug information
     pub parent: CilTypeReference,
 
     /// GUID identifying the type of custom debug information

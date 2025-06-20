@@ -76,6 +76,12 @@ use crate::disassembler::{FlowType, InstructionCategory, OperandType};
 /// };
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// [`CilInstruction`] is [`std::marker::Send`] and [`std::marker::Sync`] as all fields contain thread-safe types.
+/// This includes primitives, static string references, and [`crate::disassembler::instruction::OperandType`],
+/// [`crate::disassembler::instruction::InstructionCategory`], and [`crate::disassembler::instruction::FlowType`] enums.
 pub struct CilInstruction<'a> {
     /// The [`crate::disassembler::OperandType`] that this instruction expects
     pub op_type: OperandType,

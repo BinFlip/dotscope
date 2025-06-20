@@ -70,6 +70,12 @@ use crate::disassembler::{FlowType, Instruction};
 /// assert_eq!(block.instructions.len(), 0);
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// [`BasicBlock`] is [`std::marker::Send`] and [`std::marker::Sync`] as all fields are thread-safe types.
+/// Multiple threads can safely read from the same block concurrently, but mutation requires
+/// external synchronization.
 #[derive(Debug, Clone)]
 pub struct BasicBlock {
     /// Unique identifier for this block within the method
@@ -105,7 +111,7 @@ impl BasicBlock {
     ///
     /// # Returns
     ///
-    /// A new [`crate::disassembler::block::BasicBlock`] instance ready for instruction insertion.
+    /// A new [`BasicBlock`] instance ready for instruction insertion.
     ///
     /// # Examples
     ///
@@ -120,6 +126,10 @@ impl BasicBlock {
     /// assert_eq!(entry_block.size, 0);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn new(id: usize, rva: u64, offset: usize) -> Self {
         Self {
@@ -159,6 +169,10 @@ impl BasicBlock {
     /// // assert!(block.instruction_first().is_some());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn instruction_first(&self) -> Option<&Instruction> {
         self.instructions.first()
@@ -192,6 +206,10 @@ impl BasicBlock {
     /// // }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn instruction_last(&self) -> Option<&Instruction> {
         self.instructions.last()
@@ -223,6 +241,10 @@ impl BasicBlock {
     /// assert!(!block.is_entry());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn is_entry(&self) -> bool {
         self.predecessors.is_empty()
@@ -257,6 +279,10 @@ impl BasicBlock {
     /// // assert!(block.is_exit());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn is_exit(&self) -> bool {
         if let Some(last_instr) = self.instruction_last() {

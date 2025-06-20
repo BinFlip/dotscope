@@ -1,7 +1,7 @@
-//! LocalVariable table loader for metadata processing
+//! `LocalVariable` table loader for metadata processing
 //!
 //! This module provides the [`LocalVariableLoader`] implementation for processing
-//! LocalVariable table data during metadata loading. The loader handles parallel
+//! `LocalVariable` table data during metadata loading. The loader handles parallel
 //! processing and integration with the broader loader context.
 
 use crate::{
@@ -12,9 +12,9 @@ use crate::{
     Result,
 };
 
-/// Loader for the LocalVariable metadata table
+/// Loader for the `LocalVariable` metadata table
 ///
-/// Implements [`MetadataLoader`] to process the LocalVariable table (0x33)
+/// Implements [`MetadataLoader`] to process the `LocalVariable` table (0x33)
 /// which stores information about local variables within method scopes,
 /// including their names, signatures, and attributes in Portable PDB format.
 /// This loader handles the conversion from raw binary data to structured variable
@@ -38,9 +38,7 @@ pub struct LocalVariableLoader;
 impl MetadataLoader for LocalVariableLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) =
-                header.table::<crate::metadata::tables::LocalVariableRaw>(TableId::LocalVariable)
-            {
+            if let Some(table) = header.table::<crate::metadata::tables::LocalVariableRaw>() {
                 if let Some(strings) = context.strings {
                     table.par_iter().try_for_each(|row| {
                         let local_variable = row.to_owned(strings)?;

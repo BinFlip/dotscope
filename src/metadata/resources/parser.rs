@@ -1,7 +1,7 @@
 //! .NET resource file parsing infrastructure.
 //!
 //! This module provides comprehensive parsing capabilities for .NET resource files,
-//! implementing the full .NET ResourceManager and RuntimeResourceReader format
+//! implementing the full .NET `ResourceManager` and `RuntimeResourceReader` format
 //! specifications. It handles both V1 and V2 resource formats with support for
 //! debug builds and all standard resource types.
 //!
@@ -132,11 +132,11 @@ pub fn parse_dotnet_resource(data: &[u8]) -> Result<BTreeMap<String, ResourceEnt
     resource.read_resources(data)
 }
 
-/// Low-level parser for .NET ResourceManager format with complete format exposure.
+/// Low-level parser for .NET `ResourceManager` format with complete format exposure.
 ///
 /// This struct provides direct access to all aspects of the .NET resource format,
 /// enabling detailed analysis and custom parsing scenarios. It implements the full
-/// specification from CoreCLR for both V1 and V2 resource formats.
+/// specification from `CoreCLR` for both V1 and V2 resource formats.
 ///
 /// # Format Structure
 ///
@@ -208,7 +208,7 @@ pub fn parse_dotnet_resource(data: &[u8]) -> Result<BTreeMap<String, ResourceEnt
 /// let resources = resource.read_resources(&resource_data)?;
 /// ```
 ///
-/// # Format Details from CoreCLR
+/// # Format Details from `CoreCLR`
 ///
 /// From `CoreCLR` documentation, the system default file format (V1) is:
 ///
@@ -484,8 +484,8 @@ impl Resource {
     /// Supports all standard .NET resource types:
     /// - **Primitive Types**: `bool`, `byte`, `sbyte`, `char`, `int16`, `uint16`, `int32`, `uint32`, `int64`, `uint64`, `single`, `double`, `decimal`
     /// - **String Types**: UTF-16 strings with length prefixes
-    /// - **DateTime**: .NET DateTime binary format
-    /// - **TimeSpan**: .NET TimeSpan binary format
+    /// - **`DateTime`**: .NET `DateTime` binary format
+    /// - **`TimeSpan`**: .NET `TimeSpan` binary format
     /// - **Byte Arrays**: Raw binary data with length prefixes
     /// - **Custom Objects**: Serialized .NET objects (parsing depends on type)
     pub fn read_resources(&mut self, data: &[u8]) -> Result<BTreeMap<String, ResourceEntry>> {

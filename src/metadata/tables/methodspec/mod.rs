@@ -1,13 +1,13 @@
-//! # MethodSpec Table Module
+//! # `MethodSpec` Table Module
 //!
-//! This module provides comprehensive access to the **MethodSpec** metadata table (ID 0x2B),
+//! This module provides comprehensive access to the **`MethodSpec`** metadata table (ID 0x2B),
 //! which represents instantiations of generic methods in .NET assemblies. The table is essential
 //! for resolving generic method calls with concrete type arguments, enabling proper generic
 //! method dispatch and type safety at runtime.
 //!
 //! ## Overview
 //!
-//! The MethodSpec table handles generic method instantiation by:
+//! The `MethodSpec` table handles generic method instantiation by:
 //! - **Method References**: Linking to the generic method definition or member reference
 //! - **Type Arguments**: Specifying concrete types for generic parameters
 //! - **Instantiation**: Creating concrete method instances from generic templates
@@ -30,7 +30,7 @@
 //!
 //! | Field | Type | Description |
 //! |-------|------|-------------|
-//! | `Method` | `u32` | MethodDefOrRef coded index to the generic method |
+//! | `Method` | `u32` | `MethodDefOrRef` coded index to the generic method |
 //! | `Instantiation` | `u32` | Index into blob heap containing method spec signature |
 //!
 //! The `Instantiation` blob contains a [`MethodSpecSignature`](crate::metadata::signatures::SignatureMethodSpec)
@@ -49,9 +49,9 @@
 //! ## ECMA-335 Specification
 //!
 //! This implementation follows the ECMA-335 specification:
-//! - **§II.22.29** - MethodSpec table structure and semantics
-//! - **§II.24.2.7** - MethodDefOrRef coded index encoding
-//! - **§II.23.2.15** - MethodSpec signature format
+//! - **§II.22.29** - `MethodSpec` table structure and semantics
+//! - **§II.24.2.7** - `MethodDefOrRef` coded index encoding
+//! - **§II.23.2.15** - `MethodSpec` signature format
 //! - **§II.10.1.7** - Generic method instantiation semantics
 //!
 //! For detailed specifications, see [ECMA-335 6th Edition](https://www.ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf).
@@ -63,6 +63,7 @@ use std::sync::Arc;
 mod loader;
 mod owned;
 mod raw;
+mod reader;
 
 pub(crate) use loader::*;
 pub use owned::*;

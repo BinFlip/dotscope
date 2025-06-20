@@ -12,7 +12,6 @@
 //!
 //! - **Position tracking** - Maintains current offset for sequential parsing operations
 //! - **Bounds checking** - All operations validate data availability before reading
-//! - **Zero-copy access** - Works directly on byte slices without data copying
 //! - **Type-safe reading** - Strongly typed methods for common data types
 //! - **Metadata support** - Specialized methods for .NET metadata structures
 //!
@@ -554,9 +553,9 @@ impl<'a> Parser<'a> {
     ///
     /// Compressed tokens encode type references using 2 tag bits and the table index.
     /// The tag bits determine which metadata table the token refers to:
-    /// - 0x0: TypeDef table
-    /// - 0x1: TypeRef table  
-    /// - 0x2: TypeSpec table
+    /// - 0x0: `TypeDef` table
+    /// - 0x1: `TypeRef` table  
+    /// - 0x2: `TypeSpec` table
     ///
     /// # Errors
     /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or

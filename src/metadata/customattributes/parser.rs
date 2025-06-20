@@ -1,8 +1,8 @@
 //! Custom attribute blob parsing implementation for .NET metadata.
 //!
 //! This module provides robust parsing of custom attribute blob data according to the
-//! ECMA-335 II.23.3 CustomAttribute signature specification. It implements the documented
-//! CorSerializationType enumeration for accurate .NET runtime-compliant parsing with
+//! ECMA-335 II.23.3 `CustomAttribute` signature specification. It implements the documented
+//! `CorSerializationType` enumeration for accurate .NET runtime-compliant parsing with
 //! comprehensive error handling and graceful degradation strategies.
 //!
 //! # Architecture
@@ -13,9 +13,9 @@
 //! ## Core Components
 //!
 //! - **Fixed Arguments**: Type-aware parsing based on constructor parameter types (CilFlavor-based)
-//! - **Named Arguments**: Explicit CorSerializationType tag parsing from blob data
+//! - **Named Arguments**: Explicit `CorSerializationType` tag parsing from blob data
 //! - **Recursive Design**: Clean recursive parsing with depth limiting for complex types
-//! - **Enum Support**: Uses SERIALIZATION_TYPE constants for documented .NET types
+//! - **Enum Support**: Uses `SERIALIZATION_TYPE` constants for documented .NET types
 //!
 //! ## Error Handling Strategy
 //!
@@ -81,13 +81,19 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
+//! # Thread Safety
+//!
+//! All functions in this module are thread-safe and stateless. The parser implementation
+//! can be called concurrently from multiple threads as it operates only on immutable
+//! input data and produces owned output structures.
+//!
 //! # Integration
 //!
 //! This module integrates with:
 //! - [`crate::metadata::customattributes::types`] - Type definitions and argument structures
 //! - [`crate::metadata::streams::Blob`] - Blob heap access for custom attribute data
 //! - [`crate::metadata::tables`] - Parameter resolution for constructor type information
-//! - [`crate::metadata::typesystem`] - Type system integration for CilFlavor handling
+//! - [`crate::metadata::typesystem`] - Type system integration for `CilFlavor` handling
 //!
 //! # Implementation Features
 //!
@@ -99,7 +105,7 @@
 //!
 //! ## Future Enhancements
 //! - **Multi-Assembly Support**: Planned project-style loading with cross-assembly resolution
-//! - **External Type Loading**: Default windows_dll directory for common .NET assemblies
+//! - **External Type Loading**: Default `windows_dll` directory for common .NET assemblies
 //! - **Enhanced Inheritance**: Full inheritance chain analysis for enum detection
 //!
 //! # Standards Compliance
@@ -172,6 +178,10 @@ const MAX_RECURSION_DEPTH: usize = 50;
 /// }
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// This function is thread-safe and can be called concurrently from multiple threads.
 pub fn parse_custom_attribute_blob(
     blob: &Blob,
     index: u32,
@@ -245,6 +255,10 @@ pub fn parse_custom_attribute_blob(
 /// println!("Named arguments: {}", result.named_args.len());
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// This function is thread-safe and can be called concurrently from multiple threads.
 pub fn parse_custom_attribute_data(
     data: &[u8],
     params: &Arc<boxcar::Vec<ParamRc>>,
@@ -263,6 +277,11 @@ pub fn parse_custom_attribute_data(
 /// The parser handles both fixed arguments (based on constructor parameters) and named
 /// arguments (with embedded type information) while maintaining compatibility with
 /// real-world .NET assemblies through graceful degradation strategies.
+///
+/// # Thread Safety
+///
+/// [`CustomAttributeParser`] is not [`std::marker::Send`] or [`std::marker::Sync`] due to mutable state.
+/// Each thread should create its own parser instance for concurrent parsing operations.
 pub struct CustomAttributeParser<'a> {
     /// Binary data parser for reading attribute blob
     parser: Parser<'a>,
@@ -441,7 +460,7 @@ impl<'a> CustomAttributeParser<'a> {
     /// - **Primitives**: Direct binary reading (bool, int, float, etc.)
     /// - **String**: Compressed length + UTF-8 data or null marker (0xFF)
     /// - **Class Types**: Special handling for System.Type, System.String, System.Object
-    /// - **ValueType**: Treated as enum with i32 underlying type
+    /// - **`ValueType`**: Treated as enum with i32 underlying type
     /// - **Arrays**: Single-dimensional arrays with element type parsing
     /// - **Enum**: Heuristic detection with graceful fallback to Type parsing
     ///

@@ -54,7 +54,7 @@
 //! This implementation follows .NET runtime validation behavior to ensure
 //! compatibility with actual runtime loading and execution:
 //!
-//! - **Packing validation** matches CoreCLR packing size constraints
+//! - **Packing validation** matches `CoreCLR` packing size constraints
 //! - **Type restrictions** follow ECMA-335 layout specifications
 //! - **Size limits** prevent excessive memory allocation
 //! - **Error messages** provide runtime-style diagnostics
@@ -66,13 +66,13 @@
 //! ## Related Modules
 //!
 //! - [`crate::metadata::validation::field`] - Field-level layout validation
-//! - [`crate::metadata::tables::ClassLayout`] - ClassLayout table structures
+//! - [`crate::metadata::tables::ClassLayout`] - `ClassLayout` table structures
 //! - [`crate::metadata::typesystem`] - Type system components
 //!
 //! ## References
 //!
 //! - ECMA-335, Partition II, Section 10.7 - Controlling instance layout
-//! - ECMA-335, Partition II, Section 23.2.3 - ClassLayout table
+//! - ECMA-335, Partition II, Section 23.2.3 - `ClassLayout` table
 //! - .NET Core Runtime: Layout validation implementation
 
 use crate::{
@@ -167,7 +167,7 @@ impl LayoutValidator {
     /// | Type Flavor | Explicit Layout | Notes |
     /// |-------------|-----------------|-------|
     /// | Class       | ✅ Supported    | Reference types |
-    /// | ValueType   | ✅ Supported    | Structs |
+    /// | `ValueType`   | ✅ Supported    | Structs |
     /// | Interface   | ❌ Not allowed  | No physical layout |
     /// | Primitive   | ❌ Not allowed  | Fixed runtime layout |
     /// | Array       | ❌ Not allowed  | Runtime-managed |
@@ -295,8 +295,8 @@ impl LayoutValidator {
     /// The `validate_type_layout_compatibility` method checks whether a type
     /// flavor can use explicit layout. Only classes and value types are permitted
     /// to use explicit layout in .NET.
-    pub fn validate_type_layout_compatibility(type_flavor: CilFlavor) -> Result<()> {
-        match type_flavor {
+    pub fn validate_type_layout_compatibility(type_flavor: &CilFlavor) -> Result<()> {
+        match *type_flavor {
             CilFlavor::Class | CilFlavor::ValueType => Ok(()),
             CilFlavor::Interface => Err(malformed_error!(
                 "Cannot apply explicit layout to interface type"
@@ -423,13 +423,15 @@ mod tests {
     #[test]
     fn test_type_layout_compatibility() {
         // Valid types for explicit layout
-        assert!(LayoutValidator::validate_type_layout_compatibility(CilFlavor::Class).is_ok());
-        assert!(LayoutValidator::validate_type_layout_compatibility(CilFlavor::ValueType).is_ok());
+        assert!(LayoutValidator::validate_type_layout_compatibility(&CilFlavor::Class).is_ok());
+        assert!(LayoutValidator::validate_type_layout_compatibility(&CilFlavor::ValueType).is_ok());
 
         // Invalid types for explicit layout
-        assert!(LayoutValidator::validate_type_layout_compatibility(CilFlavor::Interface).is_err());
-        assert!(LayoutValidator::validate_type_layout_compatibility(CilFlavor::I4).is_err());
-        assert!(LayoutValidator::validate_type_layout_compatibility(CilFlavor::String).is_err());
+        assert!(
+            LayoutValidator::validate_type_layout_compatibility(&CilFlavor::Interface).is_err()
+        );
+        assert!(LayoutValidator::validate_type_layout_compatibility(&CilFlavor::I4).is_err());
+        assert!(LayoutValidator::validate_type_layout_compatibility(&CilFlavor::String).is_err());
     }
 
     #[test]

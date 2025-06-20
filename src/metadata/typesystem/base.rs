@@ -749,9 +749,9 @@ pub mod ELEMENT_TYPE {
     pub const PTR: u8 = 0x0f;
     /// Managed reference (followed by type)
     pub const BYREF: u8 = 0x10;
-    /// Value type (followed by TypeDef or TypeRef token)
+    /// Value type (followed by `TypeDef` or `TypeRef` token)
     pub const VALUETYPE: u8 = 0x11;
-    /// Reference type/class (followed by TypeDef or TypeRef token)
+    /// Reference type/class (followed by `TypeDef` or `TypeRef` token)
     pub const CLASS: u8 = 0x12;
     /// Generic parameter in a generic type definition (represented as number)
     pub const VAR: u8 = 0x13;
@@ -773,9 +773,9 @@ pub mod ELEMENT_TYPE {
     pub const SZARRAY: u8 = 0x1d;
     /// Generic parameter in a generic method definition (represented as number)
     pub const MVAR: u8 = 0x1e;
-    /// Required modifier (followed by a TypeDef or TypeRef token)
+    /// Required modifier (followed by a `TypeDef` or `TypeRef` token)
     pub const CMOD_REQD: u8 = 0x1f;
-    /// Optional modifier (followed by a TypeDef or TypeRef token)
+    /// Optional modifier (followed by a `TypeDef` or `TypeRef` token)
     pub const CMOD_OPT: u8 = 0x20;
     /// Implemented within the CLI
     pub const INTERNAL: u8 = 0x21;
@@ -855,7 +855,7 @@ pub struct CilModifier {
 /// - **Floating point**: `R4` (float), `R8` (double)
 /// - **Character types**: `Char` (16-bit Unicode)
 /// - **Boolean**: `Boolean` (true/false)
-/// - **Native integers**: `I` (IntPtr), `U` (UIntPtr)
+/// - **Native integers**: `I` (`IntPtr`), `U` (`UIntPtr`)
 /// - **Special types**: `Void`, `Object`, `String`
 ///
 /// ### Constructed Types
@@ -952,9 +952,9 @@ pub enum CilFlavor {
     R4,
     /// 64-bit floating point number (IEEE 754 double precision)
     R8,
-    /// Native signed integer (pointer-sized, IntPtr)
+    /// Native signed integer (pointer-sized, `IntPtr`)
     I,
-    /// Native unsigned integer (pointer-sized, UIntPtr)
+    /// Native unsigned integer (pointer-sized, `UIntPtr`)
     U,
     /// Base object type (System.Object)
     Object,

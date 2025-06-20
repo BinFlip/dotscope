@@ -1,32 +1,31 @@
-//! Raw LocalConstant table representation for Portable PDB format
+//! Raw `LocalConstant` table representation for Portable PDB format
 //!
 //! This module provides the [`LocalConstantRaw`] struct that represents
-//! the binary format of LocalConstant table entries as they appear in
+//! the binary format of `LocalConstant` table entries as they appear in
 //! the metadata tables stream. This is the low-level representation used during
 //! the initial parsing phase, containing unresolved heap indices.
 
 use crate::{
-    file::io::read_le_at_dyn,
     metadata::{
         signatures::{parse_field_signature, SignatureField, TypeSignature},
         streams::{Blob, Strings},
-        tables::{types::*, LocalConstant, LocalConstantRc},
+        tables::{LocalConstant, LocalConstantRc},
         token::Token,
     },
     Result,
 };
 use std::sync::Arc;
 
-/// Raw binary representation of a LocalConstant table entry
+/// Raw binary representation of a `LocalConstant` table entry
 ///
-/// This structure matches the exact binary layout of LocalConstant table
+/// This structure matches the exact binary layout of `LocalConstant` table
 /// entries in the metadata tables stream. Both Name and Signature fields contain
 /// unresolved indices into their respective heaps that must be resolved during
 /// conversion to the owned [`LocalConstant`] variant.
 ///
 /// # Binary Format
 ///
-/// Each LocalConstant table entry consists of:
+/// Each `LocalConstant` table entry consists of:
 /// - Name: Index into #Strings heap for the constant name
 /// - Signature: Index into #Blob heap for the constant signature
 #[derive(Debug, Clone)]
@@ -34,7 +33,7 @@ pub struct LocalConstantRaw {
     /// Row identifier (1-based index in the table)
     pub rid: u32,
 
-    /// Metadata token for this LocalConstant entry
+    /// Metadata token for this `LocalConstant` entry
     pub token: Token,
 
     /// Byte offset of this row in the original metadata stream
@@ -56,9 +55,9 @@ pub struct LocalConstantRaw {
 }
 
 impl LocalConstantRaw {
-    /// Converts this raw LocalConstant entry to an owned [`LocalConstant`] instance
+    /// Converts this raw `LocalConstant` entry to an owned [`LocalConstant`] instance
     ///
-    /// This method resolves the raw LocalConstant entry to create a complete LocalConstant
+    /// This method resolves the raw `LocalConstant` entry to create a complete `LocalConstant`
     /// object by resolving the name string from the #Strings heap and signature data
     /// from the #Blob heap.
     ///
@@ -69,6 +68,9 @@ impl LocalConstantRaw {
     /// # Returns
     /// Returns `Ok(LocalConstantRc)` with the resolved constant data, or an error if
     /// the name or signature indices are invalid or point to malformed data.
+    ///
+    /// # Errors
+    /// Returns an error if the name or signature indices are invalid or if the data is malformed.
     ///
     /// # Example
     ///
@@ -114,104 +116,5 @@ impl LocalConstantRaw {
         };
 
         Ok(Arc::new(constant))
-    }
-}
-
-impl<'a> RowDefinition<'a> for LocalConstantRaw {
-    fn read_row(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
-        Ok(LocalConstantRaw {
-            rid,
-            token: Token::new(0x3400_0000 + rid),
-            offset: *offset,
-            name: read_le_at_dyn(data, offset, sizes.is_large_str())?,
-            signature: read_le_at_dyn(data, offset, sizes.is_large_blob())?,
-        })
-    }
-
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            sizes.str_bytes() +   // name (strings heap index)
-            sizes.blob_bytes()    // signature (blob heap index)
-        )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::metadata::tables::{MetadataTable, TableId, TableInfo};
-
-    #[test]
-    fn crafted_short() {
-        let data = vec![
-            0x01, 0x00, // name (2 bytes, short strings heap) - 0x0001
-            0x02, 0x00, // signature (2 bytes, short blob heap) - 0x0002
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[(TableId::LocalConstant, 1)],
-            false, // large tables
-            false, // large strings
-            false, // large blob
-        ));
-        let table = MetadataTable::<LocalConstantRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: LocalConstantRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x34000001);
-            assert_eq!(row.name, 0x0001);
-            assert_eq!(row.signature, 0x0002);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
-    }
-
-    #[test]
-    fn crafted_long() {
-        let data = vec![
-            0x01, 0x00, 0x00, 0x00, // name (4 bytes, large strings heap) - 0x00000001
-            0x02, 0x00, // signature (2 bytes, normal blob heap) - 0x0002
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[(TableId::LocalConstant, 1)],
-            true,  // large strings
-            false, // large blob
-            false, // large GUID
-        ));
-        let table = MetadataTable::<LocalConstantRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: LocalConstantRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x34000001);
-            assert_eq!(row.name, 0x00000001);
-            assert_eq!(row.signature, 0x0002);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
     }
 }

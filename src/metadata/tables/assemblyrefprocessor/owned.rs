@@ -1,4 +1,4 @@
-//! Owned AssemblyRefProcessor table representation.
+//! Owned `AssemblyRefProcessor` table representation.
 //!
 //! This module provides the [`crate::metadata::tables::assemblyrefprocessor::owned::AssemblyRefProcessor`] struct
 //! which contains fully resolved processor architecture compatibility information for external assembly
@@ -7,7 +7,7 @@
 //!
 //! # Architecture
 //!
-//! The owned representation stores fully resolved data from the AssemblyRefProcessor metadata table,
+//! The owned representation stores fully resolved data from the `AssemblyRefProcessor` metadata table,
 //! including resolved references to assembly dependencies. This eliminates the need for table
 //! lookups during runtime access, providing immediate access to processor compatibility metadata.
 //!
@@ -32,14 +32,14 @@ use crate::{
 
 /// Represents processor architecture compatibility information for an external assembly reference
 ///
-/// This structure contains the complete processor requirement information from the AssemblyRefProcessor
+/// This structure contains the complete processor requirement information from the `AssemblyRefProcessor`
 /// metadata table (0x24), with all table references resolved to owned assembly reference instances.
 /// Unlike [`crate::metadata::tables::assemblyrefprocessor::raw::AssemblyRefProcessorRaw`], this provides
 /// immediate access to the referenced assembly without requiring table lookups.
 ///
 /// # Processor Compatibility
 ///
-/// The AssemblyRefProcessor table allows specifying explicit processor requirements for external assemblies:
+/// The `AssemblyRefProcessor` table allows specifying explicit processor requirements for external assemblies:
 /// - **Processor Architecture**: Target processor family identifier (x86, x64, ARM, etc.)
 /// - **Assembly Reference**: The external assembly these requirements apply to
 ///
@@ -56,22 +56,22 @@ use crate::{
 /// reference data.
 ///
 /// # References
-/// - [ECMA-335 II.22.8](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyRefProcessor table specification
+/// - [ECMA-335 II.22.8](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyRefProcessor` table specification
 pub struct AssemblyRefProcessor {
-    /// Row identifier within the AssemblyRefProcessor metadata table
+    /// Row identifier within the `AssemblyRefProcessor` metadata table
     ///
-    /// The 1-based index of this AssemblyRefProcessor row within the table.
+    /// The 1-based index of this `AssemblyRefProcessor` row within the table.
     pub rid: u32,
 
-    /// Metadata token for this AssemblyRefProcessor entry
+    /// Metadata token for this `AssemblyRefProcessor` entry
     ///
-    /// Combines the table identifier (0x24 for AssemblyRefProcessor) with the row ID to create
+    /// Combines the table identifier (0x24 for `AssemblyRefProcessor`) with the row ID to create
     /// a unique token that can be used to reference this entry from other metadata.
     pub token: Token,
 
-    /// Byte offset of this AssemblyRefProcessor row within the metadata tables stream
+    /// Byte offset of this `AssemblyRefProcessor` row within the metadata tables stream
     ///
-    /// Physical location of the raw AssemblyRefProcessor data within the metadata binary format.
+    /// Physical location of the raw `AssemblyRefProcessor` data within the metadata binary format.
     /// Used for debugging and low-level metadata analysis.
     pub offset: usize,
 
@@ -98,12 +98,16 @@ impl AssemblyRefProcessor {
     /// Apply processor architecture information to the referenced assembly
     ///
     /// Updates the referenced assembly with processor architecture information from this
-    /// AssemblyRefProcessor entry. The assembly reference already contains atomic fields for storing
+    /// `AssemblyRefProcessor` entry. The assembly reference already contains atomic fields for storing
     /// processor data, allowing thread-safe updates without additional synchronization.
     ///
     /// # Returns
     ///
     /// * `Ok(())` - Processor information successfully applied to assembly reference
+    ///
+    /// # Errors
+    ///
+    /// This function never returns an error as atomic operations cannot fail.
     ///
     /// # Thread Safety
     ///

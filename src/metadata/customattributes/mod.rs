@@ -89,6 +89,12 @@
 //! - **Graceful Degradation** - Falls back to heuristic parsing when type resolution fails
 //! - **Recursion Protection** - Limits parsing depth to prevent stack overflow attacks
 //!
+//! # Thread Safety
+//!
+//! All types and functions in this module are thread-safe. The parsing functions are stateless
+//! and can be called concurrently from multiple threads. Custom attribute value types contain
+//! only owned data and are [`std::marker::Send`] and [`std::marker::Sync`].
+//!
 //! # Integration
 //!
 //! This module integrates with:

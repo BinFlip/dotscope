@@ -632,11 +632,11 @@ impl Orchestrator {
     /// ## Pointer Types
     /// All pointer types use platform pointer size:
     /// - **Ptr**: 8 bytes (unmanaged pointer)
-    /// - **ByRef**: 8 bytes (managed reference)
-    /// - **FnPtr**: 8 bytes (function pointer)
+    /// - **`ByRef`**: 8 bytes (managed reference)
+    /// - **`FnPtr`**: 8 bytes (function pointer)
     ///
     /// ## Special Types
-    /// - **TypedByRef**: 16 bytes (TypedReference structure)
+    /// - **`TypedByRef`**: 16 bytes (`TypedReference` structure)
     /// - **Pinned**: Delegates to inner type size
     /// - **Modified**: Uses conservative 8-byte estimate
     ///
@@ -778,17 +778,17 @@ impl Orchestrator {
     ///
     /// ## Pointer Types (Platform Pointer Size)
     /// - **Ptr**: 8 bytes
-    /// - **ByRef**: 8 bytes  
-    /// - **FnPtr**: 8 bytes
+    /// - **`ByRef`**: 8 bytes  
+    /// - **`FnPtr`**: 8 bytes
     ///
     /// ## Conservative Estimates
-    /// - **ValueType**: 8 bytes (conservative, actual size could vary)
+    /// - **`ValueType`**: 8 bytes (conservative, actual size could vary)
     /// - **Generic Types**: 8 bytes (conservative)
     /// - **Modified Types**: 8 bytes (conservative)
     /// - **Unknown Types**: 8 bytes (safe fallback)
     ///
     /// ## Special Cases
-    /// - **TypedByRef**: 16 bytes (known structure size)
+    /// - **`TypedByRef`**: 16 bytes (known structure size)
     /// - **Pinned**: Delegates to inner type (recursive calculation)
     #[allow(clippy::match_same_arms)]
     fn calculate_field_size(field_signature: &TypeSignature) -> u32 {

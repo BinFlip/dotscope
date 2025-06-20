@@ -11,6 +11,19 @@
 //! - **Parallel Execution**: Organizing loaders into execution levels where all loaders in the same level can run concurrently
 //! - **Memory Efficiency**: Using [`std::collections::HashMap`] and [`std::collections::HashSet`] for O(1) lookups
 //!
+//! # Thread Safety
+//!
+//! The [`crate::metadata::loader::graph::LoaderGraph`] is not thread-safe for mutations and should only be constructed
+//! from a single thread. However, the execution plans it generates can safely coordinate parallel
+//! loader execution across multiple threads.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::loader`] - MetadataLoader trait and parallel execution coordination
+//! - [`crate::metadata::tables::TableId`] - Table identification for dependency relationships
+//! - [`crate::metadata::loader::context::LoaderContext`] - Execution context for parallel loading
+//!
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
@@ -41,8 +54,9 @@ use crate::{
 ///
 /// # Thread Safety
 ///
-/// This struct is not thread-safe. All graph modifications must be performed from a single thread.
-/// However, the execution plan it generates can be used to coordinate parallel loader execution.
+/// [`LoaderGraph`] is not [`std::marker::Send`] or [`std::marker::Sync`] due to containing trait object references.
+/// All graph modifications must be performed from a single thread during the setup phase.
+/// However, the execution plans it generates can safely coordinate parallel loader execution.
 ///
 /// ```rust, ignore
 /// Level 0: [
@@ -122,6 +136,10 @@ impl<'a> LoaderGraph<'a> {
     /// let mut graph = LoaderGraph::new();
     /// // Add loaders and build relationships...
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called from any thread.
     pub fn new() -> Self {
         LoaderGraph {
             loaders: HashMap::new(),
@@ -154,6 +172,10 @@ impl<'a> LoaderGraph<'a> {
     /// - The loader must remain valid for the lifetime of the graph
     /// - Adding the same loader multiple times will overwrite the previous entry
     /// - Dependencies are not resolved until [`crate::metadata::loader::graph::LoaderGraph::build_relationships`] is called
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is not thread-safe and must be called from a single thread during graph construction.
     pub fn add_loader(&mut self, loader: &'a dyn MetadataLoader) {
         let table_id = loader.table_id();
         self.loaders.insert(table_id, loader);
@@ -203,6 +225,10 @@ impl<'a> LoaderGraph<'a> {
     /// - Comprehensive cycle detection using depth-first search
     /// - Execution plan generation and validation
     /// - Detailed error reporting for dependency issues
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is not thread-safe and must be called from a single thread during graph construction.
     pub fn build_relationships(&mut self) -> Result<()> {
         self.dependencies
             .values_mut()
@@ -389,6 +415,11 @@ impl<'a> LoaderGraph<'a> {
     /// - **Level N**: Loaders that depend only on loaders from levels 0 through N-1
     /// - **Parallelism**: All loaders within a single level can execute concurrently
     /// - **Synchronization**: Complete all loaders in level N before starting level N+1
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently. The returned execution plan
+    /// can be safely used to coordinate parallel loader execution across multiple threads.
     pub fn topological_levels(&self) -> Result<Vec<Vec<&'a dyn MetadataLoader>>> {
         let mut result = Vec::new();
         let mut remaining = self.loaders.keys().copied().collect::<HashSet<_>>();

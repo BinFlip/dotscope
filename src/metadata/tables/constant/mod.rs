@@ -23,7 +23,7 @@
 //! # Constant Table Structure
 //!
 //! The Constant table contains zero or more rows with these fields:
-//! - **Type**: Element type of the constant value (ELEMENT_TYPE_* enumeration)
+//! - **Type**: Element type of the constant value (`ELEMENT_TYPE_*` enumeration)
 //! - **Parent**: Coded index referencing Field, Property, or Param tables
 //! - **Value**: Blob heap reference containing the binary representation of the constant
 //!
@@ -58,6 +58,7 @@ use crate::metadata::token::Token;
 mod loader;
 mod owned;
 mod raw;
+mod reader;
 
 pub(crate) use loader::*;
 pub use owned::*;

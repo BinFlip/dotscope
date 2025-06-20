@@ -42,8 +42,8 @@ use crate::metadata::{
 ///
 /// # File Attributes
 /// The flags field indicates file characteristics:
-/// - **CONTAINS_META_DATA**: File contains .NET metadata (executable modules)
-/// - **CONTAINS_NO_META_DATA**: Resource files without metadata
+/// - **`CONTAINS_META_DATA`**: File contains .NET metadata (executable modules)
+/// - **`CONTAINS_NO_META_DATA`**: Resource files without metadata
 ///
 /// # Hash Verification
 /// Each file includes a cryptographic hash for security:
@@ -89,8 +89,8 @@ pub struct File {
     /// resource file.
     ///
     /// # Common Values
-    /// - **CONTAINS_META_DATA (0x0000)**: File contains .NET metadata
-    /// - **CONTAINS_NO_META_DATA (0x0001)**: Resource file without metadata
+    /// - **`CONTAINS_META_DATA` (0x0000)**: File contains .NET metadata
+    /// - **`CONTAINS_NO_META_DATA` (0x0001)**: Resource file without metadata
     ///
     /// [`FileAttributes`]: crate::metadata::tables::file::FileAttributes
     pub flags: u32,

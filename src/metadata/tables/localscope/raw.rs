@@ -1,16 +1,16 @@
-//! Raw LocalScope table representation for Portable PDB format
+//! Raw `LocalScope` table representation for Portable PDB format
 //!
 //! This module provides the [`LocalScopeRaw`] struct that represents
-//! the binary format of LocalScope table entries as they appear in
+//! the binary format of `LocalScope` table entries as they appear in
 //! the metadata tables stream. This is the low-level representation used during
 //! the initial parsing phase, containing unresolved table indices.
 
 use crate::{
-    file::io::{read_le_at, read_le_at_dyn},
     metadata::{
         method::MethodMap,
         tables::{
-            types::*, ImportScopeMap, LocalConstantMap, LocalScope, LocalScopeRc, LocalVariableMap,
+            ImportScopeMap, LocalConstantMap, LocalScope, LocalScopeRc, LocalVariableMap,
+            MetadataTable,
         },
         token::Token,
     },
@@ -18,53 +18,53 @@ use crate::{
 };
 use std::sync::Arc;
 
-/// Raw binary representation of a LocalScope table entry
+/// Raw binary representation of a `LocalScope` table entry
 ///
-/// This structure matches the exact binary layout of LocalScope table
+/// This structure matches the exact binary layout of `LocalScope` table
 /// entries in the metadata tables stream. All table references remain as unresolved
 /// indices that must be resolved through the appropriate tables during the conversion
 /// to the owned [`LocalScope`] variant.
 ///
 /// # Binary Format
 ///
-/// Each LocalScope table entry consists of:
-/// - Method: Simple index into MethodDef table
-/// - ImportScope: Simple index into ImportScope table  
-/// - VariableList: Simple index into LocalVariable table
-/// - ConstantList: Simple index into LocalConstant table
-/// - StartOffset: 4-byte unsigned integer (IL offset)
-/// - Length: 4-byte unsigned integer (scope length in bytes)
+/// Each `LocalScope` table entry consists of:
+/// - Method: Simple index into `MethodDef` table
+/// - `ImportScope`: Simple index into `ImportScope` table  
+/// - `VariableList`: Simple index into `LocalVariable` table
+/// - `ConstantList`: Simple index into `LocalConstant` table
+/// - `StartOffset`: 4-byte unsigned integer (IL offset)
+/// - `Length`: 4-byte unsigned integer (scope length in bytes)
 #[derive(Debug, Clone)]
 pub struct LocalScopeRaw {
     /// Row identifier (1-based index in the table)
     pub rid: u32,
 
-    /// Metadata token for this LocalScope entry
+    /// Metadata token for this `LocalScope` entry
     pub token: Token,
 
     /// Byte offset of this row in the original metadata stream
     pub offset: usize,
 
-    /// Simple index into MethodDef table
+    /// Simple index into `MethodDef` table
     ///
     /// Identifies the method that contains this local scope. This is always
     /// a valid method reference as local scopes must belong to a method.
     pub method: u32,
 
-    /// Simple index into ImportScope table
+    /// Simple index into `ImportScope` table
     ///
     /// References the import scope that provides the namespace context for
     /// this local scope. May be 0 if no specific import context is required.
     pub import_scope: u32,
 
-    /// Simple index into LocalVariable table
+    /// Simple index into `LocalVariable` table
     ///
     /// Points to the first local variable that belongs to this scope.
     /// Variables are stored consecutively, so this serves as a range start.
     /// May be 0 if this scope contains no variables.
     pub variable_list: u32,
 
-    /// Simple index into LocalConstant table
+    /// Simple index into `LocalConstant` table
     ///
     /// Points to the first local constant that belongs to this scope.
     /// Constants are stored consecutively, so this serves as a range start.
@@ -80,14 +80,14 @@ pub struct LocalScopeRaw {
     /// Length of this scope in IL instruction bytes
     ///
     /// Specifies how many bytes of IL code this scope covers.
-    /// The scope extends from start_offset to (start_offset + length).
+    /// The scope extends from `start_offset` to (`start_offset` + `length`).
     pub length: u32,
 }
 
 impl LocalScopeRaw {
-    /// Converts this raw LocalScope entry to an owned [`LocalScope`] instance
+    /// Converts this raw `LocalScope` entry to an owned [`LocalScope`] instance
     ///
-    /// This method resolves the raw LocalScope entry to create a complete LocalScope
+    /// This method resolves the raw `LocalScope` entry to create a complete `LocalScope`
     /// object by resolving all table references and building the variable and constant lists
     /// using range determination based on the next scope's starting indices.
     ///
@@ -96,11 +96,14 @@ impl LocalScopeRaw {
     /// - `import_scopes`: Map of resolved import scopes for import scope resolution
     /// - `variables`: Map of resolved local variables for building variable lists
     /// - `constants`: Map of resolved local constants for building constant lists
-    /// - `scope_table`: The raw LocalScope table for looking up next scope indices
+    /// - `scope_table`: The raw `LocalScope` table for looking up next scope indices
     ///
     /// # Returns
     /// Returns `Ok(LocalScopeRc)` with the resolved scope data, or an error if
     /// any references are invalid or point to malformed data.
+    ///
+    /// # Errors
+    /// Returns an error if any references are invalid or point to malformed data.
     pub fn to_owned(
         &self,
         methods: &MethodMap,
@@ -139,7 +142,7 @@ impl LocalScopeRaw {
         } else {
             let start = self.variable_list;
 
-            // Find the next scope to determine range end
+            #[allow(clippy::cast_possible_truncation)]
             let end = if let Some(next_scope) = scope_table.get(self.rid + 1) {
                 if next_scope.variable_list != 0 {
                     next_scope.variable_list
@@ -165,6 +168,7 @@ impl LocalScopeRaw {
         } else {
             let start = self.constant_list;
 
+            #[allow(clippy::cast_possible_truncation)]
             let end = if let Some(next_scope) = scope_table.get(self.rid + 1) {
                 if next_scope.constant_list != 0 {
                     next_scope.constant_list
@@ -198,140 +202,5 @@ impl LocalScopeRaw {
         };
 
         Ok(Arc::new(local_scope))
-    }
-}
-
-impl<'a> RowDefinition<'a> for LocalScopeRaw {
-    fn read_row(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
-        Ok(LocalScopeRaw {
-            rid,
-            token: Token::new(0x3200_0000 + rid),
-            offset: *offset,
-            method: read_le_at_dyn(data, offset, sizes.is_large(TableId::MethodDef))?,
-            import_scope: read_le_at_dyn(data, offset, sizes.is_large(TableId::ImportScope))?,
-            variable_list: read_le_at_dyn(data, offset, sizes.is_large(TableId::LocalVariable))?,
-            constant_list: read_le_at_dyn(data, offset, sizes.is_large(TableId::LocalConstant))?,
-            start_offset: read_le_at::<u32>(data, offset)?, // Always 4 bytes
-            length: read_le_at::<u32>(data, offset)?,       // Always 4 bytes
-        })
-    }
-
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            sizes.table_index_bytes(TableId::MethodDef) +      // method
-            sizes.table_index_bytes(TableId::ImportScope) +    // import_scope
-            sizes.table_index_bytes(TableId::LocalVariable) +  // variable_list
-            sizes.table_index_bytes(TableId::LocalConstant) +  // constant_list
-            4 +  // start_offset (always 4 bytes)
-            4    // length (always 4 bytes)
-        )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::metadata::tables::{MetadataTable, TableId, TableInfo};
-
-    #[test]
-    fn crafted_short() {
-        let data = vec![
-            0x01, 0x01, // method (2 bytes)
-            0x02, 0x02, // import_scope (2 bytes)
-            0x03, 0x03, // variable_list (2 bytes)
-            0x04, 0x04, // constant_list (2 bytes)
-            0x05, 0x05, 0x05, 0x05, // start_offset (4 bytes)
-            0x06, 0x06, 0x06, 0x06, // length (4 bytes)
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[
-                (TableId::LocalScope, 1),
-                (TableId::MethodDef, 1),
-                (TableId::ImportScope, 1),
-                (TableId::LocalVariable, 1),
-                (TableId::LocalConstant, 1),
-            ],
-            false,
-            false,
-            false,
-        ));
-        let table = MetadataTable::<LocalScopeRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: LocalScopeRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x32000001);
-            assert_eq!(row.method, 0x0101);
-            assert_eq!(row.import_scope, 0x0202);
-            assert_eq!(row.variable_list, 0x0303);
-            assert_eq!(row.constant_list, 0x0404);
-            assert_eq!(row.start_offset, 0x05050505);
-            assert_eq!(row.length, 0x06060606);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
-    }
-
-    #[test]
-    fn crafted_long() {
-        let data = vec![
-            0x01, 0x01, 0x01, 0x01, // method (4 bytes)
-            0x02, 0x02, 0x02, 0x02, // import_scope (4 bytes)
-            0x03, 0x03, 0x03, 0x03, // variable_list (4 bytes)
-            0x04, 0x04, 0x04, 0x04, // constant_list (4 bytes)
-            0x05, 0x05, 0x05, 0x05, // start_offset (4 bytes)
-            0x06, 0x06, 0x06, 0x06, // length (4 bytes)
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[
-                (TableId::LocalScope, 1),
-                (TableId::MethodDef, 100000),
-                (TableId::ImportScope, 100000),
-                (TableId::LocalVariable, 100000),
-                (TableId::LocalConstant, 100000),
-            ],
-            true,
-            true,
-            true,
-        ));
-        let table = MetadataTable::<LocalScopeRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: LocalScopeRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x32000001);
-            assert_eq!(row.method, 0x01010101);
-            assert_eq!(row.import_scope, 0x02020202);
-            assert_eq!(row.variable_list, 0x03030303);
-            assert_eq!(row.constant_list, 0x04040404);
-            assert_eq!(row.start_offset, 0x05050505);
-            assert_eq!(row.length, 0x06060606);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
     }
 }

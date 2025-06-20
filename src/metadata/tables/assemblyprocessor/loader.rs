@@ -1,6 +1,6 @@
-//! AssemblyProcessor table loader implementation.
+//! `AssemblyProcessor` table loader implementation.
 //!
-//! This module provides the loader implementation for the AssemblyProcessor metadata table,
+//! This module provides the loader implementation for the `AssemblyProcessor` metadata table,
 //! which contains processor architecture targeting information for .NET assemblies. The
 //! [`crate::metadata::tables::assemblyprocessor::loader::AssemblyProcessorLoader`] processes
 //! CPU architecture metadata that specifies target processor architectures.
@@ -9,7 +9,7 @@
 //!
 //! The loader follows the standard metadata loading pattern, implementing the
 //! [`crate::metadata::loader::MetadataLoader`] trait to process table data and store
-//! results in the loader context. Since AssemblyProcessor contains only primitive values,
+//! results in the loader context. Since `AssemblyProcessor` contains only primitive values,
 //! no heap resolution is required.
 //!
 //! # Key Components
@@ -20,25 +20,25 @@
 //!
 //! # Table Structure
 //!
-//! The AssemblyProcessor table contains processor architecture information:
+//! The `AssemblyProcessor` table contains processor architecture information:
 //! - **Processor**: Processor architecture identifier (4 bytes)
 //!
 //! # Usage Context
 //!
-//! Like the AssemblyOS table, AssemblyProcessor is rarely used in modern .NET assemblies
+//! Like the `AssemblyOS` table, `AssemblyProcessor` is rarely used in modern .NET assemblies
 //! and is considered legacy. Most assemblies are designed to be architecture-neutral
-//! (AnyCPU) and rely on the runtime to handle architecture-specific optimizations.
+//! (`AnyCPU`) and rely on the runtime to handle architecture-specific optimizations.
 //!
 //! # Integration
 //!
 //! This module integrates with:
 //! - [`crate::metadata::loader`] - Core metadata loading infrastructure
 //! - [`crate::metadata::tables`] - Table structure definitions
-//! - [`crate::metadata::tables::assemblyprocessor`] - AssemblyProcessor table types
+//! - [`crate::metadata::tables::assemblyprocessor`] - `AssemblyProcessor` table types
 //!
 //! # References
 //!
-//! - [ECMA-335 II.22.4](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyProcessor table specification
+//! - [ECMA-335 II.22.4](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyProcessor` table specification
 
 use crate::{
     metadata::{
@@ -48,9 +48,9 @@ use crate::{
     Result,
 };
 
-/// Loader for the AssemblyProcessor metadata table
+/// Loader for the `AssemblyProcessor` metadata table
 ///
-/// Implements [`crate::metadata::loader::MetadataLoader`] to process the AssemblyProcessor table (0x21)
+/// Implements [`crate::metadata::loader::MetadataLoader`] to process the `AssemblyProcessor` table (0x21)
 /// which contains processor architecture information for the current assembly. This table
 /// specifies the target CPU architectures that the assembly is designed to support.
 ///
@@ -61,18 +61,18 @@ use crate::{
 pub(crate) struct AssemblyProcessorLoader;
 
 impl MetadataLoader for AssemblyProcessorLoader {
-    /// Load processor architecture metadata from the AssemblyProcessor table
+    /// Load processor architecture metadata from the `AssemblyProcessor` table
     ///
-    /// Processes AssemblyProcessor table rows (if present) and stores the processor
-    /// architecture information in the loader context. The AssemblyProcessor table is optional
-    /// and rarely present in modern .NET assemblies that use AnyCPU targeting.
+    /// Processes `AssemblyProcessor` table rows (if present) and stores the processor
+    /// architecture information in the loader context. The `AssemblyProcessor` table is optional
+    /// and rarely present in modern .NET assemblies that use `AnyCPU` targeting.
     ///
     /// # Arguments
     /// * `context` - [`crate::metadata::loader::LoaderContext`] containing metadata tables
     ///
     /// # Returns
-    /// * `Ok(())` - AssemblyProcessor successfully loaded or table not present
-    /// * `Err(`[`crate::Error`]`)` - Malformed data or duplicate AssemblyProcessor information
+    /// * `Ok(())` - `AssemblyProcessor` successfully loaded or table not present
+    /// * `Err(`[`crate::Error`]`)` - Malformed data or duplicate `AssemblyProcessor` information
     ///
     /// # Thread Safety
     ///
@@ -80,7 +80,7 @@ impl MetadataLoader for AssemblyProcessorLoader {
     /// atomic operations when setting the assembly processor data.
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(ref header) = context.meta {
-            if let Some(table) = header.table::<AssemblyProcessorRaw>(TableId::AssemblyProcessor) {
+            if let Some(table) = header.table::<AssemblyProcessorRaw>() {
                 if let Some(row) = table.get(1) {
                     let owned = row.to_owned()?;
 
@@ -95,7 +95,7 @@ impl MetadataLoader for AssemblyProcessorLoader {
         Ok(())
     }
 
-    /// Returns the table identifier for the AssemblyProcessor table
+    /// Returns the table identifier for the `AssemblyProcessor` table
     ///
     /// # Returns
     /// [`crate::metadata::tables::TableId::AssemblyProcessor`] (0x21)
@@ -105,7 +105,7 @@ impl MetadataLoader for AssemblyProcessorLoader {
 
     /// Returns the list of table dependencies
     ///
-    /// The AssemblyProcessor table has no dependencies on other metadata tables or heaps,
+    /// The `AssemblyProcessor` table has no dependencies on other metadata tables or heaps,
     /// as it contains only processor architecture identification integers.
     ///
     /// # Returns

@@ -8,9 +8,9 @@
 //! # Constant Table Format
 //!
 //! The Constant table (0x0B) contains zero or more rows with these fields:
-//! - **Type** (1 byte): Element type of the constant (ELEMENT_TYPE_* enumeration)
+//! - **Type** (1 byte): Element type of the constant (`ELEMENT_TYPE`_* enumeration)
 //! - **Padding** (1 byte): Reserved padding byte (must be zero)
-//! - **Parent** (2/4 bytes): HasConstant coded index into Field, Property, or Param tables  
+//! - **Parent** (2/4 bytes): `HasConstant` coded index into Field, Property, or Param tables  
 //! - **Value** (2/4 bytes): Blob heap index containing the constant's binary data
 //!
 //! # Reference
@@ -19,10 +19,9 @@
 use std::sync::Arc;
 
 use crate::{
-    file::io::{read_le_at, read_le_at_dyn},
     metadata::{
         streams::Blob,
-        tables::{CodedIndex, CodedIndexType, ConstantRc, RowDefinition, TableInfoRef},
+        tables::{CodedIndex, ConstantRc},
         token::Token,
         typesystem::{CilPrimitive, CilTypeReference},
     },
@@ -40,7 +39,7 @@ use super::owned::Constant;
 /// # Table Structure
 ///
 /// Each Constant row contains:
-/// - **Element type**: Primitive type identifier (ELEMENT_TYPE_*)
+/// - **Element type**: Primitive type identifier (`ELEMENT_TYPE`_*)
 /// - **Parent relationship**: Coded index to Field, Property, or Param table
 /// - **Value data**: Binary representation stored in the blob heap
 /// - **Type validation**: Ensures constant types match their containers
@@ -65,13 +64,13 @@ pub struct ConstantRaw {
 
     /// Element type of the constant value
     ///
-    /// Specifies the primitive type of the constant using ELEMENT_TYPE_* enumeration values
+    /// Specifies the primitive type of the constant using `ELEMENT_TYPE_*` enumeration values
     /// (see ECMA-335 II.23.1.16). This determines how the blob value data should be interpreted.
-    /// Common values include ELEMENT_TYPE_I4 for integers, ELEMENT_TYPE_STRING for strings, etc.
-    /// For null reference constants, this is ELEMENT_TYPE_CLASS with a 4-byte zero value.
+    /// Common values include `ELEMENT_TYPE_I4` for integers, `ELEMENT_TYPE_STRING` for strings, etc.
+    /// For null reference constants, this is `ELEMENT_TYPE_CLASS` with a 4-byte zero value.
     pub base: u8,
 
-    /// HasConstant coded index to the parent metadata element
+    /// `HasConstant` coded index to the parent metadata element
     ///
     /// Points to the field, property, or parameter that owns this constant. This is a coded
     /// index that must be decoded to determine the target table and row. The coding scheme
@@ -218,134 +217,5 @@ impl ConstantRaw {
                 blob.get(self.value as usize)?,
             )?),
         }))
-    }
-}
-
-impl<'a> RowDefinition<'a> for ConstantRaw {
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* c_type */    1 +
-            /* padding */   1 +
-            /* parent */    sizes.coded_index_bytes(CodedIndexType::HasConstant) +
-            /* value */     sizes.blob_bytes()
-        )
-    }
-
-    fn read_row(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
-        let offset_org = *offset;
-
-        let c_type = read_le_at::<u8>(data, offset)?;
-        *offset += 1; // Padding
-
-        Ok(ConstantRaw {
-            rid,
-            token: Token::new(0x0B00_0000 + rid),
-            offset: offset_org,
-            base: c_type,
-            parent: CodedIndex::read(data, offset, sizes, CodedIndexType::HasConstant)?,
-            value: read_le_at_dyn(data, offset, sizes.is_large_blob())?,
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::metadata::tables::{MetadataTable, TableId, TableInfo};
-
-    use super::*;
-    use crate::metadata::token::Token;
-
-    #[test]
-    fn crafted_short() {
-        let data = vec![
-            0x01, // type
-            0x00, // padding
-            0x02, 0x02, // parent
-            0x03, 0x03, // value
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[(TableId::Property, 1)],
-            false,
-            false,
-            false,
-        ));
-        let table = MetadataTable::<ConstantRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: ConstantRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x0B000001);
-            assert_eq!(row.base, 0x01);
-            assert_eq!(
-                row.parent,
-                CodedIndex {
-                    tag: TableId::Property,
-                    row: 128,
-                    token: Token::new(128 | 0x17000000),
-                }
-            );
-            assert_eq!(row.value, 0x303);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
-    }
-
-    #[test]
-    fn crafted_long() {
-        let data = vec![
-            0x01, // type
-            0x00, // padding
-            0x02, 0x02, 0x02, 0x02, // parent
-            0x03, 0x03, 0x03, 0x03, // value
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[(TableId::Property, u16::MAX as u32 + 3)],
-            true,
-            true,
-            true,
-        ));
-        let table = MetadataTable::<ConstantRaw>::new(&data, u16::MAX as u32 + 3, sizes).unwrap();
-
-        let eval = |row: ConstantRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x0B000001);
-            assert_eq!(row.base, 0x1);
-            assert_eq!(
-                row.parent,
-                CodedIndex {
-                    tag: TableId::Property,
-                    row: 0x808080,
-                    token: Token::new(0x808080 | 0x17000000),
-                }
-            );
-            assert_eq!(row.value, 0x3030303);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
     }
 }

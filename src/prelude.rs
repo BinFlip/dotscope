@@ -98,7 +98,7 @@
 //! // Token-based navigation
 //! let typedef_token = Token::new(0x02000001);
 //! if let Some(tables) = assembly.tables() {
-//!     if let Some(typedef_table) = tables.table::<TypeDefRaw>(TableId::TypeDef) {
+//!     if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
 //!         let row_index = typedef_token.row();
 //!         if let Some(typedef) = typedef_table.get(row_index) {
 //!             println!("Type name index: {}", typedef.type_name);
@@ -346,7 +346,7 @@ pub use crate::metadata::tables::{MethodDebugInformation, MethodDebugInformation
 
 /// Local variable and constant scope tracking.
 ///
-/// LocalScope defines the IL instruction ranges where local variables and constants are active.
+/// `LocalScope` defines the IL instruction ranges where local variables and constants are active.
 /// Critical for proper variable visibility and lifetime tracking during debugging.
 pub use crate::metadata::tables::{LocalScope, LocalScopeRc, LocalScopeRef};
 
@@ -365,7 +365,7 @@ pub use crate::metadata::tables::{LocalConstant, LocalConstantRc};
 /// Namespace import scope information.
 ///
 /// Tracks namespace imports (using statements) and their active ranges for proper name resolution
-/// during debugging and IntelliSense operations.
+/// during debugging and `IntelliSense` operations.
 pub use crate::metadata::tables::{ImportScope, ImportScopeRc};
 
 /// State machine method mappings.

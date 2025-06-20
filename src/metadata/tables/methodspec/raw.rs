@@ -1,18 +1,15 @@
-//! # MethodSpec Raw Implementation
+//! # `MethodSpec` Raw Implementation
 //!
-//! This module provides the raw variant of MethodSpec table entries with unresolved
+//! This module provides the raw variant of `MethodSpec` table entries with unresolved
 //! indexes for initial parsing and memory-efficient storage.
 
 use std::sync::Arc;
 
 use crate::{
-    file::io::read_le_at_dyn,
     metadata::{
         signatures::parse_method_spec_signature,
         streams::Blob,
-        tables::{
-            CodedIndex, CodedIndexType, MethodSpec, MethodSpecRc, RowDefinition, TableInfoRef,
-        },
+        tables::{CodedIndex, MethodSpec, MethodSpecRc},
         token::Token,
         typesystem::{CilTypeReference, TypeRegistry, TypeResolver},
     },
@@ -20,15 +17,15 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-/// Raw representation of a MethodSpec table entry with unresolved indexes.
+/// Raw representation of a `MethodSpec` table entry with unresolved indexes.
 ///
-/// This structure represents an unprocessed entry from the MethodSpec metadata table
+/// This structure represents an unprocessed entry from the `MethodSpec` metadata table
 /// (ID 0x2B), which defines instantiations of generic methods with concrete type arguments.
 /// It contains raw index values that require resolution to actual metadata objects.
 ///
 /// ## Purpose
 ///
-/// The MethodSpec table enables generic method instantiation by:
+/// The `MethodSpec` table enables generic method instantiation by:
 /// - Referencing the generic method definition or member reference
 /// - Specifying the blob heap location of the instantiation signature
 /// - Providing the foundation for runtime generic method dispatch
@@ -44,15 +41,15 @@ use crate::{
 ///
 /// ## ECMA-335 Reference
 ///
-/// Corresponds to ECMA-335 §II.22.29 MethodSpec table structure.
+/// Corresponds to ECMA-335 §II.22.29 `MethodSpec` table structure.
 pub struct MethodSpecRaw {
-    /// Row identifier within the MethodSpec table.
+    /// Row identifier within the `MethodSpec` table.
     ///
     /// This 1-based index uniquely identifies this entry within the table.
     /// Combined with table ID 0x2B, forms the metadata token 0x2BXXXXXX.
     pub rid: u32,
 
-    /// Metadata token for this MethodSpec entry.
+    /// Metadata token for this `MethodSpec` entry.
     ///
     /// Format: 0x2BXXXXXX where XXXXXX is the row ID.
     /// Used for cross-referencing this entry from other metadata structures.
@@ -64,7 +61,7 @@ pub struct MethodSpecRaw {
     /// Used for debugging and low-level metadata inspection.
     pub offset: usize,
 
-    /// Raw MethodDefOrRef coded index to the generic method.
+    /// Raw `MethodDefOrRef` coded index to the generic method.
     ///
     /// This coded index identifies the generic method that will be instantiated:
     /// - Low 1 bit: Table tag (0=MethodDef, 1=MemberRef)
@@ -92,7 +89,7 @@ impl MethodSpecRaw {
     ///
     /// This method combines the functionality of resolving indexes, parsing the signature,
     /// resolving generic arguments, and applying them to the target method all in one step.
-    /// It's the primary method for processing MethodSpec entries during metadata loading.
+    /// It's the primary method for processing `MethodSpec` entries during metadata loading.
     ///
     /// ## Arguments
     ///
@@ -187,157 +184,5 @@ impl MethodSpecRaw {
         }
 
         Ok(method_spec)
-    }
-}
-
-impl<'a> RowDefinition<'a> for MethodSpecRaw {
-    /// Calculates the byte size of a MethodSpec table row.
-    ///
-    /// The row size depends on the metadata table sizes and is calculated as:
-    /// - `method`: 2 or 4 bytes (depends on MethodDefOrRef coded index size)
-    /// - `instantiation`: 2 or 4 bytes (depends on blob heap size)
-    ///
-    /// ## Arguments
-    /// * `sizes` - Table size information for calculating index widths
-    ///
-    /// ## Returns
-    /// Total byte size of one table row
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* method */        sizes.coded_index_bytes(CodedIndexType::MethodDefOrRef) +
-            /* instantiation */ sizes.blob_bytes()
-        )
-    }
-
-    /// Reads a single MethodSpec table row from binary data.
-    ///
-    /// Parses the binary representation according to ECMA-335 §II.22.29:
-    /// 1. **Method** (2-4 bytes): MethodDefOrRef coded index to the generic method
-    /// 2. **Instantiation** (2-4 bytes): Index into blob heap containing signature
-    ///
-    /// ## Arguments
-    /// * `data` - Binary data containing the table
-    /// * `offset` - Current read position (updated by this method)
-    /// * `rid` - Row identifier for this entry (1-based)
-    /// * `sizes` - Table size information for proper index width calculation
-    ///
-    /// ## Returns
-    /// Parsed [`MethodSpecRaw`] instance with populated fields
-    ///
-    /// ## Errors
-    /// Returns an error if:
-    /// - Insufficient data remaining at offset
-    /// - Invalid coded index encoding
-    /// - Data corruption or malformed structure
-    fn read_row(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
-        Ok(MethodSpecRaw {
-            rid,
-            token: Token::new(0x2B00_0000 + rid),
-            offset: *offset,
-            method: CodedIndex::read(data, offset, sizes, CodedIndexType::MethodDefOrRef)?,
-            instantiation: read_le_at_dyn(data, offset, sizes.is_large_blob())?,
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::metadata::tables::{MetadataTable, TableId, TableInfo};
-
-    #[test]
-    fn crafted_short() {
-        let data = vec![
-            0x01, 0x00, // method
-            0x02, 0x02, // instantiation
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[
-                (TableId::MethodSpec, 1),
-                (TableId::MethodDef, 10),
-                (TableId::MemberRef, 10),
-            ],
-            false,
-            false,
-            false,
-        ));
-        let table = MetadataTable::<MethodSpecRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: MethodSpecRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x2B000001);
-            assert_eq!(
-                row.method,
-                CodedIndex {
-                    tag: TableId::MemberRef,
-                    row: 0,
-                    token: Token::new(0x0A000000),
-                }
-            );
-            assert_eq!(row.instantiation, 0x0202);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
-    }
-
-    #[test]
-    fn crafted_long() {
-        let data = vec![
-            0x01, 0x00, 0x00, 0x00, // method
-            0x02, 0x02, 0x02, 0x02, // instantiation
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[
-                (TableId::MethodSpec, u16::MAX as u32 + 3),
-                (TableId::MethodDef, u16::MAX as u32 + 3),
-                (TableId::MemberRef, u16::MAX as u32 + 3),
-            ],
-            true,
-            true,
-            true,
-        ));
-        let table = MetadataTable::<MethodSpecRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: MethodSpecRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x2B000001);
-            assert_eq!(
-                row.method,
-                CodedIndex {
-                    tag: TableId::MemberRef,
-                    row: 0,
-                    token: Token::new(0x0A000000),
-                }
-            );
-            assert_eq!(row.instantiation, 0x02020202);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
     }
 }

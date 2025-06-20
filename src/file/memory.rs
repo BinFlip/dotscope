@@ -70,6 +70,13 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
+//! # Thread Safety
+//!
+//! The [`Memory`] backend is thread-safe for concurrent read operations. Once created,
+//! the stored data is immutable, making it safe to share across threads. Multiple threads
+//! can safely call [`crate::file::Backend::data_slice`] and other accessor methods
+//! concurrently without additional synchronization.
+//!
 //! # Integration
 //!
 //! This module integrates with:
@@ -109,6 +116,12 @@ use crate::{Error::OutOfBounds, Result};
 /// println!("File size: {} bytes", file.len());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// [`Memory`] is [`std::marker::Send`] and [`std::marker::Sync`] as the stored data is immutable
+/// after creation. Multiple threads can safely access the data concurrently through the
+/// [`crate::file::Backend`] trait methods.
 #[derive(Debug)]
 pub struct Memory {
     /// The in-memory data buffer
@@ -137,6 +150,10 @@ impl Memory {
     /// // The original vector is consumed and cannot be used anymore
     /// // println!("{:?}", file_bytes); // This would be a compile error
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn new(data: Vec<u8>) -> Memory {
         Memory { data }
     }

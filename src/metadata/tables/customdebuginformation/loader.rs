@@ -1,9 +1,62 @@
-//! CustomDebugInformation table loader for efficient metadata processing
+//! `CustomDebugInformation` table loader implementation.
 //!
-//! This module provides the [`CustomDebugInformationLoader`] implementation that handles
-//! loading and processing CustomDebugInformation table entries from Portable PDB metadata.
-//! The loader follows the established MetadataLoader pattern for consistent parallel
-//! processing and efficient memory utilization.
+//! This module provides the [`crate::metadata::tables::customdebuginformation::loader::CustomDebugInformationLoader`]
+//! implementation for loading `CustomDebugInformation` metadata from the Portable PDB `CustomDebugInformation` table (0x37).
+//! The loader processes custom debugging information that extends the standard debugging metadata
+//! with compiler and language-specific debugging data.
+//!
+//! # Architecture
+//!
+//! The loader follows the standard metadata loading pattern, implementing the
+//! [`crate::metadata::loader::MetadataLoader`] trait to process table data and integrate
+//! custom debugging information with previously loaded metadata elements.
+//!
+//! # Key Components
+//!
+//! - [`crate::metadata::tables::customdebuginformation::loader::CustomDebugInformationLoader`] - Main loader implementation
+//! - [`crate::metadata::tables::customdebuginformation::CustomDebugInformationRaw`] - Raw table row structure
+//! - [`crate::metadata::loader::LoaderContext`] - Context for loading operations
+//!
+//! # Table Structure
+//!
+//! The `CustomDebugInformation` table contains zero or more rows with debugging extensions:
+//! - **Parent**: Coded index referencing the metadata element with custom debug info
+//! - **Kind**: GUID heap reference identifying the custom debug info format
+//! - **Value**: Blob heap reference containing the custom debug data
+//!
+//! # Custom Debug Information Processing
+//!
+//! Custom debugging information provides extensible debugging metadata for:
+//! - **State machine debugging**: Async/await and iterator state tracking
+//! - **Dynamic type debugging**: Information for dynamically typed variables
+//! - **Edit-and-continue**: Mapping information for debugging sessions
+//! - **Embedded sources**: Source code embedding for portable debugging
+//! - **Source link**: URL mapping for source server integration
+//! - **Language-specific data**: Compiler-specific debugging extensions
+//!
+//! # Dependencies
+//!
+//! This loader depends on most other metadata tables being loaded first, as custom
+//! debugging information can be applied to various metadata elements.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::loader`] - Core metadata loading infrastructure
+//! - [`crate::metadata::tables`] - Metadata table types for debug info targets
+//! - [`crate::metadata::streams::Guid`] - GUID heap for debug info kind identification
+//! - [`crate::metadata::streams::Blob`] - Blob heap for debug data
+//! - [`crate::metadata::tables::customdebuginformation`] - `CustomDebugInformation` table types
+//!
+//! # Thread Safety
+//!
+//! The loader is thread-safe and uses parallel iteration for performance when processing
+//! multiple `CustomDebugInformation` entries. Updates to storage collections are handled
+//! through atomic operations.
+//!
+//! # References
+//!
+//! - [Portable PDB v1.1](https://github.com/dotnet/corefx/blob/master/src/System.Reflection.Metadata/specs/PortablePdb-Metadata.md#customdebuginformation-table-0x37) - `CustomDebugInformation` table specification
 
 use crate::{
     metadata::{
@@ -13,58 +66,63 @@ use crate::{
     Result,
 };
 
-/// Metadata loader for CustomDebugInformation table entries
+/// Loader for the `CustomDebugInformation` metadata table
 ///
-/// This loader processes CustomDebugInformation table data to build efficient lookup
-/// structures for custom debugging information access. The loader handles:
+/// Implements [`crate::metadata::loader::MetadataLoader`] to process the `CustomDebugInformation` table (0x37)
+/// which contains custom debugging information that extends the standard Portable PDB debugging metadata
+/// with compiler and language-specific debugging data.
 ///
-/// - Parallel processing of table rows for optimal performance
-/// - Building token-based lookup maps for fast custom debug info resolution
-/// - Creating ordered lists for sequential access patterns
-/// - Memory-efficient storage using reference counting
+/// # Debug Information Processing
 ///
-/// # Custom Debug Information Context
+/// The loader handles various custom debugging scenarios:
+/// - **State machine debugging**: Async/await and iterator state tracking information
+/// - **Dynamic type debugging**: Information for dynamically typed variables and expressions
+/// - **Edit-and-continue**: Mapping information for debugging sessions and hot reload
+/// - **Embedded sources**: Source code embedding for portable debugging scenarios
+/// - **Source link**: URL mapping for source server integration and remote debugging
+/// - **Language-specific data**: Compiler-specific debugging extensions and metadata
 ///
-/// The CustomDebugInformation table provides extensibility for debugging scenarios
-/// beyond the standard Portable PDB tables. It allows compilers and tools to store
-/// implementation-specific debugging metadata such as:
+/// # Thread Safety
 ///
-/// - State machine variable hoisting information for async/await debugging
-/// - Dynamic type tracking for C# dynamic variables
-/// - Edit-and-continue mapping information for debugging sessions
-/// - Embedded source code and source link configuration
-/// - Language-specific namespace and scope information
-///
-/// # Integration
-///
-/// This loader integrates with the broader metadata loading infrastructure:
-/// - Uses the [`LoaderContext`] for coordinated loading across all tables
-/// - Implements [`MetadataLoader`] trait for consistent processing patterns
-/// - Provides thread-safe data structures for concurrent debugger access
-/// - Resolves GUID and blob heap references during loading
-///
-/// # Performance Considerations
-///
-/// Custom debug information can be quite large (especially embedded source),
-/// so the loader is designed for efficiency:
-/// - Parallel processing of table entries
-/// - Lazy resolution of heap data only when needed
-/// - Memory-efficient storage of resolved data
-///
-/// # References
-///
-/// - [Portable PDB Format - CustomDebugInformation Table](https://github.com/dotnet/corefx/blob/master/src/System.Reflection.Metadata/specs/PortablePdb-Metadata.md#customdebuginformation-table-0x37)
-/// - [Custom Debug Information Records](https://github.com/dotnet/corefx/blob/master/src/System.Reflection.Metadata/specs/PortablePdb-Metadata.md#language-specific-custom-debug-information-records)
+/// This type is [`Send`] and [`Sync`] as it contains no mutable state and all operations
+/// are read-only during the metadata loading phase. The loader uses parallel iteration
+/// for performance when processing multiple `CustomDebugInformation` entries.
 pub struct CustomDebugInformationLoader;
 
 impl MetadataLoader for CustomDebugInformationLoader {
+    /// Load `CustomDebugInformation` metadata and integrate with debugging system
+    ///
+    /// Processes all rows in the `CustomDebugInformation` table, resolving references to target metadata
+    /// elements and parsing custom debug data from GUID and blob heaps. Each processed entry is stored
+    /// in the loader context for subsequent access by debugging tools and analyzers.
+    ///
+    /// # Arguments
+    ///
+    /// * `context` - [`crate::metadata::loader::LoaderContext`] containing metadata tables, heap references, and storage collections
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - All `CustomDebugInformation` entries successfully processed and stored
+    /// * `Err(`[`crate::Error`]`)` - Processing failed due to malformed data or missing dependencies
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error`] in the following cases:
+    /// - Target metadata element references are invalid or missing
+    /// - GUID heap references are invalid or corrupted
+    /// - Blob heap references are invalid or corrupted
+    /// - `CustomDebugInformation` table structure is malformed
+    /// - Custom debug data parsing fails
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and uses parallel iteration for performance.
+    /// Updates to storage collections are handled through atomic operations.
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(guids), Some(blobs)) =
             (context.meta, context.guids, context.blobs)
         {
-            if let Some(table) =
-                header.table::<CustomDebugInformationRaw>(TableId::CustomDebugInformation)
-            {
+            if let Some(table) = header.table::<CustomDebugInformationRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let custom_debug_info =
                         row.to_owned(|coded_index| context.get_ref(coded_index), guids, blobs)?;
@@ -78,10 +136,20 @@ impl MetadataLoader for CustomDebugInformationLoader {
         Ok(())
     }
 
+    /// Returns the table identifier for `CustomDebugInformation`
+    ///
+    /// Provides the [`crate::prelude::TableId::CustomDebugInformation`] constant used to identify this table
+    /// type within the metadata loading framework.
     fn table_id(&self) -> TableId {
         TableId::CustomDebugInformation
     }
 
+    /// Returns the table dependencies for `CustomDebugInformation` loading
+    ///
+    /// Specifies the extensive list of tables that `CustomDebugInformation` loading depends on.
+    /// Custom debugging information can be applied to most metadata elements, requiring
+    /// that target tables are loaded before debug associations are established.
+    /// This dependency ordering prevents resolution failures during the loading process.
     fn dependencies(&self) -> &'static [TableId] {
         &[
             TableId::MethodDef,

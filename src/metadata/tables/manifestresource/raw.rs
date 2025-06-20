@@ -1,11 +1,11 @@
-//! Raw ManifestResource table structure with unresolved coded indexes.
+//! Raw `ManifestResource` table structure with unresolved coded indexes.
 //!
 //! This module provides the [`ManifestResourceRaw`] struct, which represents resource entries
 //! as stored in the metadata stream. The structure contains unresolved coded indexes
 //! and heap references that require processing to establish resource access mechanisms.
 //!
 //! # Purpose
-//! [`ManifestResourceRaw`] serves as the direct representation of ManifestResource table entries
+//! [`ManifestResourceRaw`] serves as the direct representation of `ManifestResource` table entries
 //! from the binary metadata stream, before reference resolution and resource data access
 //! establishment. This raw format is processed during metadata loading to create
 //! [`ManifestResource`] instances with resolved references and direct resource access.
@@ -15,16 +15,13 @@
 use std::sync::Arc;
 
 use crate::{
-    file::{
-        io::{read_le_at, read_le_at_dyn},
-        File,
-    },
+    file::File,
     metadata::{
         cor20header::Cor20Header,
         streams::Strings,
         tables::{
-            CodedIndex, CodedIndexType, ManifestResource, ManifestResourceAttributes,
-            ManifestResourceRc, MetadataTable, RowDefinition, TableInfoRef,
+            CodedIndex, ManifestResource, ManifestResourceAttributes, ManifestResourceRc,
+            MetadataTable,
         },
         token::Token,
         typesystem::CilTypeReference,
@@ -32,7 +29,7 @@ use crate::{
     Result,
 };
 
-/// Raw ManifestResource table entry with unresolved indexes and heap references.
+/// Raw `ManifestResource` table entry with unresolved indexes and heap references.
 ///
 /// This structure represents a resource entry as stored directly in the metadata stream.
 /// All references are unresolved coded indexes or heap offsets that require processing
@@ -49,24 +46,24 @@ use crate::{
 /// # Coded Index Resolution
 /// The `implementation` field uses the Implementation coded index encoding:
 /// - **Tag 0**: File table (external file resources)
-/// - **Tag 1**: AssemblyRef table (external assembly resources)
-/// - **Tag 2**: ExportedType table (rarely used for resources)
+/// - **Tag 1**: `AssemblyRef` table (external assembly resources)
+/// - **Tag 2**: `ExportedType` table (rarely used for resources)
 /// - **Row 0**: Special case indicating embedded resource in current assembly
 ///
 /// # Resource Location Logic
 /// Resource data location is determined by the implementation field:
 /// - **Embedded**: implementation.row == 0, data in current assembly at offset
 /// - **File-based**: implementation references File table entry
-/// - **Assembly-based**: implementation references AssemblyRef table entry
+/// - **Assembly-based**: implementation references `AssemblyRef` table entry
 #[derive(Clone, Debug)]
 pub struct ManifestResourceRaw {
-    /// Row identifier within the ManifestResource table.
+    /// Row identifier within the `ManifestResource` table.
     ///
     /// Unique identifier for this resource entry, used for internal
     /// table management and token generation.
     pub rid: u32,
 
-    /// Metadata token for this ManifestResource entry (TableId 0x28).
+    /// Metadata token for this `ManifestResource` entry (`TableId` 0x28).
     ///
     /// Computed as `0x28000000 | rid` to create the full token value
     /// for referencing this resource from other metadata structures.
@@ -100,7 +97,7 @@ pub struct ManifestResourceRaw {
 
     /// Implementation coded index for resource location.
     ///
-    /// Points to File, AssemblyRef, or ExportedType tables to specify resource location.
+    /// Points to File, `AssemblyRef`, or `ExportedType` tables to specify resource location.
     /// A row value of 0 indicates an embedded resource in the current assembly.
     /// Requires coded index resolution during processing to determine actual resource source.
     pub implementation: CodedIndex,
@@ -177,141 +174,5 @@ impl ManifestResourceRaw {
     /// Always returns `Ok(())` as `ManifestResource` entries don't modify other tables.
     pub fn apply(&self) -> Result<()> {
         Ok(())
-    }
-}
-
-impl<'a> RowDefinition<'a> for ManifestResourceRaw {
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* offset_field */   4 +
-            /* flags */          4 +
-            /* name */           sizes.str_bytes() +
-            /* implementation */ sizes.coded_index_bytes(CodedIndexType::Implementation)
-        )
-    }
-
-    fn read_row(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
-        Ok(ManifestResourceRaw {
-            rid,
-            token: Token::new(0x2800_0000 + rid),
-            offset: *offset,
-            offset_field: read_le_at::<u32>(data, offset)?,
-            flags: read_le_at::<u32>(data, offset)?,
-            name: read_le_at_dyn(data, offset, sizes.is_large_str())?,
-            implementation: CodedIndex::read(data, offset, sizes, CodedIndexType::Implementation)?,
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::metadata::tables::{MetadataTable, TableId, TableInfo};
-
-    use super::*;
-
-    #[test]
-    fn crafted_short() {
-        let data = vec![
-            0x01, 0x01, 0x01, 0x01, // offset_field
-            0x02, 0x02, 0x02, 0x02, // flags
-            0x03, 0x03, // name
-            0x04, 0x00, // implementation (tag 0 = File, index = 1)
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[
-                (TableId::ManifestResource, 1),
-                (TableId::File, 10),         // Add File table
-                (TableId::AssemblyRef, 10),  // Add AssemblyRef table
-                (TableId::ExportedType, 10), // Add ExportedType table
-            ],
-            false,
-            false,
-            false,
-        ));
-        let table = MetadataTable::<ManifestResourceRaw>::new(&data, 1, sizes.clone()).unwrap();
-
-        let eval = |row: ManifestResourceRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x28000001);
-            assert_eq!(row.offset_field, 0x01010101);
-            assert_eq!(row.flags, 0x02020202);
-            assert_eq!(row.name, 0x0303);
-            assert_eq!(
-                row.implementation,
-                CodedIndex {
-                    tag: TableId::File,
-                    row: 1,
-                    token: Token::new(1 | 0x26000000),
-                }
-            );
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
-    }
-
-    #[test]
-    fn crafted_long() {
-        let data = vec![
-            0x01, 0x01, 0x01, 0x01, // offset_field
-            0x02, 0x02, 0x02, 0x02, // flags
-            0x03, 0x03, 0x03, 0x03, // name
-            0x04, 0x00, 0x00, 0x00, // implementation (tag 0 = File, index = 1)
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[
-                (TableId::ManifestResource, u16::MAX as u32 + 3),
-                (TableId::File, u16::MAX as u32 + 3), // Add File table
-                (TableId::AssemblyRef, u16::MAX as u32 + 3), // Add AssemblyRef table
-                (TableId::ExportedType, u16::MAX as u32 + 3), // Add ExportedType table
-            ],
-            true,
-            true,
-            true,
-        ));
-        let table = MetadataTable::<ManifestResourceRaw>::new(&data, 1, sizes.clone()).unwrap();
-
-        let eval = |row: ManifestResourceRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x28000001);
-            assert_eq!(row.offset_field, 0x01010101);
-            assert_eq!(row.flags, 0x02020202);
-            assert_eq!(row.name, 0x03030303);
-            assert_eq!(
-                row.implementation,
-                CodedIndex {
-                    tag: TableId::File,
-                    row: 1,
-                    token: Token::new(1 | 0x26000000),
-                }
-            );
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
     }
 }

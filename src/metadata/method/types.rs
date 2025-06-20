@@ -91,7 +91,7 @@
 //!
 //! # Thread Safety
 //!
-//! All flag types are `Copy` and thread-safe. LocalVariable and VarArg use `Arc`-based
+//! All flag types are `Copy` and thread-safe. `LocalVariable` and `VarArg` use `Arc`-based
 //! reference counting for safe sharing across threads.
 
 use bitflags::bitflags;

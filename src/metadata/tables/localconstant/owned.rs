@@ -1,14 +1,14 @@
-//! Owned LocalConstant table representation
+//! Owned `LocalConstant` table representation
 //!
 //! This module provides the [`LocalConstant`] struct that represents
-//! the high-level, resolved form of LocalConstant table entries with
+//! the high-level, resolved form of `LocalConstant` table entries with
 //! all heap references resolved to actual string and binary data.
 
 use crate::metadata::{signatures::SignatureField, token::Token};
 
-/// High-level representation of a LocalConstant table entry
+/// High-level representation of a `LocalConstant` table entry
 ///
-/// This structure provides the resolved form of LocalConstant table data
+/// This structure provides the resolved form of `LocalConstant` table data
 /// with all heap indices resolved to their actual values. The name field
 /// contains the resolved string data from the #Strings heap, and the
 /// signature field contains the parsed type signature from the #Blob heap.
@@ -40,7 +40,7 @@ pub struct LocalConstant {
     /// Row identifier (1-based index in the table)
     pub rid: u32,
 
-    /// Metadata token for this LocalConstant entry
+    /// Metadata token for this `LocalConstant` entry
     pub token: Token,
 
     /// Byte offset of this row in the original metadata stream

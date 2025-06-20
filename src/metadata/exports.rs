@@ -5,11 +5,21 @@
 //! COM clients, and external consumers. Essential for dependency analysis, interoperability
 //! scenarios, and assembly metadata inspection workflows.
 //!
-//! # Overview
+//! # Architecture
 //!
-//! The exported types container manages [`crate::metadata::tables::ExportedType`] metadata
-//! using efficient concurrent data structures. It supports fast lookups by token, name,
-//! and implementation reference while providing iterator access for comprehensive analysis.
+//! The module implements a thread-safe container for exported type metadata using
+//! lock-free concurrent data structures. The architecture provides:
+//!
+//! - **Efficient Lookups**: O(log n) token-based access with concurrent safety
+//! - **Name-based Searching**: Linear search capabilities by type name and namespace
+//! - **Iterator Support**: Complete traversal of all exported types
+//! - **Memory Management**: Reference counting for efficient memory usage
+//!
+//! # Key Components
+//!
+//! - [`crate::metadata::exports::Exports`] - Main container for exported type metadata
+//! - [`crate::metadata::tables::ExportedTypeRc`] - Reference-counted exported type instances
+//! - [`crate::metadata::tables::ExportedTypeMap`] - Thread-safe concurrent map implementation
 //!
 //! # Use Cases
 //!
@@ -17,6 +27,7 @@
 //! - **COM Interop**: Track types exported for COM visibility
 //! - **Metadata Inspection**: Enumerate all publicly available types
 //! - **Assembly Loading**: Resolve type references across assembly boundaries
+//! - **Type Resolution**: Cross-assembly type lookup and validation
 //!
 //! # Examples
 //!
@@ -42,9 +53,18 @@
 //! # Thread Safety
 //!
 //! All operations are thread-safe using lock-free data structures from the
-//! [`crossbeam_skiplist`] crate, enabling efficient concurrent access patterns
-//! common in metadata processing scenarios.
-
+//! [`crossbeam_skiplist`] crate. The [`crate::metadata::exports::Exports`] container
+//! is [`std::marker::Send`] and [`std::marker::Sync`], enabling efficient concurrent
+//! access patterns common in metadata processing scenarios. Multiple threads can
+//! safely read, write, and iterate over exported types simultaneously.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::tables`] - Provides ExportedType table data structures
+//! - [`crate::metadata::token`] - Token-based type identification system
+//! - [`crate::metadata::typesystem`] - Type reference resolution and validation
+//! - [`crate::CilObject`] - Assembly-level exported type management
 use std::sync::Arc;
 
 use crossbeam_skiplist::map::Entry;
@@ -95,6 +115,12 @@ use crate::{
 /// }
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// [`Exports`] is [`std::marker::Send`] and [`std::marker::Sync`], enabling safe concurrent access
+/// from multiple threads. All operations use lock-free data structures for optimal performance
+/// in multi-threaded scenarios.
 pub struct Exports {
     /// Internal storage for exported type mappings
     data: ExportedTypeMap,
@@ -115,6 +141,10 @@ impl Exports {
     /// assert!(exports.is_empty());
     /// assert_eq!(exports.len(), 0);
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn new() -> Self {
         Exports {
@@ -150,6 +180,15 @@ impl Exports {
     /// assert_eq!(exports.len(), 1);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// This method currently does not return any errors but maintains a `Result` return type
+    /// for future compatibility with potential validation or storage constraints.
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn insert(&self, token: Token, export: ExportedTypeRc) -> Result<()> {
         self.data.insert(token, export);
 
@@ -185,6 +224,10 @@ impl Exports {
     ///     println!("No exported type found for token {}", token);
     /// }
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn get(&self, token: &Token) -> Option<Entry<Token, ExportedTypeRc>> {
         self.data.get(token)
     }
@@ -307,8 +350,8 @@ impl Exports {
     /// # Implementation Matching
     /// Compares tokens for each reference type:
     /// - **File**: Matches [`crate::metadata::typesystem::CilTypeReference::File`] tokens
-    /// - **AssemblyRef**: Matches [`crate::metadata::typesystem::CilTypeReference::AssemblyRef`] tokens  
-    /// - **ExportedType**: Matches [`crate::metadata::typesystem::CilTypeReference::ExportedType`] tokens
+    /// - **`AssemblyRef`**: Matches [`crate::metadata::typesystem::CilTypeReference::AssemblyRef`] tokens  
+    /// - **`ExportedType`**: Matches [`crate::metadata::typesystem::CilTypeReference::ExportedType`] tokens
     ///
     /// # Examples
     ///

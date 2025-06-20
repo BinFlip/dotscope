@@ -1,4 +1,4 @@
-//! # MethodSemantics Table Loader
+//! # `MethodSemantics` Table Loader
 //!
 //! This module provides the loader implementation for the [`MethodSemantics`](crate::metadata::tables::MethodSemantics) table,
 //! which specifies the relationship between methods and events or properties in .NET metadata.
@@ -12,7 +12,7 @@
 //!
 //! ## Table Dependencies
 //!
-//! The MethodSemantics table depends on:
+//! The `MethodSemantics` table depends on:
 //! - [`Event`](crate::metadata::tables::Event) - For event semantic associations
 //! - [`EventMap`](crate::metadata::tables::EventMap) - For event mapping resolution
 //! - [`Property`](crate::metadata::tables::Property) - For property semantic associations  
@@ -34,7 +34,7 @@ use crate::{
     Result,
 };
 
-/// Loader implementation for the MethodSemantics metadata table.
+/// Loader implementation for the `MethodSemantics` metadata table.
 ///
 /// This loader processes [`crate::metadata::tables::MethodSemanticsRaw`] entries, converting them to
 /// owned [`crate::metadata::tables::MethodSemantics`] instances with resolved references and applying
@@ -42,7 +42,7 @@ use crate::{
 pub(crate) struct MethodSemanticsLoader;
 
 impl MetadataLoader for MethodSemanticsLoader {
-    /// Loads and processes all MethodSemantics table entries.
+    /// Loads and processes all `MethodSemantics` table entries.
     ///
     /// ## Arguments
     /// * `context` - The loader context containing metadata tables and storage
@@ -55,7 +55,7 @@ impl MetadataLoader for MethodSemanticsLoader {
     /// - Required dependency tables are missing
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) = header.table::<MethodSemanticsRaw>(TableId::MethodSemantics) {
+            if let Some(table) = header.table::<MethodSemanticsRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned = row.to_owned(
                         |coded_index| context.get_ref(coded_index),
@@ -71,7 +71,7 @@ impl MetadataLoader for MethodSemanticsLoader {
         Ok(())
     }
 
-    /// Returns the table identifier for MethodSemantics.
+    /// Returns the table identifier for `MethodSemantics`.
     ///
     /// ## Returns
     /// [`crate::metadata::tables::TableId::MethodSemantics`] (0x18)
@@ -79,9 +79,9 @@ impl MetadataLoader for MethodSemanticsLoader {
         TableId::MethodSemantics
     }
 
-    /// Returns the table dependencies for MethodSemantics loading.
+    /// Returns the table dependencies for `MethodSemantics` loading.
     ///
-    /// The MethodSemantics table requires these tables to be loaded first for proper
+    /// The `MethodSemantics` table requires these tables to be loaded first for proper
     /// association resolution:
     /// - [`Event`](crate::metadata::tables::TableId::Event) - For event semantic associations
     /// - [`EventMap`](crate::metadata::tables::TableId::EventMap) - For event mapping resolution

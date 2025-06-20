@@ -1,38 +1,44 @@
-//! Raw DeclSecurity table representation.
+//! Raw `DeclSecurity` table representation.
 //!
-//! This module provides the [`crate::metadata::tables::declsecurity::raw::DeclSecurityRaw`] struct
-//! for low-level access to DeclSecurity metadata table data with unresolved heap indexes and coded indices.
+//! This module provides the [`crate::metadata::tables::declsecurity::DeclSecurityRaw`] struct
+//! for low-level access to `DeclSecurity` metadata table data with unresolved heap indexes and coded indices.
 //! This represents the binary format of security declaration records as they appear in the metadata
 //! tables stream, requiring resolution to create usable data structures.
 //!
-//! # DeclSecurity Table Format
+//! # Key Components
 //!
-//! The DeclSecurity table (0x0E) contains security declarations for assemblies, types, and methods
+//! - [`crate::metadata::tables::declsecurity::DeclSecurityRaw`] - Raw binary representation with unresolved indices
+//!
+//! # Thread Safety
+//!
+//! All types in this module are [`Send`] and [`Clone`], enabling safe sharing
+//! across threads and efficient copying when needed.
+//!
+//! # `DeclSecurity` Table Format
+//!
+//! The `DeclSecurity` table (0x0E) contains security declarations for assemblies, types, and methods
 //! with these fields:
 //! - **Action** (2 bytes): Security action enumeration value
-//! - **Parent** (2/4 bytes): HasDeclSecurity coded index to target entity
-//! - **PermissionSet** (2/4 bytes): Blob heap index for serialized permission data
+//! - **Parent** (2/4 bytes): `HasDeclSecurity` coded index to target entity
+//! - **`PermissionSet`** (2/4 bytes): Blob heap index for serialized permission data
 //!
 //! # Usage
 //!
 //! This type is used internally for metadata parsing and should typically be converted
-//! to [`crate::metadata::tables::DeclSecurity`] via [`DeclSecurityRaw::to_owned`] for practical use.
-//! The [`apply`](DeclSecurityRaw::apply) method can directly process security declarations
+//! to [`crate::metadata::tables::declsecurity::DeclSecurity`] via [`crate::metadata::tables::declsecurity::DeclSecurityRaw::to_owned`] for practical use.
+//! The [`crate::metadata::tables::declsecurity::DeclSecurityRaw::apply`] method can directly process security declarations
 //! without creating intermediate owned structures.
 //!
 //! # Reference
-//! - [ECMA-335 II.22.11](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - DeclSecurity table specification
+//! - [ECMA-335 II.22.11](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `DeclSecurity` table specification
 
 use std::sync::Arc;
 
 use crate::{
-    file::io::{read_le_at, read_le_at_dyn},
     metadata::{
         security::{PermissionSet, Security, SecurityAction},
         streams::Blob,
-        tables::{
-            CodedIndex, CodedIndexType, DeclSecurity, DeclSecurityRc, RowDefinition, TableInfoRef,
-        },
+        tables::{CodedIndex, DeclSecurity, DeclSecurityRc},
         token::Token,
         typesystem::CilTypeReference,
     },
@@ -40,9 +46,9 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-/// Raw DeclSecurity table row with unresolved indexes and coded indices
+/// Raw `DeclSecurity` table row with unresolved indexes and coded indices
 ///
-/// Represents the binary format of a DeclSecurity metadata table entry (table ID 0x0E) as stored
+/// Represents the binary format of a `DeclSecurity` metadata table entry (table ID 0x0E) as stored
 /// in the metadata tables stream. All blob references and parent entity references are stored as
 /// indexes that must be resolved using the appropriate heaps and coded index resolution.
 ///
@@ -51,9 +57,9 @@ use crate::{
 /// (assembly, type, or method) and specifies how certain permissions should be handled.
 ///
 /// # Reference
-/// - [ECMA-335 II.22.11](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - DeclSecurity table specification
+/// - [ECMA-335 II.22.11](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `DeclSecurity` table specification
 pub struct DeclSecurityRaw {
-    /// Row identifier within the DeclSecurity metadata table
+    /// Row identifier within the `DeclSecurity` metadata table
     ///
     /// The 1-based index of this security declaration row. Used for metadata
     /// token generation and cross-referencing with other metadata structures.
@@ -61,7 +67,7 @@ pub struct DeclSecurityRaw {
 
     /// Metadata token for this security declaration row
     ///
-    /// Combines the table identifier (0x0E for DeclSecurity) with the row ID to create
+    /// Combines the table identifier (0x0E for `DeclSecurity`) with the row ID to create
     /// a unique token. Format: `0x0E000000 | rid`
     pub token: Token,
 
@@ -78,10 +84,10 @@ pub struct DeclSecurityRaw {
     /// demanded, asserted, denied, etc.
     pub action: u16,
 
-    /// HasDeclSecurity coded index to the target entity (unresolved)
+    /// `HasDeclSecurity` coded index to the target entity (unresolved)
     ///
     /// References the entity this security declaration applies to through a coded index.
-    /// Can point to TypeDef, MethodDef, or Assembly tables. Must be resolved using
+    /// Can point to `TypeDef`, `MethodDef`, or Assembly tables. Must be resolved using
     /// appropriate coded index resolution to obtain the actual target reference.
     pub parent: CodedIndex,
 
@@ -169,7 +175,7 @@ impl DeclSecurityRaw {
         }
     }
 
-    /// Convert to owned DeclSecurity with resolved references and owned data
+    /// Convert to owned `DeclSecurity` with resolved references and owned data
     ///
     /// This method converts the raw security declaration into a fully resolved
     /// [`DeclSecurity`] structure with owned data and resolved references. The resulting
@@ -217,138 +223,5 @@ impl DeclSecurityRaw {
             permission_set,
             custom_attributes: Arc::new(boxcar::Vec::new()),
         }))
-    }
-}
-
-impl<'a> RowDefinition<'a> for DeclSecurityRaw {
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* action */            2 +
-            /* parent */            sizes.coded_index_bytes(CodedIndexType::HasDeclSecurity) +
-            /* permission_set */    sizes.blob_bytes()
-        )
-    }
-
-    fn read_row(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
-        let offset_org = *offset;
-
-        let action = read_le_at::<u16>(data, offset)?;
-
-        Ok(DeclSecurityRaw {
-            rid,
-            token: Token::new(0x0E00_0000 + rid),
-            offset: offset_org,
-            action,
-            parent: CodedIndex::read(data, offset, sizes, CodedIndexType::HasDeclSecurity)?,
-            permission_set: read_le_at_dyn(data, offset, sizes.is_large_blob())?,
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::metadata::tables::{MetadataTable, TableId, TableInfo};
-
-    use super::*;
-
-    #[test]
-    fn crafted_short() {
-        let data = vec![
-            0x01, 0x01, // action
-            0x02, 0x02, // parent
-            0x03, 0x03, // permission_set
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[
-                (TableId::TypeDef, 1),
-                (TableId::MethodDef, 1),
-                (TableId::Assembly, 1),
-            ],
-            false,
-            false,
-            false,
-        ));
-        let table = MetadataTable::<DeclSecurityRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: DeclSecurityRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x0E000001);
-            assert_eq!(row.action, 0x0101);
-            assert_eq!(
-                row.parent,
-                CodedIndex {
-                    tag: TableId::Assembly,
-                    row: 128,
-                    token: Token::new(128 | 0x20000000),
-                }
-            );
-            assert_eq!(row.permission_set, 0x303);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
-    }
-
-    #[test]
-    fn crafted_long() {
-        let data = vec![
-            0x01, 0x01, // action
-            0x02, 0x02, 0x02, 0x02, // parent
-            0x03, 0x03, 0x03, 0x03, // permission_set
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[
-                (TableId::TypeDef, u16::MAX as u32 + 3),
-                (TableId::MethodDef, u16::MAX as u32 + 3),
-                (TableId::Assembly, u16::MAX as u32 + 3),
-            ],
-            true,
-            true,
-            true,
-        ));
-        let table =
-            MetadataTable::<DeclSecurityRaw>::new(&data, u16::MAX as u32 + 3, sizes).unwrap();
-
-        let eval = |row: DeclSecurityRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x0E000001);
-            assert_eq!(row.action, 0x0101);
-            assert_eq!(
-                row.parent,
-                CodedIndex {
-                    tag: TableId::Assembly,
-                    row: 0x808080,
-                    token: Token::new(0x808080 | 0x20000000)
-                }
-            );
-            assert_eq!(row.permission_set, 0x3030303);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
     }
 }

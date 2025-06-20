@@ -456,14 +456,14 @@ pub struct ExceptionHandler {
     /// Byte offset of the protected try block from the start of the method body.
     ///
     /// This offset points to the first IL instruction that is protected by this
-    /// exception handler. All instructions in the range [try_offset, try_offset + try_length)
+    /// exception handler. All instructions in the range [`try_offset`, `try_offset` + `try_length`)
     /// are covered by this handler and can potentially transfer control to the handler code.
     pub try_offset: u32,
 
     /// Length of the protected try block in bytes.
     ///
     /// Combined with `try_offset`, this defines the complete protected region.
-    /// The protected region spans [try_offset, try_offset + try_length) and includes
+    /// The protected region spans [`try_offset`, `try_offset` + `try_length`) and includes
     /// all IL instructions that may throw exceptions handled by this handler.
     pub try_length: u32,
 
@@ -471,7 +471,7 @@ pub struct ExceptionHandler {
     ///
     /// Points to the first IL instruction of the handler code (catch, finally, or fault block).
     /// For FILTER handlers, this points to the actual handler code, not the filter expression.
-    /// The handler code spans [handler_offset, handler_offset + handler_length).
+    /// The handler code spans [`handler_offset`, `handler_offset` + `handler_length`).
     pub handler_offset: u32,
 
     /// Length of the exception handler code in bytes.

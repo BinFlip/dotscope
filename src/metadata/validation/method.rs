@@ -63,7 +63,7 @@
 //! ## Runtime Compliance
 //!
 //! This implementation follows .NET runtime validation behavior:
-//! - **CoreCLR Compatibility**: Matches method validation in .NET Core runtime
+//! - **`CoreCLR` Compatibility**: Matches method validation in .NET Core runtime
 //! - **ECMA-335 Compliance**: Implements specification-defined validation rules
 //! - **Error Parity**: Provides similar error messages to runtime validation
 //!

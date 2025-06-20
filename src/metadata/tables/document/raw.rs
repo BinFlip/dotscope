@@ -8,10 +8,10 @@
 //! # Document Table Format
 //!
 //! The Document table (0x30) contains rows with these fields:
-//! - **Name** (2/4 bytes): Blob heap index for the document name/path
-//! - **HashAlgorithm** (2/4 bytes): GUID heap index for the hash algorithm identifier
-//! - **Hash** (2/4 bytes): Blob heap index for the document content hash
-//! - **Language** (2/4 bytes): GUID heap index for the source language identifier
+//! - **`Name`** (2/4 bytes): Blob heap index for the document name/path
+//! - **`HashAlgorithm`** (2/4 bytes): GUID heap index for the hash algorithm identifier
+//! - **`Hash`** (2/4 bytes): Blob heap index for the document content hash
+//! - **`Language`** (2/4 bytes): GUID heap index for the source language identifier
 //!
 //! # Reference
 //! - [Portable PDB Format - Document Table](https://github.com/dotnet/core/blob/main/Documentation/diagnostics/portable_pdb.md#document-table-0x30)
@@ -19,10 +19,9 @@
 use std::sync::Arc;
 
 use crate::{
-    file::io::read_le_at_dyn,
     metadata::{
         streams::{Blob, Guid, Strings},
-        tables::{Document, DocumentRc, RowDefinition, TableInfoRef},
+        tables::{Document, DocumentRc},
         token::Token,
     },
     Result,
@@ -112,6 +111,13 @@ impl DocumentRaw {
     /// - The document name blob has an invalid format
     /// - Required heap data is missing or corrupted
     ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Blob heap access fails for name or hash data
+    /// - GUID heap access fails for hash algorithm or language GUIDs
+    /// - Any heap index is out of bounds
+    ///
     /// # Example
     ///
     /// ```rust,ignore
@@ -132,6 +138,9 @@ impl DocumentRaw {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    /// Returns an error if heap lookups fail or if the data is malformed.
     pub fn to_owned(&self, _strings: &Strings, blobs: &Blob, guids: &Guid) -> Result<DocumentRc> {
         let name_blob = blobs.get(self.name as usize)?;
         let name = String::from_utf8_lossy(name_blob).to_string();
@@ -158,33 +167,5 @@ impl DocumentRaw {
         };
 
         Ok(Arc::new(document))
-    }
-}
-
-impl<'a> RowDefinition<'a> for DocumentRaw {
-    fn read_row(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
-        Ok(DocumentRaw {
-            rid,
-            token: Token::new(0x3000_0000 + rid),
-            offset: *offset,
-            name: read_le_at_dyn(data, offset, sizes.is_large_blob())?,
-            hash_algorithm: read_le_at_dyn(data, offset, sizes.is_large_guid())?,
-            hash: read_le_at_dyn(data, offset, sizes.is_large_blob())?,
-            language: read_le_at_dyn(data, offset, sizes.is_large_guid())?,
-        })
-    }
-
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            sizes.blob_bytes() +  // name
-            sizes.guid_bytes() +  // hash_algorithm
-            sizes.blob_bytes() +  // hash
-            sizes.guid_bytes(), // language
-        )
     }
 }

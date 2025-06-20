@@ -68,7 +68,7 @@
 //! ## References
 //!
 //! - ECMA-335, Partition II, Section 10.7 - Controlling instance layout
-//! - ECMA-335, Partition II, Section 23.2.5 - FieldLayout table
+//! - ECMA-335, Partition II, Section 23.2.5 - `FieldLayout` table
 //! - .NET Core Runtime: `coreclr/vm/classlayoutinfo.cpp`
 //! - .NET Type Layout documentation
 
@@ -86,7 +86,7 @@ const MAX_FIELD_OFFSET: u32 = i32::MAX as u32; // 2,147,483,647
 /// ## Design Philosophy
 ///
 /// The validator is designed to match .NET runtime behavior as closely as possible,
-/// using the same validation rules and limits found in the CoreCLR implementation.
+/// using the same validation rules and limits found in the `CoreCLR` implementation.
 /// This ensures that validated metadata will be compatible with actual runtime loading.
 ///
 /// ## Validation Scope
@@ -94,7 +94,7 @@ const MAX_FIELD_OFFSET: u32 = i32::MAX as u32; // 2,147,483,647
 /// The validator handles three primary validation categories:
 /// - **Structural validation**: Offset ranges, format compliance
 /// - **Semantic validation**: Overlap detection, coverage analysis
-/// - **Runtime compliance**: Matching CoreCLR validation behavior
+/// - **Runtime compliance**: Matching `CoreCLR` validation behavior
 ///
 /// ## Thread Safety
 ///

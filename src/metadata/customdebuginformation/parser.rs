@@ -1,4 +1,4 @@
-//! Custom debug information parser for Portable PDB CustomDebugInformation table.
+//! Custom debug information parser for Portable PDB `CustomDebugInformation` table.
 //!
 //! This module provides parsing capabilities for the custom debug information blob format used
 //! in Portable PDB files. The blob format varies depending on the GUID kind, supporting various
@@ -7,7 +7,7 @@
 //!
 //! # Custom Debug Information Blob Format
 //!
-//! The blob format depends on the Kind GUID from the CustomDebugInformation table:
+//! The blob format depends on the Kind GUID from the `CustomDebugInformation` table:
 //!
 //! ## Source Link Format
 //! ```text
@@ -42,13 +42,28 @@
 //!     _ => println!("Other debug info type"),
 //! }
 //! ```
+//!
+//! # Thread Safety
+//!
+//! All functions in this module are thread-safe and stateless. The parser implementation
+//! can be called concurrently from multiple threads as it operates only on immutable
+//! input data and produces owned output structures.
 
-use crate::{file::parser::Parser, metadata::customdebuginformation::types::*, Result};
+use crate::{
+    file::parser::Parser,
+    metadata::customdebuginformation::types::{CustomDebugInfo, CustomDebugKind},
+    Result,
+};
 
 /// Parser for custom debug information blob binary data implementing the Portable PDB specification.
 ///
 /// This parser handles different blob formats based on the debug information kind GUID.
 /// It provides structured parsing of various debugging metadata formats.
+///
+/// # Thread Safety
+///
+/// The parser is not [`std::marker::Send`] or [`std::marker::Sync`] due to mutable state.
+/// Each thread should create its own parser instance for concurrent parsing operations.
 pub struct CustomDebugParser<'a> {
     /// Binary data parser for reading blob data
     parser: Parser<'a>,
@@ -64,7 +79,7 @@ impl<'a> CustomDebugParser<'a> {
     /// * `kind` - The debug information kind that determines the blob format
     ///
     /// # Returns
-    /// A new [`CustomDebugParser`] ready to parse the provided data.
+    /// A new parser ready to parse the provided data.
     #[must_use]
     pub fn new(data: &'a [u8], kind: CustomDebugKind) -> Self {
         CustomDebugParser {
@@ -87,37 +102,37 @@ impl<'a> CustomDebugParser<'a> {
     /// - **Truncated Data**: Insufficient data for expected format
     /// - **Invalid UTF-8**: String data that cannot be decoded as UTF-8
     /// - **Malformed Blob**: Invalid blob structure for the specified kind
-    pub fn parse_debug_info(&mut self) -> Result<CustomDebugInfo> {
+    pub fn parse_debug_info(&mut self) -> CustomDebugInfo {
         match self.kind {
             CustomDebugKind::SourceLink => {
-                let document = self.read_utf8_string()?;
-                Ok(CustomDebugInfo::SourceLink { document })
+                let document = self.read_utf8_string();
+                CustomDebugInfo::SourceLink { document }
             }
             CustomDebugKind::EmbeddedSource => {
                 // For embedded source, we need to handle the filename and content
                 // For now, treat the entire blob as content
-                let content = self.read_utf8_string()?;
-                Ok(CustomDebugInfo::EmbeddedSource {
+                let content = self.read_utf8_string();
+                CustomDebugInfo::EmbeddedSource {
                     filename: String::new(), // TODO: Extract filename if available
                     content,
-                })
+                }
             }
             CustomDebugKind::CompilationMetadata => {
-                let metadata = self.read_utf8_string()?;
-                Ok(CustomDebugInfo::CompilationMetadata { metadata })
+                let metadata = self.read_utf8_string();
+                CustomDebugInfo::CompilationMetadata { metadata }
             }
             CustomDebugKind::CompilationOptions => {
-                let options = self.read_utf8_string()?;
-                Ok(CustomDebugInfo::CompilationOptions { options })
+                let options = self.read_utf8_string();
+                CustomDebugInfo::CompilationOptions { options }
             }
             CustomDebugKind::Unknown(_) => {
                 // For unknown kinds, return the raw data
                 let remaining_data = &self.parser.data()[self.parser.pos()..];
                 let data = remaining_data.to_vec();
-                Ok(CustomDebugInfo::Unknown {
+                CustomDebugInfo::Unknown {
                     kind: self.kind,
                     data,
-                })
+                }
             }
         }
     }
@@ -126,25 +141,24 @@ impl<'a> CustomDebugParser<'a> {
     ///
     /// Many custom debug information formats store UTF-8 strings with an optional
     /// compressed length prefix. This method handles both cases.
-    fn read_utf8_string(&mut self) -> Result<String> {
-        // Try to read compressed length first
+    fn read_utf8_string(&mut self) -> String {
+        // ToDo: Try to read compressed length first
+        //       For many formats, the blob contains the raw UTF-8 string
+        //       Some formats may have a compressed length prefix
         if self.parser.has_more_data() {
-            // For many formats, the blob contains the raw UTF-8 string
-            // Some formats may have a compressed length prefix
             let remaining_data = &self.parser.data()[self.parser.pos()..];
 
             // Try to decode as UTF-8
-            let string_data = String::from_utf8_lossy(remaining_data).into_owned();
-            Ok(string_data)
+            String::from_utf8_lossy(remaining_data).into_owned()
         } else {
-            Ok(String::new())
+            String::new()
         }
     }
 }
 
 /// Parse a custom debug information blob into structured debug information.
 ///
-/// This is a convenience function that creates a [`CustomDebugParser`] and parses a complete
+/// This is a convenience function that creates a parser and parses a complete
 /// custom debug information blob from the provided byte slice. The function handles the parsing
 /// process based on the debug information kind.
 ///
@@ -178,6 +192,10 @@ impl<'a> CustomDebugParser<'a> {
 ///     _ => println!("Unexpected debug info type"),
 /// }
 /// ```
+///
+/// # Thread Safety
+///
+/// This function is thread-safe and can be called concurrently from multiple threads.
 pub fn parse_custom_debug_blob(data: &[u8], kind: CustomDebugKind) -> Result<CustomDebugInfo> {
     if data.is_empty() {
         return Ok(CustomDebugInfo::Unknown {
@@ -187,7 +205,7 @@ pub fn parse_custom_debug_blob(data: &[u8], kind: CustomDebugKind) -> Result<Cus
     }
 
     let mut parser = CustomDebugParser::new(data, kind);
-    parser.parse_debug_info()
+    Ok(parser.parse_debug_info())
 }
 
 #[cfg(test)]

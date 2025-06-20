@@ -1,4 +1,4 @@
-//! Owned ImplMap table structure with resolved references.
+//! Owned `ImplMap` table structure with resolved references.
 //!
 //! This module provides the [`ImplMap`] struct, which represents Platform Invoke (P/Invoke)
 //! mapping entries with all references resolved and data owned. Unlike [`ImplMapRaw`], this
@@ -13,25 +13,25 @@ use crate::{
     Result,
 };
 
-/// Owned ImplMap table entry with resolved references and owned data.
+/// Owned `ImplMap` table entry with resolved references and owned data.
 ///
 /// This structure represents a Platform Invoke (P/Invoke) mapping with all coded indexes
 /// resolved to their target structures and string data owned. It defines the mapping
 /// between a managed method and a native function in an unmanaged library.
 ///
 /// # Platform Invoke Mapping
-/// Each ImplMap entry establishes a bridge between managed and native code:
+/// Each `ImplMap` entry establishes a bridge between managed and native code:
 /// - **Managed side**: Method definition in the current assembly
 /// - **Native side**: Function in an external native library
 /// - **Marshalling**: Controlled by mapping flags for calling conventions and data conversion
 pub struct ImplMap {
-    /// Row identifier within the ImplMap table.
+    /// Row identifier within the `ImplMap` table.
     ///
     /// Unique identifier for this P/Invoke mapping entry, used for internal
     /// table management and cross-references.
     pub rid: u32,
 
-    /// Metadata token identifying this ImplMap entry.
+    /// Metadata token identifying this `ImplMap` entry.
     ///
     /// The token enables efficient lookup and reference to this P/Invoke mapping
     /// from other metadata structures and runtime systems.
@@ -53,8 +53,8 @@ pub struct ImplMap {
     /// Resolved reference to the managed method being forwarded to native code.
     ///
     /// Points to the managed method definition that will invoke the native function.
-    /// While the ECMA-335 specification allows both Field and MethodDef references,
-    /// in practice only MethodDef is used since field export is not supported.
+    /// While the ECMA-335 specification allows both Field and `MethodDef` references,
+    /// in practice only `MethodDef` is used since field export is not supported.
     pub member_forwarded: MethodRc,
 
     /// Name of the target function in the native library.
@@ -67,7 +67,7 @@ pub struct ImplMap {
 
     /// Resolved reference to the module containing the target native function.
     ///
-    /// Points to the ModuleRef entry that identifies the native library (DLL)
+    /// Points to the `ModuleRef` entry that identifies the native library (DLL)
     /// containing the function to be invoked.
     pub import_scope: ModuleRefRc,
 }
@@ -83,7 +83,9 @@ impl ImplMap {
     /// # Returns
     /// * `Ok(())` - P/Invoke flags applied successfully
     /// * `Err(_)` - Reserved for future error conditions (currently infallible)
+    /// # Errors
     ///
+    /// This function never returns an error; it always returns `Ok(())`.
     pub fn apply(&self) -> Result<()> {
         self.member_forwarded
             .flags_pinvoke

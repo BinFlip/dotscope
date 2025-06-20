@@ -47,6 +47,14 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
+//! # Thread Safety
+//!
+//! All public types in this module are designed to be thread-safe where appropriate.
+//! [`crate::disassembler::Instruction`], [`crate::disassembler::BasicBlock`], and related types
+//! implement [`std::marker::Send`] and [`std::marker::Sync`] as they contain only
+//! thread-safe data. The decoder functions can be called concurrently from different threads
+//! with separate parser instances.
+//!
 //! # Integration
 //!
 //! This module integrates with:

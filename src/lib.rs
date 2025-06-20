@@ -218,7 +218,7 @@
 //!
 //! # Thread Safety
 //!
-//! All public types are [`Send`] and [`Sync`] unless explicitly documented otherwise. The library
+//! All public types are [`std::marker::Send`] and [`std::marker::Sync`] unless explicitly documented otherwise. The library
 //! is designed for safe concurrent access across multiple threads.
 //!
 //! # Development and Testing
@@ -311,7 +311,7 @@ pub mod prelude;
 ///
 /// # Thread Safety
 ///
-/// All disassembler types are [`Send`] and [`Sync`] for safe concurrent processing.
+/// All disassembler types are [`std::marker::Send`] and [`std::marker::Sync`] for safe concurrent processing.
 pub mod disassembler;
 
 /// .NET metadata parsing, loading, and type system based on ECMA-335.
@@ -393,12 +393,12 @@ pub mod disassembler;
 ///
 /// # Thread Safety
 ///
-/// All metadata types are [`Send`] and [`Sync`] for safe concurrent access.
+/// All metadata types are [`std::marker::Send`] and [`std::marker::Sync`] for safe concurrent access.
 pub mod metadata;
 
 /// `dotscope` Result type.
 ///
-/// A type alias for [`std::result::Result<T, Error>`] where the error type is always [`crate::Error`].
+/// A type alias for `std::result::Result<T, Error>` where the error type is always [`crate::Error`].
 /// This is used consistently throughout the crate for all fallible operations.
 ///
 /// # Usage Examples

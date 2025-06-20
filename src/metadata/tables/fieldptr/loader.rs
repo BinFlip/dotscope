@@ -1,23 +1,23 @@
-//! FieldPtr table loader implementation.
+//! `FieldPtr` table loader implementation.
 //!
 //! This module provides the [`crate::metadata::tables::fieldptr::loader::FieldPtrLoader`] responsible for loading and processing
-//! FieldPtr metadata table entries. The FieldPtr table acts as an indirection mechanism
+//! `FieldPtr` metadata table entries. The `FieldPtr` table acts as an indirection mechanism
 //! for the Field table when field ordering differs between logical and physical layout.
 //!
 //! # Purpose
-//! The FieldPtr table is used in specific optimization scenarios:
+//! The `FieldPtr` table is used in specific optimization scenarios:
 //! - **Field reordering**: When physical field order differs from logical declaration order
 //! - **Metadata optimization**: Reducing metadata size through indirection
 //! - **Edit-and-continue**: Supporting field additions without breaking existing references
 //! - **Incremental compilation**: Maintaining field references across compilation sessions
 //!
 //! # Table Usage
-//! The FieldPtr table is optional and only present when field indirection is needed:
-//! - **Without FieldPtr**: Direct indexing into Field table
-//! - **With FieldPtr**: Indirect indexing through FieldPtr → Field
+//! The `FieldPtr` table is optional and only present when field indirection is needed:
+//! - **Without `FieldPtr`**: Direct indexing into Field table
+//! - **With `FieldPtr`**: Indirect indexing through `FieldPtr` → Field
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.18 for the FieldPtr table specification.
+//! See ECMA-335, Partition II, §22.18 for the `FieldPtr` table specification.
 
 use crate::{
     metadata::{
@@ -27,11 +27,11 @@ use crate::{
     Result,
 };
 
-/// Loader implementation for the FieldPtr metadata table.
+/// Loader implementation for the `FieldPtr` metadata table.
 ///
-/// This loader processes FieldPtr table entries which provide indirection for field
+/// This loader processes `FieldPtr` table entries which provide indirection for field
 /// references when the logical field order differs from the physical storage order.
-/// The FieldPtr table is an optimization mechanism used in specific scenarios.
+/// The `FieldPtr` table is an optimization mechanism used in specific scenarios.
 ///
 /// # Errors
 /// - Raw-to-owned conversion encounters issues
@@ -39,14 +39,14 @@ use crate::{
 /// - Memory allocation fails during processing
 ///
 /// # ECMA-335 Reference
-/// See ECMA-335, Partition II, §22.18 for complete FieldPtr table specification.
+/// See ECMA-335, Partition II, §22.18 for complete `FieldPtr` table specification.
 pub struct FieldPtrLoader;
 
 impl MetadataLoader for FieldPtrLoader {
-    /// Load and process all FieldPtr table entries.
+    /// Load and process all `FieldPtr` table entries.
     ///
-    /// This method iterates through the FieldPtr table (if present) and converts
-    /// each entry to an owned structure. FieldPtr entries provide indirection for
+    /// This method iterates through the `FieldPtr` table (if present) and converts
+    /// each entry to an owned structure. `FieldPtr` entries provide indirection for
     /// field references when logical and physical field ordering differs.
     ///
     /// # Arguments
@@ -59,7 +59,7 @@ impl MetadataLoader for FieldPtrLoader {
     /// - Memory allocation fails during processing
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) = header.table::<FieldPtrRaw>(TableId::FieldPtr) {
+            if let Some(table) = header.table::<FieldPtrRaw>() {
                 for row in table {
                     let owned = row.to_owned()?;
                     context.field_ptr.insert(row.token, owned);
@@ -69,17 +69,17 @@ impl MetadataLoader for FieldPtrLoader {
         Ok(())
     }
 
-    /// Returns the table identifier for the FieldPtr table.
+    /// Returns the table identifier for the `FieldPtr` table.
     ///
     /// # Returns
-    /// Returns [`crate::metadata::tables::TableId::FieldPtr`] indicating this loader handles the FieldPtr table.
+    /// Returns [`crate::metadata::tables::TableId::FieldPtr`] indicating this loader handles the `FieldPtr` table.
     fn table_id(&self) -> TableId {
         TableId::FieldPtr
     }
 
-    /// Returns the table dependencies for FieldPtr loading.
+    /// Returns the table dependencies for `FieldPtr` loading.
     ///
-    /// The FieldPtr table has no dependencies since it contains simple indirection
+    /// The `FieldPtr` table has no dependencies since it contains simple indirection
     /// pointers that don't require other tables to be loaded first. The actual
     /// field resolution happens later during the metadata resolution phase.
     ///
@@ -87,7 +87,7 @@ impl MetadataLoader for FieldPtrLoader {
     /// Returns an empty slice indicating no dependencies are required.
     ///
     /// # Dependency Chain
-    /// No dependencies required - FieldPtr is a simple indirection table.
+    /// No dependencies required - `FieldPtr` is a simple indirection table.
     fn dependencies(&self) -> &'static [TableId] {
         &[]
     }

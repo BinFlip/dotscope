@@ -1,4 +1,4 @@
-//! Owned FieldMarshal structures for the FieldMarshal metadata table.
+//! Owned `FieldMarshal` structures for the `FieldMarshal` metadata table.
 //!
 //! This module provides the [`crate::metadata::tables::fieldmarshal::owned::FieldMarshal`] struct which represents marshalling
 //! specifications with resolved references and owned data. Field marshals define
@@ -6,7 +6,7 @@
 //! boundaries during interop operations.
 //!
 //! # Purpose
-//! The FieldMarshal table is critical for interop scenarios:
+//! The `FieldMarshal` table is critical for interop scenarios:
 //! - **P/Invoke marshalling**: Converting parameters for native function calls
 //! - **COM interop**: Field and parameter handling for COM objects
 //! - **Custom marshalling**: User-defined conversion behavior
@@ -21,7 +21,7 @@
 //! - **Structure marshalling**: Complex type layout preservation
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.17 for the FieldMarshal table specification.
+//! See ECMA-335, Partition II, §22.17 for the `FieldMarshal` table specification.
 
 use std::sync::Arc;
 
@@ -50,18 +50,18 @@ use crate::{
 /// - **Parameters**: Method parameters for P/Invoke or COM calls
 ///
 /// # ECMA-335 Reference
-/// See ECMA-335, Partition II, §22.17 for the complete FieldMarshal table specification.
+/// See ECMA-335, Partition II, §22.17 for the complete `FieldMarshal` table specification.
 pub struct FieldMarshal {
-    /// The row identifier in the FieldMarshal table.
+    /// The row identifier in the `FieldMarshal` table.
     ///
-    /// This 1-based index uniquely identifies this field marshal within the FieldMarshal table.
+    /// This 1-based index uniquely identifies this field marshal within the `FieldMarshal` table.
     /// Combined with the table type, it forms the marshal entry's unique identity.
     pub rid: u32,
 
     /// The metadata token for this field marshal.
     ///
     /// A [`crate::metadata::token::Token`] that uniquely identifies this field marshal across the entire assembly.
-    /// The token encodes both the table type (FieldMarshal) and the row ID.
+    /// The token encodes both the table type (`FieldMarshal`) and the row ID.
     pub token: Token,
 
     /// The byte offset of this field marshal in the metadata tables stream.
@@ -73,7 +73,7 @@ pub struct FieldMarshal {
     /// Reference to the entity that this marshalling rule applies to.
     ///
     /// A [`crate::metadata::typesystem::CilTypeReference`] that can point to either a Field or Parameter entry.
-    /// This is resolved from the HasFieldMarshal coded index in the raw table data.
+    /// This is resolved from the `HasFieldMarshal` coded index in the raw table data.
     ///
     /// # Valid Parent Types
     /// - **Field**: For field marshalling in interop structures

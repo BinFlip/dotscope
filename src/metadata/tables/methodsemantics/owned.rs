@@ -1,6 +1,6 @@
-//! # MethodSemantics Owned Implementation
+//! # `MethodSemantics` Owned Implementation
 //!
-//! This module provides the owned variant of MethodSemantics table entries with resolved
+//! This module provides the owned variant of `MethodSemantics` table entries with resolved
 //! references and owned data structures for efficient runtime access.
 
 use crate::{
@@ -11,28 +11,28 @@ use crate::{
     Result,
 };
 
-/// Owned representation of a MethodSemantics table entry with resolved references.
+/// Owned representation of a `MethodSemantics` table entry with resolved references.
 ///
-/// This structure represents a processed entry from the MethodSemantics metadata table,
+/// This structure represents a processed entry from the `MethodSemantics` metadata table,
 /// which specifies the relationship between methods and events or properties. Unlike
 /// [`MethodSemanticsRaw`](crate::metadata::tables::MethodSemanticsRaw), this version contains resolved references
 /// to actual method and type objects for efficient runtime access.
 ///
 /// ## Purpose
 ///
-/// MethodSemantics entries define the semantic role of methods in relation to properties
+/// `MethodSemantics` entries define the semantic role of methods in relation to properties
 /// and events, such as:
 /// - Property getters and setters
 /// - Event add, remove, and fire methods
 /// - Other custom semantic relationships
 pub struct MethodSemantics {
-    /// Row identifier within the MethodSemantics table.
+    /// Row identifier within the `MethodSemantics` table.
     ///
     /// This 1-based index uniquely identifies this entry within the table.
     /// Combined with the table ID, it forms the complete metadata token.
     pub rid: u32,
 
-    /// Metadata token for this MethodSemantics entry.
+    /// Metadata token for this `MethodSemantics` entry.
     ///
     /// Format: 0x18XXXXXX where XXXXXX is the row ID.
     /// This token uniquely identifies this entry across the entire metadata.
@@ -66,7 +66,7 @@ pub struct MethodSemantics {
     ///
     /// Contains either a [`Property`](crate::metadata::tables::Property) or
     /// [`Event`](crate::metadata::tables::Event) that this method provides
-    /// semantic behavior for, resolved from the HasSemantics coded index.
+    /// semantic behavior for, resolved from the `HasSemantics` coded index.
     pub association: CilTypeReference,
 }
 

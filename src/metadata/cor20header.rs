@@ -66,6 +66,12 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
+//! # Thread Safety
+//!
+//! All types and functions in this module are thread-safe. The [`crate::metadata::cor20header::Cor20Header`]
+//! struct contains only primitive types and is [`std::marker::Send`] and [`std::marker::Sync`].
+//! The parsing function is stateless and can be called concurrently from multiple threads.
+//!
 //! # Integration
 //!
 //! This module integrates with:
@@ -129,6 +135,11 @@ use crate::{file::parser::Parser, Error::OutOfBounds, Result};
 ///     header.meta_data_rva, header.meta_data_size);
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// [`Cor20Header`] is [`std::marker::Send`] and [`std::marker::Sync`] as it contains only primitive types.
+/// Instances can be safely shared across threads and accessed concurrently.
 pub struct Cor20Header {
     /// Size of the CLI header in bytes (always 72).
     pub cb: u32,
@@ -140,9 +151,9 @@ pub struct Cor20Header {
     pub meta_data_rva: u32,
     /// Size of the metadata in bytes.
     pub meta_data_size: u32,
-    /// Runtime flags describing assembly characteristics (IL_ONLY, 32BIT_REQUIRED, etc.).
+    /// Runtime flags describing assembly characteristics (`IL_ONLY`, `32BIT_REQUIRED`, etc.).
     pub flags: u32,
-    /// Metadata token for the entry point method (MethodDef) or file for executables.
+    /// Metadata token for the entry point method (`MethodDef`) or file for executables.
     pub entry_point_token: u32,
     /// RVA of implementation-specific resources (typically .NET resources).
     pub resource_rva: u32,
@@ -156,9 +167,9 @@ pub struct Cor20Header {
     pub code_manager_table_rva: u32,
     /// Reserved field (always 0) - code manager table size.
     pub code_manager_table_size: u32,
-    /// RVA of VTable fixups array for COM interop (mixed-mode assemblies).
+    /// RVA of `VTable` fixups array for COM interop (mixed-mode assemblies).
     pub vtable_fixups_rva: u32,
-    /// Size of VTable fixups array in bytes.
+    /// Size of `VTable` fixups array in bytes.
     pub vtable_fixups_size: u32,
     /// Reserved field (always 0) - export address table jump RVA.
     pub export_address_table_jmp_rva: u32,
@@ -216,6 +227,10 @@ impl Cor20Header {
     ///     header.minor_runtime_version);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn read(data: &[u8]) -> Result<Cor20Header> {
         const VALID_FLAGS: u32 = 0x0000_001F; // Based on ECMA-335 defined flags
 

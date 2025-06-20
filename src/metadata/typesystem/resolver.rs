@@ -117,10 +117,10 @@
 //! # Error Handling
 //!
 //! The resolver provides comprehensive error reporting:
-//! - **TypeNotFound**: Referenced types don't exist in registry
-//! - **RecursionLimit**: Maximum recursion depth exceeded
-//! - **TypeMissingParent**: Modifier types without required parent context
-//! - **TypeError**: General type system inconsistencies
+//! - **`TypeNotFound`**: Referenced types don't exist in registry
+//! - **`RecursionLimit`**: Maximum recursion depth exceeded
+//! - **`TypeMissingParent`**: Modifier types without required parent context
+//! - **`TypeError`**: General type system inconsistencies
 //!
 //! # Performance Characteristics
 //!
@@ -238,7 +238,7 @@ impl TypeResolver {
     /// Create a new type resolver with the specified registry.
     ///
     /// Initializes a resolver with default context settings:
-    /// - Source: CurrentModule (resolving types in the current assembly)
+    /// - Source: `CurrentModule` (resolving types in the current assembly)
     /// - Parent token: None (no parent type context)
     /// - Initialization token: None (registry will generate tokens as needed)
     ///

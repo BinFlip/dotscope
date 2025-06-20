@@ -988,7 +988,7 @@ impl<'a> Strings<'a> {
     /// # }
     /// ```
     ///
-    /// ## Integration with IntoIterator
+    /// ## Integration with `IntoIterator`
     /// ```rust
     /// use dotscope::metadata::streams::Strings;
     ///

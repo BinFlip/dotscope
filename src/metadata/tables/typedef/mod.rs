@@ -1,95 +1,112 @@
-//! TypeDef table support for .NET metadata.
+//! TypeDef metadata table support for .NET assemblies.
 //!
-//! This module provides comprehensive support for the TypeDef metadata table (ID 0x02), which
+//! This module provides comprehensive support for the `TypeDef` metadata table (ID 0x02), which
 //! defines all types (classes, interfaces, value types, enums, delegates) within the current
-//! assembly. The TypeDef table is fundamental to the .NET type system and serves as the primary
+//! assembly. The `TypeDef` table is fundamental to the .NET type system and serves as the primary
 //! source of type definitions for metadata consumers.
 //!
-//! ## Table Structure
+//! # Architecture
 //!
-//! The TypeDef table contains the following columns as specified in ECMA-335:
-//! - **Flags** (4-byte bitmask): [`TypeAttributes`] controlling visibility, layout, and semantics
-//! - **TypeName** (string heap index): Simple name of the type (without namespace)
-//! - **TypeNamespace** (string heap index): Namespace containing the type (empty for global types)
-//! - **Extends** (coded index): Base type reference (TypeDef, TypeRef, or TypeSpec)
-//! - **FieldList** (Field table index): First field belonging to this type
-//! - **MethodList** (MethodDef table index): First method belonging to this type
+//! The module is built around the ECMA-335 TypeDef table structure, providing both raw
+//! table access and processed type representations. The architecture supports efficient
+//! type lookups, member enumeration, and integration with the broader type system.
 //!
-//! ## Type System Integration
+//! # Key Components
 //!
-//! TypeDef entries are processed and converted into [`crate::metadata::typesystem::CilType`]
+//! - [`crate::metadata::tables::typedef::TypeDefRaw`] - Raw table entry representation
+//! - [`crate::metadata::tables::typedef::loader::TypeDefLoader`] - Table loading functionality  
+//! - [`crate::metadata::tables::typedef::TypeAttributes`] - Type attribute flag constants
+//!
+//! # Table Structure
+//!
+//! The `TypeDef` table contains the following columns as specified in ECMA-335:
+//! - **Flags** (4-byte bitmask): [`crate::metadata::tables::typedef::TypeAttributes`] controlling visibility, layout, and semantics
+//! - **`TypeName`** (string heap index): Simple name of the type (without namespace)
+//! - **`TypeNamespace`** (string heap index): Namespace containing the type (empty for global types)
+//! - **`Extends`** (coded index): Base type reference (`TypeDef`, `TypeRef`, or `TypeSpec`)
+//! - **`FieldList`** (Field table index): First field belonging to this type
+//! - **`MethodList`** (`MethodDef` table index): First method belonging to this type
+//!
+//! # Type System Integration
+//!
+//! `TypeDef` entries are processed and converted into [`crate::metadata::typesystem::CilType`]
 //! instances that provide high-level type system operations:
 //! - Type hierarchy navigation and inheritance resolution
 //! - Member enumeration (fields, methods, properties, events)
 //! - Generic type parameter and constraint handling
 //! - Custom attribute association and retrieval
 //!
-//! ## Member Organization
+//! # Usage Examples
 //!
-//! Types own contiguous ranges of fields and methods in their respective tables.
-//! The range for each type is determined by comparing its field_list/method_list
-//! values with the next type's values:
-//! ```text
-//! // Type A owns fields [A.field_list .. B.field_list)
-//! // Type A owns methods [A.method_list .. B.method_list)
+//! ```rust,no_run
+//! use dotscope::metadata::tables::TypeAttributes;
+//!
+//! // Check if a type is public
+//! let flags = 0x00000001; // PUBLIC flag
+//! let is_public = (flags & TypeAttributes::VISIBILITY_MASK) == TypeAttributes::PUBLIC;
+//! assert!(is_public);
+//!
+//! // Check if a type is abstract
+//! let is_abstract = (flags & TypeAttributes::ABSTRACT) != 0;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
-//! ## Type Attributes
+//! # Thread Safety
 //!
-//! The [`TypeAttributes`] module provides constants for all possible type flags:
-//! - **Visibility**: Public, private, nested with various access levels
-//! - **Layout**: Auto, sequential, or explicit field layout
-//! - **Semantics**: Class vs interface, abstract/sealed modifiers
-//! - **Special**: Import, serializable, special name attributes
-//! - **Interop**: String format handling for native interoperability
+//! All types in this module are [`std::marker::Send`] and [`std::marker::Sync`] as they contain
+//! only primitive data and static references. Type attribute constants are safe to share
+//! across threads without synchronization.
 //!
-//! ## Module Components
+//! # Integration
 //!
-//! - [`TypeDefRaw`] - Raw table entry representation
-//! - [`crate::metadata::tables::typedef::loader::TypeDefLoader`] - Table loading functionality  
-//! - [`TypeAttributes`] - Type attribute flag constants
+//! This module integrates with:
+//! - [`crate::metadata::typesystem`] - Provides processed type representations
+//! - [`crate::metadata::tables`] - Part of the broader metadata table system
+//! - [`crate::metadata::tables::field`] - Related field definitions
+//! - [`crate::metadata::tables::methoddef`] - Related method definitions
 //!
 //! ## ECMA-335 Reference
 //!
-//! See ECMA-335, Partition II, Section 22.37 for the complete TypeDef table specification.
+//! See ECMA-335, Partition II, Section 22.37 for the complete `TypeDef` table specification.
 //!
 //! **Table ID**: `0x02`
 
 mod loader;
 mod raw;
+mod reader;
 
 pub(crate) use loader::*;
 pub use raw::*;
 
 #[allow(non_snake_case)]
-/// Type attribute flag constants for TypeDef entries.
+/// Type attribute flag constants for `TypeDef` entries.
 ///
-/// This module provides all the flag constants used in the TypeDef.Flags field
+/// This module provides all the flag constants used in the `TypeDef.Flags` field
 /// to control type visibility, layout, semantics, and interoperability characteristics.
 /// The flags are organized into logical groups with corresponding mask constants
 /// for efficient bit manipulation.
 ///
 /// ## Visibility Flags
 /// Control type accessibility and nested type visibility:
-/// - [`TypeAttributes::NOT_PUBLIC`] / [`TypeAttributes::PUBLIC`] - Top-level type visibility
-/// - [`TypeAttributes::NESTED_PUBLIC`], [`TypeAttributes::NESTED_PRIVATE`], etc. - Nested type accessibility levels
+/// - [`crate::metadata::tables::typedef::TypeAttributes::NOT_PUBLIC`] / [`crate::metadata::tables::typedef::TypeAttributes::PUBLIC`] - Top-level type visibility
+/// - [`crate::metadata::tables::typedef::TypeAttributes::NESTED_PUBLIC`], [`crate::metadata::tables::typedef::TypeAttributes::NESTED_PRIVATE`], etc. - Nested type accessibility levels
 ///
 /// ## Layout Flags  
 /// Control how type fields are arranged in memory:
-/// - [`TypeAttributes::AUTO_LAYOUT`] - Runtime-determined field layout (default)
-/// - [`TypeAttributes::SEQUENTIAL_LAYOUT`] - Fields laid out in declaration order
-/// - [`TypeAttributes::EXPLICIT_LAYOUT`] - Explicit field offsets specified
+/// - [`crate::metadata::tables::typedef::TypeAttributes::AUTO_LAYOUT`] - Runtime-determined field layout (default)
+/// - [`crate::metadata::tables::typedef::TypeAttributes::SEQUENTIAL_LAYOUT`] - Fields laid out in declaration order
+/// - [`crate::metadata::tables::typedef::TypeAttributes::EXPLICIT_LAYOUT`] - Explicit field offsets specified
 ///
 /// ## Semantic Flags
 /// Control type behavior and characteristics:
-/// - [`TypeAttributes::CLASS`] / [`TypeAttributes::INTERFACE`] - Type category
-/// - [`TypeAttributes::ABSTRACT`] / [`TypeAttributes::SEALED`] - Inheritance modifiers
-/// - [`TypeAttributes::SPECIAL_NAME`] / [`TypeAttributes::IMPORT`] / [`TypeAttributes::SERIALIZABLE`] - Special attributes
+/// - [`crate::metadata::tables::typedef::TypeAttributes::CLASS`] / [`crate::metadata::tables::typedef::TypeAttributes::INTERFACE`] - Type category
+/// - [`crate::metadata::tables::typedef::TypeAttributes::ABSTRACT`] / [`crate::metadata::tables::typedef::TypeAttributes::SEALED`] - Inheritance modifiers
+/// - [`crate::metadata::tables::typedef::TypeAttributes::SPECIAL_NAME`] / [`crate::metadata::tables::typedef::TypeAttributes::IMPORT`] / [`crate::metadata::tables::typedef::TypeAttributes::SERIALIZABLE`] - Special attributes
 ///
 /// ## Interop Flags
 /// Control string handling for native interoperability:
-/// - [`TypeAttributes::ANSI_CLASS`] / [`TypeAttributes::UNICODE_CLASS`] / [`TypeAttributes::AUTO_CLASS`] - String encoding
-/// - [`TypeAttributes::CUSTOM_FORMAT_CLASS`] - Custom string format
+/// - [`crate::metadata::tables::typedef::TypeAttributes::ANSI_CLASS`] / [`crate::metadata::tables::typedef::TypeAttributes::UNICODE_CLASS`] / [`crate::metadata::tables::typedef::TypeAttributes::AUTO_CLASS`] - String encoding
+/// - [`crate::metadata::tables::typedef::TypeAttributes::CUSTOM_FORMAT_CLASS`] - Custom string format
 pub mod TypeAttributes {
     /// Mask for extracting type visibility information.
     ///
@@ -166,7 +183,7 @@ pub mod TypeAttributes {
     /// Field layout is explicitly specified using field offsets.
     ///
     /// Each field's position is explicitly controlled using
-    /// [`crate::metadata::tables::FieldLayout`] entries, providing
+    /// [`crate::metadata::tables::fieldlayout::FieldLayoutRaw`] entries, providing
     /// complete control over type layout.
     pub const EXPLICIT_LAYOUT: u32 = 0x0000_0010;
 
