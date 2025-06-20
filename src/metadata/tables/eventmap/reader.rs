@@ -7,7 +7,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for EventMapRaw {
+impl RowReadable for EventMapRaw {
     /// Calculate the byte size of an `EventMap` table row
     ///
     /// Computes the total size in bytes required to store one `EventMap` table row
@@ -57,12 +57,7 @@ impl<'a> RowReadable<'a> for EventMapRaw {
     /// - The data stream is truncated or corrupted
     /// - Index values exceed expected ranges
     /// - Binary parsing encounters invalid data
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         let offset_org = *offset;
 
         let parent = read_le_at_dyn(data, offset, sizes.is_large(TableId::TypeDef))?;

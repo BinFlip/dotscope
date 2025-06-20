@@ -7,7 +7,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for TypeSpecRaw {
+impl RowReadable for TypeSpecRaw {
     /// Calculates the byte size of a single `TypeSpec` table row.
     ///
     /// The `TypeSpec` table contains a single column:
@@ -49,12 +49,7 @@ impl<'a> RowReadable<'a> for TypeSpecRaw {
     /// May return an error if:
     /// - The data buffer is too short for a complete table entry
     /// - Invalid data structure encountered during parsing
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(TypeSpecRaw {
             rid,
             token: Token::new(0x1B00_0000 + rid),

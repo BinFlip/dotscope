@@ -53,7 +53,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for AssemblyRaw {
+impl RowReadable for AssemblyRaw {
     /// Calculate the byte size of an Assembly table row
     ///
     /// Computes the total size based on fixed-size fields plus variable-size heap indexes.
@@ -104,12 +104,7 @@ impl<'a> RowReadable<'a> for AssemblyRaw {
     /// # Returns
     /// * `Ok(AssemblyRaw)` - Successfully parsed assembly row
     /// * `Err(`[`crate::Error`]`)` - If data is malformed or insufficient
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(AssemblyRaw {
             rid,
             token: Token::new(0x2000_0000 + rid),

@@ -7,7 +7,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for FieldMarshalRaw {
+impl RowReadable for FieldMarshalRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
@@ -16,12 +16,7 @@ impl<'a> RowReadable<'a> for FieldMarshalRaw {
         )
     }
 
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         let offset_org = *offset;
 
         Ok(FieldMarshalRaw {

@@ -7,7 +7,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for FieldRvaRaw {
+impl RowReadable for FieldRvaRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
@@ -16,12 +16,7 @@ impl<'a> RowReadable<'a> for FieldRvaRaw {
         )
     }
 
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(FieldRvaRaw {
             rid,
             token: Token::new(0x1D00_0000 + rid),

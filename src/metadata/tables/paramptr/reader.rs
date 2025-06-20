@@ -7,7 +7,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for ParamPtrRaw {
+impl RowReadable for ParamPtrRaw {
     /// Calculates the byte size of a single `ParamPtr` table row.
     ///
     /// The size depends on the metadata table size configuration:
@@ -49,12 +49,7 @@ impl<'a> RowReadable<'a> for ParamPtrRaw {
     ///
     /// * [`crate::error::Error::OutOfBounds`] - Insufficient data for complete entry
     /// * [`crate::error::Error::Malformed`] - Malformed table entry structure
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(ParamPtrRaw {
             rid,
             token: Token::new(0x0700_0000 + rid),

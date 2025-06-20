@@ -7,7 +7,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for TypeRefRaw {
+impl RowReadable for TypeRefRaw {
     /// Calculates the byte size of a `TypeRef` table row.
     ///
     /// The row size depends on the size configuration of heaps and tables:
@@ -45,12 +45,7 @@ impl<'a> RowReadable<'a> for TypeRefRaw {
     ///
     /// ## Errors
     /// Returns an error if the binary data is insufficient or malformed.
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(TypeRefRaw {
             rid,
             token: Token::new(0x0100_0000 + rid),

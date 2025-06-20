@@ -7,7 +7,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for ModuleRefRaw {
+impl RowReadable for ModuleRefRaw {
     /// Calculates the byte size of a `ModuleRef` table row.
     ///
     /// The row size depends on the metadata heap sizes and is calculated as:
@@ -44,12 +44,7 @@ impl<'a> RowReadable<'a> for ModuleRefRaw {
     /// - Insufficient data remaining at offset
     /// - Data corruption or malformed structure
     /// - Invalid heap index values
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(ModuleRefRaw {
             rid,
             token: Token::new(0x1A00_0000 + rid),

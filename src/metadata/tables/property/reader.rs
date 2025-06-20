@@ -7,7 +7,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for PropertyRaw {
+impl RowReadable for PropertyRaw {
     /// Calculates the byte size of a single Property table row.
     ///
     /// The size depends on the metadata heap size configuration:
@@ -53,12 +53,7 @@ impl<'a> RowReadable<'a> for PropertyRaw {
     ///
     /// * [`crate::error::Error::OutOfBounds`] - Insufficient data for complete entry
     /// * [`crate::error::Error::Malformed`] - Malformed table entry structure
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(PropertyRaw {
             rid,
             token: Token::new(0x1700_0000 + rid),

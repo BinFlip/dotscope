@@ -7,7 +7,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for NestedClassRaw {
+impl RowReadable for NestedClassRaw {
     /// Calculates the byte size of a `NestedClass` table row.
     ///
     /// The row size depends on the `TypeDef` table size and is calculated as:
@@ -46,12 +46,7 @@ impl<'a> RowReadable<'a> for NestedClassRaw {
     /// - Insufficient data remaining at offset
     /// - Data corruption or malformed structure
     /// - Invalid `TypeDef` index values
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(NestedClassRaw {
             rid,
             token: Token::new(0x2900_0000 + rid),

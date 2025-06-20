@@ -14,7 +14,6 @@
 //! - Automatic bounds checking to prevent buffer overruns
 //! - Support for both fixed-size and dynamic-size field reading
 //! - Consistent error handling through the [`crate::Result`] type
-//! - Zero-copy operations that work directly on byte slices
 //!
 //! # Key Components
 //!

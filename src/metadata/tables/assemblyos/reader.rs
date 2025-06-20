@@ -48,7 +48,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for AssemblyOsRaw {
+impl RowReadable for AssemblyOsRaw {
     /// Calculate the byte size of an `AssemblyOS` table row
     ///
     /// Returns the fixed size since `AssemblyOS` contains only primitive integer fields
@@ -86,12 +86,7 @@ impl<'a> RowReadable<'a> for AssemblyOsRaw {
     /// # Returns
     /// * `Ok(AssemblyOsRaw)` - Successfully parsed `AssemblyOS` row
     /// * `Err(`[`crate::Error`]`)` - If data is malformed or insufficient
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        _sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, _sizes: &TableInfoRef) -> Result<Self> {
         Ok(AssemblyOsRaw {
             rid,
             token: Token::new(0x2200_0000 + rid),

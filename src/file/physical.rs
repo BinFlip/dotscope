@@ -11,7 +11,6 @@
 //! virtual address space. This architecture provides several key benefits:
 //!
 //! - **Efficient memory usage** - Only requested portions are loaded into physical memory
-//! - **Zero-copy access** - Direct access to mapped memory without data copying
 //! - **Operating system optimization** - Leverages OS-level caching and paging
 //! - **Shared memory** - Multiple processes can efficiently access the same file
 //! - **Lazy loading** - Pages are loaded on-demand as they are accessed

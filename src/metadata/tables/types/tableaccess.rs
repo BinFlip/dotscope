@@ -29,7 +29,7 @@ use crate::metadata::tables::{MetadataTable, RowReadable};
 /// # Ok(())
 /// # }
 /// ```
-pub trait TableAccess<'a, T: RowReadable<'a>> {
+pub trait TableAccess<'a, T: RowReadable> {
     /// Retrieve a table of the specified type if present.
     ///
     /// # Returns

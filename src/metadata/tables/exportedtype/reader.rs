@@ -7,7 +7,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for ExportedTypeRaw {
+impl RowReadable for ExportedTypeRaw {
     /// Calculate the byte size of an `ExportedType` table row
     ///
     /// Computes the total size in bytes required to store one `ExportedType` table row
@@ -64,12 +64,7 @@ impl<'a> RowReadable<'a> for ExportedTypeRaw {
     /// - Index values exceed expected ranges
     /// - Implementation coded index reading fails
     /// - Binary parsing encounters invalid data
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(ExportedTypeRaw {
             rid,
             token: Token::new(0x2700_0000 + rid),

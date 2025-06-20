@@ -49,7 +49,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for AssemblyRefOsRaw {
+impl RowReadable for AssemblyRefOsRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
@@ -60,12 +60,7 @@ impl<'a> RowReadable<'a> for AssemblyRefOsRaw {
         )
     }
 
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(AssemblyRefOsRaw {
             rid,
             token: Token::new(0x2500_0000 + rid),

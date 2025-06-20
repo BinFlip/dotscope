@@ -7,13 +7,8 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for LocalScopeRaw {
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+impl RowReadable for LocalScopeRaw {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(LocalScopeRaw {
             rid,
             token: Token::new(0x3200_0000 + rid),

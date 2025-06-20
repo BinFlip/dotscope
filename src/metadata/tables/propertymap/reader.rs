@@ -7,7 +7,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for PropertyMapRaw {
+impl RowReadable for PropertyMapRaw {
     /// Calculates the byte size of a `PropertyMap` table row.
     ///
     /// The size depends on whether the `TypeDef` and Property tables use 2-byte or 4-byte indices,
@@ -51,12 +51,7 @@ impl<'a> RowReadable<'a> for PropertyMapRaw {
     ///
     /// ## Errors
     /// Returns an error if the data cannot be read or is malformed.
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         let offset_org = *offset;
 
         let parent = read_le_at_dyn(data, offset, sizes.is_large(TableId::TypeDef))?;

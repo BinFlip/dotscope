@@ -10,13 +10,8 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for CustomDebugInformationRaw {
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+impl RowReadable for CustomDebugInformationRaw {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         let offset_org = *offset;
 
         let parent = CodedIndex::read(

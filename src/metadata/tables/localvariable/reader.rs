@@ -10,13 +10,8 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for LocalVariableRaw {
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+impl RowReadable for LocalVariableRaw {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(LocalVariableRaw {
             rid,
             token: Token::new(0x3300_0000 + rid),

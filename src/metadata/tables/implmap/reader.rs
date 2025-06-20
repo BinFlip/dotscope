@@ -7,7 +7,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for ImplMapRaw {
+impl RowReadable for ImplMapRaw {
     /// Calculates the byte size of an `ImplMap` table row based on table sizing information.
     ///
     /// The row size depends on the size of coded indexes and string/table references,
@@ -43,12 +43,7 @@ impl<'a> RowReadable<'a> for ImplMapRaw {
     /// # Returns
     /// * `Ok(ImplMapRaw)` - Successfully parsed table row
     /// * `Err(_)` - Binary data reading or parsing error
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(ImplMapRaw {
             rid,
             token: Token::new(0x1C00_0000 + rid),

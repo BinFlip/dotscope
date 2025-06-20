@@ -37,7 +37,6 @@
 //! # Memory Management
 //!
 //! The structure uses careful memory management:
-//! - **Zero-Copy Streams**: Metadata streams reference original file data
 //! - **Reference Counting**: Shared ownership of complex objects
 //! - **Lazy Loading**: Some components use `OnceLock` for deferred initialization
 //! - **Concurrent Access**: Thread-safe data structures for parallel loading
@@ -115,7 +114,6 @@ use crate::{
 /// # Memory Layout
 ///
 /// The structure maintains careful separation between:
-/// - **Borrowed Data**: Zero-copy references to original file content
 /// - **Owned Data**: Parsed structures and computed relationships
 /// - **Shared Data**: Reference-counted objects for concurrent access
 /// - **Lazy Data**: Deferred initialization for optional components

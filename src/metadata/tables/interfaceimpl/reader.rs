@@ -9,7 +9,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for InterfaceImplRaw {
+impl RowReadable for InterfaceImplRaw {
     /// Calculates the byte size of an `InterfaceImpl` table row based on table sizing information.
     ///
     /// The row size depends on the size of table indexes and coded indexes,
@@ -41,12 +41,7 @@ impl<'a> RowReadable<'a> for InterfaceImplRaw {
     /// # Returns
     /// * `Ok(InterfaceImplRaw)` - Successfully parsed table row
     /// * `Err(_)` - Binary data reading or parsing error
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(InterfaceImplRaw {
             rid,
             token: Token::new(0x0900_0000 + rid),

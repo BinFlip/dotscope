@@ -7,7 +7,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for ParamRaw {
+impl RowReadable for ParamRaw {
     /// Calculates the byte size of a Param table row.
     ///
     /// The row size depends on string heap size and is calculated as:
@@ -49,12 +49,7 @@ impl<'a> RowReadable<'a> for ParamRaw {
     /// - Insufficient data remaining at offset
     /// - Data corruption or malformed structure
     /// - Invalid string heap index values
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(ParamRaw {
             rid,
             token: Token::new(0x0800_0000 + rid),

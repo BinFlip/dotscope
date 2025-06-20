@@ -82,12 +82,6 @@
 //!
 //! The [`crate::metadata::streams::tablesheader::TablesHeader`] implementation prioritizes memory efficiency and performance:
 //!
-//! ### Zero-Copy Architecture
-//! - **Borrowed references**: All table data remains in original assembly buffer
-//! - **Lazy parsing**: Table rows parsed only when accessed
-//! - **Minimal overhead**: Table metadata cached, but data stays in place
-//! - **Lifetime safety**: Rust borrow checker prevents dangling references
-//!
 //! ### Optimized Access Patterns
 //! - **Direct indexing**: O(1) random access to any table row
 //! - **Sequential iteration**: Efficient streaming through large tables
@@ -330,10 +324,9 @@ use crate::{
 ///
 /// ## Architecture and Design
 ///
-/// [`crate::metadata::streams::tablesheader::TablesHeader`] implements a zero-copy, reference-based design that maximizes performance
+/// [`crate::metadata::streams::tablesheader::TablesHeader`] implements a lazy-loading design that maximizes performance
 /// while maintaining memory safety through Rust's lifetime system:
 ///
-/// - **Zero allocation**: All table data remains in the original assembly buffer
 /// - **Lazy parsing**: Table rows are parsed only when accessed
 /// - **Type safety**: Generic type parameters prevent incorrect table access
 /// - **Lifetime safety**: Rust borrow checker prevents dangling references
@@ -1130,7 +1123,7 @@ impl<'a> TablesHeader<'a> {
     /// maps each table type to its corresponding table ID, ensuring type safety without
     /// runtime overhead. No unsafe code is required.
     #[must_use]
-    pub fn table<T: RowReadable<'a>>(&'a self) -> Option<&'a MetadataTable<'a, T>>
+    pub fn table<T: RowReadable>(&'a self) -> Option<&'a MetadataTable<'a, T>>
     where
         Self: TableAccess<'a, T>,
     {

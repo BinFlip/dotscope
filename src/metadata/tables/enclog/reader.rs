@@ -7,7 +7,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for EncLogRaw {
+impl RowReadable for EncLogRaw {
     /// Calculate the byte size of an `EncLog` table row
     ///
     /// Returns the fixed size since `EncLog` contains only primitive integer fields
@@ -42,12 +42,7 @@ impl<'a> RowReadable<'a> for EncLogRaw {
     /// # Returns
     /// * `Ok(EncLogRaw)` - Successfully parsed `EncLog` row
     /// * `Err(`[`crate::Error`]`)` - If data is malformed or insufficient
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        _sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, _sizes: &TableInfoRef) -> Result<Self> {
         Ok(EncLogRaw {
             rid,
             token: Token::new(0x1E00_0000 + rid),

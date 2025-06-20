@@ -12,7 +12,6 @@
 //!
 //! - **Position tracking** - Maintains current offset for sequential parsing operations
 //! - **Bounds checking** - All operations validate data availability before reading
-//! - **Zero-copy access** - Works directly on byte slices without data copying
 //! - **Type-safe reading** - Strongly typed methods for common data types
 //! - **Metadata support** - Specialized methods for .NET metadata structures
 //!

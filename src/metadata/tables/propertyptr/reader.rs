@@ -7,7 +7,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for PropertyPtrRaw {
+impl RowReadable for PropertyPtrRaw {
     /// Calculates the byte size of a `PropertyPtr` table row.
     ///
     /// The row size depends on the Property table size:
@@ -50,12 +50,7 @@ impl<'a> RowReadable<'a> for PropertyPtrRaw {
     ///
     /// * [`crate::error::Error::OutOfBounds`] - Insufficient data for complete entry
     /// * [`crate::error::Error::Malformed`] - Malformed table entry structure
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(PropertyPtrRaw {
             rid,
             token: Token::new(0x1600_0000 + rid),

@@ -7,7 +7,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for EncMapRaw {
+impl RowReadable for EncMapRaw {
     /// Calculate the size in bytes of an `EncMap` table row.
     ///
     /// The `EncMap` table has a fixed structure with one 4-byte token field.
@@ -42,12 +42,7 @@ impl<'a> RowReadable<'a> for EncMapRaw {
     ///
     /// ## Errors
     /// Returns an error if the binary data is insufficient or malformed.
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        _sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, _sizes: &TableInfoRef) -> Result<Self> {
         Ok(EncMapRaw {
             rid,
             token: Token::new(0x1F00_0000 + rid),

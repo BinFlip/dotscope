@@ -9,7 +9,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for MethodSemanticsRaw {
+impl RowReadable for MethodSemanticsRaw {
     /// Calculates the byte size of a `MethodSemantics` table row.
     ///
     /// The row size depends on the metadata table sizes and is calculated as:
@@ -52,12 +52,7 @@ impl<'a> RowReadable<'a> for MethodSemanticsRaw {
     /// - Insufficient data remaining at offset
     /// - Invalid coded index encoding
     /// - Data corruption or malformed structure
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(MethodSemanticsRaw {
             rid,
             token: Token::new(0x1800_0000 + rid),

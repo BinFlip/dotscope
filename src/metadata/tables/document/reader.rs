@@ -7,13 +7,8 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for DocumentRaw {
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+impl RowReadable for DocumentRaw {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(DocumentRaw {
             rid,
             token: Token::new(0x3000_0000 + rid),

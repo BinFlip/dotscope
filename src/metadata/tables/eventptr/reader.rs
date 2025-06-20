@@ -7,7 +7,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for EventPtrRaw {
+impl RowReadable for EventPtrRaw {
     /// Calculate the byte size of an `EventPtr` table row
     ///
     /// Computes the total size in bytes required to store one `EventPtr` table row
@@ -55,12 +55,7 @@ impl<'a> RowReadable<'a> for EventPtrRaw {
     /// - The data stream is truncated or corrupted
     /// - Event index values exceed expected ranges
     /// - Binary parsing encounters invalid data
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(EventPtrRaw {
             rid,
             token: Token::new(0x1300_0000 + rid),

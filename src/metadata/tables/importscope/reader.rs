@@ -7,13 +7,8 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for ImportScopeRaw {
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+impl RowReadable for ImportScopeRaw {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(ImportScopeRaw {
             rid,
             token: Token::new(0x3500_0000 + rid),

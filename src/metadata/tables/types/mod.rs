@@ -98,7 +98,7 @@ pub(crate) use tableaccess::TableAccess;
 /// - Provide accurate row size calculations
 /// - Handle parsing errors gracefully
 /// - Support 1-based row indexing (as per CLI specification)
-pub trait RowReadable<'a>: Sized + Send {
+pub trait RowReadable: Sized + Send {
     /// Calculates the size in bytes of a single row for this table type.
     ///
     /// This method determines the total byte size needed to store one row of this
@@ -140,8 +140,7 @@ pub trait RowReadable<'a>: Sized + Send {
     /// - The row data is malformed or contains invalid values
     /// - Heap indices reference invalid or out-of-bounds locations
     /// - The row structure doesn't match the expected format
-    fn row_read(data: &'a [u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef)
-        -> Result<Self>;
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self>;
 }
 
 /// Generic container for metadata table data with typed row access.
@@ -223,7 +222,7 @@ pub struct MetadataTable<'a, T> {
     _phantom: Arc<PhantomData<T>>,
 }
 
-impl<'a, T: RowReadable<'a>> MetadataTable<'a, T> {
+impl<'a, T: RowReadable> MetadataTable<'a, T> {
     /// Creates a new metadata table from raw byte data.
     ///
     /// This constructor initializes a new table wrapper around the provided byte data,
@@ -363,7 +362,7 @@ impl<'a, T: RowReadable<'a>> MetadataTable<'a, T> {
     }
 }
 
-impl<'a, T: RowReadable<'a>> IntoIterator for &'a MetadataTable<'a, T> {
+impl<'a, T: RowReadable> IntoIterator for &'a MetadataTable<'a, T> {
     type Item = T;
     type IntoIter = TableIterator<'a, T>;
 
@@ -393,7 +392,7 @@ pub struct TableIterator<'a, T> {
     current_offset: usize,
 }
 
-impl<'a, T: RowReadable<'a>> Iterator for TableIterator<'a, T> {
+impl<'a, T: RowReadable> Iterator for TableIterator<'a, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -448,7 +447,7 @@ pub struct TableParIterator<'a, T> {
 }
 
 // Extension methods for more efficient parallel operations
-impl<'a, T: RowReadable<'a> + Send + Sync + 'a> TableParIterator<'a, T> {
+impl<'a, T: RowReadable + Send + Sync + 'a> TableParIterator<'a, T> {
     /// Processes the iterator in parallel with early error detection and termination.
     ///
     /// This method provides a parallel equivalent to the standard iterator's `try_for_each`,
@@ -499,7 +498,7 @@ impl<'a, T: RowReadable<'a> + Send + Sync + 'a> TableParIterator<'a, T> {
     }
 }
 
-impl<'a, T: RowReadable<'a> + Send + Sync> ParallelIterator for TableParIterator<'a, T> {
+impl<'a, T: RowReadable + Send + Sync> ParallelIterator for TableParIterator<'a, T> {
     type Item = T;
 
     fn drive_unindexed<C>(self, consumer: C) -> C::Result
@@ -510,7 +509,7 @@ impl<'a, T: RowReadable<'a> + Send + Sync> ParallelIterator for TableParIterator
     }
 }
 
-impl<'a, T: RowReadable<'a> + Send + Sync> IndexedParallelIterator for TableParIterator<'a, T> {
+impl<'a, T: RowReadable + Send + Sync> IndexedParallelIterator for TableParIterator<'a, T> {
     fn len(&self) -> usize {
         self.range.len()
     }
@@ -559,9 +558,7 @@ struct TableProducer<'a, T> {
     range: std::ops::Range<u32>,
 }
 
-impl<'a, T: RowReadable<'a> + Send + Sync> rayon::iter::plumbing::Producer
-    for TableProducer<'a, T>
-{
+impl<'a, T: RowReadable + Send + Sync> rayon::iter::plumbing::Producer for TableProducer<'a, T> {
     type Item = T;
     type IntoIter = TableProducerIterator<'a, T>;
 
@@ -613,7 +610,7 @@ struct TableProducerIterator<'a, T> {
     range: std::ops::Range<u32>,
 }
 
-impl<'a, T: RowReadable<'a> + Send + Sync> Iterator for TableProducerIterator<'a, T> {
+impl<'a, T: RowReadable + Send + Sync> Iterator for TableProducerIterator<'a, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -635,10 +632,10 @@ impl<'a, T: RowReadable<'a> + Send + Sync> Iterator for TableProducerIterator<'a
     }
 }
 
-impl<'a, T: RowReadable<'a> + Send + Sync> ExactSizeIterator for TableProducerIterator<'a, T> {}
+impl<'a, T: RowReadable + Send + Sync> ExactSizeIterator for TableProducerIterator<'a, T> {}
 
 // Implement DoubleEndedIterator for compatibility with Rayon
-impl<'a, T: RowReadable<'a> + Send + Sync> DoubleEndedIterator for TableProducerIterator<'a, T> {
+impl<'a, T: RowReadable + Send + Sync> DoubleEndedIterator for TableProducerIterator<'a, T> {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.range.start >= self.range.end {
             return None;

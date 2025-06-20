@@ -7,7 +7,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for StandAloneSigRaw {
+impl RowReadable for StandAloneSigRaw {
     /// Calculates the byte size of a `StandAloneSig` table row.
     ///
     /// The row size depends on the blob heap size:
@@ -50,12 +50,7 @@ impl<'a> RowReadable<'a> for StandAloneSigRaw {
     ///
     /// * [`crate::error::Error::OutOfBounds`] - Insufficient data for complete entry
     /// * [`crate::error::Error::Malformed`] - Malformed table entry structure
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         let offset_org = *offset;
 
         let signature = read_le_at_dyn(data, offset, sizes.is_large_blob())?;

@@ -7,7 +7,7 @@ use crate::{
     Result,
 };
 
-impl<'a> RowReadable<'a> for MethodSpecRaw {
+impl RowReadable for MethodSpecRaw {
     /// Calculates the byte size of a `MethodSpec` table row.
     ///
     /// The row size depends on the metadata table sizes and is calculated as:
@@ -47,12 +47,7 @@ impl<'a> RowReadable<'a> for MethodSpecRaw {
     /// - Insufficient data remaining at offset
     /// - Invalid coded index encoding
     /// - Data corruption or malformed structure
-    fn row_read(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
+    fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(MethodSpecRaw {
             rid,
             token: Token::new(0x2B00_0000 + rid),
