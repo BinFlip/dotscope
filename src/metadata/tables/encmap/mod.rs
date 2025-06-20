@@ -1,53 +1,74 @@
-//! `EncMap` table support for .NET metadata.
+//! EncMap table implementation for Edit-and-Continue token mapping
 //!
-//! This module provides comprehensive support for the `EncMap` metadata table (ID 0x1F), which
-//! manages token mapping during Edit-and-Continue debugging operations. The `EncMap` table
+//! This module provides complete support for the ECMA-335 EncMap metadata table (0x1F), which
+//! manages token mapping during Edit-and-Continue debugging operations. The EncMap table
 //! correlates original metadata tokens with their updated versions after code modifications,
 //! enabling debuggers to maintain proper references across edit sessions.
 //!
-//! ## Table Structure
+//! # Architecture
 //!
-//! The `EncMap` table contains the following columns as specified in ECMA-335:
-//! - **Token** (4 bytes): Original metadata token before editing
+//! The EncMap table is designed to track metadata token relationships during Edit-and-Continue
+//! debugging sessions. Unlike other metadata tables, the EncMap table contains only primitive
+//! token values, requiring no heap resolution. This simplicity enables efficient token mapping
+//! during active debugging scenarios where performance is critical.
 //!
-//! ## Usage in Edit-and-Continue
+//! # Key Components
 //!
-//! During Edit-and-Continue debugging:
-//! 1. Original metadata tokens are recorded in the `EncMap` table
-//! 2. Code modifications generate new metadata tokens
-//! 3. The `EncMap` table provides mapping between old and new tokens
-//! 4. Debuggers use this mapping to update breakpoints and references
+//! - [`crate::metadata::tables::encmap::EncMapRaw`] - Raw table structure with original metadata tokens
+//! - [`crate::metadata::tables::encmap::EncMap`] - Type alias to EncMapRaw since no heap resolution is needed
+//! - [`crate::metadata::tables::encmap::EncMapLoader`] - Internal loader for processing EncMap table data
+//! - [`crate::metadata::tables::encmap::EncMapMap`] - Thread-safe concurrent map for caching EncMap entries
+//! - [`crate::metadata::tables::encmap::EncMapList`] - Thread-safe append-only vector for EncMap collections
+//! - [`crate::metadata::tables::encmap::EncMapRc`] - Reference-counted pointer for shared ownership
 //!
-//! ## Module Organization
+//! # Usage Examples
 //!
-//! - [`raw`]: Raw table row representation and parsing logic
-//! - [`loader`]: Metadata loader implementation for parallel processing
-//! - [`EncMapRaw`]: Type alias for the raw table row structure
-//! - [`EncMapMap`]: Type alias for the loaded table data structure
-//! - [`EncMapLoader`]: Type alias for the metadata loader implementation
+//! ```rust,no_run
+//! use dotscope::metadata::tables::{EncMap, EncMapMap};
+//! use dotscope::metadata::token::Token;
 //!
-//! ## Examples
-//!
-//! ```rust,ignore
-//! use dotscope::metadata::{
-//!     tables::{TableId, encmap::EncMapRaw},
-//!     streams::TablesHeader
-//! };
-//!
-//! // Access EncMap table from metadata stream
-//! if let Some(encmap_table) = tables.table::<EncMapRaw>() {
-//!     println!("Found {} token mappings", encmap_table.row_count);
-//!     
-//!     // Iterate through token mappings
-//!     for mapping in encmap_table.iter() {
-//!         println!("Original token: {:#010x}", mapping.token);
-//!     }
+//! # fn example(enc_maps: &EncMapMap) -> dotscope::Result<()> {
+//! // Get a specific EncMap entry by token
+//! let token = Token::new(0x1F000001); // EncMap table token
+//! if let Some(enc_map) = enc_maps.get(&token) {
+//!     println!("Original token: {:#010x}", enc_map.value().original_token.value());
 //! }
+//! # Ok(())
+//! # }
 //! ```
 //!
-//! ## ECMA-335 Reference
+//! # Edit-and-Continue Token Mapping
 //!
-//! See ECMA-335, Partition II, Section 22.13 for complete `EncMap` table specification.
+//! During Edit-and-Continue debugging sessions:
+//! 1. **Original Token Recording**: Original metadata tokens are stored in EncMap entries
+//! 2. **Code Modification**: Developer modifies code while debugging is paused
+//! 3. **New Token Generation**: Compiler generates new metadata with updated tokens
+//! 4. **Token Correlation**: EncMap provides mapping between pre-edit and post-edit tokens
+//! 5. **Reference Updates**: Debuggers use mappings to update breakpoints and watch expressions
+//!
+//! # Error Handling
+//!
+//! This module handles error conditions during EncMap processing:
+//! - Invalid tokens that don't correspond to valid metadata elements (returns [`crate::Error`])
+//! - Table parsing errors when the EncMap structure is corrupted (returns [`crate::Error`])
+//! - Token mapping inconsistencies during Edit-and-Continue operations (returns [`crate::Error`])
+//!
+//! # Thread Safety
+//!
+//! All types in this module are [`Send`] and [`Sync`]. The [`crate::metadata::tables::encmap::EncMapMap`] and [`crate::metadata::tables::encmap::EncMapList`]
+//! use lock-free concurrent data structures for efficient multi-threaded access during debugging sessions.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::tables`] - Core metadata table infrastructure
+//! - [`crate::metadata::token`] - Token-based metadata references
+//! - [`crate::metadata::loader`] - Metadata loading system
+//! - Debugging tools that implement Edit-and-Continue functionality
+//!
+//! # References
+//!
+//! - [ECMA-335 II.22.13](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - EncMap table specification
 
 use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;

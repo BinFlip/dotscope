@@ -191,7 +191,7 @@ macro_rules! malformed_error {
 ///
 /// # Thread Safety
 ///
-/// [`Error`] is [`std::marker::Send`] and [`std::marker::Sync`] as all variants contain thread-safe types.
+/// This error enum is [`std::marker::Send`] and [`std::marker::Sync`] as all variants contain thread-safe types.
 /// This includes owned strings, primitive values, and errors from external crates that are themselves
 /// thread-safe. Errors can be safely passed between threads and shared across thread boundaries.
 #[derive(Error, Debug)]

@@ -1,6 +1,6 @@
 //! Owned `MethodDebugInformation` table representation for Portable PDB format.
 //!
-//! This module provides the [`crate::metadata::tables::methoddebuginformation::owned::MethodDebugInformation`] struct which contains
+//! This module provides the [`MethodDebugInformation`] struct which contains
 //! fully resolved method debugging metadata with owned data and resolved heap references.
 //! This is the primary data structure for representing Portable PDB method debugging
 //! information in a usable form, with parsed sequence points after the dual variant
@@ -25,7 +25,7 @@
 //! # Thread Safety
 //!
 //! All types in this module are thread-safe for concurrent read access:
-//! - [`crate::metadata::tables::methoddebuginformation::owned::MethodDebugInformation`] is [`std::marker::Send`] and [`std::marker::Sync`]
+//! - [`MethodDebugInformation`] is [`std::marker::Send`] and [`std::marker::Sync`]
 //! - All fields contain owned data with no shared mutable state
 //! - Instances can be safely shared across threads and accessed concurrently
 //! - No synchronization required for read operations

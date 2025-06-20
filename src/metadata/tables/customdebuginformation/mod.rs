@@ -59,10 +59,10 @@
 //! let method_token = Token::new(0x06000001); // MethodDef token
 //!
 //! if custom_info.parent_token() == method_token {
-//!     println!("Found custom debug info kind: {:?}", custom_info.kind);
+//!     println!("Found custom debug info kind: {:?}", custom_info.kind());
 //!     // Process the custom information blob
-//!     let data = &custom_info.value;
-//!     // ... interpret based on the GUID in custom_info.kind
+//!     let data = custom_info.value();
+//!     // ... interpret based on the GUID in custom_info.kind()
 //! }
 //! # Ok(())
 //! # }

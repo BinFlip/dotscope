@@ -15,7 +15,7 @@
 //!
 //! - [`crate::metadata::tables::enclog::raw::EncLogRaw`] - Raw table row structure
 //! - [`crate::metadata::tables::enclog::EncLogRc`] - Reference-counted owned representation
-//! - [`crate::metadata::tables::RowDefinition`] - Table parsing interface implementation
+//! - [`crate::metadata::tables::types::RowReadable`] - Table parsing interface implementation
 //!
 //! # `EncLog` Table Format
 //!

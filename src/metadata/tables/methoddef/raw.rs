@@ -130,18 +130,18 @@ use crate::{
 /// # fn process_method_entry(raw_entry: &MethodDefRaw, strings: &Strings, blob: &Blob) -> dotscope::Result<()> {
 /// // Check method implementation type
 /// if raw_entry.rva == 0 {
-///     println!(\"Abstract or interface method: {}\", raw_entry.rid);
+///     println!("Abstract or interface method: {}", raw_entry.rid);
 /// } else {
-///     println!(\"Concrete method at RVA: 0x{:08X}\", raw_entry.rva);
+///     println!("Concrete method at RVA: 0x{:08X}", raw_entry.rva);
 /// }
 ///
 /// // Access method name
 /// let method_name = strings.get(raw_entry.name as usize)?;
-/// println!(\"Method name: {}\", method_name);
+/// println!("Method name: {}", method_name);
 ///
 /// // Access method signature
 /// let signature_data = blob.get(raw_entry.signature as usize)?;
-/// println!(\"Signature has {} bytes\", signature_data.len());
+/// println!("Signature has {} bytes", signature_data.len());
 /// # Ok(())
 /// # }
 /// ```

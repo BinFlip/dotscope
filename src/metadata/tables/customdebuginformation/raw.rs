@@ -1,9 +1,19 @@
-//! Raw `CustomDebugInformation` table representation for Portable PDB format
+//! Raw `CustomDebugInformation` table representation for Portable PDB format.
 //!
-//! This module provides the [`CustomDebugInformationRaw`] struct that represents
+//! This module provides the [`crate::metadata::tables::customdebuginformation::CustomDebugInformationRaw`] struct that represents
 //! the binary format of `CustomDebugInformation` table entries as they appear in
 //! the metadata tables stream. This is the low-level representation used during
-//! the initial parsing phase, containing unresolved indices.
+//! the initial parsing phase, containing unresolved heap indices that require
+//! resolution to access actual data.
+//!
+//! # Key Components
+//!
+//! - [`crate::metadata::tables::customdebuginformation::CustomDebugInformationRaw`] - Raw binary representation with unresolved indices
+//!
+//! # Thread Safety
+//!
+//! All types in this module are [`Send`] and [`Clone`], enabling safe sharing
+//! across threads and efficient copying when needed.
 
 use crate::{
     metadata::{
@@ -21,7 +31,7 @@ use std::sync::Arc;
 ///
 /// This structure matches the exact binary layout of `CustomDebugInformation` table
 /// entries in the metadata tables stream. All fields contain unresolved indices
-/// that must be resolved during conversion to the owned [`CustomDebugInformation`] variant.
+/// that must be resolved during conversion to the owned [`crate::metadata::tables::customdebuginformation::CustomDebugInformation`] variant.
 ///
 /// # Binary Format
 ///
@@ -91,7 +101,7 @@ pub struct CustomDebugInformationRaw {
 }
 
 impl CustomDebugInformationRaw {
-    /// Converts this raw `CustomDebugInformation` entry to an owned [`CustomDebugInformation`] instance
+    /// Converts this raw `CustomDebugInformation` entry to an owned [`crate::metadata::tables::customdebuginformation::CustomDebugInformation`] instance
     ///
     /// This method resolves the raw `CustomDebugInformation` entry to create a complete `CustomDebugInformation`
     /// object by resolving indices to actual data from the provided heaps and parsing the custom debug
@@ -119,19 +129,23 @@ impl CustomDebugInformationRaw {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// # use dotscope::metadata::tables::customdebuginformation::CustomDebugInformationRaw;
-    /// # use dotscope::metadata::token::Token;
+    /// ```rust,no_run
+    /// use dotscope::metadata::tables::{CustomDebugInformationRaw, CodedIndex};
+    /// use dotscope::metadata::token::Token;
+    /// use dotscope::metadata::typesystem::CilTypeReference;
+    /// use dotscope::metadata::streams::{Guid, Blob};
+    /// use dotscope::Result;
+    ///
     /// # fn example(
-    /// #     get_ref: impl Fn(&crate::metadata::tables::CodedIndex) -> crate::metadata::typesystem::CilTypeReference,
-    /// #     guid_heap: &crate::metadata::streams::Guid,
-    /// #     blob_heap: &crate::metadata::streams::Blob
-    /// # ) -> dotscope::Result<()> {
+    /// #     get_ref: impl Fn(&CodedIndex) -> CilTypeReference,
+    /// #     guid_heap: &Guid,
+    /// #     blob_heap: &Blob
+    /// # ) -> Result<()> {
     /// let custom_debug_raw = CustomDebugInformationRaw {
     ///     rid: 1,
     ///     token: Token::new(0x37000001),
     ///     offset: 0,
-    ///     parent: 6,      // HasCustomDebugInformation coded index
+    ///     parent: CodedIndex { tag: dotscope::metadata::tables::TableId::MethodDef, row: 6, token: Token::new(0x06000006) },  // HasCustomDebugInformation coded index
     ///     kind: 1,        // GUID heap index pointing to Source Link GUID
     ///     value: 10,      // Blob heap index pointing to JSON data
     /// };

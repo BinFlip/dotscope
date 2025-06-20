@@ -8,23 +8,23 @@ use std::{marker::PhantomData, sync::Arc};
 ///
 /// This structure provides a high-level interface for working with .NET metadata tables,
 /// offering both sequential and parallel iteration capabilities. It wraps raw table data
-/// and provides type-safe access to individual rows through the [`RowDefinition`] trait.
+/// and provides type-safe access to individual rows through the [`RowReadable`] trait.
 ///
 /// ## Type Parameters
 ///
 /// * `'a` - Lifetime of the underlying byte data
-/// * `T` - The row type that implements [`RowDefinition`]
+/// * `T` - The row type that implements [`RowReadable`]
 ///
 /// ## Examples
 ///
 /// ### Basic Usage
 /// ```rust,ignore
-/// # use dotscope::metadata::tables::types::{MetadataTable, RowDefinition};
+/// # use dotscope::metadata::tables::types::{MetadataTable, RowReadable};
 /// # use dotscope::metadata::tables::TableInfoRef;
 /// # struct MyRow { id: u32 }
-/// # impl<'a> RowDefinition<'a> for MyRow {
+/// # impl RowReadable for MyRow {
 /// #     fn row_size(_: &TableInfoRef) -> u32 { 4 }
-/// #     fn read_row(_: &'a [u8], offset: &mut usize, rid: u32, _: &TableInfoRef) -> dotscope::Result<Self> {
+/// #     fn row_read(_: &[u8], offset: &mut usize, rid: u32, _: &TableInfoRef) -> dotscope::Result<Self> {
 /// #         *offset += 4; Ok(MyRow { id: rid })
 /// #     }
 /// # }
@@ -46,11 +46,11 @@ use std::{marker::PhantomData, sync::Arc};
 ///
 /// ### Parallel Processing
 /// ```rust,ignore
-/// # use dotscope::metadata::tables::types::{MetadataTable, RowDefinition};
+/// # use dotscope::metadata::tables::types::{MetadataTable, RowReadable};
 /// # use dotscope::metadata::tables::TableInfoRef;
 /// # use rayon::prelude::*;
 /// # struct MyRow { id: u32 }
-/// # impl RowDefinition for MyRow {
+/// # impl RowReadable for MyRow {
 /// #     fn row_size(_: &TableInfoRef) -> u32 { 4 }
 /// #     fn row_read(_: &[u8], offset: &mut usize, rid: u32, _: &TableInfoRef) -> dotscope::Result<Self> {
 /// #         *offset += 4; Ok(MyRow { id: rid })

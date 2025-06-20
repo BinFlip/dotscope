@@ -55,7 +55,7 @@
 //! # Integration
 //!
 //! This module integrates with:
-//! - [`crate::metadata::tables::methoddebuginformation::owned`] - Owned representation for runtime use
+//! - Method debug information owned types - Owned representation for runtime use
 //! - [`crate::metadata::tables::document`] - Document table for source file references
 //! - [`crate::metadata::streams::blob`] - Blob heap for sequence points data resolution
 //! - [`crate::metadata::method`] - Method definition association and debugging
@@ -76,7 +76,7 @@ use std::sync::Arc;
 /// This structure matches the exact binary layout of `MethodDebugInformation` table
 /// entries in the metadata tables stream. All heap references remain as unresolved
 /// indices that must be resolved through the appropriate heap during the conversion
-/// to the owned [`crate::metadata::tables::methoddebuginformation::owned::MethodDebugInformation`] variant.
+/// to the owned [`crate::metadata::tables::MethodDebugInformation`] variant.
 ///
 /// # Binary Format
 ///

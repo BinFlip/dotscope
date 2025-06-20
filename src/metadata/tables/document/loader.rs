@@ -1,8 +1,17 @@
-//! Document table loader implementation
+//! Document table loader implementation.
 //!
-//! Provides the [`crate::metadata::tables::document::loader::DocumentLoader`] implementation for loading document information
+//! This module provides the [`crate::metadata::tables::document::DocumentLoader`] implementation for loading document information
 //! from the Portable PDB Document table (0x30). This loader processes debugging metadata that provides information
-//! about source documents referenced in the debug information.
+//! about source documents referenced in the debug information, integrating this data with existing metadata entries.
+//!
+//! # Key Components
+//!
+//! - [`crate::metadata::tables::document::DocumentLoader`] - Main loader for processing Document table data
+//!
+//! # Thread Safety
+//!
+//! All loading operations use parallel processing with proper synchronization,
+//! enabling concurrent processing of multiple document entries.
 
 use crate::metadata::loader::{LoaderContext, MetadataLoader};
 use crate::metadata::tables::types::TableId;
@@ -16,6 +25,9 @@ use rayon::prelude::*;
 /// information about source documents referenced in debug information. Each document entry
 /// includes the document name, hash algorithm, hash value, and source language identifier.
 ///
+/// Implements [`crate::metadata::loader::MetadataLoader`] to process the Document table,
+/// resolving heap indices and creating fully resolved document structures.
+///
 /// ## Loading Process
 ///
 /// 1. **Table Validation**: Verifies the Document table exists and has valid row count
@@ -26,26 +38,8 @@ use rayon::prelude::*;
 /// ## Usage
 ///
 /// The loader is automatically invoked during metadata loading and populates the
-/// `document` field in the [`LoaderContext`]. Document information can be accessed
+/// `document` field in the [`crate::metadata::loader::LoaderContext`]. Document information can be accessed
 /// through the context for debug information processing and source code mapping.
-///
-/// ```rust,ignore
-/// use dotscope::prelude::*;
-///
-/// # fn example() -> dotscope::Result<()> {
-/// # let file_path = "path/to/assembly.dll";
-/// let file = File::from_file(file_path)?;
-/// let metadata = file.metadata()?;
-///
-/// // Access document information through the loader context
-/// if let Some(document_map) = &metadata.context.document {
-///     for (token, document) in document_map.iter() {
-///         println!("Document {}: {}", token.table_index(), document.name());
-///     }
-/// }
-/// # Ok(())
-/// # }
-/// ```
 ///
 /// ## Reference
 /// * [Portable PDB Format - Document Table](https://github.com/dotnet/core/blob/main/Documentation/diagnostics/portable_pdb.md#document-table-0x30)
@@ -70,10 +64,21 @@ impl MetadataLoader for DocumentLoader {
         Ok(())
     }
 
+    /// Returns the table identifier for the Document table.
+    ///
+    /// # Returns
+    /// [`crate::metadata::tables::types::TableId::Document`] (0x30)
     fn table_id(&self) -> TableId {
         TableId::Document
     }
 
+    /// Returns the list of table dependencies for Document loading.
+    ///
+    /// The Document table has no dependencies as it contains self-contained
+    /// document metadata with only heap references.
+    ///
+    /// # Returns
+    /// Empty slice - no table dependencies required
     fn dependencies(&self) -> &'static [TableId] {
         &[]
     }

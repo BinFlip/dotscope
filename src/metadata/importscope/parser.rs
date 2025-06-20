@@ -21,7 +21,7 @@
 //!
 //! # Thread Safety
 //!
-//! All parsing functions and types in this module are thread-safe. The [`crate::metadata::importscope::parser::ImportsParser`]
+//! All parsing functions and types in this module are thread-safe. The parser
 //! and [`crate::metadata::importscope::parser::parse_imports_blob`] function are [`std::marker::Send`] and [`std::marker::Sync`],
 //! enabling safe concurrent parsing of import declarations across multiple threads.
 //!
@@ -73,7 +73,7 @@ use crate::{
 ///
 /// # Thread Safety
 ///
-/// [`ImportsParser`] is [`std::marker::Send`] and [`std::marker::Sync`] as it contains only borrowed data.
+/// The parser is [`std::marker::Send`] and [`std::marker::Sync`] as it contains only borrowed data.
 /// Instances can be safely used across threads and accessed concurrently.
 pub struct ImportsParser<'a> {
     /// Binary data parser for reading blob data
@@ -90,7 +90,7 @@ impl<'a> ImportsParser<'a> {
     /// * `blobs` - Reference to the blob heap for resolving blob indices
     ///
     /// # Returns
-    /// A new [`ImportsParser`] ready to parse the provided data.
+    /// A new parser ready to parse the provided data.
     ///
     /// # Thread Safety
     ///
@@ -209,7 +209,7 @@ impl<'a> ImportsParser<'a> {
 
 /// Parse an imports blob into structured import declarations.
 ///
-/// This is a convenience function that creates an [`ImportsParser`] and parses a complete
+/// This is a convenience function that creates a parser and parses a complete
 /// imports blob from the provided byte slice. The function handles the full parsing
 /// process including kind identification, parameter extraction, and heap resolution.
 ///

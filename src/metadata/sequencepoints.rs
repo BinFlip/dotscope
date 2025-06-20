@@ -6,7 +6,7 @@
 //!
 //! # Architecture
 //!
-//! Sequence points are stored in the [`crate::metadata::tables::methoddebuginformation::owned::MethodDebugInformation`] table as a compressed blob.
+//! Sequence points are stored in the [`crate::metadata::tables::MethodDebugInformation`] table as a compressed blob.
 //! This module parses the blob and exposes a user-friendly API for accessing sequence point data.
 //!
 //! # Key Components
@@ -37,13 +37,13 @@
 //! # Integration
 //!
 //! This module integrates with:
-//! - [`crate::metadata::tables::methoddebuginformation::owned`] - for exposing parsed sequence points per method
+//! - Method debug information tables - for exposing parsed sequence points per method
 //! - [`crate::file::parser::Parser`] - for binary parsing utilities
 //!
 //! # Sequence Points Blob Format
 //!
 //! The sequence points blob in PortablePDB is a compressed, delta-encoded list of mappings from IL offsets to source code locations.
-//! It is stored as a blob in the [`crate::metadata::tables::methoddebuginformation::owned::MethodDebugInformation`] table.
+//! It is stored as a blob in the [`crate::metadata::tables::MethodDebugInformation`] table.
 //!
 //! ## Layout
 //!

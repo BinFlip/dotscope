@@ -52,7 +52,7 @@
 //!
 //! This module integrates with:
 //! - [`crate::metadata::tables`] - Assembly and AssemblyRef table identity verification
-//! - [`crate::file::io`] - Binary data reading for key material parsing
+//! - Binary data reading utilities for key material parsing
 //! - External cryptographic libraries (`md5`, `sha1`) for token generation
 //!
 //! # Assembly Loading

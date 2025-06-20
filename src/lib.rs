@@ -398,7 +398,7 @@ pub mod metadata;
 
 /// `dotscope` Result type.
 ///
-/// A type alias for [`std::result::Result<T, Error>`] where the error type is always [`crate::Error`].
+/// A type alias for `std::result::Result<T, Error>` where the error type is always [`crate::Error`].
 /// This is used consistently throughout the crate for all fallible operations.
 ///
 /// # Usage Examples

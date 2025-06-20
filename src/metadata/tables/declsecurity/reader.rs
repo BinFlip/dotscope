@@ -1,3 +1,20 @@
+//! Binary reader implementation for `DeclSecurity` table entries.
+//!
+//! This module implements the [`crate::metadata::tables::types::RowReadable`] trait for
+//! [`crate::metadata::tables::declsecurity::DeclSecurityRaw`], enabling direct parsing
+//! of `DeclSecurity` table entries from binary metadata streams. The implementation
+//! handles variable-sized fields based on heap sizes and provides comprehensive test
+//! coverage for different data sizes.
+//!
+//! # Key Components
+//!
+//! - [`crate::metadata::tables::types::RowReadable`] implementation for [`crate::metadata::tables::declsecurity::DeclSecurityRaw`]
+//!
+//! # Thread Safety
+//!
+//! All parsing operations are thread-safe and stateless, enabling concurrent
+//! processing of multiple table entries.
+
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{

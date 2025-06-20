@@ -1,3 +1,20 @@
+//! Binary reader implementation for the `FieldMarshal` metadata table.
+//!
+//! This module provides the [`RowReadable`] trait implementation for [`FieldMarshalRaw`],
+//! enabling direct binary parsing of `FieldMarshal` table entries from metadata streams.
+//! The implementation handles both 2-byte and 4-byte coded index formats and blob heap
+//! index sizes based on metadata heap requirements.
+//!
+//! # Binary Format
+//! Each `FieldMarshal` table row contains:
+//! - **Parent** (2/4 bytes): `HasFieldMarshal` coded index (Field or Param reference)
+//! - **NativeType** (2/4 bytes): Blob heap index containing marshalling signature
+//!
+//! The field sizes depend on the coded index size requirements and blob heap size.
+//!
+//! # ECMA-335 Reference
+//! See ECMA-335, Partition II, §22.17 for the `FieldMarshal` table specification.
+
 use crate::{
     file::io::read_le_at_dyn,
     metadata::{

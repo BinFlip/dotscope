@@ -1118,10 +1118,9 @@ impl<'a> TablesHeader<'a> {
     ///
     /// # Implementation Details
     ///
-    /// This method uses the [`crate::metadata::streams::TableAccess`] trait to provide
-    /// safe, compile-time verified table access. The trait implementation automatically
-    /// maps each table type to its corresponding table ID, ensuring type safety without
-    /// runtime overhead. No unsafe code is required.
+    /// This method uses a trait to provide safe, compile-time verified table access.
+    /// The trait implementation automatically maps each table type to its corresponding
+    /// table ID, ensuring type safety without runtime overhead. No unsafe code is required.
     #[must_use]
     pub fn table<T: RowReadable>(&'a self) -> Option<&'a MetadataTable<'a, T>>
     where
@@ -1681,7 +1680,7 @@ impl<'a> TablesHeader<'a> {
 
     /// Get a summary of all present metadata tables with their row counts.
     ///
-    /// Returns a vector of [`TableSummary`] structs containing the table ID and row count
+    /// Returns a vector of summary structs containing the table ID and row count
     /// for each table present in this assembly. This provides an efficient way to get an
     /// overview of the assembly's metadata structure without accessing individual tables.
     ///
@@ -1714,7 +1713,7 @@ impl<'a> TablesHeader<'a> {
 
 /// Summary information for a metadata table providing table identity and size information.
 ///
-/// [`crate::metadata::streams::tablesheader::TableSummary`] is used by [`crate::metadata::streams::tablesheader::TablesHeader::table_summary`] to provide an overview
+/// This struct is used by [`crate::metadata::streams::tablesheader::TablesHeader::table_summary`] to provide an overview
 /// of all present tables in the metadata without requiring full table access. This
 /// is useful for assembly analysis, diagnostics, and determining what metadata is
 /// available before processing specific tables.

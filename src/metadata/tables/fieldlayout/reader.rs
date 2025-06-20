@@ -1,3 +1,18 @@
+//! Binary reader implementation for the `FieldLayout` metadata table.
+//!
+//! This module provides the [`RowReadable`] trait implementation for [`FieldLayoutRaw`],
+//! enabling direct binary parsing of `FieldLayout` table entries from metadata streams.
+//! The implementation handles both 2-byte and 4-byte field index formats based on
+//! table size requirements.
+//!
+//! # Binary Format
+//! Each `FieldLayout` table row contains:
+//! - **Offset** (4 bytes): Field offset within the containing type
+//! - **Field** (2/4 bytes): Index into Field table (size depends on Field table size)
+//!
+//! # ECMA-335 Reference
+//! See ECMA-335, Partition II, §22.16 for the `FieldLayout` table specification.
+
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{

@@ -1,9 +1,18 @@
 //! Raw `DeclSecurity` table representation.
 //!
-//! This module provides the [`crate::metadata::tables::declsecurity::raw::DeclSecurityRaw`] struct
+//! This module provides the [`crate::metadata::tables::declsecurity::DeclSecurityRaw`] struct
 //! for low-level access to `DeclSecurity` metadata table data with unresolved heap indexes and coded indices.
 //! This represents the binary format of security declaration records as they appear in the metadata
 //! tables stream, requiring resolution to create usable data structures.
+//!
+//! # Key Components
+//!
+//! - [`crate::metadata::tables::declsecurity::DeclSecurityRaw`] - Raw binary representation with unresolved indices
+//!
+//! # Thread Safety
+//!
+//! All types in this module are [`Send`] and [`Clone`], enabling safe sharing
+//! across threads and efficient copying when needed.
 //!
 //! # `DeclSecurity` Table Format
 //!
@@ -16,8 +25,8 @@
 //! # Usage
 //!
 //! This type is used internally for metadata parsing and should typically be converted
-//! to [`crate::metadata::tables::DeclSecurity`] via [`DeclSecurityRaw::to_owned`] for practical use.
-//! The [`apply`](DeclSecurityRaw::apply) method can directly process security declarations
+//! to [`crate::metadata::tables::declsecurity::DeclSecurity`] via [`crate::metadata::tables::declsecurity::DeclSecurityRaw::to_owned`] for practical use.
+//! The [`crate::metadata::tables::declsecurity::DeclSecurityRaw::apply`] method can directly process security declarations
 //! without creating intermediate owned structures.
 //!
 //! # Reference

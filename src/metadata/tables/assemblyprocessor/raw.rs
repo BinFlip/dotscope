@@ -16,7 +16,7 @@
 //!
 //! - [`crate::metadata::tables::assemblyprocessor::raw::AssemblyProcessorRaw`] - Raw table row structure
 //! - [`crate::metadata::tables::assemblyprocessor::AssemblyProcessorRc`] - Reference-counted owned representation
-//! - [`crate::metadata::tables::RowDefinition`] - Table parsing interface implementation
+//! - [`crate::metadata::tables::types::RowReadable`] - Table parsing interface implementation
 //!
 //! # `AssemblyProcessor` Table Format
 //!

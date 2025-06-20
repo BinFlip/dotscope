@@ -62,7 +62,7 @@ use crate::{
 ///
 /// # Thread Safety
 ///
-/// [`CustomDebugParser`] is not [`std::marker::Send`] or [`std::marker::Sync`] due to mutable state.
+/// The parser is not [`std::marker::Send`] or [`std::marker::Sync`] due to mutable state.
 /// Each thread should create its own parser instance for concurrent parsing operations.
 pub struct CustomDebugParser<'a> {
     /// Binary data parser for reading blob data
@@ -79,7 +79,7 @@ impl<'a> CustomDebugParser<'a> {
     /// * `kind` - The debug information kind that determines the blob format
     ///
     /// # Returns
-    /// A new [`CustomDebugParser`] ready to parse the provided data.
+    /// A new parser ready to parse the provided data.
     #[must_use]
     pub fn new(data: &'a [u8], kind: CustomDebugKind) -> Self {
         CustomDebugParser {
@@ -158,7 +158,7 @@ impl<'a> CustomDebugParser<'a> {
 
 /// Parse a custom debug information blob into structured debug information.
 ///
-/// This is a convenience function that creates a [`CustomDebugParser`] and parses a complete
+/// This is a convenience function that creates a parser and parses a complete
 /// custom debug information blob from the provided byte slice. The function handles the parsing
 /// process based on the debug information kind.
 ///

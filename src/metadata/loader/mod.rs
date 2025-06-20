@@ -373,7 +373,7 @@ pub(crate) trait MetadataLoader: Send + Sync {
 /// # Returns
 ///
 /// * [`Ok`]([`graph::LoaderGraph`]) - A validated dependency graph ready for execution planning
-/// * [`Err`]([`crate::Error::GraphError`]) - If validation fails due to missing dependencies or cycles
+/// * [`Err`]([`crate::Error`]) - If validation fails due to missing dependencies or cycles
 ///
 /// # Errors
 ///

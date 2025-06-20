@@ -15,7 +15,7 @@
 //!
 //! - [`crate::metadata::tables::assemblyos::raw::AssemblyOsRaw`] - Raw table row structure
 //! - [`crate::metadata::tables::assemblyos::AssemblyOsRc`] - Reference-counted owned representation
-//! - [`crate::metadata::tables::RowDefinition`] - Table parsing interface implementation
+//! - [`crate::metadata::tables::types::RowReadable`] - Table parsing interface implementation
 //!
 //! # `AssemblyOS` Table Format
 //!
