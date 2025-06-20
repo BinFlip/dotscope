@@ -8,12 +8,12 @@ use std::{marker::PhantomData, sync::Arc};
 ///
 /// This structure provides a high-level interface for working with .NET metadata tables,
 /// offering both sequential and parallel iteration capabilities. It wraps raw table data
-/// and provides type-safe access to individual rows through the [`RowReadable`] trait.
+/// and provides type-safe access to individual rows through the [`crate::metadata::tables::types::RowReadable`] trait.
 ///
 /// ## Type Parameters
 ///
 /// * `'a` - Lifetime of the underlying byte data
-/// * `T` - The row type that implements [`RowReadable`]
+/// * `T` - The row type that implements [`crate::metadata::tables::types::RowReadable`]
 ///
 /// ## Examples
 ///

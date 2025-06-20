@@ -60,7 +60,7 @@ use crate::metadata::tables::{
 ///
 /// This enum provides a type-safe way to handle any of the metadata tables that can exist
 /// in the `#~` or `#-` stream of a .NET assembly. Each variant corresponds to a specific table type
-/// as defined in ECMA-335, containing a [`MetadataTable`] with the appropriate row type.
+/// as defined in ECMA-335, containing a [`crate::metadata::tables::types::MetadataTable`] with the appropriate row type.
 ///
 /// ## Table Organization
 ///

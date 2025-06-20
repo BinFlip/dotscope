@@ -7,9 +7,9 @@
 //!
 //! ## Key Components
 //!
-//! - [`TableRowInfo`] - Information about individual table sizes and indexing requirements
-//! - [`TableInfo`] - Comprehensive metadata for all tables in an assembly
-//! - [`TableInfoRef`] - Shared reference to table information
+//! - [`crate::metadata::tables::types::TableRowInfo`] - Information about individual table sizes and indexing requirements
+//! - [`crate::metadata::tables::types::TableInfo`] - Comprehensive metadata for all tables in an assembly
+//! - [`crate::metadata::tables::types::TableInfoRef`] - Shared reference to table information
 //!
 //! ## Index Size Determination
 //!
@@ -137,8 +137,8 @@ impl TableRowInfo {
 ///
 /// ## Related Types
 ///
-/// - [`TableRowInfo`] - Individual table metadata
-/// - [`TableInfoRef`] - Arc-wrapped shared reference
+/// - [`crate::metadata::tables::types::TableRowInfo`] - Individual table metadata
+/// - [`crate::metadata::tables::types::TableInfoRef`] - Arc-wrapped shared reference
 /// - [`crate::metadata::tables::types::CodedIndexType`] - Coded index type definitions
 /// - [`crate::metadata::tables::types::TableId`] - Table identifier enumeration
 #[derive(Clone, Default)]
