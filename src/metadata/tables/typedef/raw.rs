@@ -140,7 +140,7 @@ impl TypeDefRaw {
     where
         F: Fn(&CodedIndex) -> CilTypeReference,
     {
-        let (end_fields, end_methods) = if self.rid + 1 > defs.row_count() {
+        let (end_fields, end_methods) = if self.rid + 1 > defs.row_count {
             (fields.len() + 1, methods.len() + 1)
         } else {
             match defs.get(self.rid + 1) {

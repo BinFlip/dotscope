@@ -132,7 +132,7 @@ impl EventMapRaw {
 
         let next_row_id = self.rid + 1;
         let start = self.event_list as usize;
-        let end = if next_row_id > map.row_count() {
+        let end = if next_row_id > map.row_count {
             events.len() + 1
         } else {
             match map.get(next_row_id) {

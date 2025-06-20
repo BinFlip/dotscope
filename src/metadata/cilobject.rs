@@ -468,7 +468,7 @@ impl CilObject {
     ///     
     ///     // Access individual tables
     ///     if let Some(typedef_table) = &tables.table::<TypeDefRaw>() {
-    ///         println!("Number of types: {}", typedef_table.row_count());
+    ///         println!("Number of types: {}", typedef_table.row_count);
     ///     }
     /// }
     /// # Ok::<(), dotscope::Error>(())

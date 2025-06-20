@@ -19,13 +19,13 @@
 //! fn process_table(table: &TableData) {
 //!     match table {
 //!         TableData::TypeDef(type_table) => {
-//!             println!("Processing {} type definitions", type_table.row_count());
+//!             println!("Processing {} type definitions", type_table.row_count);
 //!             for type_def in type_table.iter() {
 //!                 // Process each type definition
 //!             }
 //!         }
 //!         TableData::MethodDef(method_table) => {
-//!             println!("Processing {} method definitions", method_table.row_count());
+//!             println!("Processing {} method definitions", method_table.row_count);
 //!             // Process methods in parallel for better performance
 //!             method_table.par_iter().for_each(|method| {
 //!                 // Process each method definition
@@ -77,13 +77,13 @@ use crate::metadata::tables::{
 /// fn analyze_table(table: &TableData) -> String {
 ///     match table {
 ///         TableData::TypeDef(types) => {
-///             format!("Found {} type definitions", types.row_count())
+///             format!("Found {} type definitions", types.row_count)
 ///         }
 ///         TableData::MethodDef(methods) => {
-///             format!("Found {} method definitions", methods.row_count())
+///             format!("Found {} method definitions", methods.row_count)
 ///         }
 ///         TableData::Field(fields) => {
-///             format!("Found {} field definitions", fields.row_count())
+///             format!("Found {} field definitions", fields.row_count)
 ///         }
 ///         // Handle other table types...
 ///         _ => "Other table type".to_string(),

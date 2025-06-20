@@ -249,7 +249,7 @@ impl MethodDefRaw {
         } else {
             let next_row_id = self.rid + 1;
             let start = self.param_list as usize;
-            let end = if next_row_id > table.row_count() {
+            let end = if next_row_id > table.row_count {
                 params_map.len() + 1
             } else {
                 match table.get(next_row_id) {

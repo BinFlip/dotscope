@@ -102,7 +102,7 @@
 //!
 //! // Access type definitions
 //! if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
-//!     println!("Found {} type definitions", typedef_table.row_count());
+//!     println!("Found {} type definitions", typedef_table.row_count);
 //!     
 //!     // Examine first few types
 //!     for (index, type_def) in typedef_table.iter().enumerate().take(5) {
@@ -113,7 +113,7 @@
 //!
 //! // Access method definitions
 //! if let Some(method_table) = tables.table::<MethodDefRaw>() {
-//!     println!("Found {} method definitions", method_table.row_count());
+//!     println!("Found {} method definitions", method_table.row_count);
 //!     
 //!     // Find methods by characteristics
 //!     let static_methods = method_table.iter()
@@ -142,12 +142,12 @@
 //!         let field_start = type_def.field_list.saturating_sub(1) as usize;
 //!         
 //!         // Find field range end (next type's field_list or table end)
-//!         let field_end = if type_idx + 1 < typedef_table.row_count() as usize {
+//!         let field_end = if type_idx + 1 < typedef_table.row_count as usize {
 //!             typedef_table.get((type_idx + 1) as u32)
 //!                 .map(|next_type| next_type.field_list.saturating_sub(1) as usize)
-//!                 .unwrap_or(field_table.row_count() as usize)
+//!                 .unwrap_or(field_table.row_count as usize)
 //!         } else {
-//!             field_table.row_count() as usize
+//!             field_table.row_count as usize
 //!         };
 //!         
 //!         let field_count = field_end.saturating_sub(field_start);
@@ -169,7 +169,7 @@
 //!
 //! // Process custom attributes in parallel for large assemblies
 //! if let Some(ca_table) = tables.table::<CustomAttributeRaw>() {
-//!     println!("Processing {} custom attributes in parallel", ca_table.row_count());
+//!     println!("Processing {} custom attributes in parallel", ca_table.row_count);
 //!     
 //!     // Parallel analysis using rayon
 //!     let attribute_stats = ca_table.par_iter()
@@ -197,7 +197,7 @@
 //! // Process large tables in chunks to manage memory usage
 //! if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
 //!     const CHUNK_SIZE: u32 = 1000;
-//!     let total_rows = memberref_table.row_count();
+//!     let total_rows = memberref_table.row_count;
 //!     
 //!     println!("Processing {} member references in chunks of {}", total_rows, CHUNK_SIZE);
 //!     
@@ -382,7 +382,7 @@ use crate::{
 /// if tables.has_table(TableId::TypeDef) {
 ///     let typedef_table = tables.table::<TypeDefRaw>().unwrap();
 ///     
-///     println!("Assembly defines {} types", typedef_table.row_count());
+///     println!("Assembly defines {} types", typedef_table.row_count);
 ///     
 ///     // Analyze type characteristics
 ///     for (index, type_def) in typedef_table.iter().enumerate().take(10) {
@@ -418,12 +418,12 @@ use crate::{
 ///         let field_start = type_def.field_list.saturating_sub(1);
 ///         let field_end = next_type.as_ref()
 ///             .map(|t| t.field_list.saturating_sub(1))
-///             .unwrap_or(field_table.row_count());
+///             .unwrap_or(field_table.row_count);
 ///         
 ///         let method_start = type_def.method_list.saturating_sub(1);
 ///         let method_end = next_type.as_ref()
 ///             .map(|t| t.method_list.saturating_sub(1))
-///             .unwrap_or(method_table.row_count());
+///             .unwrap_or(method_table.row_count);
 ///         
 ///         println!("Type {}: {} fields, {} methods",
 ///                  type_idx,
@@ -480,7 +480,7 @@ use crate::{
 /// // Process large tables without loading all data into memory
 /// if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
 ///     const CHUNK_SIZE: u32 = 1000;
-///     let total_rows = memberref_table.row_count();
+///     let total_rows = memberref_table.row_count;
 ///     
 ///     println!("Processing {} member references in {} chunks",
 ///              total_rows, (total_rows + CHUNK_SIZE - 1) / CHUNK_SIZE);
@@ -607,7 +607,7 @@ use crate::{
 /// if tables_header.has_table(TableId::TypeDef) {
 ///     // Get efficient access to the TypeDef table
 ///     if let Some(typedef_table) = tables_header.table::<TypeDefRaw>() {
-///         println!("TypeDef table has {} rows", typedef_table.row_count());
+///         println!("TypeDef table has {} rows", typedef_table.row_count);
 ///         
 ///         // Access individual rows by index (0-based)
 ///         if let Some(first_type) = typedef_table.get(0) {
@@ -709,11 +709,11 @@ use crate::{
 /// # fn example(tables_header: &TablesHeader) -> dotscope::Result<()> {
 /// // Process large tables without loading all data at once
 /// if let Some(ca_table) = tables_header.table::<CustomAttributeRaw>() {
-///     println!("Processing {} custom attributes", ca_table.row_count());
+///     println!("Processing {} custom attributes", ca_table.row_count);
 ///     
 ///     // Process in chunks to manage memory usage
 ///     const CHUNK_SIZE: u32 = 100;
-///     let total_rows = ca_table.row_count();
+///     let total_rows = ca_table.row_count;
 ///     
 ///     for chunk_start in (0..total_rows).step_by(CHUNK_SIZE as usize) {
 ///         let chunk_end = (chunk_start + CHUNK_SIZE).min(total_rows);
@@ -1553,7 +1553,7 @@ impl<'a> TablesHeader<'a> {
     /// /// Safe pattern: check before access
     /// if tables.has_table(TableId::Event) {
     ///     if let Some(event_table) = tables.table::<EventRaw>() {
-    ///         println!("Assembly has {} events", event_table.row_count());
+    ///         println!("Assembly has {} events", event_table.row_count);
     ///     }
     /// } else {
     ///     println!("No events defined in this assembly");

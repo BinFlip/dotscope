@@ -104,7 +104,7 @@ impl PropertyMapRaw {
 
         let next_row_id = self.rid + 1;
         let start = self.property_list as usize;
-        let end = if next_row_id > map.row_count() {
+        let end = if next_row_id > map.row_count {
             properties.len() + 1
         } else {
             match map.get(next_row_id) {
