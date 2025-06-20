@@ -1,3 +1,49 @@
+//! Assembly table binary reader implementation
+//!
+//! Provides binary parsing implementation for the Assembly metadata table (0x20) through
+//! the [`crate::metadata::tables::RowReadable`] trait. This module handles the low-level
+//! deserialization of Assembly table entries from the metadata tables stream.
+//!
+//! # Binary Format Support
+//!
+//! The reader supports both small and large heap index formats:
+//! - **Small indexes**: 2-byte heap references (for assemblies with < 64K entries)
+//! - **Large indexes**: 4-byte heap references (for larger assemblies)
+//!
+//! # Row Layout
+//!
+//! Assembly table rows have this binary structure:
+//! - `hash_alg_id` (4 bytes): Hash algorithm identifier
+//! - `major_version` (2 bytes): Major version number
+//! - `minor_version` (2 bytes): Minor version number
+//! - `build_number` (2 bytes): Build number
+//! - `revision_number` (2 bytes): Revision number  
+//! - `flags` (4 bytes): Assembly attributes bitmask
+//! - `public_key` (2/4 bytes): Blob heap index for public key
+//! - `name` (2/4 bytes): String heap index for assembly name
+//! - `culture` (2/4 bytes): String heap index for culture
+//!
+//! # Architecture
+//!
+//! This implementation provides zero-copy parsing by reading data directly from the
+//! metadata tables stream without intermediate buffering. All heap references are
+//! preserved as indexes and resolved only when needed.
+//!
+//! # Thread Safety
+//!
+//! All parsing operations are stateless and safe for concurrent access. The reader
+//! does not modify any shared state during parsing operations.
+//!
+//! # Integration
+//!
+//! This reader integrates with the metadata table infrastructure:
+//! - [`crate::metadata::tables::MetadataTable`]: Table container for parsed rows
+//! - [`crate::metadata::tables::AssemblyRaw`]: Raw assembly data structure
+//! - [`crate::metadata::loader`]: High-level metadata loading system
+//!
+//! # Reference
+//! - [ECMA-335 II.22.2](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Assembly table specification
+
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{

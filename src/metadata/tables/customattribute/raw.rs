@@ -5,6 +5,18 @@
 //! This represents the binary format of custom attribute records as they appear in the metadata tables stream,
 //! requiring resolution to create usable data structures.
 //!
+//! # Architecture
+//!
+//! The raw representation maintains the exact binary layout from the metadata tables stream,
+//! with unresolved coded indexes that reference other metadata tables and blob heap entries.
+//! This design allows efficient parsing and deferred resolution until references are needed.
+//!
+//! # Key Components
+//!
+//! - [`crate::metadata::tables::customattribute::raw::CustomAttributeRaw`] - Raw table row structure with unresolved indexes
+//! - [`crate::metadata::tables::customattribute::raw::CustomAttributeRaw::to_owned`] - Resolution to owned representation
+//! - [`crate::metadata::customattributes::parse_custom_attribute_blob`] - Binary blob parsing for attribute values
+//!
 //! # `CustomAttribute` Table Format
 //!
 //! The `CustomAttribute` table (0x0C) contains rows with these fields:
@@ -12,7 +24,46 @@
 //! - **Type** (2/4 bytes): `CustomAttributeType` coded index to the constructor method
 //! - **Value** (2/4 bytes): Blob heap index for the serialized attribute arguments
 //!
-//! # Reference
+//! # Usage Examples
+//!
+//! ```rust,ignore
+//! # use dotscope::metadata::tables::customattribute::CustomAttributeRaw;
+//! # use dotscope::metadata::streams::Blob;
+//! # fn example(raw: CustomAttributeRaw, blob: &Blob) -> dotscope::Result<()> {
+//! // Convert to owned representation with resolved references
+//! let owned = raw.to_owned(|coded_index| context.get_ref(coded_index), blob)?;
+//!
+//! // Apply the custom attribute to its parent element
+//! owned.apply()?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Error Handling
+//!
+//! Raw table operations can fail if:
+//! - Coded index resolution fails for parent or constructor references
+//! - Constructor references are not valid constructor methods
+//! - Binary blob parsing fails due to corrupted data
+//! - Table data is incomplete or malformed
+//!
+//! # Thread Safety
+//!
+//! Raw table structures are [`Send`] and [`Sync`]. Resolution operations are thread-safe
+//! and can be performed concurrently across multiple custom attributes.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::tables::customattribute::owned`] - Owned representation with resolved references
+//! - [`crate::metadata::customattributes`] - Custom attribute value parsing and representation
+//! - [`crate::metadata::typesystem`] - Type system components and references
+//! - [`crate::metadata::streams::Blob`] - Blob heap for attribute value data
+//! - [`crate::metadata::tables`] - Core metadata table infrastructure
+//! - [`crate::metadata::token`] - Token-based metadata references
+//!
+//! # References
+//!
 //! - [ECMA-335 II.22.10](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `CustomAttribute` table specification
 //! - [ECMA-335 II.23.3](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Custom attribute encoding
 
@@ -102,15 +153,25 @@ impl CustomAttributeRaw {
     ///   This function should handle all coded index types used by custom attributes.
     /// * `blob` - The blob heap containing the serialized custom attribute value data
     ///
+    /// # Returns
+    ///
+    /// * `Ok(`[`crate::metadata::tables::customattribute::CustomAttributeRc`]`)` - Successfully resolved `CustomAttribute` data
+    /// * `Err(`[`crate::Error`]`)` - Resolution or parsing failed
+    ///
     /// # Errors
     ///
-    /// Returns an error if:
+    /// Returns [`crate::Error`] if:
     /// - Coded index resolution fails for parent or constructor references
     /// - The constructor reference is not a `MethodDef` or `MemberRef`
     /// - The constructor is not actually a constructor method (.ctor or .cctor)
     /// - The constructor name is empty (indicating malformed metadata)
     /// - Binary blob parsing fails due to corrupted or invalid data
     /// - Constructor method references become invalid during processing
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
+    /// The resulting owned structure is also thread-safe for concurrent access.
     pub fn to_owned<F>(&self, get_ref: F, blob: &Blob) -> Result<CustomAttributeRc>
     where
         F: Fn(&CodedIndex) -> CilTypeReference,

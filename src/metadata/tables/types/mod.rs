@@ -114,6 +114,7 @@ pub trait RowReadable<'a>: Sized + Send {
     ///
     /// The size in bytes required for one complete row of this table type.
     fn row_size(sizes: &TableInfoRef) -> u32;
+
     /// Reads and parses a single row from the provided byte buffer.
     ///
     /// This method extracts and parses one complete row from the metadata table data,

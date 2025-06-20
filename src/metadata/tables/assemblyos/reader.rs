@@ -1,3 +1,44 @@
+//! `AssemblyOS` table binary reader implementation
+//!
+//! Provides binary parsing implementation for the `AssemblyOS` metadata table (0x22) through
+//! the [`crate::metadata::tables::RowReadable`] trait. This module handles the low-level
+//! deserialization of `AssemblyOS` table entries from the metadata tables stream.
+//!
+//! # Binary Format Characteristics
+//!
+//! The `AssemblyOS` table has a simplified binary format compared to other metadata tables:
+//! - **Fixed-size layout**: All rows are exactly 12 bytes (3 × 4-byte integers)
+//! - **No heap indexes**: Contains only primitive integer values
+//! - **No variable-width fields**: Simplifies parsing compared to string/blob-referencing tables
+//!
+//! # Row Layout
+//!
+//! `AssemblyOS` table rows have this binary structure:
+//! - `os_platform_id` (4 bytes): Operating system platform identifier
+//! - `os_major_version` (4 bytes): Major OS version number
+//! - `os_minor_version` (4 bytes): Minor OS version number
+//!
+//! # Architecture
+//!
+//! This implementation provides zero-copy parsing by reading data directly from the
+//! metadata tables stream. Since no heap resolution is required, the parsing is
+//! significantly simpler than tables with string or blob references.
+//!
+//! # Thread Safety
+//!
+//! All parsing operations are stateless and safe for concurrent access. The reader
+//! does not modify any shared state during parsing operations.
+//!
+//! # Integration
+//!
+//! This reader integrates with the metadata table infrastructure:
+//! - [`crate::metadata::tables::MetadataTable`]: Table container for parsed rows
+//! - [`crate::metadata::tables::AssemblyOsRaw`]: Raw `AssemblyOS` data structure
+//! - [`crate::metadata::loader`]: High-level metadata loading system
+//!
+//! # Reference
+//! - [ECMA-335 II.22.3](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyOS` table specification
+
 use crate::{
     file::io::read_le_at,
     metadata::{

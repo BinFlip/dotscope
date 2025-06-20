@@ -1,3 +1,43 @@
+//! `AssemblyRefProcessor` table binary reader implementation
+//!
+//! Provides binary parsing implementation for the `AssemblyRefProcessor` metadata table (0x24) through
+//! the [`crate::metadata::tables::RowReadable`] trait. This module handles the low-level
+//! deserialization of `AssemblyRefProcessor` table entries from the metadata tables stream.
+//!
+//! # Binary Format Characteristics
+//!
+//! The `AssemblyRefProcessor` table has a simple binary format:
+//! - **Fixed-size field**: Processor architecture identifier (4 bytes)
+//! - **Variable-size index**: Assembly reference table index (2 or 4 bytes)
+//! - **Total size**: 6-8 bytes per row depending on table index size
+//!
+//! # Row Layout
+//!
+//! `AssemblyRefProcessor` table rows have this binary structure:
+//! - `processor` (4 bytes): Processor architecture identifier
+//! - `assembly_ref` (2/4 bytes): Table index into `AssemblyRef` table
+//!
+//! # Architecture
+//!
+//! This implementation provides zero-copy parsing by reading data directly from the
+//! metadata tables stream. The `AssemblyRef` table index is preserved for later
+//! resolution during the dual variant phase.
+//!
+//! # Thread Safety
+//!
+//! All parsing operations are stateless and safe for concurrent access. The reader
+//! does not modify any shared state during parsing operations.
+//!
+//! # Integration
+//!
+//! This reader integrates with the metadata table infrastructure:
+//! - [`crate::metadata::tables::MetadataTable`]: Table container for parsed rows
+//! - [`crate::metadata::tables::AssemblyRefProcessorRaw`]: Raw `AssemblyRefProcessor` data structure
+//! - [`crate::metadata::loader`]: High-level metadata loading system
+//!
+//! # Reference
+//! - [ECMA-335 II.22.8](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyRefProcessor` table specification
+
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{

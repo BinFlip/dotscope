@@ -1,3 +1,45 @@
+//! `AssemblyRefOS` table binary reader implementation
+//!
+//! Provides binary parsing implementation for the `AssemblyRefOS` metadata table (0x25) through
+//! the [`crate::metadata::tables::RowReadable`] trait. This module handles the low-level
+//! deserialization of `AssemblyRefOS` table entries from the metadata tables stream.
+//!
+//! # Binary Format Characteristics
+//!
+//! The `AssemblyRefOS` table has a mixed binary format:
+//! - **Fixed-size fields**: OS platform and version fields (12 bytes total)
+//! - **Variable-size index**: Assembly reference table index (2 or 4 bytes)
+//! - **Total size**: 14-16 bytes per row depending on table index size
+//!
+//! # Row Layout
+//!
+//! `AssemblyRefOS` table rows have this binary structure:
+//! - `os_platform_id` (4 bytes): Operating system platform identifier
+//! - `os_major_version` (4 bytes): Major OS version number
+//! - `os_minor_version` (4 bytes): Minor OS version number
+//! - `assembly_ref` (2/4 bytes): Table index into `AssemblyRef` table
+//!
+//! # Architecture
+//!
+//! This implementation provides zero-copy parsing by reading data directly from the
+//! metadata tables stream. The `AssemblyRef` table index is preserved for later
+//! resolution during the dual variant phase.
+//!
+//! # Thread Safety
+//!
+//! All parsing operations are stateless and safe for concurrent access. The reader
+//! does not modify any shared state during parsing operations.
+//!
+//! # Integration
+//!
+//! This reader integrates with the metadata table infrastructure:
+//! - [`crate::metadata::tables::MetadataTable`]: Table container for parsed rows
+//! - [`crate::metadata::tables::AssemblyRefOsRaw`]: Raw `AssemblyRefOS` data structure
+//! - [`crate::metadata::loader`]: High-level metadata loading system
+//!
+//! # Reference
+//! - [ECMA-335 II.22.7](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyRefOS` table specification
+
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{

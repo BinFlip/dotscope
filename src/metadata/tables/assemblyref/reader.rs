@@ -1,3 +1,49 @@
+//! `AssemblyRef` table binary reader implementation
+//!
+//! Provides binary parsing implementation for the `AssemblyRef` metadata table (0x23) through
+//! the [`crate::metadata::tables::RowReadable`] trait. This module handles the low-level
+//! deserialization of `AssemblyRef` table entries from the metadata tables stream.
+//!
+//! # Binary Format Support
+//!
+//! The reader supports both small and large heap index formats:
+//! - **Small indexes**: 2-byte heap references (for assemblies with < 64K entries)
+//! - **Large indexes**: 4-byte heap references (for larger assemblies)
+//!
+//! # Row Layout
+//!
+//! `AssemblyRef` table rows have this binary structure:
+//! - `major_version` (2 bytes): Major version number
+//! - `minor_version` (2 bytes): Minor version number
+//! - `build_number` (2 bytes): Build number
+//! - `revision_number` (2 bytes): Revision number
+//! - `flags` (4 bytes): Assembly attributes bitmask
+//! - `public_key_or_token` (2/4 bytes): Blob heap index for public key/token
+//! - `name` (2/4 bytes): String heap index for assembly name
+//! - `culture` (2/4 bytes): String heap index for culture
+//! - `hash_value` (2/4 bytes): Blob heap index for hash data
+//!
+//! # Architecture
+//!
+//! This implementation provides zero-copy parsing by reading data directly from the
+//! metadata tables stream without intermediate buffering. All heap references are
+//! preserved as indexes and resolved only when needed during the dual variant phase.
+//!
+//! # Thread Safety
+//!
+//! All parsing operations are stateless and safe for concurrent access. The reader
+//! does not modify any shared state during parsing operations.
+//!
+//! # Integration
+//!
+//! This reader integrates with the metadata table infrastructure:
+//! - [`crate::metadata::tables::MetadataTable`]: Table container for parsed rows
+//! - [`crate::metadata::tables::AssemblyRefRaw`]: Raw `AssemblyRef` data structure
+//! - [`crate::metadata::loader`]: High-level metadata loading system
+//!
+//! # Reference
+//! - [ECMA-335 II.22.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyRef` table specification
+
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{
