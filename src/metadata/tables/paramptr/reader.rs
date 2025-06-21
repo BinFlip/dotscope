@@ -1,3 +1,52 @@
+//! Implementation of `RowReadable` for `ParamPtrRaw` metadata table entries.
+//!
+//! This module provides binary deserialization support for the `ParamPtr` table (ID 0x07),
+//! enabling reading of parameter pointer information from .NET PE files. The ParamPtr
+//! table provides an indirection mechanism for parameter definitions when optimized
+//! metadata layouts require non-contiguous parameter table access patterns.
+//!
+//! ## Table Structure (ECMA-335 §II.22.26)
+//!
+//! | Field | Type | Description |
+//! |-------|------|-------------|
+//! | `Param` | Param table index | Index into Param table |
+//!
+//! ## Usage Context
+//!
+//! ParamPtr entries are used when:
+//! - **Parameter Indirection**: Param table requires indirect addressing
+//! - **Optimized Layouts**: Assembly uses optimized metadata stream layouts
+//! - **Non-contiguous Access**: Parameter definitions are not stored contiguously
+//! - **Assembly Modification**: Parameter table reorganization during editing
+//!
+//! ## Indirection Architecture
+//!
+//! The ParamPtr table enables:
+//! - **Flexible Addressing**: Methods can reference non-contiguous Param entries
+//! - **Dynamic Reordering**: Parameter definitions can be reordered without affecting method signatures
+//! - **Incremental Updates**: Parameter additions without method signature restructuring
+//! - **Memory Efficiency**: Sparse parameter collections with minimal memory overhead
+//!
+//! ## Optimization Benefits
+//!
+//! ParamPtr tables provide several optimization benefits:
+//! - **Reduced Metadata Size**: Eliminates gaps in parameter table layout
+//! - **Improved Access Patterns**: Enables better cache locality for parameter access
+//! - **Flexible Organization**: Supports various parameter organization strategies
+//! - **Assembly Merging**: Facilitates combining multiple assemblies efficiently
+//!
+//! ## Thread Safety
+//!
+//! The `RowReadable` implementation is stateless and safe for concurrent use across
+//! multiple threads during metadata loading operations.
+//!
+//! ## Related Modules
+//!
+//! - [`crate::metadata::tables::paramptr::writer`] - Binary serialization support
+//! - [`crate::metadata::tables::paramptr`] - High-level ParamPtr interface
+//! - [`crate::metadata::tables::paramptr::raw`] - Raw structure definition
+//! - [`crate::metadata::tables::param`] - Target Param table definitions
+
 use crate::{
     file::io::read_le_at_dyn,
     metadata::{

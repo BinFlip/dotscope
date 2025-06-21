@@ -1,3 +1,54 @@
+//! Implementation of `RowReadable` for `NestedClassRaw` metadata table entries.
+//!
+//! This module provides binary deserialization support for the `NestedClass` table (ID 0x29),
+//! enabling reading of nested class relationships from .NET PE files. The NestedClass table
+//! defines hierarchical relationships between nested types and their enclosing types, specifying
+//! type containment and scoping information essential for proper type resolution.
+//!
+//! ## Table Structure (ECMA-335 §II.22.32)
+//!
+//! | Field | Type | Description |
+//! |-------|------|-------------|
+//! | `NestedClass` | TypeDef table index | Type that is nested within enclosing type |
+//! | `EnclosingClass` | TypeDef table index | Type that contains the nested type |
+//!
+//! ## Usage Context
+//!
+//! NestedClass entries are used for:
+//! - **Type Hierarchy**: Defining containment relationships between types
+//! - **Scoping Resolution**: Resolving nested type names within their container context
+//! - **Accessibility Control**: Nested types inherit accessibility from their container
+//! - **Name Resolution**: Qualified type names include the enclosing type path
+//! - **Reflection Operations**: Runtime nested type discovery and access
+//!
+//! ## Type Relationships
+//!
+//! NestedClass entries establish containment relationships:
+//! - **Containment**: The nested type is contained within the enclosing type
+//! - **Scoping**: Nested types inherit accessibility from their container
+//! - **Resolution**: Type names are resolved relative to the enclosing context
+//! - **Hierarchy**: Multiple levels of nesting are supported through chaining
+//!
+//! ## Nested Type Architecture
+//!
+//! .NET supports complex nested type hierarchies:
+//! - **Direct Nesting**: Classes, interfaces, structs, and enums can be nested
+//! - **Multiple Levels**: Nested types can themselves contain other nested types
+//! - **Access Modifiers**: Nested types can have different accessibility than their containers
+//! - **Generic Types**: Generic types can be nested and can contain generic nested types
+//!
+//! ## Thread Safety
+//!
+//! The `RowReadable` implementation is stateless and safe for concurrent use across
+//! multiple threads during metadata loading operations.
+//!
+//! ## Related Modules
+//!
+//! - [`crate::metadata::tables::nestedclass::writer`] - Binary serialization support
+//! - [`crate::metadata::tables::nestedclass`] - High-level NestedClass interface
+//! - [`crate::metadata::tables::nestedclass::raw`] - Raw structure definition
+//! - [`crate::metadata::tables::typedef`] - Type definition entries for nested and enclosing types
+
 use crate::{
     file::io::read_le_at_dyn,
     metadata::{

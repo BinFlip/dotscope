@@ -1,3 +1,57 @@
+//! Implementation of `RowReadable` for `ModuleRaw` metadata table entries.
+//!
+//! This module provides binary deserialization support for the `Module` table (ID 0x00),
+//! enabling reading of module information from .NET PE files. The Module table contains
+//! essential information about the current module including its name, version identifier,
+//! and debugging support fields for Edit and Continue operations.
+//!
+//! ## Table Structure (ECMA-335 §II.22.30)
+//!
+//! | Field | Type | Description |
+//! |-------|------|-------------|
+//! | `Generation` | u16 | Reserved field (always 0) |
+//! | `Name` | String heap index | Name of the module |
+//! | `Mvid` | GUID heap index | Module version identifier (unique) |
+//! | `EncId` | GUID heap index | Edit and Continue identifier |
+//! | `EncBaseId` | GUID heap index | Edit and Continue base identifier |
+//!
+//! ## Usage Context
+//!
+//! Module entries are used for:
+//! - **Module Identification**: Providing unique identification through MVID
+//! - **Assembly Composition**: Defining the primary module of an assembly
+//! - **Edit and Continue**: Supporting debugging features with ENC identifiers
+//! - **Version Tracking**: Maintaining module version information across builds
+//! - **Metadata Binding**: Serving as the root context for all other metadata tables
+//!
+//! ## Module Architecture
+//!
+//! .NET assemblies always contain exactly one Module table entry:
+//! - **Primary Module**: The Module table contains exactly one row representing the primary module
+//! - **Multi-Module Assemblies**: Additional modules are referenced via ModuleRef table
+//! - **Unique Identity**: Each module has a unique MVID (Module Version Identifier)
+//! - **Debugging Support**: ENC fields support Edit and Continue debugging scenarios
+//!
+//! ## Integration with Assembly Structure
+//!
+//! The Module table serves as the foundation for assembly metadata:
+//! - **Assembly Manifest**: Contains the primary module information
+//! - **Type Definitions**: All TypeDef entries belong to this module
+//! - **Metadata Root**: Provides the context for all other metadata tables
+//! - **Cross-References**: Other tables reference this module's types and members
+//!
+//! ## Thread Safety
+//!
+//! The `RowReadable` implementation is stateless and safe for concurrent use across
+//! multiple threads during metadata loading operations.
+//!
+//! ## Related Modules
+//!
+//! - [`crate::metadata::tables::module::writer`] - Binary serialization support
+//! - [`crate::metadata::tables::module`] - High-level Module interface
+//! - [`crate::metadata::tables::module::raw`] - Raw structure definition
+//! - [`crate::metadata::tables::moduleref`] - External module references
+
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{
