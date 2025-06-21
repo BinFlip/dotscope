@@ -97,12 +97,7 @@ mod tests {
             language: 7,
         };
 
-        let table_info = std::sync::Arc::new(TableInfo::new_test(
-            &[],   // No table references
-            false,
-            false,
-            false,
-        ));
+        let table_info = std::sync::Arc::new(TableInfo::new_test(&[], false, false, false));
 
         // Calculate buffer size and serialize
         let row_size = <DocumentRaw as TableRow>::row_size(&table_info) as usize;
@@ -143,12 +138,7 @@ mod tests {
             language: 0x4DEAD,
         };
 
-        let table_info = std::sync::Arc::new(TableInfo::new_test(
-            &[],   // No table references
-            false,
-            true,  // large guid heap
-            true,  // large blob heap
-        ));
+        let table_info = std::sync::Arc::new(TableInfo::new_test(&[], false, true, true));
 
         // Calculate buffer size and serialize
         let row_size = <DocumentRaw as TableRow>::row_size(&table_info) as usize;
@@ -189,12 +179,7 @@ mod tests {
             language: 0xDEF0,
         };
 
-        let table_info = std::sync::Arc::new(TableInfo::new_test(
-            &[],   // No table references
-            false,
-            false,
-            false,
-        ));
+        let table_info = std::sync::Arc::new(TableInfo::new_test(&[], false, false, false));
 
         let row_size = <DocumentRaw as TableRow>::row_size(&table_info) as usize;
         let mut buffer = vec![0u8; row_size];
@@ -237,12 +222,7 @@ mod tests {
             language: 0x55667788,
         };
 
-        let table_info = std::sync::Arc::new(TableInfo::new_test(
-            &[],   // No table references
-            false,
-            true,  // large guid heap (4 byte indices)
-            true,  // large blob heap (4 byte indices)
-        ));
+        let table_info = std::sync::Arc::new(TableInfo::new_test(&[], false, true, true));
 
         let row_size = <DocumentRaw as TableRow>::row_size(&table_info) as usize;
         let mut buffer = vec![0u8; row_size];

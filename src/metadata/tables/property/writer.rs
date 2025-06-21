@@ -83,24 +83,14 @@ mod tests {
     #[test]
     fn test_row_size() {
         // Test with small heaps
-        let table_info = Arc::new(TableInfo::new_test(
-            &[],
-            false,
-            false,
-            false,
-        ));
+        let table_info = Arc::new(TableInfo::new_test(&[], false, false, false));
 
         let size = <PropertyRaw as TableRow>::row_size(&table_info);
         // flags(2) + name(2) + signature(2) = 6
         assert_eq!(size, 6);
 
         // Test with large heaps
-        let table_info_large = Arc::new(TableInfo::new_test(
-            &[],
-            true,  // large string heap
-            true,  // large blob heap
-            false,
-        ));
+        let table_info_large = Arc::new(TableInfo::new_test(&[], true, true, false));
 
         let size_large = <PropertyRaw as TableRow>::row_size(&table_info_large);
         // flags(2) + name(4) + signature(4) = 10
@@ -120,12 +110,7 @@ mod tests {
         };
 
         // Create minimal table info for testing
-        let table_info = Arc::new(TableInfo::new_test(
-            &[],
-            false,
-            false,
-            false,
-        ));
+        let table_info = Arc::new(TableInfo::new_test(&[], false, false, false));
 
         // Calculate buffer size and serialize
         let row_size = <PropertyRaw as TableRow>::row_size(&table_info) as usize;
@@ -157,12 +142,7 @@ mod tests {
             0x03, 0x03, // signature (0x0303)
         ];
 
-        let table_info = Arc::new(TableInfo::new_test(
-            &[],
-            false,
-            false,
-            false,
-        ));
+        let table_info = Arc::new(TableInfo::new_test(&[], false, false, false));
 
         // First read the original data to get a reference row
         let mut read_offset = 0;
@@ -191,12 +171,7 @@ mod tests {
             0x03, 0x03, 0x03, 0x03, // signature (0x03030303)
         ];
 
-        let table_info = Arc::new(TableInfo::new_test(
-            &[],
-            true,  // large string heap
-            true,  // large blob heap
-            false,
-        ));
+        let table_info = Arc::new(TableInfo::new_test(&[], true, true, false));
 
         // First read the original data to get a reference row
         let mut read_offset = 0;
@@ -230,12 +205,7 @@ mod tests {
             (0x1600, "SpecialName|RTSpecialName|HasDefault"),
         ];
 
-        let table_info = Arc::new(TableInfo::new_test(
-            &[],
-            false,
-            false,
-            false,
-        ));
+        let table_info = Arc::new(TableInfo::new_test(&[], false, false, false));
 
         for (flags, description) in test_cases {
             let property_row = PropertyRaw {
@@ -280,12 +250,7 @@ mod tests {
             signature: 0x789ABC,
         };
 
-        let table_info = Arc::new(TableInfo::new_test(
-            &[],
-            true,  // large string heap
-            true,  // large blob heap
-            false,
-        ));
+        let table_info = Arc::new(TableInfo::new_test(&[], true, true, false));
 
         let row_size = <PropertyRaw as TableRow>::row_size(&table_info) as usize;
         let mut buffer = vec![0u8; row_size];
@@ -317,12 +282,7 @@ mod tests {
             signature: 0, // No signature (null blob reference)
         };
 
-        let table_info = Arc::new(TableInfo::new_test(
-            &[],
-            false,
-            false,
-            false,
-        ));
+        let table_info = Arc::new(TableInfo::new_test(&[], false, false, false));
 
         let row_size = <PropertyRaw as TableRow>::row_size(&table_info) as usize;
         let mut buffer = vec![0u8; row_size];
@@ -354,12 +314,7 @@ mod tests {
             signature: 0x200,
         };
 
-        let table_info = Arc::new(TableInfo::new_test(
-            &[],
-            false,
-            false,
-            false,
-        ));
+        let table_info = Arc::new(TableInfo::new_test(&[], false, false, false));
 
         let row_size = <PropertyRaw as TableRow>::row_size(&table_info) as usize;
         let mut buffer = vec![0u8; row_size];

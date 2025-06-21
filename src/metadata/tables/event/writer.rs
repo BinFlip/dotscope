@@ -118,7 +118,7 @@ mod tests {
                 (TableId::TypeRef, 70000),
                 (TableId::TypeSpec, 70000),
             ],
-            true,  // large string heap
+            true,
             false,
             false,
         ));
@@ -230,7 +230,7 @@ mod tests {
                 (TableId::TypeRef, 1),
                 (TableId::TypeSpec, 1),
             ],
-            true,  // large string heap
+            true,
             false,
             false,
         ));
@@ -386,7 +386,7 @@ mod tests {
                 (TableId::TypeRef, 70000),
                 (TableId::TypeSpec, 70000),
             ],
-            true,  // large string heap
+            true,
             false,
             false,
         ));

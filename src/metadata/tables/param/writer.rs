@@ -86,24 +86,14 @@ mod tests {
     #[test]
     fn test_row_size() {
         // Test with small string heap
-        let table_info = Arc::new(TableInfo::new_test(
-            &[],
-            false,
-            false,
-            false,
-        ));
+        let table_info = Arc::new(TableInfo::new_test(&[], false, false, false));
 
         let size = <ParamRaw as TableRow>::row_size(&table_info);
         // flags(2) + sequence(2) + name(2) = 6
         assert_eq!(size, 6);
 
         // Test with large string heap
-        let table_info_large = Arc::new(TableInfo::new_test(
-            &[],
-            true,  // large string heap
-            false,
-            false,
-        ));
+        let table_info_large = Arc::new(TableInfo::new_test(&[], true, false, false));
 
         let size_large = <ParamRaw as TableRow>::row_size(&table_info_large);
         // flags(2) + sequence(2) + name(4) = 8
@@ -123,12 +113,7 @@ mod tests {
         };
 
         // Create minimal table info for testing
-        let table_info = Arc::new(TableInfo::new_test(
-            &[],
-            false,
-            false,
-            false,
-        ));
+        let table_info = Arc::new(TableInfo::new_test(&[], false, false, false));
 
         // Calculate buffer size and serialize
         let row_size = <ParamRaw as TableRow>::row_size(&table_info) as usize;
@@ -160,12 +145,7 @@ mod tests {
             0x03, 0x03, // name (0x0303)
         ];
 
-        let table_info = Arc::new(TableInfo::new_test(
-            &[],
-            false,
-            false,
-            false,
-        ));
+        let table_info = Arc::new(TableInfo::new_test(&[], false, false, false));
 
         // First read the original data to get a reference row
         let mut read_offset = 0;
@@ -194,12 +174,7 @@ mod tests {
             0x03, 0x03, 0x03, 0x03, // name (0x03030303)
         ];
 
-        let table_info = Arc::new(TableInfo::new_test(
-            &[],
-            true,  // large string heap
-            false,
-            false,
-        ));
+        let table_info = Arc::new(TableInfo::new_test(&[], true, false, false));
 
         // First read the original data to get a reference row
         let mut read_offset = 0;
@@ -233,12 +208,7 @@ mod tests {
             (0x3011, "In|Optional|HasDefault|HasFieldMarshal"), // Combined flags
         ];
 
-        let table_info = Arc::new(TableInfo::new_test(
-            &[],
-            false,
-            false,
-            false,
-        ));
+        let table_info = Arc::new(TableInfo::new_test(&[], false, false, false));
 
         for (flags, description) in test_cases {
             let param_row = ParamRaw {
@@ -283,12 +253,7 @@ mod tests {
             (65535, "Max 16-bit parameter"),
         ];
 
-        let table_info = Arc::new(TableInfo::new_test(
-            &[],
-            false,
-            false,
-            false,
-        ));
+        let table_info = Arc::new(TableInfo::new_test(&[], false, false, false));
 
         for (sequence, description) in test_cases {
             let param_row = ParamRaw {
@@ -333,12 +298,7 @@ mod tests {
             name: 0x123456,
         };
 
-        let table_info = Arc::new(TableInfo::new_test(
-            &[],
-            true,  // large string heap
-            false,
-            false,
-        ));
+        let table_info = Arc::new(TableInfo::new_test(&[], true, false, false));
 
         let row_size = <ParamRaw as TableRow>::row_size(&table_info) as usize;
         let mut buffer = vec![0u8; row_size];
@@ -370,12 +330,7 @@ mod tests {
             name: 0,     // Unnamed (null string reference)
         };
 
-        let table_info = Arc::new(TableInfo::new_test(
-            &[],
-            false,
-            false,
-            false,
-        ));
+        let table_info = Arc::new(TableInfo::new_test(&[], false, false, false));
 
         let row_size = <ParamRaw as TableRow>::row_size(&table_info) as usize;
         let mut buffer = vec![0u8; row_size];
@@ -407,12 +362,7 @@ mod tests {
             name: 0x100,
         };
 
-        let table_info = Arc::new(TableInfo::new_test(
-            &[],
-            false,
-            false,
-            false,
-        ));
+        let table_info = Arc::new(TableInfo::new_test(&[], false, false, false));
 
         let row_size = <ParamRaw as TableRow>::row_size(&table_info) as usize;
         let mut buffer = vec![0u8; row_size];

@@ -130,12 +130,7 @@ mod tests {
             culture: 0x0909,
         };
 
-        let table_info = std::sync::Arc::new(TableInfo::new_test(
-            &[],
-            false,
-            false,
-            false,
-        ));
+        let table_info = std::sync::Arc::new(TableInfo::new_test(&[], false, false, false));
 
         // Calculate buffer size and serialize
         let row_size = <AssemblyRaw as TableRow>::row_size(&table_info) as usize;
@@ -185,12 +180,7 @@ mod tests {
         };
 
         // Create table info for large heaps
-        let table_info = std::sync::Arc::new(TableInfo::new_test(
-            &[],
-            true,
-            true,
-            true,
-        ));
+        let table_info = std::sync::Arc::new(TableInfo::new_test(&[], true, true, true));
 
         // Calculate buffer size and serialize
         let row_size = <AssemblyRaw as TableRow>::row_size(&table_info) as usize;
@@ -239,12 +229,7 @@ mod tests {
             culture: 0x0909,
         };
 
-        let table_info = std::sync::Arc::new(TableInfo::new_test(
-            &[],
-            false,
-            false,
-            false,
-        ));
+        let table_info = std::sync::Arc::new(TableInfo::new_test(&[], false, false, false));
 
         let mut buffer = vec![0u8; <AssemblyRaw as TableRow>::row_size(&table_info) as usize];
         let mut offset = 0;
@@ -289,12 +274,7 @@ mod tests {
             culture: 0x09090909,
         };
 
-        let table_info = std::sync::Arc::new(TableInfo::new_test(
-            &[],
-            true,
-            true,
-            true,
-        ));
+        let table_info = std::sync::Arc::new(TableInfo::new_test(&[], true, true, true));
 
         let mut buffer = vec![0u8; <AssemblyRaw as TableRow>::row_size(&table_info) as usize];
         let mut offset = 0;

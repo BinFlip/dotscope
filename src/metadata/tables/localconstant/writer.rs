@@ -90,12 +90,7 @@ mod tests {
             signature: 123,
         };
 
-        let table_info = std::sync::Arc::new(TableInfo::new_test(
-            &[],   // No table references
-            false,
-            false,
-            false,
-        ));
+        let table_info = std::sync::Arc::new(TableInfo::new_test(&[], false, false, false));
 
         // Calculate buffer size and serialize
         let row_size = <LocalConstantRaw as TableRow>::row_size(&table_info) as usize;
@@ -133,12 +128,7 @@ mod tests {
             signature: 0x2CA, // Smaller value for 2-byte blob heap
         };
 
-        let table_info = std::sync::Arc::new(TableInfo::new_test(
-            &[],   // No table references
-            true,  // large string heap
-            false,
-            false,
-        ));
+        let table_info = std::sync::Arc::new(TableInfo::new_test(&[], true, false, false));
 
         // Calculate buffer size and serialize
         let row_size = <LocalConstantRaw as TableRow>::row_size(&table_info) as usize;
@@ -176,12 +166,7 @@ mod tests {
             signature: 0x5678,
         };
 
-        let table_info = std::sync::Arc::new(TableInfo::new_test(
-            &[],
-            false,
-            false,
-            false,
-        ));
+        let table_info = std::sync::Arc::new(TableInfo::new_test(&[], false, false, false));
 
         let row_size = <LocalConstantRaw as TableRow>::row_size(&table_info) as usize;
         let mut buffer = vec![0u8; row_size];
@@ -214,12 +199,7 @@ mod tests {
             signature: 0x9ABC, // Smaller value for 2-byte blob heap
         };
 
-        let table_info = std::sync::Arc::new(TableInfo::new_test(
-            &[],
-            true,
-            false,
-            false,
-        ));
+        let table_info = std::sync::Arc::new(TableInfo::new_test(&[], true, false, false));
 
         let row_size = <LocalConstantRaw as TableRow>::row_size(&table_info) as usize;
         let mut buffer = vec![0u8; row_size];
@@ -257,12 +237,7 @@ mod tests {
             signature: 100,
         };
 
-        let table_info = std::sync::Arc::new(TableInfo::new_test(
-            &[],   // No table references
-            false,
-            false,
-            false,
-        ));
+        let table_info = std::sync::Arc::new(TableInfo::new_test(&[], false, false, false));
 
         let row_size = <LocalConstantRaw as TableRow>::row_size(&table_info) as usize;
         let mut buffer = vec![0u8; row_size];
@@ -293,12 +268,7 @@ mod tests {
             signature: 0x1234, // Small blob index
         };
 
-        let table_info = std::sync::Arc::new(TableInfo::new_test(
-            &[],
-            true,
-            false,
-            false,
-        ));
+        let table_info = std::sync::Arc::new(TableInfo::new_test(&[], true, false, false));
 
         let row_size = <LocalConstantRaw as TableRow>::row_size(&table_info) as usize;
         let mut buffer = vec![0u8; row_size];
@@ -342,12 +312,7 @@ mod tests {
                 signature,
             };
 
-            let table_info = std::sync::Arc::new(TableInfo::new_test(
-                &[],   // No table references
-                false,
-                false,
-                false,
-            ));
+            let table_info = std::sync::Arc::new(TableInfo::new_test(&[], false, false, false));
 
             let row_size = <LocalConstantRaw as TableRow>::row_size(&table_info) as usize;
             let mut buffer = vec![0u8; row_size];

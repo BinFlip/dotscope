@@ -93,12 +93,7 @@ mod tests {
             os_minor_version: 5,
         };
 
-        let table_info = std::sync::Arc::new(TableInfo::new_test(
-            &[],   // No table references
-            false,
-            false,
-            false,
-        ));
+        let table_info = std::sync::Arc::new(TableInfo::new_test(&[], false, false, false));
 
         // Calculate buffer size and serialize
         let row_size = AssemblyOsRaw::row_size(&table_info) as usize;

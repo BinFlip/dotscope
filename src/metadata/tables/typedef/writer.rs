@@ -140,7 +140,7 @@ mod tests {
                 (TableId::MethodDef, 70000),
                 (TableId::TypeDef, 70000), // Make TypeDefOrRef coded index large
             ],
-            true,  // large string heap
+            true,
             false,
             false,
         ));
@@ -279,7 +279,7 @@ mod tests {
                 (TableId::MethodDef, 70000),
                 (TableId::TypeDef, 70000), // Make TypeDefOrRef coded index large
             ],
-            true,  // large string heap
+            true,
             false,
             false,
         ));

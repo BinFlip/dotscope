@@ -98,12 +98,7 @@ mod tests {
     #[test]
     fn test_row_size() {
         // Test with small heaps
-        let table_info = Arc::new(TableInfo::new_test(
-            &[],   // No large tables needed for basic test
-            false,
-            false,
-            false,
-        ));
+        let table_info = Arc::new(TableInfo::new_test(&[], false, false, false));
 
         let size = <TypeRefRaw as TableRow>::row_size(&table_info);
         // resolution_scope(2) + type_name(2) + type_namespace(2) = 6
@@ -114,7 +109,7 @@ mod tests {
             &[
                 (TableId::AssemblyRef, 70000), // Make ResolutionScope coded index large
             ],
-            true,  // large string heap
+            true,
             false,
             false,
         ));
@@ -137,12 +132,7 @@ mod tests {
         };
 
         // Create minimal table info for testing
-        let table_info = Arc::new(TableInfo::new_test(
-            &[],   // No large tables needed
-            false,
-            false,
-            false,
-        ));
+        let table_info = Arc::new(TableInfo::new_test(&[], false, false, false));
 
         // Calculate buffer size and serialize
         let row_size = <TypeRefRaw as TableRow>::row_size(&table_info) as usize;
@@ -246,7 +236,7 @@ mod tests {
             &[
                 (TableId::AssemblyRef, 70000), // Make ResolutionScope coded index large
             ],
-            true,  // large string heap
+            true,
             false,
             false,
         ));

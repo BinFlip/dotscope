@@ -116,12 +116,7 @@ mod tests {
         };
 
         // Create table info for small heaps
-        let table_info = TableInfo::new_test(
-            &[],
-            false,
-            false,
-            false,
-        );
+        let table_info = TableInfo::new_test(&[], false, false, false);
         let table_info_ref = Arc::new(table_info);
 
         // Calculate buffer size and serialize
@@ -161,12 +156,7 @@ mod tests {
         };
 
         // Create table info for large heaps
-        let table_info = TableInfo::new_test(
-            &[],
-            true,
-            true,
-            true,
-        );
+        let table_info = TableInfo::new_test(&[], true, true, true);
         let table_info_ref = Arc::new(table_info);
 
         // Calculate buffer size and serialize
@@ -205,12 +195,7 @@ mod tests {
             encbaseid: 0x0505,
         };
 
-        let table_info = TableInfo::new_test(
-            &[],
-            false,
-            false,
-            false,
-        );
+        let table_info = TableInfo::new_test(&[], false, false, false);
         let table_info_ref = Arc::new(table_info);
 
         let mut buffer = vec![0u8; <ModuleRaw as TableRow>::row_size(&table_info_ref) as usize];
@@ -248,12 +233,7 @@ mod tests {
             encbaseid: 0x05050505,
         };
 
-        let table_info = TableInfo::new_test(
-            &[],
-            true,
-            true,
-            true,
-        );
+        let table_info = TableInfo::new_test(&[], true, true, true);
         let table_info_ref = Arc::new(table_info);
 
         let mut buffer = vec![0u8; <ModuleRaw as TableRow>::row_size(&table_info_ref) as usize];

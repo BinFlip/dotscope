@@ -97,12 +97,7 @@ mod tests {
             name: 42,
         };
 
-        let table_info = std::sync::Arc::new(TableInfo::new_test(
-            &[],   // No table references
-            false,
-            false,
-            false,
-        ));
+        let table_info = std::sync::Arc::new(TableInfo::new_test(&[], false, false, false));
 
         // Calculate buffer size and serialize
         let row_size = <LocalVariableRaw as TableRow>::row_size(&table_info) as usize;
@@ -142,12 +137,7 @@ mod tests {
             name: 0x1BEEF,
         };
 
-        let table_info = std::sync::Arc::new(TableInfo::new_test(
-            &[],   // No table references
-            true,  // large string heap
-            false,
-            false,
-        ));
+        let table_info = std::sync::Arc::new(TableInfo::new_test(&[], true, false, false));
 
         // Calculate buffer size and serialize
         let row_size = <LocalVariableRaw as TableRow>::row_size(&table_info) as usize;
@@ -187,12 +177,7 @@ mod tests {
             name: 0x9ABC,
         };
 
-        let table_info = std::sync::Arc::new(TableInfo::new_test(
-            &[],
-            false,
-            false,
-            false,
-        ));
+        let table_info = std::sync::Arc::new(TableInfo::new_test(&[], false, false, false));
 
         let row_size = <LocalVariableRaw as TableRow>::row_size(&table_info) as usize;
         let mut buffer = vec![0u8; row_size];
@@ -230,12 +215,7 @@ mod tests {
             name: 0x9ABCDEF0,
         };
 
-        let table_info = std::sync::Arc::new(TableInfo::new_test(
-            &[],   // No table references
-            true,  // large string heap (4 byte indices)
-            false,
-            false,
-        ));
+        let table_info = std::sync::Arc::new(TableInfo::new_test(&[], true, false, false));
 
         let row_size = <LocalVariableRaw as TableRow>::row_size(&table_info) as usize;
         let mut buffer = vec![0u8; row_size];
@@ -275,12 +255,7 @@ mod tests {
             name: 0,            // Anonymous variable
         };
 
-        let table_info = std::sync::Arc::new(TableInfo::new_test(
-            &[],   // No table references
-            false,
-            false,
-            false,
-        ));
+        let table_info = std::sync::Arc::new(TableInfo::new_test(&[], false, false, false));
 
         let row_size = <LocalVariableRaw as TableRow>::row_size(&table_info) as usize;
         let mut buffer = vec![0u8; row_size];
@@ -320,12 +295,7 @@ mod tests {
                 name: 100, // Some name index
             };
 
-            let table_info = std::sync::Arc::new(TableInfo::new_test(
-                &[],   // No table references
-                false,
-                false,
-                false,
-            ));
+            let table_info = std::sync::Arc::new(TableInfo::new_test(&[], false, false, false));
 
             let row_size = <LocalVariableRaw as TableRow>::row_size(&table_info) as usize;
             let mut buffer = vec![0u8; row_size];

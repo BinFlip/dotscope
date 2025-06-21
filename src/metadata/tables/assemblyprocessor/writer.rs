@@ -85,12 +85,7 @@ mod tests {
             processor: 0x12345678,
         };
 
-        let table_info = std::sync::Arc::new(TableInfo::new_test(
-            &[],   // No table references
-            false,
-            false,
-            false,
-        ));
+        let table_info = std::sync::Arc::new(TableInfo::new_test(&[], false, false, false));
 
         // Calculate buffer size and serialize
         let row_size = <AssemblyProcessorRaw as TableRow>::row_size(&table_info) as usize;
