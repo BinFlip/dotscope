@@ -129,8 +129,7 @@
 //!     println!("Type name: {}", type_name);
 //!     
 //!     // Enumerate all strings in the heap
-//!     for result in strings.iter() {
-//!         let (offset, string) = result?;
+//!     for (offset, string) in strings.iter() {
 //!         if !string.is_empty() {
 //!             println!("String at 0x{:X}: '{}'", offset, string);
 //!         }
@@ -153,8 +152,7 @@
 //!     println!("Signature bytes: {} bytes", signature_data.len());
 //!     
 //!     // Analyze all binary data for debugging
-//!     for result in blob.iter() {
-//!         let (offset, blob_data) = result?;
+//!     for (offset, blob_data) in blob.iter() {
 //!         if blob_data.len() > 0 {
 //!             println!("Blob at 0x{:X}: {} bytes", offset, blob_data.len());
 //!         }
@@ -177,8 +175,7 @@
 //!     println!("Assembly GUID: {}", assembly_guid);
 //!     
 //!     // Enumerate all GUIDs for correlation analysis
-//!     for result in guid.iter() {
-//!         let (index, guid_value) = result?;
+//!     for (index, guid_value) in guid.iter() {
 //!         let null_guid = uguid::guid!("00000000-0000-0000-0000-000000000000");
 //!         if guid_value != null_guid {
 //!             println!("Active GUID at index {}: {}", index, guid_value);
@@ -202,8 +199,7 @@
 //!     println!("String literal: '{}'", literal.to_string_lossy());
 //!     
 //!     // Process all string literals for analysis
-//!     for result in user_strings.iter() {
-//!         let (offset, string_data) = result?;
+//!     for (offset, string_data) in user_strings.iter() {
 //!         if !string_data.is_empty() {
 //!             println!("User string at 0x{:X}: '{}'", offset, string_data.to_string_lossy());
 //!         }

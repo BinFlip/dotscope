@@ -3018,10 +3018,8 @@ fn test_assembly_metadata_validation(asm: &CilObject) {
 
         // Try to iterate through a few entries to validate structure
         let mut found_entries = 0;
-        for result in us_heap.iter().take(5) {
-            if result.is_ok() {
-                found_entries += 1;
-            }
+        for (_offset, _string) in us_heap.iter().take(5) {
+            found_entries += 1;
         }
         println!(
             "UserStrings heap validation: {} test accesses successful",

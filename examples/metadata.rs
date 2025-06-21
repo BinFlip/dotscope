@@ -100,19 +100,13 @@ fn print_heap_analysis(assembly: &CilObject) {
         let mut sample_strings = Vec::new();
 
         println!("  String heap analysis:");
-        for result in strings.iter().take(1000) {
-            // Limit to avoid overwhelming output
-            match result {
-                Ok((offset, string)) => {
-                    string_count += 1;
-                    total_length += string.len();
+        for (offset, string) in strings.iter().take(1000) {
+            string_count += 1;
+            total_length += string.len();
 
-                    // Collect interesting samples
-                    if sample_strings.len() < 5 && !string.is_empty() && string.len() > 3 {
-                        sample_strings.push((offset, string));
-                    }
-                }
-                Err(_) => break, // Stop on error
+            // Collect interesting samples
+            if sample_strings.len() < 5 && !string.is_empty() && string.len() > 3 {
+                sample_strings.push((offset, string));
             }
         }
 
@@ -136,26 +130,13 @@ fn print_heap_analysis(assembly: &CilObject) {
 
     // GUID heap analysis with iterator demonstration
     if let Some(guids) = assembly.guids() {
-        let mut guid_count = 0;
         println!("  GUID heap analysis:");
 
-        for result in guids.iter().take(20) {
-            // Limit to reasonable number
-            match result {
-                Ok((index, guid)) => {
-                    guid_count += 1;
-                    if guid_count <= 3 {
-                        println!("    GUID #{}: {}", index, guid);
-                    }
-                }
-                Err(_) => break,
-            }
+        for (index, guid) in guids.iter().take(3) {
+            println!("    GUID #{}: {}", index, guid);
         }
 
-        if guid_count > 3 {
-            println!("    ... and {} more GUIDs", guid_count - 3);
-        }
-        println!("    Total GUIDs: {}", guid_count);
+        println!("    Total GUIDs: {}", guids.iter().count());
     }
 
     // Blob heap analysis with iterator demonstration
@@ -165,42 +146,37 @@ fn print_heap_analysis(assembly: &CilObject) {
         let mut size_histogram: HashMap<String, usize> = HashMap::new();
 
         println!("  Blob heap analysis:");
-        for result in blob.iter().take(500) {
+        for (offset, blob_data) in blob.iter().take(500) {
             // Limit to avoid overwhelming output
-            match result {
-                Ok((offset, blob_data)) => {
-                    blob_count += 1;
-                    total_size += blob_data.len();
+            blob_count += 1;
+            total_size += blob_data.len();
 
-                    // Categorize by size
-                    let size_category = match blob_data.len() {
-                        0..=4 => "tiny (0-4 bytes)",
-                        5..=16 => "small (5-16 bytes)",
-                        17..=64 => "medium (17-64 bytes)",
-                        65..=256 => "large (65-256 bytes)",
-                        _ => "huge (>256 bytes)",
-                    };
-                    *size_histogram.entry(size_category.to_string()).or_insert(0) += 1;
+            // Categorize by size
+            let size_category = match blob_data.len() {
+                0..=4 => "tiny (0-4 bytes)",
+                5..=16 => "small (5-16 bytes)",
+                17..=64 => "medium (17-64 bytes)",
+                65..=256 => "large (65-256 bytes)",
+                _ => "huge (>256 bytes)",
+            };
+            *size_histogram.entry(size_category.to_string()).or_insert(0) += 1;
 
-                    // Show a sample of the first few blobs
-                    if blob_count <= 3 && !blob_data.is_empty() {
-                        let preview = blob_data
-                            .iter()
-                            .take(8)
-                            .map(|b| format!("{:02X}", b))
-                            .collect::<Vec<_>>()
-                            .join(" ");
-                        let suffix = if blob_data.len() > 8 { "..." } else { "" };
-                        println!(
-                            "    Blob @{:04X}: {} bytes [{}{}]",
-                            offset,
-                            blob_data.len(),
-                            preview,
-                            suffix
-                        );
-                    }
-                }
-                Err(_) => break,
+            // Show a sample of the first few blobs
+            if blob_count <= 3 && !blob_data.is_empty() {
+                let preview = blob_data
+                    .iter()
+                    .take(8)
+                    .map(|b| format!("{:02X}", b))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let suffix = if blob_data.len() > 8 { "..." } else { "" };
+                println!(
+                    "    Blob @{:04X}: {} bytes [{}{}]",
+                    offset,
+                    blob_data.len(),
+                    preview,
+                    suffix
+                );
             }
         }
 
@@ -223,21 +199,16 @@ fn print_heap_analysis(assembly: &CilObject) {
         let mut sample_user_strings = Vec::new();
 
         println!("  User strings heap analysis:");
-        for result in user_strings.iter().take(100) {
+        for (offset, string) in user_strings.iter().take(100) {
             // Limit for readability
-            match result {
-                Ok((offset, string)) => {
-                    string_count += 1;
+            string_count += 1;
 
-                    // Collect interesting samples
-                    if sample_user_strings.len() < 3 {
-                        let display_string = string.to_string_lossy();
-                        if !display_string.trim().is_empty() && display_string.len() > 2 {
-                            sample_user_strings.push((offset, display_string.to_string()));
-                        }
-                    }
+            // Collect interesting samples
+            if sample_user_strings.len() < 3 {
+                let display_string = string.to_string_lossy();
+                if !display_string.trim().is_empty() && display_string.len() > 2 {
+                    sample_user_strings.push((offset, display_string.to_string()));
                 }
-                Err(_) => break,
             }
         }
 

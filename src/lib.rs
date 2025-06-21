@@ -181,11 +181,8 @@
 //!     let name = strings.get(1)?; // Indexed access
 //!     
 //!     // Iterate through all entries
-//!     for result in strings.iter() {
-//!         match result {
-//!             Ok((offset, string)) => println!("String at {}: '{}'", offset, string),
-//!             Err(e) => eprintln!("Error: {}", e),
-//!         }
+//!     for (offset, string) in strings.iter() {
+//!         println!("String at {}: '{}'", offset, string);
 //!     }
 //! }
 //! # Ok::<(), dotscope::Error>(())

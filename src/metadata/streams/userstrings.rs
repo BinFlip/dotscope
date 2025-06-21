@@ -77,8 +77,7 @@ use widestring::U16CStr;
 /// let data = &[0u8, 0x05, 0x48, 0x00, 0x69, 0x00, 0x00, 0x00]; // "Hi"
 /// let heap = UserStrings::from(data)?;
 ///
-/// for result in heap.iter() {
-///     let (offset, string) = result?;
+/// for (offset, string) in heap.iter() {
 ///     println!("String at offset {}: {}", offset, string.to_string_lossy());
 /// }
 /// # Ok::<(), dotscope::Error>(())
@@ -212,7 +211,7 @@ impl<'a> UserStrings<'a> {
     /// Returns an iterator over all user strings in the heap
     ///
     /// Provides zero-copy access to all UTF-16 user strings with their byte offsets.
-    /// Each iteration yields a `Result<(usize, &U16CStr)>` with the offset and string content.
+    /// Each iteration yields a `(usize, &U16CStr)` with the offset and string content.
     /// The iterator automatically handles length prefixes and skips the initial null entry.
     ///
     /// # Returns
@@ -226,11 +225,8 @@ impl<'a> UserStrings<'a> {
     /// let data = &[0u8, 0x05, 0x48, 0x00, 0x69, 0x00, 0x00, 0x00]; // "Hi" in UTF-16
     /// let user_strings = UserStrings::from(data)?;
     ///
-    /// for result in user_strings.iter() {
-    ///     match result {
-    ///         Ok((offset, string)) => println!("String at {}: '{}'", offset, string.to_string_lossy()),
-    ///         Err(e) => eprintln!("Error: {}", e),
-    ///     }
+    /// for (offset, string) in user_strings.iter() {
+    ///     println!("String at {}: '{}'", offset, string.to_string_lossy());
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
@@ -241,7 +237,7 @@ impl<'a> UserStrings<'a> {
 }
 
 impl<'a> IntoIterator for &'a UserStrings<'a> {
-    type Item = std::result::Result<(usize, &'a widestring::U16CStr), crate::Error>;
+    type Item = (usize, &'a widestring::U16CStr);
     type IntoIter = UserStringsIterator<'a>;
 
     /// Create an iterator over the user strings heap.
@@ -256,8 +252,7 @@ impl<'a> IntoIterator for &'a UserStrings<'a> {
     /// let data = &[0u8, 0x05, 0x48, 0x00, 0x69, 0x00, 0x00, 0x00];
     /// let heap = UserStrings::from(data)?;
     ///
-    /// for result in &heap {
-    ///     let (offset, string) = result?;
+    /// for (offset, string) in &heap {
     ///     println!("String: {}", string.to_string_lossy());
     /// }
     /// # Ok::<(), dotscope::Error>(())
@@ -270,7 +265,7 @@ impl<'a> IntoIterator for &'a UserStrings<'a> {
 /// Iterator over entries in the `#US` (`UserStrings`) heap
 ///
 /// Provides zero-copy access to UTF-16 user strings with their byte offsets.
-/// Each iteration returns a `Result<(usize, &U16CStr)>` containing the offset and string content.
+/// Each iteration returns a `(usize, &U16CStr)` containing the offset and string content.
 /// The iterator automatically handles length prefixes and string format validation.
 ///
 /// # Iteration Behavior
@@ -278,7 +273,7 @@ impl<'a> IntoIterator for &'a UserStrings<'a> {
 /// - Starts at offset 1 (skipping the null entry at offset 0)
 /// - Reads length prefix to determine string size
 /// - Advances position based on string length + overhead bytes
-/// - Returns errors for malformed string data
+/// - Stops iteration on malformed string data
 ///
 /// Create via [`crate::metadata::streams::UserStrings::iter()`] or using `&heap` in for loops.
 pub struct UserStringsIterator<'a> {
@@ -299,12 +294,12 @@ impl<'a> UserStringsIterator<'a> {
 }
 
 impl<'a> Iterator for UserStringsIterator<'a> {
-    type Item = Result<(usize, &'a U16CStr)>;
+    type Item = (usize, &'a U16CStr);
 
     /// Get the next user string from the heap
     ///
-    /// Returns `Some((offset, string))` for valid entries, `None` when the heap is exhausted,
-    /// or `Some(Err(_))` for malformed string data.
+    /// Returns `Some((offset, string))` for valid entries, `None` when the heap is exhausted
+    /// or when malformed string data is encountered.
     fn next(&mut self) -> Option<Self::Item> {
         if self.position >= self.user_strings.data.len() {
             return None;
@@ -313,9 +308,9 @@ impl<'a> Iterator for UserStringsIterator<'a> {
         let start_position = self.position;
         let string_length = self.user_strings.data[self.position] as usize;
 
-        let result = match self.user_strings.get(start_position) {
-            Ok(string) => Ok((start_position, string)),
-            Err(e) => Err(e),
+        let string = match self.user_strings.get(start_position) {
+            Ok(string) => string,
+            Err(_) => return None,
         };
 
         if string_length == 1 {
@@ -324,7 +319,7 @@ impl<'a> Iterator for UserStringsIterator<'a> {
             self.position += 1 + string_length + 2;
         }
 
-        Some(result)
+        Some((start_position, string))
     }
 }
 
@@ -377,7 +372,7 @@ mod tests {
         let user_strings = UserStrings::from(&data).unwrap();
         let mut iter = user_strings.iter();
 
-        let first = iter.next().unwrap().unwrap();
+        let first = iter.next().unwrap();
         assert_eq!(first.0, 1);
         assert_eq!(first.1.to_string_lossy(), "Hi");
 
@@ -398,11 +393,11 @@ mod tests {
         let user_strings = UserStrings::from(&data).unwrap();
         let mut iter = user_strings.iter();
 
-        let first = iter.next().unwrap().unwrap();
+        let first = iter.next().unwrap();
         assert_eq!(first.0, 1);
         assert_eq!(first.1.to_string_lossy(), "Hi");
 
-        let second = iter.next().unwrap().unwrap();
+        let second = iter.next().unwrap();
         assert_eq!(second.0, 9);
         assert_eq!(second.1.to_string_lossy(), "Bye");
 
@@ -419,11 +414,11 @@ mod tests {
         let user_strings = UserStrings::from(&data).unwrap();
         let mut iter = user_strings.iter();
 
-        let first = iter.next().unwrap().unwrap();
+        let first = iter.next().unwrap();
         assert_eq!(first.0, 1);
         assert_eq!(first.1.to_string_lossy(), "");
 
-        let second = iter.next().unwrap().unwrap();
+        let second = iter.next().unwrap();
         assert_eq!(second.0, 3);
         assert_eq!(second.1.to_string_lossy(), "Hi");
 
@@ -448,7 +443,7 @@ mod tests {
         let user_strings = UserStrings::from(&data).unwrap();
         let mut iter = user_strings.iter();
 
-        let first = iter.next().unwrap().unwrap();
+        let first = iter.next().unwrap();
         assert_eq!(first.0, 1);
         assert_eq!(first.1.to_string_lossy(), "AAAAA");
 
@@ -462,8 +457,8 @@ mod tests {
         let user_strings = UserStrings::from(&data).unwrap();
         let mut iter = user_strings.iter();
 
-        let result = iter.next().unwrap();
-        assert!(result.is_err());
+        // Iterator should stop on malformed data
+        assert!(iter.next().is_none());
     }
 
     #[test]
@@ -473,7 +468,7 @@ mod tests {
         let user_strings = UserStrings::from(&data).unwrap();
         let mut iter = user_strings.iter();
 
-        let result = iter.next().unwrap();
-        assert!(result.is_err());
+        // Iterator should stop on malformed data
+        assert!(iter.next().is_none());
     }
 }
