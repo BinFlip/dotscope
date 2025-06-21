@@ -428,6 +428,44 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// ```
 pub use error::Error;
 
+/// Raw assembly view for editing and modification operations.
+///
+/// `CilAssemblyView` provides direct access to .NET assembly metadata structures
+/// while maintaining a 1:1 mapping with the underlying file format. Unlike [`CilObject`]
+/// which provides processed and resolved metadata optimized for analysis, `CilAssemblyView`
+/// preserves the raw structure to enable future editing capabilities.
+///
+/// # Key Features
+///
+/// - **Raw Structure Access**: Direct access to metadata tables and streams as they appear in the file
+/// - **No Validation**: Pure parsing without format validation or compliance checks
+/// - **Memory Efficient**: Self-referencing pattern avoids data duplication
+/// - **Thread Safe**: Immutable design enables safe concurrent access
+///
+/// # Usage Examples
+///
+/// ```rust,no_run
+/// use dotscope::CilAssemblyView;
+/// use std::path::Path;
+///
+/// // Load assembly for raw metadata access
+/// let view = CilAssemblyView::from_file(Path::new("assembly.dll"))?;
+///
+/// // Access raw metadata tables
+/// if let Some(tables) = view.tables() {
+///     println!("Schema version: {}.{}", tables.major_version, tables.minor_version);
+/// }
+///
+/// // Access string heaps directly
+/// if let Some(strings) = view.strings() {
+///     if let Ok(name) = strings.get(0x123) {
+///         println!("Raw string: {}", name);
+///     }
+/// }
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+pub use metadata::cilassemblyview::CilAssemblyView;
+
 /// Main entry point for working with .NET assemblies.
 ///
 /// See [`crate::metadata::cilobject::CilObject`] for high-level analysis and metadata access.
@@ -485,11 +523,8 @@ pub use metadata::validation::ValidationConfig;
 ///     let name = strings.get(1)?; // Indexed access
 ///     
 ///     // Iterate through all entries
-///     for result in strings.iter() {
-///         match result {
-///             Ok((offset, string)) => println!("String at {}: '{}'", offset, string),
-///             Err(e) => eprintln!("Error: {}", e),
-///         }
+///     for (offset, string) in strings.iter() {
+///         println!("String at {}: '{}'", offset, string);
 ///     }
 /// }
 /// # Ok::<(), dotscope::Error>(())

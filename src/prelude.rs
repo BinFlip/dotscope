@@ -185,6 +185,13 @@ pub use crate::ValidationConfig;
 /// for most dotscope applications.
 pub use crate::CilObject;
 
+/// Raw assembly view for editing and modification operations.
+///
+/// `CilAssemblyView` provides direct access to .NET assembly metadata structures
+/// while maintaining a 1:1 mapping with the underlying file format. Designed as
+/// the foundation for future editing and modification capabilities.
+pub use crate::metadata::cilassemblyview::CilAssemblyView;
+
 /// Low-level file parsing utilities.
 ///
 /// `File` and `Parser` provide direct access to raw PE file structure and metadata
