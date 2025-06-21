@@ -29,7 +29,7 @@ use std::sync::Arc;
 use crate::{
     metadata::{
         streams::{Blob, Strings},
-        tables::{AssemblyRefHash, File, FileRc},
+        tables::{AssemblyRefHash, File, FileRc, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -163,5 +163,24 @@ impl FileRaw {
     /// This function never returns an error; it always returns `Ok(())`.
     pub fn apply(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl TableRow for FileRaw {
+    /// Calculate the byte size of a File table row
+    ///
+    /// Returns the total size of one row in the File table, including:
+    /// - flags: 4 bytes
+    /// - name: 2 or 4 bytes (String heap index)
+    /// - hash_value: 2 or 4 bytes (Blob heap index)
+    ///
+    /// The index sizes depend on the metadata heap requirements.
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* flags */      4 +
+            /* name */       sizes.str_bytes() +
+            /* hash_value */ sizes.blob_bytes()
+        )
     }
 }

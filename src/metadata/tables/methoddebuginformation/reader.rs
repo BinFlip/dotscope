@@ -17,14 +17,6 @@ impl RowReadable for MethodDebugInformationRaw {
             sequence_points: read_le_at_dyn(data, offset, sizes.is_large_blob())?,
         })
     }
-
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            sizes.table_index_bytes(TableId::Document) + // document
-            sizes.blob_bytes()  // sequence_points
-        )
-    }
 }
 
 #[cfg(test)]

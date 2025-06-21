@@ -8,27 +8,6 @@ use crate::{
 };
 
 impl RowReadable for ParamRaw {
-    /// Calculates the byte size of a Param table row.
-    ///
-    /// The row size depends on string heap size and is calculated as:
-    /// - `flags`: 2 bytes (fixed)
-    /// - `sequence`: 2 bytes (fixed)
-    /// - `name`: 2 or 4 bytes (depends on string heap size)
-    ///
-    /// ## Arguments
-    /// * `sizes` - Table size information for calculating heap index widths
-    ///
-    /// ## Returns
-    /// Total byte size of one table row
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* flags */     2 +
-            /* sequence */  2 +
-            /* name */      sizes.str_bytes()
-        )
-    }
-
     /// Reads a single Param table row from binary data.
     ///
     /// Parses the binary representation according to ECMA-335 §II.22.33:

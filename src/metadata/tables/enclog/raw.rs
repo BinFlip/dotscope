@@ -44,7 +44,10 @@
 use std::sync::Arc;
 
 use crate::{
-    metadata::{tables::EncLogRc, token::Token},
+    metadata::{
+        tables::{EncLogRc, TableInfoRef, TableRow},
+        token::Token,
+    },
     Result,
 };
 
@@ -136,5 +139,27 @@ impl EncLogRaw {
     /// This function never returns an error.
     pub fn apply(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl TableRow for EncLogRaw {
+    /// Calculate the byte size of an `EncLog` table row
+    ///
+    /// Returns the fixed size since `EncLog` contains only primitive integer fields
+    /// with no variable-size heap indexes. Total size is always 8 bytes (2 × 4-byte integers).
+    ///
+    /// # Row Layout
+    /// - `token_value`: 4 bytes (metadata token)
+    /// - `func_code`: 4 bytes (operation code)
+    ///
+    /// # Arguments
+    /// * `_sizes` - Unused for `EncLog` since no heap indexes are present
+    ///
+    /// # Returns
+    /// Fixed size of 8 bytes for all `EncLog` rows
+    #[rustfmt::skip]
+    fn row_size(_sizes: &TableInfoRef) -> u32 {
+        /* token_value */ 4_u32 +
+        /* func_code */   4_u32
     }
 }

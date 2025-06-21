@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use crate::{
     metadata::{
-        tables::{FieldPtr, FieldPtrRc},
+        tables::{FieldPtr, FieldPtrRc, TableId, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -119,5 +119,27 @@ impl FieldPtrRaw {
     /// This function never returns an error; it always returns `Ok(())`.
     pub fn apply(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl TableRow for FieldPtrRaw {
+    /// Calculate the byte size of a `FieldPtr` table row
+    ///
+    /// Computes the total size based on variable-size table indexes.
+    /// The size depends on whether the Field table uses 2-byte or 4-byte indexes.
+    ///
+    /// # Row Layout
+    /// - `field`: 2 or 4 bytes (Field table index)
+    ///
+    /// # Arguments
+    /// * `sizes` - Table sizing information for table index widths
+    ///
+    /// # Returns
+    /// Total byte size of one `FieldPtr` table row
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* field */ sizes.table_index_bytes(TableId::Field)
+        )
     }
 }

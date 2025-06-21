@@ -8,23 +8,6 @@ use crate::{
 };
 
 impl RowReadable for EncMapRaw {
-    /// Calculate the size in bytes of an `EncMap` table row.
-    ///
-    /// The `EncMap` table has a fixed structure with one 4-byte token field.
-    /// Size calculation is independent of heap sizes since no heap references are used.
-    ///
-    /// ## Layout
-    /// - **Token** (4 bytes): Original metadata token
-    ///
-    /// ## Arguments
-    /// * `sizes` - Table size information (unused for `EncMap`)
-    ///
-    /// ## Returns
-    /// Always returns 4 bytes for the fixed token field.
-    fn row_size(_sizes: &TableInfoRef) -> u32 {
-        4 // Token field (4 bytes)
-    }
-
     /// Parse a single `EncMap` table row from binary metadata.
     ///
     /// Reads and validates an `EncMap` entry from the metadata stream according to the

@@ -1,35 +1,51 @@
-use crate::{metadata::tables::types::common::TableInfoRef, Result};
+//! Trait definitions for metadata table serialization and binary writing.
+//!
+//! This module provides the core trait abstractions for serializing metadata table entries
+//! back to their binary representation. It enables the modification and reconstruction of
+//! .NET metadata tables, supporting scenarios like metadata editing, patching, and custom
+//! assembly generation.
+//!
+//! ## Core Traits
+//!
+//! - [`RowWritable`] - Primary trait for serializing individual table rows
+//!
+//! ## Design Principles
+//!
+//! The write traits follow these design principles:
+//! - **Type Safety**: All serialization operations are compile-time checked
+//! - **Memory Safety**: Buffer bounds are validated during write operations
+//! - **Performance**: Traits support parallel processing of table entries
+//! - **Specification Compliance**: All output follows ECMA-335 binary format
+//!
+//! ## Thread Safety
+//!
+//! All traits in this module are designed for concurrent use, with implementations
+//! required to be `Send` and optionally `Sync` depending on the specific trait.
+//!
+//! ## Related Modules
+//!
+//! - [`crate::metadata::tables::types::read::traits`] - Corresponding read traits
+//! - [`crate::metadata::tables::types::write::table`] - Table-level write operations
+//! - [`crate::metadata::tables::types::write::data`] - Low-level data serialization
+
+use crate::{
+    metadata::tables::{TableInfoRef, TableRow},
+    Result,
+};
 
 /// Trait defining the interface for serializing and writing metadata table rows.
 ///
 /// This trait must be implemented by any type that represents a row in a metadata table
 /// and supports writing its data back to a byte buffer. It provides the necessary methods
-/// for determining row size and serializing row data, enabling generic table write operations.
+/// for serializing row data, enabling generic table write operations.
 ///
 /// ## Implementation Requirements
 ///
 /// Types implementing this trait must:
 /// - Be `Sync` to support parallel writing
-/// - Provide accurate row size calculations
 /// - Handle serialization errors gracefully
 /// - Support 1-based row indexing (as per CLI specification)
-pub trait RowWritable: Sized + Send {
-    /// Calculates the size in bytes of a single row for this table type.
-    ///
-    /// This method determines the total byte size needed to serialize one row of this
-    /// table type, taking into account variable-sized fields such as string heap
-    /// indices and blob heap indices that may be 2 or 4 bytes depending on heap size.
-    ///
-    /// ## Arguments
-    ///
-    /// * `sizes` - Table size information containing heap sizes and table row counts
-    ///   used to determine the appropriate index sizes
-    ///
-    /// ## Returns
-    ///
-    /// The size in bytes required for one complete row of this table type.
-    fn row_size(sizes: &TableInfoRef) -> u32;
-
+pub trait RowWritable: Sized + Send + TableRow {
     /// Serializes and writes a single row into the provided byte buffer.
     ///
     /// This method encodes one complete row into the metadata table data,

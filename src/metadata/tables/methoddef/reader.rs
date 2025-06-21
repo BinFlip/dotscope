@@ -8,18 +8,6 @@ use crate::{
 };
 
 impl RowReadable for MethodDefRaw {
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* rva */           4 +
-            /* impl_flags */    2 +
-            /* flags */         2 +
-            /* name */          sizes.str_bytes() +
-            /* signature */     sizes.blob_bytes() +
-            /* param_list */    sizes.table_index_bytes(TableId::Param)
-        )
-    }
-
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(MethodDefRaw {
             rid,

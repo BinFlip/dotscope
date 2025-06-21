@@ -68,7 +68,7 @@ use std::sync::{atomic::Ordering, Arc};
 
 use crate::{
     metadata::{
-        tables::{AssemblyRefMap, AssemblyRefOs, AssemblyRefOsRc},
+        tables::{AssemblyRefMap, AssemblyRefOs, AssemblyRefOsRc, TableId, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -258,5 +258,29 @@ impl AssemblyRefOsRaw {
                 self.assembly_ref | 0x2300_0000
             )),
         }
+    }
+}
+
+impl TableRow for AssemblyRefOsRaw {
+    /// Calculate the row size for `AssemblyRefOS` table entries
+    ///
+    /// Returns the total byte size of a single `AssemblyRefOS` table row based on the table
+    /// configuration. The size varies depending on the size of table indexes in the metadata.
+    ///
+    /// # Size Breakdown
+    /// - `os_platform_id`: 4 bytes (operating system platform identifier)
+    /// - `os_major_version`: 4 bytes (major OS version number)
+    /// - `os_minor_version`: 4 bytes (minor OS version number)
+    /// - `assembly_ref`: 2 or 4 bytes (table index into `AssemblyRef` table)
+    ///
+    /// Total: 14-16 bytes depending on table index size configuration
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* os_platform_id */   4 +
+            /* os_major_version */ 4 +
+            /* os_minor_version */ 4 +
+            /* assembly_ref */     sizes.table_index_bytes(TableId::AssemblyRef)
+        )
     }
 }

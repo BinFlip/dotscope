@@ -9,7 +9,7 @@ use crate::{
     metadata::{
         importscope::{parse_imports_blob, ImportsInfo},
         streams::Blob,
-        tables::{ImportScope, ImportScopeRc},
+        tables::{ImportScope, ImportScopeRc, TableId, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -107,5 +107,22 @@ impl ImportScopeRaw {
         };
 
         Ok(Arc::new(scope))
+    }
+}
+
+impl TableRow for ImportScopeRaw {
+    /// Calculate the byte size of an ImportScope table row
+    ///
+    /// Returns the total size of one row in the ImportScope table, including:
+    /// - parent: 2 or 4 bytes (ImportScope table index)
+    /// - imports: 2 or 4 bytes (Blob heap index)
+    ///
+    /// The index sizes depend on the metadata table and heap requirements.
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* parent */  sizes.table_index_bytes(TableId::ImportScope) +
+            /* imports */ sizes.blob_bytes()
+        )
     }
 }

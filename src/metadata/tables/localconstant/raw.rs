@@ -9,7 +9,7 @@ use crate::{
     metadata::{
         signatures::{parse_field_signature, SignatureField, TypeSignature},
         streams::{Blob, Strings},
-        tables::{LocalConstant, LocalConstantRc},
+        tables::{LocalConstant, LocalConstantRc, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -116,5 +116,22 @@ impl LocalConstantRaw {
         };
 
         Ok(Arc::new(constant))
+    }
+}
+
+impl TableRow for LocalConstantRaw {
+    /// Calculate the byte size of a LocalConstant table row
+    ///
+    /// Returns the total size of one row in the LocalConstant table, including:
+    /// - name: 2 or 4 bytes (String heap index)
+    /// - signature: 2 or 4 bytes (Blob heap index)
+    ///
+    /// The index sizes depend on the metadata heap requirements.
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* name */      sizes.str_bytes() +
+            /* signature */ sizes.blob_bytes()
+        )
     }
 }

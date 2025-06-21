@@ -8,31 +8,6 @@ use crate::{
 };
 
 impl RowReadable for ModuleRaw {
-    /// Calculates the byte size of a Module table row.
-    ///
-    /// The row size depends on the metadata heap sizes and is calculated as:
-    /// - `generation`: 2 bytes (fixed)
-    /// - `name`: 2 or 4 bytes (depends on string heap size)
-    /// - `mvid`: 2 or 4 bytes (depends on GUID heap size)
-    /// - `encid`: 2 or 4 bytes (depends on GUID heap size)
-    /// - `encbaseid`: 2 or 4 bytes (depends on GUID heap size)
-    ///
-    /// ## Arguments
-    /// * `sizes` - Table size information for calculating heap index widths
-    ///
-    /// ## Returns
-    /// Total byte size of one table row
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* generation */    2 +
-            /* name */          sizes.str_bytes() +
-            /* mvid */          sizes.guid_bytes() +
-            /* encid */         sizes.guid_bytes() +
-            /* encbaseid */     sizes.guid_bytes()
-        )
-    }
-
     /// Reads a single Module table row from binary data.
     ///
     /// Parses the binary representation according to ECMA-335 §II.22.30:

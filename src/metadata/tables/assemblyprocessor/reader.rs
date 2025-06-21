@@ -47,24 +47,6 @@ use crate::{
 };
 
 impl RowReadable for AssemblyProcessorRaw {
-    /// Calculate the byte size of an `AssemblyProcessor` table row
-    ///
-    /// Returns the fixed size since `AssemblyProcessor` contains only a single primitive integer field.
-    /// Total size is always 4 bytes (1 × 4-byte integer).
-    ///
-    /// # Row Layout
-    /// - processor: 4 bytes (fixed)
-    ///
-    /// # Arguments
-    /// * `_sizes` - Unused for `AssemblyProcessor` since no heap indexes are present
-    ///
-    /// # Returns
-    /// Fixed size of 4 bytes for all `AssemblyProcessor` rows
-    #[rustfmt::skip]
-    fn row_size(_sizes: &TableInfoRef) -> u32 {
-        /* processor */ 4
-    }
-
     /// Read and parse an `AssemblyProcessor` table row from binary data
     ///
     /// Deserializes one `AssemblyProcessor` table entry from the metadata tables stream.

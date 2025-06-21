@@ -66,7 +66,10 @@ use std::sync::{atomic::Ordering, Arc};
 
 use crate::{
     metadata::{
-        tables::{AssemblyRefMap, AssemblyRefProcessor, AssemblyRefProcessorRc},
+        tables::{
+            AssemblyRefMap, AssemblyRefProcessor, AssemblyRefProcessorRc, TableId, TableInfoRef,
+            TableRow,
+        },
         token::Token,
     },
     Result,
@@ -239,5 +242,29 @@ impl AssemblyRefProcessorRaw {
                 self.assembly_ref | 0x2300_0000
             )),
         }
+    }
+}
+
+impl TableRow for AssemblyRefProcessorRaw {
+    /// Calculate the binary size of one `AssemblyRefProcessor` table row
+    ///
+    /// Computes the byte size required for one `AssemblyRefProcessor` row in the metadata tables stream.
+    /// The row size depends on whether the `AssemblyRef` table uses 2-byte or 4-byte indexes.
+    ///
+    /// # Binary Layout
+    /// - `processor` (4 bytes): Processor architecture identifier
+    /// - `assembly_ref` (2/4 bytes): Table index into `AssemblyRef` table
+    ///
+    /// # Arguments
+    /// * `sizes` - Table sizing information with heap and table index sizes
+    ///
+    /// # Returns
+    /// Total byte size of one `AssemblyRefProcessor` table row
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* processor */    4 +
+            /* assembly_ref */ sizes.table_index_bytes(TableId::AssemblyRef)
+        )
     }
 }

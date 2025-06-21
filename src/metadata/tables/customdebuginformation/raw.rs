@@ -19,7 +19,10 @@ use crate::{
     metadata::{
         customdebuginformation::{parse_custom_debug_blob, CustomDebugKind},
         streams::{Blob, Guid},
-        tables::{types::CodedIndex, CustomDebugInformation, CustomDebugInformationRc},
+        tables::{
+            types::{CodedIndex, CodedIndexType},
+            CustomDebugInformation, CustomDebugInformationRc, TableInfoRef, TableRow,
+        },
         token::Token,
         typesystem::CilTypeReference,
     },
@@ -185,5 +188,27 @@ impl CustomDebugInformationRaw {
             kind: kind_guid,
             value: parsed_value,
         }))
+    }
+}
+
+impl TableRow for CustomDebugInformationRaw {
+    /// Calculate the binary size of one `CustomDebugInformation` table row
+    ///
+    /// Returns the total byte size of a single `CustomDebugInformation` table row based on the table
+    /// configuration. The size varies depending on the size of coded indexes and heap indexes.
+    ///
+    /// # Size Breakdown
+    /// - `parent`: Variable bytes (`HasCustomDebugInformation` coded index)
+    /// - `kind`: Variable bytes (GUID heap index)
+    /// - `value`: Variable bytes (Blob heap index)
+    ///
+    /// Total: Variable size depending on table index and heap size configuration
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* parent */ sizes.coded_index_bytes(CodedIndexType::HasCustomDebugInformation) +
+            /* kind */   sizes.guid_bytes() +
+            /* value */  sizes.blob_bytes()
+        )
     }
 }

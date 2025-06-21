@@ -1,3 +1,36 @@
+//! Generic metadata table container with typed row access and iteration support.
+//!
+//! This module provides the [`MetadataTable`] type, which serves as the primary interface
+//! for working with .NET metadata tables. It offers type-safe access to table rows,
+//! supporting both sequential and parallel iteration patterns commonly used in metadata
+//! processing scenarios.
+//!
+//! ## Key Features
+//!
+//! - **Type Safety**: Compile-time guarantees for row type correctness
+//! - **Performance**: Zero-copy access to underlying table data
+//! - **Concurrency**: Built-in support for parallel row processing
+//! - **Memory Efficiency**: Lazy parsing of rows on access
+//!
+//! ## Usage Patterns
+//!
+//! The table container supports several common access patterns:
+//! - **Direct Access**: Random access to specific rows by index
+//! - **Sequential Iteration**: Forward iteration through all rows
+//! - **Parallel Processing**: Concurrent processing of multiple rows
+//! - **Filtered Processing**: Selective row processing with iterator combinators
+//!
+//! ## Thread Safety
+//!
+//! `MetadataTable` is designed for concurrent read access, allowing multiple threads
+//! to safely iterate over and access table data simultaneously without synchronization.
+//!
+//! ## Related Types
+//!
+//! - [`crate::metadata::tables::types::read::iter`] - Iterator implementations
+//! - [`crate::metadata::tables::types::read::access`] - Low-level access utilities
+//! - [`crate::metadata::tables::types::read::traits`] - Core trait definitions
+
 use crate::{
     metadata::tables::{RowReadable, TableInfoRef, TableIterator, TableParIterator},
     Result,

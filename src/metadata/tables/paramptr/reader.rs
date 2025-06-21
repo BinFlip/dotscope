@@ -8,25 +8,6 @@ use crate::{
 };
 
 impl RowReadable for ParamPtrRaw {
-    /// Calculates the byte size of a single `ParamPtr` table row.
-    ///
-    /// The size depends on the metadata table size configuration:
-    /// - **param**: Index size into `Param` table (2 or 4 bytes)
-    ///
-    /// ## Arguments
-    ///
-    /// * `sizes` - Table size configuration information
-    ///
-    /// ## Returns
-    ///
-    /// * `u32` - Total row size in bytes (2-4 bytes typically)
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* param */ sizes.table_index_bytes(TableId::Param)
-        )
-    }
-
     /// Reads a single `ParamPtr` table row from metadata bytes.
     ///
     /// This method parses a `ParamPtr` entry from the metadata stream, extracting

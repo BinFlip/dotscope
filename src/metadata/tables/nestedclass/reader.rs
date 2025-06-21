@@ -8,25 +8,6 @@ use crate::{
 };
 
 impl RowReadable for NestedClassRaw {
-    /// Calculates the byte size of a `NestedClass` table row.
-    ///
-    /// The row size depends on the `TypeDef` table size and is calculated as:
-    /// - `nested_class`: 2 or 4 bytes (depends on `TypeDef` table size)
-    /// - `enclosing_class`: 2 or 4 bytes (depends on `TypeDef` table size)
-    ///
-    /// ## Arguments
-    /// * `sizes` - Table size information for calculating index widths
-    ///
-    /// ## Returns
-    /// Total byte size of one table row
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* nested_class */    sizes.table_index_bytes(TableId::TypeDef) +
-            /* enclosing_class */ sizes.table_index_bytes(TableId::TypeDef)
-        )
-    }
-
     /// Reads a single `NestedClass` table row from binary data.
     ///
     /// Parses the binary representation according to ECMA-335 §II.22.32:

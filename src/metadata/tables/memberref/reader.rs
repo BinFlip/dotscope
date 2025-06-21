@@ -8,15 +8,6 @@ use crate::{
 };
 
 impl RowReadable for MemberRefRaw {
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* class */     sizes.coded_index_bytes(CodedIndexType::MemberRefParent) +
-            /* name */      sizes.str_bytes() +
-            /* signature */ sizes.blob_bytes()
-        )
-    }
-
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(MemberRefRaw {
             rid,

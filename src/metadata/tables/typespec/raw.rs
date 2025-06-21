@@ -41,7 +41,7 @@ use crate::{
     metadata::{
         signatures::parse_type_spec_signature,
         streams::Blob,
-        tables::{TypeSpec, TypeSpecRc},
+        tables::{TableInfoRef, TableRow, TypeSpec, TypeSpecRc},
         token::Token,
     },
     Result,
@@ -174,5 +174,26 @@ impl TypeSpecRaw {
     /// return type for consistency with the metadata resolution framework.
     pub fn apply(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl TableRow for TypeSpecRaw {
+    /// Calculates the byte size of a single `TypeSpec` table row.
+    ///
+    /// The `TypeSpec` table contains a single column:
+    /// - **Signature**: Blob heap index (2 or 4 bytes depending on heap size)
+    ///
+    /// ## Arguments
+    ///
+    /// * `sizes` - Table size information including blob heap size thresholds
+    ///
+    /// ## Returns
+    ///
+    /// The total byte size for one `TypeSpec` table row.
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* signature */ sizes.blob_bytes()
+        )
     }
 }

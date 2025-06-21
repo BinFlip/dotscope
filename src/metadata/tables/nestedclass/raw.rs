@@ -7,7 +7,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     metadata::{
-        tables::{MetadataTable, NestedClass, NestedClassRc},
+        tables::{MetadataTable, NestedClass, NestedClassRc, TableId, TableInfoRef, TableRow},
         token::Token,
         typesystem::TypeRegistry,
         validation::NestedClassValidator,
@@ -196,5 +196,25 @@ impl NestedClassRaw {
                 }
             },
         }))
+    }
+}
+
+impl TableRow for NestedClassRaw {
+    /// Calculate the row size for `NestedClass` table entries
+    ///
+    /// Returns the total byte size of a single `NestedClass` table row based on the
+    /// table configuration. The size varies depending on the size of table indexes in the metadata.
+    ///
+    /// # Size Breakdown
+    /// - `nested_class`: 2 or 4 bytes (table index into `TypeDef` table)
+    /// - `enclosing_class`: 2 or 4 bytes (table index into `TypeDef` table)
+    ///
+    /// Total: 4-8 bytes depending on table index size configuration
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* nested_class */    sizes.table_index_bytes(TableId::TypeDef) +
+            /* enclosing_class */ sizes.table_index_bytes(TableId::TypeDef)
+        )
     }
 }

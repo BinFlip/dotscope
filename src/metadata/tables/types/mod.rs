@@ -35,12 +35,16 @@
 //! # Usage Examples
 //!
 //! ```rust,no_run
-//! use dotscope::metadata::tables::{MetadataTable, RowReadable, TableInfoRef};
+//! use dotscope::metadata::tables::{MetadataTable, RowReadable, TableInfoRef, TableRow};
 //! use dotscope::Result;
 //!
 //! # struct ExampleRow { id: u32 }
+//! # impl TableRow for ExampleRow {
+//! #     fn row_size(_: &TableInfoRef) -> u32 {
+//! #         4 // Example fixed size for demonstration
+//! #     }
+//! # }
 //! # impl RowReadable for ExampleRow {
-//! #     fn row_size(_: &TableInfoRef) -> u32 { 4 }
 //! #     fn row_read(_: &[u8], offset: &mut usize, rid: u32, _: &TableInfoRef) -> Result<Self> {
 //! #         *offset += 4;
 //! #         Ok(ExampleRow { id: rid })
@@ -98,3 +102,21 @@ pub use write::*;
 mod common;
 mod read;
 mod write;
+
+/// Trait for types that represent a row in a metadata table and can report their row size.
+///
+/// This trait provides the canonical method for determining the size in bytes of a single row
+/// for a given table type, taking into account variable-sized fields.
+pub trait TableRow: Send {
+    /// Calculates the size in bytes of a single row for this table type.
+    ///
+    /// # Arguments
+    ///
+    /// * `sizes` - Table size information containing heap sizes and table row counts
+    ///   used to determine the appropriate index sizes
+    ///
+    /// # Returns
+    ///
+    /// The size in bytes required for one complete row of this table type.
+    fn row_size(sizes: &TableInfoRef) -> u32;
+}

@@ -8,38 +8,6 @@ use crate::{
 };
 
 impl RowReadable for ExportedTypeRaw {
-    /// Calculate the byte size of an `ExportedType` table row
-    ///
-    /// Computes the total size in bytes required to store one `ExportedType` table row
-    /// based on the table size information. The size depends on whether large string
-    /// indexes and Implementation coded indexes are required.
-    ///
-    /// # Row Structure
-    ///
-    /// - **flags**: 4 bytes (type attributes bitmask)
-    /// - **`type_def_id`**: 4 bytes (`TypeDef` hint)
-    /// - **`type_name`**: 2 or 4 bytes (String heap index)
-    /// - **`type_namespace`**: 2 or 4 bytes (String heap index)
-    /// - **implementation**: 2, 3, or 4 bytes (Implementation coded index)
-    ///
-    /// # Arguments
-    ///
-    /// * `sizes` - Table size information determining index byte sizes
-    ///
-    /// # Returns
-    ///
-    /// Returns the total byte size required for one `ExportedType` table row.
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* flags */          4 +
-            /* type_def_id */    4 +
-            /* type_name */      sizes.str_bytes() +
-            /* type_namespace */ sizes.str_bytes() +
-            /* implementation */ sizes.coded_index_bytes(CodedIndexType::Implementation)
-        )
-    }
-
     /// Read an `ExportedType` row from the metadata tables stream
     ///
     /// Parses one `ExportedType` table row from the binary metadata stream, handling

@@ -78,6 +78,7 @@ use crate::metadata::token::Token;
 mod loader;
 mod raw;
 mod reader;
+mod writer;
 
 pub(crate) use loader::*;
 pub use raw::*;

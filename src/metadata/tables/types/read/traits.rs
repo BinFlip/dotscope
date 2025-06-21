@@ -1,35 +1,50 @@
-use crate::{metadata::tables::types::common::TableInfoRef, Result};
+//! Trait definitions for metadata table deserialization and binary parsing.
+//!
+//! This module provides the core trait abstractions for parsing metadata table entries
+//! from their binary representation in .NET PE files. It enables the reading and
+//! deserialization of CLI metadata tables, supporting the complete range of ECMA-335
+//! metadata structures.
+//!
+//! ## Core Traits
+//!
+//! - [`RowReadable`] - Primary trait for deserializing individual table rows
+//!
+//! ## Design Principles
+//!
+//! The read traits follow these design principles:
+//! - **Type Safety**: All parsing operations are compile-time checked
+//! - **Memory Safety**: Buffer bounds are validated during read operations
+//! - **Performance**: Traits support parallel processing of table entries
+//! - **Specification Compliance**: All parsing follows ECMA-335 binary format
+//!
+//! ## Thread Safety
+//!
+//! All traits in this module are designed for concurrent use, with implementations
+//! required to be `Send` to support parallel table processing during metadata loading.
+//!
+//! ## Related Modules
+//!
+//! - [`crate::metadata::tables::types::write::traits`] - Corresponding write traits
+//! - [`crate::metadata::tables::types::read::table`] - Table-level read operations
+//! - [`crate::metadata::tables::types::read::data`] - Low-level data deserialization
+
+use crate::{
+    metadata::tables::{TableInfoRef, TableRow},
+    Result,
+};
 
 /// Trait defining the interface for reading and parsing metadata table rows.
 ///
 /// This trait must be implemented by any type that represents a row in a metadata table.
-/// It provides the necessary methods for determining row size and parsing row data from
-/// byte buffers, enabling generic table operations.
+/// It provides the necessary methods for parsing row data from byte buffers, enabling generic table operations.
 ///
 /// ## Implementation Requirements
 ///
 /// Types implementing this trait must:
 /// - Be `Send` to support parallel processing
-/// - Provide accurate row size calculations
 /// - Handle parsing errors gracefully
 /// - Support 1-based row indexing (as per CLI specification)
-pub trait RowReadable: Sized + Send {
-    /// Calculates the size in bytes of a single row for this table type.
-    ///
-    /// This method determines the total byte size needed to store one row of this
-    /// table type, taking into account variable-sized fields such as string heap
-    /// indices and blob heap indices that may be 2 or 4 bytes depending on heap size.
-    ///
-    /// ## Arguments
-    ///
-    /// * `sizes` - Table size information containing heap sizes and table row counts
-    ///   used to determine the appropriate index sizes
-    ///
-    /// ## Returns
-    ///
-    /// The size in bytes required for one complete row of this table type.
-    fn row_size(sizes: &TableInfoRef) -> u32;
-
+pub trait RowReadable: Sized + Send + TableRow {
     /// Reads and parses a single row from the provided byte buffer.
     ///
     /// This method extracts and parses one complete row from the metadata table data,

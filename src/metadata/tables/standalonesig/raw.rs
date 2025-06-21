@@ -4,7 +4,12 @@
 //! indexes for initial parsing and memory-efficient storage.
 
 use crate::{
-    metadata::{streams::Blob, tables::StandAloneSigRc, token::Token},
+    metadata::{
+        streams::Blob,
+        tables::StandAloneSigRc,
+        tables::{TableInfoRef, TableRow},
+        token::Token,
+    },
     Result,
 };
 
@@ -95,5 +100,27 @@ impl StandAloneSigRaw {
     /// This function does not currently return an error, but the signature is present for future compatibility.
     pub fn apply(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl TableRow for StandAloneSigRaw {
+    /// Calculates the byte size of a `StandAloneSig` table row.
+    ///
+    /// The row size depends on the blob heap size:
+    /// - 2 bytes if blob heap has ≤ 65535 entries
+    /// - 4 bytes if blob heap has > 65535 entries
+    ///
+    /// ## Arguments
+    ///
+    /// * `sizes` - Table size information for index size calculation
+    ///
+    /// ## Returns
+    ///
+    /// The size in bytes required for a single `StandAloneSig` table row
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* signature */ sizes.blob_bytes()
+        )
     }
 }

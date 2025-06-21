@@ -19,13 +19,4 @@ impl RowReadable for DocumentRaw {
             language: read_le_at_dyn(data, offset, sizes.is_large_guid())?,
         })
     }
-
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            sizes.blob_bytes() +  // name
-            sizes.guid_bytes() +  // hash_algorithm
-            sizes.blob_bytes() +  // hash
-            sizes.guid_bytes(), // language
-        )
-    }
 }

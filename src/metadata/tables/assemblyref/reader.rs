@@ -54,39 +54,6 @@ use crate::{
 };
 
 impl RowReadable for AssemblyRefRaw {
-    /// Calculate the byte size of an `AssemblyRef` table row
-    ///
-    /// Returns the size in bytes for an `AssemblyRef` table row, accounting for variable-width
-    /// heap indexes. The size depends on whether the string and blob heaps require 2 or 4-byte indexes.
-    ///
-    /// # Row Layout
-    /// - Version fields: 8 bytes (4 × 2-byte values)
-    /// - Flags: 4 bytes
-    /// - `PublicKeyOrToken`: 2 or 4 bytes (blob heap index)
-    /// - Name: 2 or 4 bytes (string heap index)
-    /// - Culture: 2 or 4 bytes (string heap index)
-    /// - `HashValue`: 2 or 4 bytes (blob heap index)
-    ///
-    /// # Arguments
-    /// * `sizes` - Table size information containing heap index widths
-    ///
-    /// # Returns
-    /// Total size in bytes for one `AssemblyRef` table row
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* major_version */       2 +
-            /* minor_version */       2 +
-            /* build_number */        2 +
-            /* revision_number */     2 +
-            /* flags */               4 +
-            /* public_key_or_token */ sizes.blob_bytes() +
-            /* name */                sizes.str_bytes() +
-            /* culture */             sizes.str_bytes() +
-            /* hash_value */          sizes.blob_bytes()
-        )
-    }
-
     /// Read and parse an `AssemblyRef` table row from binary data
     ///
     /// Deserializes one `AssemblyRef` table entry from the metadata tables stream.

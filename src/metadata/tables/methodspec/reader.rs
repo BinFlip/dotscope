@@ -8,25 +8,6 @@ use crate::{
 };
 
 impl RowReadable for MethodSpecRaw {
-    /// Calculates the byte size of a `MethodSpec` table row.
-    ///
-    /// The row size depends on the metadata table sizes and is calculated as:
-    /// - `method`: 2 or 4 bytes (depends on `MethodDefOrRef` coded index size)
-    /// - `instantiation`: 2 or 4 bytes (depends on blob heap size)
-    ///
-    /// ## Arguments
-    /// * `sizes` - Table size information for calculating index widths
-    ///
-    /// ## Returns
-    /// Total byte size of one table row
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* method */        sizes.coded_index_bytes(CodedIndexType::MethodDefOrRef) +
-            /* instantiation */ sizes.blob_bytes()
-        )
-    }
-
     /// Reads a single `MethodSpec` table row from binary data.
     ///
     /// Parses the binary representation according to ECMA-335 §II.22.29:

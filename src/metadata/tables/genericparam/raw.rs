@@ -27,7 +27,9 @@ use std::sync::{Arc, OnceLock};
 use crate::{
     metadata::{
         streams::Strings,
-        tables::{CodedIndex, GenericParam, GenericParamRc},
+        tables::{
+            CodedIndex, CodedIndexType, GenericParam, GenericParamRc, TableInfoRef, TableRow,
+        },
         token::Token,
         typesystem::CilTypeReference,
     },
@@ -168,5 +170,33 @@ impl GenericParamRaw {
             name: strings.get(self.name as usize)?.to_string(),
             custom_attributes: Arc::new(boxcar::Vec::new()),
         }))
+    }
+}
+
+impl TableRow for GenericParamRaw {
+    /// Calculate the byte size of a GenericParam table row
+    ///
+    /// Computes the total size based on fixed-size fields and variable-size indexes.
+    /// The size depends on whether the metadata uses 2-byte or 4-byte indexes.
+    ///
+    /// # Row Layout (ECMA-335 §II.22.20)
+    /// - `number`: 2 bytes (fixed size ordinal position)
+    /// - `flags`: 2 bytes (fixed size attribute flags)
+    /// - `owner`: 2 or 4 bytes (`TypeOrMethodDef` coded index)
+    /// - `name`: 2 or 4 bytes (String heap index)
+    ///
+    /// # Arguments
+    /// * `sizes` - Table sizing information for index widths
+    ///
+    /// # Returns
+    /// Total byte size of one GenericParam table row
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* number */ 2 +
+            /* flags */  2 +
+            /* owner */  sizes.coded_index_bytes(CodedIndexType::TypeOrMethodDef) +
+            /* name */   sizes.str_bytes()
+        )
     }
 }

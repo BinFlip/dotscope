@@ -1507,7 +1507,7 @@ mod tests {
         // Test that read(write(x)) == x for various types and endianness
         const VALUE_U32: u32 = 0x12345678;
         const VALUE_I32: i32 = -12345;
-        const VALUE_F32: f32 = 3.14159;
+        const VALUE_F32: f32 = 3.0419;
 
         // Little-endian round trip
         let mut buffer = [0u8; 4];

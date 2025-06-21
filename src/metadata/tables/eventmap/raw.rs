@@ -29,7 +29,10 @@ use std::sync::Arc;
 
 use crate::{
     metadata::{
-        tables::{EventList, EventMap, EventMapEntry, EventMapEntryRc, EventPtrMap, MetadataTable},
+        tables::{
+            EventList, EventMap, EventMapEntry, EventMapEntryRc, EventPtrMap, MetadataTable,
+            TableId, TableInfoRef, TableRow,
+        },
         token::Token,
         typesystem::TypeRegistry,
     },
@@ -302,5 +305,29 @@ impl EventMapRaw {
                 self.parent | 0x0200_0000
             )),
         }
+    }
+}
+
+impl TableRow for EventMapRaw {
+    /// Calculate the byte size of an EventMap table row
+    ///
+    /// Computes the total size based on variable-size table indexes.
+    /// The size depends on whether the metadata uses 2-byte or 4-byte indexes.
+    ///
+    /// # Row Layout (ECMA-335 §II.22.12)
+    /// - `parent`: 2 or 4 bytes (TypeDef table index)
+    /// - `event_list`: 2 or 4 bytes (Event table index)
+    ///
+    /// # Arguments
+    /// * `sizes` - Table sizing information for index widths
+    ///
+    /// # Returns
+    /// Total byte size of one EventMap table row
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* parent */     sizes.table_index_bytes(TableId::TypeDef) +
+            /* event_list */ sizes.table_index_bytes(TableId::Event)
+        )
     }
 }
