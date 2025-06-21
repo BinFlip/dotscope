@@ -16,7 +16,10 @@ use std::sync::Arc;
 
 use crate::{
     metadata::{
-        tables::{CodedIndex, InterfaceImpl, InterfaceImplRc, TypeAttributes},
+        tables::{
+            CodedIndex, CodedIndexType, InterfaceImpl, InterfaceImplRc, TableId, TableInfoRef,
+            TableRow, TypeAttributes,
+        },
         token::Token,
         typesystem::TypeRegistry,
     },
@@ -170,5 +173,22 @@ impl InterfaceImplRaw {
             },
             custom_attributes: Arc::new(boxcar::Vec::new()),
         }))
+    }
+}
+
+impl TableRow for InterfaceImplRaw {
+    /// Calculate the byte size of an InterfaceImpl table row
+    ///
+    /// Returns the total size of one row in the InterfaceImpl table, including:
+    /// - class: 2 or 4 bytes (TypeDef table index)
+    /// - interface: 2 or 4 bytes (TypeDefOrRef coded index)
+    ///
+    /// The index sizes depend on the metadata table and coded index requirements.
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* class */     sizes.table_index_bytes(TableId::TypeDef) +
+            /* interface */ sizes.coded_index_bytes(CodedIndexType::TypeDefOrRef)
+        )
     }
 }

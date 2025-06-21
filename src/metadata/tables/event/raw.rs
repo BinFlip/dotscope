@@ -23,7 +23,7 @@ use std::sync::{Arc, OnceLock};
 use crate::{
     metadata::{
         streams::Strings,
-        tables::{CodedIndex, Event, EventRc},
+        tables::{CodedIndex, CodedIndexType, Event, EventRc, TableInfoRef, TableRow},
         token::Token,
         typesystem::TypeRegistry,
     },
@@ -153,5 +153,31 @@ impl EventRaw {
     /// This function never returns an error.
     pub fn apply(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl TableRow for EventRaw {
+    /// Calculate the byte size of an Event table row
+    ///
+    /// Computes the total size based on fixed-size fields plus variable-size heap and coded indexes.
+    /// The size depends on whether the metadata uses 2-byte or 4-byte indexes.
+    ///
+    /// # Row Layout (ECMA-335 §II.22.13)
+    /// - `flags`: 2 bytes (fixed)
+    /// - `name`: 2 or 4 bytes (string heap index)
+    /// - `event_type`: 2 or 4 bytes (`TypeDefOrRef` coded index)
+    ///
+    /// # Arguments
+    /// * `sizes` - Table sizing information for heap and coded index widths
+    ///
+    /// # Returns
+    /// Total byte size of one Event table row
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* flags */      2 +
+            /* name */       sizes.str_bytes() +
+            /* event_type */ sizes.coded_index_bytes(CodedIndexType::TypeDefOrRef)
+        )
     }
 }

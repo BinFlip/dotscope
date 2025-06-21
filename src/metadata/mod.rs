@@ -162,6 +162,8 @@
 //! - Microsoft .NET Framework PE Format Specification
 //! - Windows PE/COFF Specification
 
+/// Implementation of a raw assembly view for editing operations
+pub mod cilassemblyview;
 /// Implementation of a loaded + parsed CIL binary
 pub mod cilobject;
 /// Implementation of the Header of CIL

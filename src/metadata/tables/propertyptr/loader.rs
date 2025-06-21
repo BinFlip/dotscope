@@ -1,6 +1,6 @@
-///// This module provides loading functionality for the `PropertyPtr` metadata table (ID 0x16). # `PropertyPtr` Table Loader
+//! # `PropertyPtr` Table Loader
 //!
-//! This module provides loading functionality for the `PropertyPtr` metadata table (ID 0x26).
+//! This module provides loading functionality for the `PropertyPtr` metadata table (ID 0x16).
 //! The `PropertyPtr` table provides indirection for property table access in optimized
 //! metadata layouts, enabling property table compression and efficient property access
 //! patterns in .NET assemblies.
@@ -75,7 +75,7 @@ impl MetadataLoader for PropertyPtrLoader {
     ///
     /// ## Returns
     ///
-    /// [`TableId::PropertyPtr`] (0x26) - The metadata table identifier
+    /// [`TableId::PropertyPtr`] (0x16) - The metadata table identifier
     fn table_id(&self) -> TableId {
         TableId::PropertyPtr
     }

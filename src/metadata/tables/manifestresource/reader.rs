@@ -8,16 +8,6 @@ use crate::{
 };
 
 impl RowReadable for ManifestResourceRaw {
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* offset_field */   4 +
-            /* flags */          4 +
-            /* name */           sizes.str_bytes() +
-            /* implementation */ sizes.coded_index_bytes(CodedIndexType::Implementation)
-        )
-    }
-
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(ManifestResourceRaw {
             rid,

@@ -8,7 +8,7 @@
 use crate::{
     metadata::{
         streams::Strings,
-        tables::{LocalVariable, LocalVariableRc},
+        tables::{LocalVariable, LocalVariableRc, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -113,5 +113,27 @@ impl LocalVariableRaw {
         };
 
         Ok(Arc::new(variable))
+    }
+}
+
+impl TableRow for LocalVariableRaw {
+    /// Calculate the row size for `LocalVariable` table entries
+    ///
+    /// Returns the total byte size of a single `LocalVariable` table row based on the
+    /// table configuration. The size varies depending on the size of heap indexes in the metadata.
+    ///
+    /// # Size Breakdown
+    /// - `attributes`: 2 bytes (variable attribute flags)
+    /// - `index`: 2 bytes (variable index within method)
+    /// - `name`: 2 or 4 bytes (string heap index for variable name)
+    ///
+    /// Total: 6-8 bytes depending on heap size configuration
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            2 +  // attributes (always 2 bytes)
+            2 +  // index (always 2 bytes)
+            sizes.str_bytes()  // name (strings heap index)
+        )
     }
 }

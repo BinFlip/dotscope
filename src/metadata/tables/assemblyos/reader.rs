@@ -49,28 +49,6 @@ use crate::{
 };
 
 impl RowReadable for AssemblyOsRaw {
-    /// Calculate the byte size of an `AssemblyOS` table row
-    ///
-    /// Returns the fixed size since `AssemblyOS` contains only primitive integer fields
-    /// with no variable-size heap indexes. Total size is always 12 bytes (3 × 4-byte integers).
-    ///
-    /// # Row Layout
-    /// - `os_platform_id`: 4 bytes (fixed)
-    /// - `os_major_version`: 4 bytes (fixed)
-    /// - `os_minor_version`: 4 bytes (fixed)
-    ///
-    /// # Arguments
-    /// * `_sizes` - Unused for `AssemblyOS` since no heap indexes are present
-    ///
-    /// # Returns
-    /// Fixed size of 12 bytes for all `AssemblyOS` rows
-    #[rustfmt::skip]
-    fn row_size(_sizes: &TableInfoRef) -> u32 {
-        /* os_platform_id */   4_u32 +
-        /* os_major_version */ 4_u32 +
-        /* os_minor_version */ 4_u32
-    }
-
     /// Read and parse an `AssemblyOS` table row from binary data
     ///
     /// Deserializes one `AssemblyOS` table entry from the metadata tables stream.

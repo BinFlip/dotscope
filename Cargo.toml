@@ -42,6 +42,10 @@ criterion = "0.6.0"
 name = "cilobject"
 harness = false
 
+[[bench]]
+name = "cilassemblyview"
+harness = false
+
 [profile.bench]
 debug = true
 lto="fat"

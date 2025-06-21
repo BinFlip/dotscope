@@ -32,6 +32,7 @@ mod loader;
 mod owned;
 mod raw;
 mod reader;
+mod writer;
 
 pub(crate) use loader::*;
 pub use owned::*;

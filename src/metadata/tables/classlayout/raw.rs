@@ -69,7 +69,7 @@ use std::sync::Arc;
 
 use crate::{
     metadata::{
-        tables::{ClassLayout, ClassLayoutRc},
+        tables::{ClassLayout, ClassLayoutRc, TableId, TableInfoRef, TableRow},
         token::Token,
         typesystem::TypeRegistry,
         validation::LayoutValidator,
@@ -261,5 +261,31 @@ impl ClassLayoutRaw {
                 }
             },
         }))
+    }
+}
+
+impl TableRow for ClassLayoutRaw {
+    /// Calculate the byte size of a ClassLayout table row
+    ///
+    /// Computes the total size based on fixed-size fields and variable-size table indexes.
+    /// The size depends on whether the metadata uses 2-byte or 4-byte indexes.
+    ///
+    /// # Row Layout (ECMA-335 §II.22.8)
+    /// - `packing_size`: 2 bytes (fixed size alignment specification)
+    /// - `class_size`: 4 bytes (fixed size type size specification)
+    /// - `parent`: 2 or 4 bytes (TypeDef table index)
+    ///
+    /// # Arguments
+    /// * `sizes` - Table sizing information for index widths
+    ///
+    /// # Returns
+    /// Total byte size of one ClassLayout table row
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* packing_size */ 2 +
+            /* class_size */   4 +
+            /* parent */       sizes.table_index_bytes(TableId::TypeDef)
+        )
     }
 }

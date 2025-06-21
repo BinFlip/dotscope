@@ -7,9 +7,9 @@
 //!
 //! ## Key Components
 //!
-//! - [`TableRowInfo`] - Information about individual table sizes and indexing requirements
-//! - [`TableInfo`] - Comprehensive metadata for all tables in an assembly
-//! - [`TableInfoRef`] - Shared reference to table information
+//! - [`crate::metadata::tables::types::TableRowInfo`] - Information about individual table sizes and indexing requirements
+//! - [`crate::metadata::tables::types::TableInfo`] - Comprehensive metadata for all tables in an assembly
+//! - [`crate::metadata::tables::types::TableInfoRef`] - Shared reference to table information
 //!
 //! ## Index Size Determination
 //!
@@ -137,8 +137,8 @@ impl TableRowInfo {
 ///
 /// ## Related Types
 ///
-/// - [`TableRowInfo`] - Individual table metadata
-/// - [`TableInfoRef`] - Arc-wrapped shared reference
+/// - [`crate::metadata::tables::types::TableRowInfo`] - Individual table metadata
+/// - [`crate::metadata::tables::types::TableInfoRef`] - Arc-wrapped shared reference
 /// - [`crate::metadata::tables::types::CodedIndexType`] - Coded index type definitions
 /// - [`crate::metadata::tables::types::TableId`] - Table identifier enumeration
 #[derive(Clone, Default)]
@@ -357,6 +357,70 @@ impl TableInfo {
         }
 
         Ok((tables[tag as usize], index))
+    }
+
+    /// Encodes a table identifier and row index into a coded index value.
+    ///
+    /// This method performs the reverse operation of `decode_coded_index`, combining
+    /// a table identifier and row index into a single encoded value using the tag-based
+    /// encoding scheme defined by ECMA-335.
+    ///
+    /// ## Encoding Format
+    ///
+    /// ```text
+    /// Coded Index Value:
+    /// ┌─────────────────────┬────────────┐
+    /// │     Row Index       │    Tag     │
+    /// │   (upper bits)      │(lower bits)│
+    /// └─────────────────────┴────────────┘
+    ///
+    /// Tag bits = ceil(log2(number_of_tables_in_union))
+    /// Row bits = remaining bits
+    /// ```
+    ///
+    /// ## Arguments
+    ///
+    /// * `table_id` - The [`TableId`] identifying which table the index refers to
+    /// * `row` - The 1-based row index within the specified table
+    /// * `coded_index_type` - The type of coded index being encoded (determines table union)
+    ///
+    /// ## Returns
+    ///
+    /// The encoded coded index value that can be written to metadata.
+    ///
+    /// ## Errors
+    ///
+    /// - [`crate::Error::OutOfBounds`] - Table ID is not valid for the specified coded index type
+    ///
+    /// ## Reference
+    ///
+    /// * [ECMA-335 Partition II, Section 24.2.6](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Coded Indices
+    pub fn encode_coded_index(
+        &self,
+        table_id: TableId,
+        row: u32,
+        coded_index_type: CodedIndexType,
+    ) -> Result<u32> {
+        let tables = coded_index_type.tables();
+
+        let tag = tables
+            .iter()
+            .position(|&table| table == table_id)
+            .ok_or(OutOfBounds)?;
+
+        // Calculate the number of bits needed for the tag
+        // This casting is intentional for the coded index calculation
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
+        let tag_bits = (tables.len() as f32).log2().ceil() as u8;
+
+        // Encode: (row << tag_bits) | tag
+        let encoded = (row << tag_bits) | (tag as u32);
+
+        Ok(encoded)
     }
 
     /// Checks whether a specific table requires large (4-byte) indices due to size.

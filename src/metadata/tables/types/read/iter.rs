@@ -1,3 +1,37 @@
+//! Iterator implementations for sequential and parallel metadata table processing.
+//!
+//! This module provides iterator types that enable efficient traversal of metadata table rows
+//! in both sequential and parallel modes. The iterators are designed to work seamlessly with
+//! the Rust iterator ecosystem while providing specialized optimizations for metadata table
+//! access patterns.
+//!
+//! ## Iterator Types
+//!
+//! - [`TableIterator`] - Sequential iterator for memory-efficient row-by-row processing
+//! - [`TableParIterator`] - Parallel iterator leveraging Rayon for concurrent processing
+//! - [`TableProducer`] - Internal work distribution for parallel iteration
+//! - [`TableProducerIterator`] - Internal chunk processing for parallel iteration
+//!
+//! ## Design Goals
+//!
+//! The iterator design prioritizes:
+//! - **Lazy evaluation**: Rows are parsed only when accessed, reducing memory usage
+//! - **Error resilience**: Parse failures result in `None` rather than panics
+//! - **Performance**: Optimal memory access patterns and parallel processing support
+//!
+//! ## Thread Safety
+//!
+//! All iterator types support concurrent access with appropriate safety guarantees:
+//! - Sequential iterators are `Send` for thread transfer
+//! - Parallel iterators require `Send + Sync` row types for safe concurrent processing
+//! - Work-stealing algorithms ensure optimal load balancing across threads
+//!
+//! ## Related Modules
+//!
+//! - [`crate::metadata::tables::types::read::table`] - Table container that creates iterators
+//! - [`crate::metadata::tables::types::read::traits`] - Core parsing traits
+//! - [`crate::metadata::tables::types::read::access`] - Low-level access utilities
+
 use rayon::iter::{plumbing, IndexedParallelIterator, ParallelIterator};
 use std::sync::{Arc, Mutex};
 

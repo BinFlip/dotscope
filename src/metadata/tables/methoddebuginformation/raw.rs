@@ -64,7 +64,9 @@ use crate::{
     metadata::{
         sequencepoints::parse_sequence_points,
         streams::Blob,
-        tables::{MethodDebugInformation, MethodDebugInformationRc},
+        tables::{
+            MethodDebugInformation, MethodDebugInformationRc, TableId, TableInfoRef, TableRow,
+        },
         token::Token,
     },
     Result,
@@ -202,5 +204,26 @@ impl MethodDebugInformationRaw {
         };
 
         Ok(Arc::new(method_debug_info))
+    }
+}
+
+impl TableRow for MethodDebugInformationRaw {
+    /// Calculate the row size for `MethodDebugInformation` table entries
+    ///
+    /// Returns the total byte size of a single `MethodDebugInformation` table row based on the
+    /// table configuration. The size varies depending on the size of table indexes and heap
+    /// references in the metadata.
+    ///
+    /// # Size Breakdown
+    /// - `document`: 2 or 4 bytes (table index into `Document` table)
+    /// - `sequence_points`: 2 or 4 bytes (blob heap index for sequence points data)
+    ///
+    /// Total: 4-8 bytes depending on table index and heap size configuration
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            sizes.table_index_bytes(TableId::Document) + // document
+            sizes.blob_bytes()  // sequence_points
+        )
     }
 }

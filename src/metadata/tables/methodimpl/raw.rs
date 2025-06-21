@@ -44,7 +44,10 @@ use std::sync::Arc;
 use crate::{
     metadata::{
         method::MethodMap,
-        tables::{CodedIndex, MemberRefMap, MethodImpl, MethodImplRc, TableId},
+        tables::{
+            CodedIndex, CodedIndexType, MemberRefMap, MethodImpl, MethodImplRc, TableId,
+            TableInfoRef, TableRow,
+        },
         token::Token,
         typesystem::{CilTypeReference, TypeRegistry},
     },
@@ -270,5 +273,31 @@ impl MethodImplRaw {
                 result
             },
         }))
+    }
+}
+
+impl TableRow for MethodImplRaw {
+    /// Calculate the byte size of a MethodImpl table row
+    ///
+    /// Computes the total size based on variable-size table indexes and coded indexes.
+    /// The size depends on whether the metadata uses 2-byte or 4-byte indexes.
+    ///
+    /// # Row Layout (ECMA-335 §II.22.27)
+    /// - `class`: 2 or 4 bytes (TypeDef table index)
+    /// - `method_body`: 2 or 4 bytes (`MethodDefOrRef` coded index)
+    /// - `method_declaration`: 2 or 4 bytes (`MethodDefOrRef` coded index)
+    ///
+    /// # Arguments
+    /// * `sizes` - Table sizing information for index widths
+    ///
+    /// # Returns
+    /// Total byte size of one MethodImpl table row
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* class */               sizes.table_index_bytes(TableId::TypeDef) +
+            /* method_body */         sizes.coded_index_bytes(CodedIndexType::MethodDefOrRef) +
+            /* method_declaration */  sizes.coded_index_bytes(CodedIndexType::MethodDefOrRef)
+        )
     }
 }

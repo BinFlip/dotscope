@@ -19,7 +19,10 @@ use crate::{
         imports::Imports,
         method::MethodMap,
         streams::Strings,
-        tables::{CodedIndex, ImplMap, ImplMapRc, ModuleRefMap, TableId},
+        tables::{
+            CodedIndex, CodedIndexType, ImplMap, ImplMapRc, ModuleRefMap, TableId, TableInfoRef,
+            TableRow,
+        },
         token::Token,
         typesystem::CilTypeReference,
     },
@@ -226,5 +229,26 @@ impl ImplMapRaw {
                 }
             },
         }))
+    }
+}
+
+impl TableRow for ImplMapRaw {
+    /// Calculate the byte size of an ImplMap table row
+    ///
+    /// Returns the total size of one row in the ImplMap table, including:
+    /// - mapping_flags: 2 bytes
+    /// - member_forwarded: 2 or 4 bytes (MemberForwarded coded index)
+    /// - import_name: 2 or 4 bytes (String heap index)
+    /// - import_scope: 2 or 4 bytes (ModuleRef table index)
+    ///
+    /// The index sizes depend on the metadata table and heap requirements.
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* mapping_flags */    2 +
+            /* member_forwarded */ sizes.coded_index_bytes(CodedIndexType::MemberForwarded) +
+            /* import_name */      sizes.str_bytes() +
+            /* import_scope */     sizes.table_index_bytes(TableId::ModuleRef)
+        )
     }
 }

@@ -1,3 +1,45 @@
+//! Implementation of `RowReadable` for `StandAloneSigRaw` metadata table entries.
+//!
+//! This module provides binary deserialization support for the `StandAloneSig` table (ID 0x11),
+//! enabling reading of standalone signature information from .NET PE files. The StandAloneSig
+//! table stores signatures that are not directly associated with specific methods, fields, or
+//! properties but are referenced from CIL instructions or used in complex signature scenarios.
+//!
+//! ## Table Structure (ECMA-335 §II.22.39)
+//!
+//! | Field | Type | Description |
+//! |-------|------|-------------|
+//! | `Signature` | Blob heap index | Signature data stored in blob heap |
+//!
+//! ## Usage Context
+//!
+//! StandAloneSig entries are used for:
+//! - **Method Signatures**: Function pointer signatures with specific calling conventions
+//! - **Local Variable Signatures**: Method local variable type declarations
+//! - **Field Signatures**: Standalone field type specifications
+//! - **Generic Signatures**: Generic type and method instantiation signatures
+//! - **CIL Instruction References**: Signatures referenced by call/calli instructions
+//! - **P/Invoke Signatures**: Unmanaged method call signatures
+//!
+//! ## Signature Types
+//!
+//! The signature blob can contain various signature formats:
+//! - **Method Signatures**: Complete method signatures with return type and parameters
+//! - **Local Signatures**: Local variable type lists for method bodies
+//! - **Field Signatures**: Field type specifications
+//! - **Property Signatures**: Property type and accessor information
+//!
+//! ## Thread Safety
+//!
+//! The `RowReadable` implementation is stateless and safe for concurrent use across
+//! multiple threads during metadata loading operations.
+//!
+//! ## Related Modules
+//!
+//! - [`crate::metadata::tables::standalonesig::writer`] - Binary serialization support
+//! - [`crate::metadata::tables::standalonesig`] - High-level StandAloneSig interface
+//! - [`crate::metadata::tables::standalonesig::raw`] - Raw structure definition
+
 use crate::{
     file::io::read_le_at_dyn,
     metadata::{
@@ -8,26 +50,6 @@ use crate::{
 };
 
 impl RowReadable for StandAloneSigRaw {
-    /// Calculates the byte size of a `StandAloneSig` table row.
-    ///
-    /// The row size depends on the blob heap size:
-    /// - 2 bytes if blob heap has ≤ 65535 entries
-    /// - 4 bytes if blob heap has > 65535 entries
-    ///
-    /// ## Arguments
-    ///
-    /// * `sizes` - Table size information for index size calculation
-    ///
-    /// ## Returns
-    ///
-    /// The size in bytes required for a single `StandAloneSig` table row
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* signature */ sizes.blob_bytes()
-        )
-    }
-
     /// Reads a `StandAloneSig` table row from the metadata stream.
     ///
     /// Parses a single `StandAloneSig` entry from the raw metadata bytes,

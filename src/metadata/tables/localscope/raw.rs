@@ -10,7 +10,7 @@ use crate::{
         method::MethodMap,
         tables::{
             ImportScopeMap, LocalConstantMap, LocalScope, LocalScopeRc, LocalVariableMap,
-            MetadataTable,
+            MetadataTable, TableId, TableInfoRef, TableRow,
         },
         token::Token,
     },
@@ -202,5 +202,30 @@ impl LocalScopeRaw {
         };
 
         Ok(Arc::new(local_scope))
+    }
+}
+
+impl TableRow for LocalScopeRaw {
+    /// Calculate the byte size of a LocalScope table row
+    ///
+    /// Returns the total size of one row in the LocalScope table, including:
+    /// - method: 2 or 4 bytes (MethodDef table index)
+    /// - import_scope: 2 or 4 bytes (ImportScope table index)
+    /// - variable_list: 2 or 4 bytes (LocalVariable table index)
+    /// - constant_list: 2 or 4 bytes (LocalConstant table index)
+    /// - start_offset: 4 bytes
+    /// - length: 4 bytes
+    ///
+    /// The index sizes depend on the metadata table requirements.
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* method */        sizes.table_index_bytes(TableId::MethodDef) +
+            /* import_scope */  sizes.table_index_bytes(TableId::ImportScope) +
+            /* variable_list */ sizes.table_index_bytes(TableId::LocalVariable) +
+            /* constant_list */ sizes.table_index_bytes(TableId::LocalConstant) +
+            /* start_offset */  4 +
+            /* length */        4
+        )
     }
 }

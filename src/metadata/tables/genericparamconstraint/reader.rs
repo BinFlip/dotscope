@@ -11,14 +11,6 @@ use crate::{
 };
 
 impl RowReadable for GenericParamConstraintRaw {
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* owner */      sizes.table_index_bytes(TableId::GenericParam) +
-            /* constraint */ sizes.coded_index_bytes(CodedIndexType::TypeDefOrRef)
-        )
-    }
-
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(GenericParamConstraintRaw {
             rid,

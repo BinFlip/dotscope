@@ -49,15 +49,6 @@ impl RowReadable for CustomDebugInformationRaw {
             value,
         })
     }
-
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            sizes.coded_index_bytes(CodedIndexType::HasCustomDebugInformation) +  // parent (HasCustomDebugInformation coded index)
-            sizes.guid_bytes() +                                                  // kind (GUID heap index)
-            sizes.blob_bytes()                                                    // value (Blob heap index)
-        )
-    }
 }
 
 #[cfg(test)]

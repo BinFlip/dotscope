@@ -41,7 +41,10 @@
 use std::sync::Arc;
 
 use crate::{
-    metadata::{tables::EncMapRc, token::Token},
+    metadata::{
+        tables::{EncMapRc, TableInfoRef, TableRow},
+        token::Token,
+    },
     Result,
 };
 
@@ -137,5 +140,24 @@ impl EncMapRaw {
     /// See ECMA-335, Partition II, Section 22.13 for `EncMap` table semantics.
     pub fn apply(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl TableRow for EncMapRaw {
+    /// Calculate the size in bytes of an `EncMap` table row.
+    ///
+    /// The `EncMap` table has a fixed structure with one 4-byte token field.
+    /// Size calculation is independent of heap sizes since no heap references are used.
+    ///
+    /// ## Layout
+    /// - **Token** (4 bytes): Original metadata token
+    ///
+    /// ## Arguments
+    /// * `sizes` - Table size information (unused for `EncMap`)
+    ///
+    /// ## Returns
+    /// Always returns 4 bytes for the fixed token field.
+    fn row_size(_sizes: &TableInfoRef) -> u32 {
+        4 // Token field (4 bytes)
     }
 }

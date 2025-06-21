@@ -8,16 +8,6 @@ use crate::{
 };
 
 impl RowReadable for ConstantRaw {
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* c_type */    1 +
-            /* padding */   1 +
-            /* parent */    sizes.coded_index_bytes(CodedIndexType::HasConstant) +
-            /* value */     sizes.blob_bytes()
-        )
-    }
-
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         let offset_org = *offset;
 

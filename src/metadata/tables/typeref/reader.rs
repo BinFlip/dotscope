@@ -1,3 +1,45 @@
+//! Implementation of `RowReadable` for `TypeRefRaw` metadata table entries.
+//!
+//! This module provides binary deserialization support for the `TypeRef` table (ID 0x01),
+//! enabling reading of external type reference information from .NET PE files. The TypeRef
+//! table contains references to types defined in external assemblies or modules, which is
+//! essential for resolving cross-assembly dependencies.
+//!
+//! ## Table Structure (ECMA-335 §II.22.38)
+//!
+//! | Field | Type | Description |
+//! |-------|------|-------------|
+//! | `ResolutionScope` | Coded index (`ResolutionScope`) | Parent scope containing the type |
+//! | `TypeName` | String heap index | Simple name of the referenced type |
+//! | `TypeNamespace` | String heap index | Namespace containing the referenced type |
+//!
+//! ## Resolution Scope Context
+//!
+//! The `ResolutionScope` coded index can reference:
+//! - **Module** (tag 0) - Type defined in the global module
+//! - **ModuleRef** (tag 1) - Type defined in an external module (same assembly)
+//! - **AssemblyRef** (tag 2) - Type defined in an external assembly (most common)
+//! - **TypeRef** (tag 3) - Nested type where the parent is also external
+//!
+//! ## Usage Context
+//!
+//! TypeRef entries are used for:
+//! - **External Dependencies**: References to types in other assemblies
+//! - **Nested Types**: References to types nested within external types
+//! - **Module Boundaries**: References across module boundaries within assemblies
+//! - **Framework Types**: References to system types like `System.Object`
+//!
+//! ## Thread Safety
+//!
+//! The `RowReadable` implementation is stateless and safe for concurrent use across
+//! multiple threads during metadata loading operations.
+//!
+//! ## Related Modules
+//!
+//! - [`crate::metadata::tables::typeref::writer`] - Binary serialization support
+//! - [`crate::metadata::tables::typeref`] - High-level TypeRef table interface
+//! - [`crate::metadata::tables::typeref::raw`] - Raw TypeRef structure definition
+
 use crate::{
     file::io::read_le_at_dyn,
     metadata::{
@@ -8,26 +50,6 @@ use crate::{
 };
 
 impl RowReadable for TypeRefRaw {
-    /// Calculates the byte size of a `TypeRef` table row.
-    ///
-    /// The row size depends on the size configuration of heaps and tables:
-    /// - `ResolutionScope`: 2 or 4 bytes depending on `ResolutionScope` coded index size
-    /// - TypeName/TypeNamespace: 2 or 4 bytes depending on string heap size
-    ///
-    /// ## Arguments
-    /// * `sizes` - Table size information for calculating index widths
-    ///
-    /// ## Returns
-    /// The total byte size required for one `TypeRef` table row.
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* resolution_scope */  sizes.coded_index_bytes(CodedIndexType::ResolutionScope) +
-            /* type_namespace */    sizes.str_bytes() +
-            /* type_name */         sizes.str_bytes()
-        )
-    }
-
     /// Reads a `TypeRef` table row from binary metadata.
     ///
     /// Parses the binary representation of a `TypeRef` table row according to the

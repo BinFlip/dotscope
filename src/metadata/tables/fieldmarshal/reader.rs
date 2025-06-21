@@ -25,14 +25,6 @@ use crate::{
 };
 
 impl RowReadable for FieldMarshalRaw {
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* parent */      sizes.coded_index_bytes(CodedIndexType::HasFieldMarshal) +
-            /* native_type */ sizes.blob_bytes()
-        )
-    }
-
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         let offset_org = *offset;
 

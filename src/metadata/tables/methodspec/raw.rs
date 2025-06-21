@@ -9,7 +9,7 @@ use crate::{
     metadata::{
         signatures::parse_method_spec_signature,
         streams::Blob,
-        tables::{CodedIndex, MethodSpec, MethodSpecRc},
+        tables::{CodedIndex, CodedIndexType, MethodSpec, MethodSpecRc, TableInfoRef, TableRow},
         token::Token,
         typesystem::{CilTypeReference, TypeRegistry, TypeResolver},
     },
@@ -184,5 +184,26 @@ impl MethodSpecRaw {
         }
 
         Ok(method_spec)
+    }
+}
+
+impl TableRow for MethodSpecRaw {
+    /// Calculates the byte size of a `MethodSpec` table row.
+    ///
+    /// The row size depends on the metadata table sizes and is calculated as:
+    /// - `method`: 2 or 4 bytes (depends on `MethodDefOrRef` coded index size)
+    /// - `instantiation`: 2 or 4 bytes (depends on blob heap size)
+    ///
+    /// ## Arguments
+    /// * `sizes` - Table size information for calculating index widths
+    ///
+    /// ## Returns
+    /// Total byte size of one table row
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* method */        sizes.coded_index_bytes(CodedIndexType::MethodDefOrRef) +
+            /* instantiation */ sizes.blob_bytes()
+        )
     }
 }

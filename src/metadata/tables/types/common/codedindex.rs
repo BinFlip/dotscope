@@ -13,8 +13,8 @@
 //!
 //! ## Key Components
 //!
-//! - [`CodedIndexType`]: Enumeration of all possible coded index combinations defined in ECMA-335
-//! - [`CodedIndex`]: Decoded representation containing the target table, row, and computed token
+//! - [`crate::metadata::tables::types::CodedIndexType`]: Enumeration of all possible coded index combinations defined in ECMA-335
+//! - [`crate::metadata::tables::types::CodedIndex`]: Decoded representation containing the target table, row, and computed token
 //!
 //! ## References
 //!
@@ -156,7 +156,7 @@ impl CodedIndexType {
     ///
     /// ## Returns
     ///
-    /// A static slice containing the [`TableId`] values that can be referenced
+    /// A static slice containing the [`crate::metadata::tables::types::TableId`] values that can be referenced
     /// by this coded index type, in encoding order.
     #[must_use]
     pub fn tables(&self) -> &'static [TableId] {
@@ -304,7 +304,7 @@ impl CodedIndex {
     ///
     /// ## Returns
     ///
-    /// Returns a [`Result`] containing the decoded [`CodedIndex`] on success.
+    /// Returns a [`crate::Result`] containing the decoded [`crate::metadata::tables::types::CodedIndex`] on success.
     ///
     /// ## Errors
     ///
@@ -337,12 +337,12 @@ impl CodedIndex {
     ///
     /// ## Arguments
     ///
-    /// * `tag` - The [`TableId`] specifying which metadata table is being referenced
+    /// * `tag` - The [`crate::metadata::tables::types::TableId`] specifying which metadata table is being referenced
     /// * `row` - The 1-based row index within the specified table
     ///
     /// ## Returns
     ///
-    /// A new [`CodedIndex`] instance with the computed token.
+    /// A new [`crate::metadata::tables::types::CodedIndex`] instance with the computed token.
     ///
     /// ## Token Encoding
     ///

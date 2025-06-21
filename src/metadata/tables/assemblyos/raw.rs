@@ -44,7 +44,10 @@
 use std::sync::Arc;
 
 use crate::{
-    metadata::{tables::AssemblyOsRc, token::Token},
+    metadata::{
+        tables::{AssemblyOsRc, TableInfoRef, TableRow},
+        token::Token,
+    },
     Result,
 };
 
@@ -138,5 +141,24 @@ impl AssemblyOsRaw {
     /// This function never returns an error as no operations are performed.
     pub fn apply(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl TableRow for AssemblyOsRaw {
+    /// Calculate the binary size of one `AssemblyOS` table row
+    ///
+    /// Computes the total byte size required for one `AssemblyOS` row. Since all fields
+    /// are fixed-size 4-byte integers, the row size is always 12 bytes.
+    ///
+    /// # Arguments
+    /// * `_sizes` - Table sizing information (unused for fixed-size table)
+    ///
+    /// # Returns
+    /// Total byte size of one `AssemblyOS` table row (always 12 bytes)
+    #[rustfmt::skip]
+    fn row_size(_sizes: &TableInfoRef) -> u32 {
+        4 + // os_platform_id
+        4 + // os_major_version
+        4   // os_minor_version
     }
 }
