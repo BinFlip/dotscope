@@ -45,6 +45,7 @@ use std::{path::Path, sync::Arc};
 use crate::{
     file::File,
     metadata::{
+        cilassembly::CilAssembly,
         cor20header::Cor20Header,
         root::Root,
         streams::{Blob, Guid, StreamHeader, Strings, TablesHeader, UserStrings},
@@ -382,6 +383,26 @@ impl CilAssemblyView {
     /// Reference to the complete file data.
     pub fn data(&self) -> &[u8] {
         self.with_data(|data| data.data)
+    }
+
+    /// Converts this read-only view into a mutable assembly.
+    ///
+    /// This method consumes the `CilAssemblyView` and creates a `CilAssembly`
+    /// that can be modified. The original data remains unchanged until
+    /// modifications are made.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilAssemblyView;
+    /// use std::path::Path;
+    ///
+    /// let view = CilAssemblyView::from_file(Path::new("assembly.dll"))?;
+    /// let mut assembly = view.to_owned();
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn to_owned(self) -> CilAssembly {
+        CilAssembly::new(self)
     }
 }
 

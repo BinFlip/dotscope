@@ -464,7 +464,50 @@ pub use error::Error;
 /// }
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Converting to Mutable Assembly
+///
+/// `CilAssemblyView` can be converted to a mutable [`CilAssembly`] for editing operations:
+///
+/// ```rust,no_run
+/// use dotscope::{CilAssemblyView, CilAssembly};
+/// let view = CilAssemblyView::from_file(std::path::Path::new("assembly.dll"))?;
+/// let mut assembly = view.to_owned(); // Convert to mutable CilAssembly
+/// # Ok::<(), dotscope::Error>(())
+/// ```
 pub use metadata::cilassemblyview::CilAssemblyView;
+
+/// Mutable assembly for editing and modification operations.
+///
+/// `CilAssembly` provides a mutable layer on top of [`CilAssemblyView`] that enables
+/// editing of .NET assembly metadata while tracking changes efficiently. It uses a
+/// copy-on-write strategy to minimize memory usage and provides high-level APIs
+/// for adding, modifying, and deleting metadata elements.
+///
+/// # Key Features
+///
+/// - **Change Tracking**: Efficiently tracks modifications without duplicating unchanged data
+/// - **High-level APIs**: Builder patterns for creating types, methods, fields, etc.
+/// - **Binary Generation**: Write modified assemblies back to disk
+/// - **Validation**: Optional validation of metadata consistency
+///
+/// # Usage Examples
+///
+/// ```rust,no_run
+/// use dotscope::{CilAssemblyView, CilAssembly};
+///
+/// // Load and convert to mutable assembly
+/// let view = CilAssemblyView::from_file(std::path::Path::new("assembly.dll"))?;
+/// let mut assembly = view.to_owned();
+///
+/// // Add a new string to the heap
+/// let string_index = assembly.add_string("Hello, World!")?;
+///
+/// // Write changes back to file
+/// assembly.write_to_file("modified_assembly.dll")?;
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+pub use metadata::cilassembly::CilAssembly;
 
 /// Main entry point for working with .NET assemblies.
 ///

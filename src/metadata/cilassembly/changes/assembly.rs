@@ -1,0 +1,184 @@
+//! Core assembly change tracking structure.
+
+use std::collections::HashMap;
+
+use crate::metadata::{
+    cilassembly::{HeapChanges, TableModifications},
+    tables::TableId,
+};
+
+/// Internal structure for tracking all modifications to an assembly.
+///
+/// This structure uses lazy initialization - it's only created when the first
+/// modification is made, and individual change categories are only allocated
+/// when first accessed.
+///
+/// # Design Principles
+///
+/// - **Sparse Storage**: Only modified elements are tracked, not entire tables
+/// - **Lazy Allocation**: Change categories are only created when first used
+/// - **Efficient Merging**: Changes can be efficiently merged during read operations
+/// - **Memory Efficient**: Minimal overhead for read-heavy operations
+#[derive(Debug, Clone)]
+pub struct AssemblyChanges {
+    /// Table-level modifications, keyed by table ID
+    ///
+    /// Each table can have sparse modifications (individual row changes) or
+    /// complete replacement. This map only contains entries for tables that
+    /// have been modified.
+    pub table_changes: HashMap<TableId, TableModifications>,
+
+    /// String heap additions
+    ///
+    /// Tracks strings that have been added to the #Strings heap. New strings
+    /// are appended to preserve existing heap structure.
+    pub string_heap_changes: HeapChanges<String>,
+
+    /// Blob heap additions  
+    ///
+    /// Tracks blobs that have been added to the #Blob heap. New blobs
+    /// are appended to preserve existing heap structure.
+    pub blob_heap_changes: HeapChanges<Vec<u8>>,
+
+    /// GUID heap additions
+    ///
+    /// Tracks GUIDs that have been added to the #GUID heap. New GUIDs
+    /// are appended to preserve existing heap structure.
+    pub guid_heap_changes: HeapChanges<[u8; 16]>,
+
+    /// User string heap additions
+    ///
+    /// Tracks user strings that have been added to the #US heap. User strings
+    /// are typically Unicode string literals used by IL instructions.
+    pub userstring_heap_changes: HeapChanges<String>,
+}
+
+impl AssemblyChanges {
+    /// Creates a new empty change tracking structure.
+    ///
+    /// All heap changes start empty with default initial sizes.
+    /// Table changes remain an empty HashMap and are allocated on first use.
+    pub fn new() -> Self {
+        Self {
+            table_changes: HashMap::new(),
+            string_heap_changes: HeapChanges::new(0), // Will be initialized with actual heap size
+            blob_heap_changes: HeapChanges::new(0),
+            guid_heap_changes: HeapChanges::new(0),
+            userstring_heap_changes: HeapChanges::new(0),
+        }
+    }
+
+    /// Returns true if any changes have been made to the assembly.
+    ///
+    /// This checks if any table changes exist or if any heap has additions.
+    pub fn has_changes(&self) -> bool {
+        !self.table_changes.is_empty()
+            || self.string_heap_changes.has_additions()
+            || self.blob_heap_changes.has_additions()
+            || self.guid_heap_changes.has_additions()
+            || self.userstring_heap_changes.has_additions()
+    }
+
+    /// Returns the number of tables that have been modified.
+    pub fn modified_table_count(&self) -> usize {
+        self.table_changes.len()
+    }
+
+    /// Returns the total number of string heap additions.
+    pub fn string_additions_count(&self) -> usize {
+        self.string_heap_changes.appended_items.len()
+    }
+
+    /// Returns the total number of blob heap additions.
+    pub fn blob_additions_count(&self) -> usize {
+        self.blob_heap_changes.appended_items.len()
+    }
+
+    /// Returns an iterator over all modified table IDs.
+    pub fn modified_tables(&self) -> impl Iterator<Item = TableId> + '_ {
+        self.table_changes.keys().copied()
+    }
+
+    /// Gets the table modifications for a specific table, if any.
+    pub fn get_table_modifications(&self, table_id: TableId) -> Option<&TableModifications> {
+        self.table_changes.get(&table_id)
+    }
+
+    /// Gets mutable table modifications for a specific table, if any.
+    pub fn get_table_modifications_mut(
+        &mut self,
+        table_id: TableId,
+    ) -> Option<&mut TableModifications> {
+        self.table_changes.get_mut(&table_id)
+    }
+
+    /// Calculates the binary heap sizes that will be added during writing.
+    ///
+    /// Returns a tuple of (strings_size, blob_size, guid_size, userstring_size)
+    /// representing the bytes that will be added to each heap in the final binary.
+    /// This is used for binary generation and PE file size calculation.
+    pub fn binary_heap_sizes(&self) -> (usize, usize, usize, usize) {
+        let string_size = self.string_heap_changes.binary_string_heap_size();
+        let blob_size = self.blob_heap_changes.binary_blob_heap_size();
+        let guid_size = self.guid_heap_changes.binary_guid_heap_size();
+        let userstring_size = self.userstring_heap_changes.binary_userstring_heap_size();
+
+        (string_size, blob_size, guid_size, userstring_size)
+    }
+}
+
+impl Default for AssemblyChanges {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::metadata::cilassembly::HeapChanges;
+
+    #[test]
+    fn test_assembly_changes_empty() {
+        let changes = AssemblyChanges::new();
+        assert!(!changes.has_changes());
+        assert_eq!(changes.modified_table_count(), 0);
+        assert_eq!(changes.string_additions_count(), 0);
+    }
+
+    #[test]
+    fn test_binary_heap_sizes() {
+        let mut changes = AssemblyChanges::new();
+
+        // Test empty state
+        let (string_size, blob_size, guid_size, userstring_size) = changes.binary_heap_sizes();
+        assert_eq!(string_size, 0);
+        assert_eq!(blob_size, 0);
+        assert_eq!(guid_size, 0);
+        assert_eq!(userstring_size, 0);
+
+        // Add some string heap changes
+        let mut string_changes = HeapChanges::new(100);
+        string_changes.appended_items.push("Hello".to_string()); // 5 + 1 = 6 bytes
+        string_changes.appended_items.push("World".to_string()); // 5 + 1 = 6 bytes
+        changes.string_heap_changes = string_changes;
+
+        // Add some blob heap changes
+        let mut blob_changes = HeapChanges::new(50);
+        blob_changes.appended_items.push(vec![1, 2, 3]); // 1 + 3 = 4 bytes (length < 128)
+        blob_changes.appended_items.push(vec![4, 5, 6, 7, 8]); // 1 + 5 = 6 bytes
+        changes.blob_heap_changes = blob_changes;
+
+        // Add some GUID heap changes
+        let mut guid_changes = HeapChanges::new(1);
+        guid_changes.appended_items.push([1; 16]); // 16 bytes
+        guid_changes.appended_items.push([2; 16]); // 16 bytes
+        changes.guid_heap_changes = guid_changes;
+
+        let (string_size, blob_size, guid_size, userstring_size) = changes.binary_heap_sizes();
+        assert_eq!(string_size, 12); // "Hello\0" + "World\0" = 6 + 6
+        assert_eq!(blob_size, 10); // (1+3) + (1+5) = 4 + 6
+        assert_eq!(guid_size, 32); // 16 + 16
+        assert_eq!(userstring_size, 0); // No userstring changes
+    }
+}

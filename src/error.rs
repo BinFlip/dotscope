@@ -105,7 +105,7 @@
 
 use thiserror::Error;
 
-use crate::metadata::token::Token;
+use crate::metadata::{tables::TableId, token::Token};
 
 /// Helper macro for creating malformed data errors with source location information.
 ///
@@ -348,4 +348,178 @@ pub enum Error {
     /// detected or when the dependency graph cannot be properly constructed.
     #[error("{0}")]
     GraphError(String),
+
+    // Assembly Modification Errors
+    /// RID already exists during table modification.
+    ///
+    /// This error occurs when attempting to insert a row with a RID that
+    /// already exists in the target metadata table.
+    #[error("Modification error: RID {rid} already exists in table {table:?}")]
+    ModificationRidAlreadyExists {
+        /// The table where the conflict occurred
+        table: TableId,
+        /// The conflicting RID
+        rid: u32,
+    },
+
+    /// RID not found during table modification.
+    ///
+    /// This error occurs when attempting to update or delete a row that
+    /// doesn't exist in the target metadata table.
+    #[error("Modification error: RID {rid} not found in table {table:?}")]
+    ModificationRidNotFound {
+        /// The table where the RID was not found
+        table: TableId,
+        /// The missing RID
+        rid: u32,
+    },
+
+    /// Cannot modify replaced table.
+    ///
+    /// This error occurs when attempting to apply sparse modifications
+    /// to a table that has been completely replaced.
+    #[error("Modification error: Cannot modify replaced table - convert to sparse first")]
+    ModificationCannotModifyReplacedTable,
+
+    /// Operation conflicts detected during modification.
+    ///
+    /// This error occurs when multiple conflicting operations target
+    /// the same RID and cannot be automatically resolved.
+    #[error("Modification error: Operation conflicts detected - {details}")]
+    ModificationConflictDetected {
+        /// Details about the conflict
+        details: String,
+    },
+
+    /// Invalid modification operation.
+    ///
+    /// This error occurs when attempting an operation that is not
+    /// valid for the current state or context.
+    #[error("Modification error: Invalid operation - {details}")]
+    ModificationInvalidOperation {
+        /// Details about why the operation is invalid
+        details: String,
+    },
+
+    /// Table schema validation failed.
+    ///
+    /// This error occurs when table row data doesn't conform to the
+    /// expected schema for the target table type.
+    #[error("Modification error: Table schema validation failed - {details}")]
+    ModificationSchemaValidationFailed {
+        /// Details about the schema validation failure
+        details: String,
+    },
+
+    // Assembly Validation Errors
+    /// Invalid RID for table during validation.
+    ///
+    /// This error occurs when a RID is invalid for the target table,
+    /// such as zero-valued RIDs or RIDs exceeding table bounds.
+    #[error("Validation error: Invalid RID {rid} for table {table:?}")]
+    ValidationInvalidRid {
+        /// The table with the invalid RID
+        table: TableId,
+        /// The invalid RID
+        rid: u32,
+    },
+
+    /// Cannot update non-existent row during validation.
+    ///
+    /// This error occurs when validation detects an attempt to update
+    /// a row that doesn't exist in the original table.
+    #[error("Validation error: Cannot update non-existent row {rid} in table {table:?}")]
+    ValidationUpdateNonExistentRow {
+        /// The table where the update was attempted
+        table: TableId,
+        /// The non-existent RID
+        rid: u32,
+    },
+
+    /// Cannot delete non-existent row during validation.
+    ///
+    /// This error occurs when validation detects an attempt to delete
+    /// a row that doesn't exist in the original table.
+    #[error("Validation error: Cannot delete non-existent row {rid} in table {table:?}")]
+    ValidationDeleteNonExistentRow {
+        /// The table where the deletion was attempted
+        table: TableId,
+        /// The non-existent RID
+        rid: u32,
+    },
+
+    /// Cannot delete referenced row during validation.
+    ///
+    /// This error occurs when attempting to delete a row that is
+    /// referenced by other metadata tables, which would break
+    /// referential integrity.
+    #[error("Validation error: Cannot delete referenced row {rid} in table {table:?} - {reason}")]
+    ValidationCannotDeleteReferencedRow {
+        /// The table containing the referenced row
+        table: TableId,
+        /// The RID of the referenced row
+        rid: u32,
+        /// The reason why deletion is not allowed
+        reason: String,
+    },
+
+    /// Row type mismatch during validation.
+    ///
+    /// This error occurs when the provided row data type doesn't
+    /// match the expected type for the target table.
+    #[error("Validation error: Row type mismatch for table {table:?} - expected table-specific type, got {actual_type}")]
+    ValidationRowTypeMismatch {
+        /// The target table
+        table: TableId,
+        /// The actual type that was provided
+        actual_type: String,
+    },
+
+    /// Table schema validation mismatch.
+    ///
+    /// This error occurs when table data doesn't conform to the expected
+    /// schema for the target table type.
+    #[error("Validation error: Table schema mismatch for table {table:?} - expected {expected}, got {actual}")]
+    ValidationTableSchemaMismatch {
+        /// The target table
+        table: TableId,
+        /// The expected schema type
+        expected: String,
+        /// The actual type that was provided
+        actual: String,
+    },
+
+    /// Cross-reference validation failed.
+    ///
+    /// This error occurs when validation detects broken cross-references
+    /// between metadata tables.
+    #[error("Validation error: Cross-reference validation failed - {message}")]
+    ValidationCrossReferenceError {
+        /// Details about the cross-reference failure
+        message: String,
+    },
+
+    /// Heap bounds validation failed.
+    ///
+    /// This error occurs when metadata heap indices are out of bounds
+    /// for the target heap.
+    #[error(
+        "Validation error: Heap bounds validation failed - {heap_type} index {index} out of bounds"
+    )]
+    ValidationHeapBoundsError {
+        /// The type of heap (strings, blobs, etc.)
+        heap_type: String,
+        /// The out-of-bounds index
+        index: u32,
+    },
+
+    /// Conflict resolution failed.
+    ///
+    /// This error occurs when the conflict resolution system cannot
+    /// automatically resolve detected conflicts.
+    #[error("Conflict resolution error: {details}")]
+    ConflictResolutionError {
+        /// Details about why conflict resolution failed
+        details: String,
+    },
 }

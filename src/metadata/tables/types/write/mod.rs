@@ -35,6 +35,7 @@ mod table;
 mod traits;
 
 // TODO: Implement write infrastructure
+pub use data::TableDataOwned;
 // pub use data::WritableTableData;
 // pub use header::WritableTablesHeader;
 // pub use table::WritableMetadataTable;

@@ -571,6 +571,12 @@ pub use crate::metadata::tables::{
     TypeAttributes,
 };
 
+/// Method and implementation flag constants.
+///
+/// Specialized flag enumerations for method definitions including access modifiers
+/// used with MethodDefBuilder. Other method flags are exported in the method section.
+pub use crate::metadata::method::MethodAccessFlags;
+
 // ================================================================================================
 // Constants and Element Types
 // ================================================================================================
@@ -612,3 +618,44 @@ pub use crate::metadata::tables::TableId;
 pub use crate::metadata::tables::{
     CodedIndex, CodedIndexType, MetadataTable, TableInfo, TableInfoRef,
 };
+
+// ================================================================================================
+// Metadata Builders
+// ================================================================================================
+//
+// This section provides metadata builder types for creating and modifying .NET assemblies.
+// These builders use a fluent API pattern where the BuilderContext is passed to the build()
+// method, enabling ergonomic creation of multiple metadata entries in sequence.
+//
+// All builders follow the established pattern:
+// - Builder structs do NOT hold references to BuilderContext
+// - Context is passed as a parameter to the build() method
+// - All builders implement Default trait for clippy compliance
+// - Multiple builders can be used in sequence without borrow checker issues
+
+/// Core builder infrastructure.
+///
+/// BuilderContext coordinates metadata creation across all builders, managing heap operations,
+/// table modifications, and cross-reference resolution. CilAssembly provides the mutable assembly
+/// interface required for metadata modification operations.
+pub use crate::metadata::cilassembly::{BuilderContext, CilAssembly};
+
+/// Assembly and module builders.
+///
+/// Create assembly metadata, module definitions, and assembly identity information.
+/// AssemblyBuilder handles version numbers, culture settings, and strong naming.
+pub use crate::metadata::tables::AssemblyBuilder;
+
+/// Type system builders.
+///
+/// Create type definitions, type references, and type specifications. These builders
+/// handle class, interface, value type, and enum creation with proper inheritance
+/// relationships and generic type parameters.
+pub use crate::metadata::tables::{TypeDefBuilder, TypeRefBuilder};
+
+/// Member definition builders.
+///
+/// Create field definitions and method definitions with proper signatures, attributes,
+/// and implementation details. These builders handle all aspects of type member creation
+/// including accessibility, static/instance behavior, and method implementation.
+pub use crate::metadata::tables::{FieldBuilder, MethodDefBuilder};

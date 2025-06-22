@@ -71,11 +71,13 @@
 //!
 //! **Table ID**: `0x02`
 
+mod builder;
 mod loader;
 mod raw;
 mod reader;
 mod writer;
 
+pub use builder::*;
 pub(crate) use loader::*;
 pub use raw::*;
 
