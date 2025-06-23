@@ -1034,6 +1034,192 @@ pub fn write_be_at_dyn(
     Ok(())
 }
 
+/// Write methods for binary serialization
+///
+/// These methods provide the counterpart to the read methods, enabling binary
+/// data serialization using the same formats and encodings.
+/// Write a compressed unsigned integer using ECMA-335 format.
+///
+/// Encodes an unsigned integer using .NET's compressed integer format.
+/// This format uses variable-length encoding to minimize space usage
+/// for small values while supporting the full 32-bit range.
+///
+/// # Encoding Format
+///
+/// - **0x00-0x7F**: Single byte (value & 0x7F)
+/// - **0x80-0x3FFF**: Two bytes (0x80 | (value >> 8), value & 0xFF)
+/// - **0x4000-0x1FFFFFFF**: Four bytes (0xC0 | (value >> 24), (value >> 16) & 0xFF, (value >> 8) & 0xFF, value & 0xFF)
+///
+/// # Arguments
+///
+/// * `value` - The unsigned integer to encode
+/// * `buffer` - The output buffer to write encoded bytes to
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # use dotscope::file::io::write_compressed_uint;
+/// let mut buffer = Vec::new();
+/// write_compressed_uint(127, &mut buffer);
+/// assert_eq!(buffer, vec![127]);
+///
+/// let mut buffer = Vec::new();
+/// write_compressed_uint(128, &mut buffer);
+/// assert_eq!(buffer, vec![0x80, 0x80]);
+/// ```
+pub fn write_compressed_uint(value: u32, buffer: &mut Vec<u8>) {
+    if value < 0x80 {
+        buffer.push(value as u8);
+    } else if value < 0x4000 {
+        buffer.push(0x80 | ((value >> 8) as u8));
+        buffer.push(value as u8);
+    } else {
+        buffer.push(0xC0 | ((value >> 24) as u8));
+        buffer.push((value >> 16) as u8);
+        buffer.push((value >> 8) as u8);
+        buffer.push(value as u8);
+    }
+}
+
+/// Write a compressed signed integer using ECMA-335 format.
+///
+/// Encodes a signed integer using .NET's compressed integer format.
+/// This format uses variable-length encoding to minimize space usage
+/// for small values while supporting the full 32-bit signed range.
+///
+/// # Arguments
+///
+/// * `value` - The signed integer to encode
+/// * `buffer` - The output buffer to write encoded bytes to
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # use dotscope::file::io::write_compressed_int;
+/// let mut buffer = Vec::new();
+/// write_compressed_int(10, &mut buffer);
+/// assert_eq!(buffer, vec![20]); // 10 << 1 | 0
+///
+/// let mut buffer = Vec::new();
+/// write_compressed_int(-5, &mut buffer);
+/// assert_eq!(buffer, vec![9]); // (5-1) << 1 | 1
+/// ```
+pub fn write_compressed_int(value: i32, buffer: &mut Vec<u8>) {
+    let unsigned_value = if value >= 0 {
+        (value as u32) << 1
+    } else {
+        (((-value - 1) as u32) << 1) | 1
+    };
+    write_compressed_uint(unsigned_value, buffer);
+}
+
+/// Write a 7-bit encoded integer.
+///
+/// Encodes an unsigned integer using 7-bit encoding with continuation bits.
+/// This encoding uses the most significant bit of each byte as a continuation flag.
+///
+/// # Arguments
+///
+/// * `value` - The unsigned integer to encode
+/// * `buffer` - The output buffer to write encoded bytes to
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # use dotscope::file::io::write_7bit_encoded_int;
+/// let mut buffer = Vec::new();
+/// write_7bit_encoded_int(127, &mut buffer);
+/// assert_eq!(buffer, vec![0x7F]);
+///
+/// let mut buffer = Vec::new();
+/// write_7bit_encoded_int(128, &mut buffer);
+/// assert_eq!(buffer, vec![0x80, 0x01]);
+/// ```
+pub fn write_7bit_encoded_int(mut value: u32, buffer: &mut Vec<u8>) {
+    while value >= 0x80 {
+        buffer.push((value as u8) | 0x80);
+        value >>= 7;
+    }
+    buffer.push(value as u8);
+}
+
+/// Write a UTF-8 string with null terminator.
+///
+/// Encodes the string as UTF-8 bytes followed by a null terminator (0x00).
+///
+/// # Arguments
+///
+/// * `value` - The string to encode
+/// * `buffer` - The output buffer to write encoded bytes to
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # use dotscope::file::io::write_string_utf8;
+/// let mut buffer = Vec::new();
+/// write_string_utf8("Hello", &mut buffer);
+/// assert_eq!(buffer, b"Hello\0");
+/// ```
+pub fn write_string_utf8(value: &str, buffer: &mut Vec<u8>) {
+    buffer.extend_from_slice(value.as_bytes());
+    buffer.push(0);
+}
+
+/// Write a length-prefixed UTF-8 string.
+///
+/// Encodes the string length as a 7-bit encoded integer, followed by the
+/// UTF-8 bytes. This format is commonly used in .NET metadata streams.
+///
+/// # Arguments
+///
+/// * `value` - The string to encode
+/// * `buffer` - The output buffer to write encoded bytes to
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # use dotscope::file::io::write_prefixed_string_utf8;
+/// let mut buffer = Vec::new();
+/// write_prefixed_string_utf8("Hello", &mut buffer);
+/// assert_eq!(buffer, vec![5, b'H', b'e', b'l', b'l', b'o']);
+/// ```
+pub fn write_prefixed_string_utf8(value: &str, buffer: &mut Vec<u8>) {
+    let bytes = value.as_bytes();
+    write_7bit_encoded_int(bytes.len() as u32, buffer);
+    buffer.extend_from_slice(bytes);
+}
+
+/// Write a length-prefixed UTF-16 string.
+///
+/// Encodes the string length in bytes as a 7-bit encoded integer, followed by
+/// the UTF-16 bytes in little-endian format.
+///
+/// # Arguments
+///
+/// * `value` - The string to encode
+/// * `buffer` - The output buffer to write encoded bytes to
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # use dotscope::file::io::write_prefixed_string_utf16;
+/// let mut buffer = Vec::new();
+/// write_prefixed_string_utf16("Hello", &mut buffer);
+/// // Length 10 bytes (5 UTF-16 chars), followed by "Hello" in UTF-16 LE
+/// assert_eq!(buffer, vec![10, 0x48, 0x00, 0x65, 0x00, 0x6C, 0x00, 0x6C, 0x00, 0x6F, 0x00]);
+/// ```
+pub fn write_prefixed_string_utf16(value: &str, buffer: &mut Vec<u8>) {
+    let utf16_chars: Vec<u16> = value.encode_utf16().collect();
+    let byte_length = utf16_chars.len() * 2;
+
+    write_7bit_encoded_int(byte_length as u32, buffer);
+
+    for char in utf16_chars {
+        buffer.push(char as u8); // Low byte (little-endian)
+        buffer.push((char >> 8) as u8); // High byte
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1535,5 +1721,168 @@ mod tests {
         write_be(&mut buffer, VALUE_F32).unwrap();
         let read_value: f32 = read_be(&buffer).unwrap();
         assert_eq!(read_value, VALUE_F32);
+    }
+
+    #[test]
+    fn test_write_compressed_uint_single_byte() {
+        let test_cases = vec![
+            (0, vec![0]),
+            (1, vec![1]),
+            (127, vec![127]), // Max single byte value
+        ];
+
+        for (value, expected) in test_cases {
+            let mut buffer = Vec::new();
+            write_compressed_uint(value, &mut buffer);
+            assert_eq!(buffer, expected, "Failed for value {}", value);
+        }
+    }
+
+    #[test]
+    fn test_write_compressed_uint_two_bytes() {
+        let test_cases = vec![
+            (128, vec![0x80, 0x80]),   // Min two-byte value
+            (255, vec![0x80, 0xFF]),   //
+            (16383, vec![0xBF, 0xFF]), // Max two-byte value
+        ];
+
+        for (value, expected) in test_cases {
+            let mut buffer = Vec::new();
+            write_compressed_uint(value, &mut buffer);
+            assert_eq!(buffer, expected, "Failed for value {}", value);
+        }
+    }
+
+    #[test]
+    fn test_write_compressed_uint_four_bytes() {
+        let test_cases = vec![
+            (16384, vec![0xC0, 0x00, 0x40, 0x00]), // Min four-byte value
+            (0x1FFFFFFF, vec![0xDF, 0xFF, 0xFF, 0xFF]), // Max four-byte value
+        ];
+
+        for (value, expected) in test_cases {
+            let mut buffer = Vec::new();
+            write_compressed_uint(value, &mut buffer);
+            assert_eq!(buffer, expected, "Failed for value {}", value);
+        }
+    }
+
+    #[test]
+    fn test_write_compressed_int_positive() {
+        let test_cases = vec![
+            (0, vec![0]),    // 0 << 1 | 0
+            (1, vec![2]),    // 1 << 1 | 0
+            (10, vec![20]),  // 10 << 1 | 0
+            (63, vec![126]), // 63 << 1 | 0 (max single byte positive)
+        ];
+
+        for (value, expected) in test_cases {
+            let mut buffer = Vec::new();
+            write_compressed_int(value, &mut buffer);
+            assert_eq!(buffer, expected, "Failed for value {}", value);
+        }
+    }
+
+    #[test]
+    fn test_write_compressed_int_negative() {
+        let test_cases = vec![
+            (-1, vec![1]),   // (1-1) << 1 | 1
+            (-5, vec![9]),   // (5-1) << 1 | 1
+            (-10, vec![19]), // (10-1) << 1 | 1
+        ];
+
+        for (value, expected) in test_cases {
+            let mut buffer = Vec::new();
+            write_compressed_int(value, &mut buffer);
+            assert_eq!(buffer, expected, "Failed for value {}", value);
+        }
+    }
+
+    #[test]
+    fn test_write_7bit_encoded_int() {
+        let test_cases = vec![
+            (0, vec![0]),
+            (127, vec![0x7F]),                       // Max single byte
+            (128, vec![0x80, 0x01]),                 // Min two bytes
+            (16383, vec![0xFF, 0x7F]),               // Max two bytes
+            (16384, vec![0x80, 0x80, 0x01]),         // Min three bytes
+            (2097151, vec![0xFF, 0xFF, 0x7F]),       // Max three bytes
+            (2097152, vec![0x80, 0x80, 0x80, 0x01]), // Min four bytes
+        ];
+
+        for (value, expected) in test_cases {
+            let mut buffer = Vec::new();
+            write_7bit_encoded_int(value, &mut buffer);
+            assert_eq!(buffer, expected, "Failed for value {}", value);
+        }
+    }
+
+    #[test]
+    fn test_write_string_utf8() {
+        let test_cases = vec![
+            ("", vec![0]),                                            // Empty string
+            ("Hello", b"Hello\0".to_vec()),                           // Simple ASCII
+            ("中文", vec![0xE4, 0xB8, 0xAD, 0xE6, 0x96, 0x87, 0x00]), // UTF-8
+        ];
+
+        for (input, expected) in test_cases {
+            let mut buffer = Vec::new();
+            write_string_utf8(input, &mut buffer);
+            assert_eq!(buffer, expected, "Failed for input '{}'", input);
+        }
+    }
+
+    #[test]
+    fn test_write_prefixed_string_utf8() {
+        let test_cases = vec![
+            ("", vec![0]),                                    // Empty string
+            ("Hello", vec![5, b'H', b'e', b'l', b'l', b'o']), // Simple ASCII
+            ("Hi", vec![2, b'H', b'i']),                      // Short string
+        ];
+
+        for (input, expected) in test_cases {
+            let mut buffer = Vec::new();
+            write_prefixed_string_utf8(input, &mut buffer);
+            assert_eq!(buffer, expected, "Failed for input '{}'", input);
+        }
+    }
+
+    #[test]
+    fn test_write_prefixed_string_utf16() {
+        let test_cases = vec![
+            ("", vec![0]),              // Empty string
+            ("A", vec![2, 0x41, 0x00]), // Single character
+            (
+                "Hello",
+                vec![
+                    10, 0x48, 0x00, 0x65, 0x00, 0x6C, 0x00, 0x6C, 0x00, 0x6F, 0x00,
+                ],
+            ), // "Hello"
+        ];
+
+        for (input, expected) in test_cases {
+            let mut buffer = Vec::new();
+            write_prefixed_string_utf16(input, &mut buffer);
+            assert_eq!(buffer, expected, "Failed for input '{}'", input);
+        }
+    }
+
+    #[test]
+    fn test_string_encoding_edge_cases() {
+        // Test very long string for prefixed UTF-8
+        let long_string = "a".repeat(200);
+        let mut buffer = Vec::new();
+        write_prefixed_string_utf8(&long_string, &mut buffer);
+
+        // Should start with length encoded as 7-bit encoded int (200 = 0xC8, 0x01)
+        assert_eq!(buffer[0], 0xC8);
+        assert_eq!(buffer[1], 0x01);
+        assert_eq!(buffer.len(), 202); // 2 bytes length + 200 bytes content
+
+        // Test UTF-16 with non-ASCII characters
+        let mut buffer = Vec::new();
+        write_prefixed_string_utf16("中", &mut buffer);
+        // "中" is U+4E2D, should be encoded as 0x2D 0x4E in little-endian
+        assert_eq!(buffer, vec![2, 0x2D, 0x4E]);
     }
 }

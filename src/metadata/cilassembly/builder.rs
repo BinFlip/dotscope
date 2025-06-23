@@ -139,8 +139,11 @@ impl<'a> BuilderContext<'a> {
         for (index, existing_string) in heap_changes.appended_items.iter().enumerate() {
             if existing_string == value {
                 // Convert 0-based index to heap index (accounting for original heap size)
-                let heap_size = self.assembly.original_heap_size_string();
-                return Some(heap_size + index as u32 + 1);
+                // The heap changes next_index was initialized as original_heap_size + 1,
+                // so we can calculate the original heap size
+                let original_heap_size =
+                    heap_changes.next_index - heap_changes.appended_items.len() as u32 - 1;
+                return Some(original_heap_size + index as u32 + 1);
             }
         }
 

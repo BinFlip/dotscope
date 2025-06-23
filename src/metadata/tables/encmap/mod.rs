@@ -75,11 +75,13 @@ use std::sync::Arc;
 
 use crate::metadata::token::Token;
 
+mod builder;
 mod loader;
 mod raw;
 mod reader;
 mod writer;
 
+pub use builder::*;
 pub(crate) use loader::*;
 pub use raw::*;
 

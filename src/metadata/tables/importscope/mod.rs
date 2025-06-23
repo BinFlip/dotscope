@@ -86,12 +86,14 @@
 //! # ECMA-335 Reference
 //! See ECMA-335, Partition II, §22.35 for the complete `ImportScope` table specification.
 
+mod builder;
 mod loader;
 mod owned;
 mod raw;
 mod reader;
 mod writer;
 
+pub use builder::*;
 pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;

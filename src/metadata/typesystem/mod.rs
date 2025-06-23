@@ -39,6 +39,7 @@
 
 mod base;
 mod builder;
+mod encoder;
 mod primitives;
 mod registry;
 mod resolver;
@@ -50,6 +51,7 @@ pub use base::{
     ELEMENT_TYPE,
 };
 pub use builder::TypeBuilder;
+pub use encoder::TypeSignatureEncoder;
 pub use primitives::{CilPrimitive, CilPrimitiveData, CilPrimitiveKind};
 pub use registry::{TypeRegistry, TypeSource};
 pub use resolver::TypeResolver;

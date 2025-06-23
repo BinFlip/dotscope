@@ -425,7 +425,7 @@ mod tests {
     fn test_validation_pipeline_empty_changes() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let changes = AssemblyChanges::new();
+            let changes = AssemblyChanges::empty();
             let pipeline = ValidationPipeline::default();
 
             // Empty changes should pass all validation
@@ -438,7 +438,7 @@ mod tests {
     fn test_basic_schema_validator_valid_operations() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut changes = AssemblyChanges::new();
+            let mut changes = AssemblyChanges::empty();
 
             // Add valid table operation
             let mut table_modifications = TableModifications::new_sparse(1);
@@ -461,7 +461,7 @@ mod tests {
     fn test_basic_schema_validator_zero_rid_error() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut changes = AssemblyChanges::new();
+            let mut changes = AssemblyChanges::empty();
 
             // Add invalid operation with RID 0
             let mut table_modifications = TableModifications::new_sparse(1);
@@ -488,7 +488,7 @@ mod tests {
     fn test_basic_schema_validator_schema_mismatch() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut changes = AssemblyChanges::new();
+            let mut changes = AssemblyChanges::empty();
 
             // Try to insert TypeDef row into MethodDef table (schema mismatch)
             let mut table_modifications = TableModifications::new_sparse(1);
@@ -515,7 +515,7 @@ mod tests {
     fn test_rid_consistency_validator_no_conflicts() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut changes = AssemblyChanges::new();
+            let mut changes = AssemblyChanges::empty();
 
             // Add operations on different RIDs (no conflicts)
             let mut table_modifications = TableModifications::new_sparse(1);
@@ -540,7 +540,7 @@ mod tests {
     fn test_rid_consistency_validator_insert_delete_conflict() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut changes = AssemblyChanges::new();
+            let mut changes = AssemblyChanges::empty();
 
             // Add conflicting insert and delete operations on same RID
             let mut table_modifications = TableModifications::new_sparse(1);
@@ -572,7 +572,7 @@ mod tests {
     fn test_rid_consistency_validator_multiple_insert_conflict() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut changes = AssemblyChanges::new();
+            let mut changes = AssemblyChanges::empty();
 
             // Add multiple insert operations on same RID
             let mut table_modifications = TableModifications::new_sparse(1);
@@ -690,7 +690,7 @@ mod tests {
     fn test_validation_pipeline_replaced_table() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut changes = AssemblyChanges::new();
+            let mut changes = AssemblyChanges::empty();
 
             // Add replaced table (should be valid)
             let rows = vec![create_test_row(), create_test_row(), create_test_row()];
@@ -709,7 +709,7 @@ mod tests {
     fn test_validation_pipeline_heap_changes() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut changes = AssemblyChanges::new();
+            let mut changes = AssemblyChanges::empty();
 
             // Add heap changes (should be valid)
             let mut string_changes = HeapChanges::new(1000);
@@ -750,7 +750,7 @@ mod tests {
 
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let changes = AssemblyChanges::new();
+            let changes = AssemblyChanges::empty();
 
             // Create pipeline with custom failing stage
             let pipeline = ValidationPipeline::new()

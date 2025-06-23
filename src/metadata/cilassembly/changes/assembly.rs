@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use crate::metadata::{
     cilassembly::{HeapChanges, TableModifications},
+    cilassemblyview::CilAssemblyView,
     tables::TableId,
 };
 
@@ -54,18 +55,46 @@ pub struct AssemblyChanges {
 }
 
 impl AssemblyChanges {
-    /// Creates a new empty change tracking structure.
+    /// Creates a new change tracking structure initialized with proper heap sizes from the view.
     ///
-    /// All heap changes start empty with default initial sizes.
+    /// All heap changes are initialized with the proper original heap sizes
+    /// from the view to ensure correct index calculations.
     /// Table changes remain an empty HashMap and are allocated on first use.
-    pub fn new() -> Self {
+    pub fn new(view: &CilAssemblyView) -> Self {
+        let string_heap_size = Self::get_heap_size(view, "#Strings");
+        let blob_heap_size = Self::get_heap_size(view, "#Blob");
+        let guid_heap_size = Self::get_heap_size(view, "#GUID");
+        let userstring_heap_size = Self::get_heap_size(view, "#US");
+
         Self {
             table_changes: HashMap::new(),
-            string_heap_changes: HeapChanges::new(0), // Will be initialized with actual heap size
-            blob_heap_changes: HeapChanges::new(0),
-            guid_heap_changes: HeapChanges::new(0),
-            userstring_heap_changes: HeapChanges::new(0),
+            string_heap_changes: HeapChanges::new(string_heap_size),
+            blob_heap_changes: HeapChanges::new(blob_heap_size),
+            guid_heap_changes: HeapChanges::new(guid_heap_size),
+            userstring_heap_changes: HeapChanges::new(userstring_heap_size),
         }
+    }
+
+    /// Creates an empty change tracking structure for testing purposes.
+    ///
+    /// All heap changes start with default sizes (1) for proper indexing.
+    pub fn empty() -> Self {
+        Self {
+            table_changes: HashMap::new(),
+            string_heap_changes: HeapChanges::new(1),
+            blob_heap_changes: HeapChanges::new(1),
+            guid_heap_changes: HeapChanges::new(1),
+            userstring_heap_changes: HeapChanges::new(1),
+        }
+    }
+
+    /// Helper method to get the size of a heap by stream name.
+    fn get_heap_size(view: &CilAssemblyView, stream_name: &str) -> u32 {
+        view.streams()
+            .iter()
+            .find(|stream| stream.name == stream_name)
+            .map(|stream| stream.size)
+            .unwrap_or(1)
     }
 
     /// Returns true if any changes have been made to the assembly.
@@ -129,7 +158,7 @@ impl AssemblyChanges {
 
 impl Default for AssemblyChanges {
     fn default() -> Self {
-        Self::new()
+        AssemblyChanges::empty()
     }
 }
 
@@ -140,7 +169,7 @@ mod tests {
 
     #[test]
     fn test_assembly_changes_empty() {
-        let changes = AssemblyChanges::new();
+        let changes = AssemblyChanges::empty();
         assert!(!changes.has_changes());
         assert_eq!(changes.modified_table_count(), 0);
         assert_eq!(changes.string_additions_count(), 0);
@@ -148,7 +177,7 @@ mod tests {
 
     #[test]
     fn test_binary_heap_sizes() {
-        let mut changes = AssemblyChanges::new();
+        let mut changes = AssemblyChanges::empty();
 
         // Test empty state
         let (string_size, blob_size, guid_size, userstring_size) = changes.binary_heap_sizes();

@@ -199,7 +199,7 @@ pub mod NATIVE_TYPE {
     /// Struct type (0x1b) - Native structure with optional packing/size info
     pub const STRUCT: u8 = 0x1b;
     /// Interface type (0x1c) - COM interface with optional IID parameter
-    pub const INTF: u8 = 0x1c;
+    pub const INTERFACE: u8 = 0x1c;
     /// Safe array (0x1d) - COM safe array with variant type information
     pub const SAFEARRAY: u8 = 0x1d;
     /// Fixed array (0x1e) - Fixed-size array with element count
@@ -1000,7 +1000,7 @@ impl<'a> MarshallingParser<'a> {
                     class_size,
                 })
             }
-            NATIVE_TYPE::INTF => {
+            NATIVE_TYPE::INTERFACE => {
                 let iid_param_index = if self.parser.has_more_data()
                     && self.parser.peek_byte()? != NATIVE_TYPE::END
                 {

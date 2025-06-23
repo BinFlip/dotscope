@@ -44,12 +44,14 @@
 //! - [Portable PDB Format - StateMachineMethod Table](https://github.com/dotnet/corefx/blob/master/src/System.Reflection.Metadata/specs/PortablePdb-Metadata.md#statemachinemethod-table-0x36)
 //! - [ECMA-335 State Machine Attributes](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf)
 
+mod builder;
 mod loader;
 mod owned;
 mod raw;
 mod reader;
 mod writer;
 
+pub use builder::*;
 pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;

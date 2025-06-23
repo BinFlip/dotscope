@@ -227,8 +227,8 @@ impl CilAssembly {
     /// ```
     pub fn new(view: CilAssemblyView) -> Self {
         Self {
+            changes: AssemblyChanges::new(&view),
             view,
-            changes: AssemblyChanges::new(),
         }
     }
 
@@ -266,14 +266,6 @@ impl CilAssembly {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn add_string(&mut self, value: &str) -> Result<u32> {
-        // Initialize heap changes if needed
-        if self.changes.string_heap_changes.appended_items.is_empty()
-            && self.changes.string_heap_changes.next_index == 1
-        {
-            let heap_size = self.original_heap_size_string();
-            self.changes.string_heap_changes = HeapChanges::new(heap_size);
-        }
-
         let string_changes = &mut self.changes.string_heap_changes;
         let index = string_changes.next_index;
         string_changes.appended_items.push(value.to_string());
@@ -297,14 +289,6 @@ impl CilAssembly {
     /// Returns the heap index that can be used to reference this blob.
     /// Indices are 1-based following ECMA-335 conventions.
     pub fn add_blob(&mut self, data: &[u8]) -> Result<u32> {
-        // Initialize heap changes if needed
-        if self.changes.blob_heap_changes.appended_items.is_empty()
-            && self.changes.blob_heap_changes.next_index == 1
-        {
-            let heap_size = self.original_heap_size_blob();
-            self.changes.blob_heap_changes = HeapChanges::new(heap_size);
-        }
-
         let blob_changes = &mut self.changes.blob_heap_changes;
         let index = blob_changes.next_index;
         blob_changes.appended_items.push(data.to_vec());
@@ -342,14 +326,6 @@ impl CilAssembly {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn add_guid(&mut self, guid: &[u8; 16]) -> Result<u32> {
-        // Initialize heap changes if needed
-        if self.changes.guid_heap_changes.appended_items.is_empty()
-            && self.changes.guid_heap_changes.next_index == 1
-        {
-            let heap_size = self.original_heap_size_guid();
-            self.changes.guid_heap_changes = HeapChanges::new(heap_size);
-        }
-
         let guid_changes = &mut self.changes.guid_heap_changes;
         let index = guid_changes.next_index;
         guid_changes.appended_items.push(*guid);
@@ -390,18 +366,6 @@ impl CilAssembly {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn add_userstring(&mut self, value: &str) -> Result<u32> {
-        // Initialize heap changes if needed
-        if self
-            .changes
-            .userstring_heap_changes
-            .appended_items
-            .is_empty()
-            && self.changes.userstring_heap_changes.next_index == 1
-        {
-            let heap_size = self.original_heap_size_userstring();
-            self.changes.userstring_heap_changes = HeapChanges::new(heap_size);
-        }
-
         let userstring_changes = &mut self.changes.userstring_heap_changes;
         let index = userstring_changes.next_index;
         userstring_changes.appended_items.push(value.to_string());
@@ -480,46 +444,6 @@ impl CilAssembly {
     /// * `path` - The path where the modified assembly should be written
     pub fn write_to_file<P: AsRef<std::path::Path>>(&self, _path: P) -> Result<()> {
         todo!("ToDo: write functionality")
-    }
-
-    /// Gets the original string heap size for index calculation
-    fn original_heap_size_string(&self) -> u32 {
-        self.view
-            .streams()
-            .iter()
-            .find(|stream| stream.name == "#Strings")
-            .map(|stream| stream.size)
-            .unwrap_or(1)
-    }
-
-    /// Gets the original blob heap size for index calculation
-    fn original_heap_size_blob(&self) -> u32 {
-        self.view
-            .streams()
-            .iter()
-            .find(|stream| stream.name == "#Blob")
-            .map(|stream| stream.size)
-            .unwrap_or(1)
-    }
-
-    /// Gets the original GUID heap size for index calculation
-    fn original_heap_size_guid(&self) -> u32 {
-        self.view
-            .streams()
-            .iter()
-            .find(|stream| stream.name == "#GUID")
-            .map(|stream| stream.size)
-            .unwrap_or(1)
-    }
-
-    /// Gets the original user string heap size for index calculation
-    fn original_heap_size_userstring(&self) -> u32 {
-        self.view
-            .streams()
-            .iter()
-            .find(|stream| stream.name == "#US")
-            .map(|stream| stream.size)
-            .unwrap_or(1)
     }
 
     /// Gets the original row count for a table
@@ -727,15 +651,17 @@ mod tests {
         if let Ok(view) = CilAssemblyView::from_file(&path) {
             let assembly = CilAssembly::new(view);
 
-            let string_size = assembly.original_heap_size_string();
-            let blob_size = assembly.original_heap_size_blob();
-            let guid_size = assembly.original_heap_size_guid();
-            let userstring_size = assembly.original_heap_size_userstring();
+            // Check that heap changes are properly initialized with correct next_index values
+            // next_index should be original_heap_size + 1
+            let string_next_index = assembly.changes.string_heap_changes.next_index;
+            let blob_next_index = assembly.changes.blob_heap_changes.next_index;
+            let guid_next_index = assembly.changes.guid_heap_changes.next_index;
+            let userstring_next_index = assembly.changes.userstring_heap_changes.next_index;
 
-            assert_eq!(string_size, 203732);
-            assert_eq!(blob_size, 77816);
-            assert_eq!(guid_size, 16);
-            assert_eq!(userstring_size, 53288);
+            assert_eq!(string_next_index, 203732 + 1);
+            assert_eq!(blob_next_index, 77816 + 1);
+            assert_eq!(guid_next_index, 16 + 1);
+            assert_eq!(userstring_next_index, 53288 + 1);
         }
     }
 }

@@ -79,7 +79,13 @@
 //! - [ECMA-335 II.24.2.6.2](https://www.ecma-international.org/publications-and-standards/standards/ecma-335/)
 //! - [PortablePDB Spec](https://github.com/dotnet/runtime/blob/main/docs/design/specs/PortablePdb-Metadata.md#sequence-points)
 
-use crate::{file::parser::Parser, Result};
+use crate::{
+    file::{
+        io::{write_compressed_int, write_compressed_uint},
+        parser::Parser,
+    },
+    Result,
+};
 
 /// Represents a single sequence point mapping IL offset to source code location.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,6 +112,97 @@ impl SequencePoints {
     /// Returns the sequence point for a given IL offset, if any.
     pub fn find_by_il_offset(&self, il_offset: u32) -> Option<&SequencePoint> {
         self.0.iter().find(|sp| sp.il_offset == il_offset)
+    }
+
+    /// Serializes the sequence points to binary format.
+    ///
+    /// Converts the sequence points collection back to the compressed blob format
+    /// used in PortablePDB MethodDebugInformation table. The encoding uses delta
+    /// compression and ECMA-335 compressed integer format.
+    ///
+    /// # Returns
+    ///
+    /// A vector of bytes representing the encoded sequence points blob.
+    ///
+    /// # Format
+    ///
+    /// The first sequence point uses absolute values, subsequent points use deltas:
+    /// - IL Offset: absolute for first, delta for subsequent
+    /// - Start Line: absolute for first, signed delta for subsequent  
+    /// - Start Column: absolute for first, signed delta for subsequent
+    /// - End Line Delta: unsigned delta from start line
+    /// - End Column Delta: unsigned delta from start column
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use dotscope::metadata::sequencepoints::{SequencePoints, SequencePoint};
+    /// let points = SequencePoints(vec![
+    ///     SequencePoint {
+    ///         il_offset: 1,
+    ///         start_line: 10,
+    ///         start_col: 2,
+    ///         end_line: 10,
+    ///         end_col: 7,
+    ///         is_hidden: false,
+    ///     }
+    /// ]);
+    /// let bytes = points.to_bytes();
+    /// assert_eq!(bytes, vec![1, 10, 2, 0, 5]); // il_offset=1, start_line=10, start_col=2, end_line_delta=0, end_col_delta=5
+    /// ```
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buffer = Vec::new();
+
+        if self.0.is_empty() {
+            return buffer;
+        }
+
+        let mut prev_il_offset = 0u32;
+        let mut prev_start_line = 0u32;
+        let mut prev_start_col = 0u16;
+
+        for (i, point) in self.0.iter().enumerate() {
+            let is_first = i == 0;
+
+            // IL Offset (absolute for first, delta for subsequent)
+            let il_offset_value = if is_first {
+                point.il_offset
+            } else {
+                point.il_offset - prev_il_offset
+            };
+            write_compressed_uint(il_offset_value, &mut buffer);
+
+            // Start Line (absolute for first, signed delta for subsequent)
+            if is_first {
+                write_compressed_uint(point.start_line, &mut buffer);
+            } else {
+                let delta = point.start_line as i32 - prev_start_line as i32;
+                write_compressed_int(delta, &mut buffer);
+            }
+
+            // Start Column (absolute for first, signed delta for subsequent)
+            if is_first {
+                write_compressed_uint(point.start_col as u32, &mut buffer);
+            } else {
+                let delta = point.start_col as i32 - prev_start_col as i32;
+                write_compressed_int(delta, &mut buffer);
+            }
+
+            // End Line Delta (unsigned delta from start line)
+            let end_line_delta = point.end_line - point.start_line;
+            write_compressed_uint(end_line_delta, &mut buffer);
+
+            // End Column Delta (unsigned delta from start column)
+            let end_col_delta = point.end_col - point.start_col;
+            write_compressed_uint(end_col_delta as u32, &mut buffer);
+
+            // Update previous values for next iteration
+            prev_il_offset = point.il_offset;
+            prev_start_line = point.start_line;
+            prev_start_col = point.start_col;
+        }
+
+        buffer
     }
 }
 

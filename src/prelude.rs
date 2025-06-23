@@ -242,7 +242,7 @@ pub use crate::metadata::imports::ImportType;
 pub use crate::metadata::typesystem::{
     CilFlavor, CilModifier, CilPrimitive, CilPrimitiveData, CilPrimitiveKind, CilType, CilTypeList,
     CilTypeRc, CilTypeRef, CilTypeRefList, CilTypeReference, TypeRegistry, TypeResolver,
-    TypeSource,
+    TypeSignatureEncoder, TypeSource,
 };
 
 // ================================================================================================
@@ -315,6 +315,16 @@ pub use crate::metadata::tables::{
 /// Important for analyzing assembly security policies and annotation information.
 pub use crate::metadata::tables::{
     CustomAttribute, CustomAttributeList, CustomAttributeRc, DeclSecurity, DeclSecurityRc,
+};
+
+/// .NET Code Access Security (CAS) implementation.
+///
+/// Complete support for parsing and representing .NET Code Access Security permissions,
+/// permission sets, and security actions. Essential for analyzing legacy .NET Framework
+/// assemblies that use declarative security attributes and CAS policies.
+pub use crate::metadata::security::{
+    ArgumentType, ArgumentValue, NamedArgument, Permission, PermissionSet, PermissionSetFormat,
+    Security, SecurityAction, SecurityPermissionFlags,
 };
 
 /// Files and resources.
@@ -651,11 +661,30 @@ pub use crate::metadata::tables::AssemblyBuilder;
 /// Create type definitions, type references, and type specifications. These builders
 /// handle class, interface, value type, and enum creation with proper inheritance
 /// relationships and generic type parameters.
-pub use crate::metadata::tables::{TypeDefBuilder, TypeRefBuilder};
+pub use crate::metadata::tables::{TypeDefBuilder, TypeRefBuilder, TypeSpecBuilder};
 
 /// Member definition builders.
 ///
-/// Create field definitions and method definitions with proper signatures, attributes,
-/// and implementation details. These builders handle all aspects of type member creation
-/// including accessibility, static/instance behavior, and method implementation.
-pub use crate::metadata::tables::{FieldBuilder, MethodDefBuilder};
+/// Create field definitions, method definitions, parameter definitions, property
+/// definitions, event definitions, and custom attribute annotations with proper
+/// signatures, attributes, and implementation details. These builders handle all
+/// aspects of type member creation including accessibility, static/instance behavior,
+/// method implementation, parameter information, property encapsulation, event
+/// notification mechanisms, and declarative metadata annotations.
+pub use crate::metadata::tables::{
+    AssemblyRefBuilder, ClassLayoutBuilder, ConstantBuilder, CustomAttributeBuilder,
+    DeclSecurityBuilder, DocumentBuilder, EventBuilder, EventMapBuilder, ExportedTypeBuilder,
+    FieldBuilder, FieldLayoutBuilder, FieldMarshalBuilder, FieldRVABuilder, FileBuilder,
+    GenericParamBuilder, GenericParamConstraintBuilder, ImplMapBuilder, InterfaceImplBuilder,
+    LocalScopeBuilder, LocalVariableBuilder, ManifestResourceBuilder, MemberRefBuilder,
+    MethodDebugInformationBuilder, MethodDefBuilder, MethodImplBuilder, MethodSemanticsBuilder,
+    MethodSpecBuilder, ModuleBuilder, ModuleRefBuilder, NestedClassBuilder, ParamBuilder,
+    PropertyBuilder, PropertyMapBuilder, StandAloneSigBuilder,
+};
+
+/// Method semantic relationship constants.
+///
+/// Constants defining the semantic roles methods can play in relation to properties
+/// and events. Used with MethodSemanticsBuilder to specify getter, setter, add, remove,
+/// fire, and other semantic relationships.
+pub use crate::metadata::tables::MethodSemanticsAttributes;

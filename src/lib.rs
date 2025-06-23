@@ -20,7 +20,6 @@
 #![allow(clippy::too_many_arguments)]
 //#![deny(unsafe_code)]
 // - 'userstring.rs' uses a transmute for converting a &[u8] to &[u16]
-// - 'tableheader.rs' uses a transmute for type conversion
 // - 'file/physical.rs' uses mmap to map a file into memory
 
 //! # dotscope
