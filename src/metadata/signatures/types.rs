@@ -149,6 +149,52 @@
 
 use crate::metadata::{token::Token, typesystem::ArrayDimensions};
 
+/// Represents a custom modifier with its required/optional flag and type reference.
+///
+/// Custom modifiers in .NET metadata can be either required (modreq) or optional (modopt):
+/// - **Required modifiers**: Must be understood by all consumers of the type
+/// - **Optional modifiers**: May be ignored by consumers that don't understand them
+///
+/// According to ECMA-335 §II.23.2.7, custom modifiers are encoded as:
+/// - Required: `0x1F (ELEMENT_TYPE_CMOD_REQD) + TypeDefOrRef coded index`
+/// - Optional: `0x20 (ELEMENT_TYPE_CMOD_OPT) + TypeDefOrRef coded index`
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use dotscope::metadata::signatures::CustomModifier;
+/// use dotscope::metadata::token::Token;
+///
+/// // Required modifier (modreq)
+/// let const_modifier = CustomModifier {
+///     is_required: true,
+///     modifier_type: Token::new(0x01000001), // Reference to IsConst type
+/// };
+///
+/// // Optional modifier (modopt)  
+/// let volatile_modifier = CustomModifier {
+///     is_required: false,
+///     modifier_type: Token::new(0x01000002), // Reference to IsVolatile type
+/// };
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomModifier {
+    /// Whether this is a required modifier (modreq) or optional modifier (modopt).
+    /// - `true`: Required modifier (ELEMENT_TYPE_CMOD_REQD = 0x1F)
+    /// - `false`: Optional modifier (ELEMENT_TYPE_CMOD_OPT = 0x20)
+    pub is_required: bool,
+
+    /// Token referencing the modifier type (TypeDef, TypeRef, or TypeSpec).
+    /// This token points to the type that defines the modifier semantics.
+    pub modifier_type: Token,
+}
+
+/// A collection of custom modifiers applied to a type or type component.
+///
+/// Custom modifiers are applied in sequence and evaluated right-to-left according
+/// to ECMA-335. Multiple modifiers can be applied to the same type component.
+pub type CustomModifiers = Vec<CustomModifier>;
+
 /// Complete .NET type signature representation supporting all ECMA-335 type encodings.
 ///
 /// `TypeSignature` represents any type that can appear in .NET metadata signatures,
@@ -935,7 +981,7 @@ pub enum TypeSignature {
     ///
     /// # See Also
     /// - [`TypeSignature::ModifiedOptional`]: For optional modifiers
-    ModifiedRequired(Vec<Token>),
+    ModifiedRequired(Vec<CustomModifier>),
 
     /// Optional custom modifier (`ELEMENT_TYPE_CMOD_OPT` = 0x20).
     ///
@@ -962,7 +1008,7 @@ pub enum TypeSignature {
     ///
     /// # See Also
     /// - [`TypeSignature::ModifiedRequired`]: For required modifiers
-    ModifiedOptional(Vec<Token>),
+    ModifiedOptional(Vec<CustomModifier>),
 
     /// CLI-internal type (`ELEMENT_TYPE_INTERNAL` = 0x21).
     ///
@@ -1365,13 +1411,16 @@ pub struct SignatureArray {
 ///
 /// ## Array with Custom Modifiers
 /// ```rust
-/// use dotscope::metadata::signatures::{SignatureSzArray, TypeSignature};
+/// use dotscope::metadata::signatures::{CustomModifier, SignatureSzArray, TypeSignature};
 /// use dotscope::metadata::token::Token;
 ///
 /// # fn create_modified_array() {
 /// let modified_array = SignatureSzArray {
 ///     modifiers: vec![
-///         Token::new(0x02000001),  // Custom modifier token
+///         CustomModifier {
+///             is_required: false,
+///             modifier_type: Token::new(0x02000001),  // Custom modifier token
+///         },
 ///     ],
 ///     base: Box::new(TypeSignature::String),  // string[] with modifier
 /// };
@@ -1429,22 +1478,20 @@ pub struct SignatureArray {
 pub struct SignatureSzArray {
     /// Custom modifiers that apply to the array type.
     ///
-    /// A vector of metadata tokens referencing `TypeDef` or `TypeRef` entries
-    /// that specify additional type constraints or annotations. Most arrays
-    /// have no custom modifiers (empty vector).
+    /// A collection of custom modifiers specifying additional type constraints or annotations.
+    /// Most arrays have no custom modifiers (empty vector).
     ///
-    /// # Modifier Types
+    /// Each modifier can be either required (modreq) or optional (modopt):
     /// - **Required Modifiers**: Must be understood for type compatibility
     /// - **Optional Modifiers**: Can be safely ignored if not recognized
-    /// - **Platform Modifiers**: OS or architecture-specific constraints
-    /// - **Tool Modifiers**: Compiler or analyzer metadata
     ///
     /// # Common Scenarios
     /// - Interop with native arrays requiring specific memory layout
-    /// - Volatile arrays for multithreaded scenarios
-    /// - Const arrays for immutable data
+    /// - Volatile arrays for multithreaded scenarios (`modopt(IsVolatile)`)
+    /// - Const arrays for immutable data (`modreq(IsConst)`)
     /// - Security attributes for trusted/untrusted data
-    pub modifiers: Vec<Token>,
+    /// - Platform-specific constraints for P/Invoke scenarios
+    pub modifiers: CustomModifiers,
 
     /// The type of elements stored in the array.
     ///
@@ -1586,13 +1633,16 @@ pub struct SignatureSzArray {
 ///
 /// ## Pointer with Custom Modifiers
 /// ```rust
-/// use dotscope::metadata::signatures::{SignaturePointer, TypeSignature};
+/// use dotscope::metadata::signatures::{CustomModifier, SignaturePointer, TypeSignature};
 /// use dotscope::metadata::token::Token;
 ///
 /// # fn create_modified_pointer() {
 /// let const_pointer = SignaturePointer {
 ///     modifiers: vec![
-///         Token::new(0x02000001),  // const modifier token
+///         CustomModifier {
+///             is_required: true,
+///             modifier_type: Token::new(0x02000001),  // const modifier token
+///         },
 ///     ],
 ///     base: Box::new(TypeSignature::Char),  // const char* pointer
 /// };
@@ -1632,12 +1682,15 @@ pub struct SignatureSzArray {
 pub struct SignaturePointer {
     /// Custom modifiers that apply to the pointer type.
     ///
-    /// A vector of metadata tokens referencing `TypeDef` or `TypeRef` entries
-    /// that specify additional constraints or annotations for the pointer.
+    /// A collection of custom modifiers specifying additional constraints or annotations for the pointer.
     /// Most pointers have no custom modifiers (empty vector).
     ///
+    /// Each modifier can be either required (modreq) or optional (modopt):
+    /// - **Required Modifiers**: Must be understood for type compatibility
+    /// - **Optional Modifiers**: Can be safely ignored if not recognized
+    ///
     /// # Modifier Applications
-    /// - **Memory Semantics**: `const`, `volatile`, `restrict` equivalents
+    /// - **Memory Semantics**: `modopt(IsConst)`, `modopt(IsVolatile)`, `restrict` equivalents
     /// - **Platform Constraints**: OS-specific pointer requirements
     /// - **Calling Conventions**: Function pointer calling conventions
     /// - **Safety Annotations**: Tool-specific safety metadata
@@ -1645,7 +1698,7 @@ pub struct SignaturePointer {
     /// # Interop Scenarios
     /// Custom modifiers are particularly important for P/Invoke and COM interop
     /// where native calling conventions and memory semantics must be preserved.
-    pub modifiers: Vec<Token>,
+    pub modifiers: CustomModifiers,
 
     /// The type that this pointer references.
     ///
@@ -1781,13 +1834,16 @@ pub struct SignaturePointer {
 ///
 /// ## Parameter with Custom Modifiers
 /// ```rust
-/// use dotscope::metadata::signatures::{SignatureParameter, TypeSignature};
+/// use dotscope::metadata::signatures::{CustomModifier, SignatureParameter, TypeSignature};
 /// use dotscope::metadata::token::Token;
 ///
 /// # fn create_modified_parameter() {
 /// let marshalled_param = SignatureParameter {
 ///     modifiers: vec![
-///         Token::new(0x02000001),  // Marshalling modifier
+///         CustomModifier {
+///             is_required: false,
+///             modifier_type: Token::new(0x02000001),  // Marshalling modifier
+///         },
 ///     ],
 ///     by_ref: false,
 ///     base: TypeSignature::String,         // String with marshalling info
@@ -1834,13 +1890,16 @@ pub struct SignaturePointer {
 pub struct SignatureParameter {
     /// Custom modifiers that apply to this parameter.
     ///
-    /// A vector of metadata tokens referencing `TypeDef` or `TypeRef` entries
-    /// that specify additional constraints or annotations. Most parameters
-    /// have no custom modifiers (empty vector).
+    /// A collection of custom modifiers specifying additional constraints or annotations for the parameter.
+    /// Most parameters have no custom modifiers (empty vector).
+    ///
+    /// Each modifier can be either required (modreq) or optional (modopt):
+    /// - **Required Modifiers**: Must be understood for type compatibility
+    /// - **Optional Modifiers**: Can be safely ignored if not recognized
     ///
     /// # Modifier Types
-    /// - **Marshalling**: How to convert between managed and native types
-    /// - **Validation**: Parameter validation requirements
+    /// - **Marshalling**: How to convert between managed and native types (`modopt(In)`, `modopt(Out)`)
+    /// - **Validation**: Parameter validation requirements (`modreq(NotNull)`)
     /// - **Optimization**: Hints for compiler optimizations
     /// - **Platform**: OS or architecture-specific constraints
     ///
@@ -1849,7 +1908,7 @@ pub struct SignatureParameter {
     /// - COM interop calling convention requirements
     /// - Security annotations for parameter validation
     /// - Tool-specific metadata for static analysis
-    pub modifiers: Vec<Token>,
+    pub modifiers: CustomModifiers,
 
     /// Whether this parameter uses reference semantics.
     ///
@@ -2372,13 +2431,16 @@ pub struct SignatureMethod {
 ///
 /// ## Field with Custom Modifiers
 /// ```rust
-/// use dotscope::metadata::signatures::{SignatureField, TypeSignature};
+/// use dotscope::metadata::signatures::{CustomModifier, SignatureField, TypeSignature};
 /// use dotscope::metadata::token::Token;
 ///
 /// # fn create_modified_field() {
 /// let volatile_field = SignatureField {
 ///     modifiers: vec![
-///         Token::new(0x1B000001), // Hypothetical volatile modifier token
+///         CustomModifier {
+///             is_required: false,
+///             modifier_type: Token::new(0x1B000001), // Hypothetical volatile modifier token
+///         },
 ///     ],
 ///     base: TypeSignature::I4,
 /// };
@@ -2415,15 +2477,19 @@ pub struct SignatureMethod {
 pub struct SignatureField {
     /// Custom modifiers that apply to this field.
     ///
-    /// A vector of metadata tokens referencing `TypeDef` or `TypeRef` entries
-    /// that specify additional constraints, attributes, or behaviors for
+    /// A collection of custom modifiers specifying additional constraints, attributes, or behaviors for
     /// the field. Most fields have no custom modifiers (empty vector).
+    ///
+    /// Each modifier can be either required (modreq) or optional (modopt):
+    /// - **Required Modifiers**: Must be understood for type compatibility
+    /// - **Optional Modifiers**: Can be safely ignored if not recognized
     ///
     /// # Modifier Categories
     /// - **Layout Modifiers**: Control field alignment and packing
-    /// - **Threading Modifiers**: `volatile` for thread-safe access patterns
+    /// - **Threading Modifiers**: `modopt(IsVolatile)` for thread-safe access patterns
     /// - **Marshalling Modifiers**: Control interop type conversions
     /// - **Security Modifiers**: Access control and validation requirements
+    /// - **Const Modifiers**: `modreq(IsConst)` for immutable fields
     /// - **Tool Modifiers**: Compiler or analyzer-specific metadata
     ///
     /// # Common Scenarios
@@ -2431,13 +2497,7 @@ pub struct SignatureField {
     /// - Precise memory layout for interop structures
     /// - Thread-safe field access patterns
     /// - Platform-specific field requirements
-    ///
-    /// # Token References
-    /// Each token typically references:
-    /// - `TypeDef`: For custom modifier types defined in the same assembly
-    /// - `TypeRef`: For external modifier types (from other assemblies)
-    /// - `TypeSpec`: For complex generic modifier instantiations
-    pub modifiers: Vec<Token>,
+    pub modifiers: CustomModifiers,
     /// The type of data stored in this field.
     ///
     /// Specifies the .NET type that this field can hold. The type determines:
@@ -2611,13 +2671,16 @@ pub struct SignatureProperty {
 
     /// Custom modifiers that apply to this property.
     ///
-    /// A vector of metadata tokens referencing `TypeDef` or `TypeRef` entries
-    /// that specify additional constraints, attributes, or behaviors for
+    /// A collection of custom modifiers specifying additional constraints, attributes, or behaviors for
     /// the property. Most properties have no custom modifiers (empty vector).
     ///
+    /// Each modifier can be either required (modreq) or optional (modopt):
+    /// - **Required Modifiers**: Must be understood for type compatibility
+    /// - **Optional Modifiers**: Can be safely ignored if not recognized
+    ///
     /// # Modifier Applications
-    /// - **Threading**: Synchronization and thread-safety attributes
-    /// - **Validation**: Property value validation requirements
+    /// - **Threading**: Synchronization and thread-safety attributes (`modopt(IsVolatile)`)
+    /// - **Validation**: Property value validation requirements (`modreq(NotNull)`)
     /// - **Serialization**: Custom serialization behavior
     /// - **Interop**: Platform-specific property requirements
     /// - **Security**: Access control and permission requirements
@@ -2627,7 +2690,7 @@ pub struct SignatureProperty {
     /// - Thread-safe property access patterns
     /// - Properties with custom validation logic
     /// - Tool-specific metadata for static analysis
-    pub modifiers: Vec<Token>,
+    pub modifiers: CustomModifiers,
 
     /// The type of value this property represents.
     ///
@@ -2893,12 +2956,15 @@ pub struct SignatureLocalVariables {
 pub struct SignatureLocalVariable {
     /// Custom modifiers that apply to this local variable.
     ///
-    /// A vector of metadata tokens referencing `TypeDef` or `TypeRef` entries
-    /// that specify additional constraints, attributes, or behaviors for
+    /// A collection of custom modifiers specifying additional constraints, attributes, or behaviors for
     /// the local variable. Most variables have no custom modifiers (empty vector).
     ///
+    /// Each modifier can be either required (modreq) or optional (modopt):
+    /// - **Required Modifiers**: Must be understood for type compatibility
+    /// - **Optional Modifiers**: Can be safely ignored if not recognized
+    ///
     /// # Modifier Applications
-    /// - **Type Constraints**: Additional type safety requirements
+    /// - **Type Constraints**: Additional type safety requirements (`modreq(NotNull)`)
     /// - **Memory Layout**: Specific alignment or packing requirements
     /// - **Tool Metadata**: Debugger or profiler annotations
     /// - **Security**: Access control or validation attributes
@@ -2908,7 +2974,7 @@ pub struct SignatureLocalVariable {
     /// - Variables with debugging metadata
     /// - Variables with custom lifetime semantics
     /// - Tool-specific analysis annotations
-    pub modifiers: Vec<Token>,
+    pub modifiers: CustomModifiers,
 
     /// Whether this variable uses reference semantics.
     ///

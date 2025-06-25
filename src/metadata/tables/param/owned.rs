@@ -169,14 +169,14 @@ impl Param {
         self.is_by_ref.store(signature.by_ref, Ordering::Relaxed);
 
         for modifier in &signature.modifiers {
-            match types.get(modifier) {
+            match types.get(&modifier.modifier_type) {
                 Some(new_mod) => {
                     self.modifiers.push(new_mod.into());
                 }
                 None => {
                     return Err(malformed_error!(
                         "Failed to resolve modifier type - {}",
-                        modifier.value()
+                        modifier.modifier_type.value()
                     ))
                 }
             }

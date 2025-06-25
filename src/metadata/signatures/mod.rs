@@ -261,9 +261,13 @@
 //! The implementation handles all standard signature types and element types
 //! defined in the specification, including legacy formats for backward compatibility.
 
+mod builders;
+mod encoders;
 mod parser;
 mod types;
 
+pub use builders::*;
+pub use encoders::*;
 pub use parser::*;
 pub use types::*;
 
@@ -813,7 +817,13 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(result.base, TypeSignature::I4);
-        assert_eq!(result.modifiers, vec![Token::new(0x1B000010)]);
+        assert_eq!(
+            result.modifiers,
+            vec![crate::metadata::signatures::CustomModifier {
+                is_required: true,
+                modifier_type: Token::new(0x1B000010)
+            }]
+        );
 
         // Array field: string[] field
         let result = parse_field_signature(&[
@@ -918,5 +928,348 @@ mod tests {
         assert_eq!(result.generic_args.len(), 2);
         assert_eq!(result.generic_args[0], TypeSignature::I4);
         assert_eq!(result.generic_args[1], TypeSignature::String);
+    }
+
+    #[test]
+    fn test_method_signature_roundtrip() {
+        // Test simple void method
+        let signature = MethodSignatureBuilder::new()
+            .calling_convention_default()
+            .returns(TypeSignature::Void)
+            .build()
+            .unwrap();
+
+        let encoded = encode_method_signature(&signature).unwrap();
+        let reparsed = parse_method_signature(&encoded).unwrap();
+
+        assert_eq!(signature.has_this, reparsed.has_this);
+        assert_eq!(signature.explicit_this, reparsed.explicit_this);
+        assert_eq!(signature.default, reparsed.default);
+        assert_eq!(signature.vararg, reparsed.vararg);
+        assert_eq!(signature.return_type, reparsed.return_type);
+        assert_eq!(signature.params, reparsed.params);
+
+        // Test method with parameters
+        let signature = MethodSignatureBuilder::new()
+            .calling_convention_default()
+            .has_this(true)
+            .returns(TypeSignature::I4)
+            .param(TypeSignature::String)
+            .param(TypeSignature::I4)
+            .build()
+            .unwrap();
+
+        let encoded = encode_method_signature(&signature).unwrap();
+        let reparsed = parse_method_signature(&encoded).unwrap();
+
+        assert_eq!(signature.has_this, reparsed.has_this);
+        assert_eq!(signature.return_type, reparsed.return_type);
+        assert_eq!(signature.params.len(), reparsed.params.len());
+        assert_eq!(signature.params, reparsed.params);
+    }
+
+    #[test]
+    fn test_field_signature_roundtrip() {
+        // Test simple field
+        let signature = FieldSignatureBuilder::new()
+            .field_type(TypeSignature::I4)
+            .build()
+            .unwrap();
+
+        let encoded = encode_field_signature(&signature).unwrap();
+        let reparsed = parse_field_signature(&encoded).unwrap();
+
+        assert_eq!(signature.base, reparsed.base);
+        assert_eq!(signature.modifiers, reparsed.modifiers);
+
+        // Test field with array type
+        let signature = FieldSignatureBuilder::new()
+            .field_type(TypeSignature::SzArray(
+                crate::metadata::signatures::SignatureSzArray {
+                    modifiers: vec![],
+                    base: Box::new(TypeSignature::String),
+                },
+            ))
+            .build()
+            .unwrap();
+
+        let encoded = encode_field_signature(&signature).unwrap();
+        let reparsed = parse_field_signature(&encoded).unwrap();
+
+        assert_eq!(signature.base, reparsed.base);
+        assert_eq!(signature.modifiers, reparsed.modifiers);
+    }
+
+    #[test]
+    fn test_property_signature_roundtrip() {
+        // Test simple property
+        let signature = PropertySignatureBuilder::new()
+            .property_type(TypeSignature::String)
+            .build()
+            .unwrap();
+
+        let encoded = encode_property_signature(&signature).unwrap();
+        let reparsed = parse_property_signature(&encoded).unwrap();
+
+        assert_eq!(signature.has_this, reparsed.has_this);
+        assert_eq!(signature.base, reparsed.base);
+        assert_eq!(signature.params, reparsed.params);
+
+        // Test indexed property
+        let signature = PropertySignatureBuilder::new()
+            .has_this(true)
+            .property_type(TypeSignature::I4)
+            .param(TypeSignature::String)
+            .param(TypeSignature::I4)
+            .build()
+            .unwrap();
+
+        let encoded = encode_property_signature(&signature).unwrap();
+        let reparsed = parse_property_signature(&encoded).unwrap();
+
+        assert_eq!(signature.has_this, reparsed.has_this);
+        assert_eq!(signature.base, reparsed.base);
+        assert_eq!(signature.params.len(), reparsed.params.len());
+        assert_eq!(signature.params, reparsed.params);
+    }
+
+    #[test]
+    fn test_local_var_signature_roundtrip() {
+        // Test simple locals
+        let signature = LocalVariableSignatureBuilder::new()
+            .add_local(TypeSignature::I4)
+            .add_local(TypeSignature::String)
+            .build()
+            .unwrap();
+
+        let encoded = encode_local_var_signature(&signature).unwrap();
+        let reparsed = parse_local_var_signature(&encoded).unwrap();
+
+        assert_eq!(signature.locals.len(), reparsed.locals.len());
+        assert_eq!(signature.locals, reparsed.locals);
+
+        // Test locals with modifiers
+        let signature = LocalVariableSignatureBuilder::new()
+            .add_local(TypeSignature::I4)
+            .add_byref_local(TypeSignature::String)
+            .add_pinned_local(TypeSignature::Object)
+            .build()
+            .unwrap();
+
+        let encoded = encode_local_var_signature(&signature).unwrap();
+        let reparsed = parse_local_var_signature(&encoded).unwrap();
+
+        assert_eq!(signature.locals.len(), reparsed.locals.len());
+        assert_eq!(signature.locals, reparsed.locals);
+    }
+
+    #[test]
+    fn test_typespec_signature_roundtrip() {
+        // Test simple type specification
+        let signature = TypeSpecSignatureBuilder::new()
+            .type_signature(TypeSignature::String)
+            .build()
+            .unwrap();
+
+        let encoded = encode_typespec_signature(&signature).unwrap();
+        let reparsed = parse_type_spec_signature(&encoded).unwrap();
+
+        assert_eq!(signature.base, reparsed.base);
+
+        // Test byref type specification
+        let signature = TypeSpecSignatureBuilder::new()
+            .type_signature(TypeSignature::ByRef(Box::new(TypeSignature::I4)))
+            .build()
+            .unwrap();
+
+        let encoded = encode_typespec_signature(&signature).unwrap();
+        let reparsed = parse_type_spec_signature(&encoded).unwrap();
+
+        assert_eq!(signature.base, reparsed.base);
+    }
+
+    #[test]
+    fn test_complex_signature_roundtrips() {
+        // Test method with complex return type and parameters
+        let signature = MethodSignatureBuilder::new()
+            .calling_convention_default()
+            .has_this(true)
+            .returns(TypeSignature::SzArray(
+                crate::metadata::signatures::SignatureSzArray {
+                    modifiers: vec![],
+                    base: Box::new(TypeSignature::String),
+                },
+            ))
+            .param(TypeSignature::I4)
+            .param_by_ref(TypeSignature::Object)
+            .build()
+            .unwrap();
+
+        let encoded = encode_method_signature(&signature).unwrap();
+        let reparsed = parse_method_signature(&encoded).unwrap();
+
+        assert_eq!(signature.has_this, reparsed.has_this);
+        assert_eq!(signature.return_type, reparsed.return_type);
+        assert_eq!(signature.params.len(), reparsed.params.len());
+        assert_eq!(signature.params, reparsed.params);
+
+        // Test generic instantiation type specification
+        let list_token = Token::new(0x02000001);
+        let signature = TypeSpecSignatureBuilder::new()
+            .type_signature(TypeSignature::GenericInst(
+                Box::new(TypeSignature::Class(list_token)),
+                vec![TypeSignature::I4],
+            ))
+            .build()
+            .unwrap();
+
+        let encoded = encode_typespec_signature(&signature).unwrap();
+        let reparsed = parse_type_spec_signature(&encoded).unwrap();
+
+        assert_eq!(signature.base, reparsed.base);
+    }
+
+    #[test]
+    fn test_roundtrip_with_all_primitive_types() {
+        // Test all primitive types in method signatures
+        let primitives = vec![
+            TypeSignature::Void,
+            TypeSignature::Boolean,
+            TypeSignature::Char,
+            TypeSignature::I1,
+            TypeSignature::U1,
+            TypeSignature::I2,
+            TypeSignature::U2,
+            TypeSignature::I4,
+            TypeSignature::U4,
+            TypeSignature::I8,
+            TypeSignature::U8,
+            TypeSignature::R4,
+            TypeSignature::R8,
+            TypeSignature::String,
+            TypeSignature::Object,
+            TypeSignature::I,
+            TypeSignature::U,
+        ];
+
+        for primitive in primitives {
+            // Test as method return type (except void gets no parameters)
+            let mut builder = MethodSignatureBuilder::new()
+                .calling_convention_default()
+                .returns(primitive.clone());
+
+            // Add a parameter for non-void methods
+            if !matches!(primitive, TypeSignature::Void) {
+                builder = builder.param(TypeSignature::I4);
+            }
+
+            let signature = builder.build().unwrap();
+            let encoded = encode_method_signature(&signature).unwrap();
+            let reparsed = parse_method_signature(&encoded).unwrap();
+
+            assert_eq!(
+                signature.return_type, reparsed.return_type,
+                "Failed roundtrip for primitive return type: {:?}",
+                primitive
+            );
+
+            // Test as field type (skip void)
+            if !matches!(primitive, TypeSignature::Void) {
+                let field_sig = FieldSignatureBuilder::new()
+                    .field_type(primitive.clone())
+                    .build()
+                    .unwrap();
+
+                let encoded = encode_field_signature(&field_sig).unwrap();
+                let reparsed = parse_field_signature(&encoded).unwrap();
+
+                assert_eq!(
+                    field_sig.base, reparsed.base,
+                    "Failed roundtrip for primitive field type: {:?}",
+                    primitive
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_byref_parameters_comprehensive() {
+        // Test byref parameters across all signature types that support them
+
+        // Method signature with byref parameter
+        let method_sig = MethodSignatureBuilder::new()
+            .calling_convention_default()
+            .returns(TypeSignature::Void)
+            .param_by_ref(TypeSignature::I4)
+            .build()
+            .unwrap();
+
+        let encoded = encode_method_signature(&method_sig).unwrap();
+        let reparsed = parse_method_signature(&encoded).unwrap();
+
+        assert_eq!(method_sig.params[0].by_ref, reparsed.params[0].by_ref);
+        assert_eq!(method_sig.params[0].base, reparsed.params[0].base);
+
+        // Property signature with byref indexer parameter
+        let property_sig = PropertySignatureBuilder::new()
+            .has_this(true)
+            .property_type(TypeSignature::String)
+            .param_by_ref(TypeSignature::I4)
+            .build()
+            .unwrap();
+
+        let encoded = encode_property_signature(&property_sig).unwrap();
+        let reparsed = parse_property_signature(&encoded).unwrap();
+
+        assert_eq!(property_sig.params[0].by_ref, reparsed.params[0].by_ref);
+        assert_eq!(property_sig.params[0].base, reparsed.params[0].base);
+
+        println!("✓ All byref parameter types round-trip correctly");
+    }
+
+    #[test]
+    fn test_roundtrip_edge_cases() {
+        // Test empty local variable signature
+        let signature = LocalVariableSignatureBuilder::new().build().unwrap();
+        let encoded = encode_local_var_signature(&signature).unwrap();
+        let reparsed = parse_local_var_signature(&encoded).unwrap();
+        assert_eq!(signature.locals.len(), 0);
+        assert_eq!(reparsed.locals.len(), 0);
+
+        // Test method with many parameters
+        let mut builder = MethodSignatureBuilder::new()
+            .calling_convention_default()
+            .returns(TypeSignature::Void);
+
+        for i in 0..10 {
+            builder = builder.param(if i % 2 == 0 {
+                TypeSignature::I4
+            } else {
+                TypeSignature::String
+            });
+        }
+
+        let signature = builder.build().unwrap();
+        let encoded = encode_method_signature(&signature).unwrap();
+        let reparsed = parse_method_signature(&encoded).unwrap();
+
+        assert_eq!(signature.params.len(), 10);
+        assert_eq!(reparsed.params.len(), 10);
+        assert_eq!(signature.params, reparsed.params);
+
+        // Test property with no parameters (simple property)
+        let signature = PropertySignatureBuilder::new()
+            .has_this(true)
+            .property_type(TypeSignature::Object)
+            .build()
+            .unwrap();
+
+        let encoded = encode_property_signature(&signature).unwrap();
+        let reparsed = parse_property_signature(&encoded).unwrap();
+
+        assert_eq!(signature.has_this, reparsed.has_this);
+        assert_eq!(signature.base, reparsed.base);
+        assert_eq!(signature.params.len(), 0);
+        assert_eq!(reparsed.params.len(), 0);
     }
 }

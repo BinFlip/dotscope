@@ -528,7 +528,7 @@ mod tests {
         }
 
         let blobs = view.blobs().unwrap();
-        assert_eq!(blobs.get(0).unwrap(), &[]);
+        assert_eq!(blobs.get(0).unwrap(), &[] as &[u8]);
 
         let streams = view.streams();
         assert!(!streams.is_empty());

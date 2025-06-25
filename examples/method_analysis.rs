@@ -279,7 +279,17 @@ fn print_signature_parameter(param: &SignatureParameter, indent: &str) {
             param.modifiers.len()
         );
         for (i, modifier) in param.modifiers.iter().enumerate() {
-            println!("{}  [{}]: Token 0x{:08X}", indent, i, modifier.value());
+            println!(
+                "{}  [{}]: Token 0x{:08X} ({})",
+                indent,
+                i,
+                modifier.modifier_type.value(),
+                if modifier.is_required {
+                    "required"
+                } else {
+                    "optional"
+                }
+            );
         }
     }
 }

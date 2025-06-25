@@ -24,6 +24,11 @@ use std::collections::HashMap;
 use crate::{
     cilassembly::CilAssembly,
     metadata::{
+        signatures::{
+            encode_field_signature, encode_local_var_signature, encode_method_signature,
+            encode_property_signature, encode_typespec_signature, SignatureField,
+            SignatureLocalVariables, SignatureMethod, SignatureProperty, SignatureTypeSpec,
+        },
         tables::{AssemblyRefRaw, CodedIndex, TableDataOwned, TableId},
         token::Token,
     },
@@ -334,6 +339,112 @@ impl BuilderContext {
             .or_else(|| self.find_assembly_ref_by_name("System.Runtime"))
             .or_else(|| self.find_assembly_ref_by_name("System.Private.CoreLib"))
     }
+
+    /// Adds a method signature to the blob heap and returns its index.
+    ///
+    /// This encodes the method signature using the dedicated method signature encoder
+    /// from the signatures module. The encoder handles all ECMA-335 method signature
+    /// format requirements including calling conventions, parameter counts, and type encoding.
+    ///
+    /// # Arguments
+    ///
+    /// * `signature` - The method signature to encode and store
+    ///
+    /// # Returns
+    ///
+    /// The blob heap index that can be used to reference this signature.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// # use dotscope::metadata::signatures::*;
+    /// # let mut context: BuilderContext = todo!();
+    /// let signature = MethodSignatureBuilder::new()
+    ///     .calling_convention_default()
+    ///     .returns(TypeSignature::Void)
+    ///     .param(TypeSignature::I4)
+    ///     .build()?;
+    ///
+    /// let blob_index = context.add_method_signature(&signature)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn add_method_signature(&mut self, signature: &SignatureMethod) -> Result<u32> {
+        let encoded_data = encode_method_signature(signature)?;
+        self.add_blob(&encoded_data)
+    }
+
+    /// Adds a field signature to the blob heap and returns its index.
+    ///
+    /// This encodes the field signature using the dedicated field signature encoder
+    /// from the signatures module. The encoder handles ECMA-335 field signature format
+    /// requirements including custom modifiers and field type encoding.
+    ///
+    /// # Arguments
+    ///
+    /// * `signature` - The field signature to encode and store
+    ///
+    /// # Returns
+    ///
+    /// The blob heap index that can be used to reference this signature.
+    pub fn add_field_signature(&mut self, signature: &SignatureField) -> Result<u32> {
+        let encoded_data = encode_field_signature(signature)?;
+        self.add_blob(&encoded_data)
+    }
+
+    /// Adds a property signature to the blob heap and returns its index.
+    ///
+    /// This encodes the property signature using the dedicated property signature encoder
+    /// from the signatures module. The encoder handles ECMA-335 property signature format
+    /// requirements including instance/static properties and indexer parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `signature` - The property signature to encode and store
+    ///
+    /// # Returns
+    ///
+    /// The blob heap index that can be used to reference this signature.
+    pub fn add_property_signature(&mut self, signature: &SignatureProperty) -> Result<u32> {
+        let encoded_data = encode_property_signature(signature)?;
+        self.add_blob(&encoded_data)
+    }
+
+    /// Adds a local variable signature to the blob heap and returns its index.
+    ///
+    /// This encodes the local variable signature using the dedicated local variable encoder
+    /// from the signatures module. The encoder handles ECMA-335 local variable signature format
+    /// requirements including pinned and byref modifiers.
+    ///
+    /// # Arguments
+    ///
+    /// * `signature` - The local variable signature to encode and store
+    ///
+    /// # Returns
+    ///
+    /// The blob heap index that can be used to reference this signature.
+    pub fn add_local_var_signature(&mut self, signature: &SignatureLocalVariables) -> Result<u32> {
+        let encoded_data = encode_local_var_signature(signature)?;
+        self.add_blob(&encoded_data)
+    }
+
+    /// Adds a type specification signature to the blob heap and returns its index.
+    ///
+    /// This encodes the type specification signature using the dedicated type specification encoder
+    /// from the signatures module. Type specification signatures encode complex type signatures
+    /// for generic instantiations, arrays, pointers, and other complex types.
+    ///
+    /// # Arguments
+    ///
+    /// * `signature` - The type specification signature to encode and store
+    ///
+    /// # Returns
+    ///
+    /// The blob heap index that can be used to reference this signature.
+    pub fn add_typespec_signature(&mut self, signature: &SignatureTypeSpec) -> Result<u32> {
+        let encoded_data = encode_typespec_signature(signature)?;
+        self.add_blob(&encoded_data)
+    }
 }
 
 #[cfg(test)]
@@ -547,6 +658,100 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn test_builder_context_signature_integration() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
+
+            // Test signature placeholder methods work and return valid blob indices
+
+            // Create placeholder signatures for testing
+            use crate::metadata::signatures::{
+                FieldSignatureBuilder, LocalVariableSignatureBuilder, MethodSignatureBuilder,
+                PropertySignatureBuilder, TypeSignature, TypeSpecSignatureBuilder,
+            };
+
+            // Test method signature integration
+            let method_sig = MethodSignatureBuilder::new()
+                .calling_convention_default()
+                .returns(TypeSignature::Void)
+                .build()
+                .unwrap();
+            let method_blob_idx = context.add_method_signature(&method_sig).unwrap();
+            assert!(
+                method_blob_idx > 0,
+                "Method signature should return valid blob index"
+            );
+
+            // Test field signature integration
+            let field_sig = FieldSignatureBuilder::new()
+                .field_type(TypeSignature::String)
+                .build()
+                .unwrap();
+            let field_blob_idx = context.add_field_signature(&field_sig).unwrap();
+            assert!(
+                field_blob_idx > 0,
+                "Field signature should return valid blob index"
+            );
+            assert_ne!(
+                field_blob_idx, method_blob_idx,
+                "Different signatures should get different indices"
+            );
+
+            // Test property signature integration
+            let property_sig = PropertySignatureBuilder::new()
+                .property_type(TypeSignature::I4)
+                .build()
+                .unwrap();
+            let property_blob_idx = context.add_property_signature(&property_sig).unwrap();
+            assert!(
+                property_blob_idx > 0,
+                "Property signature should return valid blob index"
+            );
+
+            // Test local variable signature integration
+            let localvar_sig = LocalVariableSignatureBuilder::new()
+                .add_local(TypeSignature::I4)
+                .build()
+                .unwrap();
+            let localvar_blob_idx = context.add_local_var_signature(&localvar_sig).unwrap();
+            assert!(
+                localvar_blob_idx > 0,
+                "Local var signature should return valid blob index"
+            );
+
+            // Test type spec signature integration
+            let typespec_sig = TypeSpecSignatureBuilder::new()
+                .type_signature(TypeSignature::String)
+                .build()
+                .unwrap();
+            let typespec_blob_idx = context.add_typespec_signature(&typespec_sig).unwrap();
+            assert!(
+                typespec_blob_idx > 0,
+                "Type spec signature should return valid blob index"
+            );
+
+            // Verify all blob indices are unique
+            let indices = vec![
+                method_blob_idx,
+                field_blob_idx,
+                property_blob_idx,
+                localvar_blob_idx,
+                typespec_blob_idx,
+            ];
+            let mut unique_indices = indices.clone();
+            unique_indices.sort();
+            unique_indices.dedup();
+            assert_eq!(
+                indices.len(),
+                unique_indices.len(),
+                "All signature blob indices should be unique"
+            );
         }
     }
 }

@@ -590,7 +590,7 @@ fn update_cor20_header(
 
 /// Updates PE structure including checksums and relocations.
 ///
-/// Uses the [`crate::cilassembly::write::writers::pe`] module to perform
+/// Uses the [`crate::cilassembly::write::writers::PeWriter`] to perform
 /// final PE structure updates including checksums and relocation data.
 ///
 /// # Arguments

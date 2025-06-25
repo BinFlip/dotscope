@@ -38,7 +38,10 @@
 //! ```
 
 use crate::{
-    metadata::{signatures::SignatureMethod, signatures::TypeSignature, token::Token},
+    metadata::{
+        signatures::{CustomModifier, SignatureMethod, TypeSignature},
+        token::Token,
+    },
     Error, Result,
 };
 
@@ -291,17 +294,27 @@ impl TypeSignatureEncoder {
             }
 
             // Custom modifiers
-            TypeSignature::ModifiedRequired(tokens) => {
-                for token in tokens {
-                    buffer.push(0x1F); // ELEMENT_TYPE_CMOD_REQD
-                    Self::encode_typedefref_token(*token, buffer)?;
+            TypeSignature::ModifiedRequired(modifiers) => {
+                for modifier in modifiers {
+                    let modifier_type = if modifier.is_required {
+                        0x1F // ELEMENT_TYPE_CMOD_REQD
+                    } else {
+                        0x20 // ELEMENT_TYPE_CMOD_OPT
+                    };
+                    buffer.push(modifier_type);
+                    Self::encode_typedefref_token(modifier.modifier_type, buffer)?;
                 }
             }
 
-            TypeSignature::ModifiedOptional(tokens) => {
-                for token in tokens {
-                    buffer.push(0x20); // ELEMENT_TYPE_CMOD_OPT
-                    Self::encode_typedefref_token(*token, buffer)?;
+            TypeSignature::ModifiedOptional(modifiers) => {
+                for modifier in modifiers {
+                    let modifier_type = if modifier.is_required {
+                        0x1F // ELEMENT_TYPE_CMOD_REQD
+                    } else {
+                        0x20 // ELEMENT_TYPE_CMOD_OPT
+                    };
+                    buffer.push(modifier_type);
+                    Self::encode_typedefref_token(modifier.modifier_type, buffer)?;
                 }
             }
 
@@ -411,10 +424,15 @@ impl TypeSignatureEncoder {
     /// This is a simplified implementation that treats all modifiers as optional.
     /// A full implementation would need to distinguish between required and
     /// optional modifiers based on their semantic meaning.
-    fn encode_custom_modifiers(modifiers: &[Token], buffer: &mut Vec<u8>) -> Result<()> {
+    fn encode_custom_modifiers(modifiers: &[CustomModifier], buffer: &mut Vec<u8>) -> Result<()> {
         for modifier in modifiers {
-            buffer.push(0x20); // ELEMENT_TYPE_CMOD_OPT (simplified)
-            Self::encode_typedefref_token(*modifier, buffer)?;
+            let modifier_type = if modifier.is_required {
+                0x1F // ELEMENT_TYPE_CMOD_REQD
+            } else {
+                0x20 // ELEMENT_TYPE_CMOD_OPT
+            };
+            buffer.push(modifier_type);
+            Self::encode_typedefref_token(modifier.modifier_type, buffer)?;
         }
         Ok(())
     }

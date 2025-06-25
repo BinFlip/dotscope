@@ -525,17 +525,17 @@ impl TypeResolver {
                     Err(TypeNotFound(*token))
                 }
             }
-            TypeSignature::ModifiedRequired(tokens) => {
+            TypeSignature::ModifiedRequired(modifiers) => {
                 if let Some(parent_token) = self.token_parent {
                     if let Some(parent_type) = self.registry.get(&parent_token) {
-                        for &token in tokens {
-                            if let Some(mod_type) = self.registry.get(&token) {
+                        for modifier in modifiers {
+                            if let Some(mod_type) = self.registry.get(&modifier.modifier_type) {
                                 parent_type.modifiers.push(CilModifier {
-                                    required: true,
+                                    required: modifier.is_required,
                                     modifier: mod_type.into(),
                                 });
                             } else {
-                                return Err(TypeNotFound(token));
+                                return Err(TypeNotFound(modifier.modifier_type));
                             }
                         }
                         Ok(parent_type)
@@ -546,17 +546,17 @@ impl TypeResolver {
                     Err(TypeMissingParent)
                 }
             }
-            TypeSignature::ModifiedOptional(tokens) => {
+            TypeSignature::ModifiedOptional(modifiers) => {
                 if let Some(parent_token) = self.token_parent {
                     if let Some(parent_type) = self.registry.get(&parent_token) {
-                        for &token in tokens {
-                            if let Some(mod_type) = self.registry.get(&token) {
+                        for modifier in modifiers {
+                            if let Some(mod_type) = self.registry.get(&modifier.modifier_type) {
                                 parent_type.modifiers.push(CilModifier {
-                                    required: false,
+                                    required: modifier.is_required,
                                     modifier: mod_type.into(),
                                 });
                             } else {
-                                return Err(TypeNotFound(token));
+                                return Err(TypeNotFound(modifier.modifier_type));
                             }
                         }
                         Ok(parent_type)
@@ -633,10 +633,10 @@ impl TypeResolver {
                     .set(element_type.into())
                     .map_err(|_| malformed_error!("Array type base already set"))?;
 
-                for &token in &szarray.modifiers {
-                    if let Some(mod_type) = self.registry.get(&token) {
+                for modifier in &szarray.modifiers {
+                    if let Some(mod_type) = self.registry.get(&modifier.modifier_type) {
                         array_type.modifiers.push(CilModifier {
-                            required: true,
+                            required: modifier.is_required,
                             modifier: mod_type.into(),
                         });
                     }
@@ -665,10 +665,10 @@ impl TypeResolver {
                     .set(pointed_type.into())
                     .map_err(|_| malformed_error!("Pointer type base already set"))?;
 
-                for &token in &ptr.modifiers {
-                    if let Some(mod_type) = self.registry.get(&token) {
+                for modifier in &ptr.modifiers {
+                    if let Some(mod_type) = self.registry.get(&modifier.modifier_type) {
                         ptr_type.modifiers.push(CilModifier {
-                            required: true,
+                            required: modifier.is_required,
                             modifier: mod_type.into(),
                         });
                     }
@@ -982,7 +982,10 @@ mod tests {
         assert_eq!(pointed_type.name, "Int32");
 
         let mod_ptr_sig = TypeSignature::Ptr(SignaturePointer {
-            modifiers: vec![in_attr_token],
+            modifiers: vec![crate::metadata::signatures::CustomModifier {
+                is_required: false,
+                modifier_type: in_attr_token,
+            }],
             base: Box::new(TypeSignature::I4),
         });
 
@@ -1228,7 +1231,11 @@ mod tests {
 
         let mut resolver = TypeResolver::new(registry).with_parent(parent_token);
 
-        let req_mod_sig = TypeSignature::ModifiedRequired(vec![modifier_token]);
+        let req_mod_sig =
+            TypeSignature::ModifiedRequired(vec![crate::metadata::signatures::CustomModifier {
+                is_required: true,
+                modifier_type: modifier_token,
+            }]);
         let req_mod_type = resolver.resolve(&req_mod_sig).unwrap();
 
         assert_eq!(req_mod_type.token, parent_token);
@@ -1239,7 +1246,11 @@ mod tests {
             modifier_token
         );
 
-        let opt_mod_sig = TypeSignature::ModifiedOptional(vec![modifier_token]);
+        let opt_mod_sig =
+            TypeSignature::ModifiedOptional(vec![crate::metadata::signatures::CustomModifier {
+                is_required: false,
+                modifier_type: modifier_token,
+            }]);
         let opt_mod_type = resolver.resolve(&opt_mod_sig).unwrap();
 
         assert_eq!(opt_mod_type.token, parent_token);
@@ -1295,7 +1306,11 @@ mod tests {
 
         // Test TypeMissingParent error
         let mod_token = Token::new(0x01000001);
-        let mod_sig = TypeSignature::ModifiedRequired(vec![mod_token]);
+        let mod_sig =
+            TypeSignature::ModifiedRequired(vec![crate::metadata::signatures::CustomModifier {
+                is_required: true,
+                modifier_type: mod_token,
+            }]);
         let result = resolver.resolve(&mod_sig);
 
         assert!(result.is_err());
