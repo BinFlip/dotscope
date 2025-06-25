@@ -1,12 +1,12 @@
 //! TypeDefBuilder for creating type definitions.
 //!
-//! This module provides [`TypeDefBuilder`] for creating TypeDef table entries
+//! This module provides [`crate::metadata::tables::typedef::TypeDefBuilder`] for creating TypeDef table entries
 //! with a fluent API. The TypeDef table defines types (classes, interfaces,
 //! value types, enums) within the current module.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{CodedIndex, TableDataOwned, TableId, TypeDefRaw},
         token::Token,
     },
@@ -21,14 +21,13 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
-/// # use dotscope::{CilAssembly, CilAssemblyView};
-/// # use dotscope::metadata::cilassembly::BuilderContext;
+/// ```rust,ignore
+/// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::{CodedIndex, TableId, TypeDefBuilder};
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create a simple class
 /// let my_class = TypeDefBuilder::new()
@@ -59,7 +58,7 @@ impl TypeDefBuilder {
     ///
     /// # Returns
     ///
-    /// A new [`TypeDefBuilder`] ready for configuration.
+    /// A new [`crate::metadata::tables::typedef::TypeDefBuilder`] ready for configuration.
     pub fn new() -> Self {
         Self {
             name: None,
@@ -203,7 +202,7 @@ impl TypeDefBuilder {
     ///
     /// # Returns
     ///
-    /// The [`Token`] for the newly created TypeDef entry.
+    /// The [`crate::metadata::token::Token`] for the newly created TypeDef entry.
     ///
     /// # Errors
     ///
@@ -254,10 +253,9 @@ impl TypeDefBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
-        tables::TypeAttributes,
+        metadata::{cilassemblyview::CilAssemblyView, tables::TypeAttributes},
     };
     use std::path::PathBuf;
 
@@ -265,8 +263,8 @@ mod tests {
     fn test_typedef_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let token = TypeDefBuilder::new()
                 .name("TestClass")
@@ -285,8 +283,8 @@ mod tests {
     fn test_typedef_builder_interface() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let token = TypeDefBuilder::new()
                 .name("ITestInterface")
@@ -304,8 +302,8 @@ mod tests {
     fn test_typedef_builder_value_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let token = TypeDefBuilder::new()
                 .name("TestStruct")
@@ -323,8 +321,8 @@ mod tests {
     fn test_typedef_builder_with_base_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let base_type = CodedIndex::new(TableId::TypeRef, 1); // Assume System.Object
             let token = TypeDefBuilder::new()
@@ -344,8 +342,8 @@ mod tests {
     fn test_typedef_builder_missing_name() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = TypeDefBuilder::new()
                 .namespace("TestNamespace")
@@ -361,8 +359,8 @@ mod tests {
     fn test_typedef_builder_global_namespace() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let token = TypeDefBuilder::new()
                 .name("GlobalClass")

@@ -1,13 +1,13 @@
 //! FieldBuilder for creating field definitions.
 //!
-//! This module provides [`FieldBuilder`] for creating Field table entries
+//! This module provides [`crate::metadata::tables::field::FieldBuilder`] for creating Field table entries
 //! with a fluent API. Fields define data members for types including instance
 //! fields, static fields, constants, and literals with their associated types
 //! and characteristics.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{FieldRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -23,14 +23,13 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
-/// # use dotscope::{CilAssembly, CilAssemblyView};
-/// # use dotscope::metadata::cilassembly::BuilderContext;
+/// ```rust,ignore
+/// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::FieldBuilder;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create a field signature for System.String
 /// let string_signature = &[0x12]; // ELEMENT_TYPE_STRING
@@ -60,7 +59,7 @@ impl FieldBuilder {
     ///
     /// # Returns
     ///
-    /// A new [`FieldBuilder`] instance ready for configuration.
+    /// A new [`crate::metadata::tables::field::FieldBuilder`] instance ready for configuration.
     pub fn new() -> Self {
         Self {
             name: None,
@@ -150,7 +149,7 @@ impl FieldBuilder {
     ///
     /// # Returns
     ///
-    /// A [`Token`] representing the newly created field, or an error if
+    /// A [`crate::metadata::token::Token`] representing the newly created field, or an error if
     /// validation fails or required fields are missing.
     ///
     /// # Errors
@@ -212,10 +211,8 @@ impl FieldBuilder {
 mod tests {
     use super::*;
     use crate::{
-        metadata::{
-            cilassembly::{BuilderContext, CilAssembly},
-            cilassemblyview::CilAssemblyView,
-        },
+        cilassembly::{BuilderContext, CilAssembly},
+        metadata::cilassemblyview::CilAssemblyView,
         prelude::FieldAttributes,
     };
     use std::path::PathBuf;
@@ -224,13 +221,13 @@ mod tests {
     fn test_field_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
+            let assembly = CilAssembly::new(view);
 
             // Check existing Field table count
             let existing_field_count = assembly.original_table_row_count(TableId::Field);
             let expected_rid = existing_field_count + 1;
 
-            let mut context = BuilderContext::new(&mut assembly);
+            let mut context = BuilderContext::new(assembly);
 
             // Create a field signature for System.String (ELEMENT_TYPE_STRING = 0x0E)
             let string_signature = &[0x0E];
@@ -252,8 +249,8 @@ mod tests {
     fn test_field_builder_with_attributes() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Create an int32 signature (ELEMENT_TYPE_I4 = 0x08)
             let int32_signature = &[0x08];
@@ -277,8 +274,8 @@ mod tests {
     fn test_field_builder_literal_field() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Create a boolean signature (ELEMENT_TYPE_BOOLEAN = 0x02)
             let bool_signature = &[0x02];
@@ -302,8 +299,8 @@ mod tests {
     fn test_field_builder_missing_name() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = FieldBuilder::new()
                 .flags(FieldAttributes::PRIVATE)
@@ -319,8 +316,8 @@ mod tests {
     fn test_field_builder_missing_flags() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = FieldBuilder::new()
                 .name("testField")
@@ -336,8 +333,8 @@ mod tests {
     fn test_field_builder_missing_signature() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = FieldBuilder::new()
                 .name("testField")
@@ -353,8 +350,8 @@ mod tests {
     fn test_field_builder_multiple_fields() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let signature = &[0x08]; // int32
 

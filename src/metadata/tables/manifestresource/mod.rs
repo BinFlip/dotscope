@@ -55,7 +55,7 @@ pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;
 
-/// Concurrent map for storing `ManifestResource` entries indexed by [`Token`].
+/// Concurrent map for storing `ManifestResource` entries indexed by [`crate::metadata::token::Token`].
 ///
 /// This thread-safe map enables efficient lookup of resources by their
 /// associated tokens during metadata processing and runtime resource access.

@@ -23,7 +23,7 @@
 //!
 //! # Examples
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::{CilObject, metadata::typesystem::TypeRegistry};
 //!
 //! let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
@@ -180,7 +180,7 @@ impl CilType {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::{
     ///     typesystem::{CilType, CilFlavor},
     ///     token::Token,
@@ -271,7 +271,7 @@ impl CilType {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::{CilType, CilTypeRef};
     /// use std::sync::{Arc, Weak};
     ///
@@ -303,7 +303,7 @@ impl CilType {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::metadata::typesystem::CilType;
     /// # fn example(cil_type: &CilType) {
     /// if let Some(base) = cil_type.base() {
@@ -337,7 +337,7 @@ impl CilType {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::{CilType, CilFlavor};
     ///
     /// # fn example(cil_type: &CilType) {

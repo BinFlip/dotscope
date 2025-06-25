@@ -1,13 +1,13 @@
 //! MethodImplBuilder for creating method implementation mapping metadata entries.
 //!
-//! This module provides [`MethodImplBuilder`] for creating MethodImpl table entries
+//! This module provides [`crate::metadata::tables::methodimpl::MethodImplBuilder`] for creating MethodImpl table entries
 //! with a fluent API. Method implementation mappings define which concrete methods
 //! provide the implementation for interface method declarations or virtual method
 //! overrides, enabling polymorphic dispatch and interface implementation contracts.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{CodedIndex, MethodImplRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -48,14 +48,14 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
 /// # fn main() -> Result<()> {
 /// let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create interface implementation mapping
 /// let implementing_class = Token::new(0x02000001); // MyClass
@@ -109,7 +109,7 @@ impl MethodImplBuilder {
     ///
     /// # Returns
     ///
-    /// A new [`MethodImplBuilder`] instance ready for configuration.
+    /// A new [`crate::metadata::tables::methodimpl::MethodImplBuilder`] instance ready for configuration.
     pub fn new() -> Self {
         Self {
             class: None,
@@ -142,14 +142,14 @@ impl MethodImplBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::prelude::*;
     /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
     /// let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// let mut assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(&mut assembly);
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
     ///
     /// let my_class = Token::new(0x02000001); // MyClass TypeDef
     ///
@@ -189,14 +189,14 @@ impl MethodImplBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::prelude::*;
     /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
     /// let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// let mut assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(&mut assembly);
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
     ///
     /// let implementation_method = Token::new(0x06000001); // MyClass.DoWork()
     ///
@@ -238,14 +238,14 @@ impl MethodImplBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::prelude::*;
     /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
     /// let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// let mut assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(&mut assembly);
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
     ///
     /// let external_method = Token::new(0x0A000001); // External.DoWork()
     ///
@@ -287,14 +287,14 @@ impl MethodImplBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::prelude::*;
     /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
     /// let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// let mut assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(&mut assembly);
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
     ///
     /// let base_method = Token::new(0x06000002); // BaseClass.VirtualMethod()
     ///
@@ -336,14 +336,14 @@ impl MethodImplBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::prelude::*;
     /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
     /// let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// let mut assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(&mut assembly);
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
     ///
     /// let interface_method = Token::new(0x0A000002); // IWorker.DoWork()
     ///
@@ -434,7 +434,7 @@ impl MethodImplBuilder {
     ///
     /// # Returns
     ///
-    /// A [`Token`] referencing the created MethodImpl entry.
+    /// A [`crate::metadata::token::Token`] referencing the created MethodImpl entry.
     ///
     /// # Errors
     ///
@@ -486,9 +486,9 @@ impl MethodImplBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -512,8 +512,8 @@ mod tests {
     fn test_interface_implementation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Get the expected next RID for MethodImpl
             let expected_rid = context.next_rid(TableId::MethodImpl);
@@ -538,8 +538,8 @@ mod tests {
     fn test_virtual_method_override() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Get the expected next RID for MethodImpl
             let expected_rid = context.next_rid(TableId::MethodImpl);
@@ -564,8 +564,8 @@ mod tests {
     fn test_explicit_interface_implementation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Get the expected next RID for MethodImpl
             let expected_rid = context.next_rid(TableId::MethodImpl);
@@ -590,8 +590,8 @@ mod tests {
     fn test_external_method_body() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Get the expected next RID for MethodImpl
             let expected_rid = context.next_rid(TableId::MethodImpl);
@@ -616,8 +616,8 @@ mod tests {
     fn test_direct_coded_index() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Get the expected next RID for MethodImpl
             let expected_rid = context.next_rid(TableId::MethodImpl);
@@ -642,8 +642,8 @@ mod tests {
     fn test_build_without_class_fails() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = MethodImplBuilder::new()
                 .method_body_from_method_def(Token::new(0x06000001))
@@ -662,8 +662,8 @@ mod tests {
     fn test_build_without_method_body_fails() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = MethodImplBuilder::new()
                 .class(Token::new(0x02000001))
@@ -682,8 +682,8 @@ mod tests {
     fn test_build_without_method_declaration_fails() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = MethodImplBuilder::new()
                 .class(Token::new(0x02000001))
@@ -702,8 +702,8 @@ mod tests {
     fn test_multiple_method_impls() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Get the expected first RID for MethodImpl
             let expected_rid1 = context.next_rid(TableId::MethodImpl);

@@ -81,7 +81,7 @@ pub struct ParamRaw {
     ///
     /// 2-byte bitmask defining parameter characteristics including direction,
     /// optional status, default values, and marshalling information.
-    /// See [`ParamAttributes`](crate::metadata::tables::ParamAttributes) for flag definitions.
+    /// See [`crate::metadata::tables::ParamAttributes`] for flag definitions.
     pub flags: u32,
 
     /// Parameter sequence number defining order in method signature.

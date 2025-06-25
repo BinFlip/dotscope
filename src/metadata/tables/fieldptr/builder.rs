@@ -1,6 +1,6 @@
 //! Builder for constructing `FieldPtr` table entries
 //!
-//! This module provides the [`FieldPtrBuilder`] which enables fluent construction
+//! This module provides the [`crate::metadata::tables::fieldptr::FieldPtrBuilder`] which enables fluent construction
 //! of `FieldPtr` metadata table entries. The builder follows the established
 //! pattern used across all table builders in the library.
 //!
@@ -17,8 +17,8 @@
 //! ```
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{FieldPtrRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -179,9 +179,9 @@ impl Default for FieldPtrBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -207,8 +207,8 @@ mod tests {
 
     #[test]
     fn test_fieldptr_builder_basic() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = FieldPtrBuilder::new()
             .field(1)
             .build(&mut context)
@@ -221,8 +221,8 @@ mod tests {
 
     #[test]
     fn test_fieldptr_builder_reordering() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = FieldPtrBuilder::new()
             .field(10) // Point to later field for reordering
             .build(&mut context)
@@ -235,8 +235,8 @@ mod tests {
 
     #[test]
     fn test_fieldptr_builder_missing_field() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = FieldPtrBuilder::new().build(&mut context);
 
         assert!(result.is_err());
@@ -268,8 +268,8 @@ mod tests {
 
     #[test]
     fn test_fieldptr_builder_fluent_interface() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test method chaining
         let token = FieldPtrBuilder::new()
@@ -284,8 +284,8 @@ mod tests {
 
     #[test]
     fn test_fieldptr_builder_multiple_builds() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Build first pointer
         let token1 = FieldPtrBuilder::new()
@@ -315,8 +315,8 @@ mod tests {
 
     #[test]
     fn test_fieldptr_builder_large_field_rid() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = FieldPtrBuilder::new()
             .field(0xFFFF) // Large Field RID
             .build(&mut context)
@@ -329,8 +329,8 @@ mod tests {
 
     #[test]
     fn test_fieldptr_builder_field_ordering_scenario() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Simulate field reordering: logical order 1,2,3 -> physical order 3,1,2
         let logical_to_physical = [(1, 3), (2, 1), (3, 2)];
@@ -355,8 +355,8 @@ mod tests {
 
     #[test]
     fn test_fieldptr_builder_zero_field() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test with field 0 (typically invalid but should not cause builder to fail)
         let result = FieldPtrBuilder::new().field(0).build(&mut context);

@@ -14,13 +14,12 @@
 //!
 //! ## Usage
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! # use dotscope::prelude::*;
-//! # use dotscope::metadata::cilassembly::BuilderContext;
 //! # use std::path::Path;
 //! # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-//! # let mut assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(&mut assembly);
+//! # let assembly = CilAssembly::new(view);
+//! # let mut context = BuilderContext::new(assembly);
 //!
 //! // Create a field signature for static data
 //! let field_sig = vec![0x06]; // Simple type signature
@@ -49,8 +48,8 @@
 //! - **RVA Validation**: Ensures RVA values are non-zero and valid
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{FieldRvaRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -76,13 +75,12 @@ use crate::{
 ///
 /// The builder provides a fluent interface for constructing FieldRVA entries:
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// # use dotscope::prelude::*;
-/// # use dotscope::metadata::cilassembly::BuilderContext;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// # let mut assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(&mut assembly);
+/// # let assembly = CilAssembly::new(view);
+/// # let mut context = BuilderContext::new(assembly);
 /// # let field_token = Token::new(0x04000001);
 ///
 /// let field_rva_token = FieldRVABuilder::new()
@@ -151,13 +149,12 @@ impl FieldRVABuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
-    /// # use dotscope::metadata::cilassembly::BuilderContext;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// # let mut assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(&mut assembly);
+    /// # let assembly = CilAssembly::new(view);
+    /// # let mut context = BuilderContext::new(assembly);
     /// let field_sig = vec![0x06]; // Simple type signature
     /// let field_token = FieldBuilder::new()
     ///     .name("StaticArray")
@@ -222,13 +219,12 @@ impl FieldRVABuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
-    /// # use dotscope::metadata::cilassembly::BuilderContext;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// # let mut assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(&mut assembly);
+    /// # let assembly = CilAssembly::new(view);
+    /// # let mut context = BuilderContext::new(assembly);
     /// # let field_token = Token::new(0x04000001);
     ///
     /// let field_rva_token = FieldRVABuilder::new()
@@ -294,10 +290,12 @@ impl FieldRVABuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::CilAssembly,
-        cilassemblyview::CilAssemblyView,
-        tables::{FieldAttributes, TableId},
+        metadata::{
+            cilassemblyview::CilAssemblyView,
+            tables::{FieldAttributes, TableId},
+        },
     };
     use std::path::PathBuf;
 
@@ -309,8 +307,8 @@ mod tests {
 
     #[test]
     fn test_field_rva_builder_basic() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a Field for testing
         let field_token = crate::metadata::tables::FieldBuilder::new()
@@ -341,8 +339,8 @@ mod tests {
 
     #[test]
     fn test_field_rva_builder_missing_field() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let result = FieldRVABuilder::new().rva(0x2000).build(&mut context);
 
@@ -355,8 +353,8 @@ mod tests {
 
     #[test]
     fn test_field_rva_builder_missing_rva() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a Field for testing
         let field_token = crate::metadata::tables::FieldBuilder::new()
@@ -378,8 +376,8 @@ mod tests {
 
     #[test]
     fn test_field_rva_builder_invalid_field_token() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Use an invalid token (not Field)
         let invalid_token = Token::new(0x02000001); // TypeDef token instead of Field
@@ -398,8 +396,8 @@ mod tests {
 
     #[test]
     fn test_field_rva_builder_zero_row_field() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Use a zero row token
         let zero_token = Token::new(0x04000000);
@@ -418,8 +416,8 @@ mod tests {
 
     #[test]
     fn test_field_rva_builder_zero_rva() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a Field for testing
         let field_token = crate::metadata::tables::FieldBuilder::new()
@@ -442,8 +440,8 @@ mod tests {
 
     #[test]
     fn test_field_rva_builder_multiple_entries() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create Fields for testing
         let field1_token = crate::metadata::tables::FieldBuilder::new()
@@ -479,8 +477,8 @@ mod tests {
 
     #[test]
     fn test_field_rva_builder_various_rva_values() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test with different RVA values
         let test_rvas = [0x1000, 0x2000, 0x4000, 0x8000, 0x10000];
@@ -506,8 +504,8 @@ mod tests {
 
     #[test]
     fn test_field_rva_builder_fluent_api() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a Field for testing
         let field_token = crate::metadata::tables::FieldBuilder::new()

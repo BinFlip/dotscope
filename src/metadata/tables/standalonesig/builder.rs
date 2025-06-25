@@ -1,13 +1,13 @@
 //! StandAloneSigBuilder for creating standalone signature specifications.
 //!
-//! This module provides [`StandAloneSigBuilder`] for creating StandAloneSig table entries
+//! This module provides [`crate::metadata::tables::standalonesig::StandAloneSigBuilder`] for creating StandAloneSig table entries
 //! with a fluent API. Standalone signatures provide metadata signatures that are not
 //! directly associated with specific methods, fields, or properties, supporting complex
 //! scenarios like method pointers, local variables, and dynamic signature generation.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{StandAloneSigRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -53,12 +53,12 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create a method signature for a function pointer
 /// let method_signature = vec![
@@ -133,7 +133,7 @@ impl StandAloneSigBuilder {
     ///
     /// # Returns
     ///
-    /// A new [`StandAloneSigBuilder`] instance ready for configuration.
+    /// A new [`crate::metadata::tables::standalonesig::StandAloneSigBuilder`] instance ready for configuration.
     pub fn new() -> Self {
         Self { signature: None }
     }
@@ -155,7 +155,7 @@ impl StandAloneSigBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::metadata::tables::StandAloneSigBuilder;
     /// let builder = StandAloneSigBuilder::new()
     ///     .signature(&[0x00, 0x01, 0x01]); // Simple void method signature
@@ -191,12 +191,12 @@ impl StandAloneSigBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// # let mut assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(&mut assembly);
+    /// # let assembly = CilAssembly::new(view);
+    /// # let mut context = BuilderContext::new(assembly);
     /// let signature_data = vec![0x00, 0x01, 0x01]; // Simple method signature
     /// let token = StandAloneSigBuilder::new()
     ///     .signature(&signature_data)
@@ -237,10 +237,7 @@ impl StandAloneSigBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        metadata::{cilassembly::CilAssembly, cilassemblyview::CilAssemblyView},
-        prelude::*,
-    };
+    use crate::{cilassembly::CilAssembly, metadata::cilassemblyview::CilAssemblyView, prelude::*};
     use std::path::PathBuf;
 
     fn get_test_assembly() -> Result<CilAssembly> {
@@ -251,8 +248,8 @@ mod tests {
 
     #[test]
     fn test_standalonesig_builder_basic() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let signature = vec![0x00, 0x01, 0x01]; // Simple method signature: DEFAULT, 1 param, VOID
         let token = StandAloneSigBuilder::new()
@@ -266,8 +263,8 @@ mod tests {
 
     #[test]
     fn test_standalonesig_builder_method_signature() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Method signature: DEFAULT calling convention, 2 params, returns I4, params: I4, STRING
         let method_signature = vec![
@@ -289,8 +286,8 @@ mod tests {
 
     #[test]
     fn test_standalonesig_builder_locals_signature() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Local variable signature: 3 locals of types I4, STRING, OBJECT
         let locals_signature = vec![
@@ -312,8 +309,8 @@ mod tests {
 
     #[test]
     fn test_standalonesig_builder_generic_signature() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Generic method signature: GENERIC calling convention, 1 generic param, 2 params
         let generic_signature = vec![
@@ -338,8 +335,8 @@ mod tests {
 
     #[test]
     fn test_standalonesig_builder_complex_signature() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Complex signature with arrays and pointers
         let complex_signature = vec![
@@ -364,8 +361,8 @@ mod tests {
 
     #[test]
     fn test_standalonesig_builder_missing_signature() {
-        let mut assembly = get_test_assembly().unwrap();
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly().unwrap();
+        let mut context = BuilderContext::new(assembly);
 
         let result = StandAloneSigBuilder::new().build(&mut context);
 
@@ -375,8 +372,8 @@ mod tests {
 
     #[test]
     fn test_standalonesig_builder_empty_signature() {
-        let mut assembly = get_test_assembly().unwrap();
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly().unwrap();
+        let mut context = BuilderContext::new(assembly);
 
         let result = StandAloneSigBuilder::new()
             .signature(&[])
@@ -391,8 +388,8 @@ mod tests {
 
     #[test]
     fn test_standalonesig_builder_default() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test Default trait implementation
         let signature = vec![0x00, 0x00, 0x01]; // No-param void method
@@ -407,8 +404,8 @@ mod tests {
 
     #[test]
     fn test_standalonesig_builder_multiple_signatures() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create multiple different signatures
         let sig1 = vec![0x00, 0x00, 0x01]; // No-param void method

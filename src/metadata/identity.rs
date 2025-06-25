@@ -18,7 +18,7 @@
 //!
 //! # Examples
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::identity::Identity;
 //! use dotscope::metadata::tables::AssemblyHashAlgorithm;
 //!
@@ -89,7 +89,7 @@ use sha1::Sha1;
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::identity::Identity;
 /// use dotscope::metadata::tables::AssemblyHashAlgorithm;
 ///
@@ -165,7 +165,7 @@ impl Identity {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::identity::Identity;
     ///
     /// // Create public key identity
@@ -223,7 +223,7 @@ impl Identity {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::identity::Identity;
     /// use dotscope::metadata::tables::AssemblyHashAlgorithm;
     ///

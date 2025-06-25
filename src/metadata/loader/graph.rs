@@ -1,21 +1,150 @@
-//! Loader Dependency Graph Module
+//! Dependency graph management for parallel metadata table loading.
 //!
-//! This module defines the [`crate::metadata::loader::graph::LoaderGraph`] struct, which models the dependencies between metadata table loaders as a directed graph.
-//! It provides methods for adding loaders, building dependency relationships, checking for cycles, and producing a topological execution plan for parallel loading.
+//! This module provides sophisticated dependency tracking and execution planning for .NET metadata
+//! table loaders. The [`crate::metadata::loader::graph::LoaderGraph`] enables efficient parallel
+//! loading by analyzing inter-table dependencies, detecting cycles, and generating optimal
+//! execution plans that maximize concurrency while respecting load order constraints.
 //!
 //! # Architecture
 //!
-//! The dependency graph system enables efficient parallel loading of .NET metadata tables by:
-//! - **Dependency Tracking**: Maintaining bidirectional dependency relationships between [`crate::metadata::tables::TableId`] entries
-//! - **Cycle Detection**: Preventing circular dependencies that would cause loading deadlocks
-//! - **Parallel Execution**: Organizing loaders into execution levels where all loaders in the same level can run concurrently
-//! - **Memory Efficiency**: Using [`std::collections::HashMap`] and [`std::collections::HashSet`] for O(1) lookups
+//! The dependency graph system implements a multi-stage approach to parallel loading coordination:
+//!
+//! ## Core Components
+//!
+//! - **Dependency Analysis**: Bidirectional relationship tracking between metadata tables
+//! - **Cycle Detection**: Comprehensive validation using depth-first search algorithms
+//! - **Topological Ordering**: Level-based execution planning for maximum parallelism
+//! - **Load Coordination**: Safe execution plan generation for multi-threaded loading
+//!
+//! ## Graph Structure
+//!
+//! The dependency graph maintains three core data structures:
+//! - **Loaders Map**: Associates [`crate::metadata::tables::TableId`] with loader implementations
+//! - **Dependencies Map**: Forward dependency tracking (what each table depends on)
+//! - **Dependents Map**: Reverse dependency tracking (what depends on each table)
+//!
+//! # Key Components
+//!
+//! - [`crate::metadata::loader::graph::LoaderGraph`] - Main dependency graph implementation
+//! - Bidirectional dependency relationship management
+//! - Kahn's algorithm-based topological sorting for execution planning
+//! - Comprehensive cycle detection with detailed error reporting
+//!
+//! # Dependency Management
+//!
+//! The loader dependency system manages complex relationships between .NET metadata tables:
+//!
+//! ## Loading Phases
+//!
+//! 1. **Independent Tables**: Assembly, Module, basic reference tables (Level 0)
+//! 2. **Simple Dependencies**: TypeRef, basic field/method tables (Level 1)
+//! 3. **Complex Types**: TypeDef with method/field relationships (Level 2)
+//! 4. **Advanced Structures**: Generic parameters, interfaces, nested types (Level 3+)
+//! 5. **Cross-References**: Custom attributes, security attributes (Final Levels)
+//!
+//! ## Parallel Execution Strategy
+//!
+//! The graph enables efficient parallel loading through level-based execution:
+//! - **Intra-Level Parallelism**: All loaders within the same level execute concurrently
+//! - **Inter-Level Synchronization**: Complete all level N loaders before starting level N+1
+//! - **Dependency Satisfaction**: Ensures all dependencies are resolved before dependent loading
+//! - **Deadlock Prevention**: Cycle detection prevents circular dependency deadlocks
+//!
+//! # Usage Examples
+//!
+//! ## Basic Graph Construction
+//!
+//! ```rust,ignore
+//! use dotscope::metadata::loader::graph::LoaderGraph;
+//! use dotscope::metadata::loader::MetadataLoader;
+//!
+//! // Create dependency graph
+//! let mut graph = LoaderGraph::new();
+//!
+//! # fn get_loaders() -> Vec<Box<dyn MetadataLoader>> { vec![] }
+//! let loaders = get_loaders();
+//!
+//! // Register all metadata loaders
+//! for loader in &loaders {
+//!     graph.add_loader(loader.as_ref());
+//! }
+//!
+//! // Build dependency relationships and validate
+//! graph.build_relationships()?;
+//!
+//! // Generate execution plan for parallel loading
+//! let execution_levels = graph.topological_levels()?;
+//! println!("Execution plan has {} levels", execution_levels.len());
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! ## Parallel Execution Planning
+//!
+//! ```rust,ignore
+//! use dotscope::metadata::loader::graph::LoaderGraph;
+//!
+//! # fn example_execution_planning(graph: LoaderGraph) -> dotscope::Result<()> {
+//! // Generate optimal execution plan
+//! let levels = graph.topological_levels()?;
+//!
+//! // Execute each level in parallel
+//! for (level_num, level_loaders) in levels.iter().enumerate() {
+//!     println!("Level {}: {} loaders can run in parallel",
+//!              level_num, level_loaders.len());
+//!     
+//!     // All loaders in this level can execute concurrently
+//!     for loader in level_loaders {
+//!         println!("  - {:?} (ready to execute)", loader.table_id());
+//!     }
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Debug Visualization
+//!
+//! ```rust,ignore
+//! use dotscope::metadata::loader::graph::LoaderGraph;
+//!
+//! # fn debug_example(graph: LoaderGraph) {
+//! // Generate detailed execution plan for debugging
+//! let execution_plan = graph.dump_execution_plan();
+//! println!("Complete Execution Plan:\n{}", execution_plan);
+//!
+//! // Example output:
+//! // Level 0: [
+//! //   Assembly (depends on: )
+//! //   Module (depends on: )
+//! // ]
+//! // Level 1: [
+//! //   TypeRef (depends on: Assembly, Module)
+//! //   MethodDef (depends on: Module)
+//! // ]
+//! # }
+//! ```
+//!
+//! # Error Handling
+//!
+//! The graph system provides comprehensive error detection and reporting:
+//!
+//! ## Validation Errors
+//! - **Missing Dependencies**: Loaders reference tables without corresponding loaders
+//! - **Circular Dependencies**: Dependency cycles that would cause deadlocks
+//! - **Graph Inconsistencies**: Internal state corruption or invalid configurations
+//!
+//! ## Debug Features
+//! - Detailed cycle detection with specific table identification
+//! - Execution plan validation in debug builds
+//! - Comprehensive error messages for troubleshooting
+//!
 //!
 //! # Thread Safety
 //!
-//! The [`crate::metadata::loader::graph::LoaderGraph`] is not thread-safe for mutations and should only be constructed
-//! from a single thread. However, the execution plans it generates can safely coordinate parallel
-//! loader execution across multiple threads.
+//! The [`crate::metadata::loader::graph::LoaderGraph`] has specific thread safety characteristics:
+//! - **Construction Phase**: Not thread-safe, must be built from single thread
+//! - **Execution Phase**: Generated plans are thread-safe for coordination
+//! - **Read-Only Operations**: Safe concurrent access after relationship building
+//! - **Loader References**: Maintains safe references throughout execution lifecycle
 //!
 //! # Integration
 //!
@@ -23,6 +152,11 @@
 //! - [`crate::metadata::loader`] - MetadataLoader trait and parallel execution coordination
 //! - [`crate::metadata::tables::TableId`] - Table identification for dependency relationships
 //! - [`crate::metadata::loader::context::LoaderContext`] - Execution context for parallel loading
+//! - [`crate::Error`] - Comprehensive error handling for graph validation failures
+//!
+//! # Standards Compliance
+//!
+//! - **ECMA-335**: Respects .NET metadata table interdependency requirements
 //!
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;

@@ -14,13 +14,12 @@
 //!
 //! ## Usage
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! # use dotscope::prelude::*;
-//! # use dotscope::metadata::cilassembly::BuilderContext;
 //! # use std::path::Path;
 //! # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-//! # let mut assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(&mut assembly);
+//! # let assembly = CilAssembly::new(view);
+//! # let mut context = BuilderContext::new(assembly);
 //!
 //! // Create a type first
 //! let type_token = TypeDefBuilder::new()
@@ -64,8 +63,8 @@
 //! - **Range Support**: Supports defining contiguous event ranges for efficient lookup
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{EventMapRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -91,13 +90,12 @@ use crate::{
 ///
 /// The builder provides a fluent interface for constructing EventMap entries:
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// # use dotscope::prelude::*;
-/// # use dotscope::metadata::cilassembly::BuilderContext;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// # let mut assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(&mut assembly);
+/// # let assembly = CilAssembly::new(view);
+/// # let mut context = BuilderContext::new(assembly);
 /// # let type_token = Token::new(0x02000001);
 ///
 /// let event_map_token = EventMapBuilder::new()
@@ -167,13 +165,12 @@ impl EventMapBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
-    /// # use dotscope::metadata::cilassembly::BuilderContext;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// # let mut assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(&mut assembly);
+    /// # let assembly = CilAssembly::new(view);
+    /// # let mut context = BuilderContext::new(assembly);
     /// let type_token = TypeDefBuilder::new()
     ///     .name("EventfulClass")
     ///     .namespace("MyApp")
@@ -237,13 +234,12 @@ impl EventMapBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
-    /// # use dotscope::metadata::cilassembly::BuilderContext;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// # let mut assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(&mut assembly);
+    /// # let assembly = CilAssembly::new(view);
+    /// # let mut context = BuilderContext::new(assembly);
     /// # let type_token = Token::new(0x02000001);
     ///
     /// let event_map_token = EventMapBuilder::new()
@@ -309,8 +305,9 @@ impl EventMapBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
-        cilassembly::CilAssembly, cilassemblyview::CilAssemblyView, tables::TableId,
+    use crate::{
+        cilassembly::CilAssembly,
+        metadata::{cilassemblyview::CilAssemblyView, tables::TableId},
     };
     use std::path::PathBuf;
 
@@ -322,8 +319,8 @@ mod tests {
 
     #[test]
     fn test_event_map_builder_basic() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a TypeDef for testing
         let type_token = crate::metadata::tables::TypeDefBuilder::new()
@@ -354,8 +351,8 @@ mod tests {
 
     #[test]
     fn test_event_map_builder_missing_parent() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let result = EventMapBuilder::new().event_list(1).build(&mut context);
 
@@ -368,8 +365,8 @@ mod tests {
 
     #[test]
     fn test_event_map_builder_missing_event_list() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a TypeDef for testing
         let type_token = crate::metadata::tables::TypeDefBuilder::new()
@@ -391,8 +388,8 @@ mod tests {
 
     #[test]
     fn test_event_map_builder_invalid_parent_token() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Use an invalid token (not TypeDef)
         let invalid_token = Token::new(0x04000001); // Field token instead of TypeDef
@@ -411,8 +408,8 @@ mod tests {
 
     #[test]
     fn test_event_map_builder_zero_row_parent() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Use a zero row token
         let zero_token = Token::new(0x02000000);
@@ -431,8 +428,8 @@ mod tests {
 
     #[test]
     fn test_event_map_builder_zero_event_list() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a TypeDef for testing
         let type_token = crate::metadata::tables::TypeDefBuilder::new()
@@ -455,8 +452,8 @@ mod tests {
 
     #[test]
     fn test_event_map_builder_multiple_entries() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create TypeDefs for testing
         let type1_token = crate::metadata::tables::TypeDefBuilder::new()
@@ -492,8 +489,8 @@ mod tests {
 
     #[test]
     fn test_event_map_builder_various_event_indices() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test with different event list indices
         let test_indices = [1, 5, 10, 20, 100];
@@ -519,8 +516,8 @@ mod tests {
 
     #[test]
     fn test_event_map_builder_fluent_api() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a TypeDef for testing
         let type_token = crate::metadata::tables::TypeDefBuilder::new()

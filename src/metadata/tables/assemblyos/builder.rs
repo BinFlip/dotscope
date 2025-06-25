@@ -1,6 +1,6 @@
 //! Builder for constructing `AssemblyOS` table entries
 //!
-//! This module provides the [`AssemblyOSBuilder`] which enables fluent construction
+//! This module provides the [`crate::metadata::tables::assemblyos::builder::AssemblyOSBuilder`] which enables fluent construction
 //! of `AssemblyOS` metadata table entries. The builder follows the established
 //! pattern used across all table builders in the library.
 //!
@@ -19,8 +19,8 @@
 //! ```
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{AssemblyOsRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -277,9 +277,9 @@ impl Default for AssemblyOSBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -309,8 +309,8 @@ mod tests {
 
     #[test]
     fn test_assemblyos_builder_windows10() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = AssemblyOSBuilder::new()
             .os_platform_id(1) // Windows
             .os_major_version(10) // Windows 10
@@ -325,8 +325,8 @@ mod tests {
 
     #[test]
     fn test_assemblyos_builder_windows7() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = AssemblyOSBuilder::new()
             .os_platform_id(1) // Windows
             .os_major_version(6) // Windows 7
@@ -341,8 +341,8 @@ mod tests {
 
     #[test]
     fn test_assemblyos_builder_linux() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = AssemblyOSBuilder::new()
             .os_platform_id(2) // Unix/Linux
             .os_major_version(5) // Linux kernel 5
@@ -357,8 +357,8 @@ mod tests {
 
     #[test]
     fn test_assemblyos_builder_custom() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = AssemblyOSBuilder::new()
             .os_platform_id(99) // Custom platform
             .os_major_version(1) // Custom major
@@ -373,8 +373,8 @@ mod tests {
 
     #[test]
     fn test_assemblyos_builder_missing_platform_id() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = AssemblyOSBuilder::new()
             .os_major_version(10)
             .os_minor_version(0)
@@ -392,8 +392,8 @@ mod tests {
 
     #[test]
     fn test_assemblyos_builder_missing_major_version() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = AssemblyOSBuilder::new()
             .os_platform_id(1)
             .os_minor_version(0)
@@ -411,8 +411,8 @@ mod tests {
 
     #[test]
     fn test_assemblyos_builder_missing_minor_version() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = AssemblyOSBuilder::new()
             .os_platform_id(1)
             .os_major_version(10)
@@ -457,8 +457,8 @@ mod tests {
 
     #[test]
     fn test_assemblyos_builder_fluent_interface() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test method chaining
         let token = AssemblyOSBuilder::new()
@@ -475,8 +475,8 @@ mod tests {
 
     #[test]
     fn test_assemblyos_builder_multiple_builds() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Build first OS entry
         let token1 = AssemblyOSBuilder::new()
@@ -502,8 +502,8 @@ mod tests {
 
     #[test]
     fn test_assemblyos_builder_zero_values() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = AssemblyOSBuilder::new()
             .os_platform_id(0) // Zero platform
             .os_major_version(0) // Zero major
@@ -518,8 +518,8 @@ mod tests {
 
     #[test]
     fn test_assemblyos_builder_max_values() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = AssemblyOSBuilder::new()
             .os_platform_id(u32::MAX) // Max platform
             .os_major_version(u32::MAX) // Max major

@@ -1,24 +1,43 @@
 //! Raw assembly view for editing and modification operations.
 //!
-//! This module provides the [`CilAssemblyView`] struct, which offers a read-only
+//! This module provides the [`crate::metadata::cilassemblyview::CilAssemblyView`] struct, which offers a read-only
 //! representation of .NET assemblies that maintains a 1:1 mapping with the underlying
 //! file structure. Unlike [`crate::CilObject`] which provides a fully processed and
-//! resolved view optimized for analysis, `CilAssemblyView` preserves the raw metadata
+//! resolved view optimized for analysis, [`crate::metadata::cilassemblyview::CilAssemblyView`] preserves the raw metadata
 //! structure to enable future editing and modification operations.
 //!
-//! # Design Philosophy
+//! # Architecture
 //!
-//! `CilAssemblyView` is designed as the foundation for assembly editing capabilities:
-//! - **Raw Structure Access**: Direct access to metadata tables and streams as they
-//!   appear in the file, without resolution or cross-referencing
+//! The module is built around a self-referencing pattern that enables efficient access to
+//! file data while maintaining memory safety. The architecture provides:
+//!
+//! - **Raw Structure Access**: Direct access to metadata tables and streams without resolution
 //! - **Immutable View**: Read-only operations to ensure data integrity during analysis
 //! - **Editing Foundation**: Structured to support future writable operations
 //! - **Memory Efficient**: Self-referencing pattern avoids data duplication
 //! - **No Validation**: Pure parsing without format validation or compliance checks
 //!
+//! # Key Components
+//!
+//! ## Core Types
+//! - [`crate::metadata::cilassemblyview::CilAssemblyView`] - Main assembly view struct with file-mapped data
+//! - [`crate::metadata::cilassemblyview::CilAssemblyViewData`] - Internal data structure holding raw metadata
+//!
+//! ## Access Methods
+//! - [`crate::metadata::cilassemblyview::CilAssemblyView::tables`] - Raw metadata tables without semantic resolution
+//! - [`crate::metadata::cilassemblyview::CilAssemblyView::strings`] - Direct access to strings heap (#Strings)
+//! - [`crate::metadata::cilassemblyview::CilAssemblyView::userstrings`] - Direct access to user strings heap (#US)
+//! - [`crate::metadata::cilassemblyview::CilAssemblyView::guids`] - Direct access to GUID heap (#GUID)
+//! - [`crate::metadata::cilassemblyview::CilAssemblyView::blobs`] - Direct access to blob heap (#Blob)
+//!
+//! ## Conversion Methods
+//! - [`crate::metadata::cilassemblyview::CilAssemblyView::to_owned`] - Convert to mutable [`crate::CilAssembly`] for editing
+//!
 //! # Usage Examples
 //!
-//! ```rust,no_run
+//! ## Basic Raw Metadata Access
+//!
+//! ```rust,ignore
 //! use dotscope::CilAssemblyView;
 //! use std::path::Path;
 //!
@@ -38,14 +57,63 @@
 //! }
 //! # Ok::<(), dotscope::Error>(())
 //! ```
+//!
+//! ## Converting to Mutable Assembly
+//!
+//! ```rust,ignore
+//! use dotscope::{CilAssemblyView, CilAssembly};
+//! use std::path::Path;
+//!
+//! // Load raw view
+//! let view = CilAssemblyView::from_file(Path::new("assembly.dll"))?;
+//!
+//! // Convert to mutable assembly for editing
+//! let mut assembly = view.to_owned();
+//!
+//! // Now you can perform editing operations
+//! let string_index = assembly.add_string("New String")?;
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! ## Analyzing Raw Structures
+//!
+//! ```rust,ignore
+//! use dotscope::CilAssemblyView;
+//! use std::path::Path;
+//!
+//! let view = CilAssemblyView::from_file(Path::new("assembly.dll"))?;
+//!
+//! // Direct access to CLR header
+//! let cor20 = view.with_data(|data| &data.cor20header);
+//! println!("Runtime version: {}.{}", cor20.major_runtime_version, cor20.minor_runtime_version);
+//!
+//! // Raw metadata root access
+//! let root = view.with_data(|data| &data.metadata_root);
+//! println!("Metadata signature: {:?}", root.signature);
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! # Thread Safety
+//!
+//! [`crate::metadata::cilassemblyview::CilAssemblyView`] is [`std::marker::Send`] and [`std::marker::Sync`] as it provides read-only access
+//! to immutable file data. Multiple threads can safely access the same view concurrently
+//! without additional synchronization.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::CilAssembly`] - Provides conversion to mutable assembly for editing operations
+//! - [`crate::metadata::streams`] - Uses stream types for direct heap access
+//! - [`crate::metadata::cor20header`] - Provides CLR header information
+//! - File I/O abstraction for memory-mapped or in-memory access
 
 use ouroboros::self_referencing;
 use std::{path::Path, sync::Arc};
 
 use crate::{
+    cilassembly::CilAssembly,
     file::File,
     metadata::{
-        cilassembly::CilAssembly,
         cor20header::Cor20Header,
         root::Root,
         streams::{Blob, Guid, StreamHeader, Strings, TablesHeader, UserStrings},
@@ -229,7 +297,7 @@ impl CilAssemblyView {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilAssemblyView;
     /// use std::path::Path;
     ///
@@ -257,7 +325,7 @@ impl CilAssemblyView {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilAssemblyView;
     ///
     /// let file_data = std::fs::read("assembly.dll")?;
@@ -393,7 +461,7 @@ impl CilAssemblyView {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilAssemblyView;
     /// use std::path::Path;
     ///

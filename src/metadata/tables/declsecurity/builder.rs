@@ -1,13 +1,13 @@
 //! DeclSecurityBuilder for creating declarative security attribute specifications.
 //!
-//! This module provides [`DeclSecurityBuilder`] for creating DeclSecurity table entries
+//! This module provides [`crate::metadata::tables::declsecurity::DeclSecurityBuilder`] for creating DeclSecurity table entries
 //! with a fluent API. Declarative security defines security permissions and restrictions
 //! that apply to assemblies, types, and methods through Code Access Security (CAS),
 //! enabling fine-grained security control and permission management.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         security::SecurityAction,
         tables::{CodedIndex, CodedIndexType, DeclSecurityRaw, TableDataOwned, TableId},
         token::Token,
@@ -59,12 +59,12 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create a demand for FileIOPermission on a method
 /// let method_ref = CodedIndex::new(TableId::MethodDef, 1); // Target method
@@ -123,7 +123,7 @@ impl DeclSecurityBuilder {
     ///
     /// # Returns
     ///
-    /// A new [`DeclSecurityBuilder`] instance ready for configuration.
+    /// A new [`crate::metadata::tables::declsecurity::DeclSecurityBuilder`] instance ready for configuration.
     pub fn new() -> Self {
         Self {
             action: None,
@@ -271,7 +271,7 @@ impl DeclSecurityBuilder {
     ///
     /// # Returns
     ///
-    /// A [`Token`] representing the newly created security declaration, or an error if
+    /// A [`crate::metadata::token::Token`] representing the newly created security declaration, or an error if
     /// validation fails or required fields are missing.
     ///
     /// # Errors
@@ -349,10 +349,9 @@ impl DeclSecurityBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
-        security::SecurityAction,
+        metadata::{cilassemblyview::CilAssemblyView, security::SecurityAction},
     };
     use std::path::PathBuf;
 
@@ -360,13 +359,13 @@ mod tests {
     fn test_decl_security_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
+            let assembly = CilAssembly::new(view);
 
             // Check existing DeclSecurity table count
             let existing_count = assembly.original_table_row_count(TableId::DeclSecurity);
             let expected_rid = existing_count + 1;
 
-            let mut context = BuilderContext::new(&mut assembly);
+            let mut context = BuilderContext::new(assembly);
 
             // Create a basic security declaration
             let method_ref = CodedIndex::new(TableId::MethodDef, 1); // Method target
@@ -389,8 +388,8 @@ mod tests {
     fn test_decl_security_builder_different_actions() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let permission_blob = vec![0x01, 0x02, 0x03, 0x04];
 
@@ -425,8 +424,8 @@ mod tests {
     fn test_decl_security_builder_different_parents() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let permission_blob = vec![0x01, 0x02, 0x03, 0x04];
 
@@ -473,8 +472,8 @@ mod tests {
     fn test_decl_security_builder_raw_action() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let parent_ref = CodedIndex::new(TableId::MethodDef, 1);
             let permission_blob = vec![0x01, 0x02, 0x03, 0x04];
@@ -496,8 +495,8 @@ mod tests {
     fn test_decl_security_builder_unrestricted_permission() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let parent_ref = CodedIndex::new(TableId::TypeDef, 1);
 
@@ -518,8 +517,8 @@ mod tests {
     fn test_decl_security_builder_missing_action() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let parent_ref = CodedIndex::new(TableId::MethodDef, 1);
             let permission_blob = vec![0x01, 0x02, 0x03, 0x04];
@@ -539,8 +538,8 @@ mod tests {
     fn test_decl_security_builder_missing_parent() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let permission_blob = vec![0x01, 0x02, 0x03, 0x04];
 
@@ -559,8 +558,8 @@ mod tests {
     fn test_decl_security_builder_missing_permission_set() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let parent_ref = CodedIndex::new(TableId::MethodDef, 1);
 
@@ -579,8 +578,8 @@ mod tests {
     fn test_decl_security_builder_empty_permission_set() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let parent_ref = CodedIndex::new(TableId::MethodDef, 1);
             let empty_blob = vec![]; // Empty permission set
@@ -600,8 +599,8 @@ mod tests {
     fn test_decl_security_builder_invalid_parent_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Use a table type that's not valid for HasDeclSecurity
             let invalid_parent = CodedIndex::new(TableId::Field, 1); // Field not in HasDeclSecurity
@@ -622,8 +621,8 @@ mod tests {
     fn test_decl_security_builder_zero_action() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let parent_ref = CodedIndex::new(TableId::MethodDef, 1);
             let permission_blob = vec![0x01, 0x02, 0x03, 0x04];
@@ -659,8 +658,8 @@ mod tests {
     fn test_decl_security_builder_multiple_declarations() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let method_ref = CodedIndex::new(TableId::MethodDef, 1);
             let permission_blob1 = vec![0x01, 0x02, 0x03, 0x04]; // First permission set
@@ -695,8 +694,8 @@ mod tests {
     fn test_decl_security_builder_realistic_scenario() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Realistic scenario: Secure file access method
             let file_method = CodedIndex::new(TableId::MethodDef, 1);

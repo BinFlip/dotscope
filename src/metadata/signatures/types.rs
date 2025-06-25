@@ -613,7 +613,7 @@ pub enum TypeSignature {
     /// - Supports custom constructors and methods
     ///
     /// # Token Reference
-    /// The contained [`Token`] references the `TypeDef` or `TypeRef` metadata table
+    /// The contained [`crate::metadata::token::Token`] references the `TypeDef` or `TypeRef` metadata table
     /// entry that defines this value type.
     ///
     /// # See Also
@@ -641,7 +641,7 @@ pub enum TypeSignature {
     /// - Can contain virtual methods and properties
     ///
     /// # Token Reference
-    /// The contained [`Token`] references the `TypeDef` or `TypeRef` metadata table
+    /// The contained [`crate::metadata::token::Token`] references the `TypeDef` or `TypeRef` metadata table
     /// entry that defines this class type.
     ///
     /// # See Also
@@ -2027,7 +2027,7 @@ pub struct SignatureParameter {
 ///
 /// # See Also
 /// - [`SignatureParameter`]: For individual parameter definitions
-/// - [`TypeSignature`]: For supported type representations
+/// - [`crate::metadata::signatures::TypeSignature`]: For supported type representations
 /// - [`crate::metadata::method::Method`]: For complete method metadata
 /// - [`crate::metadata::token::Token`]: For metadata token references
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -2408,7 +2408,7 @@ pub struct SignatureMethod {
 /// and supports all standard field signature scenarios.
 ///
 /// # See Also
-/// - [`TypeSignature`]: For supported field types
+/// - [`crate::metadata::signatures::TypeSignature`]: For supported field types
 /// - [`crate::metadata::token::Token`]: For custom modifier references
 /// - Field metadata types in [`crate::metadata::typesystem`] module
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -2586,7 +2586,7 @@ pub struct SignatureField {
 ///
 /// # See Also
 /// - [`SignatureParameter`]: For indexer parameter definitions
-/// - [`TypeSignature`]: For supported property types
+/// - [`crate::metadata::signatures::TypeSignature`]: For supported property types
 /// - [`crate::metadata::token::Token`]: For custom modifier references
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SignatureProperty {
@@ -2765,7 +2765,7 @@ pub struct SignatureProperty {
 ///
 /// # See Also
 /// - [`SignatureLocalVariable`]: For individual local variable definitions
-/// - [`TypeSignature`]: For supported local variable types
+/// - [`crate::metadata::signatures::TypeSignature`]: For supported local variable types
 /// - [`crate::metadata::method::MethodBody`]: For method body context
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SignatureLocalVariables {
@@ -2887,7 +2887,7 @@ pub struct SignatureLocalVariables {
 ///
 /// # See Also
 /// - [`SignatureLocalVariables`]: For complete local variable collections
-/// - [`TypeSignature`]: For supported variable types
+/// - [`crate::metadata::signatures::TypeSignature`]: For supported variable types
 /// - [`crate::metadata::token::Token`]: For custom modifier references
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SignatureLocalVariable {
@@ -3076,7 +3076,7 @@ pub struct SignatureLocalVariable {
 /// and supports all standard type specification scenarios.
 ///
 /// # See Also
-/// - [`TypeSignature`]: For the underlying type representation
+/// - [`crate::metadata::signatures::TypeSignature`]: For the underlying type representation
 /// - [`SignatureMethodSpec`]: For method specification signatures
 /// - [`crate::metadata::token::Token`]: For metadata token references
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -3217,7 +3217,7 @@ pub struct SignatureTypeSpec {
 /// and supports all standard method specification scenarios.
 ///
 /// # See Also
-/// - [`TypeSignature`]: For generic argument type representations
+/// - [`crate::metadata::signatures::TypeSignature`]: For generic argument type representations
 /// - [`SignatureMethod`]: For the underlying generic method signatures
 /// - [`crate::metadata::method::Method`]: For complete method metadata
 #[derive(Debug, Clone, PartialEq, Default)]

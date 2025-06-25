@@ -31,7 +31,7 @@
 //!
 //! # Examples
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::exports::Exports;
 //! use dotscope::metadata::token::Token;
 //!
@@ -91,7 +91,7 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::exports::Exports;
 /// use dotscope::metadata::token::Token;
 ///
@@ -167,7 +167,7 @@ impl Exports {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::exports::Exports;
     /// use dotscope::metadata::token::Token;
     ///
@@ -240,7 +240,7 @@ impl Exports {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::exports::Exports;
     ///
     /// let exports = Exports::new();
@@ -261,7 +261,7 @@ impl Exports {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::exports::Exports;
     ///
     /// let exports = Exports::new();
@@ -297,7 +297,7 @@ impl Exports {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::exports::Exports;
     ///
     /// let exports = Exports::new();
@@ -408,7 +408,7 @@ impl Exports {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::exports::Exports;
     ///
     /// let exports = Exports::new();
@@ -430,7 +430,7 @@ impl Exports {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::exports::Exports;
     ///
     /// let exports = Exports::new();

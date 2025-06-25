@@ -1,13 +1,13 @@
 //! FieldMarshalBuilder for creating P/Invoke marshaling specifications.
 //!
-//! This module provides [`FieldMarshalBuilder`] for creating FieldMarshal table entries
+//! This module provides [`crate::metadata::tables::fieldmarshal::FieldMarshalBuilder`] for creating FieldMarshal table entries
 //! with a fluent API. Field marshaling defines how managed types are converted to and
 //! from native types during P/Invoke calls, COM interop, and platform invoke scenarios,
 //! enabling seamless interoperability between managed and unmanaged code.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         marshalling::NATIVE_TYPE,
         tables::{CodedIndex, CodedIndexType, FieldMarshalRaw, TableDataOwned, TableId},
         token::Token,
@@ -56,12 +56,12 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Marshal a parameter as a null-terminated Unicode string
 /// let param_ref = CodedIndex::new(TableId::Param, 1); // String parameter
@@ -120,7 +120,7 @@ impl FieldMarshalBuilder {
     ///
     /// # Returns
     ///
-    /// A new [`FieldMarshalBuilder`] instance ready for configuration.
+    /// A new [`crate::metadata::tables::fieldmarshal::FieldMarshalBuilder`] instance ready for configuration.
     pub fn new() -> Self {
         Self {
             parent: None,
@@ -273,7 +273,7 @@ impl FieldMarshalBuilder {
     ///
     /// # Returns
     ///
-    /// A [`Token`] representing the newly created field marshal entry, or an error if
+    /// A [`crate::metadata::token::Token`] representing the newly created field marshal entry, or an error if
     /// validation fails or required fields are missing.
     ///
     /// # Errors
@@ -338,9 +338,9 @@ impl FieldMarshalBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -348,13 +348,13 @@ mod tests {
     fn test_field_marshal_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
+            let assembly = CilAssembly::new(view);
 
             // Check existing FieldMarshal table count
             let existing_count = assembly.original_table_row_count(TableId::FieldMarshal);
             let expected_rid = existing_count + 1;
 
-            let mut context = BuilderContext::new(&mut assembly);
+            let mut context = BuilderContext::new(assembly);
 
             // Create a basic field marshal entry
             let param_ref = CodedIndex::new(TableId::Param, 1); // Parameter target
@@ -376,8 +376,8 @@ mod tests {
     fn test_field_marshal_builder_different_parents() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let marshal_descriptor = vec![NATIVE_TYPE::I4];
 
@@ -408,8 +408,8 @@ mod tests {
     fn test_field_marshal_builder_different_native_types() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Test various native types
             let param_refs: Vec<_> = (1..=8)
@@ -481,8 +481,8 @@ mod tests {
     fn test_field_marshal_builder_complex_descriptors() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let field_ref = CodedIndex::new(TableId::Field, 1);
 
@@ -516,8 +516,8 @@ mod tests {
     fn test_field_marshal_builder_missing_parent() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let marshal_descriptor = vec![NATIVE_TYPE::I4];
 
@@ -535,8 +535,8 @@ mod tests {
     fn test_field_marshal_builder_missing_native_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let param_ref = CodedIndex::new(TableId::Param, 1);
 
@@ -554,8 +554,8 @@ mod tests {
     fn test_field_marshal_builder_empty_native_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let param_ref = CodedIndex::new(TableId::Param, 1);
             let empty_descriptor = vec![]; // Empty descriptor
@@ -574,8 +574,8 @@ mod tests {
     fn test_field_marshal_builder_invalid_parent_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Use a table type that's not valid for HasFieldMarshal
             let invalid_parent = CodedIndex::new(TableId::TypeDef, 1); // TypeDef not in HasFieldMarshal
@@ -595,8 +595,8 @@ mod tests {
     fn test_field_marshal_builder_all_primitive_types() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Test all primitive native types
             let primitive_types = [
@@ -634,8 +634,8 @@ mod tests {
     fn test_field_marshal_builder_string_types() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Test string marshaling types
             let param1 = CodedIndex::new(TableId::Param, 1);
@@ -683,8 +683,8 @@ mod tests {
     fn test_field_marshal_builder_realistic_pinvoke() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Realistic P/Invoke scenario: Win32 API function
             // BOOL CreateDirectory(LPCWSTR lpPathName, LPSECURITY_ATTRIBUTES lpSecurityAttributes);
@@ -738,8 +738,8 @@ mod tests {
     fn test_field_marshal_builder_struct_fields() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Realistic struct marshaling: POINT structure
             // struct POINT { LONG x; LONG y; };

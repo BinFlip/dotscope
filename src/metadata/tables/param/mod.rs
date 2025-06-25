@@ -39,7 +39,7 @@
 //!
 //! ## Parameter Attributes
 //!
-//! The [`ParamAttributes`] module defines all possible parameter flags:
+//! The [`crate::metadata::tables::ParamAttributes`] module defines all possible parameter flags:
 //!
 //! ### Direction Attributes
 //! - [`IN`](ParamAttributes::IN) - Parameter is input (passed to method)

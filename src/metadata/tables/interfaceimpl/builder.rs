@@ -1,13 +1,13 @@
 //! InterfaceImplBuilder for creating interface implementation declarations.
 //!
-//! This module provides [`InterfaceImplBuilder`] for creating InterfaceImpl table entries
+//! This module provides [`crate::metadata::tables::interfaceimpl::InterfaceImplBuilder`] for creating InterfaceImpl table entries
 //! with a fluent API. Interface implementations establish the relationship between types
 //! and the interfaces they implement, enabling .NET's interface-based polymorphism,
 //! multiple inheritance support, and runtime type compatibility.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{CodedIndex, CodedIndexType, InterfaceImplRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -45,14 +45,13 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
-/// # use dotscope::{CilAssembly, CilAssemblyView};
-/// # use dotscope::metadata::cilassembly::BuilderContext;
+/// ```rust,ignore
+/// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::{InterfaceImplBuilder, CodedIndex, TableId};
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create a class implementing an interface
 /// let implementing_class = 1; // TypeDef RID for MyClass
@@ -98,7 +97,7 @@ impl InterfaceImplBuilder {
     ///
     /// # Returns
     ///
-    /// A new [`InterfaceImplBuilder`] instance ready for configuration.
+    /// A new [`crate::metadata::tables::interfaceimpl::InterfaceImplBuilder`] instance ready for configuration.
     pub fn new() -> Self {
         Self {
             class: None,
@@ -165,7 +164,7 @@ impl InterfaceImplBuilder {
     ///
     /// # Returns
     ///
-    /// A [`Token`] representing the newly created interface implementation, or an error if
+    /// A [`crate::metadata::token::Token`] representing the newly created interface implementation, or an error if
     /// validation fails or required fields are missing.
     ///
     /// # Errors
@@ -227,9 +226,9 @@ impl InterfaceImplBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -237,13 +236,13 @@ mod tests {
     fn test_interface_impl_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
+            let assembly = CilAssembly::new(view);
 
             // Check existing InterfaceImpl table count
             let existing_count = assembly.original_table_row_count(TableId::InterfaceImpl);
             let expected_rid = existing_count + 1;
 
-            let mut context = BuilderContext::new(&mut assembly);
+            let mut context = BuilderContext::new(assembly);
 
             // Create a basic interface implementation
             let implementing_class = 1; // TypeDef RID
@@ -265,8 +264,8 @@ mod tests {
     fn test_interface_impl_builder_interface_extension() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Create an interface extending another interface
             let derived_interface = 2; // TypeDef RID for derived interface
@@ -287,8 +286,8 @@ mod tests {
     fn test_interface_impl_builder_generic_interface() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Create a generic interface implementation
             let implementing_class = 3; // TypeDef RID
@@ -309,8 +308,8 @@ mod tests {
     fn test_interface_impl_builder_missing_class() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let target_interface = CodedIndex::new(TableId::TypeRef, 1);
 
@@ -327,8 +326,8 @@ mod tests {
     fn test_interface_impl_builder_missing_interface() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let implementing_class = 1; // TypeDef RID
 
@@ -345,8 +344,8 @@ mod tests {
     fn test_interface_impl_builder_zero_class_rid() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let target_interface = CodedIndex::new(TableId::TypeRef, 1);
 
@@ -364,8 +363,8 @@ mod tests {
     fn test_interface_impl_builder_invalid_interface_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let implementing_class = 1; // TypeDef RID
                                         // Use a table type that's not valid for TypeDefOrRef
@@ -385,8 +384,8 @@ mod tests {
     fn test_interface_impl_builder_multiple_implementations() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let class1 = 1; // TypeDef RID
             let class2 = 2; // TypeDef RID
@@ -441,8 +440,8 @@ mod tests {
     fn test_interface_impl_builder_complex_inheritance() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Create a complex inheritance scenario
             let base_class = 1; // TypeDef RID for base class

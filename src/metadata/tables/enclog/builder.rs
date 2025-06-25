@@ -1,6 +1,6 @@
 //! Builder for constructing `EncLog` table entries
 //!
-//! This module provides the [`EncLogBuilder`] which enables fluent construction
+//! This module provides the [`crate::metadata::tables::enclog::EncLogBuilder`] which enables fluent construction
 //! of `EncLog` metadata table entries. The builder follows the established
 //! pattern used across all table builders in the library.
 //!
@@ -18,8 +18,8 @@
 //! ```
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{EncLogRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -297,9 +297,9 @@ impl Default for EncLogBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -327,8 +327,8 @@ mod tests {
 
     #[test]
     fn test_enclog_builder_create_method() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = EncLogBuilder::new()
             .token_value(0x06000001) // MethodDef token
             .func_code(0) // Create
@@ -342,8 +342,8 @@ mod tests {
 
     #[test]
     fn test_enclog_builder_update_type() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = EncLogBuilder::new()
             .token_value(0x02000010) // TypeDef token
             .func_code(1) // Update
@@ -357,8 +357,8 @@ mod tests {
 
     #[test]
     fn test_enclog_builder_delete_field() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = EncLogBuilder::new()
             .token_value(0x04000025) // Field token
             .func_code(2) // Delete
@@ -372,8 +372,8 @@ mod tests {
 
     #[test]
     fn test_enclog_builder_convenience_methods() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test create convenience method
         let token1 = EncLogBuilder::new()
@@ -404,8 +404,8 @@ mod tests {
 
     #[test]
     fn test_enclog_builder_missing_token_value() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = EncLogBuilder::new().func_code(0).build(&mut context);
 
         assert!(result.is_err());
@@ -420,8 +420,8 @@ mod tests {
 
     #[test]
     fn test_enclog_builder_missing_func_code() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = EncLogBuilder::new()
             .token_value(0x06000001)
             .build(&mut context);
@@ -457,8 +457,8 @@ mod tests {
 
     #[test]
     fn test_enclog_builder_fluent_interface() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test method chaining
         let token = EncLogBuilder::new()
@@ -474,8 +474,8 @@ mod tests {
 
     #[test]
     fn test_enclog_builder_multiple_builds() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Build first log entry
         let token1 = EncLogBuilder::new()
@@ -499,8 +499,8 @@ mod tests {
 
     #[test]
     fn test_enclog_builder_various_tokens() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test with different token types
         let tokens = [

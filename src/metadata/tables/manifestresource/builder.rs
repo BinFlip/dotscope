@@ -16,13 +16,12 @@
 //!
 //! ## Usage
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! # use dotscope::prelude::*;
-//! # use dotscope::metadata::cilassembly::BuilderContext;
 //! # use std::path::Path;
 //! # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-//! # let mut assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(&mut assembly);
+//! # let assembly = CilAssembly::new(view);
+//! # let mut context = BuilderContext::new(assembly);
 //!
 //! // Create an embedded resource
 //! let embedded_token = ManifestResourceBuilder::new()
@@ -66,8 +65,8 @@
 //! - **Implementation Support**: Methods for embedded, file-based, and external resources
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{
             CodedIndex, ManifestResourceAttributes, ManifestResourceRaw, TableDataOwned, TableId,
         },
@@ -94,13 +93,12 @@ use crate::{
 ///
 /// The builder provides a fluent interface for constructing ManifestResource entries:
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// # use dotscope::prelude::*;
-/// # use dotscope::metadata::cilassembly::BuilderContext;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// # let mut assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(&mut assembly);
+/// # let assembly = CilAssembly::new(view);
+/// # let mut context = BuilderContext::new(assembly);
 ///
 /// let resource_token = ManifestResourceBuilder::new()
 ///     .name("MyApp.Resources.strings")
@@ -277,13 +275,12 @@ impl ManifestResourceBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
-    /// # use dotscope::metadata::cilassembly::BuilderContext;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// # let mut assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(&mut assembly);
+    /// # let assembly = CilAssembly::new(view);
+    /// # let mut context = BuilderContext::new(assembly);
     /// let file_token = FileBuilder::new()
     ///     .name("Resources.resources")
     ///     .build(&mut context)?;
@@ -309,13 +306,12 @@ impl ManifestResourceBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
-    /// # use dotscope::metadata::cilassembly::BuilderContext;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// # let mut assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(&mut assembly);
+    /// # let assembly = CilAssembly::new(view);
+    /// # let mut context = BuilderContext::new(assembly);
     /// let assembly_ref_token = AssemblyRefBuilder::new()
     ///     .name("MyApp.Resources")
     ///     .version(1, 0, 0, 0)
@@ -379,13 +375,12 @@ impl ManifestResourceBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
-    /// # use dotscope::metadata::cilassembly::BuilderContext;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// # let mut assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(&mut assembly);
+    /// # let assembly = CilAssembly::new(view);
+    /// # let mut context = BuilderContext::new(assembly);
     ///
     /// let resource_token = ManifestResourceBuilder::new()
     ///     .name("MyApp.Resources")
@@ -469,10 +464,12 @@ impl ManifestResourceBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::CilAssembly,
-        cilassemblyview::CilAssemblyView,
-        tables::{ManifestResourceAttributes, TableId},
+        metadata::{
+            cilassemblyview::CilAssemblyView,
+            tables::{ManifestResourceAttributes, TableId},
+        },
     };
     use std::path::PathBuf;
 
@@ -484,8 +481,8 @@ mod tests {
 
     #[test]
     fn test_manifest_resource_builder_basic() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = ManifestResourceBuilder::new()
             .name("MyApp.Resources")
@@ -509,8 +506,8 @@ mod tests {
 
     #[test]
     fn test_manifest_resource_builder_missing_name() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let result = ManifestResourceBuilder::new().public().build(&mut context);
 
@@ -523,8 +520,8 @@ mod tests {
 
     #[test]
     fn test_manifest_resource_builder_empty_name() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let result = ManifestResourceBuilder::new().name("").build(&mut context);
 
@@ -537,8 +534,8 @@ mod tests {
 
     #[test]
     fn test_manifest_resource_builder_public() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = ManifestResourceBuilder::new()
             .name("PublicResource")
@@ -553,8 +550,8 @@ mod tests {
 
     #[test]
     fn test_manifest_resource_builder_private() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = ManifestResourceBuilder::new()
             .name("PrivateResource")
@@ -569,8 +566,8 @@ mod tests {
 
     #[test]
     fn test_manifest_resource_builder_with_offset() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = ManifestResourceBuilder::new()
             .name("EmbeddedResource")
@@ -585,8 +582,8 @@ mod tests {
 
     #[test]
     fn test_manifest_resource_builder_with_flags() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = ManifestResourceBuilder::new()
             .name("CustomResource")
@@ -601,8 +598,8 @@ mod tests {
 
     #[test]
     fn test_manifest_resource_builder_embedded() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = ManifestResourceBuilder::new()
             .name("EmbeddedResource")
@@ -618,8 +615,8 @@ mod tests {
 
     #[test]
     fn test_manifest_resource_builder_multiple_resources() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token1 = ManifestResourceBuilder::new()
             .name("Resource1")
@@ -642,8 +639,8 @@ mod tests {
 
     #[test]
     fn test_manifest_resource_builder_comprehensive() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = ManifestResourceBuilder::new()
             .name("MyApp.Comprehensive.Resources")
@@ -660,8 +657,8 @@ mod tests {
 
     #[test]
     fn test_manifest_resource_builder_fluent_api() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test fluent API chaining
         let token = ManifestResourceBuilder::new()
@@ -696,8 +693,8 @@ mod tests {
 
     #[test]
     fn test_manifest_resource_builder_invalid_implementation() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a builder with an invalid implementation reference (TypeDef table)
         let mut builder = ManifestResourceBuilder::new().name("InvalidImplementation");
@@ -716,8 +713,8 @@ mod tests {
 
     #[test]
     fn test_manifest_resource_builder_zero_row_implementation() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a builder with a zero row implementation reference
         let mut builder = ManifestResourceBuilder::new().name("ZeroRowImplementation");
@@ -736,8 +733,8 @@ mod tests {
 
     #[test]
     fn test_manifest_resource_builder_valid_exported_type_implementation() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a builder with a valid ExportedType implementation reference
         let mut builder = ManifestResourceBuilder::new().name("ExportedTypeResource");

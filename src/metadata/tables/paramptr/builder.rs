@@ -1,6 +1,6 @@
 //! Builder for constructing `ParamPtr` table entries
 //!
-//! This module provides the [`ParamPtrBuilder`] which enables fluent construction
+//! This module provides the [`crate::metadata::tables::paramptr::ParamPtrBuilder`] which enables fluent construction
 //! of `ParamPtr` metadata table entries. The builder follows the established
 //! pattern used across all table builders in the library.
 //!
@@ -17,8 +17,8 @@
 //! ```
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{ParamPtrRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -180,9 +180,9 @@ impl Default for ParamPtrBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -208,8 +208,8 @@ mod tests {
 
     #[test]
     fn test_paramptr_builder_basic() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = ParamPtrBuilder::new()
             .param(1)
             .build(&mut context)
@@ -222,8 +222,8 @@ mod tests {
 
     #[test]
     fn test_paramptr_builder_reordering() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = ParamPtrBuilder::new()
             .param(10) // Point to later parameter for reordering
             .build(&mut context)
@@ -236,8 +236,8 @@ mod tests {
 
     #[test]
     fn test_paramptr_builder_missing_param() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = ParamPtrBuilder::new().build(&mut context);
 
         assert!(result.is_err());
@@ -269,8 +269,8 @@ mod tests {
 
     #[test]
     fn test_paramptr_builder_fluent_interface() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test method chaining
         let token = ParamPtrBuilder::new()
@@ -285,8 +285,8 @@ mod tests {
 
     #[test]
     fn test_paramptr_builder_multiple_builds() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Build first pointer
         let token1 = ParamPtrBuilder::new()
@@ -316,8 +316,8 @@ mod tests {
 
     #[test]
     fn test_paramptr_builder_large_param_rid() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = ParamPtrBuilder::new()
             .param(0xFFFF) // Large Param RID
             .build(&mut context)
@@ -330,8 +330,8 @@ mod tests {
 
     #[test]
     fn test_paramptr_builder_param_ordering_scenario() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Simulate parameter reordering: logical order 1,2,3 -> physical order 3,1,2
         let logical_to_physical = [(1, 8), (2, 3), (3, 6)];
@@ -356,8 +356,8 @@ mod tests {
 
     #[test]
     fn test_paramptr_builder_zero_param() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test with param 0 (typically invalid but should not cause builder to fail)
         let result = ParamPtrBuilder::new().param(0).build(&mut context);
@@ -369,8 +369,8 @@ mod tests {
 
     #[test]
     fn test_paramptr_builder_method_parameter_scenario() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Simulate method parameters with custom ordering
         let method_params = [4, 1, 7, 2]; // Parameters in custom order
@@ -395,8 +395,8 @@ mod tests {
 
     #[test]
     fn test_paramptr_builder_compressed_metadata_scenario() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Simulate compressed metadata scenario with parameter indirection
         let compressed_order = [10, 5, 15, 1, 20];
@@ -422,8 +422,8 @@ mod tests {
 
     #[test]
     fn test_paramptr_builder_edit_continue_parameter_scenario() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Simulate edit-and-continue where parameters are added/modified
         let original_params = [1, 2, 3];

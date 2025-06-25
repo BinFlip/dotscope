@@ -1,6 +1,6 @@
 //! Builder for constructing `EventPtr` table entries
 //!
-//! This module provides the [`EventPtrBuilder`] which enables fluent construction
+//! This module provides the [`crate::metadata::tables::eventptr::EventPtrBuilder`] which enables fluent construction
 //! of `EventPtr` metadata table entries. The builder follows the established
 //! pattern used across all table builders in the library.
 //!
@@ -17,8 +17,8 @@
 //! ```
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{EventPtrRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -180,9 +180,9 @@ impl Default for EventPtrBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -208,8 +208,8 @@ mod tests {
 
     #[test]
     fn test_eventptr_builder_basic() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = EventPtrBuilder::new()
             .event(1)
             .build(&mut context)
@@ -222,8 +222,8 @@ mod tests {
 
     #[test]
     fn test_eventptr_builder_reordering() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = EventPtrBuilder::new()
             .event(12) // Point to later event for reordering
             .build(&mut context)
@@ -236,8 +236,8 @@ mod tests {
 
     #[test]
     fn test_eventptr_builder_missing_event() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = EventPtrBuilder::new().build(&mut context);
 
         assert!(result.is_err());
@@ -269,8 +269,8 @@ mod tests {
 
     #[test]
     fn test_eventptr_builder_fluent_interface() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test method chaining
         let token = EventPtrBuilder::new()
@@ -285,8 +285,8 @@ mod tests {
 
     #[test]
     fn test_eventptr_builder_multiple_builds() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Build first pointer
         let token1 = EventPtrBuilder::new()
@@ -316,8 +316,8 @@ mod tests {
 
     #[test]
     fn test_eventptr_builder_large_event_rid() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = EventPtrBuilder::new()
             .event(0xFFFF) // Large Event RID
             .build(&mut context)
@@ -330,8 +330,8 @@ mod tests {
 
     #[test]
     fn test_eventptr_builder_event_ordering_scenario() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Simulate event reordering: logical order 1,2,3 -> physical order 10,5,12
         let logical_to_physical = [(1, 10), (2, 5), (3, 12)];
@@ -356,8 +356,8 @@ mod tests {
 
     #[test]
     fn test_eventptr_builder_zero_event() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test with event 0 (typically invalid but should not cause builder to fail)
         let result = EventPtrBuilder::new().event(0).build(&mut context);
@@ -369,8 +369,8 @@ mod tests {
 
     #[test]
     fn test_eventptr_builder_edit_continue_scenario() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Simulate edit-and-continue where events are reordered after code modifications
         let reordered_events = [3, 1, 2]; // Physical reordering
@@ -395,8 +395,8 @@ mod tests {
 
     #[test]
     fn test_eventptr_builder_type_event_scenario() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Simulate type with multiple events that need indirection
         let type_events = [5, 10, 7, 15, 2]; // Events in custom order
@@ -421,8 +421,8 @@ mod tests {
 
     #[test]
     fn test_eventptr_builder_hot_reload_scenario() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Simulate hot-reload where new event implementations replace existing ones
         let new_event_implementations = [100, 200, 300];
@@ -448,8 +448,8 @@ mod tests {
 
     #[test]
     fn test_eventptr_builder_complex_indirection_scenario() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Simulate complex indirection with non-sequential event arrangement
         let complex_mapping = [25, 1, 50, 10, 75, 5, 100];

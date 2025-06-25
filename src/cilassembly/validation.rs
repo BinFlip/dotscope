@@ -3,13 +3,85 @@
 //! This module provides a comprehensive validation system for ensuring that
 //! assembly modifications are consistent, valid, and can be safely applied.
 //! It includes conflict detection, resolution strategies, and a configurable
-//! validation pipeline.
+//! validation pipeline that can be customized for different validation requirements.
+//!
+//! # Key Components
+//!
+//! - [`crate::cilassembly::validation::ValidationPipeline`] - Configurable pipeline for running validation stages
+//! - [`crate::cilassembly::validation::ValidationStage`] - Trait for implementing custom validation stages
+//! - [`crate::cilassembly::validation::ConflictResolver`] - Trait for implementing conflict resolution strategies
+//! - [`crate::cilassembly::validation::BasicSchemaValidator`] - Basic schema and RID validation
+//! - [`crate::cilassembly::validation::RidConsistencyValidator`] - RID uniqueness and consistency validation
+//! - [`crate::cilassembly::validation::LastWriteWinsResolver`] - Default timestamp-based conflict resolver
+//!
+//! # Architecture
+//!
+//! The validation system is built around a configurable pipeline architecture that
+//! enables modular validation and flexible conflict resolution:
+//!
+//! ## Validation Pipeline
+//! The [`crate::cilassembly::validation::ValidationPipeline`] orchestrates the validation process:
+//! - **Sequential Stages**: Validation stages run in order, with early termination on failure
+//! - **Configurable**: Stages can be added, removed, or reordered based on requirements
+//! - **Extensible**: Custom validation stages can be implemented via the trait system
+//!
+//! ## Validation Stages
+//! Individual stages focus on specific aspects of validation:
+//! - **Schema Validation**: Ensures row data types match target tables
+//! - **RID Consistency**: Validates RID uniqueness and conflict detection
+//! - **Cross-Reference Integrity**: Validates references between tables (extensible)
+//! - **Heap Validation**: Validates heap modifications (extensible)
+//!
+//! ## Conflict Resolution
+//! When operations conflict, the system provides pluggable resolution strategies:
+//! - **Last-Write-Wins**: Uses timestamps to determine precedence (default)
+//! - **First-Write-Wins**: Earlier operations take precedence (extensible)
+//! - **Merge Operations**: Combines compatible operations (extensible)
+//! - **Reject on Conflict**: Fails validation when conflicts are detected (extensible)
+//!
+//! # Usage Examples
+//!
+//! ```rust,ignore
+//! use crate::cilassembly::validation::{ValidationPipeline, BasicSchemaValidator, LastWriteWinsResolver};
+//! use crate::cilassembly::changes::assembly::AssemblyChanges;
+//! use crate::metadata::cilassemblyview::CilAssemblyView;
+//! use std::path::Path;
+//!
+//! # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+//! # let changes = AssemblyChanges::new(&view);
+//!
+//! // Use default validation pipeline
+//! let pipeline = ValidationPipeline::default();
+//! pipeline.validate(&changes, &view)?;
+//!
+//! // Create custom validation pipeline
+//! let custom_pipeline = ValidationPipeline::new()
+//!     .add_stage(BasicSchemaValidator)
+//!     .with_resolver(LastWriteWinsResolver);
+//!
+//! custom_pipeline.validate(&changes, &view)?;
+//! # Ok::<(), crate::Error>(())
+//! ```
+//!
+//! # Thread Safety
+//!
+//! The validation types are designed for single-threaded use during assembly modification.
+//! Validation stages and resolvers are not required to be [`Send`] or [`Sync`], allowing
+//! for complex validation logic that may use non-thread-safe dependencies.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::cilassembly::changes::assembly::AssemblyChanges`] - Change tracking and validation input
+//! - [`crate::cilassembly::operation`] - Operation definitions and conflict detection
+//! - [`crate::cilassembly::remapping`] - Index remapping after successful validation
+//! - [`crate::metadata::cilassemblyview::CilAssemblyView`] - Original assembly data for validation context
 
 use std::collections::HashMap;
 
 use crate::{
+    cilassembly::{AssemblyChanges, Operation, TableModifications, TableOperation},
     metadata::{
-        cilassembly::{AssemblyChanges, Operation, TableModifications, TableOperation},
         cilassemblyview::CilAssemblyView,
         tables::{TableDataOwned, TableId},
     },
@@ -173,7 +245,7 @@ impl BasicSchemaValidator {
             (TableId::Assembly, TableDataOwned::Assembly(_)) => true,
             (TableId::Module, TableDataOwned::Module(_)) => true,
             (TableId::Param, TableDataOwned::Param(_)) => true,
-            // Add more matches as TableDataOwned variants are implemented
+            // ToDo: Add more matches as TableDataOwned variants are implemented
             _ => false,
         };
 
@@ -386,13 +458,15 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{
             AssemblyChanges, HeapChanges, Operation, TableModifications, TableOperation,
         },
-        cilassemblyview::CilAssemblyView,
-        tables::{CodedIndex, TableDataOwned, TableId, TypeDefRaw},
-        token::Token,
+        metadata::{
+            cilassemblyview::CilAssemblyView,
+            tables::{CodedIndex, TableDataOwned, TableId, TypeDefRaw},
+            token::Token,
+        },
     };
 
     fn create_test_row() -> TableDataOwned {

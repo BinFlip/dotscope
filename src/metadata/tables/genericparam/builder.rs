@@ -1,13 +1,13 @@
 //! GenericParamBuilder for creating generic parameter definitions.
 //!
-//! This module provides [`GenericParamBuilder`] for creating GenericParam table entries
+//! This module provides [`crate::metadata::tables::genericparam::GenericParamBuilder`] for creating GenericParam table entries
 //! with a fluent API. Generic parameters enable type-safe generic programming in .NET
 //! by defining type and method parameters with constraints, variance annotations, and
 //! runtime reflection support for dynamic type operations.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{CodedIndex, CodedIndexType, GenericParamRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -47,14 +47,13 @@ pub use super::GenericParamAttributes;
 ///
 /// # Examples
 ///
-/// ```rust,no_run
-/// # use dotscope::{CilAssembly, CilAssemblyView};
-/// # use dotscope::metadata::cilassembly::BuilderContext;
+/// ```rust,ignore
+/// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::{GenericParamBuilder, GenericParamAttributes, CodedIndex, TableId};
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create a basic type parameter for a generic class
 /// let generic_class = CodedIndex::new(TableId::TypeDef, 1); // Generic class
@@ -114,7 +113,7 @@ impl GenericParamBuilder {
     ///
     /// # Returns
     ///
-    /// A new [`GenericParamBuilder`] instance ready for configuration.
+    /// A new [`crate::metadata::tables::genericparam::GenericParamBuilder`] instance ready for configuration.
     pub fn new() -> Self {
         Self {
             name: None,
@@ -230,7 +229,7 @@ impl GenericParamBuilder {
     ///
     /// # Returns
     ///
-    /// A [`Token`] representing the newly created generic parameter, or an error if
+    /// A [`crate::metadata::token::Token`] representing the newly created generic parameter, or an error if
     /// validation fails or required fields are missing.
     ///
     /// # Errors
@@ -318,9 +317,9 @@ impl GenericParamBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -328,13 +327,13 @@ mod tests {
     fn test_generic_param_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
+            let assembly = CilAssembly::new(view);
 
             // Check existing GenericParam table count
             let existing_count = assembly.original_table_row_count(TableId::GenericParam);
             let expected_rid = existing_count + 1;
 
-            let mut context = BuilderContext::new(&mut assembly);
+            let mut context = BuilderContext::new(assembly);
 
             // Create a basic type parameter
             let generic_type = CodedIndex::new(TableId::TypeDef, 1);
@@ -356,8 +355,8 @@ mod tests {
     fn test_generic_param_builder_with_flags() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let generic_type = CodedIndex::new(TableId::TypeDef, 1);
             let constraint_flags = GenericParamAttributes::REFERENCE_TYPE_CONSTRAINT
@@ -380,8 +379,8 @@ mod tests {
     fn test_generic_param_builder_covariant() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let generic_interface = CodedIndex::new(TableId::TypeDef, 2);
 
@@ -402,8 +401,8 @@ mod tests {
     fn test_generic_param_builder_method_parameter() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let generic_method = CodedIndex::new(TableId::MethodDef, 1);
 
@@ -423,8 +422,8 @@ mod tests {
     fn test_generic_param_builder_missing_name() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let generic_type = CodedIndex::new(TableId::TypeDef, 1);
 
@@ -442,8 +441,8 @@ mod tests {
     fn test_generic_param_builder_missing_number() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let generic_type = CodedIndex::new(TableId::TypeDef, 1);
 
@@ -461,8 +460,8 @@ mod tests {
     fn test_generic_param_builder_missing_owner() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = GenericParamBuilder::new()
                 .name("T")
@@ -478,8 +477,8 @@ mod tests {
     fn test_generic_param_builder_invalid_owner_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Use a table type that's not valid for TypeOrMethodDef
             let invalid_owner = CodedIndex::new(TableId::Field, 1); // Field not in TypeOrMethodDef
@@ -499,8 +498,8 @@ mod tests {
     fn test_generic_param_builder_invalid_number() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let generic_type = CodedIndex::new(TableId::TypeDef, 1);
 
@@ -519,8 +518,8 @@ mod tests {
     fn test_generic_param_builder_invalid_flags() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let generic_type = CodedIndex::new(TableId::TypeDef, 1);
 
@@ -540,8 +539,8 @@ mod tests {
     fn test_generic_param_builder_multiple_parameters() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let generic_type = CodedIndex::new(TableId::TypeDef, 1);
             let generic_method = CodedIndex::new(TableId::MethodDef, 1);
@@ -586,8 +585,8 @@ mod tests {
     fn test_generic_param_builder_all_constraint_types() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let generic_type = CodedIndex::new(TableId::TypeDef, 1);
 

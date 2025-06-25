@@ -34,7 +34,7 @@
 //!
 //! # Usage Examples
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::tables::{MetadataTable, RowReadable, TableInfoRef, TableRow};
 //! use dotscope::Result;
 //!

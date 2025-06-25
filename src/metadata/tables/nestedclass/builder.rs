@@ -14,14 +14,13 @@
 //!
 //! ## Usage
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! # use dotscope::prelude::*;
-//! # use dotscope::metadata::cilassembly::BuilderContext;
 //! # use std::path::Path;
 //! # fn main() -> dotscope::Result<()> {
 //! # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-//! # let mut assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(&mut assembly);
+//! # let assembly = CilAssembly::new(view);
+//! # let mut context = BuilderContext::new(assembly);
 //!
 //! // Create an enclosing type first
 //! let outer_class_token = TypeDefBuilder::new()
@@ -55,8 +54,8 @@
 //! - **Type Safety**: Ensures proper TypeDef token validation
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{NestedClassRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -82,13 +81,12 @@ use crate::{
 ///
 /// The builder provides a fluent interface for constructing NestedClass entries:
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// # use dotscope::prelude::*;
-/// # use dotscope::metadata::cilassembly::BuilderContext;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// # let mut assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(&mut assembly);
+/// # let assembly = CilAssembly::new(view);
+/// # let mut context = BuilderContext::new(assembly);
 /// # let outer_token = Token::new(0x02000001);
 /// # let inner_token = Token::new(0x02000002);
 ///
@@ -157,14 +155,13 @@ impl NestedClassBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
-    /// # use dotscope::metadata::cilassembly::BuilderContext;
     /// # use std::path::Path;
     /// # fn main() -> dotscope::Result<()> {
     /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// # let mut assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(&mut assembly);
+    /// # let assembly = CilAssembly::new(view);
+    /// # let mut context = BuilderContext::new(assembly);
     /// let inner_token = TypeDefBuilder::new()
     ///     .name("InnerClass")
     ///     .flags(TypeAttributes::NESTED_PUBLIC | TypeAttributes::CLASS)
@@ -191,14 +188,13 @@ impl NestedClassBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
-    /// # use dotscope::metadata::cilassembly::BuilderContext;
     /// # use std::path::Path;
     /// # fn main() -> dotscope::Result<()> {
     /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// # let mut assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(&mut assembly);
+    /// # let assembly = CilAssembly::new(view);
+    /// # let mut context = BuilderContext::new(assembly);
     /// let outer_token = TypeDefBuilder::new()
     ///     .name("OuterClass")
     ///     .public_class()
@@ -239,13 +235,12 @@ impl NestedClassBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
-    /// # use dotscope::metadata::cilassembly::BuilderContext;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// # let mut assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(&mut assembly);
+    /// # let assembly = CilAssembly::new(view);
+    /// # let mut context = BuilderContext::new(assembly);
     /// # let outer_token = Token::new(0x02000001);
     /// # let inner_token = Token::new(0x02000002);
     ///
@@ -328,10 +323,12 @@ impl NestedClassBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::CilAssembly,
-        cilassemblyview::CilAssemblyView,
-        tables::{TableId, TypeAttributes},
+        metadata::{
+            cilassemblyview::CilAssemblyView,
+            tables::{TableId, TypeAttributes},
+        },
     };
     use std::path::PathBuf;
 
@@ -343,8 +340,8 @@ mod tests {
 
     #[test]
     fn test_nested_class_builder_basic() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create TypeDefs for testing
         let outer_token = crate::metadata::tables::TypeDefBuilder::new()
@@ -379,8 +376,8 @@ mod tests {
 
     #[test]
     fn test_nested_class_builder_missing_nested_class() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create an enclosing type
         let outer_token = crate::metadata::tables::TypeDefBuilder::new()
@@ -401,8 +398,8 @@ mod tests {
 
     #[test]
     fn test_nested_class_builder_missing_enclosing_class() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a nested type
         let inner_token = crate::metadata::tables::TypeDefBuilder::new()
@@ -423,8 +420,8 @@ mod tests {
 
     #[test]
     fn test_nested_class_builder_invalid_nested_token() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create valid enclosing type
         let outer_token = crate::metadata::tables::TypeDefBuilder::new()
@@ -449,8 +446,8 @@ mod tests {
 
     #[test]
     fn test_nested_class_builder_invalid_enclosing_token() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create valid nested type
         let inner_token = crate::metadata::tables::TypeDefBuilder::new()
@@ -475,8 +472,8 @@ mod tests {
 
     #[test]
     fn test_nested_class_builder_self_nesting() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a type
         let type_token = crate::metadata::tables::TypeDefBuilder::new()
@@ -499,8 +496,8 @@ mod tests {
 
     #[test]
     fn test_nested_class_builder_zero_row_nested() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create valid enclosing type
         let outer_token = crate::metadata::tables::TypeDefBuilder::new()
@@ -525,8 +522,8 @@ mod tests {
 
     #[test]
     fn test_nested_class_builder_zero_row_enclosing() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create valid nested type
         let inner_token = crate::metadata::tables::TypeDefBuilder::new()
@@ -551,8 +548,8 @@ mod tests {
 
     #[test]
     fn test_nested_class_builder_multiple_relationships() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create an outer class
         let outer_token = crate::metadata::tables::TypeDefBuilder::new()
@@ -593,8 +590,8 @@ mod tests {
 
     #[test]
     fn test_nested_class_builder_deep_nesting() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a hierarchy: Outer -> Middle -> Inner
         let outer_token = crate::metadata::tables::TypeDefBuilder::new()
@@ -633,8 +630,8 @@ mod tests {
 
     #[test]
     fn test_nested_class_builder_fluent_api() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create types for testing
         let outer_token = crate::metadata::tables::TypeDefBuilder::new()

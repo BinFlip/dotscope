@@ -1,6 +1,6 @@
 //! Builder for constructing `MethodPtr` table entries
 //!
-//! This module provides the [`MethodPtrBuilder`] which enables fluent construction
+//! This module provides the [`crate::metadata::tables::methodptr::MethodPtrBuilder`] which enables fluent construction
 //! of `MethodPtr` metadata table entries. The builder follows the established
 //! pattern used across all table builders in the library.
 //!
@@ -17,8 +17,8 @@
 //! ```
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{MethodPtrRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -180,9 +180,9 @@ impl Default for MethodPtrBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -208,8 +208,8 @@ mod tests {
 
     #[test]
     fn test_methodptr_builder_basic() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = MethodPtrBuilder::new()
             .method(1)
             .build(&mut context)
@@ -222,8 +222,8 @@ mod tests {
 
     #[test]
     fn test_methodptr_builder_reordering() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = MethodPtrBuilder::new()
             .method(25) // Point to later method for reordering
             .build(&mut context)
@@ -236,8 +236,8 @@ mod tests {
 
     #[test]
     fn test_methodptr_builder_missing_method() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = MethodPtrBuilder::new().build(&mut context);
 
         assert!(result.is_err());
@@ -269,8 +269,8 @@ mod tests {
 
     #[test]
     fn test_methodptr_builder_fluent_interface() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test method chaining
         let token = MethodPtrBuilder::new()
@@ -285,8 +285,8 @@ mod tests {
 
     #[test]
     fn test_methodptr_builder_multiple_builds() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Build first pointer
         let token1 = MethodPtrBuilder::new()
@@ -316,8 +316,8 @@ mod tests {
 
     #[test]
     fn test_methodptr_builder_large_method_rid() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = MethodPtrBuilder::new()
             .method(0xFFFF) // Large MethodDef RID
             .build(&mut context)
@@ -330,8 +330,8 @@ mod tests {
 
     #[test]
     fn test_methodptr_builder_method_ordering_scenario() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Simulate method reordering: logical order 1,2,3 -> physical order 3,1,2
         let logical_to_physical = [(1, 30), (2, 10), (3, 20)];
@@ -356,8 +356,8 @@ mod tests {
 
     #[test]
     fn test_methodptr_builder_zero_method() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test with method 0 (typically invalid but should not cause builder to fail)
         let result = MethodPtrBuilder::new().method(0).build(&mut context);
@@ -369,8 +369,8 @@ mod tests {
 
     #[test]
     fn test_methodptr_builder_edit_continue_scenario() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Simulate edit-and-continue scenario where methods are added/reordered
         let original_methods = [5, 10, 15];
@@ -395,8 +395,8 @@ mod tests {
 
     #[test]
     fn test_methodptr_builder_hot_reload_scenario() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Simulate hot-reload where new methods replace existing ones
         let new_method_implementations = [100, 200, 300];

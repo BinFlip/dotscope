@@ -83,10 +83,10 @@ pub struct GenericParamConstraintRaw {
 
     /// The metadata token for this generic parameter constraint.
     ///
-    /// A [`Token`] that uniquely identifies this constraint across the entire assembly.
+    /// A [`crate::metadata::token::Token`] that uniquely identifies this constraint across the entire assembly.
     /// The token value is calculated as `0x2C000000 + rid`.
     ///
-    /// [`Token`]: crate::metadata::token::Token
+    /// [`crate::metadata::token::Token`]: crate::metadata::token::Token
     pub token: Token,
 
     /// The byte offset of this constraint in the metadata tables stream.

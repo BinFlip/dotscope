@@ -1,20 +1,106 @@
 //! Table modification tracking and management.
+//!
+//! This module provides the [`crate::cilassembly::modifications::TableModifications`]
+//! enumeration for tracking changes to metadata tables during assembly modification operations.
+//! It supports two different modification strategies optimized for different usage patterns.
+//!
+//! # Key Components
+//!
+//! - [`crate::cilassembly::modifications::TableModifications`] - Core table modification tracking with sparse and replacement strategies
+//!
+//! # Architecture
+//!
+//! The module implements two distinct strategies for tracking table modifications:
+//!
+//! ## Sparse Modifications
+//! - Track individual operations (Insert/Update/Delete) with timestamps
+//! - Memory-efficient for tables with few changes
+//! - Supports conflict detection and resolution
+//! - Operations are stored chronologically for proper ordering
+//!
+//! ## Complete Replacement
+//! - Replace entire table content with new data
+//! - More efficient for heavily modified tables
+//! - Simpler conflict resolution (no conflicts possible)
+//! - Better performance for bulk operations
+//!
+//! # Usage Examples
+//!
+//! ```rust,ignore
+//! use crate::cilassembly::modifications::TableModifications;
+//! use crate::cilassembly::operation::{TableOperation, Operation};
+//! use crate::metadata::tables::TableDataOwned;
+//!
+//! // Create sparse modification tracker
+//! let mut modifications = TableModifications::new_sparse(1);
+//!
+//! // Apply operations
+//! // let operation = TableOperation::new(Operation::Insert(1, row_data));
+//! // modifications.apply_operation(operation)?;
+//!
+//! // Check for modifications
+//! if modifications.has_modifications() {
+//!     println!("Table has {} operations", modifications.operation_count());
+//! }
+//! # Ok::<(), crate::Error>(())
+//! ```
+//!
+//! # Thread Safety
+//!
+//! This type is not [`Send`] or [`Sync`] as it contains mutable state that is not
+//! protected by synchronization primitives and is designed for single-threaded assembly modification.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::cilassembly::changes::assembly::AssemblyChanges`] - Overall change tracking
+//! - [`crate::cilassembly::operation`] - Operation definitions and management
+//! - [`crate::cilassembly::validation`] - Validation and conflict resolution
 
 use std::collections::HashSet;
 
-use crate::{
-    metadata::{cilassembly::TableOperation, tables::TableDataOwned},
-    Error, Result,
-};
+use crate::{cilassembly::TableOperation, metadata::tables::TableDataOwned, Error, Result};
 
 /// Represents modifications to a specific metadata table.
 ///
-/// Tables can be modified in two ways:
+/// This enum provides two different strategies for tracking changes to metadata tables,
+/// each optimized for different modification patterns. It integrates with
+/// [`crate::cilassembly::operation::TableOperation`] to maintain chronological ordering
+/// and conflict resolution capabilities.
+///
+/// # Modification Strategies
+///
 /// 1. **Sparse modifications** - Individual row operations (insert, update, delete)
 /// 2. **Complete replacement** - Replace the entire table content
 ///
 /// Sparse modifications are more memory-efficient for few changes, while
 /// complete replacement is better for heavily modified tables.
+///
+/// # Usage Examples
+///
+/// ```rust,ignore
+/// use crate::cilassembly::modifications::TableModifications;
+/// use crate::cilassembly::operation::{TableOperation, Operation};
+/// use crate::metadata::tables::TableDataOwned;
+///
+/// // Create sparse tracker
+/// let mut modifications = TableModifications::new_sparse(5); // next RID = 5
+///
+/// // Check if RID exists
+/// if modifications.has_row(3)? {
+///     println!("Row 3 exists");
+/// }
+///
+/// // Apply operations and consolidate
+/// // modifications.apply_operation(operation)?;
+/// modifications.consolidate_operations()?;
+/// # Ok::<(), crate::Error>(())
+/// ```
+///
+/// # Thread Safety
+///
+/// This type is not [`Send`] or [`Sync`] as it contains mutable collections
+/// and is designed for single-threaded modification operations.
 #[derive(Debug, Clone)]
 pub enum TableModifications {
     /// Sparse modifications with ordered operation tracking.
@@ -58,6 +144,19 @@ pub enum TableModifications {
 
 impl TableModifications {
     /// Creates a new sparse table modifications tracker.
+    ///
+    /// Initializes a new sparse modification tracker that will track individual
+    /// operations chronologically. The `next_rid` parameter determines where
+    /// new row insertions will begin.
+    ///
+    /// # Arguments
+    ///
+    /// * `next_rid` - The next available RID for new row insertions
+    ///
+    /// # Returns
+    ///
+    /// A new [`crate::cilassembly::modifications::TableModifications::Sparse`] variant
+    /// ready to track operations.
     pub fn new_sparse(next_rid: u32) -> Self {
         let original_row_count = next_rid.saturating_sub(1);
         Self::Sparse {
@@ -69,6 +168,19 @@ impl TableModifications {
     }
 
     /// Creates a table replacement with the given rows.
+    ///
+    /// Initializes a complete table replacement with the provided row data.
+    /// This is more efficient than sparse modifications when replacing most
+    /// or all of a table's content.
+    ///
+    /// # Arguments
+    ///
+    /// * `rows` - The complete set of rows to replace the table with
+    ///
+    /// # Returns
+    ///
+    /// A new [`crate::cilassembly::modifications::TableModifications::Replaced`] variant
+    /// containing the provided rows.
     pub fn new_replaced(rows: Vec<TableDataOwned>) -> Self {
         Self::Replaced(rows)
     }
@@ -130,11 +242,6 @@ impl TableModifications {
                     super::Operation::Update(rid, _) => {
                         deleted_rows.remove(rid);
                     }
-                }
-
-                // Consolidate operations periodically to manage memory
-                if operations.len() % 100 == 0 {
-                    // TODO: Implement consolidation
                 }
 
                 Ok(())

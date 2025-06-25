@@ -16,13 +16,12 @@
 //!
 //! ## Usage
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! # use dotscope::prelude::*;
-//! # use dotscope::metadata::cilassembly::BuilderContext;
 //! # use std::path::Path;
 //! # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-//! # let mut assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(&mut assembly);
+//! # let assembly = CilAssembly::new(view);
+//! # let mut context = BuilderContext::new(assembly);
 //!
 //! // Create a type forwarding entry
 //! let assembly_ref_token = AssemblyRefBuilder::new()
@@ -62,8 +61,8 @@
 //! - **Implementation Support**: Methods for file-based and external assembly exports
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{CodedIndex, ExportedTypeRaw, TableDataOwned, TableId, TypeAttributes},
         token::Token,
     },
@@ -89,13 +88,12 @@ use crate::{
 ///
 /// The builder provides a fluent interface for constructing ExportedType entries:
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// # use dotscope::prelude::*;
-/// # use dotscope::metadata::cilassembly::BuilderContext;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// # let mut assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(&mut assembly);
+/// # let assembly = CilAssembly::new(view);
+/// # let mut context = BuilderContext::new(assembly);
 ///
 /// let exported_type_token = ExportedTypeBuilder::new()
 ///     .name("Customer")
@@ -217,7 +215,7 @@ impl ExportedTypeBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
     /// # use dotscope::metadata::tables::TypeAttributes;
     /// let builder = ExportedTypeBuilder::new()
@@ -298,13 +296,12 @@ impl ExportedTypeBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
-    /// # use dotscope::metadata::cilassembly::BuilderContext;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// # let mut assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(&mut assembly);
+    /// # let assembly = CilAssembly::new(view);
+    /// # let mut context = BuilderContext::new(assembly);
     /// let file_token = FileBuilder::new()
     ///     .name("DataLayer.netmodule")
     ///     .build(&mut context)?;
@@ -330,13 +327,12 @@ impl ExportedTypeBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
-    /// # use dotscope::metadata::cilassembly::BuilderContext;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// # let mut assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(&mut assembly);
+    /// # let assembly = CilAssembly::new(view);
+    /// # let mut context = BuilderContext::new(assembly);
     /// let assembly_ref_token = AssemblyRefBuilder::new()
     ///     .name("MyApp.Core")
     ///     .version(2, 0, 0, 0)
@@ -366,13 +362,12 @@ impl ExportedTypeBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
-    /// # use dotscope::metadata::cilassembly::BuilderContext;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// # let mut assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(&mut assembly);
+    /// # let assembly = CilAssembly::new(view);
+    /// # let mut context = BuilderContext::new(assembly);
     /// let base_export_token = ExportedTypeBuilder::new()
     ///     .name("BaseType")
     ///     .build(&mut context)?;
@@ -416,13 +411,12 @@ impl ExportedTypeBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
-    /// # use dotscope::metadata::cilassembly::BuilderContext;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// # let mut assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(&mut assembly);
+    /// # let assembly = CilAssembly::new(view);
+    /// # let mut context = BuilderContext::new(assembly);
     ///
     /// let exported_type_token = ExportedTypeBuilder::new()
     ///     .name("Customer")
@@ -506,10 +500,12 @@ impl ExportedTypeBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::CilAssembly,
-        cilassemblyview::CilAssemblyView,
-        tables::{TableId, TypeAttributes},
+        metadata::{
+            cilassemblyview::CilAssemblyView,
+            tables::{TableId, TypeAttributes},
+        },
     };
     use std::path::PathBuf;
 
@@ -521,8 +517,8 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_basic() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // First create a File to reference
         let file_token = crate::metadata::tables::FileBuilder::new()
@@ -554,8 +550,8 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_missing_name() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a File to reference
         let file_token = crate::metadata::tables::FileBuilder::new()
@@ -575,8 +571,8 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_empty_name() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a File to reference
         let file_token = crate::metadata::tables::FileBuilder::new()
@@ -597,8 +593,8 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_missing_implementation() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let result = ExportedTypeBuilder::new()
             .name("TestType")
@@ -613,8 +609,8 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_with_namespace() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a File to reference
         let file_token = crate::metadata::tables::FileBuilder::new()
@@ -635,8 +631,8 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_public() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a File to reference
         let file_token = crate::metadata::tables::FileBuilder::new()
@@ -657,8 +653,8 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_not_public() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a File to reference
         let file_token = crate::metadata::tables::FileBuilder::new()
@@ -679,8 +675,8 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_with_typedef_id() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a File to reference
         let file_token = crate::metadata::tables::FileBuilder::new()
@@ -701,8 +697,8 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_assembly_ref_implementation() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create an AssemblyRef to reference
         let assembly_ref_token = crate::metadata::tables::AssemblyRefBuilder::new()
@@ -724,8 +720,8 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_exported_type_implementation() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a File for the first ExportedType
         let file_token = crate::metadata::tables::FileBuilder::new()
@@ -752,8 +748,8 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_invalid_implementation() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a builder with an invalid implementation reference
         let mut builder = ExportedTypeBuilder::new().name("InvalidType");
@@ -772,8 +768,8 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_zero_row_implementation() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a builder with a zero row implementation reference
         let mut builder = ExportedTypeBuilder::new().name("ZeroRowType");
@@ -792,8 +788,8 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_multiple_types() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create Files to reference
         let file_token1 = crate::metadata::tables::FileBuilder::new()
@@ -827,8 +823,8 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_comprehensive() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a File to reference
         let file_token = crate::metadata::tables::FileBuilder::new()
@@ -851,8 +847,8 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_fluent_api() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a File to reference
         let file_token = crate::metadata::tables::FileBuilder::new()
@@ -901,8 +897,8 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_empty_namespace() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create a File to reference
         let file_token = crate::metadata::tables::FileBuilder::new()

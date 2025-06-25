@@ -1,12 +1,12 @@
 //! TypeRefBuilder for creating type references.
 //!
-//! This module provides [`TypeRefBuilder`] for creating TypeRef table entries
+//! This module provides [`crate::metadata::tables::typeref::TypeRefBuilder`] for creating TypeRef table entries
 //! with a fluent API. The TypeRef table contains references to types defined
 //! in other assemblies or modules.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{CodedIndex, TableDataOwned, TableId, TypeRefRaw},
         token::Token,
     },
@@ -21,14 +21,13 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
-/// # use dotscope::{CilAssembly, CilAssemblyView};
-/// # use dotscope::metadata::cilassembly::BuilderContext;
+/// ```rust,ignore
+/// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::{CodedIndex, TableId, TypeRefBuilder};
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create a reference to System.Object from mscorlib
 /// let system_object = TypeRefBuilder::new()
@@ -55,7 +54,7 @@ impl TypeRefBuilder {
     ///
     /// # Returns
     ///
-    /// A new [`TypeRefBuilder`] ready for configuration.
+    /// A new [`crate::metadata::tables::typeref::TypeRefBuilder`] ready for configuration.
     pub fn new() -> Self {
         Self {
             name: None,
@@ -114,7 +113,7 @@ impl TypeRefBuilder {
     ///
     /// # Returns
     ///
-    /// The [`Token`] for the newly created TypeRef entry.
+    /// The [`crate::metadata::token::Token`] for the newly created TypeRef entry.
     ///
     /// # Errors
     ///
@@ -166,9 +165,9 @@ impl TypeRefBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -176,8 +175,8 @@ mod tests {
     fn test_typeref_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let mscorlib_ref = CodedIndex::new(TableId::AssemblyRef, 1);
             let token = TypeRefBuilder::new()
@@ -197,8 +196,8 @@ mod tests {
     fn test_typeref_builder_system_object() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Manually specify the core library reference
             let mscorlib_ref = CodedIndex::new(TableId::AssemblyRef, 1);
@@ -218,8 +217,8 @@ mod tests {
     fn test_typeref_builder_system_value_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Manually specify the core library reference
             let mscorlib_ref = CodedIndex::new(TableId::AssemblyRef, 1);
@@ -239,8 +238,8 @@ mod tests {
     fn test_typeref_builder_from_mscorlib() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Manually specify the core library reference
             let mscorlib_ref = CodedIndex::new(TableId::AssemblyRef, 1);
@@ -260,8 +259,8 @@ mod tests {
     fn test_typeref_builder_missing_name() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = TypeRefBuilder::new()
                 .namespace("System")
@@ -277,8 +276,8 @@ mod tests {
     fn test_typeref_builder_missing_resolution_scope() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = TypeRefBuilder::new()
                 .name("String")
@@ -294,8 +293,8 @@ mod tests {
     fn test_typeref_builder_global_namespace() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let token = TypeRefBuilder::new()
                 .name("GlobalType")

@@ -1,13 +1,13 @@
 //! FieldLayoutBuilder for creating explicit field layout specifications.
 //!
-//! This module provides [`FieldLayoutBuilder`] for creating FieldLayout table entries
+//! This module provides [`crate::metadata::tables::fieldlayout::FieldLayoutBuilder`] for creating FieldLayout table entries
 //! with a fluent API. Field layouts specify explicit byte offsets for fields in types
 //! with explicit layout control, enabling precise memory layout for P/Invoke interop,
 //! performance optimization, and native structure compatibility.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{FieldLayoutRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -51,15 +51,14 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
-/// # use dotscope::{CilAssembly, CilAssemblyView};
-/// # use dotscope::metadata::cilassembly::BuilderContext;
+/// ```rust,ignore
+/// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::FieldLayoutBuilder;
 /// # use dotscope::metadata::token::Token;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create explicit layout for a P/Invoke structure
 /// // struct Point { int x; int y; }
@@ -127,7 +126,7 @@ impl FieldLayoutBuilder {
     ///
     /// # Returns
     ///
-    /// A new [`FieldLayoutBuilder`] instance ready for configuration.
+    /// A new [`crate::metadata::tables::fieldlayout::FieldLayoutBuilder`] instance ready for configuration.
     pub fn new() -> Self {
         Self {
             field_offset: None,
@@ -211,7 +210,7 @@ impl FieldLayoutBuilder {
     ///
     /// # Returns
     ///
-    /// A [`Token`] representing the newly created field layout, or an error if
+    /// A [`crate::metadata::token::Token`] representing the newly created field layout, or an error if
     /// validation fails or required fields are missing.
     ///
     /// # Errors
@@ -280,9 +279,9 @@ impl FieldLayoutBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -290,13 +289,13 @@ mod tests {
     fn test_field_layout_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
+            let assembly = CilAssembly::new(view);
 
             // Check existing FieldLayout table count
             let existing_count = assembly.original_table_row_count(TableId::FieldLayout);
             let expected_rid = existing_count + 1;
 
-            let mut context = BuilderContext::new(&mut assembly);
+            let mut context = BuilderContext::new(assembly);
 
             // Create a basic field layout
             let field_token = Token::new(0x04000001); // Field RID 1
@@ -317,8 +316,8 @@ mod tests {
     fn test_field_layout_builder_different_offsets() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Test various common offset values
             let field1 = Token::new(0x04000001); // Field RID 1
@@ -371,8 +370,8 @@ mod tests {
     fn test_field_layout_builder_union_layout() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Create overlapping fields (union behavior)
             let int_field = Token::new(0x04000001); // Field RID 1
@@ -402,8 +401,8 @@ mod tests {
     fn test_field_layout_builder_large_offsets() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let field_token = Token::new(0x04000001); // Field RID 1
 
@@ -424,8 +423,8 @@ mod tests {
     fn test_field_layout_builder_missing_field_offset() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let field_token = Token::new(0x04000001); // Field RID 1
 
@@ -443,8 +442,8 @@ mod tests {
     fn test_field_layout_builder_missing_field() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = FieldLayoutBuilder::new()
                 .field_offset(4)
@@ -460,8 +459,8 @@ mod tests {
     fn test_field_layout_builder_invalid_field_token() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Use a token that's not from Field table
             let invalid_field = Token::new(0x02000001); // TypeDef token instead
@@ -480,8 +479,8 @@ mod tests {
     fn test_field_layout_builder_zero_field_rid() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Use a Field token with RID 0 (invalid)
             let invalid_field = Token::new(0x04000000); // Field with RID 0
@@ -500,8 +499,8 @@ mod tests {
     fn test_field_layout_builder_reserved_offset() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let field_token = Token::new(0x04000001); // Field RID 1
 
@@ -519,8 +518,8 @@ mod tests {
     fn test_field_layout_builder_multiple_layouts() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Create layouts for multiple fields simulating a struct
             let field1 = Token::new(0x04000001); // int field
@@ -572,8 +571,8 @@ mod tests {
     fn test_field_layout_builder_realistic_struct() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Realistic scenario: Point3D struct with explicit layout
             // struct Point3D { float x, y, z; int flags; }
@@ -636,8 +635,8 @@ mod tests {
     fn test_field_layout_builder_performance_alignment() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Performance-oriented layout with cache line alignment
             let hot_field = Token::new(0x04000001); // Frequently accessed

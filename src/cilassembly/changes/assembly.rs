@@ -1,18 +1,60 @@
 //! Core assembly change tracking structure.
+//!
+//! This module provides the [`crate::cilassembly::changes::assembly::AssemblyChanges`] structure
+//! for tracking all modifications made to a .NET assembly during the modification process.
+//! It implements sparse change tracking to minimize memory overhead and enable efficient
+//! merging operations during assembly output.
+//!
+//! # Key Components
+//!
+//! - [`crate::cilassembly::changes::assembly::AssemblyChanges`] - Core change tracking structure for assembly modifications
+//!
+//! # Architecture
+//!
+//! The change tracking system uses sparse storage principles - only modified elements
+//! are tracked rather than copying entire tables. This enables efficient memory usage
+//! for assemblies where only small portions are modified.
+//!
+//! Key design principles:
+//! - **Sparse Storage**: Only modified elements are tracked, not entire tables
+//! - **Lazy Allocation**: Change categories are only created when first used
+//! - **Efficient Merging**: Changes can be efficiently merged during read operations
+//! - **Memory Efficient**: Minimal overhead for read-heavy operations
+//!
+//! # Usage Examples
+//!
+//! ```rust,ignore
+//! use crate::cilassembly::changes::assembly::AssemblyChanges;
+//! use crate::metadata::cilassemblyview::CilAssemblyView;
+//! use std::path::Path;
+//!
+//! # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+//! let mut changes = AssemblyChanges::new(&view);
+//!
+//! // Check if any changes have been made
+//! if changes.has_changes() {
+//!     println!("Assembly has been modified");
+//! }
+//!
+//! // Get modification statistics
+//! let table_count = changes.modified_table_count();
+//! let string_count = changes.string_additions_count();
+//! # Ok::<(), crate::Error>(())
+//! ```
 
 use std::collections::HashMap;
 
-use crate::metadata::{
+use crate::{
     cilassembly::{HeapChanges, TableModifications},
-    cilassemblyview::CilAssemblyView,
-    tables::TableId,
+    metadata::{cilassemblyview::CilAssemblyView, tables::TableId},
 };
 
 /// Internal structure for tracking all modifications to an assembly.
 ///
 /// This structure uses lazy initialization - it's only created when the first
 /// modification is made, and individual change categories are only allocated
-/// when first accessed.
+/// when first accessed. It works closely with [`crate::cilassembly::CilAssembly`]
+/// to provide efficient change tracking during assembly modification operations.
 ///
 /// # Design Principles
 ///
@@ -20,6 +62,29 @@ use crate::metadata::{
 /// - **Lazy Allocation**: Change categories are only created when first used
 /// - **Efficient Merging**: Changes can be efficiently merged during read operations
 /// - **Memory Efficient**: Minimal overhead for read-heavy operations
+///
+/// # Usage Examples
+///
+/// ```rust,ignore
+/// use crate::cilassembly::changes::assembly::AssemblyChanges;
+/// use crate::metadata::cilassemblyview::CilAssemblyView;
+/// use std::path::Path;
+///
+/// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+/// let changes = AssemblyChanges::new(&view);
+///
+/// // Check modification status
+/// if changes.has_changes() {
+///     let table_count = changes.modified_table_count();
+///     println!("Modified {} tables", table_count);
+/// }
+/// # Ok::<(), crate::Error>(())
+/// ```
+///
+/// # Thread Safety
+///
+/// This type is not [`Send`] or [`Sync`] because it contains mutable state
+/// that is not protected by synchronization primitives.
 #[derive(Debug, Clone)]
 pub struct AssemblyChanges {
     /// Table-level modifications, keyed by table ID
@@ -57,14 +122,14 @@ pub struct AssemblyChanges {
 impl AssemblyChanges {
     /// Creates a new change tracking structure initialized with proper heap sizes from the view.
     ///
-    /// All heap changes are initialized with the proper original heap sizes
+    /// All heap changes are initialized with the proper original heap byte sizes
     /// from the view to ensure correct index calculations.
     /// Table changes remain an empty HashMap and are allocated on first use.
     pub fn new(view: &CilAssemblyView) -> Self {
-        let string_heap_size = Self::get_heap_size(view, "#Strings");
-        let blob_heap_size = Self::get_heap_size(view, "#Blob");
-        let guid_heap_size = Self::get_heap_size(view, "#GUID");
-        let userstring_heap_size = Self::get_heap_size(view, "#US");
+        let string_heap_size = Self::get_heap_byte_size(view, "#Strings");
+        let blob_heap_size = Self::get_heap_byte_size(view, "#Blob");
+        let guid_heap_size = Self::get_heap_byte_size(view, "#GUID");
+        let userstring_heap_size = Self::get_heap_byte_size(view, "#US");
 
         Self {
             table_changes: HashMap::new(),
@@ -88,8 +153,8 @@ impl AssemblyChanges {
         }
     }
 
-    /// Helper method to get the size of a heap by stream name.
-    fn get_heap_size(view: &CilAssemblyView, stream_name: &str) -> u32 {
+    /// Helper method to get the byte size of a heap by stream name.
+    fn get_heap_byte_size(view: &CilAssemblyView, stream_name: &str) -> u32 {
         view.streams()
             .iter()
             .find(|stream| stream.name == stream_name)
@@ -129,11 +194,27 @@ impl AssemblyChanges {
     }
 
     /// Gets the table modifications for a specific table, if any.
+    ///
+    /// # Arguments
+    ///
+    /// * `table_id` - The [`crate::metadata::tables::TableId`] to query for modifications
+    ///
+    /// # Returns
+    ///
+    /// An optional reference to [`crate::cilassembly::TableModifications`] if the table has been modified.
     pub fn get_table_modifications(&self, table_id: TableId) -> Option<&TableModifications> {
         self.table_changes.get(&table_id)
     }
 
     /// Gets mutable table modifications for a specific table, if any.
+    ///
+    /// # Arguments
+    ///
+    /// * `table_id` - The [`crate::metadata::tables::TableId`] to query for modifications
+    ///
+    /// # Returns
+    ///
+    /// An optional mutable reference to [`crate::cilassembly::TableModifications`] if the table has been modified.
     pub fn get_table_modifications_mut(
         &mut self,
         table_id: TableId,
@@ -165,7 +246,7 @@ impl Default for AssemblyChanges {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::cilassembly::HeapChanges;
+    use crate::cilassembly::HeapChanges;
 
     #[test]
     fn test_assembly_changes_empty() {

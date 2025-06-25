@@ -343,6 +343,47 @@ impl TableDataOwned {
         Ok(())
     }
 
+    /// Creates a copy of this table row with heap indices remapped for complex edit operations.
+    ///
+    /// This method will apply heap index remapping when editing existing heap entries
+    /// requires updating all referencing table rows. Currently unimplemented as we
+    /// only support add-only operations in the initial version.
+    ///
+    /// # Future Implementation
+    /// This will be needed when we support:
+    /// - Editing existing heap entries (strings, blobs, GUIDs, user strings)
+    /// - Deleting heap entries with compaction
+    /// - Complex table modifications that affect cross-references
+    pub fn with_remapped_heap_indices(
+        &self,
+        _remapper: &(), // Placeholder for IndexRemapper - will be proper type in future implementation
+    ) -> Self {
+        todo!("Heap index remapping for edit operations - will be implemented in future version");
+    }
+
+    /// Creates a copy of this table row with table references (RIDs) remapped for complex edit operations.
+    ///
+    /// This method will apply table RID remapping when table modifications affect
+    /// coded indices and foreign key references. Currently unimplemented as we
+    /// only support add-only operations in the initial version.
+    ///
+    /// # Future Implementation  
+    /// This will be needed when we support:
+    /// - Deleting table rows with RID compaction
+    /// - Moving table rows that affect coded indices
+    /// - Complex table modifications that affect cross-references
+    pub fn with_remapped_table_references(
+        &self,
+        _table_remapper: &std::collections::HashMap<
+            crate::metadata::tables::TableId,
+            std::collections::HashMap<u32, Option<u32>>,
+        >,
+    ) -> Self {
+        todo!(
+            "Table reference remapping for edit operations - will be implemented in future version"
+        );
+    }
+
     /// Calculate the row size for this specific table row.
     pub fn calculate_row_size(&self, sizes: &TableInfoRef) -> u32 {
         match self {

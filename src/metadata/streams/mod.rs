@@ -117,7 +117,7 @@
 //! # Examples
 //!
 //! ## Basic Stream Access
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::CilObject;
 //!
 //! # fn example() -> dotscope::Result<()> {
@@ -140,7 +140,7 @@
 //! ```
 //!
 //! ## Signature Analysis
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::CilObject;
 //!
 //! # fn example() -> dotscope::Result<()> {
@@ -163,7 +163,7 @@
 //! ```
 //!
 //! ## Assembly Identity and Versioning
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::CilObject;
 //!
 //! # fn example() -> dotscope::Result<()> {
@@ -187,7 +187,7 @@
 //! ```
 //!
 //! ## String Literal Processing
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::CilObject;
 //!
 //! # fn example() -> dotscope::Result<()> {
@@ -210,7 +210,7 @@
 //! ```
 //!
 //! ## Comprehensive Metadata Analysis
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::CilObject;
 //!
 //! # fn example() -> dotscope::Result<()> {

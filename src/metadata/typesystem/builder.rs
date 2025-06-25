@@ -273,7 +273,7 @@ impl TypeBuilder {
     ///
     /// ## Arguments
     ///
-    /// * `token` - The [`Token`] representing the metadata table entry for this type
+    /// * `token` - The [`crate::metadata::token::Token`] representing the metadata table entry for this type
     ///
     /// ## Returns
     ///
@@ -294,7 +294,7 @@ impl TypeBuilder {
     /// # }
     /// ```
     ///
-    /// [`Token`]: crate::metadata::token::Token
+    /// [`crate::metadata::token::Token`]: crate::metadata::token::Token
     #[must_use]
     pub fn with_token_init(mut self, token: Token) -> Self {
         self.token_init = Some(token);

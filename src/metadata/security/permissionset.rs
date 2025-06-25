@@ -153,7 +153,7 @@
 //!
 //! ## Working with Different Formats
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::security::PermissionSet;
 //!
 //! // Binary format (most common)

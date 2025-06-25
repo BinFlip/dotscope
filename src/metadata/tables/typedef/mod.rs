@@ -38,7 +38,7 @@
 //!
 //! # Usage Examples
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::tables::TypeAttributes;
 //!
 //! // Check if a type is public

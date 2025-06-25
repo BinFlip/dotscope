@@ -1,6 +1,6 @@
 //! Builder for constructing `AssemblyProcessor` table entries
 //!
-//! This module provides the [`AssemblyProcessorBuilder`] which enables fluent construction
+//! This module provides the [`crate::metadata::tables::assemblyprocessor::builder::AssemblyProcessorBuilder`] which enables fluent construction
 //! of `AssemblyProcessor` metadata table entries. The builder follows the established
 //! pattern used across all table builders in the library.
 //!
@@ -17,8 +17,8 @@
 //! ```
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{AssemblyProcessorRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -187,9 +187,9 @@ impl Default for AssemblyProcessorBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -215,8 +215,8 @@ mod tests {
 
     #[test]
     fn test_assemblyprocessor_builder_x86() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = AssemblyProcessorBuilder::new()
             .processor(0x014C) // x86
             .build(&mut context)
@@ -229,8 +229,8 @@ mod tests {
 
     #[test]
     fn test_assemblyprocessor_builder_x64() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = AssemblyProcessorBuilder::new()
             .processor(0x8664) // x64
             .build(&mut context)
@@ -243,8 +243,8 @@ mod tests {
 
     #[test]
     fn test_assemblyprocessor_builder_ia64() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = AssemblyProcessorBuilder::new()
             .processor(0x0200) // IA64
             .build(&mut context)
@@ -257,8 +257,8 @@ mod tests {
 
     #[test]
     fn test_assemblyprocessor_builder_custom() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = AssemblyProcessorBuilder::new()
             .processor(0x1234) // Custom processor ID
             .build(&mut context)
@@ -271,8 +271,8 @@ mod tests {
 
     #[test]
     fn test_assemblyprocessor_builder_missing_processor() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = AssemblyProcessorBuilder::new().build(&mut context);
 
         assert!(result.is_err());
@@ -304,8 +304,8 @@ mod tests {
 
     #[test]
     fn test_assemblyprocessor_builder_fluent_interface() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test method chaining
         let token = AssemblyProcessorBuilder::new()
@@ -320,8 +320,8 @@ mod tests {
 
     #[test]
     fn test_assemblyprocessor_builder_multiple_builds() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Build first processor
         let token1 = AssemblyProcessorBuilder::new()
@@ -343,8 +343,8 @@ mod tests {
 
     #[test]
     fn test_assemblyprocessor_builder_zero_processor() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = AssemblyProcessorBuilder::new()
             .processor(0) // Zero processor ID
             .build(&mut context)
@@ -357,8 +357,8 @@ mod tests {
 
     #[test]
     fn test_assemblyprocessor_builder_max_processor() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = AssemblyProcessorBuilder::new()
             .processor(u32::MAX) // Maximum processor ID
             .build(&mut context)

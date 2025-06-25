@@ -1,13 +1,13 @@
 //! PropertyBuilder for creating property definitions.
 //!
-//! This module provides [`PropertyBuilder`] for creating Property table entries
+//! This module provides [`crate::metadata::tables::property::PropertyBuilder`] for creating Property table entries
 //! with a fluent API. Properties define named attributes that can be accessed
 //! through getter and setter methods, forming a fundamental part of the .NET
 //! object model for encapsulated data access.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{PropertyRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -39,14 +39,13 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
-/// # use dotscope::{CilAssembly, CilAssemblyView};
-/// # use dotscope::metadata::cilassembly::BuilderContext;
+/// ```rust,ignore
+/// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::PropertyBuilder;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create a property signature for System.String
 /// let string_property_sig = &[0x08, 0x1C]; // PROPERTY calling convention + ELEMENT_TYPE_OBJECT
@@ -83,7 +82,7 @@ impl PropertyBuilder {
     ///
     /// # Returns
     ///
-    /// A new [`PropertyBuilder`] instance ready for configuration.
+    /// A new [`crate::metadata::tables::property::PropertyBuilder`] instance ready for configuration.
     pub fn new() -> Self {
         Self {
             name: None,
@@ -113,7 +112,7 @@ impl PropertyBuilder {
     /// Sets the property flags (attributes).
     ///
     /// Property flags control special behaviors and characteristics.
-    /// Common flag values from [`PropertyAttributes`](crate::metadata::tables::PropertyAttributes):
+    /// Common flag values from [`crate::metadata::tables::PropertyAttributes`]:
     /// - `0x0000`: No special flags (default for most properties)
     /// - `0x0200`: SPECIAL_NAME - Property has special naming conventions
     /// - `0x0400`: RT_SPECIAL_NAME - Runtime should verify name encoding
@@ -170,7 +169,7 @@ impl PropertyBuilder {
     ///
     /// # Returns
     ///
-    /// A [`Token`] representing the newly created property, or an error if
+    /// A [`crate::metadata::token::Token`] representing the newly created property, or an error if
     /// validation fails or required fields are missing.
     ///
     /// # Errors
@@ -223,10 +222,9 @@ impl PropertyBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
-        tables::PropertyAttributes,
+        metadata::{cilassemblyview::CilAssemblyView, tables::PropertyAttributes},
     };
     use std::path::PathBuf;
 
@@ -234,13 +232,13 @@ mod tests {
     fn test_property_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
+            let assembly = CilAssembly::new(view);
 
             // Check existing Property table count
             let existing_property_count = assembly.original_table_row_count(TableId::Property);
             let expected_rid = existing_property_count + 1;
 
-            let mut context = BuilderContext::new(&mut assembly);
+            let mut context = BuilderContext::new(assembly);
 
             // Create a property signature for System.String (PROPERTY + ELEMENT_TYPE_STRING)
             let string_property_sig = &[0x08, 0x0E];
@@ -262,8 +260,8 @@ mod tests {
     fn test_property_builder_with_special_name() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Create an int32 property signature (PROPERTY + ELEMENT_TYPE_I4)
             let int32_property_sig = &[0x08, 0x08];
@@ -285,8 +283,8 @@ mod tests {
     fn test_property_builder_indexer_signature() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Create an indexer signature: PROPERTY + HASTHIS + 1 param + string return + int32 param
             let indexer_sig = &[0x28, 0x01, 0x0E, 0x08]; // PROPERTY|HASTHIS, 1 param, string, int32
@@ -307,8 +305,8 @@ mod tests {
     fn test_property_builder_with_default() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Create a boolean property signature (PROPERTY + ELEMENT_TYPE_BOOLEAN)
             let bool_property_sig = &[0x08, 0x02];
@@ -330,8 +328,8 @@ mod tests {
     fn test_property_builder_missing_name() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = PropertyBuilder::new()
                 .flags(0)
@@ -347,8 +345,8 @@ mod tests {
     fn test_property_builder_missing_flags() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = PropertyBuilder::new()
                 .name("TestProperty")
@@ -364,8 +362,8 @@ mod tests {
     fn test_property_builder_missing_signature() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = PropertyBuilder::new()
                 .name("TestProperty")
@@ -381,8 +379,8 @@ mod tests {
     fn test_property_builder_multiple_properties() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let string_sig = &[0x08, 0x0E]; // PROPERTY + string
             let int_sig = &[0x08, 0x08]; // PROPERTY + int32

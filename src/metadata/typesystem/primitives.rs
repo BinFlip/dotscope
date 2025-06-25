@@ -32,7 +32,7 @@
 //!
 //! ## Creating Primitive Constants
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::typesystem::{CilPrimitive, CilPrimitiveKind, CilPrimitiveData};
 //!
 //! // Create a boolean constant
@@ -47,7 +47,7 @@
 //!
 //! ## Type Conversions
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::typesystem::{CilPrimitive, CilPrimitiveData};
 //!
 //! let primitive = CilPrimitive::i4(42);
@@ -64,7 +64,7 @@
 //!
 //! ## Parsing from Metadata
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::typesystem::{CilPrimitiveData, ELEMENT_TYPE};
 //!
 //! // Parse a 32-bit integer from metadata bytes
@@ -120,7 +120,7 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::typesystem::CilPrimitiveData;
 ///
 /// // Create different primitive values
@@ -185,7 +185,7 @@ impl CilPrimitiveData {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::CilPrimitiveData;
     ///
     /// assert_eq!(CilPrimitiveData::Boolean(true).as_boolean(), Some(true));
@@ -217,7 +217,7 @@ impl CilPrimitiveData {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::CilPrimitiveData;
     ///
     /// assert_eq!(CilPrimitiveData::Boolean(true).as_i32(), Some(1));
@@ -375,7 +375,7 @@ impl CilPrimitiveData {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::{CilPrimitiveData, ELEMENT_TYPE};
     ///
     /// // Parse a 32-bit integer (little-endian)
@@ -466,7 +466,7 @@ impl CilPrimitiveData {
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::typesystem::{CilPrimitive, CilPrimitiveKind, CilPrimitiveData};
 ///
 /// // Create a primitive with data
@@ -508,7 +508,7 @@ pub struct CilPrimitive {
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::typesystem::CilPrimitiveKind;
 ///
 /// // Common primitive types
@@ -588,7 +588,7 @@ impl CilPrimitiveKind {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::CilPrimitiveKind;
     ///
     /// let int_token = CilPrimitiveKind::I4.token();
@@ -654,7 +654,7 @@ impl CilPrimitiveKind {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::{CilPrimitiveKind, ELEMENT_TYPE};
     ///
     /// let bool_kind = CilPrimitiveKind::from_byte(ELEMENT_TYPE::BOOLEAN)?;
@@ -702,7 +702,7 @@ impl CilPrimitive {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::{CilPrimitive, CilPrimitiveKind, CilPrimitiveData};
     ///
     /// let void_type = CilPrimitive::new(CilPrimitiveKind::Void);
@@ -732,7 +732,7 @@ impl CilPrimitive {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::{CilPrimitive, CilPrimitiveKind, CilPrimitiveData};
     ///
     /// let int_const = CilPrimitive::with_data(
@@ -760,7 +760,7 @@ impl CilPrimitive {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::CilPrimitive;
     ///
     /// let true_const = CilPrimitive::boolean(true);

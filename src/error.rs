@@ -522,4 +522,117 @@ pub enum Error {
         /// Details about why conflict resolution failed
         details: String,
     },
+
+    // Binary Writing Errors
+    /// Assembly validation failed before writing.
+    ///
+    /// This error occurs when pre-write validation detects issues that
+    /// would prevent successful binary generation.
+    #[error("Binary write validation failed: {message}")]
+    WriteValidationFailed {
+        /// Details about the validation failure
+        message: String,
+    },
+
+    /// Layout planning failed during binary generation.
+    ///
+    /// This error occurs when the write planner cannot determine a valid
+    /// layout for the output file, such as when the file would exceed
+    /// configured size limits.
+    #[error("Binary write layout planning failed: {message}")]
+    WriteLayoutFailed {
+        /// Details about the layout failure
+        message: String,
+    },
+
+    /// Memory mapping failed during binary writing.
+    ///
+    /// This error occurs when the memory-mapped file cannot be created
+    /// or accessed for writing the output assembly.
+    #[error("Binary write memory mapping failed: {message}")]
+    WriteMmapFailed {
+        /// Details about the memory mapping failure
+        message: String,
+    },
+
+    /// Heap writing failed during binary generation.
+    ///
+    /// This error occurs when writing metadata heaps (strings, blobs, etc.)
+    /// to the output file fails.
+    #[error("Binary write heap writing failed: {message}")]
+    WriteHeapFailed {
+        /// Details about the heap writing failure
+        message: String,
+    },
+
+    /// Table writing failed during binary generation.
+    ///
+    /// This error occurs when writing metadata tables to the output file fails.
+    #[error("Binary write table writing failed: {message}")]
+    WriteTableFailed {
+        /// Details about the table writing failure
+        message: String,
+    },
+
+    /// PE structure writing failed during binary generation.
+    ///
+    /// This error occurs when writing PE headers, sections, or other
+    /// PE-specific structures to the output file fails.
+    #[error("Binary write PE structure writing failed: {message}")]
+    WritePeFailed {
+        /// Details about the PE writing failure
+        message: String,
+    },
+
+    /// File finalization failed during binary writing.
+    ///
+    /// This error occurs when the final step of writing (such as flushing,
+    /// syncing, or closing the output file) fails.
+    #[error("Binary write finalization failed: {message}")]
+    WriteFinalizationFailed {
+        /// Details about the finalization failure
+        message: String,
+    },
+
+    /// Binary writing configuration is invalid.
+    ///
+    /// This error occurs when the provided writer configuration contains
+    /// invalid or conflicting settings.
+    #[error("Binary write configuration invalid: {message}")]
+    WriteInvalidConfig {
+        /// Details about the configuration error
+        message: String,
+    },
+
+    /// File size would exceed configured limits.
+    ///
+    /// This error occurs when the planned output file size exceeds the
+    /// maximum allowed size set in the writer configuration.
+    #[error("Binary write file size {actual} exceeds maximum allowed size {max}")]
+    WriteFileSizeExceeded {
+        /// The actual file size that would be generated
+        actual: u64,
+        /// The maximum allowed file size
+        max: u64,
+    },
+
+    /// Required metadata is missing or invalid for binary writing.
+    ///
+    /// This error occurs when the assembly is missing metadata required
+    /// for binary generation, or when the metadata is in an invalid state.
+    #[error("Binary write missing required metadata: {message}")]
+    WriteMissingMetadata {
+        /// Details about the missing metadata
+        message: String,
+    },
+
+    /// Internal error during binary writing.
+    ///
+    /// This error represents an internal inconsistency or bug in the
+    /// binary writing logic that should not occur under normal conditions.
+    #[error("Binary write internal error: {message}")]
+    WriteInternalError {
+        /// Details about the internal error
+        message: String,
+    },
 }

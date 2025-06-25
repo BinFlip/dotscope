@@ -1,17 +1,130 @@
 //! Index remapping for binary generation.
+//!
+//! This module provides the [`crate::cilassembly::remapping::index::IndexRemapper`] for managing
+//! index remapping during the binary generation phase of assembly modification. It handles
+//! the complex task of updating all cross-references when heap items are added or table
+//! rows are modified, ensuring referential integrity in the final output.
+//!
+//! # Key Components
+//!
+//! - [`crate::cilassembly::remapping::index::IndexRemapper`] - Central index remapping coordinator for all heaps and tables
+//!
+//! # Architecture
+//!
+//! The index remapping system addresses the challenge of maintaining referential integrity
+//! when assembly modifications change the layout of metadata structures:
+//!
+//! ## Heap Index Remapping
+//! When new items are added to metadata heaps (#Strings, #Blob, #GUID, #US), existing
+//! indices remain valid but new items receive sequential indices. The remapper maintains
+//! mapping tables to track these assignments.
+//!
+//! ## Table RID Remapping  
+//! When table rows are inserted, updated, or deleted, the RID (Row ID) space may be
+//! reorganized. The remapper coordinates with [`crate::cilassembly::remapping::rid::RidRemapper`]
+//! instances to handle per-table RID management.
+//!
+//! ## Cross-Reference Updates
+//! The final phase applies all remappings to update cross-references throughout the
+//! assembly metadata, ensuring all indices and RIDs point to their correct final locations.
+//!
+//! # Usage Examples
+//!
+//! ```rust,ignore
+//! use crate::cilassembly::remapping::index::IndexRemapper;
+//! use crate::cilassembly::changes::assembly::AssemblyChanges;
+//! use crate::metadata::cilassemblyview::CilAssemblyView;
+//! use std::path::Path;
+//!
+//! # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+//! # let mut changes = AssemblyChanges::new(&view);
+//! // Build complete remapping from changes
+//! let remapper = IndexRemapper::build_from_changes(&changes, &view);
+//!
+//! // Query specific index mappings
+//! if let Some(final_index) = remapper.map_string_index(42) {
+//!     println!("String index 42 maps to {}", final_index);
+//! }
+//!
+//! // Apply remapping to update cross-references
+//! remapper.apply_to_assembly(&mut changes)?;
+//! # Ok::<(), crate::Error>(())
+//! ```
+//!
+//! # Thread Safety
+//!
+//! This type is not [`Send`] or [`Sync`] as it contains large hash maps that are designed
+//! for single-threaded batch processing during binary generation.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::cilassembly::remapping::rid`] - Per-table RID remapping
+//! - [`crate::cilassembly::changes::assembly::AssemblyChanges`] - Change tracking data
+//! - [`crate::cilassembly::write`] - Binary output generation system
+//! - [`crate::metadata::cilassemblyview::CilAssemblyView`] - Original assembly data
 
 use std::collections::HashMap;
 
 use crate::{
-    metadata::{
-        cilassembly::{remapping::RidRemapper, AssemblyChanges, HeapChanges, TableModifications},
-        cilassemblyview::CilAssemblyView,
-        tables::TableId,
-    },
+    cilassembly::{remapping::RidRemapper, AssemblyChanges, HeapChanges, TableModifications},
+    metadata::{cilassemblyview::CilAssemblyView, tables::TableId},
     Result,
 };
 
 /// Manages index remapping during binary generation phase.
+///
+/// This struct serves as the central coordinator for all index remapping operations
+/// during assembly modification. It maintains separate mapping tables for each metadata
+/// heap and delegates table-specific RID remapping to [`crate::cilassembly::remapping::rid::RidRemapper`]
+/// instances.
+///
+/// # Remapping Strategy
+///
+/// The remapper implements a preservation strategy where:
+/// - Original indices are preserved whenever possible
+/// - New items receive sequential indices after existing items
+/// - Cross-references are updated in a final consolidation phase
+/// - All mappings are tracked to enable reverse lookups if needed
+///
+/// # Memory Layout
+///
+/// The remapper contains hash maps for each metadata heap type:
+/// - **String heap**: UTF-8 strings with null terminators
+/// - **Blob heap**: Binary data with compressed length prefixes  
+/// - **GUID heap**: Fixed 16-byte GUIDs
+/// - **UserString heap**: UTF-16 strings with compressed length prefixes
+/// - **Table RIDs**: Per-table row identifier mappings
+///
+/// # Usage Examples
+///
+/// ```rust,ignore
+/// use crate::cilassembly::remapping::index::IndexRemapper;
+/// use crate::cilassembly::changes::assembly::AssemblyChanges;
+/// use crate::metadata::cilassemblyview::CilAssemblyView;
+/// use crate::metadata::tables::TableId;
+/// use std::path::Path;
+///
+/// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+/// # let changes = AssemblyChanges::new(&view);
+/// // Build remapper from assembly changes
+/// let remapper = IndexRemapper::build_from_changes(&changes, &view);
+///
+/// // Check heap index mappings
+/// let final_string_idx = remapper.map_string_index(42);
+/// let final_blob_idx = remapper.map_blob_index(100);
+///
+/// // Access table remappers
+/// if let Some(table_remapper) = remapper.get_table_remapper(TableId::TypeDef) {
+///     let final_rid = table_remapper.map_rid(5);
+/// }
+/// # Ok::<(), crate::Error>(())
+/// ```
+///
+/// # Thread Safety
+///
+/// This type is not [`Send`] or [`Sync`] as it contains large mutable hash maps
+/// optimized for single-threaded batch processing.
 pub struct IndexRemapper {
     /// String heap: Original index -> Final index  
     pub string_map: HashMap<u32, u32>,
@@ -27,6 +140,26 @@ pub struct IndexRemapper {
 
 impl IndexRemapper {
     /// Build complete remapping for all modified tables and heaps.
+    ///
+    /// This method analyzes the provided changes and constructs a comprehensive remapping
+    /// strategy for all modified metadata structures. It coordinates heap index remapping
+    /// and table RID remapping to ensure referential integrity in the final binary.
+    ///
+    /// # Arguments
+    ///
+    /// * `changes` - The [`crate::cilassembly::changes::assembly::AssemblyChanges`] containing all modifications
+    /// * `original_view` - The original [`crate::metadata::cilassemblyview::CilAssemblyView`] for baseline data
+    ///
+    /// # Returns
+    ///
+    /// A new [`crate::cilassembly::remapping::index::IndexRemapper`] with complete mapping tables
+    /// for all modified structures.
+    ///
+    /// # Process
+    ///
+    /// 1. **Heap Remapping**: Builds index mappings for all modified heaps
+    /// 2. **Table Remapping**: Creates RID remappers for all modified tables
+    /// 3. **Cross-Reference Preparation**: Prepares for final cross-reference updates
     pub fn build_from_changes(changes: &AssemblyChanges, original_view: &CilAssemblyView) -> Self {
         let mut remapper = Self {
             string_map: HashMap::new(),
@@ -42,6 +175,15 @@ impl IndexRemapper {
     }
 
     /// Build heap index remapping for all modified heaps.
+    ///
+    /// This method examines each metadata heap for changes and builds appropriate
+    /// index mappings. Only heaps with modifications receive mapping tables to
+    /// optimize memory usage.
+    ///
+    /// # Arguments
+    ///
+    /// * `changes` - The [`crate::cilassembly::changes::assembly::AssemblyChanges`] to analyze
+    /// * `original_view` - The original assembly view for baseline heap sizes
     fn build_heap_remapping(&mut self, changes: &AssemblyChanges, original_view: &CilAssemblyView) {
         if changes.string_heap_changes.has_additions() {
             self.build_string_mapping(&changes.string_heap_changes, original_view);
@@ -187,11 +329,24 @@ impl IndexRemapper {
     }
 
     /// Update all cross-references in table data using this remapping.
+    ///
+    /// This method applies the constructed remapping tables to update all cross-references
+    /// throughout the assembly metadata. This is the final phase of the remapping process
+    /// that ensures referential integrity in the output binary.
+    ///
+    /// # Arguments
+    ///
+    /// * `changes` - Mutable reference to [`crate::cilassembly::changes::assembly::AssemblyChanges`] to update
+    ///
+    /// # Returns
+    ///
+    /// [`Result<()>`] indicating success or failure of the cross-reference update process.
+    ///
+    /// # Current Status
+    ///
+    /// This is currently a placeholder implementation that requires completion to
+    /// handle the complex task of traversing all table data and updating references.
     pub fn apply_to_assembly(&self, changes: &mut AssemblyChanges) -> Result<()> {
-        // For now, this is a placeholder that would update cross-references
-        // The actual implementation would traverse all table data and update
-        // any references to strings, blobs, or other table RIDs
-
         // TODO: Implement cross-reference updating
         // This would involve:
         // 1. Iterating through all table operations
@@ -204,11 +359,33 @@ impl IndexRemapper {
     }
 
     /// Get the final index for a string heap index.
+    ///
+    /// Looks up the final index mapping for a string heap index. This is used
+    /// to update cross-references during binary generation.
+    ///
+    /// # Arguments
+    ///
+    /// * `original_index` - The original string heap index to map
+    ///
+    /// # Returns
+    ///
+    /// `Some(final_index)` if the index has a mapping, `None` if not found.
     pub fn map_string_index(&self, original_index: u32) -> Option<u32> {
         self.string_map.get(&original_index).copied()
     }
 
     /// Get the final index for a blob heap index.
+    ///
+    /// Looks up the final index mapping for a blob heap index. This is used
+    /// to update cross-references during binary generation.
+    ///
+    /// # Arguments
+    ///
+    /// * `original_index` - The original blob heap index to map
+    ///
+    /// # Returns
+    ///
+    /// `Some(final_index)` if the index has a mapping, `None` if not found.
     pub fn map_blob_index(&self, original_index: u32) -> Option<u32> {
         self.blob_map.get(&original_index).copied()
     }
@@ -224,6 +401,19 @@ impl IndexRemapper {
     }
 
     /// Get the RID remapper for a specific table.
+    ///
+    /// Retrieves the [`crate::cilassembly::remapping::rid::RidRemapper`] instance for a specific
+    /// table, if that table has been modified. This provides access to table-specific
+    /// RID mapping functionality.
+    ///
+    /// # Arguments
+    ///
+    /// * `table_id` - The [`crate::metadata::tables::TableId`] to get the remapper for
+    ///
+    /// # Returns
+    ///
+    /// `Some(&RidRemapper)` if the table has modifications, `None` if the table
+    /// has not been modified and thus has no remapper.
     pub fn get_table_remapper(&self, table_id: TableId) -> Option<&RidRemapper> {
         self.table_maps.get(&table_id)
     }
@@ -234,13 +424,15 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{
             AssemblyChanges, HeapChanges, Operation, TableModifications, TableOperation,
         },
-        cilassemblyview::CilAssemblyView,
-        tables::{CodedIndex, TableDataOwned, TableId, TypeDefRaw},
-        token::Token,
+        metadata::{
+            cilassemblyview::CilAssemblyView,
+            tables::{CodedIndex, TableDataOwned, TableId, TypeDefRaw},
+            token::Token,
+        },
     };
 
     fn create_test_row() -> TableDataOwned {

@@ -1,13 +1,13 @@
 //! ConstantBuilder for creating compile-time constant value definitions.
 //!
-//! This module provides [`ConstantBuilder`] for creating Constant table entries
+//! This module provides [`crate::metadata::tables::constant::ConstantBuilder`] for creating Constant table entries
 //! with a fluent API. Constants represent compile-time literal values associated
 //! with fields, properties, and parameters, enabling default value initialization,
 //! enumeration value definitions, and attribute argument specification.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{CodedIndex, CodedIndexType, ConstantRaw, TableDataOwned, TableId},
         token::Token,
         typesystem::ELEMENT_TYPE,
@@ -50,15 +50,14 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
-/// # use dotscope::{CilAssembly, CilAssemblyView};
-/// # use dotscope::metadata::cilassembly::BuilderContext;
+/// ```rust,ignore
+/// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::{ConstantBuilder, CodedIndex, TableId};
 /// # use dotscope::metadata::typesystem::ELEMENT_TYPE;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create an integer constant for a field
 /// let field_ref = CodedIndex::new(TableId::Field, 1); // Target field
@@ -118,7 +117,7 @@ impl ConstantBuilder {
     ///
     /// # Returns
     ///
-    /// A new [`ConstantBuilder`] instance ready for configuration.
+    /// A new [`crate::metadata::tables::constant::ConstantBuilder`] instance ready for configuration.
     pub fn new() -> Self {
         Self {
             element_type: None,
@@ -294,7 +293,7 @@ impl ConstantBuilder {
     ///
     /// # Returns
     ///
-    /// A [`Token`] representing the newly created constant, or an error if
+    /// A [`crate::metadata::token::Token`] representing the newly created constant, or an error if
     /// validation fails or required fields are missing.
     ///
     /// # Errors
@@ -395,9 +394,9 @@ impl ConstantBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -405,13 +404,13 @@ mod tests {
     fn test_constant_builder_basic_integer() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
+            let assembly = CilAssembly::new(view);
 
             // Check existing Constant table count
             let existing_count = assembly.original_table_row_count(TableId::Constant);
             let expected_rid = existing_count + 1;
 
-            let mut context = BuilderContext::new(&mut assembly);
+            let mut context = BuilderContext::new(assembly);
 
             // Create an integer constant for a field
             let field_ref = CodedIndex::new(TableId::Field, 1);
@@ -434,8 +433,8 @@ mod tests {
     fn test_constant_builder_i4_convenience() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let field_ref = CodedIndex::new(TableId::Field, 1);
 
@@ -454,8 +453,8 @@ mod tests {
     fn test_constant_builder_boolean() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let param_ref = CodedIndex::new(TableId::Param, 1);
 
@@ -474,8 +473,8 @@ mod tests {
     fn test_constant_builder_string() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let property_ref = CodedIndex::new(TableId::Property, 1);
 
@@ -494,8 +493,8 @@ mod tests {
     fn test_constant_builder_null_reference() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let field_ref = CodedIndex::new(TableId::Field, 2);
             let null_value = [0u8, 0u8, 0u8, 0u8]; // 4-byte zero for null reference
@@ -516,8 +515,8 @@ mod tests {
     fn test_constant_builder_missing_element_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let field_ref = CodedIndex::new(TableId::Field, 1);
             let int_value = 42i32.to_le_bytes();
@@ -536,8 +535,8 @@ mod tests {
     fn test_constant_builder_missing_parent() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let int_value = 42i32.to_le_bytes();
 
@@ -555,8 +554,8 @@ mod tests {
     fn test_constant_builder_missing_value() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let field_ref = CodedIndex::new(TableId::Field, 1);
 
@@ -574,8 +573,8 @@ mod tests {
     fn test_constant_builder_invalid_parent_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Use a table type that's not valid for HasConstant
             let invalid_parent = CodedIndex::new(TableId::TypeDef, 1); // TypeDef not in HasConstant
@@ -596,8 +595,8 @@ mod tests {
     fn test_constant_builder_invalid_element_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let field_ref = CodedIndex::new(TableId::Field, 1);
             let int_value = 42i32.to_le_bytes();
@@ -617,8 +616,8 @@ mod tests {
     fn test_constant_builder_multiple_constants() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let field1 = CodedIndex::new(TableId::Field, 1);
             let field2 = CodedIndex::new(TableId::Field, 2);
@@ -671,8 +670,8 @@ mod tests {
     fn test_constant_builder_all_primitive_types() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Test various primitive types
             let field_refs: Vec<_> = (1..=12)

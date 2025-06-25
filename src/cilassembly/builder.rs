@@ -3,9 +3,13 @@
 //! This module provides builder patterns for creating complex metadata
 //! structures with automatic cross-reference resolution and validation.
 //!
+//! # Key Components
+//!
+//! - [`crate::cilassembly::builder::BuilderContext`] - Central coordination context for all builder operations
+//!
 //! # Architecture
 //!
-//! The builder system centers around [`BuilderContext`], which coordinates
+//! The builder system centers around [`crate::cilassembly::builder::BuilderContext`], which coordinates
 //! all builder operations and provides:
 //! - RID management for all tables
 //! - Cross-reference validation
@@ -18,8 +22,8 @@
 use std::collections::HashMap;
 
 use crate::{
+    cilassembly::CilAssembly,
     metadata::{
-        cilassembly::CilAssembly,
         tables::{AssemblyRefRaw, CodedIndex, TableDataOwned, TableId},
         token::Token,
     },
@@ -30,7 +34,7 @@ use crate::{
 ///
 /// `BuilderContext` serves as the coordination hub for all metadata creation
 /// operations, managing RID allocation, cross-reference validation, and
-/// integration with the underlying [`CilAssembly`] infrastructure.
+/// integration with the underlying [`crate::cilassembly::CilAssembly`] infrastructure.
 ///
 /// # Key Responsibilities
 ///
@@ -42,44 +46,46 @@ use crate::{
 ///
 /// # Usage
 ///
-/// ```rust,no_run
-/// # use dotscope::{CilAssembly, CilAssemblyView};
-/// # use dotscope::metadata::cilassembly::BuilderContext;
+/// ```rust,ignore
+/// # use dotscope::prelude::*;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Use builders through the context
 /// // let assembly_token = AssemblyBuilder::new(&mut context)...
+///
+/// // Get the assembly back when done
+/// let assembly = context.finish();
 /// # Ok::<(), dotscope::Error>(())
 /// ```
-pub struct BuilderContext<'a> {
-    /// Reference to the mutable assembly being modified
-    assembly: &'a mut CilAssembly,
+pub struct BuilderContext {
+    /// Owned assembly being modified
+    assembly: CilAssembly,
 
     /// Track next available RIDs for each table
     next_rids: HashMap<TableId, u32>,
 }
 
-impl<'a> BuilderContext<'a> {
+impl BuilderContext {
     /// Creates a new builder context for the given assembly.
     ///
-    /// This initializes the RID tracking by examining the current state
-    /// of all tables in the assembly to determine the next available RID
-    /// for each table type. Only tables that actually exist in the loaded
-    /// assembly are initialized.
+    /// This takes ownership of the assembly and initializes the RID tracking
+    /// by examining the current state of all tables in the assembly to determine
+    /// the next available RID for each table type. Only tables that actually
+    /// exist in the loaded assembly are initialized.
     ///
     /// # Arguments
     ///
-    /// * `assembly` - Mutable reference to the assembly to modify
+    /// * `assembly` - Assembly to take ownership of and modify
     ///
     /// # Returns
     ///
-    /// A new [`BuilderContext`] ready for builder operations.
-    pub fn new(assembly: &'a mut CilAssembly) -> Self {
+    /// A new [`crate::cilassembly::builder::BuilderContext`] ready for builder operations.
+    pub fn new(assembly: CilAssembly) -> Self {
         let mut next_rids = HashMap::new();
-        if let Some(tables) = assembly.view.tables() {
+        if let Some(tables) = assembly.view().tables() {
             for table_id in tables.present_tables() {
                 let existing_count = assembly.original_table_row_count(table_id);
                 next_rids.insert(table_id, existing_count + 1);
@@ -92,10 +98,41 @@ impl<'a> BuilderContext<'a> {
         }
     }
 
+    /// Finishes the building process and returns ownership of the assembly.
+    ///
+    /// This consumes the [`crate::cilassembly::builder::BuilderContext`] and returns the owned [`crate::cilassembly::CilAssembly`]
+    /// with all modifications applied. After calling this method, the context
+    /// can no longer be used, and the assembly can be written to disk or
+    /// used for other operations.
+    ///
+    /// # Returns
+    ///
+    /// The owned [`crate::cilassembly::CilAssembly`] with all builder modifications applied.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
+    ///
+    /// // Perform builder operations...
+    ///
+    /// // Get the assembly back and write to file
+    /// let assembly = context.finish();
+    /// assembly.write_to_file(Path::new("output.dll"))?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn finish(self) -> CilAssembly {
+        self.assembly
+    }
+
     /// Adds a string to the assembly's string heap and returns its index.
     ///
     /// This is a convenience method that delegates to the underlying
-    /// [`CilAssembly::add_string`] method.
+    /// [`crate::cilassembly::CilAssembly::add_string`] method.
     ///
     /// # Arguments
     ///
@@ -134,16 +171,12 @@ impl<'a> BuilderContext<'a> {
     /// This searches through the strings added in the current builder session
     /// to avoid duplicates within the same session.
     fn find_existing_string(&self, value: &str) -> Option<u32> {
-        let heap_changes = &self.assembly.changes.string_heap_changes;
+        let heap_changes = &self.assembly.changes().string_heap_changes;
 
-        for (index, existing_string) in heap_changes.appended_items.iter().enumerate() {
+        // Use the proper string_items_with_indices iterator to get correct byte offsets
+        for (offset, existing_string) in heap_changes.string_items_with_indices() {
             if existing_string == value {
-                // Convert 0-based index to heap index (accounting for original heap size)
-                // The heap changes next_index was initialized as original_heap_size + 1,
-                // so we can calculate the original heap size
-                let original_heap_size =
-                    heap_changes.next_index - heap_changes.appended_items.len() as u32 - 1;
-                return Some(original_heap_size + index as u32 + 1);
+                return Some(offset);
             }
         }
 
@@ -153,7 +186,7 @@ impl<'a> BuilderContext<'a> {
     /// Adds a blob to the assembly's blob heap and returns its index.
     ///
     /// This is a convenience method that delegates to the underlying
-    /// [`CilAssembly::add_blob`] method.
+    /// [`crate::cilassembly::CilAssembly::add_blob`] method.
     ///
     /// # Arguments
     ///
@@ -169,7 +202,7 @@ impl<'a> BuilderContext<'a> {
     /// Adds a GUID to the assembly's GUID heap and returns its index.
     ///
     /// This is a convenience method that delegates to the underlying
-    /// [`CilAssembly::add_guid`] method.
+    /// [`crate::cilassembly::CilAssembly::add_guid`] method.
     ///
     /// # Arguments
     ///
@@ -185,7 +218,7 @@ impl<'a> BuilderContext<'a> {
     /// Adds a user string to the assembly's user string heap and returns its index.
     ///
     /// This is a convenience method that delegates to the underlying
-    /// [`CilAssembly::add_userstring`] method.
+    /// [`crate::cilassembly::CilAssembly::add_userstring`] method.
     ///
     /// # Arguments
     ///
@@ -210,7 +243,7 @@ impl<'a> BuilderContext<'a> {
     ///
     /// # Returns
     ///
-    /// The RID (Row ID) assigned to the newly created row as a [`Token`].
+    /// The RID (Row ID) assigned to the newly created row as a [`crate::metadata::token::Token`].
     pub fn add_table_row(&mut self, table_id: TableId, row: TableDataOwned) -> Result<Token> {
         let rid = self.assembly.add_table_row(table_id, row)?;
 
@@ -248,12 +281,12 @@ impl<'a> BuilderContext<'a> {
     ///
     /// # Returns
     ///
-    /// A [`CodedIndex`] pointing to the matching AssemblyRef, or None if not found.
+    /// A [`crate::metadata::tables::CodedIndex`] pointing to the matching AssemblyRef, or None if not found.
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
-    /// # use dotscope::metadata::cilassembly::BuilderContext;
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
     /// # let mut context: BuilderContext = todo!();
     /// // Find a specific library
     /// if let Some(newtonsoft_ref) = context.find_assembly_ref_by_name("Newtonsoft.Json") {
@@ -291,11 +324,11 @@ impl<'a> BuilderContext<'a> {
     /// - "System.Runtime" (.NET Core/.NET 5+)
     /// - "System.Private.CoreLib" (some .NET implementations)
     ///
-    /// This is a convenience method that uses [`find_assembly_ref_by_name`] internally.
+    /// This is a convenience method that uses [`crate::cilassembly::builder::BuilderContext::find_assembly_ref_by_name`] internally.
     ///
     /// # Returns
     ///
-    /// A [`CodedIndex`] pointing to the core library AssemblyRef, or None if not found.
+    /// A [`crate::metadata::tables::CodedIndex`] pointing to the core library AssemblyRef, or None if not found.
     pub fn find_core_library_ref(&self) -> Option<CodedIndex> {
         self.find_assembly_ref_by_name("mscorlib")
             .or_else(|| self.find_assembly_ref_by_name("System.Runtime"))
@@ -313,14 +346,14 @@ mod tests {
     fn test_builder_context_creation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
+            let assembly = CilAssembly::new(view);
 
             // Check existing table counts
             let assembly_count = assembly.original_table_row_count(TableId::Assembly);
             let typedef_count = assembly.original_table_row_count(TableId::TypeDef);
             let typeref_count = assembly.original_table_row_count(TableId::TypeRef);
 
-            let context = BuilderContext::new(&mut assembly);
+            let context = BuilderContext::new(assembly);
 
             // Verify context is created successfully and RIDs are correct
             assert_eq!(context.next_rid(TableId::Assembly), assembly_count + 1);
@@ -333,8 +366,8 @@ mod tests {
     fn test_builder_context_heap_operations() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Test string heap operations
             let string_idx = context.add_string("TestString").unwrap();
@@ -362,8 +395,8 @@ mod tests {
     fn test_builder_context_string_deduplication() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Add the same namespace string multiple times
             let namespace1 = context.get_or_add_string("MyNamespace").unwrap();
@@ -393,7 +426,7 @@ mod tests {
     fn test_builder_context_dynamic_table_discovery() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
+            let assembly = CilAssembly::new(view);
 
             // Get the expected present tables before creating the context
             let expected_tables: Vec<_> = if let Some(tables) = assembly.view.tables() {
@@ -402,7 +435,7 @@ mod tests {
                 vec![]
             };
 
-            let context = BuilderContext::new(&mut assembly);
+            let context = BuilderContext::new(assembly);
 
             // Verify that we discover tables dynamically from the actual assembly
             // WindowsBase.dll should have these common tables
@@ -447,8 +480,8 @@ mod tests {
     fn test_builder_context_assembly_ref_lookup() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let context = BuilderContext::new(assembly);
 
             // Test general assembly reference lookup - try common assembly names
             // WindowsBase.dll might reference System, System.Core, etc. instead of mscorlib directly
@@ -490,8 +523,8 @@ mod tests {
     fn test_builder_context_core_library_lookup() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let context = BuilderContext::new(assembly);
 
             // Should find mscorlib (WindowsBase.dll is a .NET Framework assembly)
             let core_lib_ref = context.find_core_library_ref();

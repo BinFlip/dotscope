@@ -1,13 +1,13 @@
 //! ClassLayoutBuilder for creating type layout specifications.
 //!
-//! This module provides [`ClassLayoutBuilder`] for creating ClassLayout table entries
+//! This module provides [`crate::metadata::tables::classlayout::ClassLayoutBuilder`] for creating ClassLayout table entries
 //! with a fluent API. Class layouts define memory layout characteristics for types,
 //! including field alignment boundaries, explicit type sizes, and packing behavior
 //! for P/Invoke interop, performance optimization, and platform compatibility.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{ClassLayoutRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -63,15 +63,14 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
-/// # use dotscope::{CilAssembly, CilAssemblyView};
-/// # use dotscope::metadata::cilassembly::BuilderContext;
+/// ```rust,ignore
+/// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::ClassLayoutBuilder;
 /// # use dotscope::metadata::token::Token;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create layout for a P/Invoke structure with byte packing
 /// let struct_type = Token::new(0x02000001); // TypeDef RID 1
@@ -127,7 +126,7 @@ impl ClassLayoutBuilder {
     ///
     /// # Returns
     ///
-    /// A new [`ClassLayoutBuilder`] instance ready for configuration.
+    /// A new [`crate::metadata::tables::classlayout::ClassLayoutBuilder`] instance ready for configuration.
     pub fn new() -> Self {
         Self {
             packing_size: None,
@@ -246,7 +245,7 @@ impl ClassLayoutBuilder {
     ///
     /// # Returns
     ///
-    /// A [`Token`] representing the newly created class layout, or an error if
+    /// A [`crate::metadata::token::Token`] representing the newly created class layout, or an error if
     /// validation fails or required fields are missing.
     ///
     /// # Errors
@@ -343,9 +342,9 @@ impl ClassLayoutBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -353,13 +352,13 @@ mod tests {
     fn test_class_layout_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
+            let assembly = CilAssembly::new(view);
 
             // Check existing ClassLayout table count
             let existing_count = assembly.original_table_row_count(TableId::ClassLayout);
             let expected_rid = existing_count + 1;
 
-            let mut context = BuilderContext::new(&mut assembly);
+            let mut context = BuilderContext::new(assembly);
 
             // Create a basic class layout
             let type_token = Token::new(0x02000001); // TypeDef RID 1
@@ -381,8 +380,8 @@ mod tests {
     fn test_class_layout_builder_different_packings() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Test various valid packing sizes (powers of 2)
             let type1 = Token::new(0x02000001); // TypeDef RID 1
@@ -439,8 +438,8 @@ mod tests {
     fn test_class_layout_builder_default_packing() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let type_token = Token::new(0x02000001); // TypeDef RID 1
 
@@ -461,8 +460,8 @@ mod tests {
     fn test_class_layout_builder_explicit_sizes() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Test various explicit sizes
             let type1 = Token::new(0x02000001); // TypeDef RID 1
@@ -504,8 +503,8 @@ mod tests {
     fn test_class_layout_builder_missing_packing_size() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let type_token = Token::new(0x02000001); // TypeDef RID 1
 
@@ -524,8 +523,8 @@ mod tests {
     fn test_class_layout_builder_missing_class_size() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let type_token = Token::new(0x02000001); // TypeDef RID 1
 
@@ -544,8 +543,8 @@ mod tests {
     fn test_class_layout_builder_missing_parent() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = ClassLayoutBuilder::new()
                 .packing_size(4)
@@ -562,8 +561,8 @@ mod tests {
     fn test_class_layout_builder_invalid_parent_token() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Use a token that's not from TypeDef table
             let invalid_parent = Token::new(0x04000001); // Field token instead
@@ -583,8 +582,8 @@ mod tests {
     fn test_class_layout_builder_zero_parent_rid() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Use a TypeDef token with RID 0 (invalid)
             let invalid_parent = Token::new(0x02000000); // TypeDef with RID 0
@@ -604,8 +603,8 @@ mod tests {
     fn test_class_layout_builder_invalid_packing_size() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let type_token = Token::new(0x02000001); // TypeDef RID 1
 
@@ -625,8 +624,8 @@ mod tests {
     fn test_class_layout_builder_excessive_packing_size() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let type_token = Token::new(0x02000001); // TypeDef RID 1
 
@@ -645,8 +644,8 @@ mod tests {
     fn test_class_layout_builder_excessive_class_size() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let type_token = Token::new(0x02000001); // TypeDef RID 1
 
@@ -665,8 +664,8 @@ mod tests {
     fn test_class_layout_builder_maximum_valid_values() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let type_token = Token::new(0x02000001); // TypeDef RID 1
 
@@ -687,8 +686,8 @@ mod tests {
     fn test_class_layout_builder_all_valid_packing_sizes() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Test all valid packing sizes (powers of 2 from 0 to 128)
             let valid_packings = [0, 1, 2, 4, 8, 16, 32, 64, 128];
@@ -713,8 +712,8 @@ mod tests {
     fn test_class_layout_builder_realistic_scenarios() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // P/Invoke struct with byte packing
             let pinvoke_type = Token::new(0x02000001);

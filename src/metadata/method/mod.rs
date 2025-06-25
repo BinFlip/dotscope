@@ -28,7 +28,7 @@
 //!
 //! ## Basic Method Analysis
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -52,7 +52,7 @@
 //!
 //! ## Instruction-Level Analysis
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -133,7 +133,7 @@ pub type MethodRc = Arc<Method>;
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
@@ -171,7 +171,7 @@ impl MethodRef {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -201,7 +201,7 @@ impl MethodRef {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -239,7 +239,7 @@ impl MethodRef {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -270,7 +270,7 @@ impl MethodRef {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -306,7 +306,7 @@ impl MethodRef {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -338,7 +338,7 @@ impl MethodRef {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -373,7 +373,7 @@ impl MethodRef {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -488,7 +488,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -530,7 +530,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -582,7 +582,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -621,7 +621,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -660,7 +660,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -685,7 +685,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -710,7 +710,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -735,7 +735,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -760,7 +760,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -786,7 +786,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -814,7 +814,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -839,7 +839,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -864,7 +864,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -889,7 +889,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///

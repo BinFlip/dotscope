@@ -1,6 +1,6 @@
 //! Builder for constructing `ImportScope` table entries
 //!
-//! This module provides the [`ImportScopeBuilder`] which enables fluent construction
+//! This module provides the [`crate::metadata::tables::importscope::ImportScopeBuilder`] which enables fluent construction
 //! of `ImportScope` metadata table entries. The builder follows the established
 //! pattern used across all table builders in the library.
 //!
@@ -20,8 +20,8 @@
 //! ```
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{ImportScopeRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -228,9 +228,9 @@ impl Default for ImportScopeBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -258,8 +258,8 @@ mod tests {
 
     #[test]
     fn test_importscope_builder_root_scope() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let imports_data = vec![0x01, 0x10, 0x53, 0x79, 0x73, 0x74, 0x65, 0x6D]; // System namespace
         let token = ImportScopeBuilder::new()
             .parent(0) // Root scope
@@ -274,8 +274,8 @@ mod tests {
 
     #[test]
     fn test_importscope_builder_child_scope() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let imports_data = vec![0x01, 0x02, 0x03];
         let token = ImportScopeBuilder::new()
             .parent(1) // Child scope referencing parent
@@ -290,8 +290,8 @@ mod tests {
 
     #[test]
     fn test_importscope_builder_empty_imports() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = ImportScopeBuilder::new()
             .parent(0)
             .imports(&[]) // Empty imports
@@ -305,8 +305,8 @@ mod tests {
 
     #[test]
     fn test_importscope_builder_missing_parent() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let imports_data = vec![0x01, 0x02];
         let result = ImportScopeBuilder::new()
             .imports(&imports_data)
@@ -324,8 +324,8 @@ mod tests {
 
     #[test]
     fn test_importscope_builder_missing_imports() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = ImportScopeBuilder::new().parent(0).build(&mut context);
 
         assert!(result.is_err());
@@ -361,8 +361,8 @@ mod tests {
 
     #[test]
     fn test_importscope_builder_fluent_interface() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let imports_data = vec![0x01, 0x05, 0x54, 0x65, 0x73, 0x74, 0x73]; // Tests namespace
 
         // Test method chaining
@@ -379,8 +379,8 @@ mod tests {
 
     #[test]
     fn test_importscope_builder_multiple_builds() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let imports1 = vec![0x01, 0x02];
         let imports2 = vec![0x03, 0x04];
 

@@ -1,13 +1,13 @@
 //! MethodDefBuilder for creating method definitions.
 //!
-//! This module provides [`MethodDefBuilder`] for creating MethodDef table entries
+//! This module provides [`crate::metadata::tables::methoddef::MethodDefBuilder`] for creating MethodDef table entries
 //! with a fluent API. Methods define the behavior of types including instance
 //! methods, static methods, constructors, and property/event accessors with their
 //! signatures, parameters, and implementation details.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{MethodDefRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -23,14 +23,13 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
-/// # use dotscope::{CilAssembly, CilAssemblyView};
-/// # use dotscope::metadata::cilassembly::BuilderContext;
+/// ```rust,ignore
+/// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::MethodDefBuilder;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create a method signature for void method with no parameters
 /// let void_signature = &[0x00, 0x00, 0x01]; // DEFAULT calling convention, 0 params, VOID return
@@ -59,7 +58,7 @@ impl MethodDefBuilder {
     ///
     /// # Returns
     ///
-    /// A new [`MethodDefBuilder`] instance ready for configuration.
+    /// A new [`crate::metadata::tables::methoddef::MethodDefBuilder`] instance ready for configuration.
     pub fn new() -> Self {
         Self {
             name: None,
@@ -233,7 +232,7 @@ impl MethodDefBuilder {
     ///
     /// # Returns
     ///
-    /// A [`Token`] representing the newly created method, or an error if
+    /// A [`crate::metadata::token::Token`] representing the newly created method, or an error if
     /// validation fails or required fields are missing.
     ///
     /// # Errors
@@ -304,10 +303,12 @@ impl Default for MethodDefBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
-        method::{MethodAccessFlags, MethodImplCodeType, MethodModifiers},
+        metadata::{
+            cilassemblyview::CilAssemblyView,
+            method::{MethodAccessFlags, MethodImplCodeType, MethodModifiers},
+        },
     };
     use std::path::PathBuf;
 
@@ -315,13 +316,13 @@ mod tests {
     fn test_method_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
+            let assembly = CilAssembly::new(view);
 
             // Check existing MethodDef table count
             let existing_method_count = assembly.original_table_row_count(TableId::MethodDef);
             let expected_rid = existing_method_count + 1;
 
-            let mut context = BuilderContext::new(&mut assembly);
+            let mut context = BuilderContext::new(assembly);
 
             // Create a void method signature with no parameters
             // Format: [calling_convention, param_count, return_type]
@@ -346,8 +347,8 @@ mod tests {
     fn test_method_builder_static_constructor() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Static constructor signature
             let static_ctor_sig = &[0x00, 0x00, 0x01]; // DEFAULT, 0 params, VOID
@@ -374,8 +375,8 @@ mod tests {
     fn test_method_builder_instance_constructor() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Instance constructor signature
             let instance_ctor_sig = &[0x20, 0x00, 0x01]; // HASTHIS, 0 params, VOID
@@ -401,8 +402,8 @@ mod tests {
     fn test_method_builder_with_return_value() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Method with return value (int32)
             let method_with_return_sig = &[0x00, 0x00, 0x08]; // DEFAULT, 0 params, I4
@@ -428,8 +429,8 @@ mod tests {
     fn test_method_builder_missing_name() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = MethodDefBuilder::new()
                 .flags(MethodAccessFlags::PUBLIC.bits())
@@ -446,8 +447,8 @@ mod tests {
     fn test_method_builder_missing_flags() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = MethodDefBuilder::new()
                 .name("TestMethod")
@@ -464,8 +465,8 @@ mod tests {
     fn test_method_builder_missing_impl_flags() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = MethodDefBuilder::new()
                 .name("TestMethod")
@@ -482,8 +483,8 @@ mod tests {
     fn test_method_builder_missing_signature() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = MethodDefBuilder::new()
                 .name("TestMethod")
@@ -500,8 +501,8 @@ mod tests {
     fn test_method_builder_multiple_methods() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let void_signature = &[0x00, 0x00, 0x01]; // void return
 
@@ -533,8 +534,8 @@ mod tests {
     fn test_method_builder_default_values() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Test that optional fields default correctly
             let token = MethodDefBuilder::new()

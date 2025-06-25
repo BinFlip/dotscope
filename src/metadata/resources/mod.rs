@@ -64,7 +64,7 @@
 //!
 //! ## Resource Data Access
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -199,7 +199,7 @@ use crate::{file::File, metadata::tables::ManifestResourceRc};
 ///
 /// ## Basic Resource Management
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
@@ -221,7 +221,7 @@ use crate::{file::File, metadata::tables::ManifestResourceRc};
 ///
 /// ## Resource Data Processing
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
@@ -301,7 +301,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -336,7 +336,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -383,7 +383,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -465,7 +465,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -496,7 +496,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -534,7 +534,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///

@@ -1220,6 +1220,114 @@ pub fn write_prefixed_string_utf16(value: &str, buffer: &mut Vec<u8>) {
     }
 }
 
+/// Reads a compressed integer from a byte buffer according to ECMA-335 II.24.2.4.
+///
+/// Compressed integers are used throughout .NET metadata to encode length prefixes
+/// and other size information efficiently. The encoding uses 1, 2, or 4 bytes
+/// depending on the value being encoded.
+///
+/// # Format
+/// - Single byte (0xxxxxxx): Values 0-127
+/// - Two bytes (10xxxxxx xxxxxxxx): Values 128-16383  
+/// - Four bytes (110xxxxx xxxxxxxx xxxxxxxx xxxxxxxx): Values 16384-536870911
+///
+/// # Arguments
+/// * `data` - The byte buffer to read from
+/// * `offset` - Mutable reference to the current position (will be advanced)
+///
+/// # Returns
+/// * `Ok((value, bytes_consumed))` - The decoded value and number of bytes read
+/// * `Err(OutOfBounds)` - If there are insufficient bytes in the buffer
+///
+/// # Examples
+/// ```rust,ignore
+/// use dotscope::file::io::read_compressed_int;
+///
+/// let data = [0x7F, 0x80, 0x80, 0xC0, 0x00, 0x00, 0x40];
+/// let mut offset = 0;
+///
+/// // Read single byte value (127)
+/// let (value, consumed) = read_compressed_int(&data, &mut offset)?;
+/// assert_eq!(value, 127);
+/// assert_eq!(consumed, 1);
+/// assert_eq!(offset, 1);
+///
+/// // Read two byte value (128)
+/// let (value, consumed) = read_compressed_int(&data, &mut offset)?;
+/// assert_eq!(value, 128);
+/// assert_eq!(consumed, 2);
+/// assert_eq!(offset, 3);
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+pub fn read_compressed_int(data: &[u8], offset: &mut usize) -> Result<(usize, usize)> {
+    if *offset >= data.len() {
+        return Err(OutOfBounds);
+    }
+
+    let first_byte = data[*offset];
+
+    if first_byte & 0x80 == 0 {
+        // Single byte: 0xxxxxxx
+        *offset += 1;
+        Ok((first_byte as usize, 1))
+    } else if first_byte & 0xC0 == 0x80 {
+        // Two bytes: 10xxxxxx xxxxxxxx
+        if *offset + 1 >= data.len() {
+            return Err(OutOfBounds);
+        }
+        let second_byte = data[*offset + 1];
+        let value = (((first_byte & 0x3F) as usize) << 8) | (second_byte as usize);
+        *offset += 2;
+        Ok((value, 2))
+    } else {
+        // Four bytes: 110xxxxx xxxxxxxx xxxxxxxx xxxxxxxx
+        if *offset + 3 >= data.len() {
+            return Err(OutOfBounds);
+        }
+        let mut value = ((first_byte & 0x1F) as usize) << 24;
+        value |= (data[*offset + 1] as usize) << 16;
+        value |= (data[*offset + 2] as usize) << 8;
+        value |= data[*offset + 3] as usize;
+        *offset += 4;
+        Ok((value, 4))
+    }
+}
+
+/// Reads a compressed integer from a specific offset without advancing a mutable offset.
+///
+/// This is a convenience function for reading compressed integers when you need
+/// to specify an absolute offset rather than using a mutable offset reference.
+///
+/// # Arguments
+/// * `data` - The byte buffer to read from  
+/// * `offset` - The absolute offset to read from
+///
+/// # Returns
+/// * `Ok((value, bytes_consumed))` - The decoded value and number of bytes read
+/// * `Err(OutOfBounds)` - If there are insufficient bytes in the buffer
+///
+/// # Examples
+/// ```rust,ignore
+/// use dotscope::file::io::read_compressed_int_at;
+///
+/// let data = [0x7F, 0x80, 0x80];
+///
+/// // Read from offset 0
+/// let (value, consumed) = read_compressed_int_at(&data, 0)?;
+/// assert_eq!(value, 127);
+/// assert_eq!(consumed, 1);
+///
+/// // Read from offset 1  
+/// let (value, consumed) = read_compressed_int_at(&data, 1)?;
+/// assert_eq!(value, 128);
+/// assert_eq!(consumed, 2);
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+pub fn read_compressed_int_at(data: &[u8], offset: usize) -> Result<(usize, usize)> {
+    let mut mutable_offset = offset;
+    read_compressed_int(data, &mut mutable_offset)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

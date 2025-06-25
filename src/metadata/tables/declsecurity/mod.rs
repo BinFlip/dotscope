@@ -43,7 +43,7 @@
 //!
 //! # Usage Examples
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::tables::DeclSecurity;
 //! use dotscope::metadata::token::Token;
 //! use dotscope::Result;

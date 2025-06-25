@@ -8,7 +8,7 @@
 //! - [`ImplMapRaw`] - Raw table structure with unresolved coded indexes
 //! - [`ImplMap`] - Owned variant with resolved references and owned data
 //! - [`ImplMapLoader`] - Internal loader for processing table entries (crate-private)
-//! - [`PInvokeAttributes`] - P/Invoke attribute constants and flags
+//! - [`crate::metadata::tables::PInvokeAttributes`] - P/Invoke attribute constants and flags
 //! - Type aliases for collections: [`ImplMapMap`], [`ImplMapList`], [`ImplMapRc`]
 //!
 //! # Table Structure (ECMA-335 §22.22)
@@ -28,7 +28,7 @@
 //! - **Error handling**: Manages `GetLastError()` propagation and exception mapping
 //!
 //! # Mapping Flags
-//! The [`PInvokeAttributes`] module defines flags controlling P/Invoke behavior:
+//! The [`crate::metadata::tables::PInvokeAttributes`] module defines flags controlling P/Invoke behavior:
 //! - **Name mangling**: [`NO_MANGLE`] preserves exact function names
 //! - **Character sets**: [`CHAR_SET_ANSI`], [`CHAR_SET_UNICODE`], [`CHAR_SET_AUTO`]
 //! - **Calling conventions**: [`CALL_CONV_CDECL`], [`CALL_CONV_STDCALL`], etc.
@@ -66,7 +66,7 @@ pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;
 
-/// Concurrent map for storing `ImplMap` entries indexed by [`Token`].
+/// Concurrent map for storing `ImplMap` entries indexed by [`crate::metadata::token::Token`].
 ///
 /// This thread-safe map enables efficient lookup of P/Invoke mappings by their
 /// associated member tokens during metadata processing and runtime method resolution.

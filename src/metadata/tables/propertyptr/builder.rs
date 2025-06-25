@@ -1,6 +1,6 @@
 //! Builder for constructing `PropertyPtr` table entries
 //!
-//! This module provides the [`PropertyPtrBuilder`] which enables fluent construction
+//! This module provides the [`crate::metadata::tables::propertyptr::PropertyPtrBuilder`] which enables fluent construction
 //! of `PropertyPtr` metadata table entries. The builder follows the established
 //! pattern used across all table builders in the library.
 //!
@@ -17,8 +17,8 @@
 //! ```
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{PropertyPtrRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -183,9 +183,9 @@ impl Default for PropertyPtrBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -211,8 +211,8 @@ mod tests {
 
     #[test]
     fn test_propertyptr_builder_basic() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = PropertyPtrBuilder::new()
             .property(1)
             .build(&mut context)
@@ -225,8 +225,8 @@ mod tests {
 
     #[test]
     fn test_propertyptr_builder_reordering() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = PropertyPtrBuilder::new()
             .property(15) // Point to later property for reordering
             .build(&mut context)
@@ -239,8 +239,8 @@ mod tests {
 
     #[test]
     fn test_propertyptr_builder_missing_property() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = PropertyPtrBuilder::new().build(&mut context);
 
         assert!(result.is_err());
@@ -272,8 +272,8 @@ mod tests {
 
     #[test]
     fn test_propertyptr_builder_fluent_interface() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test method chaining
         let token = PropertyPtrBuilder::new()
@@ -288,8 +288,8 @@ mod tests {
 
     #[test]
     fn test_propertyptr_builder_multiple_builds() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Build first pointer
         let token1 = PropertyPtrBuilder::new()
@@ -319,8 +319,8 @@ mod tests {
 
     #[test]
     fn test_propertyptr_builder_large_property_rid() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = PropertyPtrBuilder::new()
             .property(0xFFFF) // Large Property RID
             .build(&mut context)
@@ -333,8 +333,8 @@ mod tests {
 
     #[test]
     fn test_propertyptr_builder_property_ordering_scenario() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Simulate property reordering: logical order 1,2,3 -> physical order 12,6,15
         let logical_to_physical = [(1, 12), (2, 6), (3, 15)];
@@ -359,8 +359,8 @@ mod tests {
 
     #[test]
     fn test_propertyptr_builder_zero_property() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test with property 0 (typically invalid but should not cause builder to fail)
         let result = PropertyPtrBuilder::new().property(0).build(&mut context);
@@ -372,8 +372,8 @@ mod tests {
 
     #[test]
     fn test_propertyptr_builder_type_property_scenario() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Simulate type with multiple properties that need indirection
         let type_properties = [7, 14, 3, 21, 9]; // Properties in custom order
@@ -398,8 +398,8 @@ mod tests {
 
     #[test]
     fn test_propertyptr_builder_compressed_metadata_scenario() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Simulate compressed metadata scenario with property indirection
         let compressed_order = [25, 10, 30, 5, 40, 15];
@@ -425,8 +425,8 @@ mod tests {
 
     #[test]
     fn test_propertyptr_builder_optimization_scenario() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Simulate property optimization with access pattern-based ordering
         let optimized_access_order = [100, 50, 200, 25, 150, 75, 300];
@@ -452,8 +452,8 @@ mod tests {
 
     #[test]
     fn test_propertyptr_builder_interface_property_scenario() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Simulate interface with properties requiring specific ordering
         let interface_properties = [1, 5, 3, 8, 2]; // Interface property order
@@ -478,8 +478,8 @@ mod tests {
 
     #[test]
     fn test_propertyptr_builder_edit_continue_property_scenario() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Simulate edit-and-continue where properties are added/modified
         let original_properties = [10, 20, 30];

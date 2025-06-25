@@ -1,6 +1,6 @@
 //! Builder for constructing `AssemblyRefOS` table entries
 //!
-//! This module provides the [`AssemblyRefOSBuilder`] which enables fluent construction
+//! This module provides the [`crate::metadata::tables::assemblyrefos::AssemblyRefOSBuilder`] which enables fluent construction
 //! of `AssemblyRefOS` metadata table entries. The builder follows the established
 //! pattern used across all table builders in the library.
 //!
@@ -20,8 +20,8 @@
 //! ```
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{AssemblyRefOsRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -318,9 +318,9 @@ impl Default for AssemblyRefOSBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -352,8 +352,8 @@ mod tests {
 
     #[test]
     fn test_assemblyrefos_builder_windows10() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = AssemblyRefOSBuilder::new()
             .os_platform_id(1) // Windows
             .os_major_version(10) // Windows 10
@@ -369,8 +369,8 @@ mod tests {
 
     #[test]
     fn test_assemblyrefos_builder_windows7() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = AssemblyRefOSBuilder::new()
             .os_platform_id(1) // Windows
             .os_major_version(6) // Windows 7
@@ -386,8 +386,8 @@ mod tests {
 
     #[test]
     fn test_assemblyrefos_builder_custom_os() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = AssemblyRefOSBuilder::new()
             .os_platform_id(99) // Custom platform
             .os_major_version(2) // Custom major
@@ -403,8 +403,8 @@ mod tests {
 
     #[test]
     fn test_assemblyrefos_builder_missing_platform_id() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = AssemblyRefOSBuilder::new()
             .os_major_version(10)
             .os_minor_version(0)
@@ -423,8 +423,8 @@ mod tests {
 
     #[test]
     fn test_assemblyrefos_builder_missing_major_version() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = AssemblyRefOSBuilder::new()
             .os_platform_id(1)
             .os_minor_version(0)
@@ -443,8 +443,8 @@ mod tests {
 
     #[test]
     fn test_assemblyrefos_builder_missing_minor_version() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = AssemblyRefOSBuilder::new()
             .os_platform_id(1)
             .os_major_version(10)
@@ -463,8 +463,8 @@ mod tests {
 
     #[test]
     fn test_assemblyrefos_builder_missing_assembly_ref() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = AssemblyRefOSBuilder::new()
             .os_platform_id(1)
             .os_major_version(10)
@@ -514,8 +514,8 @@ mod tests {
 
     #[test]
     fn test_assemblyrefos_builder_fluent_interface() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test method chaining
         let token = AssemblyRefOSBuilder::new()
@@ -533,8 +533,8 @@ mod tests {
 
     #[test]
     fn test_assemblyrefos_builder_multiple_builds() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Build first OS entry
         let token1 = AssemblyRefOSBuilder::new()
@@ -562,8 +562,8 @@ mod tests {
 
     #[test]
     fn test_assemblyrefos_builder_zero_values() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = AssemblyRefOSBuilder::new()
             .os_platform_id(0) // Zero platform
             .os_major_version(0) // Zero major
@@ -579,8 +579,8 @@ mod tests {
 
     #[test]
     fn test_assemblyrefos_builder_large_assembly_ref() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = AssemblyRefOSBuilder::new()
             .os_platform_id(1)
             .os_major_version(10)

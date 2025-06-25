@@ -1,6 +1,6 @@
 //! Binary encoding for .NET type signatures according to ECMA-335.
 //!
-//! This module provides functionality to encode [`TypeSignature`] instances into their
+//! This module provides functionality to encode [`crate::metadata::signatures::TypeSignature`] instances into their
 //! binary representation as defined by the ECMA-335 standard. The encoding process
 //! converts structured type information into compact binary signatures suitable for
 //! storage in metadata blob heaps.
@@ -50,7 +50,7 @@ const MAX_RECURSION_DEPTH: usize = 50;
 
 /// Encoder for converting type signatures into binary format.
 ///
-/// `TypeSignatureEncoder` provides methods to convert structured [`TypeSignature`]
+/// `TypeSignatureEncoder` provides methods to convert structured [`crate::metadata::signatures::TypeSignature`]
 /// instances into their binary representation according to ECMA-335 standards.
 /// The encoder handles all type signature variants and their specific encoding
 /// requirements.
@@ -72,13 +72,13 @@ pub struct TypeSignatureEncoder;
 impl TypeSignatureEncoder {
     /// Encodes a type signature into binary format.
     ///
-    /// Converts a [`TypeSignature`] into its binary representation according
+    /// Converts a [`crate::metadata::signatures::TypeSignature`] into its binary representation according
     /// to ECMA-335 standards. The encoding process handles all type signature
     /// variants and their specific encoding requirements.
     ///
     /// # Recursion Protection
     ///
-    /// This method enforces a maximum recursion depth of [`MAX_RECURSION_DEPTH`]
+    /// This method enforces a maximum recursion depth limit
     /// to prevent stack overflow from deeply nested or circular type signatures.
     ///
     /// # Arguments
@@ -144,7 +144,7 @@ impl TypeSignatureEncoder {
 
     /// Internal recursive implementation of type signature encoding.
     ///
-    /// Recursively encodes a [`TypeSignature`] and all its components into
+    /// Recursively encodes a [`crate::metadata::signatures::TypeSignature`] and all its components into
     /// the provided buffer with depth tracking for recursion protection.
     /// This method handles all type signature variants and their specific
     /// encoding requirements.

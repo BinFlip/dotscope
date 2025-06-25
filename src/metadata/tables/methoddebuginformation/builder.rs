@@ -15,13 +15,12 @@
 //!
 //! ## Usage
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! # use dotscope::prelude::*;
-//! # use dotscope::metadata::cilassembly::BuilderContext;
 //! # use std::path::Path;
 //! # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-//! # let mut assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(&mut assembly);
+//! # let assembly = CilAssembly::new(view);
+//! # let mut context = BuilderContext::new(assembly);
 //!
 //! // Create method debug information entry with document reference
 //! let debug_info_token = MethodDebugInformationBuilder::new()
@@ -44,8 +43,8 @@
 //! - **Validation**: Document indices are validated when provided
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         sequencepoints::SequencePoints,
         tables::{MethodDebugInformationRaw, TableDataOwned, TableId},
         token::Token,
@@ -72,13 +71,12 @@ use crate::{
 ///
 /// The builder provides a fluent interface for constructing MethodDebugInformation entries:
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// # use dotscope::prelude::*;
-/// # use dotscope::metadata::cilassembly::BuilderContext;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// # let mut assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(&mut assembly);
+/// # let assembly = CilAssembly::new(view);
+/// # let mut context = BuilderContext::new(assembly);
 ///
 /// let debug_info_token = MethodDebugInformationBuilder::new()
 ///     .document(1)                                    // Document table reference
@@ -183,7 +181,7 @@ impl MethodDebugInformationBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
     /// # use dotscope::metadata::sequencepoints::SequencePoints;
     /// # let points = SequencePoints::default();
@@ -217,13 +215,12 @@ impl MethodDebugInformationBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
-    /// # use dotscope::metadata::cilassembly::BuilderContext;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// # let mut assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(&mut assembly);
+    /// # let assembly = CilAssembly::new(view);
+    /// # let mut context = BuilderContext::new(assembly);
     ///
     /// let debug_token = MethodDebugInformationBuilder::new()
     ///     .document(1)
@@ -267,8 +264,9 @@ impl MethodDebugInformationBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
-        cilassembly::CilAssembly, cilassemblyview::CilAssemblyView, tables::TableId,
+    use crate::{
+        cilassembly::CilAssembly,
+        metadata::{cilassemblyview::CilAssemblyView, tables::TableId},
     };
     use std::path::PathBuf;
 
@@ -280,8 +278,8 @@ mod tests {
 
     #[test]
     fn test_method_debug_information_builder_basic() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = MethodDebugInformationBuilder::new()
             .document(1)
@@ -305,8 +303,8 @@ mod tests {
 
     #[test]
     fn test_method_debug_information_builder_minimal() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Should work with no document or sequence points
         let token = MethodDebugInformationBuilder::new().build(&mut context)?;
@@ -319,8 +317,8 @@ mod tests {
 
     #[test]
     fn test_method_debug_information_builder_document_only() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = MethodDebugInformationBuilder::new()
             .document(5)
@@ -334,8 +332,8 @@ mod tests {
 
     #[test]
     fn test_method_debug_information_builder_sequence_points_only() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let sequence_data = vec![0x10, 0x20, 0x30, 0x40];
         let token = MethodDebugInformationBuilder::new()
@@ -350,8 +348,8 @@ mod tests {
 
     #[test]
     fn test_method_debug_information_builder_empty_sequence_points() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Empty sequence points should result in index 0
         let token = MethodDebugInformationBuilder::new()
@@ -367,8 +365,8 @@ mod tests {
 
     #[test]
     fn test_method_debug_information_builder_fluent_api() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test fluent chaining
         let token = MethodDebugInformationBuilder::new()

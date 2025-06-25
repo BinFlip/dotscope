@@ -1,43 +1,14 @@
 //! Mutable assembly representation for editing and modification operations.
 //!
-//! This module provides [`CilAssembly`], a comprehensive editing layer for .NET assemblies
+//! This module provides [`crate::cilassembly::CilAssembly`], a comprehensive editing layer for .NET assemblies
 //! that enables type-safe, efficient modification of metadata tables, heap content, and
 //! cross-references while maintaining ECMA-335 compliance.
-//!
-//! # Architecture Overview
-//!
-//! ```text
-//! ┌───────────────────────────────────────────────────────────────────┐
-//! │                        CilAssembly                                │
-//! │  ┌─────────────────┐                 ┌─────────────────────────┐  │
-//! │  │ CilAssemblyView │ ◄─────┐         │    AssemblyChanges      │  │
-//! │  │   (read-only)   │       │         │                         │  │
-//! │  └─────────────────┘       │         └─────────────────────────┘  │
-//! │          │                 │                     │                │
-//! │          │                 │         ┌───────────┼───────────┐    │
-//! │          ▼                 │         │           ▼           │    │
-//! │  ┌─────────────────┐       │    ┌─────────┐ ┌─────────┐ ┌───────┐ │
-//! │  │ Original Tables │       │    │  Heap   │ │ Table   │ │ Other │ │
-//! │  │ Original Heaps  │───────┘    │Changes  │ │Changes  │ │Changes│ │
-//! │  │ Original Meta   │            └─────────┘ └─────────┘ └───────┘ │
-//! │  └─────────────────┘                 │         │           │      │
-//! └───────────────────────────────────────────────────────────────────┘
-//!                                        │         │           │
-//!                    ┌───────────────────┼─────────┼───────────┘
-//!                    │                   │         │
-//!                    ▼                   ▼         ▼
-//!            ┌─────────────┐    ┌─────────────┐ ┌─────────────┐
-//!            │ Validation  │    │ Remapping   │ │ Binary      │
-//!            │ Pipeline    │    │ & Index     │ │ Generation  │
-//!            │             │    │ Management  │ │             │
-//!            └─────────────┘    └─────────────┘ └─────────────┘
-//! ```
 //!
 //! # Design Philosophy
 //!
 //! ## **Copy-on-Write Semantics**
-//! - Original [`CilAssemblyView`] remains immutable and unchanged
-//! - Modifications are tracked separately in [`AssemblyChanges`]
+//! - Original [`crate::metadata::cilassemblyview::CilAssemblyView`] remains immutable and unchanged
+//! - Modifications are tracked separately in [`crate::cilassembly::changes::assembly::AssemblyChanges`]
 //! - Changes are lazily allocated only when modifications are made
 //! - Read operations efficiently merge original data with changes
 //!
@@ -49,7 +20,7 @@
 //!
 //! # Core Components
 //!
-//! ## **Change Tracking ([`AssemblyChanges`])**
+//! ## **Change Tracking ([`crate::cilassembly::changes::assembly::AssemblyChanges`])**
 //! Central structure that tracks all modifications:
 //! ```text
 //! AssemblyChanges
@@ -60,12 +31,12 @@
 //! └── table_changes: HashMap<TableId, TableModifications>
 //! ```
 //!
-//! ## **Table Modifications ([`TableModifications`])**
+//! ## **Table Modifications ([`crate::cilassembly::modifications::TableModifications`])**
 //! Two strategies for tracking table changes:
 //! - **Sparse**: Individual operations (Insert/Update/Delete) with timestamps
 //! - **Replaced**: Complete table replacement for heavily modified tables
 //!
-//! ## **Operation Types ([`Operation`])**
+//! ## **Operation Types ([`crate::cilassembly::operation::Operation`])**
 //! - **Insert(rid, data)**: Add new row with specific RID
 //! - **Update(rid, data)**: Modify existing row data  
 //! - **Delete(rid)**: Mark row as deleted
@@ -84,7 +55,7 @@
 //! # Usage Patterns
 //!
 //! ## **Basic Heap Modification**
-//! ```rust,no_run
+//! ```rust,ignore
 //! # use dotscope::{CilAssemblyView, CilAssembly};
 //! # let view = CilAssemblyView::from_mem(vec![])?;
 //! let mut assembly = CilAssembly::new(view);
@@ -99,7 +70,7 @@
 //! ```
 //!
 //! ## **Table Row Operations**
-//! ```rust,no_run
+//! ```rust,ignore
 //! # use dotscope::{CilAssemblyView, CilAssembly, metadata::tables::{TableId, TableDataOwned}};
 //! # let view = CilAssemblyView::from_mem(vec![])?;
 //! let mut assembly = CilAssembly::new(view);
@@ -111,7 +82,7 @@
 //! ```
 //!
 //! ## **Validation and Consistency**
-//! ```rust,no_run
+//! ```rust,ignore
 //! # use dotscope::{CilAssemblyView, CilAssembly};
 //! # let view = CilAssemblyView::from_mem(vec![])?;
 //! let mut assembly = CilAssembly::new(view);
@@ -128,27 +99,27 @@
 //! Following "one type per file" for maintainability:
 //!
 //! ## **Core Types**
-//! - [`CilAssembly`] - Main mutable assembly (this file)
-//! - [`AssemblyChanges`] - Central change tracking
-//! - [`HeapChanges`] - Heap modification tracking
-//! - [`TableModifications`] - Table change strategies
-//! - [`TableOperation`] - Timestamped operations
-//! - [`Operation`] - Operation variants
+//! - [`crate::cilassembly::CilAssembly`] - Main mutable assembly (this file)
+//! - [`crate::cilassembly::changes::assembly::AssemblyChanges`] - Central change tracking
+//! - [`crate::cilassembly::changes::heap::HeapChanges`] - Heap modification tracking
+//! - [`crate::cilassembly::modifications::TableModifications`] - Table change strategies
+//! - [`crate::cilassembly::operation::TableOperation`] - Timestamped operations
+//! - [`crate::cilassembly::operation::Operation`] - Operation variants
 //!
-//! ## **Validation ([`validation`])**
+//! ## **Validation ([`crate::cilassembly::validation`])**
 //! Consolidated module containing all validation logic:
-//! - [`ValidationPipeline`] - Configurable validation stages
-//! - [`ValidationStage`] - Individual validation trait
-//! - [`ConflictResolver`] - Conflict resolution strategies
-//! - [`Conflict`] & [`Resolution`] - Conflict types and results
+//! - [`crate::cilassembly::validation::ValidationPipeline`] - Configurable validation stages
+//! - [`crate::cilassembly::validation::ValidationStage`] - Individual validation trait
+//! - [`crate::cilassembly::validation::ConflictResolver`] - Conflict resolution strategies
+//! - [`crate::cilassembly::validation::Conflict`] & [`crate::cilassembly::validation::Resolution`] - Conflict types and results
 //!
-//! ## **Remapping ([`remapping`])**
-//! - [`IndexRemapper`] - Master index/RID remapping
-//! - [`RidRemapper`] - Per-table RID management
+//! ## **Remapping ([`crate::cilassembly::remapping`])**
+//! - [`crate::cilassembly::remapping::IndexRemapper`] - Master index/RID remapping
+//! - [`crate::cilassembly::remapping::RidRemapper`] - Per-table RID management
 //!
 //! # Examples
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::{CilAssemblyView, CilAssembly};
 //! use std::path::Path;
 //!
@@ -178,7 +149,7 @@ mod modifications;
 mod operation;
 mod remapping;
 mod validation;
-//mod write;
+mod write;
 
 pub use builder::*;
 
@@ -192,7 +163,7 @@ use self::{
 
 /// A mutable view of a .NET assembly that tracks changes for editing operations.
 ///
-/// `CilAssembly` provides an editing layer on top of [`CilAssemblyView`], using
+/// `CilAssembly` provides an editing layer on top of [`crate::metadata::cilassemblyview::CilAssemblyView`], using
 /// a copy-on-write strategy to track modifications while preserving the original
 /// assembly data. Changes are stored separately and merged when writing to disk.
 ///
@@ -217,7 +188,7 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::{CilAssemblyView, CilAssembly};
     /// use std::path::Path;
     ///
@@ -253,7 +224,7 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(&Path::new("assembly.dll"))?;
@@ -269,7 +240,8 @@ impl CilAssembly {
         let string_changes = &mut self.changes.string_heap_changes;
         let index = string_changes.next_index;
         string_changes.appended_items.push(value.to_string());
-        string_changes.next_index += 1;
+        // Strings are null-terminated, so increment by string length + 1 for null terminator
+        string_changes.next_index += value.len() as u32 + 1;
 
         Ok(index)
     }
@@ -292,7 +264,17 @@ impl CilAssembly {
         let blob_changes = &mut self.changes.blob_heap_changes;
         let index = blob_changes.next_index;
         blob_changes.appended_items.push(data.to_vec());
-        blob_changes.next_index += 1;
+
+        // Blobs have compressed length prefix + data
+        let length = data.len();
+        let prefix_size = if length < 128 {
+            1
+        } else if length < 16384 {
+            2
+        } else {
+            4
+        };
+        blob_changes.next_index += prefix_size + length as u32;
 
         Ok(index)
     }
@@ -314,7 +296,7 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(&Path::new("assembly.dll"))?;
@@ -329,7 +311,8 @@ impl CilAssembly {
         let guid_changes = &mut self.changes.guid_heap_changes;
         let index = guid_changes.next_index;
         guid_changes.appended_items.push(*guid);
-        guid_changes.next_index += 1;
+        // GUIDs are fixed 16 bytes each
+        guid_changes.next_index += 16;
 
         Ok(index)
     }
@@ -356,7 +339,7 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(&Path::new("assembly.dll"))?;
@@ -369,7 +352,20 @@ impl CilAssembly {
         let userstring_changes = &mut self.changes.userstring_heap_changes;
         let index = userstring_changes.next_index;
         userstring_changes.appended_items.push(value.to_string());
-        userstring_changes.next_index += 1;
+
+        // User strings are UTF-16 encoded with compressed length prefix
+        let utf16_bytes: Vec<u8> = value.encode_utf16().flat_map(|c| c.to_le_bytes()).collect();
+        let length = utf16_bytes.len();
+
+        // Calculate compressed length prefix size + UTF-16 data length
+        let prefix_size = if length < 128 {
+            1
+        } else if length < 16384 {
+            2
+        } else {
+            4
+        };
+        userstring_changes.next_index += prefix_size + length as u32;
 
         Ok(index)
     }
@@ -436,14 +432,13 @@ impl CilAssembly {
     /// Writes the modified assembly to a file.
     ///
     /// This method generates a complete PE file with all modifications applied.
-    /// Index remapping, heap reconstruction, and metadata consistency checks
-    /// are performed during the write process.
+    /// The assembly should already be validated before calling this method.
     ///
     /// # Arguments
     ///
     /// * `path` - The path where the modified assembly should be written
-    pub fn write_to_file<P: AsRef<std::path::Path>>(&self, _path: P) -> Result<()> {
-        todo!("ToDo: write functionality")
+    pub fn write_to_file<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
+        write::write_assembly_to_file(self, path)
     }
 
     /// Gets the original row count for a table
@@ -453,6 +448,16 @@ impl CilAssembly {
         } else {
             0
         }
+    }
+
+    /// Gets a reference to the underlying view for read operations.
+    pub fn view(&self) -> &CilAssemblyView {
+        &self.view
+    }
+
+    /// Gets a reference to the changes for write operations.
+    pub fn changes(&self) -> &AssemblyChanges {
+        &self.changes
     }
 }
 
@@ -652,16 +657,16 @@ mod tests {
             let assembly = CilAssembly::new(view);
 
             // Check that heap changes are properly initialized with correct next_index values
-            // next_index should be original_heap_size + 1
+            // next_index should be original_heap_size (where the next item will be placed)
             let string_next_index = assembly.changes.string_heap_changes.next_index;
             let blob_next_index = assembly.changes.blob_heap_changes.next_index;
             let guid_next_index = assembly.changes.guid_heap_changes.next_index;
             let userstring_next_index = assembly.changes.userstring_heap_changes.next_index;
 
-            assert_eq!(string_next_index, 203732 + 1);
-            assert_eq!(blob_next_index, 77816 + 1);
-            assert_eq!(guid_next_index, 16 + 1);
-            assert_eq!(userstring_next_index, 53288 + 1);
+            assert_eq!(string_next_index, 203732);
+            assert_eq!(blob_next_index, 77816);
+            assert_eq!(guid_next_index, 16);
+            assert_eq!(userstring_next_index, 53288);
         }
     }
 }

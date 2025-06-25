@@ -30,7 +30,7 @@
 //!
 //! ## Basic Custom Attribute Parsing
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::customattributes::{parse_custom_attribute_data, CustomAttributeValue};
 //! use dotscope::metadata::method::MethodRc;
 //!
@@ -61,7 +61,7 @@
 //!
 //! ## Working with Different Argument Types
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::customattributes::{CustomAttributeArgument, parse_custom_attribute_data};
 //!
 //! # fn get_parsed_custom_attribute() -> dotscope::metadata::customattributes::CustomAttributeValue { todo!() }

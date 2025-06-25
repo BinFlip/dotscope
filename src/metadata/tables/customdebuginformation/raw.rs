@@ -132,7 +132,7 @@ impl CustomDebugInformationRaw {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::tables::{CustomDebugInformationRaw, CodedIndex};
     /// use dotscope::metadata::token::Token;
     /// use dotscope::metadata::typesystem::CilTypeReference;

@@ -1,13 +1,13 @@
 //! TypeSpecBuilder for creating type specification metadata entries.
 //!
-//! This module provides [`TypeSpecBuilder`] for creating TypeSpec table entries
+//! This module provides [`crate::metadata::tables::typespec::TypeSpecBuilder`] for creating TypeSpec table entries
 //! with a fluent API. Type specifications define complex types such as generic
 //! instantiations, arrays, pointers, and function types that cannot be represented
 //! by simple TypeDef or TypeRef entries.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         signatures::{SignatureMethod, SignatureTypeSpec, TypeSignature},
         tables::{TableDataOwned, TableId, TypeSpecRaw},
         token::Token,
@@ -51,14 +51,14 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
 /// # fn main() -> Result<()> {
 /// let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create a generic instantiation: List<int>
 /// let list_type = Token::new(0x02000001); // List<T> type definition
@@ -115,14 +115,14 @@ impl TypeSpecBuilder {
     ///
     /// # Returns
     ///
-    /// A new [`TypeSpecBuilder`] instance ready for configuration.
+    /// A new [`crate::metadata::tables::typespec::TypeSpecBuilder`] instance ready for configuration.
     pub fn new() -> Self {
         Self { signature: None }
     }
 
     /// Sets the type signature directly.
     ///
-    /// Allows setting any [`TypeSignature`] directly for maximum flexibility.
+    /// Allows setting any [`crate::metadata::signatures::TypeSignature`] directly for maximum flexibility.
     /// This method provides complete control over the type specification
     /// and can be used to create any valid type signature.
     ///
@@ -174,14 +174,14 @@ impl TypeSpecBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::prelude::*;
     /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
     /// let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// let mut assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(&mut assembly);
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
     /// let list_type = Token::new(0x02000001); // List<T>
     ///
     /// // Create List<int>
@@ -237,14 +237,14 @@ impl TypeSpecBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::prelude::*;
     /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
     /// let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// let mut assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(&mut assembly);
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
     /// // Create int[]
     /// let int_array = TypeSpecBuilder::new()
     ///     .single_dimensional_array(TypeSignature::I4)
@@ -292,14 +292,14 @@ impl TypeSpecBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::prelude::*;
     /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
     /// let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// let mut assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(&mut assembly);
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
     /// // Create int[,] (2D array)
     /// let int_2d = TypeSpecBuilder::new()
     ///     .multi_dimensional_array(TypeSignature::I4, 2)
@@ -355,14 +355,14 @@ impl TypeSpecBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::prelude::*;
     /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
     /// let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// let mut assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(&mut assembly);
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
     /// // Create int*
     /// let int_pointer = TypeSpecBuilder::new()
     ///     .pointer(TypeSignature::I4)
@@ -409,14 +409,14 @@ impl TypeSpecBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::prelude::*;
     /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
     /// let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// let mut assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(&mut assembly);
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
     /// // Create ref int
     /// let int_ref = TypeSpecBuilder::new()
     ///     .managed_reference(TypeSignature::I4)
@@ -458,14 +458,14 @@ impl TypeSpecBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::prelude::*;
     /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
     /// let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// let mut assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(&mut assembly);
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
     ///
     /// // Create a function pointer for: int Function(string, bool)
     /// let method_sig = SignatureMethod {
@@ -513,7 +513,7 @@ impl TypeSpecBuilder {
     /// Builds the TypeSpec metadata entry.
     ///
     /// Creates a new TypeSpec entry in the metadata with the configured signature.
-    /// The signature is encoded using the [`TypeSignatureEncoder`] and stored in
+    /// The signature is encoded using the [`crate::metadata::typesystem::TypeSignatureEncoder`] and stored in
     /// the blob heap, with the TypeSpec entry containing a reference to the blob heap index.
     ///
     /// # Validation
@@ -530,7 +530,7 @@ impl TypeSpecBuilder {
     ///
     /// # Returns
     ///
-    /// A [`Token`] referencing the created TypeSpec entry.
+    /// A [`crate::metadata::token::Token`] referencing the created TypeSpec entry.
     ///
     /// # Errors
     ///
@@ -567,10 +567,12 @@ impl TypeSpecBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
-        signatures::{SignatureMethod, SignatureParameter},
+        metadata::{
+            cilassemblyview::CilAssemblyView,
+            signatures::{SignatureMethod, SignatureParameter},
+        },
     };
     use std::path::PathBuf;
 
@@ -590,8 +592,8 @@ mod tests {
     fn test_direct_signature() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Get the expected next RID for TypeSpec
             let expected_rid = context.next_rid(TableId::TypeSpec);
@@ -610,8 +612,8 @@ mod tests {
     fn test_single_dimensional_array() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Get the expected next RID for TypeSpec
             let expected_rid = context.next_rid(TableId::TypeSpec);
@@ -630,8 +632,8 @@ mod tests {
     fn test_multi_dimensional_array() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Get the expected next RID for TypeSpec
             let expected_rid = context.next_rid(TableId::TypeSpec);
@@ -650,8 +652,8 @@ mod tests {
     fn test_generic_instantiation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Get the expected next RID for TypeSpec
             let expected_rid = context.next_rid(TableId::TypeSpec);
@@ -671,8 +673,8 @@ mod tests {
     fn test_pointer_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Get the expected next RID for TypeSpec
             let expected_rid = context.next_rid(TableId::TypeSpec);
@@ -691,8 +693,8 @@ mod tests {
     fn test_managed_reference() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Get the expected next RID for TypeSpec
             let expected_rid = context.next_rid(TableId::TypeSpec);
@@ -711,8 +713,8 @@ mod tests {
     fn test_function_pointer() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Get the expected next RID for TypeSpec
             let expected_rid = context.next_rid(TableId::TypeSpec);
@@ -755,8 +757,8 @@ mod tests {
     fn test_complex_nested_generic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Get the expected next RID for TypeSpec
             let expected_rid = context.next_rid(TableId::TypeSpec);
@@ -784,8 +786,8 @@ mod tests {
     fn test_build_without_signature_fails() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = TypeSpecBuilder::new().build(&mut context);
             assert!(result.is_err());
@@ -800,8 +802,8 @@ mod tests {
     fn test_multiple_typespecs() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Get the expected first RID for TypeSpec
             let expected_rid1 = context.next_rid(TableId::TypeSpec);

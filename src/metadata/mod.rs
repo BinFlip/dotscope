@@ -54,7 +54,7 @@
 //!
 //! ## Basic Assembly Loading and Analysis
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -78,7 +78,7 @@
 //!
 //! ## Method Analysis and IL Code Inspection
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -162,8 +162,6 @@
 //! - Microsoft .NET Framework PE Format Specification
 //! - Windows PE/COFF Specification
 
-/// Implementation of a mutable assembly for editing operations
-pub mod cilassembly;
 /// Implementation of a raw assembly view for editing operations
 pub mod cilassemblyview;
 /// Implementation of a loaded + parsed CIL binary

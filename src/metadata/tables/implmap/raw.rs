@@ -69,10 +69,10 @@ pub struct ImplMapRaw {
     /// Platform Invoke attribute flags as a 2-byte bitmask.
     ///
     /// Defines calling conventions, character sets, error handling, and other
-    /// P/Invoke characteristics. See ECMA-335 §23.1.8 and [`PInvokeAttributes`]
+    /// P/Invoke characteristics. See ECMA-335 §23.1.8 and [`crate::metadata::tables::PInvokeAttributes`]
     /// for detailed flag definitions.
     ///
-    /// [`PInvokeAttributes`]: crate::metadata::tables::implmap::PInvokeAttributes
+    /// [`crate::metadata::tables::PInvokeAttributes`]: crate::metadata::tables::implmap::PInvokeAttributes
     pub mapping_flags: u32,
 
     /// `MemberForwarded` coded index to the method or field being mapped.

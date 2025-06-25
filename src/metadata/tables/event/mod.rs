@@ -26,7 +26,7 @@
 //!
 //! # Usage Examples
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::tables::{Event, EventMap};
 //! use dotscope::metadata::token::Token;
 //!

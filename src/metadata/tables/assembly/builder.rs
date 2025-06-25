@@ -1,13 +1,13 @@
 //! AssemblyBuilder for creating assembly metadata.
 //!
-//! This module provides [`AssemblyBuilder`] for creating Assembly table entries
+//! This module provides [`crate::metadata::tables::assembly::AssemblyBuilder`] for creating Assembly table entries
 //! with a fluent API. The Assembly table contains the identity information for
 //! the current assembly, including version numbers, flags, and references to
 //! the assembly name and public key data.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{AssemblyRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -22,14 +22,13 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
-/// # use dotscope::{CilAssembly, CilAssemblyView};
-/// # use dotscope::metadata::cilassembly::BuilderContext;
+/// ```rust,ignore
+/// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::AssemblyBuilder;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// let assembly_token = AssemblyBuilder::new()
 ///     .name("MyAssembly")
@@ -55,7 +54,7 @@ impl AssemblyBuilder {
     ///
     /// # Returns
     ///
-    /// A new [`AssemblyBuilder`] ready for configuration.
+    /// A new [`crate::metadata::tables::assembly::AssemblyBuilder`] ready for configuration.
     pub fn new() -> Self {
         Self {
             hash_alg_id: None,
@@ -168,7 +167,7 @@ impl AssemblyBuilder {
     ///
     /// # Returns
     ///
-    /// The [`Token`] for the newly created Assembly entry.
+    /// The [`crate::metadata::token::Token`] for the newly created Assembly entry.
     ///
     /// # Errors
     ///
@@ -234,9 +233,9 @@ impl Default for AssemblyBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -244,13 +243,13 @@ mod tests {
     fn test_assembly_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
+            let assembly = CilAssembly::new(view);
 
             // Check existing Assembly table count
             let existing_assembly_count = assembly.original_table_row_count(TableId::Assembly);
             let expected_rid = existing_assembly_count + 1;
 
-            let mut context = BuilderContext::new(&mut assembly);
+            let mut context = BuilderContext::new(assembly);
 
             let token = AssemblyBuilder::new()
                 .name("TestAssembly")
@@ -269,8 +268,8 @@ mod tests {
     fn test_assembly_builder_with_public_key() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let public_key = vec![0x01, 0x02, 0x03, 0x04];
             let token = AssemblyBuilder::new()
@@ -291,8 +290,8 @@ mod tests {
     fn test_assembly_builder_missing_name() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = AssemblyBuilder::new()
                 .version(1, 0, 0, 0)

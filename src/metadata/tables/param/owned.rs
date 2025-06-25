@@ -64,7 +64,7 @@ pub struct Param {
     /// Parameter attributes bitmask according to ECMA-335 §II.23.1.13.
     ///
     /// Defines parameter characteristics including direction (in/out), optional status,
-    /// default values, and marshalling information. See [`ParamAttributes`](crate::metadata::tables::ParamAttributes)
+    /// default values, and marshalling information. See [`crate::metadata::tables::ParamAttributes`]
     /// for available flags.
     pub flags: u32,
 

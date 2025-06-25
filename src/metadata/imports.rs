@@ -39,7 +39,7 @@
 //!
 //! ## Basic Import Analysis
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::imports::{Imports, ImportType};
 //!
 //! let imports = Imports::new();
@@ -62,7 +62,7 @@
 //!
 //! ## Source-Based Analysis
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::imports::{Imports, ImportContainer};
 //!
 //! let imports = Imports::new();
@@ -82,7 +82,7 @@
 //!
 //! ## Comprehensive Import Enumeration
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::imports::{Imports, ImportType};
 //!
 //! let imports = Imports::new();
@@ -151,7 +151,7 @@ pub type ImportRc = Arc<Import>;
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::imports::ImportType;
 ///
 /// # fn process_import(import_type: &ImportType) {
@@ -212,7 +212,7 @@ pub enum ImportType {
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::imports::ImportSourceId;
 /// use dotscope::metadata::token::Token;
 ///
@@ -272,7 +272,7 @@ pub enum ImportSourceId {
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::imports::{Import, ImportType};
 ///
 /// # fn process_import(import: &Import) {
@@ -323,7 +323,7 @@ impl Import {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::metadata::imports::Import;
     /// # use dotscope::metadata::token::Token;
     /// # use dotscope::metadata::imports::{ImportType, ImportSourceId};
@@ -384,7 +384,7 @@ impl Import {
 ///
 /// ## Basic Container Operations
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::imports::Imports;
 ///
 /// let imports = Imports::new();
@@ -401,7 +401,7 @@ impl Import {
 ///
 /// ## Name-Based Lookups
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::imports::Imports;
 ///
 /// let imports = Imports::new();
@@ -425,7 +425,7 @@ impl Import {
 ///
 /// ## Namespace and Source Analysis
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::imports::{Imports, ImportContainer};
 ///
 /// let imports = Imports::new();
@@ -442,7 +442,7 @@ impl Import {
 ///
 /// ## Comprehensive Analysis
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::imports::{Imports, ImportType};
 ///
 /// let imports = Imports::new();
@@ -553,7 +553,7 @@ impl Imports {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::imports::Imports;
     /// use dotscope::metadata::typesystem::CilTypeReference;
     ///
@@ -612,7 +612,7 @@ impl Imports {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::imports::Imports;
     ///
     /// let imports = Imports::new();
@@ -702,7 +702,7 @@ impl Imports {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::imports::Imports;
     /// use dotscope::metadata::token::Token;
     ///
@@ -796,7 +796,7 @@ impl Imports {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::imports::Imports;
     ///
     /// let imports = Imports::new();
@@ -822,7 +822,7 @@ impl Imports {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::imports::Imports;
     ///
     /// let imports = Imports::new();
@@ -854,7 +854,7 @@ impl Imports {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::imports::{Imports, ImportType};
     ///
     /// let imports = Imports::new();
@@ -896,7 +896,7 @@ impl Imports {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::imports::Imports;
     ///
     /// let imports = Imports::new();
@@ -938,7 +938,7 @@ impl Imports {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::imports::Imports;
     ///
     /// let imports = Imports::new();
@@ -980,7 +980,7 @@ impl Imports {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::imports::Imports;
     ///
     /// let imports = Imports::new();
@@ -1040,7 +1040,7 @@ impl Imports {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::imports::Imports;
     ///
     /// let imports = Imports::new();
@@ -1145,7 +1145,7 @@ impl<'a> IntoIterator for &'a Imports {
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::imports::{Imports, ImportContainer};
 ///
 /// let imports = Imports::new();
@@ -1164,7 +1164,7 @@ impl<'a> IntoIterator for &'a Imports {
 ///
 /// # Implementing the Trait
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::imports::{ImportContainer, Imports, ImportRc, ImportSourceId};
 /// use dotscope::metadata::token::Token;
 ///

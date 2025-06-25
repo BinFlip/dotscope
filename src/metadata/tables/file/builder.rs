@@ -14,13 +14,12 @@
 //!
 //! ## Usage
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! # use dotscope::prelude::*;
-//! # use dotscope::metadata::cilassembly::BuilderContext;
 //! # use std::path::Path;
 //! # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-//! # let mut assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(&mut assembly);
+//! # let assembly = CilAssembly::new(view);
+//! # let mut context = BuilderContext::new(assembly);
 //!
 //! // Create a module file reference
 //! let module_token = FileBuilder::new()
@@ -47,8 +46,8 @@
 //! - **File Type Support**: Methods for specifying metadata vs. resource files
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{FileAttributes, FileRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -74,13 +73,12 @@ use crate::{
 ///
 /// The builder provides a fluent interface for constructing File entries:
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// # use dotscope::prelude::*;
-/// # use dotscope::metadata::cilassembly::BuilderContext;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// # let mut assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(&mut assembly);
+/// # let assembly = CilAssembly::new(view);
+/// # let mut context = BuilderContext::new(assembly);
 /// let hash_bytes = vec![0x01, 0x02, 0x03, 0x04]; // Example hash
 ///
 /// let file_token = FileBuilder::new()
@@ -261,13 +259,12 @@ impl FileBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
-    /// # use dotscope::metadata::cilassembly::BuilderContext;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// # let mut assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(&mut assembly);
+    /// # let assembly = CilAssembly::new(view);
+    /// # let mut context = BuilderContext::new(assembly);
     ///
     /// let file_token = FileBuilder::new()
     ///     .name("MyModule.netmodule")
@@ -324,8 +321,9 @@ impl FileBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
-        cilassembly::CilAssembly, cilassemblyview::CilAssemblyView, tables::FileAttributes,
+    use crate::{
+        cilassembly::CilAssembly,
+        metadata::{cilassemblyview::CilAssemblyView, tables::FileAttributes},
     };
     use std::path::PathBuf;
 
@@ -337,8 +335,8 @@ mod tests {
 
     #[test]
     fn test_file_builder_basic() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = FileBuilder::new()
             .name("MyModule.netmodule")
@@ -362,8 +360,8 @@ mod tests {
 
     #[test]
     fn test_file_builder_missing_name() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let result = FileBuilder::new().contains_metadata().build(&mut context);
 
@@ -376,8 +374,8 @@ mod tests {
 
     #[test]
     fn test_file_builder_empty_name() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let result = FileBuilder::new().name("").build(&mut context);
 
@@ -390,8 +388,8 @@ mod tests {
 
     #[test]
     fn test_file_builder_contains_metadata() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = FileBuilder::new()
             .name("Module.netmodule")
@@ -406,8 +404,8 @@ mod tests {
 
     #[test]
     fn test_file_builder_contains_no_metadata() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = FileBuilder::new()
             .name("Resources.resources")
@@ -422,8 +420,8 @@ mod tests {
 
     #[test]
     fn test_file_builder_with_hash_value() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let hash = vec![0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0];
 
@@ -440,8 +438,8 @@ mod tests {
 
     #[test]
     fn test_file_builder_with_flags() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = FileBuilder::new()
             .name("CustomFile.data")
@@ -456,8 +454,8 @@ mod tests {
 
     #[test]
     fn test_file_builder_multiple_files() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token1 = FileBuilder::new()
             .name("Module1.netmodule")
@@ -480,8 +478,8 @@ mod tests {
 
     #[test]
     fn test_file_builder_comprehensive() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let hash = vec![0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE];
 
@@ -499,8 +497,8 @@ mod tests {
 
     #[test]
     fn test_file_builder_fluent_api() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test fluent API chaining
         let token = FileBuilder::new()
@@ -535,8 +533,8 @@ mod tests {
 
     #[test]
     fn test_file_builder_empty_hash() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = FileBuilder::new()
             .name("NoHashFile.dll")

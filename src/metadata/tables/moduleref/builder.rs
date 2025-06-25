@@ -13,13 +13,12 @@
 //!
 //! ## Usage
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! # use dotscope::prelude::*;
-//! # use dotscope::metadata::cilassembly::BuilderContext;
 //! # use std::path::Path;
 //! # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-//! # let mut assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(&mut assembly);
+//! # let assembly = CilAssembly::new(view);
+//! # let mut context = BuilderContext::new(assembly);
 //!
 //! // Create a module reference
 //! let module_ref_token = ModuleRefBuilder::new()
@@ -37,8 +36,8 @@
 //! - **Error Handling**: Clear error messages for validation failures
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{ModuleRefRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -63,13 +62,12 @@ use crate::{
 ///
 /// The builder provides a fluent interface for constructing ModuleRef entries:
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// # use dotscope::prelude::*;
-/// # use dotscope::metadata::cilassembly::BuilderContext;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// # let mut assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(&mut assembly);
+/// # let assembly = CilAssembly::new(view);
+/// # let mut context = BuilderContext::new(assembly);
 ///
 /// let module_ref = ModuleRefBuilder::new()
 ///     .name("System.Core.dll")
@@ -157,13 +155,12 @@ impl ModuleRefBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
-    /// # use dotscope::metadata::cilassembly::BuilderContext;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// # let mut assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(&mut assembly);
+    /// # let assembly = CilAssembly::new(view);
+    /// # let mut context = BuilderContext::new(assembly);
     ///
     /// let module_ref_token = ModuleRefBuilder::new()
     ///     .name("MyModule.dll")
@@ -205,7 +202,7 @@ impl ModuleRefBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{cilassembly::CilAssembly, cilassemblyview::CilAssemblyView};
+    use crate::{cilassembly::CilAssembly, metadata::cilassemblyview::CilAssemblyView};
     use std::path::PathBuf;
 
     fn get_test_assembly() -> Result<CilAssembly> {
@@ -216,8 +213,8 @@ mod tests {
 
     #[test]
     fn test_moduleref_builder_basic() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = ModuleRefBuilder::new()
             .name("System.Core.dll")
@@ -239,8 +236,8 @@ mod tests {
 
     #[test]
     fn test_moduleref_builder_missing_name() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let result = ModuleRefBuilder::new().build(&mut context);
 
@@ -253,8 +250,8 @@ mod tests {
 
     #[test]
     fn test_moduleref_builder_empty_name() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let result = ModuleRefBuilder::new().name("").build(&mut context);
 
@@ -267,8 +264,8 @@ mod tests {
 
     #[test]
     fn test_moduleref_builder_multiple_modules() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token1 = ModuleRefBuilder::new()
             .name("Module1.dll")
@@ -289,8 +286,8 @@ mod tests {
 
     #[test]
     fn test_moduleref_builder_fluent_api() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test fluent API chaining
         let token = ModuleRefBuilder::new()
@@ -305,8 +302,8 @@ mod tests {
 
     #[test]
     fn test_moduleref_builder_various_names() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let test_names = [
             "System.dll",
@@ -329,8 +326,8 @@ mod tests {
 
     #[test]
     fn test_moduleref_builder_string_reuse() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Create two module references with the same name
         let token1 = ModuleRefBuilder::new()

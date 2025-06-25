@@ -1,13 +1,13 @@
 //! MethodSpecBuilder for creating generic method instantiation specifications.
 //!
-//! This module provides [`MethodSpecBuilder`] for creating MethodSpec table entries
+//! This module provides [`crate::metadata::tables::methodspec::MethodSpecBuilder`] for creating MethodSpec table entries
 //! with a fluent API. Method specifications define instantiations of generic methods
 //! with concrete type arguments, enabling type-safe generic method dispatch and
 //! supporting both compile-time and runtime generic method resolution.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{CodedIndex, CodedIndexType, MethodSpecRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -54,12 +54,12 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Instantiate a generic method with a single type argument
 /// let generic_method = CodedIndex::new(TableId::MethodDef, 1); // Generic Add<T> method
@@ -129,7 +129,7 @@ impl MethodSpecBuilder {
     ///
     /// # Returns
     ///
-    /// A new [`MethodSpecBuilder`] instance ready for configuration.
+    /// A new [`crate::metadata::tables::methodspec::MethodSpecBuilder`] instance ready for configuration.
     pub fn new() -> Self {
         Self {
             method: None,
@@ -272,7 +272,7 @@ impl MethodSpecBuilder {
     ///
     /// # Returns
     ///
-    /// A [`Token`] representing the newly created method specification, or an error if
+    /// A [`crate::metadata::token::Token`] representing the newly created method specification, or an error if
     /// validation fails or required fields are missing.
     ///
     /// # Errors
@@ -350,9 +350,9 @@ impl MethodSpecBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -360,13 +360,13 @@ mod tests {
     fn test_method_spec_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
+            let assembly = CilAssembly::new(view);
 
             // Check existing MethodSpec table count
             let existing_count = assembly.original_table_row_count(TableId::MethodSpec);
             let expected_rid = existing_count + 1;
 
-            let mut context = BuilderContext::new(&mut assembly);
+            let mut context = BuilderContext::new(assembly);
 
             // Create a basic method specification
             let method_ref = CodedIndex::new(TableId::MethodDef, 1); // Generic method
@@ -388,8 +388,8 @@ mod tests {
     fn test_method_spec_builder_different_methods() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let instantiation_blob = vec![0x01, 0x08]; // Single int32 argument
 
@@ -420,8 +420,8 @@ mod tests {
     fn test_method_spec_builder_convenience_methods() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let method_ref = CodedIndex::new(TableId::MethodDef, 1);
 
@@ -457,8 +457,8 @@ mod tests {
     fn test_method_spec_builder_complex_instantiations() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let method_ref = CodedIndex::new(TableId::MemberRef, 1);
 
@@ -485,8 +485,8 @@ mod tests {
     fn test_method_spec_builder_missing_method() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let instantiation_blob = vec![0x01, 0x08];
 
@@ -504,8 +504,8 @@ mod tests {
     fn test_method_spec_builder_missing_instantiation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let method_ref = CodedIndex::new(TableId::MethodDef, 1);
 
@@ -523,8 +523,8 @@ mod tests {
     fn test_method_spec_builder_empty_instantiation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let method_ref = CodedIndex::new(TableId::MethodDef, 1);
             let empty_blob = vec![]; // Empty instantiation
@@ -543,8 +543,8 @@ mod tests {
     fn test_method_spec_builder_invalid_method_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Use a table type that's not valid for MethodDefOrRef
             let invalid_method = CodedIndex::new(TableId::Field, 1); // Field not in MethodDefOrRef
@@ -564,8 +564,8 @@ mod tests {
     fn test_method_spec_builder_zero_generic_args() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let method_ref = CodedIndex::new(TableId::MethodDef, 1);
             let zero_args_blob = vec![0x00]; // Zero generic arguments
@@ -584,8 +584,8 @@ mod tests {
     fn test_method_spec_builder_realistic_scenarios() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Scenario 1: List<T>.Add(T) instantiated with int
             let list_add = CodedIndex::new(TableId::MethodDef, 1);

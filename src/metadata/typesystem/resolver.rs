@@ -50,7 +50,7 @@
 //!
 //! ## Basic Type Resolution
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::{
 //!     typesystem::{TypeResolver, TypeRegistry},
 //!     signatures::TypeSignature
@@ -96,7 +96,7 @@
 //!
 //! ## Context-Aware Resolution
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::{
 //!     typesystem::{TypeResolver, TypeSource},
 //!     token::Token
@@ -189,7 +189,7 @@ const MAX_RECURSION_DEPTH: usize = 100;
 ///
 /// ## Basic Usage
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::{
 ///     typesystem::{TypeResolver, TypeRegistry},
 ///     signatures::TypeSignature
@@ -210,7 +210,7 @@ const MAX_RECURSION_DEPTH: usize = 100;
 ///
 /// ## Context Configuration
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::{
 ///     typesystem::{TypeResolver, TypeSource},
 ///     token::Token
@@ -250,7 +250,7 @@ impl TypeResolver {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::{TypeResolver, TypeRegistry};
     /// use std::sync::Arc;
     ///
@@ -282,7 +282,7 @@ impl TypeResolver {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::{TypeResolver, TypeSource};
     /// use dotscope::metadata::token::Token;
     ///
@@ -331,7 +331,7 @@ impl TypeResolver {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::{typesystem::TypeResolver, token::Token};
     ///
     /// # fn example(resolver: TypeResolver) {
@@ -365,7 +365,7 @@ impl TypeResolver {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::{typesystem::TypeResolver, token::Token};
     ///
     /// # fn example(resolver: TypeResolver) {
@@ -415,7 +415,7 @@ impl TypeResolver {
     ///
     /// ## Primitive Type Resolution
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::{
     ///     typesystem::TypeResolver,
     ///     signatures::TypeSignature

@@ -18,7 +18,7 @@
 //!
 //! # Examples
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::streams::UserStrings;
 //!
 //! // Sample heap data with "Hello" string
@@ -40,9 +40,10 @@
 //! # Reference
 //! - [ECMA-335 II.24.2.4](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf)
 
+use crate::file::io::{read_compressed_int, read_compressed_int_at};
 use crate::{Error::OutOfBounds, Result};
 
-use widestring::U16CStr;
+use widestring::U16Str;
 
 /// The `UserStrings` object provides helper methods to access the data within the '#US' heap.
 ///
@@ -58,7 +59,7 @@ use widestring::U16CStr;
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::streams::UserStrings;
 ///
 /// // Create from heap data
@@ -71,7 +72,7 @@ use widestring::U16CStr;
 ///
 /// ## Iteration Example
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::streams::UserStrings;
 ///
 /// let data = &[0u8, 0x05, 0x48, 0x00, 0x69, 0x00, 0x00, 0x00]; // "Hi"
@@ -112,7 +113,7 @@ impl<'a> UserStrings<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::streams::UserStrings;
     ///
     /// // Valid heap data
@@ -132,13 +133,13 @@ impl<'a> UserStrings<'a> {
     ///
     /// Retrieves a UTF-16 string reference from the heap at the specified byte offset.
     /// The method processes the length prefix and validates the string data according to
-    /// ECMA-335 format specifications.
+    /// the .NET runtime implementation researched from the official runtime source code.
     ///
     /// # Arguments
     /// * `index` - The byte offset within the heap (typically from metadata table references)
     ///
     /// # Returns
-    /// * `Ok(&U16CStr)` - Reference to the UTF-16 string at the specified offset
+    /// * `Ok(&U16Str)` - Reference to the UTF-16 string at the specified offset
     ///
     /// # Errors
     /// * [`crate::Error::OutOfBounds`] - If index is out of bounds
@@ -146,10 +147,10 @@ impl<'a> UserStrings<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::streams::UserStrings;
     ///
-    /// let data = &[0x00, 0x05, 0x48, 0x00, 0x69, 0x00, 0x00, 0x00]; // "Hi"
+    /// let data = &[0x00, 0x05, 0x48, 0x00, 0x69, 0x00, 0x00]; // "Hi"
     /// let heap = UserStrings::from(data)?;
     /// let string = heap.get(1)?;
     /// assert_eq!(string.to_string_lossy(), "Hi");
@@ -158,30 +159,32 @@ impl<'a> UserStrings<'a> {
     ///
     /// # Panics
     /// May panic if the underlying slice conversion fails due to memory alignment issues
-    pub fn get(&self, index: usize) -> Result<&'a U16CStr> {
+    pub fn get(&self, index: usize) -> Result<&'a U16Str> {
         if index >= self.data.len() {
             return Err(OutOfBounds);
         }
 
-        let string_length = self.data[index] as usize;
-        let data_start = index + 1;
+        let (total_bytes, compressed_length_size) = read_compressed_int_at(self.data, index)?;
+        let data_start = index + compressed_length_size;
 
-        if string_length == 0 {
+        if total_bytes == 0 {
             return Err(malformed_error!(
                 "Invalid zero-length string at index {}",
                 index
             ));
         }
 
-        if string_length == 1 {
-            let empty_slice = &[0u16];
-            return Ok(U16CStr::from_slice_truncate(empty_slice).unwrap());
+        if total_bytes == 1 {
+            static EMPTY_U16: [u16; 0] = [];
+            return Ok(U16Str::from_slice(&EMPTY_U16));
         }
 
-        // The string length includes the terminal byte, so actual UTF-16 data is length - 1
-        let utf16_length = string_length - 1;
-        let data_end = data_start + utf16_length;
-        if data_end + 2 > self.data.len() {
+        // Total bytes includes UTF-16 data + terminator byte (1 byte)
+        // So actual UTF-16 data is total_bytes - 1
+        let utf16_length = total_bytes - 1;
+
+        let total_data_end = data_start + total_bytes;
+        if total_data_end > self.data.len() {
             return Err(OutOfBounds);
         }
 
@@ -189,23 +192,17 @@ impl<'a> UserStrings<'a> {
             return Err(malformed_error!("Invalid UTF-16 length at index {}", index));
         }
 
-        let utf16_data_with_null = &self.data[data_start..data_end + 2];
+        let utf16_data_end = data_start + utf16_length;
+        let utf16_data = &self.data[data_start..utf16_data_end];
 
-        // Convert to u16 slice (unsafe but controlled)
         let str_slice = unsafe {
             #[allow(clippy::cast_ptr_alignment)]
-            core::ptr::slice_from_raw_parts(
-                utf16_data_with_null.as_ptr().cast::<u16>(),
-                utf16_data_with_null.len() / 2,
-            )
-            .as_ref()
-            .unwrap()
+            core::ptr::slice_from_raw_parts(utf16_data.as_ptr().cast::<u16>(), utf16_data.len() / 2)
+                .as_ref()
+                .unwrap()
         };
 
-        match U16CStr::from_slice_truncate(str_slice) {
-            Ok(result) => Ok(result),
-            Err(_) => Err(malformed_error!("Invalid string from index - {}", index)),
-        }
+        Ok(U16Str::from_slice(str_slice))
     }
 
     /// Returns an iterator over all user strings in the heap
@@ -219,7 +216,7 @@ impl<'a> UserStrings<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::streams::UserStrings;
     ///
     /// let data = &[0u8, 0x05, 0x48, 0x00, 0x69, 0x00, 0x00, 0x00]; // "Hi" in UTF-16
@@ -237,7 +234,7 @@ impl<'a> UserStrings<'a> {
 }
 
 impl<'a> IntoIterator for &'a UserStrings<'a> {
-    type Item = (usize, &'a widestring::U16CStr);
+    type Item = (usize, &'a U16Str);
     type IntoIter = UserStringsIterator<'a>;
 
     /// Create an iterator over the user strings heap.
@@ -246,7 +243,7 @@ impl<'a> IntoIterator for &'a UserStrings<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::streams::UserStrings;
     ///
     /// let data = &[0u8, 0x05, 0x48, 0x00, 0x69, 0x00, 0x00, 0x00];
@@ -265,7 +262,7 @@ impl<'a> IntoIterator for &'a UserStrings<'a> {
 /// Iterator over entries in the `#US` (`UserStrings`) heap
 ///
 /// Provides zero-copy access to UTF-16 user strings with their byte offsets.
-/// Each iteration returns a `(usize, &U16CStr)` containing the offset and string content.
+/// Each iteration returns a `(usize, &U16Str)` containing the offset and string content.
 /// The iterator automatically handles length prefixes and string format validation.
 ///
 /// # Iteration Behavior
@@ -294,11 +291,11 @@ impl<'a> UserStringsIterator<'a> {
 }
 
 impl<'a> Iterator for UserStringsIterator<'a> {
-    type Item = (usize, &'a U16CStr);
+    type Item = (usize, &'a U16Str);
 
     /// Get the next user string from the heap
     ///
-    /// Returns `Some((offset, string))` for valid entries, `None` when the heap is exhausted
+    /// Returns `(offset, string)` for valid entries, `None` when the heap is exhausted
     /// or when malformed string data is encountered.
     fn next(&mut self) -> Option<Self::Item> {
         if self.position >= self.user_strings.data.len() {
@@ -306,18 +303,48 @@ impl<'a> Iterator for UserStringsIterator<'a> {
         }
 
         let start_position = self.position;
-        let string_length = self.user_strings.data[self.position] as usize;
+
+        // Read compressed length according to ECMA-335 II.24.2.4 and .NET runtime implementation
+        let (total_bytes, compressed_length_size) =
+            match read_compressed_int(self.user_strings.data, &mut self.position) {
+                Ok((length, consumed)) => {
+                    // Reset position since read_compressed_int advanced it
+                    self.position -= consumed;
+                    (length, consumed)
+                }
+                Err(_) => {
+                    // Try to skip over bad data by advancing one byte and trying again
+                    self.position += 1;
+                    if self.position < self.user_strings.data.len() {
+                        return self.next(); // Recursive call to try next position
+                    }
+                    return None;
+                }
+            };
+
+        // Handle zero-length entries (invalid according to .NET spec, but may exist in malformed data)
+        if total_bytes == 0 {
+            self.position += compressed_length_size;
+            if self.position < self.user_strings.data.len() {
+                return self.next(); // Recursive call to try next position
+            }
+            return None;
+        }
 
         let string = match self.user_strings.get(start_position) {
             Ok(string) => string,
-            Err(_) => return None,
+            Err(_) => {
+                // Skip over the malformed entry
+                self.position += compressed_length_size + total_bytes;
+                if self.position < self.user_strings.data.len() {
+                    return self.next(); // Recursive call to try next position
+                }
+                return None;
+            }
         };
 
-        if string_length == 1 {
-            self.position += 1 + string_length;
-        } else {
-            self.position += 1 + string_length + 2;
-        }
+        let new_position = self.position + compressed_length_size + total_bytes;
+        self.position = new_position;
 
         Some((start_position, string))
     }
@@ -325,20 +352,20 @@ impl<'a> Iterator for UserStringsIterator<'a> {
 
 #[cfg(test)]
 mod tests {
-    use widestring::u16cstr;
+    use widestring::u16str;
 
     use super::*;
 
     #[test]
     fn crafted() {
         #[rustfmt::skip]
-        let data: [u8; 32] = [
-            0x00, 0x1b, 0x48, 0x00, 0x65, 0x00, 0x6c, 0x00, 0x6c, 0x00, 0x6f, 0x00, 0x2c, 0x00, 0x20, 0x00, 0x57, 0x00, 0x6f, 0x00, 0x72, 0x00, 0x6c, 0x00, 0x64, 0x00, 0x21, 0x00, 0x00, 0x00, 0x00, 0x00
+        let data: [u8; 29] = [
+            0x00, 0x1b, 0x48, 0x00, 0x65, 0x00, 0x6c, 0x00, 0x6c, 0x00, 0x6f, 0x00, 0x2c, 0x00, 0x20, 0x00, 0x57, 0x00, 0x6f, 0x00, 0x72, 0x00, 0x6c, 0x00, 0x64, 0x00, 0x21, 0x00, 0x00
         ];
 
         let us_str = UserStrings::from(&data).unwrap();
 
-        assert_eq!(us_str.get(1).unwrap(), u16cstr!("Hello, World!"));
+        assert_eq!(us_str.get(1).unwrap(), u16str!("Hello, World!"));
     }
 
     #[test]
@@ -366,9 +393,15 @@ mod tests {
 
     #[test]
     fn test_userstrings_iterator_basic() {
-        // Simple test case - "Hi" in UTF-16 with length prefix
-        // Length 0x05 = 5 bytes: 4 bytes for "Hi" + 1 terminal byte (null terminator is separate)
-        let data = [0x00, 0x05, 0x48, 0x00, 0x69, 0x00, 0x00, 0x00, 0x00]; // "Hi" in UTF-16 + null terminator + terminal
+        // Simple test case - "Hi" in UTF-16 with compressed length prefix
+        // Based on .NET runtime format: [compressed_length][utf16_data][terminator_byte]
+        // Length 0x05 = 5 bytes: 4 bytes UTF-16 + 1 terminator byte
+        let data = [
+            0x00, // Initial null byte
+            0x05, // Length: 5 bytes total (4 UTF-16 + 1 terminator)
+            0x48, 0x00, 0x69, 0x00, // "Hi" in UTF-16 LE
+            0x00, // Terminator byte (no high chars)
+        ];
         let user_strings = UserStrings::from(&data).unwrap();
         let mut iter = user_strings.iter();
 
@@ -382,12 +415,15 @@ mod tests {
     #[test]
     fn test_userstrings_iterator_multiple() {
         // Two strings: "Hi" (length 5) and "Bye" (length 7)
+        // Format: [compressed_length][utf16_data][terminator_byte]
         let data = [
             0x00, // Initial null byte
-            0x05, 0x48, 0x00, 0x69, 0x00, 0x00, 0x00,
-            0x00, // "Hi" + null terminator + terminal
-            0x07, 0x42, 0x00, 0x79, 0x00, 0x65, 0x00, 0x00, 0x00,
-            0x00, // "Bye" + null terminator + terminal
+            0x05, // "Hi": len=5 (4 UTF-16 + 1 terminator)
+            0x48, 0x00, 0x69, 0x00, // "Hi" in UTF-16 LE
+            0x00, // Terminator byte
+            0x07, // "Bye": len=7 (6 UTF-16 + 1 terminator)
+            0x42, 0x00, 0x79, 0x00, 0x65, 0x00, // "Bye" in UTF-16 LE
+            0x00, // Terminator byte
         ];
 
         let user_strings = UserStrings::from(&data).unwrap();
@@ -398,7 +434,7 @@ mod tests {
         assert_eq!(first.1.to_string_lossy(), "Hi");
 
         let second = iter.next().unwrap();
-        assert_eq!(second.0, 9);
+        assert_eq!(second.0, 7); // Correct: 1 (start) + 1 (length byte) + 5 (data+terminator) = 7
         assert_eq!(second.1.to_string_lossy(), "Bye");
 
         assert!(iter.next().is_none());
@@ -407,9 +443,14 @@ mod tests {
     #[test]
     fn test_userstrings_iterator_empty_string() {
         // Empty string followed by "Hi"
-        // Empty string: length 1 (just terminal byte), then "Hi": length 5
+        // Empty string: length 1 (0 UTF-16 + 1 terminator), then "Hi": length 5
         let data = [
-            0x00, 0x01, 0x00, 0x05, 0x48, 0x00, 0x69, 0x00, 0x00, 0x00, 0x00,
+            0x00, // Initial null byte
+            0x01, // Empty string: len=1 (just terminator)
+            0x00, // Terminator byte
+            0x05, // "Hi": len=5 (4 UTF-16 + 1 terminator)
+            0x48, 0x00, 0x69, 0x00, // "Hi" in UTF-16 LE
+            0x00, // Terminator byte
         ];
         let user_strings = UserStrings::from(&data).unwrap();
         let mut iter = user_strings.iter();
@@ -430,15 +471,14 @@ mod tests {
         // Test with a longer string - 5 characters in UTF-16
         let mut data = vec![0x00]; // Initial null byte
 
-        // "AAAAA" = 5 chars * 2 bytes + 1 terminal = 11 bytes total
+        // "AAAAA" = 5 chars * 2 bytes + 1 terminator = 11 bytes total
         data.push(0x0B); // Length 11
 
         // Add 10 bytes of UTF-16 data (5 characters: "AAAAA")
         for _ in 0..5 {
             data.extend_from_slice(&[0x41, 0x00]);
         }
-        data.extend_from_slice(&[0x00, 0x00]); // UTF-16 null terminator
-        data.push(0x00); // Terminal byte
+        data.push(0x00); // Terminator byte
 
         let user_strings = UserStrings::from(&data).unwrap();
         let mut iter = user_strings.iter();

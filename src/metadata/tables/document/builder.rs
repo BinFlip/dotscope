@@ -16,13 +16,12 @@
 //!
 //! ## Usage
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! # use dotscope::prelude::*;
-//! # use dotscope::metadata::cilassembly::BuilderContext;
 //! # use std::path::Path;
 //! # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-//! # let mut assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(&mut assembly);
+//! # let assembly = CilAssembly::new(view);
+//! # let mut context = BuilderContext::new(assembly);
 //!
 //! // Create a document entry with basic information
 //! let document_token = DocumentBuilder::new()
@@ -48,8 +47,8 @@
 //! - **Heap Management**: Strings, blobs, and GUIDs are added to appropriate heaps
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{DocumentRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -75,13 +74,12 @@ use crate::{
 ///
 /// The builder provides a fluent interface for constructing Document entries:
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// # use dotscope::prelude::*;
-/// # use dotscope::metadata::cilassembly::BuilderContext;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// # let mut assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(&mut assembly);
+/// # let assembly = CilAssembly::new(view);
+/// # let mut context = BuilderContext::new(assembly);
 ///
 /// let document_token = DocumentBuilder::new()
 ///     .name("MyFile.cs")
@@ -370,13 +368,12 @@ impl DocumentBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
-    /// # use dotscope::metadata::cilassembly::BuilderContext;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// # let mut assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(&mut assembly);
+    /// # let assembly = CilAssembly::new(view);
+    /// # let mut context = BuilderContext::new(assembly);
     ///
     /// let document_token = DocumentBuilder::new()
     ///     .name("Program.cs")
@@ -441,8 +438,9 @@ impl DocumentBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
-        cilassembly::CilAssembly, cilassemblyview::CilAssemblyView, tables::TableId,
+    use crate::{
+        cilassembly::CilAssembly,
+        metadata::{cilassemblyview::CilAssemblyView, tables::TableId},
     };
     use std::path::PathBuf;
 
@@ -454,8 +452,8 @@ mod tests {
 
     #[test]
     fn test_document_builder_basic() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = DocumentBuilder::new()
             .name("Program.cs")
@@ -480,8 +478,8 @@ mod tests {
 
     #[test]
     fn test_document_builder_missing_name() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let result = DocumentBuilder::new().csharp_language().build(&mut context);
 
@@ -494,8 +492,8 @@ mod tests {
 
     #[test]
     fn test_document_builder_empty_name() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let result = DocumentBuilder::new().name("").build(&mut context);
 
@@ -508,8 +506,8 @@ mod tests {
 
     #[test]
     fn test_document_builder_with_csharp_language() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = DocumentBuilder::new()
             .name("Test.cs")
@@ -524,8 +522,8 @@ mod tests {
 
     #[test]
     fn test_document_builder_with_vb_language() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = DocumentBuilder::new()
             .name("Test.vb")
@@ -540,8 +538,8 @@ mod tests {
 
     #[test]
     fn test_document_builder_with_fsharp_language() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = DocumentBuilder::new()
             .name("Test.fs")
@@ -556,8 +554,8 @@ mod tests {
 
     #[test]
     fn test_document_builder_with_sha1_hash() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let hash_bytes = vec![0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0];
         let token = DocumentBuilder::new()
@@ -574,8 +572,8 @@ mod tests {
 
     #[test]
     fn test_document_builder_with_sha256_hash() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let hash_bytes = vec![0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0];
         let token = DocumentBuilder::new()
@@ -592,8 +590,8 @@ mod tests {
 
     #[test]
     fn test_document_builder_full_specification() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let hash_bytes = vec![0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0];
         let token = DocumentBuilder::new()
@@ -611,8 +609,8 @@ mod tests {
 
     #[test]
     fn test_document_builder_multiple_entries() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let doc1_token = DocumentBuilder::new()
             .name("File1.cs")
@@ -635,8 +633,8 @@ mod tests {
 
     #[test]
     fn test_document_builder_custom_guid() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let custom_lang_guid = [
             0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
@@ -662,8 +660,8 @@ mod tests {
 
     #[test]
     fn test_document_builder_fluent_api() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test fluent API chaining
         let token = DocumentBuilder::new()

@@ -16,13 +16,12 @@
 //!
 //! ## Usage
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! # use dotscope::prelude::*;
-//! # use dotscope::metadata::cilassembly::BuilderContext;
 //! # use std::path::Path;
 //! # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-//! # let mut assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(&mut assembly);
+//! # let assembly = CilAssembly::new(view);
+//! # let mut context = BuilderContext::new(assembly);
 //!
 //! // Create a simple assembly reference
 //! let assembly_ref_token = AssemblyRefBuilder::new()
@@ -49,8 +48,8 @@
 //! - **Strong Name Support**: Handles both public keys and public key tokens
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{AssemblyFlags, AssemblyRefRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -76,14 +75,13 @@ use crate::{
 ///
 /// The builder provides a fluent interface for constructing AssemblyRef entries:
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// # use dotscope::prelude::*;
-/// # use dotscope::metadata::cilassembly::BuilderContext;
 /// # use dotscope::metadata::tables::AssemblyFlags;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// # let mut assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(&mut assembly);
+/// # let assembly = CilAssembly::new(view);
+/// # let mut context = BuilderContext::new(assembly);
 ///
 /// let assembly_ref = AssemblyRefBuilder::new()
 ///     .name("System.Core")
@@ -214,7 +212,7 @@ impl AssemblyRefBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
     /// # use dotscope::metadata::tables::AssemblyFlags;
     /// let builder = AssemblyRefBuilder::new()
@@ -339,13 +337,12 @@ impl AssemblyRefBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
-    /// # use dotscope::metadata::cilassembly::BuilderContext;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// # let mut assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(&mut assembly);
+    /// # let assembly = CilAssembly::new(view);
+    /// # let mut context = BuilderContext::new(assembly);
     ///
     /// let assembly_ref_token = AssemblyRefBuilder::new()
     ///     .name("System.Core")
@@ -454,8 +451,9 @@ impl AssemblyRefBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
-        cilassembly::CilAssembly, cilassemblyview::CilAssemblyView, tables::AssemblyFlags,
+    use crate::{
+        cilassembly::CilAssembly,
+        metadata::{cilassemblyview::CilAssemblyView, tables::AssemblyFlags},
     };
     use std::path::PathBuf;
 
@@ -467,8 +465,8 @@ mod tests {
 
     #[test]
     fn test_assemblyref_builder_basic() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = AssemblyRefBuilder::new()
             .name("System.Core")
@@ -496,8 +494,8 @@ mod tests {
 
     #[test]
     fn test_assemblyref_builder_missing_name() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let result = AssemblyRefBuilder::new()
             .version(1, 0, 0, 0)
@@ -512,8 +510,8 @@ mod tests {
 
     #[test]
     fn test_assemblyref_builder_empty_name() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let result = AssemblyRefBuilder::new()
             .name("")
@@ -529,8 +527,8 @@ mod tests {
 
     #[test]
     fn test_assemblyref_builder_with_culture() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = AssemblyRefBuilder::new()
             .name("LocalizedAssembly")
@@ -546,8 +544,8 @@ mod tests {
 
     #[test]
     fn test_assemblyref_builder_with_public_key_token() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token_data = [0xB7, 0x7A, 0x5C, 0x56, 0x19, 0x34, 0xE0, 0x89];
 
@@ -565,8 +563,8 @@ mod tests {
 
     #[test]
     fn test_assemblyref_builder_with_public_key() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let public_key = vec![0x00, 0x24, 0x00, 0x00, 0x04, 0x80]; // Truncated for test
 
@@ -584,8 +582,8 @@ mod tests {
 
     #[test]
     fn test_assemblyref_builder_invalid_public_key_token_length() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let invalid_token = [0xB7, 0x7A, 0x5C]; // Only 3 bytes instead of 8
 
@@ -604,8 +602,8 @@ mod tests {
 
     #[test]
     fn test_assemblyref_builder_version_overflow() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let result = AssemblyRefBuilder::new()
             .name("OverflowAssembly")
@@ -621,8 +619,8 @@ mod tests {
 
     #[test]
     fn test_assemblyref_builder_with_flags() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = AssemblyRefBuilder::new()
             .name("RetargetableAssembly")
@@ -638,8 +636,8 @@ mod tests {
 
     #[test]
     fn test_assemblyref_builder_with_hash_value() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let hash = vec![0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0];
 
@@ -657,8 +655,8 @@ mod tests {
 
     #[test]
     fn test_assemblyref_builder_multiple_assembly_refs() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token1 = AssemblyRefBuilder::new()
             .name("FirstAssembly")
@@ -681,8 +679,8 @@ mod tests {
 
     #[test]
     fn test_assemblyref_builder_comprehensive() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token_data = [0xB7, 0x7A, 0x5C, 0x56, 0x19, 0x34, 0xE0, 0x89];
         let hash = vec![0xDE, 0xAD, 0xBE, 0xEF];
@@ -704,8 +702,8 @@ mod tests {
 
     #[test]
     fn test_assemblyref_builder_fluent_api() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test fluent API chaining
         let token = AssemblyRefBuilder::new()

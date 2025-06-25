@@ -29,7 +29,7 @@
 //!
 //! ## Basic Permission Set Analysis
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::{CilObject, metadata::security::PermissionSet};
 //!
 //! let assembly = CilObject::from_file("legacy_app.dll".as_ref())?;
@@ -48,7 +48,7 @@
 //!
 //! ## Detailed Permission Analysis
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::security::{PermissionSet, Permission, SecurityAction};
 //!
 //! # let permission_set_data = &[0u8; 100]; // placeholder

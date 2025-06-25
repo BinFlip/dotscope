@@ -85,10 +85,10 @@ pub struct GenericParamRaw {
 
     /// The metadata token for this generic parameter.
     ///
-    /// A [`Token`] that uniquely identifies this generic parameter across the entire assembly.
+    /// A [`crate::metadata::token::Token`] that uniquely identifies this generic parameter across the entire assembly.
     /// The token value is calculated as `0x2A000000 + rid`.
     ///
-    /// [`Token`]: crate::metadata::token::Token
+    /// [`crate::metadata::token::Token`]: crate::metadata::token::Token
     pub token: Token,
 
     /// The byte offset of this generic parameter in the metadata tables stream.

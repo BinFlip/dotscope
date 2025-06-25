@@ -1,13 +1,13 @@
 //! MethodSemanticsBuilder for creating method semantic relationship metadata entries.
 //!
-//! This module provides [`MethodSemanticsBuilder`] for creating MethodSemantics table entries
+//! This module provides [`crate::metadata::tables::methodsemantics::MethodSemanticsBuilder`] for creating MethodSemantics table entries
 //! with a fluent API. Method semantic relationships define which concrete methods provide
 //! semantic behavior for properties (getters/setters) and events (add/remove/fire handlers),
 //! enabling the .NET runtime to understand accessor patterns and event handling mechanisms.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{CodedIndex, MethodSemanticsRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -373,11 +373,10 @@ impl Default for MethodSemanticsBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        tables::MethodSemanticsAttributes,
+        metadata::{cilassemblyview::CilAssemblyView, tables::MethodSemanticsAttributes},
     };
-    use crate::CilAssemblyView;
     use std::{env, path::PathBuf};
 
     #[test]
@@ -400,8 +399,8 @@ mod tests {
     fn test_property_getter_semantic() -> Result<()> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let semantic_token = MethodSemanticsBuilder::new()
                 .semantics(MethodSemanticsAttributes::GETTER)
@@ -419,8 +418,8 @@ mod tests {
     fn test_property_setter_semantic() -> Result<()> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let semantic_token = MethodSemanticsBuilder::new()
                 .semantics(MethodSemanticsAttributes::SETTER)
@@ -438,8 +437,8 @@ mod tests {
     fn test_event_add_semantic() -> Result<()> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let semantic_token = MethodSemanticsBuilder::new()
                 .semantics(MethodSemanticsAttributes::ADD_ON)
@@ -457,8 +456,8 @@ mod tests {
     fn test_event_remove_semantic() -> Result<()> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let semantic_token = MethodSemanticsBuilder::new()
                 .semantics(MethodSemanticsAttributes::REMOVE_ON)
@@ -476,8 +475,8 @@ mod tests {
     fn test_event_fire_semantic() -> Result<()> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let semantic_token = MethodSemanticsBuilder::new()
                 .semantics(MethodSemanticsAttributes::FIRE)
@@ -495,8 +494,8 @@ mod tests {
     fn test_combined_semantics() -> Result<()> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let semantic_token = MethodSemanticsBuilder::new()
                 .semantics(MethodSemanticsAttributes::GETTER | MethodSemanticsAttributes::OTHER)
@@ -514,8 +513,8 @@ mod tests {
     fn test_direct_coded_index() -> Result<()> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let coded_index = CodedIndex::new(TableId::Property, 1);
 
@@ -535,8 +534,8 @@ mod tests {
     fn test_multiple_method_semantics() -> Result<()> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Create multiple semantic relationships for the same property
             let getter_token = MethodSemanticsBuilder::new()
@@ -570,8 +569,8 @@ mod tests {
     fn test_build_without_semantics_fails() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = MethodSemanticsBuilder::new()
                 .method(Token::new(0x06000001))
@@ -590,8 +589,8 @@ mod tests {
     fn test_build_without_method_fails() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = MethodSemanticsBuilder::new()
                 .semantics(MethodSemanticsAttributes::GETTER)
@@ -610,8 +609,8 @@ mod tests {
     fn test_build_without_association_fails() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = MethodSemanticsBuilder::new()
                 .semantics(MethodSemanticsAttributes::GETTER)

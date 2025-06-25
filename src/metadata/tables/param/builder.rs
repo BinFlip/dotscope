@@ -1,13 +1,13 @@
 //! ParamBuilder for creating parameter definitions.
 //!
-//! This module provides [`ParamBuilder`] for creating Param table entries
+//! This module provides [`crate::metadata::tables::param::ParamBuilder`] for creating Param table entries
 //! with a fluent API. Parameters define method parameter information including
 //! names, attributes, sequence numbers, and characteristics for proper method
 //! signature construction and parameter binding.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{ParamRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -29,14 +29,13 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
-/// # use dotscope::{CilAssembly, CilAssemblyView};
-/// # use dotscope::metadata::cilassembly::BuilderContext;
+/// ```rust,ignore
+/// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::ParamBuilder;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create a method parameter
 /// let param = ParamBuilder::new()
@@ -69,7 +68,7 @@ impl ParamBuilder {
     ///
     /// # Returns
     ///
-    /// A new [`ParamBuilder`] instance ready for configuration.
+    /// A new [`crate::metadata::tables::param::ParamBuilder`] instance ready for configuration.
     pub fn new() -> Self {
         Self {
             name: None,
@@ -98,7 +97,7 @@ impl ParamBuilder {
     /// Sets the parameter flags (attributes).
     ///
     /// Parameter flags control direction, optional status, and special behaviors.
-    /// Common flag values from [`ParamAttributes`](crate::metadata::tables::ParamAttributes):
+    /// Common flag values from [`crate::metadata::tables::ParamAttributes`]:
     /// - `0x0001`: IN - Parameter is input (default for most parameters)
     /// - `0x0002`: OUT - Parameter is output (for ref/out parameters)
     /// - `0x0010`: OPTIONAL - Parameter is optional (COM interop)
@@ -149,7 +148,7 @@ impl ParamBuilder {
     ///
     /// # Returns
     ///
-    /// A [`Token`] representing the newly created parameter, or an error if
+    /// A [`crate::metadata::token::Token`] representing the newly created parameter, or an error if
     /// validation fails or required fields are missing.
     ///
     /// # Errors
@@ -198,10 +197,9 @@ impl ParamBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
-        tables::ParamAttributes,
+        metadata::{cilassemblyview::CilAssemblyView, tables::ParamAttributes},
     };
     use std::path::PathBuf;
 
@@ -209,13 +207,13 @@ mod tests {
     fn test_param_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
+            let assembly = CilAssembly::new(view);
 
             // Check existing Param table count
             let existing_param_count = assembly.original_table_row_count(TableId::Param);
             let expected_rid = existing_param_count + 1;
 
-            let mut context = BuilderContext::new(&mut assembly);
+            let mut context = BuilderContext::new(assembly);
 
             let token = ParamBuilder::new()
                 .name("testParam")
@@ -234,8 +232,8 @@ mod tests {
     fn test_param_builder_return_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Create a return type parameter (no name, sequence 0)
             let token = ParamBuilder::new()
@@ -253,8 +251,8 @@ mod tests {
     fn test_param_builder_with_attributes() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Create an OUT parameter with optional flag
             let token = ParamBuilder::new()
@@ -273,8 +271,8 @@ mod tests {
     fn test_param_builder_default_value() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Create a parameter with default value
             let token = ParamBuilder::new()
@@ -293,8 +291,8 @@ mod tests {
     fn test_param_builder_missing_flags() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = ParamBuilder::new()
                 .name("testParam")
@@ -310,8 +308,8 @@ mod tests {
     fn test_param_builder_missing_sequence() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = ParamBuilder::new()
                 .name("testParam")
@@ -327,8 +325,8 @@ mod tests {
     fn test_param_builder_multiple_params() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Create multiple parameters with different sequences
             let param1 = ParamBuilder::new()

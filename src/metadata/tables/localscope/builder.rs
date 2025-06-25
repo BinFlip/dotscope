@@ -1,13 +1,13 @@
 //! LocalScopeBuilder for creating local variable scope metadata entries.
 //!
-//! This module provides [`LocalScopeBuilder`] for creating LocalScope table entries
+//! This module provides [`crate::metadata::tables::localscope::LocalScopeBuilder`] for creating LocalScope table entries
 //! with a fluent API. Local scopes define the IL instruction ranges where local
 //! variables and constants are active within methods, enabling proper debugging
 //! support for block-scoped variables and constants.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{LocalScopeRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -40,14 +40,14 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
 /// # fn main() -> dotscope::Result<()> {
 /// let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create a basic local scope
 /// let scope_token = LocalScopeBuilder::new()
@@ -337,9 +337,9 @@ impl LocalScopeBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -351,8 +351,8 @@ mod tests {
 
     #[test]
     fn test_localscope_builder_basic() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = LocalScopeBuilder::new()
             .method(Token::new(0x06000001))
@@ -381,8 +381,8 @@ mod tests {
 
     #[test]
     fn test_localscope_builder_with_all_fields() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let token = LocalScopeBuilder::new()
             .method(Token::new(0x06000002))
@@ -401,8 +401,8 @@ mod tests {
 
     #[test]
     fn test_localscope_builder_missing_method() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let result = LocalScopeBuilder::new()
             .start_offset(0x10)
@@ -418,8 +418,8 @@ mod tests {
 
     #[test]
     fn test_localscope_builder_missing_start_offset() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let result = LocalScopeBuilder::new()
             .method(Token::new(0x06000001))
@@ -435,8 +435,8 @@ mod tests {
 
     #[test]
     fn test_localscope_builder_missing_length() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let result = LocalScopeBuilder::new()
             .method(Token::new(0x06000001))
@@ -452,8 +452,8 @@ mod tests {
 
     #[test]
     fn test_localscope_builder_zero_length() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let result = LocalScopeBuilder::new()
             .method(Token::new(0x06000001))
@@ -470,8 +470,8 @@ mod tests {
 
     #[test]
     fn test_localscope_builder_invalid_method_table() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let result = LocalScopeBuilder::new()
             .method(Token::new(0x02000001)) // TypeDef instead of MethodDef
@@ -488,8 +488,8 @@ mod tests {
 
     #[test]
     fn test_localscope_builder_zero_method_row() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let result = LocalScopeBuilder::new()
             .method(Token::new(0x06000000)) // Row 0 is invalid

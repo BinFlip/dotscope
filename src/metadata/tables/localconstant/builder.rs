@@ -1,6 +1,6 @@
 //! Builder for constructing `LocalConstant` table entries
 //!
-//! This module provides the [`LocalConstantBuilder`] which enables fluent construction
+//! This module provides the [`crate::metadata::tables::localconstant::LocalConstantBuilder`] which enables fluent construction
 //! of `LocalConstant` metadata table entries. The builder follows the established
 //! pattern used across all table builders in the library.
 //!
@@ -20,8 +20,8 @@
 //! ```
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{LocalConstantRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -236,9 +236,9 @@ impl Default for LocalConstantBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -266,8 +266,8 @@ mod tests {
 
     #[test]
     fn test_localconstant_builder_basic() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let signature_bytes = vec![0x08]; // ELEMENT_TYPE_I4
         let token = LocalConstantBuilder::new()
             .name("testConstant")
@@ -282,8 +282,8 @@ mod tests {
 
     #[test]
     fn test_localconstant_builder_anonymous_constant() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let signature_bytes = vec![0x0E]; // ELEMENT_TYPE_STRING
         let token = LocalConstantBuilder::new()
             .name("") // Empty name for anonymous constant
@@ -298,8 +298,8 @@ mod tests {
 
     #[test]
     fn test_localconstant_builder_missing_name() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let signature_bytes = vec![0x08]; // ELEMENT_TYPE_I4
         let result = LocalConstantBuilder::new()
             .signature(&signature_bytes)
@@ -317,8 +317,8 @@ mod tests {
 
     #[test]
     fn test_localconstant_builder_missing_signature() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = LocalConstantBuilder::new()
             .name("testConstant")
             .build(&mut context);
@@ -360,8 +360,8 @@ mod tests {
 
     #[test]
     fn test_localconstant_builder_fluent_interface() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let signature_bytes = vec![0x02]; // ELEMENT_TYPE_BOOLEAN
 
         // Test method chaining
@@ -378,8 +378,8 @@ mod tests {
 
     #[test]
     fn test_localconstant_builder_multiple_builds() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let signature1 = vec![0x08]; // ELEMENT_TYPE_I4
         let signature2 = vec![0x0E]; // ELEMENT_TYPE_STRING
 

@@ -1,13 +1,13 @@
 //! CustomAttributeBuilder for creating custom attribute definitions.
 //!
-//! This module provides [`CustomAttributeBuilder`] for creating CustomAttribute table entries
+//! This module provides [`crate::metadata::tables::customattribute::CustomAttributeBuilder`] for creating CustomAttribute table entries
 //! with a fluent API. Custom attributes allow adding declarative metadata to any element
 //! in the .NET metadata system, providing extensible annotation mechanisms for types,
 //! methods, fields, assemblies, and other metadata entities.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{CodedIndex, CodedIndexType, CustomAttributeRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -37,14 +37,13 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
-/// # use dotscope::{CilAssembly, CilAssemblyView};
-/// # use dotscope::metadata::cilassembly::BuilderContext;
+/// ```rust,ignore
+/// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::{CustomAttributeBuilder, CodedIndex, TableId};
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create coded indices for the custom attribute
 /// let target_type = CodedIndex::new(TableId::TypeDef, 1); // Target class
@@ -87,7 +86,7 @@ impl CustomAttributeBuilder {
     ///
     /// # Returns
     ///
-    /// A new [`CustomAttributeBuilder`] instance ready for configuration.
+    /// A new [`crate::metadata::tables::customattribute::CustomAttributeBuilder`] instance ready for configuration.
     pub fn new() -> Self {
         Self {
             parent: None,
@@ -191,7 +190,7 @@ impl CustomAttributeBuilder {
     ///
     /// # Returns
     ///
-    /// A [`Token`] representing the newly created custom attribute, or an error if
+    /// A [`crate::metadata::token::Token`] representing the newly created custom attribute, or an error if
     /// validation fails or required fields are missing.
     ///
     /// # Errors
@@ -269,9 +268,9 @@ impl CustomAttributeBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -279,13 +278,13 @@ mod tests {
     fn test_custom_attribute_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
+            let assembly = CilAssembly::new(view);
 
             // Check existing CustomAttribute table count
             let existing_count = assembly.original_table_row_count(TableId::CustomAttribute);
             let expected_rid = existing_count + 1;
 
-            let mut context = BuilderContext::new(&mut assembly);
+            let mut context = BuilderContext::new(assembly);
 
             // Create coded indices for HasCustomAttribute and CustomAttributeType
             let target_type = CodedIndex::new(TableId::TypeDef, 1); // HasCustomAttribute
@@ -308,8 +307,8 @@ mod tests {
     fn test_custom_attribute_builder_with_value() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let target_field = CodedIndex::new(TableId::Field, 1); // HasCustomAttribute
             let constructor = CodedIndex::new(TableId::MemberRef, 1); // CustomAttributeType
@@ -333,8 +332,8 @@ mod tests {
     fn test_custom_attribute_builder_no_value() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let target_method = CodedIndex::new(TableId::MethodDef, 2); // HasCustomAttribute
             let constructor = CodedIndex::new(TableId::MethodDef, 3); // CustomAttributeType
@@ -355,8 +354,8 @@ mod tests {
     fn test_custom_attribute_builder_missing_parent() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let constructor = CodedIndex::new(TableId::MethodDef, 1);
 
@@ -373,8 +372,8 @@ mod tests {
     fn test_custom_attribute_builder_missing_constructor() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let target_type = CodedIndex::new(TableId::TypeDef, 1);
 
@@ -391,8 +390,8 @@ mod tests {
     fn test_custom_attribute_builder_invalid_parent_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Use a table type that's not valid for HasCustomAttribute
             let invalid_parent = CodedIndex::new(TableId::Constant, 1); // Constant not in HasCustomAttribute
@@ -412,8 +411,8 @@ mod tests {
     fn test_custom_attribute_builder_invalid_constructor_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let target_type = CodedIndex::new(TableId::TypeDef, 1);
             // Use a table type that's not valid for CustomAttributeType
@@ -433,8 +432,8 @@ mod tests {
     fn test_custom_attribute_builder_multiple_attributes() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let target1 = CodedIndex::new(TableId::TypeDef, 1);
             let target2 = CodedIndex::new(TableId::MethodDef, 1);

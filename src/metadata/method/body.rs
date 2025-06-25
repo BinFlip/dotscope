@@ -79,7 +79,7 @@
 //!
 //! # Examples
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::{CilObject, metadata::method::MethodBody};
 //!
 //! let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;

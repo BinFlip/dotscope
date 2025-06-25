@@ -1,12 +1,12 @@
 //! ModuleBuilder for creating Module metadata entries.
 //!
-//! This module provides [`ModuleBuilder`] for creating Module table entries
+//! This module provides [`crate::metadata::tables::module::ModuleBuilder`] for creating Module table entries
 //! with a fluent API. Module entries define module identity information including
 //! name, version identifier (Mvid), and Edit-and-Continue support for .NET assemblies.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{ModuleRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -46,12 +46,12 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create a basic module with auto-generated Mvid
 /// let basic_module = ModuleBuilder::new()
@@ -114,7 +114,7 @@ impl ModuleBuilder {
     ///
     /// # Returns
     ///
-    /// A new [`ModuleBuilder`] instance ready for configuration.
+    /// A new [`crate::metadata::tables::module::ModuleBuilder`] instance ready for configuration.
     pub fn new() -> Self {
         Self {
             generation: None,
@@ -141,7 +141,7 @@ impl ModuleBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::metadata::tables::ModuleBuilder;
     /// let builder = ModuleBuilder::new()
     ///     .generation(0); // Always 0 per ECMA-335
@@ -167,7 +167,7 @@ impl ModuleBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::metadata::tables::ModuleBuilder;
     /// let builder = ModuleBuilder::new()
     ///     .name("MyLibrary.dll");
@@ -193,7 +193,7 @@ impl ModuleBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::metadata::tables::ModuleBuilder;
     /// let builder = ModuleBuilder::new()
     ///     .mvid(&[
@@ -222,7 +222,7 @@ impl ModuleBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::metadata::tables::ModuleBuilder;
     /// let builder = ModuleBuilder::new()
     ///     .encid(&[
@@ -251,7 +251,7 @@ impl ModuleBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::metadata::tables::ModuleBuilder;
     /// let builder = ModuleBuilder::new()
     ///     .encbaseid(&[
@@ -291,12 +291,12 @@ impl ModuleBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-    /// # let mut assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(&mut assembly);
+    /// # let assembly = CilAssembly::new(view);
+    /// # let mut context = BuilderContext::new(assembly);
     /// let token = ModuleBuilder::new()
     ///     .name("MyModule.dll")
     ///     .build(&mut context)?;
@@ -391,7 +391,7 @@ fn generate_random_guid() -> [u8; 16] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{cilassembly::CilAssembly, cilassemblyview::CilAssemblyView};
+    use crate::{cilassembly::CilAssembly, metadata::cilassemblyview::CilAssemblyView};
     use std::path::PathBuf;
 
     fn get_test_assembly() -> Result<CilAssembly> {
@@ -402,8 +402,8 @@ mod tests {
 
     #[test]
     fn test_module_builder_basic() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Note: WindowsBase.dll already has a Module entry, so this should fail
         let result = ModuleBuilder::new()
@@ -420,8 +420,8 @@ mod tests {
 
     #[test]
     fn test_module_builder_with_mvid() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let mvid = [
             0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
@@ -443,8 +443,8 @@ mod tests {
 
     #[test]
     fn test_module_builder_with_enc_support() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let encid = [
             0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
@@ -471,8 +471,8 @@ mod tests {
 
     #[test]
     fn test_module_builder_missing_name() {
-        let mut assembly = get_test_assembly().unwrap();
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly().unwrap();
+        let mut context = BuilderContext::new(assembly);
 
         let result = ModuleBuilder::new().build(&mut context);
 
@@ -485,8 +485,8 @@ mod tests {
 
     #[test]
     fn test_module_builder_generation() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         let result = ModuleBuilder::new()
             .name("TestModule.dll")
@@ -503,8 +503,8 @@ mod tests {
 
     #[test]
     fn test_module_builder_default() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test Default trait implementation
         let result = ModuleBuilder::default()

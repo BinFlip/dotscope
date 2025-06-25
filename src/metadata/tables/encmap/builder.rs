@@ -1,6 +1,6 @@
 //! Builder for constructing `EncMap` table entries
 //!
-//! This module provides the [`EncMapBuilder`] which enables fluent construction
+//! This module provides the [`crate::metadata::tables::encmap::EncMapBuilder`] which enables fluent construction
 //! of `EncMap` metadata table entries. The builder follows the established
 //! pattern used across all table builders in the library.
 //!
@@ -17,8 +17,8 @@
 //! ```
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{EncMapRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -206,9 +206,9 @@ impl Default for EncMapBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -234,8 +234,8 @@ mod tests {
 
     #[test]
     fn test_encmap_builder_method_token() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = EncMapBuilder::new()
             .original_token(0x06000001) // MethodDef token
             .build(&mut context)
@@ -248,8 +248,8 @@ mod tests {
 
     #[test]
     fn test_encmap_builder_type_token() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = EncMapBuilder::new()
             .original_token(0x02000010) // TypeDef token
             .build(&mut context)
@@ -262,8 +262,8 @@ mod tests {
 
     #[test]
     fn test_encmap_builder_field_token() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = EncMapBuilder::new()
             .original_token(0x04000025) // Field token
             .build(&mut context)
@@ -276,8 +276,8 @@ mod tests {
 
     #[test]
     fn test_encmap_builder_token_object() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let original = Token::new(0x08000005);
         let token = EncMapBuilder::new()
             .original_token_obj(original)
@@ -291,8 +291,8 @@ mod tests {
 
     #[test]
     fn test_encmap_builder_missing_original_token() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = EncMapBuilder::new().build(&mut context);
 
         assert!(result.is_err());
@@ -325,8 +325,8 @@ mod tests {
 
     #[test]
     fn test_encmap_builder_fluent_interface() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test method chaining
         let token = EncMapBuilder::new()
@@ -341,8 +341,8 @@ mod tests {
 
     #[test]
     fn test_encmap_builder_multiple_builds() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Build first mapping entry
         let token1 = EncMapBuilder::new()
@@ -364,8 +364,8 @@ mod tests {
 
     #[test]
     fn test_encmap_builder_various_tokens() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test with different token types
         let tokens = [
@@ -391,8 +391,8 @@ mod tests {
 
     #[test]
     fn test_encmap_builder_large_token_values() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test with large token values
         let large_tokens = [

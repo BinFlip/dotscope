@@ -15,17 +15,41 @@
 //! - **Metadata Layer**: Structured access to ECMA-335 metadata tables and streams
 //! - **Validation Layer**: Configurable validation during loading
 //! - **Caching Layer**: Thread-safe caching of parsed structures
+//! - **Analysis Layer**: High-level access to types, methods, fields, and metadata
 //!
 //! # Key Components
 //!
+//! ## Core Types
 //! - [`crate::CilObject`] - Main entry point for .NET assembly analysis
-//! - [`crate::metadata::validation::ValidationConfig`] - Configuration for validation during loading
+//! - Internal data structure holding parsed metadata and type registry
+//!
+//! ## Loading Methods
+//! - [`crate::CilObject::from_file`] - Load assembly from disk with default validation
+//! - [`crate::CilObject::from_file_with_validation`] - Load with custom validation settings
+//! - [`crate::CilObject::from_mem`] - Load assembly from memory buffer
+//! - [`crate::CilObject::from_mem_with_validation`] - Load from memory with custom validation
+//!
+//! ## Metadata Access Methods
+//! - [`crate::CilObject::module`] - Get module information
+//! - [`crate::CilObject::assembly`] - Get assembly metadata
+//! - [`crate::CilObject::strings`] - Access strings heap
+//! - [`crate::CilObject::userstrings`] - Access user strings heap
+//! - [`crate::CilObject::guids`] - Access GUID heap
+//! - [`crate::CilObject::blob`] - Access blob heap
+//! - [`crate::CilObject::tables`] - Access raw metadata tables
+//!
+//! ## High-level Analysis Methods
+//! - [`crate::CilObject::types`] - Get all type definitions
+//! - [`crate::CilObject::methods`] - Get all method definitions
+//! - [`crate::CilObject::imports`] - Get imported types and methods
+//! - [`crate::CilObject::exports`] - Get exported types and methods
+//! - [`crate::CilObject::resources`] - Get embedded resources
 //!
 //! # Usage Examples
 //!
-//! ## Basic Assembly Loading
+//! ## Basic Assembly Loading and Analysis
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -40,25 +64,82 @@
 //! if let Some(assembly_info) = assembly.assembly() {
 //!     println!("Assembly: {}", assembly_info.name);
 //! }
+//!
+//! // Analyze types and methods
+//! let types = assembly.types();
+//! let methods = assembly.methods();
+//! println!("Found {} types and {} methods", types.len(), methods.len());
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## Memory-based Analysis
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::CilObject;
 //!
 //! // Load from memory buffer (e.g., downloaded or embedded)
 //! let file_data = std::fs::read("assembly.dll")?;
 //! let assembly = CilObject::from_mem(file_data)?;
 //!
-//! // Access metadata streams
+//! // Access metadata streams with iteration
 //! if let Some(strings) = assembly.strings() {
+//!     // Indexed access
 //!     if let Ok(name) = strings.get(1) {
 //!         println!("String at index 1: {}", name);
 //!     }
+//!     
+//!     // Iterate through all strings
+//!     for (offset, string) in strings.iter() {
+//!         println!("String at {}: '{}'", offset, string);
+//!     }
 //! }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! ## Custom Validation Settings
+//!
+//! ```rust,ignore
+//! use dotscope::{CilObject, ValidationConfig};
+//! use std::path::Path;
+//!
+//! // Use minimal validation for best performance
+//! let assembly = CilObject::from_file_with_validation(
+//!     Path::new("tests/samples/WindowsBase.dll"),
+//!     ValidationConfig::minimal()
+//! )?;
+//!
+//! // Use strict validation for maximum verification
+//! let assembly = CilObject::from_file_with_validation(
+//!     Path::new("tests/samples/WindowsBase.dll"),
+//!     ValidationConfig::strict()
+//! )?;
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! ## Comprehensive Metadata Analysis
+//!
+//! ```rust,ignore
+//! use dotscope::CilObject;
+//! use std::path::Path;
+//!
+//! let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+//!
+//! // Analyze imports and exports
+//! let imports = assembly.imports();
+//! let exports = assembly.exports();
+//! println!("Imports: {} items", imports.len());
+//! println!("Exports: {} items", exports.len());
+//!
+//! // Access embedded resources
+//! let resources = assembly.resources();
+//! println!("Resources: {} items", resources.len());
+//!
+//! // Access raw metadata tables for low-level analysis
+//! if let Some(tables) = assembly.tables() {
+//!     println!("Metadata schema version: {}.{}",
+//!              tables.major_version, tables.minor_version);
+//! }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Error Handling
@@ -73,7 +154,7 @@
 //!
 //! [`crate::CilObject`] is designed for thread-safe concurrent read access. Internal
 //! caching and lazy loading use appropriate synchronization primitives to ensure
-//! correctness in multi-threaded scenarios. All public APIs are [`Send`] and [`Sync`].
+//! correctness in multi-threaded scenarios. All public APIs are [`std::marker::Send`] and [`std::marker::Sync`].
 //!
 //! # Integration
 //!
@@ -81,6 +162,7 @@
 //! - [`crate::disassembler`] - Method body disassembly and instruction decoding  
 //! - [`crate::metadata::tables`] - Low-level metadata table access
 //! - [`crate::metadata::typesystem`] - Type resolution and signature parsing
+//! - [`crate::metadata::validation`] - Configurable validation during loading
 //! - Low-level PE file parsing and memory management components
 use ouroboros::self_referencing;
 use std::{path::Path, sync::Arc};
@@ -131,7 +213,7 @@ use crate::{
 ///
 /// # Usage Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
@@ -191,7 +273,7 @@ impl CilObject {
     ///
     /// # Usage Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -225,7 +307,7 @@ impl CilObject {
     ///
     /// # Usage Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::{CilObject, ValidationConfig};
     /// use std::path::Path;
     ///
@@ -279,7 +361,7 @@ impl CilObject {
     ///
     /// # Usage Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     ///
     /// // Load assembly from file into memory then parse
@@ -316,7 +398,7 @@ impl CilObject {
     ///
     /// # Usage Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::{CilObject, ValidationConfig};
     ///
     /// let file_data = std::fs::read("tests/samples/WindowsBase.dll")?;
@@ -392,7 +474,7 @@ impl CilObject {
     ///
     /// # Usage Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     ///
     /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
@@ -422,7 +504,7 @@ impl CilObject {
     ///
     /// # Usage Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     ///
     /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;

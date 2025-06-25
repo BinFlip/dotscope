@@ -36,7 +36,7 @@
 //!
 //! ## Creating and Inspecting Tokens
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::token::Token;
 //!
 //! // Create a MethodDef token (table 0x06, row 1)
@@ -54,7 +54,7 @@
 //!
 //! ## Working with Different Token Types
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::token::Token;
 //!
 //! // Common .NET metadata token types

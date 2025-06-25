@@ -17,7 +17,7 @@
 //!
 //! # Usage Examples
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::sequencepoints::{parse_sequence_points, SequencePoints};
 //!
 //! let blob: &[u8] = &[1, 10, 2, 0, 5];

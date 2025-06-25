@@ -1,6 +1,6 @@
 //! Builder for constructing `LocalVariable` table entries
 //!
-//! This module provides the [`LocalVariableBuilder`] which enables fluent construction
+//! This module provides the [`crate::metadata::tables::localvariable::LocalVariableBuilder`] which enables fluent construction
 //! of `LocalVariable` metadata table entries. The builder follows the established
 //! pattern used across all table builders in the library.
 //!
@@ -19,8 +19,8 @@
 //! ```
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{LocalVariableRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -252,9 +252,9 @@ impl Default for LocalVariableBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -284,8 +284,8 @@ mod tests {
 
     #[test]
     fn test_localvariable_builder_basic() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = LocalVariableBuilder::new()
             .index(0)
             .name("testVar")
@@ -299,8 +299,8 @@ mod tests {
 
     #[test]
     fn test_localvariable_builder_with_all_fields() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = LocalVariableBuilder::new()
             .attributes(0x0001)
             .index(2)
@@ -315,8 +315,8 @@ mod tests {
 
     #[test]
     fn test_localvariable_builder_anonymous_variable() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = LocalVariableBuilder::new()
             .index(1)
             .name("") // Empty name for anonymous variable
@@ -330,8 +330,8 @@ mod tests {
 
     #[test]
     fn test_localvariable_builder_missing_index() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = LocalVariableBuilder::new()
             .name("testVar")
             .build(&mut context);
@@ -348,8 +348,8 @@ mod tests {
 
     #[test]
     fn test_localvariable_builder_missing_name() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = LocalVariableBuilder::new().index(0).build(&mut context);
 
         assert!(result.is_err());
@@ -391,8 +391,8 @@ mod tests {
 
     #[test]
     fn test_localvariable_builder_fluent_interface() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test method chaining
         let token = LocalVariableBuilder::new()
@@ -409,8 +409,8 @@ mod tests {
 
     #[test]
     fn test_localvariable_builder_multiple_builds() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Build first variable
         let token1 = LocalVariableBuilder::new()

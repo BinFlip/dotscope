@@ -85,10 +85,10 @@ pub struct FileRaw {
 
     /// The metadata token for this file.
     ///
-    /// A [`Token`] that uniquely identifies this file across the entire assembly.
+    /// A [`crate::metadata::token::Token`] that uniquely identifies this file across the entire assembly.
     /// The token value is calculated as `0x26000000 + rid`.
     ///
-    /// [`Token`]: crate::metadata::token::Token
+    /// [`crate::metadata::token::Token`]: crate::metadata::token::Token
     pub token: Token,
 
     /// The byte offset of this file in the metadata tables stream.

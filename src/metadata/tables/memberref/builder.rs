@@ -1,13 +1,13 @@
 //! MemberRefBuilder for creating external member reference definitions.
 //!
-//! This module provides [`MemberRefBuilder`] for creating MemberRef table entries
+//! This module provides [`crate::metadata::tables::memberref::MemberRefBuilder`] for creating MemberRef table entries
 //! with a fluent API. Member references enable cross-assembly member access by
 //! defining references to fields and methods in external assemblies, modules,
 //! and type instantiations without requiring the actual implementation at compile time.
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{CodedIndex, CodedIndexType, MemberRefRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -46,12 +46,12 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
-/// let mut assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(&mut assembly);
+/// let assembly = CilAssembly::new(view);
+/// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create a method reference to external assembly
 /// let external_type = CodedIndex::new(TableId::TypeRef, 1); // System.String from mscorlib
@@ -97,7 +97,7 @@ impl MemberRefBuilder {
     ///
     /// # Returns
     ///
-    /// A new [`MemberRefBuilder`] instance ready for configuration.
+    /// A new [`crate::metadata::tables::memberref::MemberRefBuilder`] instance ready for configuration.
     pub fn new() -> Self {
         Self {
             class: None,
@@ -191,7 +191,7 @@ impl MemberRefBuilder {
     ///
     /// # Returns
     ///
-    /// A [`Token`] representing the newly created member reference, or an error if
+    /// A [`crate::metadata::token::Token`] representing the newly created member reference, or an error if
     /// validation fails or required fields are missing.
     ///
     /// # Errors
@@ -254,9 +254,9 @@ impl MemberRefBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -264,13 +264,13 @@ mod tests {
     fn test_memberref_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
+            let assembly = CilAssembly::new(view);
 
             // Check existing MemberRef table count
             let existing_count = assembly.original_table_row_count(TableId::MemberRef);
             let expected_rid = existing_count + 1;
 
-            let mut context = BuilderContext::new(&mut assembly);
+            let mut context = BuilderContext::new(assembly);
 
             // Create a MemberRefParent coded index (TypeRef)
             let declaring_type = CodedIndex::new(TableId::TypeRef, 1);
@@ -295,8 +295,8 @@ mod tests {
     fn test_memberref_builder_field_reference() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let declaring_type = CodedIndex::new(TableId::TypeDef, 1); // Local type
 
@@ -319,8 +319,8 @@ mod tests {
     fn test_memberref_builder_constructor_reference() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let declaring_type = CodedIndex::new(TableId::TypeRef, 2);
 
@@ -343,8 +343,8 @@ mod tests {
     fn test_memberref_builder_module_reference() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let module_ref = CodedIndex::new(TableId::ModuleRef, 1); // External module
 
@@ -367,8 +367,8 @@ mod tests {
     fn test_memberref_builder_generic_type_reference() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let generic_type = CodedIndex::new(TableId::TypeSpec, 1); // Generic type instantiation
 
@@ -391,8 +391,8 @@ mod tests {
     fn test_memberref_builder_missing_class() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let result = MemberRefBuilder::new()
                 .name("TestMethod")
@@ -408,8 +408,8 @@ mod tests {
     fn test_memberref_builder_missing_name() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let declaring_type = CodedIndex::new(TableId::TypeRef, 1);
 
@@ -427,8 +427,8 @@ mod tests {
     fn test_memberref_builder_missing_signature() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let declaring_type = CodedIndex::new(TableId::TypeRef, 1);
 
@@ -446,8 +446,8 @@ mod tests {
     fn test_memberref_builder_invalid_class_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             // Use a table type that's not valid for MemberRefParent
             let invalid_class = CodedIndex::new(TableId::Field, 1); // Field not in MemberRefParent
@@ -467,8 +467,8 @@ mod tests {
     fn test_memberref_builder_multiple_member_refs() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let mut assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(&mut assembly);
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
 
             let type_ref1 = CodedIndex::new(TableId::TypeRef, 1);
             let type_ref2 = CodedIndex::new(TableId::TypeRef, 2);

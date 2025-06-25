@@ -341,7 +341,7 @@ impl<'a> SignatureParser<'a> {
     /// signatures. The maximum depth is [`MAX_RECURSION_DEPTH`] levels.
     ///
     /// # Returns
-    /// A [`TypeSignature`] representing the parsed type information.
+    /// A [`crate::metadata::signatures::TypeSignature`] representing the parsed type information.
     ///
     /// # Errors
     /// - [`crate::error::Error::RecursionLimit`]: Maximum recursion depth exceeded

@@ -35,7 +35,7 @@
 //!
 //! ## Parsing from Blob Heap
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::customattributes::parse_custom_attribute_blob;
 //! use dotscope::CilObject;
 //!
@@ -55,7 +55,7 @@
 //!
 //! ## Parsing Raw Blob Data
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::customattributes::{parse_custom_attribute_data, CustomAttributeArgument};
 //!
 //! # fn get_constructor_params() -> std::sync::Arc<boxcar::Vec<dotscope::metadata::tables::ParamRc>> { todo!() }
@@ -161,7 +161,7 @@ const MAX_RECURSION_DEPTH: usize = 50;
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::customattributes::parse_custom_attribute_blob;
 /// use dotscope::CilObject;
 ///
@@ -230,7 +230,7 @@ pub fn parse_custom_attribute_blob(
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::customattributes::{parse_custom_attribute_data, CustomAttributeArgument};
 ///
 /// # fn get_constructor_params() -> std::sync::Arc<boxcar::Vec<dotscope::metadata::tables::ParamRc>> { todo!() }

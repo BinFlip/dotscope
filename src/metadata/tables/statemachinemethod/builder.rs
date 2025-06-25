@@ -1,6 +1,6 @@
 //! Builder for constructing `StateMachineMethod` table entries
 //!
-//! This module provides the [`StateMachineMethodBuilder`] which enables fluent construction
+//! This module provides the [`crate::metadata::tables::statemachinemethod::StateMachineMethodBuilder`] which enables fluent construction
 //! of `StateMachineMethod` metadata table entries. The builder follows the established
 //! pattern used across all table builders in the library.
 //!
@@ -18,8 +18,8 @@
 //! ```
 
 use crate::{
+    cilassembly::BuilderContext,
     metadata::{
-        cilassembly::BuilderContext,
         tables::{StateMachineMethodRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -213,9 +213,9 @@ impl Default for StateMachineMethodBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
+    use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        cilassemblyview::CilAssemblyView,
+        metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
 
@@ -243,8 +243,8 @@ mod tests {
 
     #[test]
     fn test_statemachinemethod_builder_basic() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = StateMachineMethodBuilder::new()
             .move_next_method(123)
             .kickoff_method(45)
@@ -258,8 +258,8 @@ mod tests {
 
     #[test]
     fn test_statemachinemethod_builder_async_mapping() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = StateMachineMethodBuilder::new()
             .move_next_method(200) // Async state machine MoveNext
             .kickoff_method(78) // Original async method
@@ -273,8 +273,8 @@ mod tests {
 
     #[test]
     fn test_statemachinemethod_builder_iterator_mapping() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let token = StateMachineMethodBuilder::new()
             .move_next_method(300) // Iterator state machine MoveNext
             .kickoff_method(99) // Original iterator method
@@ -288,8 +288,8 @@ mod tests {
 
     #[test]
     fn test_statemachinemethod_builder_missing_move_next() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = StateMachineMethodBuilder::new()
             .kickoff_method(45)
             .build(&mut context);
@@ -306,8 +306,8 @@ mod tests {
 
     #[test]
     fn test_statemachinemethod_builder_missing_kickoff() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
         let result = StateMachineMethodBuilder::new()
             .move_next_method(123)
             .build(&mut context);
@@ -347,8 +347,8 @@ mod tests {
 
     #[test]
     fn test_statemachinemethod_builder_fluent_interface() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test method chaining
         let token = StateMachineMethodBuilder::new()
@@ -364,8 +364,8 @@ mod tests {
 
     #[test]
     fn test_statemachinemethod_builder_multiple_builds() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Build first mapping
         let token1 = StateMachineMethodBuilder::new()
@@ -389,8 +389,8 @@ mod tests {
 
     #[test]
     fn test_statemachinemethod_builder_large_method_ids() -> Result<()> {
-        let mut assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(&mut assembly);
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
 
         // Test with large method RIDs
         let token = StateMachineMethodBuilder::new()
