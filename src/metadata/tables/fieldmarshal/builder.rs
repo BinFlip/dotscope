@@ -8,7 +8,7 @@
 use crate::{
     cilassembly::BuilderContext,
     metadata::{
-        marshalling::NATIVE_TYPE,
+        marshalling::{encode_marshalling_descriptor, MarshallingInfo, NativeType, NATIVE_TYPE},
         tables::{CodedIndex, CodedIndexType, FieldMarshalRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -259,6 +259,239 @@ impl FieldMarshalBuilder {
     /// Self for method chaining.
     pub fn com_interface(self) -> Self {
         self.simple_native_type(NATIVE_TYPE::INTERFACE)
+    }
+
+    /// Sets marshaling using a high-level NativeType specification.
+    ///
+    /// This method provides a type-safe way to configure marshaling using the
+    /// structured `NativeType` enum rather than raw binary descriptors. It automatically
+    /// encodes the native type specification to the correct binary format.
+    ///
+    /// # Arguments
+    ///
+    /// * `native_type` - The native type specification to marshal to
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::marshalling::NativeType;
+    /// use dotscope::metadata::tables::FieldMarshalBuilder;
+    ///
+    /// // Unicode string with size parameter
+    /// let marshal = FieldMarshalBuilder::new()
+    ///     .parent(param_ref)
+    ///     .native_type_spec(NativeType::LPWStr { size_param_index: Some(2) })
+    ///     .build(&mut context)?;
+    ///
+    /// // Array of 32-bit integers
+    /// let array_marshal = FieldMarshalBuilder::new()
+    ///     .parent(field_ref)
+    ///     .native_type_spec(NativeType::Array {
+    ///         element_type: Box::new(NativeType::I4),
+    ///         num_param: Some(1),
+    ///         num_element: Some(10),
+    ///     })
+    ///     .build(&mut context)?;
+    /// ```
+    pub fn native_type_spec(mut self, native_type: NativeType) -> Self {
+        let info = MarshallingInfo {
+            primary_type: native_type,
+            additional_types: vec![],
+        };
+
+        if let Ok(descriptor) = encode_marshalling_descriptor(&info) {
+            self.native_type = Some(descriptor);
+        }
+
+        self
+    }
+
+    /// Sets marshaling using a complete marshalling descriptor.
+    ///
+    /// This method allows specifying complex marshalling scenarios with primary
+    /// and additional types. This is useful for advanced marshalling cases that
+    /// require multiple type specifications.
+    ///
+    /// # Arguments
+    ///
+    /// * `info` - The complete marshalling descriptor with primary and additional types
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::marshalling::{NativeType, MarshallingInfo};
+    /// use dotscope::metadata::tables::FieldMarshalBuilder;
+    ///
+    /// let complex_info = MarshallingInfo {
+    ///     primary_type: NativeType::CustomMarshaler {
+    ///         guid: "12345678-1234-5678-9ABC-DEF012345678".to_string(),
+    ///         native_type_name: "NativeArray".to_string(),
+    ///         cookie: "size=dynamic".to_string(),
+    ///         type_reference: "MyAssembly.ArrayMarshaler".to_string(),
+    ///     },
+    ///     additional_types: vec![NativeType::I4], // Element type hint
+    /// };
+    ///
+    /// let marshal = FieldMarshalBuilder::new()
+    ///     .parent(param_ref)
+    ///     .marshalling_info(complex_info)
+    ///     .build(&mut context)?;
+    /// ```
+    pub fn marshalling_info(mut self, info: MarshallingInfo) -> Self {
+        if let Ok(descriptor) = encode_marshalling_descriptor(&info) {
+            self.native_type = Some(descriptor);
+        }
+
+        self
+    }
+
+    /// Sets marshaling for a pointer to a specific native type.
+    ///
+    /// This convenience method configures marshaling for pointer types with
+    /// optional target type specification.
+    ///
+    /// # Arguments
+    ///
+    /// * `ref_type` - Optional type that the pointer references
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining.
+    pub fn pointer(self, ref_type: Option<NativeType>) -> Self {
+        let ptr_type = NativeType::Ptr {
+            ref_type: ref_type.map(Box::new),
+        };
+        self.native_type_spec(ptr_type)
+    }
+
+    /// Sets marshaling for a variable-length array.
+    ///
+    /// This convenience method configures marshaling for arrays with runtime
+    /// size determination through parameter references.
+    ///
+    /// # Arguments
+    ///
+    /// * `element_type` - The type of array elements
+    /// * `size_param` - Optional parameter index for array size
+    /// * `element_count` - Optional fixed element count
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining.
+    pub fn variable_array(
+        self,
+        element_type: NativeType,
+        size_param: Option<u32>,
+        element_count: Option<u32>,
+    ) -> Self {
+        let array_type = NativeType::Array {
+            element_type: Box::new(element_type),
+            num_param: size_param,
+            num_element: element_count,
+        };
+        self.native_type_spec(array_type)
+    }
+
+    /// Sets marshaling for a fixed-size array.
+    ///
+    /// This convenience method configures marshaling for arrays with compile-time
+    /// known size embedded directly in structures.
+    ///
+    /// # Arguments
+    ///
+    /// * `element_type` - Optional type of array elements
+    /// * `size` - Number of elements in the array
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining.
+    pub fn fixed_array_typed(self, element_type: Option<NativeType>, size: u32) -> Self {
+        let array_type = NativeType::FixedArray {
+            element_type: element_type.map(Box::new),
+            size,
+        };
+        self.native_type_spec(array_type)
+    }
+
+    /// Sets marshaling for a native structure.
+    ///
+    /// This convenience method configures marshaling for native structures with
+    /// optional packing and size specifications.
+    ///
+    /// # Arguments
+    ///
+    /// * `packing_size` - Optional structure packing alignment in bytes
+    /// * `class_size` - Optional total structure size in bytes
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining.
+    pub fn native_struct(self, packing_size: Option<u8>, class_size: Option<u32>) -> Self {
+        let struct_type = NativeType::Struct {
+            packing_size,
+            class_size,
+        };
+        self.native_type_spec(struct_type)
+    }
+
+    /// Sets marshaling for a COM safe array.
+    ///
+    /// This convenience method configures marshaling for COM safe arrays with
+    /// variant type specification for element types.
+    ///
+    /// # Arguments
+    ///
+    /// * `variant_type` - VARIANT type constant for array elements
+    /// * `user_defined_name` - Optional user-defined type name
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining.
+    pub fn safe_array(self, variant_type: u16, user_defined_name: Option<String>) -> Self {
+        let array_type = NativeType::SafeArray {
+            variant_type,
+            user_defined_name,
+        };
+        self.native_type_spec(array_type)
+    }
+
+    /// Sets marshaling for a custom marshaler.
+    ///
+    /// This convenience method configures marshaling using a user-defined custom
+    /// marshaler with GUID identification and initialization parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `guid` - GUID identifying the custom marshaler
+    /// * `native_type_name` - Native type name for the marshaler
+    /// * `cookie` - Cookie string passed to the marshaler for initialization
+    /// * `type_reference` - Full type name of the custom marshaler class
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining.
+    pub fn custom_marshaler(
+        self,
+        guid: &str,
+        native_type_name: &str,
+        cookie: &str,
+        type_reference: &str,
+    ) -> Self {
+        let marshaler_type = NativeType::CustomMarshaler {
+            guid: guid.to_string(),
+            native_type_name: native_type_name.to_string(),
+            cookie: cookie.to_string(),
+            type_reference: type_reference.to_string(),
+        };
+        self.native_type_spec(marshaler_type)
     }
 
     /// Builds the field marshal entry and adds it to the assembly.
@@ -765,6 +998,188 @@ mod tests {
             assert_eq!(x_marshal.value() & 0xFF000000, 0x0D000000);
             assert_eq!(y_marshal.value() & 0xFF000000, 0x0D000000);
             assert_ne!(x_marshal.value(), y_marshal.value());
+        }
+    }
+
+    #[test]
+    fn test_field_marshal_builder_high_level_native_type_spec() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
+
+            let param_ref = CodedIndex::new(TableId::Param, 1);
+
+            // Test high-level NativeType specification
+            let token = FieldMarshalBuilder::new()
+                .parent(param_ref)
+                .native_type_spec(NativeType::LPWStr {
+                    size_param_index: Some(2),
+                })
+                .build(&mut context)
+                .unwrap();
+
+            // Should succeed
+            assert_eq!(token.value() & 0xFF000000, 0x0D000000);
+        }
+    }
+
+    #[test]
+    fn test_field_marshal_builder_variable_array() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
+
+            let field_ref = CodedIndex::new(TableId::Field, 1);
+
+            // Test variable array marshaling
+            let token = FieldMarshalBuilder::new()
+                .parent(field_ref)
+                .variable_array(NativeType::I4, Some(1), Some(10))
+                .build(&mut context)
+                .unwrap();
+
+            // Should succeed
+            assert_eq!(token.value() & 0xFF000000, 0x0D000000);
+        }
+    }
+
+    #[test]
+    fn test_field_marshal_builder_fixed_array_typed() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
+
+            let field_ref = CodedIndex::new(TableId::Field, 1);
+
+            // Test fixed array marshaling with type specification
+            let token = FieldMarshalBuilder::new()
+                .parent(field_ref)
+                .fixed_array_typed(Some(NativeType::Boolean), 64)
+                .build(&mut context)
+                .unwrap();
+
+            // Should succeed
+            assert_eq!(token.value() & 0xFF000000, 0x0D000000);
+        }
+    }
+
+    #[test]
+    fn test_field_marshal_builder_native_struct() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
+
+            let field_ref = CodedIndex::new(TableId::Field, 1);
+
+            // Test native struct marshaling
+            let token = FieldMarshalBuilder::new()
+                .parent(field_ref)
+                .native_struct(Some(4), Some(128))
+                .build(&mut context)
+                .unwrap();
+
+            // Should succeed
+            assert_eq!(token.value() & 0xFF000000, 0x0D000000);
+        }
+    }
+
+    #[test]
+    fn test_field_marshal_builder_pointer() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
+
+            let param_ref = CodedIndex::new(TableId::Param, 1);
+
+            // Test pointer marshaling
+            let token = FieldMarshalBuilder::new()
+                .parent(param_ref)
+                .pointer(Some(NativeType::I4))
+                .build(&mut context)
+                .unwrap();
+
+            // Should succeed
+            assert_eq!(token.value() & 0xFF000000, 0x0D000000);
+        }
+    }
+
+    #[test]
+    fn test_field_marshal_builder_custom_marshaler() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
+
+            let param_ref = CodedIndex::new(TableId::Param, 1);
+
+            // Test custom marshaler
+            let token = FieldMarshalBuilder::new()
+                .parent(param_ref)
+                .custom_marshaler(
+                    "12345678-1234-5678-9ABC-DEF012345678",
+                    "NativeType",
+                    "cookie_data",
+                    "MyAssembly.CustomMarshaler",
+                )
+                .build(&mut context)
+                .unwrap();
+
+            // Should succeed
+            assert_eq!(token.value() & 0xFF000000, 0x0D000000);
+        }
+    }
+
+    #[test]
+    fn test_field_marshal_builder_safe_array() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
+
+            let param_ref = CodedIndex::new(TableId::Param, 1);
+
+            // Test safe array marshaling
+            let token = FieldMarshalBuilder::new()
+                .parent(param_ref)
+                .safe_array(crate::metadata::marshalling::VARIANT_TYPE::I4, None)
+                .build(&mut context)
+                .unwrap();
+
+            // Should succeed
+            assert_eq!(token.value() & 0xFF000000, 0x0D000000);
+        }
+    }
+
+    #[test]
+    fn test_field_marshal_builder_marshalling_info() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            let assembly = CilAssembly::new(view);
+            let mut context = BuilderContext::new(assembly);
+
+            let param_ref = CodedIndex::new(TableId::Param, 1);
+
+            // Test complex marshalling info
+            let info = MarshallingInfo {
+                primary_type: NativeType::LPStr {
+                    size_param_index: Some(1),
+                },
+                additional_types: vec![NativeType::Boolean],
+            };
+
+            let token = FieldMarshalBuilder::new()
+                .parent(param_ref)
+                .marshalling_info(info)
+                .build(&mut context)
+                .unwrap();
+
+            // Should succeed
+            assert_eq!(token.value() & 0xFF000000, 0x0D000000);
         }
     }
 }
