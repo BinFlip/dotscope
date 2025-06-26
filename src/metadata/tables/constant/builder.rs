@@ -281,6 +281,21 @@ impl ConstantBuilder {
         self
     }
 
+    /// Sets a null reference value for reference type constants.
+    ///
+    /// This is a convenience method for null reference constants that automatically
+    /// sets the element type to `ELEMENT_TYPE::CLASS` and uses a 4-byte zero value
+    /// as per ECMA-335 specification for null object references.
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining.
+    pub fn null_reference_value(mut self) -> Self {
+        self.element_type = Some(ELEMENT_TYPE::CLASS);
+        self.value = Some(vec![0, 0, 0, 0]); // 4-byte zero value for null references
+        self
+    }
+
     /// Builds the constant and adds it to the assembly.
     ///
     /// This method validates all required fields are set, adds the value blob to
