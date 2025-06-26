@@ -282,6 +282,8 @@ pub struct Resource {
     pub name_section_offset: usize,
     /// Is a debug build
     pub is_debug: bool,
+    /// Is this an embedded resource (with size prefix) vs standalone .resources file
+    pub is_embedded_resource: bool,
 }
 
 impl Resource {
@@ -343,41 +345,94 @@ impl Resource {
     /// - **Array Bounds**: Ensures hash and position arrays match resource count
     pub fn parse(data: &[u8]) -> Result<Self> {
         if data.len() < 12 {
-            // Need at least size + magic + version
+            // Need at least magic + header version + skip bytes + basic header
             return Err(malformed_error!("Resource data too small"));
         }
 
         let mut parser = Parser::new(data);
+        let is_embedded_resource;
 
-        let size = parser.read_le::<u32>()? as usize;
-        if size > (data.len() - 4) || size < 8 {
+        // Auto-detect format: embedded resource (size + magic) vs standalone (.resources file)
+        let first_u32 = parser.read_le::<u32>()?;
+        let second_u32 = parser.read_le::<u32>()?;
+
+        if second_u32 == RESOURCE_MAGIC {
+            // Embedded resource format: [size][magic][header...]
+            let size = first_u32 as usize;
+            if size > (data.len() - 4) || size < 8 {
+                return Err(malformed_error!("Invalid embedded resource size: {}", size));
+            }
+            is_embedded_resource = true;
+            // parser is already positioned after magic number
+        } else if first_u32 == RESOURCE_MAGIC {
+            // Standalone .resources file format: [magic][header...]
+            parser.seek(4)?; // Reset to after magic number
+            is_embedded_resource = false;
+        } else {
             return Err(malformed_error!(
-                "The resource format is invalid! size - {}",
-                size
+                "Invalid resource format - no magic number found"
             ));
         }
 
-        let magic = parser.read_le::<u32>()?;
-        if magic != RESOURCE_MAGIC {
-            return Err(malformed_error!("Invalid resource magic: 0x{:X}", magic));
-        }
+        let res_mgr_header_version = parser.read_le::<u32>()?;
+        let num_bytes_to_skip = parser.read_le::<u32>()?;
+
+        let (reader_type, resource_set_type) = if res_mgr_header_version > 1 {
+            // For future versions, skip the specified number of bytes
+            if num_bytes_to_skip > (1 << 30) {
+                return Err(malformed_error!(
+                    "Invalid skip bytes: {}",
+                    num_bytes_to_skip
+                ));
+            }
+            parser.advance_by(num_bytes_to_skip as usize)?;
+            (String::new(), String::new())
+        } else {
+            // V1 header: read reader type and resource set type
+            let reader_type = parser.read_prefixed_string_utf8()?;
+            let resource_set_type = parser.read_prefixed_string_utf8()?;
+
+            if !Self::validate_reader_type(&reader_type) {
+                return Err(malformed_error!("Unsupported reader type: {}", reader_type));
+            }
+
+            (reader_type, resource_set_type)
+        };
 
         let mut res: Resource = Resource {
-            res_mgr_header_version: parser.read_le::<u32>()?,
-            header_size: parser.read_le::<u32>()?,
-            reader_type: parser.read_prefixed_string_utf8()?,
-            resource_set_type: parser.read_prefixed_string_utf8()?,
+            res_mgr_header_version,
+            header_size: num_bytes_to_skip,
+            reader_type,
+            resource_set_type,
+            is_embedded_resource,
             ..Default::default()
         };
 
         res.rr_header_offset = parser.pos();
 
+        // Read RuntimeResourceReader header
         res.rr_version = parser.read_le::<u32>()?;
-        if res.rr_version == 2 && parser.peek_byte()? == b'*' {
-            // Version 2, can have a '***DEBUG***' string here
-            // Read it, but ignore. Will advance our parser accordingly
-            let _ = parser.read_string_utf8()?;
-            res.is_debug = true;
+
+        if res.rr_version != 1 && res.rr_version != 2 {
+            return Err(malformed_error!(
+                "Unsupported resource reader version: {}",
+                res.rr_version
+            ));
+        }
+
+        // Check for debug string in V2 debug builds
+        if res.rr_version == 2 && (data.len() - parser.pos()) >= 11 {
+            // Check if next bytes look like "***DEBUG***"
+            let peek_pos = parser.pos();
+            if let Ok(debug_string) = parser.read_prefixed_string_utf8() {
+                if debug_string == "***DEBUG***" {
+                    res.is_debug = true;
+                } else {
+                    parser.seek(peek_pos)?;
+                }
+            } else {
+                parser.seek(peek_pos)?;
+            }
         }
         res.resource_count = parser.read_le::<u32>()?;
 
@@ -386,18 +441,44 @@ impl Resource {
             res.type_names.push(parser.read_prefixed_string_utf8()?);
         }
 
-        loop {
-            let padding_byte = parser.peek_byte()?;
-            if padding_byte != b'P'
-                && padding_byte != b'A'
-                && padding_byte != b'D'
-                && padding_byte != 0
+        // Align to 8-byte boundary exactly as per .NET Framework implementation
+        // From .NET source: "Skip over alignment stuff. All public .resources files
+        // should be aligned. No need to verify the byte values."
+        let pos = parser.pos();
+        let align_bytes = pos & 7;
+        let mut padding_count = 0;
+
+        if align_bytes != 0 {
+            let padding_to_skip = 8 - align_bytes;
+            padding_count = padding_to_skip;
+            parser.advance_by(padding_to_skip)?;
+        }
+
+        // Check for additional PAD pattern bytes that may exist in the file
+        // Some .NET resource files include explicit PAD patterns beyond 8-byte alignment
+        while parser.pos() < data.len() - 4 {
+            let peek_bytes = &data[parser.pos()..parser.pos() + 3.min(data.len() - parser.pos())];
+            if peek_bytes.len() >= 3
+                && peek_bytes[0] == b'P'
+                && peek_bytes[1] == b'A'
+                && peek_bytes[2] == b'D'
             {
+                // Found PAD pattern, skip it
+                parser.advance_by(3)?;
+                padding_count += 3;
+                // Check for additional padding byte after PAD
+                if parser.pos() < data.len()
+                    && (data[parser.pos()] == b'P' || data[parser.pos()] == 0)
+                {
+                    parser.advance()?;
+                    padding_count += 1;
+                }
+            } else {
                 break;
             }
-            res.padding += 1;
-            parser.advance()?;
         }
+
+        res.padding = padding_count;
 
         for _ in 0..res.resource_count {
             res.name_hashes.push(parser.read_le::<u32>()?);
@@ -407,8 +488,7 @@ impl Resource {
             res.name_positions.push(parser.read_le::<u32>()?);
         }
 
-        // +4 because of the initial size, it's not part of the 'format' but from the embedding
-        res.data_section_offset = parser.read_le::<u32>()? as usize + 4;
+        res.data_section_offset = parser.read_le::<u32>()? as usize;
         res.name_section_offset = parser.pos();
 
         Ok(res)
@@ -493,25 +573,87 @@ impl Resource {
         let mut parser = Parser::new(data);
 
         for i in 0..self.resource_count as usize {
-            parser.seek(self.name_section_offset + self.name_positions[i] as usize)?;
+            let name_pos = self.name_section_offset + self.name_positions[i] as usize;
+            parser.seek(name_pos)?;
 
             let name = parser.read_prefixed_string_utf16()?;
             let type_offset = parser.read_le::<u32>()?;
 
-            parser.seek(self.data_section_offset + type_offset as usize)?;
+            let data_pos = if self.is_embedded_resource {
+                // Embedded resources: offset calculated from magic number position, need +4 for size field
+                self.data_section_offset + type_offset as usize + 4
+            } else {
+                // Standalone .resources files: use direct offset
+                self.data_section_offset + type_offset as usize
+            };
 
-            let type_code = parser.read_le::<u8>()?;
+            // Validate data position bounds
+            if data_pos >= data.len() {
+                return Err(malformed_error!(
+                    "Resource data offset {} is beyond file bounds",
+                    data_pos
+                ));
+            }
+
+            parser.seek(data_pos)?;
+
+            let resource_data = if self.rr_version == 1 {
+                // V1 format: type index (7-bit encoded) followed by data
+                let type_index = parser.read_7bit_encoded_int()?;
+                if type_index == u32::MAX {
+                    // -1 encoded as 7-bit represents null
+                    ResourceType::Null
+                } else if (type_index as usize) < self.type_names.len() {
+                    let type_name = &self.type_names[type_index as usize];
+                    ResourceType::from_type_name(type_name, &mut parser)?
+                } else {
+                    return Err(malformed_error!("Invalid type index: {}", type_index));
+                }
+            } else {
+                // V2 format: type code (7-bit encoded) followed by data
+                let type_code = parser.read_7bit_encoded_int()? as u8;
+
+                if self.type_names.is_empty() {
+                    // No type table - this file uses only primitive types (direct type codes)
+                    // Common in resource files that contain only strings/primitives
+                    ResourceType::from_type_byte(type_code, &mut parser)?
+                } else {
+                    // Has type table - type code is an index into the type table
+                    if (type_code as usize) < self.type_names.len() {
+                        let type_name = &self.type_names[type_code as usize];
+                        ResourceType::from_type_name(type_name, &mut parser)?
+                    } else {
+                        return Err(malformed_error!("Invalid type index: {}", type_code));
+                    }
+                }
+            };
 
             let result = ResourceEntry {
                 name: name.clone(),
                 name_hash: self.name_hashes[i],
-                data: ResourceType::from_type_byte(type_code, &mut parser)?,
+                data: resource_data,
             };
 
             resources.insert(name, result);
         }
 
         Ok(resources)
+    }
+
+    /// Validate that the reader type is supported by this parser.
+    ///
+    /// Based on .NET Framework validation, accepts:
+    /// - System.Resources.ResourceReader (with or without assembly qualification)
+    /// - System.Resources.Extensions.DeserializingResourceReader
+    fn validate_reader_type(reader_type: &str) -> bool {
+        match reader_type {
+            "System.Resources.ResourceReader" => true,
+            "System.Resources.Extensions.DeserializingResourceReader" => true,
+            // Accept fully qualified names with mscorlib assembly info
+            s if s.starts_with("System.Resources.ResourceReader,") => true,
+            s if s.starts_with("System.Resources.Extensions.DeserializingResourceReader,") => true,
+            _ => false,
+        }
     }
 }
 

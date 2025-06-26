@@ -1182,7 +1182,7 @@ pub fn verify_wbdll_resource_buffer(data: &[u8]) {
     assert_eq!(resource.padding, 7);
     assert_eq!(resource.name_hashes.len(), 562);
     assert_eq!(resource.name_positions.len(), 562);
-    assert_eq!(resource.data_section_offset, 0x8F8C);
+    assert_eq!(resource.data_section_offset, 0x8F88);
     assert_eq!(resource.name_section_offset, 0x1248);
     assert!(!resource.is_debug);
 

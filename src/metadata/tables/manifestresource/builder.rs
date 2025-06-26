@@ -67,6 +67,7 @@
 use crate::{
     cilassembly::BuilderContext,
     metadata::{
+        resources::DotNetResourceEncoder,
         tables::{
             CodedIndex, ManifestResourceAttributes, ManifestResourceRaw, TableDataOwned, TableId,
         },
@@ -131,6 +132,10 @@ pub struct ManifestResourceBuilder {
     offset: u32,
     /// Implementation reference for resource location
     implementation: Option<CodedIndex>,
+    /// Optional resource data for embedded resources
+    resource_data: Option<Vec<u8>>,
+    /// Optional resource data encoder for generating resource data
+    resource_encoder: Option<DotNetResourceEncoder>,
 }
 
 impl Default for ManifestResourceBuilder {
@@ -158,6 +163,8 @@ impl ManifestResourceBuilder {
             flags: ManifestResourceAttributes::PUBLIC.bits(),
             offset: 0,
             implementation: None, // Default to embedded (null implementation)
+            resource_data: None,
+            resource_encoder: None,
         }
     }
 
@@ -350,6 +357,209 @@ impl ManifestResourceBuilder {
         self
     }
 
+    /// Sets the resource data for embedded resources.
+    ///
+    /// Specifies the actual data content for embedded resources. When resource data
+    /// is provided, the resource will be stored directly in the assembly's resource
+    /// section and the offset will be calculated automatically during assembly generation.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The resource data as raw bytes
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// let resource_data = b"Hello, World!";
+    /// let builder = ManifestResourceBuilder::new()
+    ///     .name("TextResource")
+    ///     .resource_data(resource_data);
+    /// ```
+    pub fn resource_data(mut self, data: &[u8]) -> Self {
+        self.resource_data = Some(data.to_vec());
+        self.implementation = None; // Force embedded implementation
+        self
+    }
+
+    /// Sets the resource data from a string for text-based embedded resources.
+    ///
+    /// Convenience method for setting string content as resource data. The string
+    /// is encoded as UTF-8 bytes and stored as embedded resource data.
+    ///
+    /// # Arguments
+    ///
+    /// * `content` - The string content to store as resource data
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// let builder = ManifestResourceBuilder::new()
+    ///     .name("ConfigResource")
+    ///     .resource_string("key=value\nsetting=option");
+    /// ```
+    pub fn resource_string(mut self, content: &str) -> Self {
+        self.resource_data = Some(content.as_bytes().to_vec());
+        self.implementation = None; // Force embedded implementation
+        self
+    }
+
+    /// Adds a string resource using the resource encoder.
+    ///
+    /// Creates or updates the internal resource encoder to include a string resource
+    /// with the specified name and content. Multiple resources can be added to the
+    /// same encoder for efficient bundling.
+    ///
+    /// # Arguments
+    ///
+    /// * `resource_name` - Name of the individual resource within the encoder
+    /// * `content` - String content of the resource
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// let builder = ManifestResourceBuilder::new()
+    ///     .name("AppResources")
+    ///     .add_string_resource("AppTitle", "My Application")
+    ///     .add_string_resource("Version", "1.0.0");
+    /// ```
+    pub fn add_string_resource(mut self, resource_name: &str, content: &str) -> Result<Self> {
+        let encoder = self
+            .resource_encoder
+            .get_or_insert_with(DotNetResourceEncoder::new);
+        encoder.add_string(resource_name, content)?;
+        self.implementation = None; // Force embedded implementation
+        Ok(self)
+    }
+
+    /// Adds a binary resource using the resource encoder.
+    ///
+    /// Creates or updates the internal resource encoder to include a binary resource
+    /// with the specified name and data.
+    ///
+    /// # Arguments
+    ///
+    /// * `resource_name` - Name of the individual resource within the encoder
+    /// * `data` - Binary data of the resource
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// let icon_data = std::fs::read("icon.png")?;
+    /// let builder = ManifestResourceBuilder::new()
+    ///     .name("AppResources")
+    ///     .add_binary_resource("AppIcon", &icon_data)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn add_binary_resource(mut self, resource_name: &str, data: &[u8]) -> Result<Self> {
+        let encoder = self
+            .resource_encoder
+            .get_or_insert_with(DotNetResourceEncoder::new);
+        encoder.add_byte_array(resource_name, data)?;
+        self.implementation = None; // Force embedded implementation
+        Ok(self)
+    }
+
+    /// Adds an XML resource using the resource encoder.
+    ///
+    /// Creates or updates the internal resource encoder to include an XML resource
+    /// with the specified name and content. XML resources are treated as structured
+    /// data and may receive optimized encoding.
+    ///
+    /// # Arguments
+    ///
+    /// * `resource_name` - Name of the individual resource within the encoder
+    /// * `xml_content` - XML content as a string
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// let config_xml = r#"<?xml version="1.0"?>
+    /// <configuration>
+    ///     <setting name="timeout" value="30" />
+    /// </configuration>"#;
+    ///
+    /// let builder = ManifestResourceBuilder::new()
+    ///     .name("AppConfig")
+    ///     .add_xml_resource("config.xml", config_xml)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn add_xml_resource(mut self, resource_name: &str, xml_content: &str) -> Result<Self> {
+        let encoder = self
+            .resource_encoder
+            .get_or_insert_with(DotNetResourceEncoder::new);
+        encoder.add_string(resource_name, xml_content)?;
+        self.implementation = None; // Force embedded implementation
+        Ok(self)
+    }
+
+    /// Adds a text resource with explicit type specification using the resource encoder.
+    ///
+    /// Creates or updates the internal resource encoder to include a text resource
+    /// with a specific resource type for encoding optimization.
+    ///
+    /// # Arguments
+    ///
+    /// * `resource_name` - Name of the individual resource within the encoder
+    /// * `content` - Text content of the resource
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// let json_config = r#"{"timeout": 30, "retries": 3}"#;
+    ///
+    /// let builder = ManifestResourceBuilder::new()
+    ///     .name("AppConfig")
+    ///     .add_text_resource("config.json", json_config)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn add_text_resource(mut self, resource_name: &str, content: &str) -> Result<Self> {
+        let encoder = self
+            .resource_encoder
+            .get_or_insert_with(DotNetResourceEncoder::new);
+        encoder.add_string(resource_name, content)?;
+        self.implementation = None; // Force embedded implementation
+        Ok(self)
+    }
+
+    /// Configures the resource encoder with specific settings.
+    ///
+    /// Allows customization of the resource encoding process, including alignment,
+    /// compression, and deduplication settings. This method provides access to
+    /// advanced encoding options for performance optimization.
+    ///
+    /// # Arguments
+    ///
+    /// * `configure_fn` - Closure that configures the resource encoder
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// let builder = ManifestResourceBuilder::new()
+    ///     .name("OptimizedResources")
+    ///     .configure_encoder(|encoder| {
+    ///         // DotNetResourceEncoder configuration can be added here
+    ///         // when additional configuration options are implemented
+    ///     });
+    /// ```
+    pub fn configure_encoder<F>(mut self, configure_fn: F) -> Self
+    where
+        F: FnOnce(&mut DotNetResourceEncoder),
+    {
+        let encoder = self
+            .resource_encoder
+            .get_or_insert_with(DotNetResourceEncoder::new);
+        configure_fn(encoder);
+        self.implementation = None; // Force embedded implementation
+        self
+    }
+
     /// Builds the ManifestResource entry and adds it to the assembly.
     ///
     /// This method validates all required fields, adds any strings to the appropriate heaps,
@@ -441,14 +651,25 @@ impl ManifestResourceBuilder {
             CodedIndex::new(TableId::File, 0) // This will have row = 0, indicating embedded
         };
 
+        // Handle resource data if provided
+        let mut final_offset = self.offset;
+        if let Some(encoder) = self.resource_encoder {
+            let encoded_data = encoder.encode_dotnet_format()?;
+            let blob_index = context.add_blob(&encoded_data)?;
+            final_offset = blob_index;
+        } else if let Some(data) = self.resource_data {
+            let blob_index = context.add_blob(&data)?;
+            final_offset = blob_index;
+        }
+
         let rid = context.next_rid(TableId::ManifestResource);
         let token = Token::new(((TableId::ManifestResource as u32) << 24) | rid);
 
         let manifest_resource = ManifestResourceRaw {
             rid,
             token,
-            offset: 0, // Will be set during binary generation
-            offset_field: self.offset,
+            offset: 0,
+            offset_field: final_offset,
             flags: self.flags,
             name: name_index,
             implementation,
@@ -501,6 +722,8 @@ mod tests {
         assert!(builder.name.is_none());
         assert_eq!(builder.flags, ManifestResourceAttributes::PUBLIC.bits());
         assert_eq!(builder.offset, 0);
+        assert!(builder.resource_data.is_none());
+        assert!(builder.resource_encoder.is_none());
         Ok(())
     }
 
@@ -746,6 +969,96 @@ mod tests {
 
         assert!(result.is_ok());
         let token = result?;
+        assert_eq!(token.table(), TableId::ManifestResource as u8);
+        assert!(token.row() > 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_manifest_resource_builder_with_resource_data() -> Result<()> {
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
+
+        let resource_data = b"Hello, World!";
+        let token = ManifestResourceBuilder::new()
+            .name("TextResource")
+            .resource_data(resource_data)
+            .build(&mut context)?;
+
+        assert_eq!(token.table(), TableId::ManifestResource as u8);
+        assert!(token.row() > 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_manifest_resource_builder_with_resource_string() -> Result<()> {
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
+
+        let token = ManifestResourceBuilder::new()
+            .name("ConfigResource")
+            .resource_string("key=value\nsetting=option")
+            .build(&mut context)?;
+
+        assert_eq!(token.table(), TableId::ManifestResource as u8);
+        assert!(token.row() > 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_manifest_resource_builder_with_encoder() -> Result<()> {
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
+
+        let token = ManifestResourceBuilder::new()
+            .name("EncodedResources")
+            .add_string_resource("AppTitle", "My Application")?
+            .add_string_resource("Version", "1.0.0")?
+            .build(&mut context)?;
+
+        assert_eq!(token.table(), TableId::ManifestResource as u8);
+        assert!(token.row() > 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_manifest_resource_builder_configure_encoder() -> Result<()> {
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
+
+        let token = ManifestResourceBuilder::new()
+            .name("OptimizedResources")
+            .configure_encoder(|_encoder| {
+                // DotNetResourceEncoder doesn't need deduplication setup
+            })
+            .add_string_resource("Test", "Content")?
+            .build(&mut context)?;
+
+        assert_eq!(token.table(), TableId::ManifestResource as u8);
+        assert!(token.row() > 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_manifest_resource_builder_mixed_resources() -> Result<()> {
+        let assembly = get_test_assembly()?;
+        let mut context = BuilderContext::new(assembly);
+
+        let binary_data = vec![0x01, 0x02, 0x03, 0x04];
+        let xml_content = r#"<?xml version="1.0"?><config><setting value="test"/></config>"#;
+
+        let token = ManifestResourceBuilder::new()
+            .name("MixedResources")
+            .add_string_resource("title", "My App")?
+            .add_binary_resource("data", &binary_data)?
+            .add_xml_resource("config.xml", xml_content)?
+            .build(&mut context)?;
+
         assert_eq!(token.table(), TableId::ManifestResource as u8);
         assert!(token.row() > 0);
 
