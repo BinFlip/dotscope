@@ -109,8 +109,10 @@
 
 mod heap;
 mod pe;
+mod relocation;
 mod table;
 
 pub use heap::*;
 pub use pe::*;
+pub use relocation::*;
 pub use table::*;

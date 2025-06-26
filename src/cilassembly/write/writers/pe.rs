@@ -101,7 +101,7 @@
 
 use crate::{
     cilassembly::{
-        write::{output::Output, planner::LayoutPlan},
+        write::{output::Output, planner::LayoutPlan, writers::RelocationWriter},
         CilAssembly,
     },
     Error, Result,
@@ -169,14 +169,10 @@ impl<'a> PeWriter<'a> {
     /// Returns [`crate::Error`] if PE updates fail due to invalid structure or
     /// insufficient output buffer space.
     pub fn write_pe_updates(&mut self) -> Result<()> {
-        // Only update checksum if sections were modified
         if self.layout_plan.pe_updates.checksum_needs_update {
             self.update_pe_checksum()?;
         }
 
-        // Handle base relocations if needed
-        // Note: Most .NET assemblies don't use base relocations since they use
-        // managed code with relative addressing, but we should handle it for completeness
         if self.needs_relocation_updates() {
             self.update_base_relocations()?;
         }
@@ -193,16 +189,12 @@ impl<'a> PeWriter<'a> {
     /// # Errors
     /// Returns [`crate::Error`] if checksum field cannot be located or updated.
     fn update_pe_checksum(&mut self) -> Result<()> {
-        // Find the checksum field location in the PE optional header
         let checksum_offset = self.find_checksum_field_offset()?;
 
-        // Calculate checksum over the entire file, excluding the checksum field
         let file_size = self.layout_plan.total_size as usize;
         let checksum = self.calculate_pe_checksum(checksum_offset, file_size)?;
 
-        // Write the new checksum to the PE header
         self.output.write_u32_le_at(checksum_offset, checksum)?;
-
         Ok(())
     }
 
@@ -313,7 +305,6 @@ impl<'a> PeWriter<'a> {
     /// Returns `true` if any section moved to a different virtual address, indicating
     /// that base relocations may need updating.
     fn needs_relocation_updates(&self) -> bool {
-        // Check if any sections moved to different virtual addresses
         let view = self.assembly.view();
         let original_sections: Vec<_> = view.file().sections().collect();
 
@@ -330,53 +321,66 @@ impl<'a> PeWriter<'a> {
 
     /// Updates base relocations if sections moved.
     ///
-    /// This is a placeholder implementation since most .NET assemblies don't use
+    /// Handles base relocation table updates for mixed-mode assemblies when sections
+    /// move to different virtual addresses. Pure .NET assemblies typically don't have
     /// base relocations due to their position-independent managed code nature.
     ///
-    /// # Implementation Notes
-    /// A full implementation would:
-    /// 1. Parse the .reloc section from the original file
-    /// 2. Update relocation entries for sections that moved
-    /// 3. Recalculate relocation tables with new addresses
-    /// 4. Write updated relocation data to the output buffer
+    /// # Implementation
+    /// 1. Parses the existing .reloc section from the original file
+    /// 2. Updates relocation entries for sections that moved
+    /// 3. Recalculates relocation tables with new addresses
+    /// 4. Writes updated relocation data to the output buffer
     ///
     /// # Errors
-    /// Currently returns [`crate::Result::Ok`] as a placeholder. Future implementations
-    /// may return errors for malformed relocation tables.
+    /// Returns errors for malformed relocation tables or I/O failures during
+    /// relocation table processing.
     fn update_base_relocations(&mut self) -> Result<()> {
-        // Most .NET assemblies don't have base relocations since they use
-        // position-independent managed code. For now, we'll just log that
-        // this case was encountered.
+        let section_moves = self.create_section_moves();
+        if section_moves.is_empty() {
+            return Ok(());
+        }
 
-        // If we encounter assemblies that actually need this, we would:
-        // 1. Find the .reloc section in the original file
-        // 2. Parse the base relocation table
-        // 3. Update relocation entries for sections that moved
-        // 4. Write the updated relocation table to the output
+        let mut relocation_writer =
+            RelocationWriter::with_assembly(self.output, &section_moves, self.assembly);
+
+        relocation_writer.parse_relocation_table()?;
+        relocation_writer.update_relocations()?;
+        relocation_writer.write_relocation_table()?;
 
         Ok(())
+    }
+
+    /// Creates section move information from the layout plan.
+    fn create_section_moves(&self) -> Vec<super::relocation::SectionMove> {
+        let view = self.assembly.view();
+        let original_sections: Vec<_> = view.file().sections().collect();
+        let mut section_moves = Vec::new();
+
+        for (index, new_section) in self.layout_plan.file_layout.sections.iter().enumerate() {
+            if let Some(original_section) = original_sections.get(index) {
+                if new_section.virtual_address != original_section.virtual_address {
+                    section_moves.push(super::relocation::SectionMove {
+                        old_virtual_address: original_section.virtual_address,
+                        new_virtual_address: new_section.virtual_address,
+                        virtual_size: new_section.virtual_size,
+                    });
+                }
+            }
+        }
+
+        section_moves
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{cilassembly::write::planner::create_layout_plan, CilAssemblyView};
+    use super::PeWriter;
+    use crate::{
+        cilassembly::write::{output::Output, planner::create_layout_plan},
+        CilAssemblyView,
+    };
     use std::path::Path;
-
-    #[test]
-    fn test_pe_writer_creation() {
-        // Test that PeWriter can be created without panic
-        let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))
-            .expect("Failed to load test assembly");
-        let assembly = view.to_owned();
-
-        let layout_plan = create_layout_plan(&assembly).expect("Failed to create layout plan");
-
-        // We can't test the full writer without a real Output instance,
-        // but we can verify the basic structure compiles
-        // The boolean logic was always true - just check if checksum_needs_update is defined
-        let _needs_update = layout_plan.pe_updates.checksum_needs_update;
-    }
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_checksum_offset_calculation() {
@@ -392,5 +396,75 @@ mod tests {
             layout_plan.file_layout.pe_headers.size >= 88,
             "PE headers should be at least 88 bytes for checksum field"
         );
+    }
+
+    #[test]
+    fn test_relocation_integration_with_pe_writer() {
+        // Test that the PE writer correctly handles base relocations when sections don't move
+        let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))
+            .expect("Failed to load test assembly");
+
+        let original_data = view.data().to_vec();
+        let assembly = view.to_owned();
+
+        let layout_plan = create_layout_plan(&assembly).expect("Failed to create layout plan");
+
+        // Create a temporary file for the output
+        let temp_file = NamedTempFile::new().expect("Failed to create temporary file");
+        let temp_path = temp_file.path();
+
+        // Create an output buffer
+        let mut output =
+            Output::create(temp_path, layout_plan.total_size).expect("Failed to create output");
+
+        // Initialize output with original file data
+        let copy_size = std::cmp::min(original_data.len(), layout_plan.total_size as usize);
+        output
+            .write_at(0, &original_data[..copy_size])
+            .expect("Failed to copy original data");
+
+        // Create PE writer
+        let mut pe_writer = PeWriter::new(&assembly, &mut output, &layout_plan);
+
+        // Test that PE updates complete without error
+        let result = pe_writer.write_pe_updates();
+        assert!(result.is_ok(), "PE updates should complete successfully");
+
+        // Test the section move detection
+        let needs_relocation = pe_writer.needs_relocation_updates();
+        println!("Assembly needs relocation updates: {}", needs_relocation);
+        // For a typical layout plan without actual section moves, this should be false
+    }
+
+    #[test]
+    fn test_section_move_detection() {
+        let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))
+            .expect("Failed to load test assembly");
+        let assembly = view.to_owned();
+
+        let layout_plan = create_layout_plan(&assembly).expect("Failed to create layout plan");
+
+        // Create a temporary file for the output
+        let temp_file = NamedTempFile::new().expect("Failed to create temporary file");
+        let temp_path = temp_file.path();
+
+        let mut output =
+            Output::create(temp_path, layout_plan.total_size).expect("Failed to create output");
+
+        let pe_writer = PeWriter::new(&assembly, &mut output, &layout_plan);
+
+        // Test section move detection with current layout plan
+        let needs_updates = pe_writer.needs_relocation_updates();
+
+        // Test section move creation
+        let section_moves = pe_writer.create_section_moves();
+
+        assert_eq!(
+            needs_updates,
+            !section_moves.is_empty(),
+            "needs_relocation_updates should match whether section_moves is empty"
+        );
+
+        // temp_file will be automatically cleaned up when it goes out of scope
     }
 }

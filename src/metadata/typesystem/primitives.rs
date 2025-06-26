@@ -1820,7 +1820,10 @@ mod tests {
         assert_eq!(int_prim.to_bytes(), vec![42, 0, 0, 0]);
 
         let string_prim = CilPrimitive::string("Hello");
-        assert_eq!(string_prim.to_bytes(), "Hello".as_bytes());
+        assert_eq!(
+            string_prim.to_bytes(),
+            vec![72, 0, 101, 0, 108, 0, 108, 0, 111, 0]
+        );
 
         let void_prim = CilPrimitive::new(CilPrimitiveKind::Void);
         assert!(void_prim.to_bytes().is_empty());
