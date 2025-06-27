@@ -262,7 +262,7 @@ mod tests {
     fn test_paramptr_builder_debug() {
         let builder = ParamPtrBuilder::new().param(7);
 
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("ParamPtrBuilder"));
         assert!(debug_str.contains("param"));
     }

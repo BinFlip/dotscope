@@ -109,14 +109,14 @@ impl MethodBuilder {
     /// Create a property getter method
     pub fn property_getter(property_name: &str) -> Self {
         Self::new()
-            .with_name(&format!("get_{}", property_name))
+            .with_name(&format!("get_{property_name}"))
             .with_access(MethodAccessFlags::PUBLIC)
             .with_modifiers(MethodModifiers::SPECIAL_NAME)
     }
 
     /// Create a property setter method
     pub fn property_setter(property_name: &str) -> Self {
-        Self::simple_void_method(&format!("set_{}", property_name))
+        Self::simple_void_method(&format!("set_{property_name}"))
             .with_access(MethodAccessFlags::PUBLIC)
             .with_modifiers(MethodModifiers::SPECIAL_NAME)
     }

@@ -359,7 +359,7 @@ mod tests {
     #[test]
     fn test_moduleref_builder_debug() {
         let builder = ModuleRefBuilder::new().name("DebugModule.dll");
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("ModuleRefBuilder"));
         assert!(debug_str.contains("DebugModule.dll"));
     }

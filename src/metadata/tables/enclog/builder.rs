@@ -449,7 +449,7 @@ mod tests {
     fn test_enclog_builder_debug() {
         let builder = EncLogBuilder::new().token_value(0x02000005).func_code(2);
 
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("EncLogBuilder"));
         assert!(debug_str.contains("token_value"));
         assert!(debug_str.contains("func_code"));

@@ -314,7 +314,7 @@ mod tests {
             assert_eq!(sp.end_line, 0xFEEFEE);
             assert_eq!(sp.end_col, 0);
         } else {
-            panic!("Hidden sequence point parse failed: {:?}", result);
+            panic!("Hidden sequence point parse failed: {result:?}");
         }
     }
 

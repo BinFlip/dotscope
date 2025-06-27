@@ -498,7 +498,7 @@ mod tests {
 
         for (i, &index) in test_indices.iter().enumerate() {
             let type_token = crate::metadata::tables::TypeDefBuilder::new()
-                .name(format!("PropertyfulClass{}", i))
+                .name(format!("PropertyfulClass{i}"))
                 .namespace("MyApp")
                 .public_class()
                 .build(&mut context)?;
@@ -559,7 +559,7 @@ mod tests {
         let builder = PropertyMapBuilder::new()
             .parent(parent_token)
             .property_list(1);
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("PropertyMapBuilder"));
     }
 }

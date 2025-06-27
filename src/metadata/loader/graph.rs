@@ -374,9 +374,7 @@ impl<'a> LoaderGraph<'a> {
         for (table_id, loader) in &self.loaders {
             for dep_id in loader.dependencies() {
                 if !self.loaders.contains_key(dep_id) {
-                    return Err(GraphError(format!("Loader for table {:?} depends on table {:?}, but no loader for that table exists",
-                        table_id,
-                        dep_id
+                    return Err(GraphError(format!("Loader for table {table_id:?} depends on table {dep_id:?}, but no loader for that table exists"
                     )));
                 }
 
@@ -485,8 +483,7 @@ impl<'a> LoaderGraph<'a> {
                     self.detect_cycle(dep_id, visited, stack)?;
                 } else if stack.contains(&dep_id) {
                     return Err(GraphError(format!(
-                        "Circular dependency detected involving table {:?}",
-                        dep_id
+                        "Circular dependency detected involving table {dep_id:?}"
                     )));
                 }
             }
@@ -659,7 +656,7 @@ impl<'a> LoaderGraph<'a> {
                     || "None".to_string(),
                     |d| {
                         d.iter()
-                            .map(|id| format!("{:?}", id))
+                            .map(|id| format!("{id:?}"))
                             .collect::<Vec<_>>()
                             .join(", ")
                     },

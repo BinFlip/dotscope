@@ -514,8 +514,7 @@ impl TryFrom<Token> for CodedIndex {
             0x37 => TableId::CustomDebugInformation,
             _ => {
                 return Err(malformed_error!(&format!(
-                    "Unknown table ID: 0x{:02x}",
-                    table_id
+                    "Unknown table ID: 0x{table_id:02x}"
                 )))
             }
         };

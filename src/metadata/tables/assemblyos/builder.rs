@@ -448,7 +448,7 @@ mod tests {
             .os_major_version(5)
             .os_minor_version(4);
 
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("AssemblyOSBuilder"));
         assert!(debug_str.contains("os_platform_id"));
         assert!(debug_str.contains("os_major_version"));

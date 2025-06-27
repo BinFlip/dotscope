@@ -1522,7 +1522,7 @@ mod tests {
                 match &attr.fixed_args[0] {
                     CustomAttributeArgument::Type(val) => assert_eq!(val, "System.Int32"),
                     CustomAttributeArgument::String(val) => assert_eq!(val, "System.Int32"),
-                    other => panic!("Expected Type or String argument, got: {:?}", other),
+                    other => panic!("Expected Type or String argument, got: {other:?}"),
                 }
             }
             Err(_e) => {
@@ -1553,7 +1553,7 @@ mod tests {
                     _ => panic!("Expected empty string or type argument"),
                 }
             }
-            Err(e) => panic!("Expected success for empty string, got: {}", e),
+            Err(e) => panic!("Expected success for empty string, got: {e}"),
         }
     }
 
@@ -1838,8 +1838,7 @@ mod tests {
                 || error_msg.contains("enough")
                 || error_msg.contains("Out of Bound")
                 || error_msg.contains("bound"),
-            "Error should mention data, I4, or bound issue: {}",
-            error_msg
+            "Error should mention data, I4, or bound issue: {error_msg}"
         );
 
         // Test string with invalid length

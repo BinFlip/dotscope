@@ -262,7 +262,7 @@ mod tests {
     fn test_methodptr_builder_debug() {
         let builder = MethodPtrBuilder::new().method(12);
 
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("MethodPtrBuilder"));
         assert!(debug_str.contains("method"));
     }

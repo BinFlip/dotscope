@@ -909,7 +909,7 @@ mod tests {
     #[test]
     fn test_manifest_resource_builder_debug() {
         let builder = ManifestResourceBuilder::new().name("DebugResource");
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("ManifestResourceBuilder"));
         assert!(debug_str.contains("DebugResource"));
     }

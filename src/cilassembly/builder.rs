@@ -833,8 +833,7 @@ mod tests {
             // Should be more than just the hardcoded ones (shows dynamic discovery working)
             assert!(
                 discovered_table_count > 5,
-                "Expected more than 5 tables, found {}",
-                discovered_table_count
+                "Expected more than 5 tables, found {discovered_table_count}"
             );
 
             // Verify tables match what's actually in the assembly
@@ -847,8 +846,7 @@ mod tests {
             for table_id in expected_tables {
                 assert!(
                     context.next_rids.contains_key(&table_id),
-                    "BuilderContext missing table {:?} that exists in assembly",
-                    table_id
+                    "BuilderContext missing table {table_id:?} that exists in assembly"
                 );
             }
         }

@@ -383,8 +383,7 @@ mod tests {
         let section_names: Vec<&str> = pe_layout.sections.iter().map(|s| s.name.as_str()).collect();
         assert!(
             section_names.contains(&".text") || section_names.contains(&".rdata"),
-            "Should have typical PE sections, got: {:?}",
-            section_names
+            "Should have typical PE sections, got: {section_names:?}"
         );
     }
 

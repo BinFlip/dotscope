@@ -533,7 +533,7 @@ fn calculate_stream_offsets(assembly: &CilAssembly, stream_name: &str) -> Result
         .iter()
         .find(|s| s.name == stream_name)
         .ok_or_else(|| Error::WriteLayoutFailed {
-            message: format!("Stream '{}' not found in original file", stream_name),
+            message: format!("Stream '{stream_name}' not found in original file"),
         })?;
 
     // Write offset is where the additional data should be appended
@@ -563,7 +563,7 @@ fn get_metadata_root_offset(assembly: &CilAssembly) -> Result<usize> {
     let file = assembly.view().file();
     file.rva_to_offset(cor20_header.meta_data_rva as usize)
         .map_err(|e| Error::WriteLayoutFailed {
-            message: format!("Failed to convert metadata RVA to file offset: {}", e),
+            message: format!("Failed to convert metadata RVA to file offset: {e}"),
         })
 }
 
@@ -603,7 +603,7 @@ fn find_stream_size_field_offset(
     }
 
     Err(Error::WriteLayoutFailed {
-        message: format!("Stream '{}' not found in stream directory", stream_name),
+        message: format!("Stream '{stream_name}' not found in stream directory"),
     })
 }
 

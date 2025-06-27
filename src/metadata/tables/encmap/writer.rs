@@ -195,18 +195,17 @@ mod tests {
 
             encmap_entry
                 .row_write(&mut buffer, &mut offset, 1, &table_info)
-                .unwrap_or_else(|_| panic!("Serialization should succeed for {}", token_type));
+                .unwrap_or_else(|_| panic!("Serialization should succeed for {token_type}"));
 
             // Verify round-trip
             let mut read_offset = 0;
             let deserialized_row = EncMapRaw::row_read(&buffer, &mut read_offset, 1, &table_info)
-                .unwrap_or_else(|_| panic!("Deserialization should succeed for {}", token_type));
+                .unwrap_or_else(|_| panic!("Deserialization should succeed for {token_type}"));
 
             assert_eq!(
                 encmap_entry.original_token.value(),
                 deserialized_row.original_token.value(),
-                "Token value mismatch for {}",
-                token_type
+                "Token value mismatch for {token_type}"
             );
         }
     }
@@ -297,18 +296,17 @@ mod tests {
 
             encmap_entry
                 .row_write(&mut buffer, &mut offset, 1, &table_info)
-                .unwrap_or_else(|_| panic!("Serialization should succeed for {}", description));
+                .unwrap_or_else(|_| panic!("Serialization should succeed for {description}"));
 
             // Verify round-trip
             let mut read_offset = 0;
             let deserialized_row = EncMapRaw::row_read(&buffer, &mut read_offset, 1, &table_info)
-                .unwrap_or_else(|_| panic!("Deserialization should succeed for {}", description));
+                .unwrap_or_else(|_| panic!("Deserialization should succeed for {description}"));
 
             assert_eq!(
                 encmap_entry.original_token.value(),
                 deserialized_row.original_token.value(),
-                "Token value mismatch for {}",
-                description
+                "Token value mismatch for {description}"
             );
         }
     }

@@ -539,7 +539,7 @@ mod tests {
 
         // Test the section move detection
         let needs_relocation = pe_writer.needs_relocation_updates();
-        println!("Assembly needs relocation updates: {}", needs_relocation);
+        println!("Assembly needs relocation updates: {needs_relocation}");
         // For a typical layout plan without actual section moves, this should be false
     }
 

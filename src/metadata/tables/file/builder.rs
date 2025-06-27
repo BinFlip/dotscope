@@ -526,7 +526,7 @@ mod tests {
     #[test]
     fn test_file_builder_debug() {
         let builder = FileBuilder::new().name("DebugFile.netmodule");
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("FileBuilder"));
         assert!(debug_str.contains("DebugFile.netmodule"));
     }

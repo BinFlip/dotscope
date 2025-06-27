@@ -70,7 +70,7 @@ fn print_metadata_tables(assembly: &CilObject) {
         println!("  Available metadata tables:");
         for table_id in tables.present_tables() {
             let row_count = tables.table_row_count(table_id);
-            println!("    ✓ {:?} ({} rows)", table_id, row_count);
+            println!("    ✓ {table_id:?} ({row_count} rows)");
         }
     }
 
@@ -110,7 +110,7 @@ fn print_heap_analysis(assembly: &CilObject) {
             }
         }
 
-        println!("    Total strings analyzed: {}", string_count);
+        println!("    Total strings analyzed: {string_count}");
         println!(
             "    Average string length: {:.1} chars",
             total_length as f64 / string_count.max(1) as f64
@@ -133,7 +133,7 @@ fn print_heap_analysis(assembly: &CilObject) {
         println!("  GUID heap analysis:");
 
         for (index, guid) in guids.iter().take(3) {
-            println!("    GUID #{}: {}", index, guid);
+            println!("    GUID #{index}: {guid}");
         }
 
         println!("    Total GUIDs: {}", guids.iter().count());
@@ -166,7 +166,7 @@ fn print_heap_analysis(assembly: &CilObject) {
                 let preview = blob_data
                     .iter()
                     .take(8)
-                    .map(|b| format!("{:02X}", b))
+                    .map(|b| format!("{b:02X}"))
                     .collect::<Vec<_>>()
                     .join(" ");
                 let suffix = if blob_data.len() > 8 { "..." } else { "" };
@@ -180,7 +180,7 @@ fn print_heap_analysis(assembly: &CilObject) {
             }
         }
 
-        println!("    Total blobs analyzed: {}", blob_count);
+        println!("    Total blobs analyzed: {blob_count}");
         if blob_count > 0 {
             println!(
                 "    Average blob size: {:.1} bytes",
@@ -188,7 +188,7 @@ fn print_heap_analysis(assembly: &CilObject) {
             );
             println!("    Size distribution:");
             for (category, count) in size_histogram {
-                println!("      {}: {} blobs", category, count);
+                println!("      {category}: {count} blobs");
             }
         }
     }
@@ -212,7 +212,7 @@ fn print_heap_analysis(assembly: &CilObject) {
             }
         }
 
-        println!("    Total user strings: {}", string_count);
+        println!("    Total user strings: {string_count}");
         if !sample_user_strings.is_empty() {
             println!("    Sample user strings:");
             for (offset, string) in sample_user_strings {
@@ -221,7 +221,7 @@ fn print_heap_analysis(assembly: &CilObject) {
                 } else {
                     string
                 };
-                println!("      @{:04X}: \"{}\"", offset, truncated);
+                println!("      @{offset:04X}: \"{truncated}\"");
             }
         }
     }
@@ -266,13 +266,13 @@ fn print_type_system_analysis(assembly: &CilObject) {
     let mut sorted_ns: Vec<_> = namespace_stats.iter().collect();
     sorted_ns.sort_by(|a, b| b.1.cmp(a.1));
     for (namespace, count) in sorted_ns.iter().take(8) {
-        println!("    {}: {} types", namespace, count);
+        println!("    {namespace}: {count} types");
     }
 
     // Display type kind statistics
     println!("  Type categories:");
     for (kind, count) in &type_kind_stats {
-        println!("    {}: {} types", kind, count);
+        println!("    {kind}: {count} types");
     }
 }
 
@@ -356,21 +356,18 @@ fn print_custom_attributes_analysis(assembly: &CilObject) {
 }
 
 fn print_custom_attribute_info(index: usize, attr: &CustomAttributeValueRc) {
-    println!("      {}. Custom Attribute:", index);
+    println!("      {index}. Custom Attribute:");
 
     // Show argument summary
     let fixed_count = attr.fixed_args.len();
     let named_count = attr.named_args.len();
 
     if fixed_count > 0 || named_count > 0 {
-        println!(
-            "         Arguments: {} fixed, {} named",
-            fixed_count, named_count
-        );
+        println!("         Arguments: {fixed_count} fixed, {named_count} named");
 
         // Show first 2 fixed args
         for (i, arg) in attr.fixed_args.iter().take(2).enumerate() {
-            println!("           Fixed[{}]: {:?}", i, arg);
+            println!("           Fixed[{i}]: {arg:?}");
         }
 
         // Show first 2 named args
@@ -430,7 +427,7 @@ fn print_dependency_analysis(assembly: &CilObject) {
             };
 
             println!("    {}. {} v{}", i + 1, assembly_ref.name, version);
-            println!("       Culture: {}, Flags: {}", culture, flags_str);
+            println!("       Culture: {culture}, Flags: {flags_str}");
 
             // Show identifier information if available
             if let Some(ref identifier) = assembly_ref.identifier {
@@ -439,7 +436,7 @@ fn print_dependency_analysis(assembly: &CilObject) {
                         println!("       PublicKey: {} bytes", key.len());
                     }
                     dotscope::metadata::identity::Identity::Token(token) => {
-                        println!("       Token: 0x{:016X}", token);
+                        println!("       Token: 0x{token:016X}");
                     }
                 }
             }

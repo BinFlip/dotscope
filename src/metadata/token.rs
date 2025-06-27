@@ -390,16 +390,16 @@ mod tests {
     #[test]
     fn test_token_display() {
         let token = Token(0x06000001);
-        assert_eq!(format!("{}", token), "0x06000001");
+        assert_eq!(format!("{token}"), "0x06000001");
 
         let token2 = Token(0x00000000);
-        assert_eq!(format!("{}", token2), "0x00000000");
+        assert_eq!(format!("{token2}"), "0x00000000");
     }
 
     #[test]
     fn test_token_debug() {
         let token = Token(0x06000001);
-        let debug_str = format!("{:?}", token);
+        let debug_str = format!("{token:?}");
         assert!(debug_str.contains("Token(0x06000001"));
         assert!(debug_str.contains("table: 0x06"));
         assert!(debug_str.contains("row: 1"));

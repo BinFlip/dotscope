@@ -694,7 +694,7 @@ mod tests {
     #[test]
     fn test_document_builder_debug() {
         let builder = DocumentBuilder::new().name("Debug.cs").csharp_language();
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("DocumentBuilder"));
     }
 }

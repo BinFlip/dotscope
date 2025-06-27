@@ -382,7 +382,7 @@ mod tests {
             .index(0)
             .name("testVar");
 
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("LocalVariableBuilder"));
         assert!(debug_str.contains("attributes"));
         assert!(debug_str.contains("index"));

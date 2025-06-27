@@ -497,7 +497,7 @@ mod tests {
 
         for (i, &index) in test_indices.iter().enumerate() {
             let type_token = crate::metadata::tables::TypeDefBuilder::new()
-                .name(format!("EventfulClass{}", i))
+                .name(format!("EventfulClass{i}"))
                 .namespace("MyApp")
                 .public_class()
                 .build(&mut context)?;
@@ -554,7 +554,7 @@ mod tests {
         let parent_token = Token::new(0x02000001);
 
         let builder = EventMapBuilder::new().parent(parent_token).event_list(1);
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("EventMapBuilder"));
     }
 }

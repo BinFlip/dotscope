@@ -375,8 +375,7 @@ impl ConstantBuilder {
             _ => {
                 return Err(Error::ModificationInvalidOperation {
                     details: format!(
-                        "Invalid element type for constant: 0x{:02X}. Only primitive types, strings, and null references are allowed",
-                        element_type
+                        "Invalid element type for constant: 0x{element_type:02X}. Only primitive types, strings, and null references are allowed"
                     ),
                 });
             }

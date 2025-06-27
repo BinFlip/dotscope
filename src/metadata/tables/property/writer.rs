@@ -223,17 +223,16 @@ mod tests {
 
             property_row
                 .row_write(&mut buffer, &mut offset, 1, &table_info)
-                .unwrap_or_else(|_| panic!("Serialization should succeed for {}", description));
+                .unwrap_or_else(|_| panic!("Serialization should succeed for {description}"));
 
             // Verify round-trip
             let mut read_offset = 0;
             let deserialized_row = PropertyRaw::row_read(&buffer, &mut read_offset, 1, &table_info)
-                .unwrap_or_else(|_| panic!("Deserialization should succeed for {}", description));
+                .unwrap_or_else(|_| panic!("Deserialization should succeed for {description}"));
 
             assert_eq!(
                 deserialized_row.flags, property_row.flags,
-                "Flags should match for {}",
-                description
+                "Flags should match for {description}"
             );
         }
     }
@@ -363,8 +362,7 @@ mod tests {
             let size = <PropertyRaw as TableRow>::row_size(&table_info) as usize;
             assert_eq!(
                 size, expected_size,
-                "Row size should be {} for large_str={}, large_blob={}",
-                expected_size, large_str, large_blob
+                "Row size should be {expected_size} for large_str={large_str}, large_blob={large_blob}"
             );
 
             let mut buffer = vec![0u8; size];

@@ -111,7 +111,7 @@ fn print_type_analysis(assembly: &CilObject) {
 
     println!("  Top namespaces:");
     for (namespace, count) in namespaces.iter().take(5) {
-        println!("    {}: {} types", namespace, count);
+        println!("    {namespace}: {count} types");
     }
 
     // Show a few interesting types
@@ -241,8 +241,8 @@ fn print_import_analysis(assembly: &CilObject) {
         }
 
         println!("  Import summary:");
-        println!("    Method imports: {} (shown)", method_imports);
-        println!("    Type imports: {} (shown)", type_imports);
+        println!("    Method imports: {method_imports} (shown)");
+        println!("    Type imports: {type_imports} (shown)");
     }
 
     println!("  Import analysis capabilities:");
@@ -281,7 +281,7 @@ fn print_instruction_analysis(assembly: &CilObject) {
                     let inst_count = first_block.instructions.len();
                     instruction_count += inst_count;
 
-                    println!("      - First block has {} instructions", inst_count);
+                    println!("      - First block has {inst_count} instructions");
                     for (i, instruction) in first_block.instructions.iter().take(3).enumerate() {
                         println!(
                             "        [{}] {} (flow: {:?})",
@@ -300,9 +300,9 @@ fn print_instruction_analysis(assembly: &CilObject) {
     }
 
     println!("  Analysis summary:");
-    println!("    Methods analyzed: {}", methods_analyzed);
-    println!("    Total IL bytes: {}", total_il_bytes);
-    println!("    Instructions decoded: {}", instruction_count);
+    println!("    Methods analyzed: {methods_analyzed}");
+    println!("    Total IL bytes: {total_il_bytes}");
+    println!("    Instructions decoded: {instruction_count}");
     println!("  Instruction analysis capabilities:");
     println!("    • Automatic basic block construction");
     println!("    • Control flow analysis");

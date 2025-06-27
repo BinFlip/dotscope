@@ -485,7 +485,7 @@ mod tests {
 
         for (i, &rva) in test_rvas.iter().enumerate() {
             let field_token = crate::metadata::tables::FieldBuilder::new()
-                .name(format!("StaticData{}", i))
+                .name(format!("StaticData{i}"))
                 .flags(FieldAttributes::STATIC | FieldAttributes::PRIVATE)
                 .signature(&[0x06])
                 .build(&mut context)?;
@@ -542,7 +542,7 @@ mod tests {
         let field_token = Token::new(0x04000001);
 
         let builder = FieldRVABuilder::new().field(field_token).rva(0x2000);
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("FieldRVABuilder"));
     }
 }

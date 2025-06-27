@@ -837,49 +837,49 @@ mod tests {
         for i in 0..100 {
             match i % 13 {
                 0 => encoder
-                    .add_string(&format!("str_{}", i), &format!("String value {}", i))
+                    .add_string(&format!("str_{i}"), &format!("String value {i}"))
                     .unwrap(),
                 1 => encoder
-                    .add_boolean(&format!("bool_{}", i), i % 2 == 0)
+                    .add_boolean(&format!("bool_{i}"), i % 2 == 0)
                     .unwrap(),
                 2 => encoder
-                    .add_byte(&format!("byte_{}", i), (i % 256) as u8)
+                    .add_byte(&format!("byte_{i}"), (i % 256) as u8)
                     .unwrap(),
                 3 => encoder
                     .add_sbyte(
-                        &format!("sbyte_{}", i),
+                        &format!("sbyte_{i}"),
                         ((i % 256) as u8).wrapping_sub(128) as i8,
                     )
                     .unwrap(),
                 4 => encoder
                     .add_char(
-                        &format!("char_{}", i),
+                        &format!("char_{i}"),
                         char::from_u32((65 + (i % 26)) as u32).unwrap(),
                     )
                     .unwrap(),
                 5 => encoder
-                    .add_int16(&format!("int16_{}", i), ((i % 32768) as i16) - 16384)
+                    .add_int16(&format!("int16_{i}"), ((i % 32768) as i16) - 16384)
                     .unwrap(),
                 6 => encoder
-                    .add_uint16(&format!("uint16_{}", i), (i % 65536) as u16)
+                    .add_uint16(&format!("uint16_{i}"), (i % 65536) as u16)
                     .unwrap(),
                 7 => encoder
-                    .add_int32(&format!("int32_{}", i), i as i32 - 50)
+                    .add_int32(&format!("int32_{i}"), i as i32 - 50)
                     .unwrap(),
                 8 => encoder
-                    .add_uint32(&format!("uint32_{}", i), i as u32 * 1000)
+                    .add_uint32(&format!("uint32_{i}"), i as u32 * 1000)
                     .unwrap(),
                 9 => encoder
-                    .add_int64(&format!("int64_{}", i), (i as i64) * 1000000)
+                    .add_int64(&format!("int64_{i}"), (i as i64) * 1000000)
                     .unwrap(),
                 10 => encoder
-                    .add_uint64(&format!("uint64_{}", i), (i as u64) * 2000000)
+                    .add_uint64(&format!("uint64_{i}"), (i as u64) * 2000000)
                     .unwrap(),
                 11 => encoder
-                    .add_single(&format!("single_{}", i), i as f32 * 0.1)
+                    .add_single(&format!("single_{i}"), i as f32 * 0.1)
                     .unwrap(),
                 12 => encoder
-                    .add_byte_array(&format!("bytes_{}", i), &vec![i as u8; i % 20 + 1])
+                    .add_byte_array(&format!("bytes_{i}"), &vec![i as u8; i % 20 + 1])
                     .unwrap(),
                 _ => unreachable!(),
             }

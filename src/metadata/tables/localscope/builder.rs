@@ -522,7 +522,7 @@ mod tests {
         let builder = LocalScopeBuilder::new()
             .method(Token::new(0x06000001))
             .start_offset(0x10);
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("LocalScopeBuilder"));
     }
 }

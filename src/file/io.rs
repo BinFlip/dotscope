@@ -1896,7 +1896,7 @@ mod tests {
         for (value, expected) in test_cases {
             let mut buffer = Vec::new();
             write_compressed_uint(value, &mut buffer);
-            assert_eq!(buffer, expected, "Failed for value {}", value);
+            assert_eq!(buffer, expected, "Failed for value {value}");
         }
     }
 
@@ -1911,7 +1911,7 @@ mod tests {
         for (value, expected) in test_cases {
             let mut buffer = Vec::new();
             write_compressed_uint(value, &mut buffer);
-            assert_eq!(buffer, expected, "Failed for value {}", value);
+            assert_eq!(buffer, expected, "Failed for value {value}");
         }
     }
 
@@ -1925,7 +1925,7 @@ mod tests {
         for (value, expected) in test_cases {
             let mut buffer = Vec::new();
             write_compressed_uint(value, &mut buffer);
-            assert_eq!(buffer, expected, "Failed for value {}", value);
+            assert_eq!(buffer, expected, "Failed for value {value}");
         }
     }
 
@@ -1941,7 +1941,7 @@ mod tests {
         for (value, expected) in test_cases {
             let mut buffer = Vec::new();
             write_compressed_int(value, &mut buffer);
-            assert_eq!(buffer, expected, "Failed for value {}", value);
+            assert_eq!(buffer, expected, "Failed for value {value}");
         }
     }
 
@@ -1956,7 +1956,7 @@ mod tests {
         for (value, expected) in test_cases {
             let mut buffer = Vec::new();
             write_compressed_int(value, &mut buffer);
-            assert_eq!(buffer, expected, "Failed for value {}", value);
+            assert_eq!(buffer, expected, "Failed for value {value}");
         }
     }
 
@@ -1975,7 +1975,7 @@ mod tests {
         for (value, expected) in test_cases {
             let mut buffer = Vec::new();
             write_7bit_encoded_int(value, &mut buffer);
-            assert_eq!(buffer, expected, "Failed for value {}", value);
+            assert_eq!(buffer, expected, "Failed for value {value}");
         }
     }
 
@@ -1990,7 +1990,7 @@ mod tests {
         for (input, expected) in test_cases {
             let mut buffer = Vec::new();
             write_string_utf8(input, &mut buffer);
-            assert_eq!(buffer, expected, "Failed for input '{}'", input);
+            assert_eq!(buffer, expected, "Failed for input '{input}'");
         }
     }
 
@@ -2005,7 +2005,7 @@ mod tests {
         for (input, expected) in test_cases {
             let mut buffer = Vec::new();
             write_prefixed_string_utf8(input, &mut buffer);
-            assert_eq!(buffer, expected, "Failed for input '{}'", input);
+            assert_eq!(buffer, expected, "Failed for input '{input}'");
         }
     }
 
@@ -2025,7 +2025,7 @@ mod tests {
         for (input, expected) in test_cases {
             let mut buffer = Vec::new();
             write_prefixed_string_utf16(input, &mut buffer);
-            assert_eq!(buffer, expected, "Failed for input '{}'", input);
+            assert_eq!(buffer, expected, "Failed for input '{input}'");
         }
     }
 

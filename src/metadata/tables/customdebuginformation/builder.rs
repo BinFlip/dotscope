@@ -470,7 +470,7 @@ mod tests {
             .kind(42)
             .value(&debug_data);
 
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("CustomDebugInformationBuilder"));
         assert!(debug_str.contains("parent"));
         assert!(debug_str.contains("kind"));

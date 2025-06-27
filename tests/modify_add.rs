@@ -143,22 +143,16 @@ fn extend_crafted_2() -> Result<()> {
     );
 
     // Verify our added strings exist
-    let found_test_string = strings.get(string_index as usize).unwrap_or_else(|_| {
-        panic!(
-            "Should be able to retrieve string at index {}",
-            string_index
-        )
-    });
+    let found_test_string = strings
+        .get(string_index as usize)
+        .unwrap_or_else(|_| panic!("Should be able to retrieve string at index {string_index}"));
     assert_eq!(
         found_test_string, test_string,
         "Added string should match expected value"
     );
 
     let found_method_name = strings.get(method_name_index as usize).unwrap_or_else(|_| {
-        panic!(
-            "Should be able to retrieve method name string at index {}",
-            method_name_index
-        )
+        panic!("Should be able to retrieve method name string at index {method_name_index}")
     });
     assert_eq!(
         found_method_name, method_name_string,
@@ -166,10 +160,7 @@ fn extend_crafted_2() -> Result<()> {
     );
 
     let found_param_name = strings.get(param_name_index as usize).unwrap_or_else(|_| {
-        panic!(
-            "Should be able to retrieve param name string at index {}",
-            param_name_index
-        )
+        panic!("Should be able to retrieve param name string at index {param_name_index}")
     });
     assert_eq!(
         found_param_name, param_name_string,
@@ -197,7 +188,7 @@ fn extend_crafted_2() -> Result<()> {
 
     let found_test_blob = blobs
         .get(blob_index as usize)
-        .unwrap_or_else(|_| panic!("Should be able to retrieve blob at index {}", blob_index));
+        .unwrap_or_else(|_| panic!("Should be able to retrieve blob at index {blob_index}"));
     assert_eq!(
         found_test_blob, test_blob,
         "Added blob should match expected value"
@@ -207,8 +198,7 @@ fn extend_crafted_2() -> Result<()> {
         .get(method_signature_index as usize)
         .unwrap_or_else(|_| {
             panic!(
-                "Should be able to retrieve method signature blob at index {}",
-                method_signature_index
+                "Should be able to retrieve method signature blob at index {method_signature_index}"
             )
         });
     assert_eq!(
@@ -249,8 +239,7 @@ fn extend_crafted_2() -> Result<()> {
     }
     assert!(
         found_our_userstring,
-        "Should find our added userstring '{}' in the heap",
-        test_userstring
+        "Should find our added userstring '{test_userstring}' in the heap"
     );
 
     // Verify table additions

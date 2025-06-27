@@ -889,7 +889,7 @@ mod tests {
         let builder = ExportedTypeBuilder::new()
             .name("DebugType")
             .namespace("MyApp.Debug");
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("ExportedTypeBuilder"));
         assert!(debug_str.contains("DebugType"));
         assert!(debug_str.contains("MyApp.Debug"));

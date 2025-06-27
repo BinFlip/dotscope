@@ -474,7 +474,7 @@ impl<'a> HeapWriter<'a> {
                 Ok(write_start)
             }
             _ => Err(crate::Error::WriteLayoutFailed {
-                message: format!("Unknown heap type: {}", heap_name),
+                message: format!("Unknown heap type: {heap_name}"),
             }),
         }
     }

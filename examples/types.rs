@@ -270,7 +270,7 @@ fn print_inheritance_analysis(assembly: &CilObject) {
     let mut sorted_bases: Vec<_> = base_class_counts.iter().collect();
     sorted_bases.sort_by(|a, b| b.1.cmp(a.1));
     for (base_class, count) in sorted_bases.iter().take(5) {
-        println!("    {}: {} derived types", base_class, count);
+        println!("    {base_class}: {count} derived types");
     }
 }
 
@@ -315,7 +315,7 @@ fn print_interface_analysis(assembly: &CilObject) {
     if !interface_names.is_empty() {
         println!("  Sample interfaces:");
         for interface_name in interface_names.iter().take(8) {
-            println!("    {}", interface_name);
+            println!("    {interface_name}");
         }
         if interface_names.len() > 8 {
             println!("    ... (showing first 8 interfaces)");

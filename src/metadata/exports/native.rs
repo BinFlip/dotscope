@@ -382,16 +382,12 @@ impl NativeExports {
 
         // Check for conflicts
         if self.functions.contains_key(&ordinal) || self.forwarders.contains_key(&ordinal) {
-            return Err(Error::Error(format!(
-                "Ordinal {} is already in use",
-                ordinal
-            )));
+            return Err(Error::Error(format!("Ordinal {ordinal} is already in use")));
         }
 
         if self.name_to_ordinal.contains_key(name) {
             return Err(Error::Error(format!(
-                "Function name '{}' is already exported",
-                name
+                "Function name '{name}' is already exported"
             )));
         }
 
@@ -454,10 +450,7 @@ impl NativeExports {
 
         // Check for conflicts
         if self.functions.contains_key(&ordinal) || self.forwarders.contains_key(&ordinal) {
-            return Err(Error::Error(format!(
-                "Ordinal {} is already in use",
-                ordinal
-            )));
+            return Err(Error::Error(format!("Ordinal {ordinal} is already in use")));
         }
 
         // Create function export
@@ -527,16 +520,12 @@ impl NativeExports {
         }
 
         if self.functions.contains_key(&ordinal) || self.forwarders.contains_key(&ordinal) {
-            return Err(Error::Error(format!(
-                "Ordinal {} is already in use",
-                ordinal
-            )));
+            return Err(Error::Error(format!("Ordinal {ordinal} is already in use")));
         }
 
         if !name.is_empty() && self.name_to_ordinal.contains_key(name) {
             return Err(Error::Error(format!(
-                "Function name '{}' is already exported",
-                name
+                "Function name '{name}' is already exported"
             )));
         }
 

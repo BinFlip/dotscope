@@ -563,7 +563,7 @@ impl UnifiedImportContainer {
                 if let Some(ref name) = function.name {
                     functions.insert(name.to_string());
                 } else if let Some(ordinal) = function.ordinal {
-                    functions.insert(format!("#{}", ordinal));
+                    functions.insert(format!("#{ordinal}"));
                 }
             }
         }

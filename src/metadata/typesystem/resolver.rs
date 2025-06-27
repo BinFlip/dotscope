@@ -800,7 +800,7 @@ impl TypeResolver {
                 Ok(generic_inst)
             }
             TypeSignature::GenericParamType(index) => {
-                let param_name = format!("T{}", index);
+                let param_name = format!("T{index}");
 
                 let param_type = self.registry.get_or_create_type(
                     &mut self.token_init,
@@ -816,7 +816,7 @@ impl TypeResolver {
                 Ok(param_type)
             }
             TypeSignature::GenericParamMethod(index) => {
-                let param_name = format!("TM{}", index);
+                let param_name = format!("TM{index}");
 
                 let param_type = self.registry.get_or_create_type(
                     &mut self.token_init,

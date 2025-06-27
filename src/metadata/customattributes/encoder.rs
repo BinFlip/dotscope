@@ -621,7 +621,7 @@ mod tests {
         };
 
         let encoded = encode_custom_attribute_value(&custom_attr).unwrap();
-        println!("Debug encoded bytes: {:02X?}", encoded);
+        println!("Debug encoded bytes: {encoded:02X?}");
 
         // Expected format:
         // 0x01, 0x00 - Prolog
@@ -655,7 +655,7 @@ mod tests {
         };
 
         let encoded = encode_custom_attribute_value(&custom_attr).unwrap();
-        println!("Debug Type args encoded bytes: {:02X?}", encoded);
+        println!("Debug Type args encoded bytes: {encoded:02X?}");
 
         // Expected format:
         // 0x01, 0x00 - Prolog
@@ -670,13 +670,13 @@ mod tests {
         // String encoding: first read compressed length
         if pos < encoded.len() {
             let str_len = encoded[pos];
-            println!("  String length: {:02X} ({})", str_len, str_len);
+            println!("  String length: {str_len:02X} ({str_len})");
             pos += 1;
 
             if pos + str_len as usize <= encoded.len() {
                 let string_bytes = &encoded[pos..pos + str_len as usize];
                 let string_str = String::from_utf8_lossy(string_bytes);
-                println!("  String content: {:02X?} ('{}')", string_bytes, string_str);
+                println!("  String content: {string_bytes:02X?} ('{string_str}')");
                 pos += str_len as usize;
             }
         }

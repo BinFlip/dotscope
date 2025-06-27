@@ -317,7 +317,7 @@ impl TableModifications {
             super::Operation::Insert(rid, _) => {
                 if *rid == 0 {
                     return Err(crate::Error::ModificationInvalidOperation {
-                        details: format!("RID cannot be zero: {}", rid),
+                        details: format!("RID cannot be zero: {rid}"),
                     });
                 }
 
@@ -326,7 +326,7 @@ impl TableModifications {
                     // We need the table ID, but it's not available in this context
                     // For now, we'll use a generic error
                     return Err(crate::Error::ModificationInvalidOperation {
-                        details: format!("RID {} already exists", rid),
+                        details: format!("RID {rid} already exists"),
                     });
                 }
 
@@ -335,14 +335,14 @@ impl TableModifications {
             super::Operation::Update(rid, _) => {
                 if *rid == 0 {
                     return Err(crate::Error::ModificationInvalidOperation {
-                        details: format!("RID cannot be zero: {}", rid),
+                        details: format!("RID cannot be zero: {rid}"),
                     });
                 }
 
                 // Check if the row exists to update
                 if !self.has_row(*rid)? {
                     return Err(crate::Error::ModificationInvalidOperation {
-                        details: format!("RID {} not found for update", rid),
+                        details: format!("RID {rid} not found for update"),
                     });
                 }
 
@@ -351,14 +351,14 @@ impl TableModifications {
             super::Operation::Delete(rid) => {
                 if *rid == 0 {
                     return Err(crate::Error::ModificationInvalidOperation {
-                        details: format!("RID cannot be zero: {}", rid),
+                        details: format!("RID cannot be zero: {rid}"),
                     });
                 }
 
                 // Check if the row exists to delete
                 if !self.has_row(*rid)? {
                     return Err(crate::Error::ModificationInvalidOperation {
-                        details: format!("RID {} not found for deletion", rid),
+                        details: format!("RID {rid} not found for deletion"),
                     });
                 }
 

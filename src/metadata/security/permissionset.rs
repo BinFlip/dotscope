@@ -1747,7 +1747,7 @@ mod tests {
             data: vec![],
         };
 
-        let display_string = format!("{}", permission_set);
+        let display_string = format!("{permission_set}");
         assert!(display_string.contains("Permission Set (BinaryLegacy):"));
         assert!(display_string.contains("TestPermission1, Assembly: TestAssembly"));
         assert!(display_string.contains("TestPermission2, Assembly: TestAssembly2"));
@@ -1763,7 +1763,7 @@ mod tests {
             data: xml_data.to_vec(),
         };
 
-        let display_string = format!("{}", permission_set);
+        let display_string = format!("{permission_set}");
         assert_eq!(display_string, "<PermissionSet>test</PermissionSet>");
     }
 

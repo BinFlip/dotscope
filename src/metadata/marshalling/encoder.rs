@@ -626,7 +626,7 @@ mod tests {
             let parsed = parse_marshalling_descriptor(&encoded).unwrap();
 
             // Verify - Now we can do full verification
-            assert_eq!(parsed.primary_type, original_type, "Test case {} failed", i);
+            assert_eq!(parsed.primary_type, original_type, "Test case {i} failed");
             assert_eq!(parsed.additional_types.len(), 0);
         }
     }

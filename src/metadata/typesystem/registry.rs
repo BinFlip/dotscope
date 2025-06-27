@@ -900,7 +900,7 @@ impl TypeRegistry {
         let fullname = if namespace.is_empty() {
             name.to_string()
         } else {
-            format!("{}.{}", namespace, name)
+            format!("{namespace}.{name}")
         };
 
         if let Some(tokens) = self.types_by_source.get(&source) {
@@ -1242,11 +1242,7 @@ mod tests {
 
         for primitive in all_primitives.iter() {
             let prim_type = registry.get_primitive(*primitive);
-            assert!(
-                prim_type.is_ok(),
-                "Failed to get primitive: {:?}",
-                primitive
-            );
+            assert!(prim_type.is_ok(), "Failed to get primitive: {primitive:?}");
         }
     }
 

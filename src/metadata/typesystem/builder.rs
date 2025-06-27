@@ -839,7 +839,7 @@ impl TypeBuilder {
             // Extract or create a name with arity
             let mut name = base_type.name.clone();
             if !name.contains('`') {
-                name = format!("{}`{}", name, arg_count);
+                name = format!("{name}`{arg_count}");
             }
 
             let namespace = base_type.namespace.clone();

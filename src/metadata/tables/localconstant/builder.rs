@@ -352,7 +352,7 @@ mod tests {
             .name("testConstant")
             .signature(&signature_bytes);
 
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("LocalConstantBuilder"));
         assert!(debug_str.contains("name"));
         assert!(debug_str.contains("signature"));

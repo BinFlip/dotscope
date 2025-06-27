@@ -558,24 +558,21 @@ impl ResourceType {
                 // ResourceTypeCode.Decimal - 16 bytes (128-bit decimal)
                 // For now, return not supported as we don't have Decimal type
                 Err(TypeError(format!(
-                    "TypeByte - {:X} (Decimal) is not yet implemented",
-                    byte
+                    "TypeByte - {byte:X} (Decimal) is not yet implemented"
                 )))
             }
             0xF => {
                 // ResourceTypeCode.DateTime - 8 bytes (64-bit binary format)
                 // For now, return not supported as we don't have DateTime type
                 Err(TypeError(format!(
-                    "TypeByte - {:X} (DateTime) is not yet implemented",
-                    byte
+                    "TypeByte - {byte:X} (DateTime) is not yet implemented"
                 )))
             }
             0x10 => {
                 // ResourceTypeCode.TimeSpan - 8 bytes (64-bit ticks)
                 // For now, return not supported as we don't have TimeSpan type
                 Err(TypeError(format!(
-                    "TypeByte - {:X} (TimeSpan) is not yet implemented",
-                    byte
+                    "TypeByte - {byte:X} (TimeSpan) is not yet implemented"
                 )))
             }
             0x20 => {
@@ -617,13 +614,11 @@ impl ResourceType {
                 // According to .NET ResourceReader, if we have user types but no type table,
                 // this is a BadImageFormat error
                 Err(TypeError(format!(
-                    "TypeByte - {:X} is a user type (>=0x40) but requires type table resolution which is not yet implemented",
-                    byte
+                    "TypeByte - {byte:X} is a user type (>=0x40) but requires type table resolution which is not yet implemented"
                 )))
             }
             _ => Err(TypeError(format!(
-                "TypeByte - {:X} is currently not supported",
-                byte
+                "TypeByte - {byte:X} is currently not supported"
             ))),
         }
     }
@@ -712,8 +707,7 @@ impl ResourceType {
             "System.Double" => ResourceType::from_type_byte(0xD, parser),
             "System.Byte[]" => ResourceType::from_type_byte(0x20, parser),
             _ => Err(TypeError(format!(
-                "TypeName - {} is currently not supported",
-                type_name
+                "TypeName - {type_name} is currently not supported"
             ))),
         }
     }
@@ -1064,7 +1058,7 @@ mod tests {
     #[test]
     fn test_resource_type_debug() {
         let resource = ResourceType::String("test".to_string());
-        let debug_str = format!("{:?}", resource);
+        let debug_str = format!("{resource:?}");
         assert!(debug_str.contains("String"));
         assert!(debug_str.contains("test"));
     }
@@ -1172,8 +1166,7 @@ mod tests {
             if resource_type.as_str().is_some() {
                 assert!(
                     resource_type.index().is_some(),
-                    "Type {:?} has as_str() but no index()",
-                    resource_type
+                    "Type {resource_type:?} has as_str() but no index()"
                 );
             }
 
@@ -1181,8 +1174,7 @@ mod tests {
             if resource_type.index().is_some() {
                 assert!(
                     resource_type.as_str().is_some(),
-                    "Type {:?} has index() but no as_str()",
-                    resource_type
+                    "Type {resource_type:?} has index() but no as_str()"
                 );
             }
         }
@@ -1268,18 +1260,15 @@ mod tests {
             // All implemented types should have all three methods
             assert!(
                 resource_type.as_str().is_some(),
-                "Type {:?} should have as_str()",
-                resource_type
+                "Type {resource_type:?} should have as_str()"
             );
             assert!(
                 resource_type.index().is_some(),
-                "Type {:?} should have index()",
-                resource_type
+                "Type {resource_type:?} should have index()"
             );
             assert!(
                 resource_type.data_size().is_some(),
-                "Type {:?} should have data_size()",
-                resource_type
+                "Type {resource_type:?} should have data_size()"
             );
         }
     }

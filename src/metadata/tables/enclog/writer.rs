@@ -200,20 +200,17 @@ mod tests {
 
             enclog_entry
                 .row_write(&mut buffer, &mut offset, 1, &table_info)
-                .unwrap_or_else(|_| panic!("Serialization should succeed for {}", operation_name));
+                .unwrap_or_else(|_| panic!("Serialization should succeed for {operation_name}"));
 
             // Verify round-trip
             let mut read_offset = 0;
             let deserialized_row = EncLogRaw::row_read(&buffer, &mut read_offset, 1, &table_info)
-                .unwrap_or_else(|_| {
-                    panic!("Deserialization should succeed for {}", operation_name)
-                });
+                .unwrap_or_else(|_| panic!("Deserialization should succeed for {operation_name}"));
 
             assert_eq!(enclog_entry.token_value, deserialized_row.token_value);
             assert_eq!(
                 enclog_entry.func_code, deserialized_row.func_code,
-                "Function code mismatch for {}",
-                operation_name
+                "Function code mismatch for {operation_name}"
             );
         }
     }
@@ -251,17 +248,16 @@ mod tests {
 
             enclog_entry
                 .row_write(&mut buffer, &mut offset, 1, &table_info)
-                .unwrap_or_else(|_| panic!("Serialization should succeed for {}", token_type));
+                .unwrap_or_else(|_| panic!("Serialization should succeed for {token_type}"));
 
             // Verify round-trip
             let mut read_offset = 0;
             let deserialized_row = EncLogRaw::row_read(&buffer, &mut read_offset, 1, &table_info)
-                .unwrap_or_else(|_| panic!("Deserialization should succeed for {}", token_type));
+                .unwrap_or_else(|_| panic!("Deserialization should succeed for {token_type}"));
 
             assert_eq!(
                 enclog_entry.token_value, deserialized_row.token_value,
-                "Token value mismatch for {}",
-                token_type
+                "Token value mismatch for {token_type}"
             );
             assert_eq!(enclog_entry.func_code, deserialized_row.func_code);
         }

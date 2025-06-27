@@ -678,7 +678,7 @@ mod tests {
         let builder = NestedClassBuilder::new()
             .nested_class(nested_token)
             .enclosing_class(enclosing_token);
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("NestedClassBuilder"));
     }
 }

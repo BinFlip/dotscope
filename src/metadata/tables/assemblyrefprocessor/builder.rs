@@ -371,7 +371,7 @@ mod tests {
             .processor(0x014C)
             .assembly_ref(2);
 
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("AssemblyRefProcessorBuilder"));
         assert!(debug_str.contains("processor"));
         assert!(debug_str.contains("assembly_ref"));

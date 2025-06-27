@@ -430,14 +430,12 @@ impl NativeImports {
                 .any(|f| f.name.as_deref() == Some(function_name))
             {
                 return Err(Error::Error(format!(
-                    "Function '{}' already imported from '{}'",
-                    function_name, dll_name
+                    "Function '{function_name}' already imported from '{dll_name}'"
                 )));
             }
         } else {
             return Err(Error::Error(format!(
-                "DLL '{}' not found in import table",
-                dll_name
+                "DLL '{dll_name}' not found in import table"
             )));
         }
 
@@ -506,14 +504,12 @@ impl NativeImports {
                 .any(|f| f.ordinal == Some(ordinal))
             {
                 return Err(Error::Error(format!(
-                    "Ordinal {} already imported from '{}'",
-                    ordinal, dll_name
+                    "Ordinal {ordinal} already imported from '{dll_name}'"
                 )));
             }
         } else {
             return Err(Error::Error(format!(
-                "DLL '{}' not found in import table",
-                dll_name
+                "DLL '{dll_name}' not found in import table"
             )));
         }
 
@@ -531,7 +527,7 @@ impl NativeImports {
         let iat_entry = ImportAddressEntry {
             rva: iat_rva,
             dll_name: dll_name.to_owned(),
-            function_identifier: format!("#{}", ordinal),
+            function_identifier: format!("#{ordinal}"),
             original_value: function.ilt_value,
         };
 
@@ -1189,13 +1185,11 @@ mod tests {
                 // Both should be non-zero RVAs pointing to ILT and IAT respectively
                 assert_ne!(
                     original_first_thunk, 0,
-                    "OriginalFirstThunk should be non-zero for descriptor {}",
-                    i
+                    "OriginalFirstThunk should be non-zero for descriptor {i}"
                 );
                 assert_ne!(
                     first_thunk, 0,
-                    "FirstThunk should be non-zero for descriptor {}",
-                    i
+                    "FirstThunk should be non-zero for descriptor {i}"
                 );
             }
         }

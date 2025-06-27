@@ -16,7 +16,7 @@ fn main() -> Result<()> {
         .map(|s| s.as_str())
         .unwrap_or("tests/samples/WindowsBase.dll");
 
-    println!("🔍 Raw Assembly Analysis: {}", assembly_path);
+    println!("🔍 Raw Assembly Analysis: {assembly_path}");
     println!("{}", "=".repeat(60));
 
     // Load assembly using CilAssemblyView for raw metadata access
@@ -138,7 +138,7 @@ fn display_tables(view: &CilAssemblyView) -> Result<()> {
 
         // Count and display which tables are present
         let table_count = tables.valid.count_ones();
-        println!("• Total Tables Present: {}", table_count);
+        println!("• Total Tables Present: {table_count}");
 
         if tables.valid & (1u64 << TableId::Module as u8) != 0 {
             println!("  ✓ Module table present");
@@ -170,7 +170,7 @@ fn demonstrate_string_access(view: &CilAssemblyView) -> Result<()> {
         println!("String heap available - demonstrating lookups:");
 
         for (offset, entry) in strings.iter().take(10) {
-            println!("  • Offset: {} - String: '{}'", offset, entry);
+            println!("  • Offset: {offset} - String: '{entry}'");
         }
     } else {
         println!("❌ No string heap available");

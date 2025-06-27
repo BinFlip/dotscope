@@ -1003,7 +1003,7 @@ mod tests {
         // Try to parse the resources and see what happens
         match resource.read_resources(&buffer) {
             Ok(_) => println!("Successfully parsed resources with our current parser"),
-            Err(e) => println!("Failed to parse with current parser: {:?}", e),
+            Err(e) => println!("Failed to parse with current parser: {e:?}"),
         }
     }
 

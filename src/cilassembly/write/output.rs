@@ -132,7 +132,7 @@ impl Output {
         })?;
 
         let temp_file = NamedTempFile::new_in(temp_dir).map_err(|e| Error::WriteMmapFailed {
-            message: format!("Failed to create temporary file: {}", e),
+            message: format!("Failed to create temporary file: {e}"),
         })?;
 
         // Set the file size
@@ -140,7 +140,7 @@ impl Output {
             .as_file()
             .set_len(size)
             .map_err(|e| Error::WriteMmapFailed {
-                message: format!("Failed to set file size: {}", e),
+                message: format!("Failed to set file size: {e}"),
             })?;
 
         // Create memory mapping
@@ -148,7 +148,7 @@ impl Output {
             MmapOptions::new()
                 .map_mut(temp_file.as_file())
                 .map_err(|e| Error::WriteMmapFailed {
-                    message: format!("Failed to create memory mapping: {}", e),
+                    message: format!("Failed to create memory mapping: {e}"),
                 })?
         };
 
@@ -187,7 +187,7 @@ impl Output {
 
         if start > end {
             return Err(Error::WriteMmapFailed {
-                message: format!("Range start {} is greater than end {}", start, end),
+                message: format!("Range start {start} is greater than end {end}"),
             });
         }
 
@@ -314,7 +314,7 @@ impl Output {
     /// Returns [`crate::Error::WriteMmapFailed`] if the flush operation fails.
     pub fn flush(&mut self) -> Result<()> {
         self.mmap.flush().map_err(|e| Error::WriteMmapFailed {
-            message: format!("Failed to flush memory mapping: {}", e),
+            message: format!("Failed to flush memory mapping: {e}"),
         })
     }
 
@@ -347,7 +347,7 @@ impl Output {
         self.mmap
             .flush()
             .map_err(|e| Error::WriteFinalizationFailed {
-                message: format!("Failed to flush memory mapping: {}", e),
+                message: format!("Failed to flush memory mapping: {e}"),
             })?;
 
         // Sync to ensure data is written to disk
@@ -355,7 +355,7 @@ impl Output {
             .as_file()
             .sync_all()
             .map_err(|e| Error::WriteFinalizationFailed {
-                message: format!("Failed to sync temporary file: {}", e),
+                message: format!("Failed to sync temporary file: {e}"),
             })?;
 
         // Extract target path before taking ownership
@@ -363,14 +363,14 @@ impl Output {
 
         // Create a dummy temp file and mmap to replace the originals
         let dummy_temp = NamedTempFile::new().map_err(|e| Error::WriteFinalizationFailed {
-            message: format!("Failed to create dummy temp file: {}", e),
+            message: format!("Failed to create dummy temp file: {e}"),
         })?;
         let dummy_mmap = unsafe {
             memmap2::MmapOptions::new()
                 .len(1)
                 .map_mut(dummy_temp.as_file())
                 .map_err(|e| Error::WriteFinalizationFailed {
-                    message: format!("Failed to create dummy memory mapping: {}", e),
+                    message: format!("Failed to create dummy memory mapping: {e}"),
                 })?
         };
 

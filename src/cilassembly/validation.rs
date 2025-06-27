@@ -252,7 +252,7 @@ impl BasicSchemaValidator {
         if !valid {
             return Err(Error::ValidationTableSchemaMismatch {
                 table: table_id,
-                expected: format!("{:?}", table_id),
+                expected: format!("{table_id:?}"),
                 actual: format!("{:?}", std::mem::discriminant(row_data)),
             });
         }
@@ -315,8 +315,7 @@ impl RidConsistencyValidator {
                 if has_insert && has_delete {
                     return Err(Error::ModificationConflictDetected {
                         details: format!(
-                            "Insert and delete operations on RID {} in table {:?}",
-                            rid, table_id
+                            "Insert and delete operations on RID {rid} in table {table_id:?}"
                         ),
                     });
                 }
@@ -905,8 +904,8 @@ mod tests {
         };
 
         // Ensure Debug formatting works (shouldn't panic)
-        let _ = format!("{:?}", conflict1);
-        let _ = format!("{:?}", conflict2);
+        let _ = format!("{conflict1:?}");
+        let _ = format!("{conflict2:?}");
     }
 
     #[test]
@@ -919,9 +918,9 @@ mod tests {
         let reject = OperationResolution::Reject("Test reason".to_string());
 
         // Ensure Debug formatting works for all variants
-        let _ = format!("{:?}", use_op);
-        let _ = format!("{:?}", use_latest);
-        let _ = format!("{:?}", merge);
-        let _ = format!("{:?}", reject);
+        let _ = format!("{use_op:?}");
+        let _ = format!("{use_latest:?}");
+        let _ = format!("{merge:?}");
+        let _ = format!("{reject:?}");
     }
 }

@@ -1169,8 +1169,7 @@ mod tests {
 
             assert_eq!(
                 signature.return_type, reparsed.return_type,
-                "Failed roundtrip for primitive return type: {:?}",
-                primitive
+                "Failed roundtrip for primitive return type: {primitive:?}"
             );
 
             // Test as field type (skip void)
@@ -1185,8 +1184,7 @@ mod tests {
 
                 assert_eq!(
                     field_sig.base, reparsed.base,
-                    "Failed roundtrip for primitive field type: {:?}",
-                    primitive
+                    "Failed roundtrip for primitive field type: {primitive:?}"
                 );
             }
         }

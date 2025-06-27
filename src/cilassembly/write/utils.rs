@@ -143,7 +143,7 @@ pub fn find_stream_layout<'a>(
         .iter()
         .find(|stream| stream.name == stream_name)
         .ok_or_else(|| Error::WriteLayoutFailed {
-            message: format!("Stream '{}' not found in metadata section", stream_name),
+            message: format!("Stream '{stream_name}' not found in metadata section"),
         })
 }
 

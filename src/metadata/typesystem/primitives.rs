@@ -1281,28 +1281,28 @@ impl fmt::Display for CilPrimitive {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.data {
             CilPrimitiveData::None => write!(f, "{}", self.clr_full_name()),
-            CilPrimitiveData::Boolean(value) => write!(f, "{}", value),
-            CilPrimitiveData::Char(value) => write!(f, "'{}'", value),
-            CilPrimitiveData::I1(value) => write!(f, "{}", value),
-            CilPrimitiveData::U1(value) => write!(f, "{}", value),
-            CilPrimitiveData::I2(value) => write!(f, "{}", value),
-            CilPrimitiveData::U2(value) => write!(f, "{}", value),
-            CilPrimitiveData::I4(value) => write!(f, "{}", value),
-            CilPrimitiveData::U4(value) => write!(f, "{}", value),
-            CilPrimitiveData::I8(value) => write!(f, "{}", value),
-            CilPrimitiveData::U8(value) => write!(f, "{}", value),
-            CilPrimitiveData::R4(value) => write!(f, "{}", value),
-            CilPrimitiveData::R8(value) => write!(f, "{}", value),
-            CilPrimitiveData::U(value) => write!(f, "{}", value),
-            CilPrimitiveData::I(value) => write!(f, "{}", value),
-            CilPrimitiveData::String(value) => write!(f, "\"{}\"", value),
+            CilPrimitiveData::Boolean(value) => write!(f, "{value}"),
+            CilPrimitiveData::Char(value) => write!(f, "'{value}'"),
+            CilPrimitiveData::I1(value) => write!(f, "{value}"),
+            CilPrimitiveData::U1(value) => write!(f, "{value}"),
+            CilPrimitiveData::I2(value) => write!(f, "{value}"),
+            CilPrimitiveData::U2(value) => write!(f, "{value}"),
+            CilPrimitiveData::I4(value) => write!(f, "{value}"),
+            CilPrimitiveData::U4(value) => write!(f, "{value}"),
+            CilPrimitiveData::I8(value) => write!(f, "{value}"),
+            CilPrimitiveData::U8(value) => write!(f, "{value}"),
+            CilPrimitiveData::R4(value) => write!(f, "{value}"),
+            CilPrimitiveData::R8(value) => write!(f, "{value}"),
+            CilPrimitiveData::U(value) => write!(f, "{value}"),
+            CilPrimitiveData::I(value) => write!(f, "{value}"),
+            CilPrimitiveData::String(value) => write!(f, "\"{value}\""),
             CilPrimitiveData::Bytes(value) => {
                 write!(f, "Bytes[")?;
                 for (i, byte) in value.iter().enumerate().take(8) {
                     if i > 0 {
                         write!(f, " ")?;
                     }
-                    write!(f, "{:02X}", byte)?;
+                    write!(f, "{byte:02X}")?;
                 }
                 if value.len() > 8 {
                     write!(f, "...")?;

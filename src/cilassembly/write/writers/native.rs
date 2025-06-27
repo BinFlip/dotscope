@@ -374,7 +374,7 @@ mod tests {
         // Should succeed with native imports present
         let result = writer.write_native_tables();
         if let Err(e) = &result {
-            panic!("Write native tables failed: {:?}", e);
+            panic!("Write native tables failed: {e:?}");
         }
         assert!(result.is_ok());
     }
@@ -409,7 +409,7 @@ mod tests {
         // Should succeed with native exports present
         let result = writer.write_native_tables();
         if let Err(e) = &result {
-            panic!("Write native tables failed: {:?}", e);
+            panic!("Write native tables failed: {e:?}");
         }
         assert!(result.is_ok());
     }
@@ -449,7 +449,7 @@ mod tests {
         // Should succeed with both native imports and exports present
         let result = writer.write_native_tables();
         if let Err(e) = &result {
-            panic!("Write native tables failed: {:?}", e);
+            panic!("Write native tables failed: {e:?}");
         }
         assert!(result.is_ok());
     }

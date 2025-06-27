@@ -265,7 +265,7 @@ mod tests {
     fn test_propertyptr_builder_debug() {
         let builder = PropertyPtrBuilder::new().property(11);
 
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("PropertyPtrBuilder"));
         assert!(debug_str.contains("property"));
     }

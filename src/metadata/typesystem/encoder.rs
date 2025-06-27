@@ -827,7 +827,7 @@ mod tests {
             if let crate::Error::RecursionLimit(depth) = err {
                 assert_eq!(depth, MAX_RECURSION_DEPTH);
             } else {
-                panic!("Expected RecursionLimit error, got: {:?}", err);
+                panic!("Expected RecursionLimit error, got: {err:?}");
             }
         }
     }

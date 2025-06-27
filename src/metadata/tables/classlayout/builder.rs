@@ -295,16 +295,13 @@ impl ClassLayoutBuilder {
 
         if packing_size != 0 && (packing_size & (packing_size - 1)) != 0 {
             return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Packing size must be 0 or a power of 2, got {}",
-                    packing_size
-                ),
+                details: format!("Packing size must be 0 or a power of 2, got {packing_size}"),
             });
         }
 
         if packing_size > 128 {
             return Err(Error::ModificationInvalidOperation {
-                details: format!("Packing size cannot exceed 128 bytes, got {}", packing_size),
+                details: format!("Packing size cannot exceed 128 bytes, got {packing_size}"),
             });
         }
 
@@ -312,8 +309,7 @@ impl ClassLayoutBuilder {
         if class_size > MAX_CLASS_SIZE {
             return Err(Error::ModificationInvalidOperation {
                 details: format!(
-                    "Class size cannot exceed 256MB (0x{:X}), got {}",
-                    MAX_CLASS_SIZE, class_size
+                    "Class size cannot exceed 256MB (0x{MAX_CLASS_SIZE:X}), got {class_size}"
                 ),
             });
         }

@@ -353,7 +353,7 @@ mod tests {
         let imports_data = vec![0x01, 0x02, 0x03];
         let builder = ImportScopeBuilder::new().parent(1).imports(&imports_data);
 
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("ImportScopeBuilder"));
         assert!(debug_str.contains("parent"));
         assert!(debug_str.contains("imports"));

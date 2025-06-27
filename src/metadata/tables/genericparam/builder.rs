@@ -273,10 +273,7 @@ impl GenericParamBuilder {
 
         if number > 65535 {
             return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "GenericParam number {} is too large (maximum 65535)",
-                    number
-                ),
+                details: format!("GenericParam number {number} is too large (maximum 65535)"),
             });
         }
 
@@ -285,8 +282,7 @@ impl GenericParamBuilder {
         if flags & !valid_flags_mask != 0 {
             return Err(Error::ModificationInvalidOperation {
                 details: format!(
-                    "Invalid GenericParam flags: 0x{:04X}. Unsupported flags detected",
-                    flags
+                    "Invalid GenericParam flags: 0x{flags:04X}. Unsupported flags detected"
                 ),
             });
         }

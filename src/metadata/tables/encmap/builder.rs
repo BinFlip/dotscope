@@ -318,7 +318,7 @@ mod tests {
     fn test_encmap_builder_debug() {
         let builder = EncMapBuilder::new().original_token(0x02000005);
 
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("EncMapBuilder"));
         assert!(debug_str.contains("original_token"));
     }

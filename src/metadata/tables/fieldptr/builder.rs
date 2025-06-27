@@ -261,7 +261,7 @@ mod tests {
     fn test_fieldptr_builder_debug() {
         let builder = FieldPtrBuilder::new().field(8);
 
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("FieldPtrBuilder"));
         assert!(debug_str.contains("field"));
     }

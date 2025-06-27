@@ -419,23 +419,21 @@ mod tests {
 
             custom_debug_info
                 .row_write(&mut buffer, &mut offset, 1, &table_info)
-                .unwrap_or_else(|_| panic!("Serialization should succeed for {}", name));
+                .unwrap_or_else(|_| panic!("Serialization should succeed for {name}"));
 
             // Verify round-trip
             let mut read_offset = 0;
             let deserialized_row =
                 CustomDebugInformationRaw::row_read(&buffer, &mut read_offset, 1, &table_info)
-                    .unwrap_or_else(|_| panic!("Deserialization should succeed for {}", name));
+                    .unwrap_or_else(|_| panic!("Deserialization should succeed for {name}"));
 
             assert_eq!(
                 custom_debug_info.kind, deserialized_row.kind,
-                "Kind mismatch for {}",
-                name
+                "Kind mismatch for {name}"
             );
             assert_eq!(
                 custom_debug_info.value, deserialized_row.value,
-                "Value mismatch for {}",
-                name
+                "Value mismatch for {name}"
             );
         }
     }

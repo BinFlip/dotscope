@@ -339,7 +339,7 @@ mod tests {
             .move_next_method(123)
             .kickoff_method(45);
 
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("StateMachineMethodBuilder"));
         assert!(debug_str.contains("move_next_method"));
         assert!(debug_str.contains("kickoff_method"));

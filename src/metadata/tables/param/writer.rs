@@ -226,17 +226,16 @@ mod tests {
 
             param_row
                 .row_write(&mut buffer, &mut offset, 1, &table_info)
-                .unwrap_or_else(|_| panic!("Serialization should succeed for {}", description));
+                .unwrap_or_else(|_| panic!("Serialization should succeed for {description}"));
 
             // Verify round-trip
             let mut read_offset = 0;
             let deserialized_row = ParamRaw::row_read(&buffer, &mut read_offset, 1, &table_info)
-                .unwrap_or_else(|_| panic!("Deserialization should succeed for {}", description));
+                .unwrap_or_else(|_| panic!("Deserialization should succeed for {description}"));
 
             assert_eq!(
                 deserialized_row.flags, param_row.flags,
-                "Flags should match for {}",
-                description
+                "Flags should match for {description}"
             );
         }
     }
@@ -271,17 +270,16 @@ mod tests {
 
             param_row
                 .row_write(&mut buffer, &mut offset, 1, &table_info)
-                .unwrap_or_else(|_| panic!("Serialization should succeed for {}", description));
+                .unwrap_or_else(|_| panic!("Serialization should succeed for {description}"));
 
             // Verify round-trip
             let mut read_offset = 0;
             let deserialized_row = ParamRaw::row_read(&buffer, &mut read_offset, 1, &table_info)
-                .unwrap_or_else(|_| panic!("Deserialization should succeed for {}", description));
+                .unwrap_or_else(|_| panic!("Deserialization should succeed for {description}"));
 
             assert_eq!(
                 deserialized_row.sequence, param_row.sequence,
-                "Sequence should match for {}",
-                description
+                "Sequence should match for {description}"
             );
         }
     }

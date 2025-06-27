@@ -297,7 +297,7 @@ mod tests {
     fn test_assemblyprocessor_builder_debug() {
         let builder = AssemblyProcessorBuilder::new().processor(0x8664);
 
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("AssemblyProcessorBuilder"));
         assert!(debug_str.contains("processor"));
     }

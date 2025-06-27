@@ -86,8 +86,9 @@ fn add_native_imports_to_crafted_2() -> Result<()> {
         "Native import builder should succeed"
     );
 
-    // Step 3: Write to project directory for analysis with BinaryNinja
-    let temp_path = std::path::Path::new("crafted_2_with_imports.exe");
+    // Step 3: Write to a temporary file
+    let temp_file = tempfile::NamedTempFile::new()?;
+    let temp_path = temp_file.path();
 
     // Get the assembly back from context and write to file
     let assembly = context.finish();
@@ -761,10 +762,7 @@ fn debug_import_table_format() -> Result<()> {
     assert!(import_size > 0, "Import table size should be positive");
 
     // Debug output for import directory
-    println!(
-        "Import directory: RVA=0x{:x}, Size={}",
-        import_rva, import_size
-    );
+    println!("Import directory: RVA=0x{import_rva:x}, Size={import_size}");
 
     // Try to read the raw import table data
     let import_offset = modified_view.file().rva_to_offset(import_rva as usize)?;
@@ -776,7 +774,7 @@ fn debug_import_table_format() -> Result<()> {
     for (i, chunk) in import_data.chunks(16).take(4).enumerate() {
         print!("{:04x}: ", i * 16);
         for byte in chunk {
-            print!("{:02x} ", byte);
+            print!("{byte:02x} ");
         }
         println!();
     }
@@ -794,7 +792,7 @@ fn debug_import_table_format() -> Result<()> {
             }
         }
         Err(e) => {
-            println!("Goblin failed to parse PE: {:?}", e);
+            println!("Goblin failed to parse PE: {e:?}");
         }
     }
 

@@ -331,9 +331,9 @@ mod tests {
         {
             match (parsed_arg, orig_arg) {
                 (CustomAttributeArgument::Char(p), CustomAttributeArgument::Char(o)) => {
-                    assert_eq!(p, o, "Character mismatch at index {}", i);
+                    assert_eq!(p, o, "Character mismatch at index {i}");
                 }
-                _ => panic!("Character type mismatch at index {}", i),
+                _ => panic!("Character type mismatch at index {i}"),
             }
         }
     }
@@ -370,9 +370,9 @@ mod tests {
         {
             match (parsed_arg, orig_arg) {
                 (CustomAttributeArgument::String(p), CustomAttributeArgument::String(o)) => {
-                    assert_eq!(p, o, "String mismatch at index {}", i);
+                    assert_eq!(p, o, "String mismatch at index {i}");
                 }
-                _ => panic!("String type mismatch at index {}", i),
+                _ => panic!("String type mismatch at index {i}"),
             }
         }
     }
@@ -406,14 +406,13 @@ mod tests {
         {
             match (parsed_arg, orig_arg) {
                 (CustomAttributeArgument::Type(p), CustomAttributeArgument::Type(o)) => {
-                    assert_eq!(p, o, "Type mismatch at index {}", i);
+                    assert_eq!(p, o, "Type mismatch at index {i}");
                 }
                 (CustomAttributeArgument::String(p), CustomAttributeArgument::Type(o)) => {
-                    assert_eq!(p, o, "Type converted to string at index {}", i);
+                    assert_eq!(p, o, "Type converted to string at index {i}");
                 }
                 _ => panic!(
-                    "Type argument type mismatch at index {}: {:?} vs {:?}",
-                    i, parsed_arg, orig_arg
+                    "Type argument type mismatch at index {i}: {parsed_arg:?} vs {orig_arg:?}"
                 ),
             }
         }
@@ -497,15 +496,12 @@ mod tests {
                     // Compare underlying values
                     match (p_val.as_ref(), o_val.as_ref()) {
                         (CustomAttributeArgument::I4(p), CustomAttributeArgument::I4(o)) => {
-                            assert_eq!(p, o, "Enum value mismatch at index {}", i);
+                            assert_eq!(p, o, "Enum value mismatch at index {i}");
                         }
-                        _ => panic!("Enum underlying type mismatch at index {}", i),
+                        _ => panic!("Enum underlying type mismatch at index {i}"),
                     }
                 }
-                _ => panic!(
-                    "Enum type mismatch at index {}: {:?} vs {:?}",
-                    i, parsed_arg, orig_arg
-                ),
+                _ => panic!("Enum type mismatch at index {i}: {parsed_arg:?} vs {orig_arg:?}"),
             }
         }
     }

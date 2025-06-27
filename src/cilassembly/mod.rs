@@ -959,8 +959,7 @@ mod tests {
                         // Verify it's the right kind of error
                         assert!(
                             e.to_string().contains("Invalid RID"),
-                            "Should be RID validation error: {}",
-                            e
+                            "Should be RID validation error: {e}"
                         );
                     }
                 }

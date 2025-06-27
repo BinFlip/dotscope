@@ -812,19 +812,19 @@ pub enum ArgumentValue {
 impl fmt::Display for ArgumentValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ArgumentValue::Boolean(v) => write!(f, "{}", v),
-            ArgumentValue::Int32(v) => write!(f, "{}", v),
-            ArgumentValue::Int64(v) => write!(f, "{}", v),
-            ArgumentValue::String(v) => write!(f, "\"{}\"", v),
-            ArgumentValue::Type(v) => write!(f, "typeof({})", v),
-            ArgumentValue::Enum(t, v) => write!(f, "{}({})", t, v),
+            ArgumentValue::Boolean(v) => write!(f, "{v}"),
+            ArgumentValue::Int32(v) => write!(f, "{v}"),
+            ArgumentValue::Int64(v) => write!(f, "{v}"),
+            ArgumentValue::String(v) => write!(f, "\"{v}\""),
+            ArgumentValue::Type(v) => write!(f, "typeof({v})"),
+            ArgumentValue::Enum(t, v) => write!(f, "{t}({v})"),
             ArgumentValue::Array(v) => {
                 write!(f, "[")?;
                 for (i, val) in v.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", val)?;
+                    write!(f, "{val}")?;
                 }
                 write!(f, "]")
             }

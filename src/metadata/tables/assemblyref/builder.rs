@@ -736,7 +736,7 @@ mod tests {
         let builder = AssemblyRefBuilder::new()
             .name("DebugAssembly")
             .version(1, 0, 0, 0);
-        let debug_str = format!("{:?}", builder);
+        let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("AssemblyRefBuilder"));
         assert!(debug_str.contains("DebugAssembly"));
     }

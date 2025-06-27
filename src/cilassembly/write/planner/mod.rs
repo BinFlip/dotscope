@@ -672,7 +672,7 @@ impl<'a> LayoutPlanner<'a> {
         }
 
         Err(Error::WriteLayoutFailed {
-            message: format!("Could not find section containing RVA 0x{:x}", rva),
+            message: format!("Could not find section containing RVA 0x{rva:x}"),
         })
     }
 
@@ -805,9 +805,8 @@ impl<'a> LayoutPlanner<'a> {
 
         Err(Error::WriteLayoutFailed {
             message: format!(
-                "No space available within section boundaries for {} bytes allocation. \
-                 Consider expanding section virtual sizes or using a different allocation strategy.",
-                required_size
+                "No space available within section boundaries for {required_size} bytes allocation. \
+                 Consider expanding section virtual sizes or using a different allocation strategy."
             ),
         })
     }
