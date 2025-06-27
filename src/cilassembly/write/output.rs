@@ -323,7 +323,8 @@ impl Output {
     /// This operation ensures data durability and atomically completes the file creation:
     /// 1. Flushes the memory mapping to write cached data
     /// 2. Syncs the temporary file to ensure disk persistence
-    /// 3. Atomically renames the temporary file to the target path
+    /// 3. Drops the memory mapping to release file handles (important on Windows)
+    /// 4. Atomically renames the temporary file to the target path
     ///
     /// After calling this method, the file is complete and available at the target path.
     /// The temporary file is consumed and no longer accessible. This method can only
@@ -343,7 +344,11 @@ impl Output {
         }
 
         // Flush memory mapping
-        self.flush()?;
+        self.mmap
+            .flush()
+            .map_err(|e| Error::WriteFinalizationFailed {
+                message: format!("Failed to flush memory mapping: {}", e),
+            })?;
 
         // Sync to ensure data is written to disk
         self.temp_file
@@ -353,13 +358,28 @@ impl Output {
                 message: format!("Failed to sync temporary file: {}", e),
             })?;
 
-        // Extract the fields we need before moving
+        // Extract target path before taking ownership
         let target_path = self.target_path.clone();
-        // Create a dummy temp file to replace the one we're taking
+
+        // Create a dummy temp file and mmap to replace the originals
         let dummy_temp = NamedTempFile::new().map_err(|e| Error::WriteFinalizationFailed {
             message: format!("Failed to create dummy temp file: {}", e),
         })?;
+        let dummy_mmap = unsafe {
+            memmap2::MmapOptions::new()
+                .len(1)
+                .map_mut(dummy_temp.as_file())
+                .map_err(|e| Error::WriteFinalizationFailed {
+                    message: format!("Failed to create dummy memory mapping: {}", e),
+                })?
+        };
+
+        // Replace the mmap and temp_file with dummies, which drops the originals
+        let _old_mmap = std::mem::replace(&mut self.mmap, dummy_mmap);
         let temp_file = std::mem::replace(&mut self.temp_file, dummy_temp);
+
+        // Explicitly drop the old mmap to release Windows file handles
+        drop(_old_mmap);
 
         // Atomically move to target path
         temp_file
