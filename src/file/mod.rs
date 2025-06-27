@@ -611,6 +611,134 @@ impl File {
         })
     }
 
+    /// Returns the RVA and size of a specific data directory entry.
+    ///
+    /// This method provides unified access to PE data directory entries by type.
+    /// It returns the virtual address and size if the directory exists and is valid,
+    /// or `None` if the directory doesn't exist or has zero address/size.
+    ///
+    /// # Arguments
+    /// * `dir_type` - The type of data directory to retrieve
+    ///
+    /// # Returns
+    /// - `Some((rva, size))` if the directory exists with non-zero address and size
+    /// - `None` if the directory doesn't exist or has zero address/size
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::File;
+    /// use goblin::pe::data_directories::DataDirectoryType;
+    /// use std::path::Path;
+    ///
+    /// let file = File::from_file(Path::new("example.dll"))?;
+    ///
+    /// // Check for import table
+    /// if let Some((import_rva, import_size)) = file.get_data_directory(DataDirectoryType::ImportTable) {
+    ///     println!("Import table at RVA 0x{:x}, size: {} bytes", import_rva, import_size);
+    /// }
+    ///
+    /// // Check for export table
+    /// if let Some((export_rva, export_size)) = file.get_data_directory(DataDirectoryType::ExportTable) {
+    ///     println!("Export table at RVA 0x{:x}, size: {} bytes", export_rva, export_size);
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn get_data_directory(&self, dir_type: DataDirectoryType) -> Option<(u32, u32)> {
+        // Optimized version that avoids Vec allocation by directly searching
+        self.with_pe(|pe| {
+            pe.header
+                .optional_header
+                .unwrap()
+                .data_directories
+                .dirs()
+                .find(|(directory_type, directory)| {
+                    *directory_type == dir_type
+                        && directory.virtual_address != 0
+                        && directory.size != 0
+                })
+                .map(|(_, directory)| (directory.virtual_address, directory.size))
+        })
+    }
+
+    /// Returns the parsed import data from the PE file.
+    ///
+    /// Uses goblin's PE parsing to extract import table information including
+    /// DLL dependencies and imported functions. Returns the parsed import data
+    /// if an import directory exists.
+    ///
+    /// # Returns
+    /// - `Some(imports)` if import directory exists and was successfully parsed
+    /// - `None` if no import directory exists or parsing failed
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::File;
+    /// use std::path::Path;
+    ///
+    /// let file = File::from_file(Path::new("example.dll"))?;
+    /// if let Some(imports) = file.imports() {
+    ///     for import in imports {
+    ///         println!("DLL: {}", import.dll);
+    ///         if !import.name.is_empty() {
+    ///             println!("  Function: {}", import.name);
+    ///         } else if import.ordinal != 0 {
+    ///             println!("  Ordinal: {}", import.ordinal);
+    ///         }
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn imports(&self) -> Option<&Vec<goblin::pe::import::Import>> {
+        self.with_pe(|pe| {
+            if pe.imports.is_empty() {
+                None
+            } else {
+                Some(&pe.imports)
+            }
+        })
+    }
+
+    /// Returns the parsed export data from the PE file.
+    ///
+    /// Uses goblin's PE parsing to extract export table information including
+    /// exported functions and their addresses. Returns the parsed export data
+    /// if an export directory exists.
+    ///
+    /// # Returns
+    /// - `Some(exports)` if export directory exists and was successfully parsed
+    /// - `None` if no export directory exists or parsing failed
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::File;
+    /// use std::path::Path;
+    ///
+    /// let file = File::from_file(Path::new("example.dll"))?;
+    /// if let Some(exports) = file.exports() {
+    ///     for export in exports {
+    ///         if let Some(name) = &export.name {
+    ///             println!("Export: {} -> 0x{:X}", name, export.rva);
+    ///         }
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn exports(&self) -> Option<&Vec<goblin::pe::export::Export>> {
+        self.with_pe(|pe| {
+            if pe.exports.is_empty() {
+                None
+            } else {
+                Some(&pe.exports)
+            }
+        })
+    }
+
     /// Returns the raw data of the loaded file.
     ///
     /// This provides access to the entire PE file contents as a byte slice.
@@ -835,6 +963,73 @@ impl File {
             ))
         })
     }
+
+    /// Determines if a section contains .NET metadata by checking the actual metadata RVA.
+    ///
+    /// This method reads the CLR runtime header to get the metadata RVA and checks
+    /// if it falls within the specified section's address range. This is more accurate
+    /// than name-based heuristics since metadata can technically be located in any section.
+    ///
+    /// # Arguments
+    /// * `section_name` - The name of the section to check (e.g., ".text")
+    ///
+    /// # Returns
+    /// Returns `true` if the section contains .NET metadata, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::File;
+    /// use std::path::Path;
+    ///
+    /// let file = File::from_file(Path::new("example.dll"))?;
+    ///
+    /// if file.section_contains_metadata(".text") {
+    ///     println!("The .text section contains .NET metadata");
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn section_contains_metadata(&self, section_name: &str) -> bool {
+        let (clr_rva, _clr_size) = match self.clr() {
+            (rva, size) if rva > 0 && size >= 72 => (rva as u32, size),
+            _ => return false, // No CLR header means no .NET metadata
+        };
+
+        let clr_offset = match self.rva_to_offset(clr_rva as usize) {
+            Ok(offset) => offset,
+            Err(_) => return false,
+        };
+
+        let clr_data = match self.data_slice(clr_offset, 72) {
+            Ok(data) => data,
+            Err(_) => return false,
+        };
+
+        if clr_data.len() < 12 {
+            return false;
+        }
+
+        let meta_data_rva =
+            u32::from_le_bytes([clr_data[8], clr_data[9], clr_data[10], clr_data[11]]);
+
+        if meta_data_rva == 0 {
+            return false; // No metadata
+        }
+
+        for section in self.sections() {
+            let current_section_name = std::str::from_utf8(&section.name)
+                .unwrap_or("")
+                .trim_end_matches('\0');
+
+            if current_section_name == section_name {
+                let section_start = section.virtual_address;
+                let section_end = section.virtual_address + section.virtual_size;
+                return meta_data_rva >= section_start && meta_data_rva < section_end;
+            }
+        }
+
+        false // Section not found
+    }
 }
 
 #[cfg(test)]
@@ -920,6 +1115,46 @@ mod tests {
         let data = include_bytes!("../../tests/samples/WB_ROOT.bin");
         if File::from_mem(data.to_vec()).is_ok() {
             panic!("This should not load!")
+        }
+    }
+
+    /// Tests the unified get_data_directory method.
+    #[test]
+    fn test_get_data_directory() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        let file = File::from_file(&path).unwrap();
+
+        // Test CLR runtime header (should exist for .NET assemblies)
+        let clr_dir = file.get_data_directory(DataDirectoryType::ClrRuntimeHeader);
+        assert!(clr_dir.is_some(), "CLR runtime header should exist");
+        let (clr_rva, clr_size) = clr_dir.unwrap();
+        assert!(clr_rva > 0, "CLR RVA should be non-zero");
+        assert!(clr_size > 0, "CLR size should be non-zero");
+
+        // Verify it matches the existing clr() method
+        let (expected_rva, expected_size) = file.clr();
+        assert_eq!(
+            clr_rva as usize, expected_rva,
+            "CLR RVA should match clr() method"
+        );
+        assert_eq!(
+            clr_size as usize, expected_size,
+            "CLR size should match clr() method"
+        );
+
+        // Test non-existent directory (should return None)
+        let _base_reloc_dir = file.get_data_directory(DataDirectoryType::BaseRelocationTable);
+        // For a typical .NET assembly, base relocation table might not exist
+        // We don't assert anything specific here as it depends on the assembly
+
+        // The method should handle any directory type gracefully
+        let tls_dir = file.get_data_directory(DataDirectoryType::TlsTable);
+        // TLS table typically doesn't exist in .NET assemblies, but method should not panic
+        if let Some((tls_rva, tls_size)) = tls_dir {
+            assert!(
+                tls_rva > 0 && tls_size > 0,
+                "If TLS directory exists, it should have valid values"
+            );
         }
     }
 }

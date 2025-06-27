@@ -171,8 +171,8 @@ use crate::{
     file::File,
     metadata::{
         cor20header::Cor20Header,
-        exports::Exports,
-        imports::Imports,
+        exports::UnifiedExportContainer,
+        imports::UnifiedImportContainer,
         loader::CilObjectData,
         method::MethodMap,
         resources::Resources,
@@ -877,14 +877,14 @@ impl CilObject {
     /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
     /// let imports = assembly.imports();
     ///
-    /// for entry in imports.iter() {
+    /// for entry in imports.cil().iter() {
     ///     let (token, import) = (entry.key(), entry.value());
     ///     println!("Import: {}.{} from {:?}", import.namespace, import.name, import.source_id);
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn imports(&self) -> &Imports {
-        self.with_data(|data| &data.imports)
+    pub fn imports(&self) -> &UnifiedImportContainer {
+        self.with_data(|data| &data.import_container)
     }
 
     /// Returns the exports container with all exported function information.
@@ -895,7 +895,7 @@ impl CilObject {
     ///
     /// # Returns
     ///
-    /// Reference to the `Exports` container with all export declarations.
+    /// Reference to the `UnifiedExportContainer` with both CIL and native export declarations.
     ///
     /// # Examples
     ///
@@ -905,14 +905,21 @@ impl CilObject {
     /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
     /// let exports = assembly.exports();
     ///
-    /// for entry in exports.iter() {
+    /// // Access CIL exports (existing functionality)
+    /// for entry in exports.cil().iter() {
     ///     let (token, export) = (entry.key(), entry.value());
-    ///     println!("Export: {} at offset 0x{:X} - Token 0x{:X}", export.name, export.offset, token.value());
+    ///     println!("CIL Export: {} at offset 0x{:X} - Token 0x{:X}", export.name, export.offset, token.value());
+    /// }
+    ///
+    /// // Access native function exports
+    /// let native_functions = exports.get_native_function_names();
+    /// for function_name in native_functions {
+    ///     println!("Native Export: {}", function_name);
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn exports(&self) -> &Exports {
-        self.with_data(|data| &data.exports)
+    pub fn exports(&self) -> &UnifiedExportContainer {
+        self.with_data(|data| &data.export_container)
     }
 
     /// Returns the methods container with all method definitions and metadata.

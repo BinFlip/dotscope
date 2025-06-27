@@ -134,8 +134,8 @@
 //!     let imports = assembly.imports();
 //!     let exports = assembly.exports();
 //!     
-//!     println!("Imports: {} items", imports.len());
-//!     println!("Exports: {} items", exports.len());
+//!     println!("Imports: {} items", imports.total_count());
+//!     println!("Exports: {} items", exports.total_count());
 //!     
 //!     Ok(())
 //! }

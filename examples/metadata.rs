@@ -471,9 +471,9 @@ fn print_dependency_analysis(assembly: &CilObject) {
 
     // Import analysis
     let imports = assembly.imports();
-    println!("  Total imports: {}", imports.len());
+    println!("  Total imports: {}", imports.total_count());
 
     // Export analysis
     let exports = assembly.exports();
-    println!("  Total exports: {}", exports.len());
+    println!("  Total exports: {}", exports.total_count());
 }

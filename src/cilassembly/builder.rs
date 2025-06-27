@@ -445,6 +445,273 @@ impl BuilderContext {
         let encoded_data = encode_typespec_signature(signature)?;
         self.add_blob(&encoded_data)
     }
+
+    /// Adds a DLL to the native import table.
+    ///
+    /// Creates a new import descriptor for the specified DLL if it doesn't already exist.
+    /// This is the foundation for adding native function imports and should be called
+    /// before adding individual functions from the DLL.
+    ///
+    /// # Arguments
+    ///
+    /// * `dll_name` - Name of the DLL (e.g., "kernel32.dll", "user32.dll")
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the DLL was added successfully, or if it already exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the DLL name is empty or contains invalid characters.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
+    ///
+    /// context.add_native_import_dll("kernel32.dll")?;
+    /// context.add_native_import_dll("user32.dll")?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn add_native_import_dll(&mut self, dll_name: &str) -> Result<()> {
+        self.assembly.add_native_import_dll(dll_name)
+    }
+
+    /// Adds a named function import from a specific DLL to the native import table.
+    ///
+    /// Adds a function import that uses name-based lookup. The DLL will be automatically
+    /// added to the import table if it doesn't already exist. This is the most common
+    /// form of function importing and provides the best compatibility across DLL versions.
+    ///
+    /// # Arguments
+    ///
+    /// * `dll_name` - Name of the DLL containing the function
+    /// * `function_name` - Name of the function to import
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the function was added successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The DLL name or function name is empty
+    /// - The function is already imported from this DLL
+    /// - There are issues with IAT allocation
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
+    ///
+    /// // Add kernel32 functions
+    /// context.add_native_import_function("kernel32.dll", "GetCurrentProcessId")?;
+    /// context.add_native_import_function("kernel32.dll", "ExitProcess")?;
+    ///
+    /// // Add user32 functions  
+    /// context.add_native_import_function("user32.dll", "MessageBoxW")?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn add_native_import_function(
+        &mut self,
+        dll_name: &str,
+        function_name: &str,
+    ) -> Result<()> {
+        self.assembly
+            .add_native_import_function(dll_name, function_name)
+    }
+
+    /// Adds an ordinal-based function import to the native import table.
+    ///
+    /// Adds a function import that uses ordinal-based lookup instead of name-based.
+    /// This can be more efficient and result in smaller import tables, but is less
+    /// portable across DLL versions. The DLL will be automatically added if it
+    /// doesn't exist.
+    ///
+    /// # Arguments
+    ///
+    /// * `dll_name` - Name of the DLL containing the function
+    /// * `ordinal` - Ordinal number of the function in the DLL's export table
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the function was added successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The DLL name is empty
+    /// - The ordinal is 0 (invalid)
+    /// - A function with the same ordinal is already imported from this DLL
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
+    ///
+    /// // Import MessageBoxW by ordinal (more efficient)
+    /// context.add_native_import_function_by_ordinal("user32.dll", 120)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn add_native_import_function_by_ordinal(
+        &mut self,
+        dll_name: &str,
+        ordinal: u16,
+    ) -> Result<()> {
+        self.assembly
+            .add_native_import_function_by_ordinal(dll_name, ordinal)
+    }
+
+    /// Adds a named function export to the native export table.
+    ///
+    /// Creates a function export that can be called by other modules. The function
+    /// will be accessible by both name and ordinal. This is the standard way to
+    /// export functions from a library.
+    ///
+    /// # Arguments
+    ///
+    /// * `function_name` - Name of the function to export
+    /// * `ordinal` - Ordinal number for the export (must be unique)
+    /// * `address` - Function address (RVA) in the image
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the function was exported successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The function name is empty
+    /// - The ordinal is 0 (invalid) or already in use
+    /// - The function name is already exported
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
+    ///
+    /// // Export library functions
+    /// context.add_native_export_function("MyLibraryInit", 1, 0x1000)?;
+    /// context.add_native_export_function("ProcessData", 2, 0x2000)?;
+    /// context.add_native_export_function("MyLibraryCleanup", 3, 0x3000)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn add_native_export_function(
+        &mut self,
+        function_name: &str,
+        ordinal: u16,
+        address: u32,
+    ) -> Result<()> {
+        self.assembly
+            .add_native_export_function(function_name, ordinal, address)
+    }
+
+    /// Adds an ordinal-only function export to the native export table.
+    ///
+    /// Creates a function export that is accessible by ordinal number only,
+    /// without a symbolic name. This can reduce the size of the export table
+    /// but makes the exports less discoverable.
+    ///
+    /// # Arguments
+    ///
+    /// * `ordinal` - Ordinal number for the export (must be unique)
+    /// * `address` - Function address (RVA) in the image
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the function was exported successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the ordinal is 0 (invalid) or already in use.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
+    ///
+    /// // Export internal functions by ordinal only
+    /// context.add_native_export_function_by_ordinal(100, 0x5000)?;
+    /// context.add_native_export_function_by_ordinal(101, 0x6000)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn add_native_export_function_by_ordinal(
+        &mut self,
+        ordinal: u16,
+        address: u32,
+    ) -> Result<()> {
+        self.assembly
+            .add_native_export_function_by_ordinal(ordinal, address)
+    }
+
+    /// Adds an export forwarder to the native export table.
+    ///
+    /// Creates a function export that forwards calls to a function in another DLL.
+    /// The Windows loader resolves forwarders at runtime by loading the target
+    /// DLL and finding the specified function. This is useful for implementing
+    /// compatibility shims or redirecting calls.
+    ///
+    /// # Arguments
+    ///
+    /// * `function_name` - Name of the exported function (can be empty for ordinal-only)
+    /// * `ordinal` - Ordinal number for the export (must be unique)
+    /// * `target` - Target specification: "DllName.FunctionName" or "DllName.#Ordinal"
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the forwarder was added successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The ordinal is 0 (invalid) or already in use
+    /// - The function name is already exported (if name is provided)
+    /// - The target specification is empty or malformed
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
+    ///
+    /// // Forward to functions in other DLLs
+    /// context.add_native_export_forwarder("GetProcessId", 10, "kernel32.dll.GetCurrentProcessId")?;
+    /// context.add_native_export_forwarder("MessageBox", 11, "user32.dll.MessageBoxW")?;
+    /// context.add_native_export_forwarder("OrdinalForward", 12, "mydll.dll.#50")?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn add_native_export_forwarder(
+        &mut self,
+        function_name: &str,
+        ordinal: u16,
+        target: &str,
+    ) -> Result<()> {
+        self.assembly
+            .add_native_export_forwarder(function_name, ordinal, target)
+    }
 }
 
 #[cfg(test)]

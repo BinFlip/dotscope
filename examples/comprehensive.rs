@@ -190,7 +190,7 @@ fn print_import_analysis(assembly: &CilObject) {
     println!("\n📦 Import Analysis:");
 
     let imports = assembly.imports();
-    println!("  Total imports: {}", imports.len());
+    println!("  Total imports: {}", imports.total_count());
 
     if !imports.is_empty() {
         println!("  Sample imports:");
@@ -199,7 +199,7 @@ fn print_import_analysis(assembly: &CilObject) {
         let mut method_imports = 0;
         let mut type_imports = 0;
 
-        for entry in imports.iter().take(10) {
+        for entry in imports.cil().iter().take(10) {
             let (token, import) = (entry.key(), entry.value());
 
             match &import.import {
@@ -236,8 +236,8 @@ fn print_import_analysis(assembly: &CilObject) {
             }
         }
 
-        if imports.len() > 10 {
-            println!("    ... and {} more imports", imports.len() - 10);
+        if imports.total_count() > 10 {
+            println!("    ... and {} more imports", imports.total_count() - 10);
         }
 
         println!("  Import summary:");

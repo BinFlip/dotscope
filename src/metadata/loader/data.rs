@@ -71,8 +71,8 @@ use crate::{
     file::File,
     metadata::{
         cor20header::Cor20Header,
-        exports::Exports,
-        imports::Imports,
+        exports::UnifiedExportContainer,
+        imports::UnifiedImportContainer,
         loader::{execute_loaders_in_parallel, LoaderContext},
         method::MethodMap,
         resources::Resources,
@@ -180,10 +180,10 @@ pub(crate) struct CilObjectData<'a> {
     // === Core Registries ===
     /// Central type registry managing all type definitions and references.
     pub types: Arc<TypeRegistry>,
-    /// Import tracking for external dependencies and P/Invoke.
-    pub imports: Imports,
-    /// Export tracking for types visible to other assemblies.
-    pub exports: Exports,
+    /// Unified import container for both CIL and native imports.
+    pub import_container: UnifiedImportContainer,
+    /// Unified export container for both CIL and native exports.
+    pub export_container: UnifiedExportContainer,
     /// Method definitions and implementation details.
     pub methods: MethodMap,
     /// Generic method instantiation specifications.
@@ -277,14 +277,17 @@ impl<'a> CilObjectData<'a> {
             assembly_os: Arc::new(OnceLock::new()),
             assembly_processor: Arc::new(OnceLock::new()),
             types: Arc::new(TypeRegistry::new()?),
-            imports: Imports::new(),
-            exports: Exports::new(),
+            import_container: UnifiedImportContainer::new(),
+            export_container: UnifiedExportContainer::new(),
             methods: SkipMap::default(),
             method_specs: SkipMap::default(),
             resources: Resources::new(file),
         };
 
         cil_object.load_streams(meta_root_offset)?;
+
+        // Load native PE import/export tables if present
+        cil_object.load_native_tables()?;
 
         {
             let context = LoaderContext {
@@ -344,9 +347,9 @@ impl<'a> CilObjectData<'a> {
                 custom_attribute: SkipMap::default(),
                 decl_security: SkipMap::default(),
                 file: &cil_object.refs_file,
-                exported_type: &cil_object.exports,
+                exported_type: cil_object.export_container.cil(),
                 standalone_sig: SkipMap::default(),
-                imports: &cil_object.imports,
+                imports: cil_object.import_container.cil(),
                 resources: &cil_object.resources,
                 types: &cil_object.types,
             };
@@ -441,6 +444,47 @@ impl<'a> CilObjectData<'a> {
 
         self.header_root
             .validate_stream_layout(meta_root_offset, self.header.meta_data_size)?;
+
+        Ok(())
+    }
+
+    /// Load native PE import and export tables from the assembly file.
+    ///
+    /// This method uses goblin's PE parsing to extract existing native import
+    /// and export tables from the PE file and populates the unified containers
+    /// with this data. This preserves existing native dependencies when loading
+    /// mixed-mode assemblies.
+    ///
+    /// # Process
+    /// 1. Check for import directory in PE data directories
+    /// 2. Parse imports using goblin and populate unified import container
+    /// 3. Check for export directory in PE data directories  
+    /// 4. Parse exports using goblin and populate unified export container
+    ///
+    /// # Returns
+    /// Result indicating success or failure of the loading operation.
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - PE data directories are malformed
+    /// - Import/export table parsing fails
+    /// - Native container population fails
+    fn load_native_tables(&mut self) -> Result<()> {
+        // Load native imports
+        if let Some(goblin_imports) = self.file.imports() {
+            if !goblin_imports.is_empty() {
+                self.import_container
+                    .native_mut()
+                    .populate_from_goblin(goblin_imports)?;
+            }
+        }
+
+        // Load native exports
+        if let Some(goblin_exports) = self.file.exports() {
+            self.export_container
+                .native_mut()
+                .populate_from_goblin(goblin_exports)?;
+        }
 
         Ok(())
     }

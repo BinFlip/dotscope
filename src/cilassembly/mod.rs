@@ -138,6 +138,8 @@
 use crate::{
     metadata::{
         cilassemblyview::CilAssemblyView,
+        exports::UnifiedExportContainer,
+        imports::UnifiedImportContainer,
         tables::{TableDataOwned, TableId},
     },
     Result,
@@ -458,6 +460,322 @@ impl CilAssembly {
     /// Gets a reference to the changes for write operations.
     pub fn changes(&self) -> &AssemblyChanges {
         &self.changes
+    }
+
+    // === NATIVE IMPORT/EXPORT OPERATIONS ===
+
+    /// Adds a DLL to the native import table.
+    ///
+    /// Creates a new import descriptor for the specified DLL if it doesn't already exist.
+    /// This method provides the foundation for native PE import functionality by managing
+    /// DLL dependencies at the assembly level.
+    ///
+    /// # Arguments
+    ///
+    /// * `dll_name` - Name of the DLL (e.g., "kernel32.dll", "user32.dll")
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the DLL was added successfully, or if it already exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the DLL name is empty or contains invalid characters.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::{CilAssemblyView, CilAssembly};
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let mut assembly = CilAssembly::new(view);
+    ///
+    /// assembly.add_native_import_dll("kernel32.dll")?;
+    /// assembly.add_native_import_dll("user32.dll")?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn add_native_import_dll(&mut self, dll_name: &str) -> Result<()> {
+        let imports = self.changes.native_imports_mut();
+        imports.native_mut().add_dll(dll_name)
+    }
+
+    /// Adds a named function import from a specific DLL to the native import table.
+    ///
+    /// Adds a function import that uses name-based lookup. The DLL will be automatically
+    /// added to the import table if it doesn't already exist. This method handles the
+    /// complete import process including IAT allocation and Import Lookup Table setup.
+    ///
+    /// # Arguments
+    ///
+    /// * `dll_name` - Name of the DLL containing the function
+    /// * `function_name` - Name of the function to import
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the function was added successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The DLL name or function name is empty
+    /// - The function is already imported from this DLL
+    /// - There are issues with IAT allocation
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::{CilAssemblyView, CilAssembly};
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let mut assembly = CilAssembly::new(view);
+    ///
+    /// // Add kernel32 functions
+    /// assembly.add_native_import_function("kernel32.dll", "GetCurrentProcessId")?;
+    /// assembly.add_native_import_function("kernel32.dll", "ExitProcess")?;
+    ///
+    /// // Add user32 functions  
+    /// assembly.add_native_import_function("user32.dll", "MessageBoxW")?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn add_native_import_function(
+        &mut self,
+        dll_name: &str,
+        function_name: &str,
+    ) -> Result<()> {
+        let imports = self.changes.native_imports_mut();
+        imports.add_native_function(dll_name, function_name)
+    }
+
+    /// Adds an ordinal-based function import to the native import table.
+    ///
+    /// Adds a function import that uses ordinal-based lookup instead of name-based.
+    /// This can be more efficient and result in smaller import tables, but is less
+    /// portable across DLL versions. The DLL will be automatically added if it
+    /// doesn't exist.
+    ///
+    /// # Arguments
+    ///
+    /// * `dll_name` - Name of the DLL containing the function
+    /// * `ordinal` - Ordinal number of the function in the DLL's export table
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the function was added successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The DLL name is empty
+    /// - The ordinal is 0 (invalid)
+    /// - A function with the same ordinal is already imported from this DLL
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::{CilAssemblyView, CilAssembly};
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let mut assembly = CilAssembly::new(view);
+    ///
+    /// // Import MessageBoxW by ordinal (more efficient)
+    /// assembly.add_native_import_function_by_ordinal("user32.dll", 120)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn add_native_import_function_by_ordinal(
+        &mut self,
+        dll_name: &str,
+        ordinal: u16,
+    ) -> Result<()> {
+        let imports = self.changes.native_imports_mut();
+        imports.add_native_function_by_ordinal(dll_name, ordinal)
+    }
+
+    /// Adds a named function export to the native export table.
+    ///
+    /// Creates a function export that can be called by other modules. The function
+    /// will be accessible by both name and ordinal. This method handles the complete
+    /// export process including Export Address Table and Export Name Table setup.
+    ///
+    /// # Arguments
+    ///
+    /// * `function_name` - Name of the function to export
+    /// * `ordinal` - Ordinal number for the export (must be unique)
+    /// * `address` - Function address (RVA) in the image
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the function was exported successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The function name is empty
+    /// - The ordinal is 0 (invalid) or already in use
+    /// - The function name is already exported
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::{CilAssemblyView, CilAssembly};
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let mut assembly = CilAssembly::new(view);
+    ///
+    /// // Export library functions
+    /// assembly.add_native_export_function("MyLibraryInit", 1, 0x1000)?;
+    /// assembly.add_native_export_function("ProcessData", 2, 0x2000)?;
+    /// assembly.add_native_export_function("MyLibraryCleanup", 3, 0x3000)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn add_native_export_function(
+        &mut self,
+        function_name: &str,
+        ordinal: u16,
+        address: u32,
+    ) -> Result<()> {
+        let exports = self.changes.native_exports_mut();
+        exports.add_native_function(function_name, ordinal, address)
+    }
+
+    /// Adds an ordinal-only function export to the native export table.
+    ///
+    /// Creates a function export that is accessible by ordinal number only,
+    /// without a symbolic name. This can reduce the size of the export table
+    /// but makes the exports less discoverable.
+    ///
+    /// # Arguments
+    ///
+    /// * `ordinal` - Ordinal number for the export (must be unique)
+    /// * `address` - Function address (RVA) in the image
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the function was exported successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the ordinal is 0 (invalid) or already in use.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::{CilAssemblyView, CilAssembly};
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let mut assembly = CilAssembly::new(view);
+    ///
+    /// // Export internal functions by ordinal only
+    /// assembly.add_native_export_function_by_ordinal(100, 0x5000)?;
+    /// assembly.add_native_export_function_by_ordinal(101, 0x6000)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn add_native_export_function_by_ordinal(
+        &mut self,
+        ordinal: u16,
+        address: u32,
+    ) -> Result<()> {
+        let exports = self.changes.native_exports_mut();
+        exports.add_native_function_by_ordinal(ordinal, address)
+    }
+
+    /// Adds an export forwarder to the native export table.
+    ///
+    /// Creates a function export that forwards calls to a function in another DLL.
+    /// The Windows loader resolves forwarders at runtime by loading the target
+    /// DLL and finding the specified function. This is useful for implementing
+    /// compatibility shims or redirecting calls.
+    ///
+    /// # Arguments
+    ///
+    /// * `function_name` - Name of the exported function (can be empty for ordinal-only)
+    /// * `ordinal` - Ordinal number for the export (must be unique)
+    /// * `target` - Target specification: "DllName.FunctionName" or "DllName.#Ordinal"
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the forwarder was added successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The ordinal is 0 (invalid) or already in use
+    /// - The function name is already exported (if name is provided)
+    /// - The target specification is empty or malformed
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::{CilAssemblyView, CilAssembly};
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let mut assembly = CilAssembly::new(view);
+    ///
+    /// // Forward to functions in other DLLs
+    /// assembly.add_native_export_forwarder("GetProcessId", 10, "kernel32.dll.GetCurrentProcessId")?;
+    /// assembly.add_native_export_forwarder("MessageBox", 11, "user32.dll.MessageBoxW")?;
+    /// assembly.add_native_export_forwarder("OrdinalForward", 12, "mydll.dll.#50")?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn add_native_export_forwarder(
+        &mut self,
+        function_name: &str,
+        ordinal: u16,
+        target: &str,
+    ) -> Result<()> {
+        let exports = self.changes.native_exports_mut();
+        exports.add_native_forwarder(function_name, ordinal, target)
+    }
+
+    /// Gets read-only access to the unified import container.
+    ///
+    /// Returns the unified import container that provides access to both CIL and native
+    /// PE imports. Returns `None` if no native import operations have been performed.
+    ///
+    /// # Returns
+    ///
+    /// Optional reference to the unified import container.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::{CilAssemblyView, CilAssembly};
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let assembly = CilAssembly::new(view);
+    ///
+    /// if let Some(imports) = assembly.native_imports() {
+    ///     let dll_names = imports.get_all_dll_names();
+    ///     println!("DLL dependencies: {:?}", dll_names);
+    /// }
+    /// ```
+    pub fn native_imports(&self) -> Option<&UnifiedImportContainer> {
+        self.changes.native_imports()
+    }
+
+    /// Gets read-only access to the unified export container.
+    ///
+    /// Returns the unified export container that provides access to both CIL and native
+    /// PE exports. Returns `None` if no native export operations have been performed.
+    ///
+    /// # Returns
+    ///
+    /// Optional reference to the unified export container.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::{CilAssemblyView, CilAssembly};
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let assembly = CilAssembly::new(view);
+    ///
+    /// if let Some(exports) = assembly.native_exports() {
+    ///     let function_names = exports.get_native_function_names();
+    ///     println!("Exported functions: {:?}", function_names);
+    /// }
+    /// ```
+    pub fn native_exports(&self) -> Option<&UnifiedExportContainer> {
+        self.changes.native_exports()
     }
 }
 

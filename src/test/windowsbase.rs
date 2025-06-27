@@ -34,8 +34,8 @@ pub fn verify_windowsbasedll(asm: &CilObject) {
     let imports = asm.imports();
 
     // Pass imports to the verification methods
-    verify_refs_assembly(asm.refs_assembly(), imports);
-    verify_refs_module(asm.refs_module(), imports);
+    verify_refs_assembly(asm.refs_assembly(), imports.cil());
+    verify_refs_module(asm.refs_module(), imports.cil());
     verify_module(asm.module().unwrap());
     verify_resource(asm.resources());
     verify_methods(asm.methods());

@@ -1380,7 +1380,7 @@ fn verify_specialized_attribute_tables(asm: &CilObject) {
 fn _verify_imports(asm: &CilObject) {
     let imports = asm.imports();
 
-    let set_state_machine_class = imports.by_name("SetStateMachine").unwrap();
+    let set_state_machine_class = imports.cil().by_name("SetStateMachine").unwrap();
 
     assert_eq!(set_state_machine_class.token.value(), 0x0A000018);
     assert_eq!(set_state_machine_class.name, "SetStateMachine");

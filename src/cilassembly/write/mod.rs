@@ -161,6 +161,9 @@ pub fn write_assembly_to_file<P: AsRef<Path>>(
     // Phase 9: Write table modifications
     write_table_modifications(assembly, &mut mmap_file, &layout_plan)?;
 
+    // Phase 9.1: Write native PE import/export tables
+    write_native_tables(assembly, &mut mmap_file, &layout_plan)?;
+
     // Phase 9.5: Update COR20 header with new metadata size
     update_cor20_header(assembly, &mut mmap_file, &layout_plan)?;
 
@@ -528,6 +531,27 @@ fn write_table_modifications(
     Ok(())
 }
 
+/// Writes native PE import/export tables.
+///
+/// Uses the [`crate::cilassembly::write::writers::native`] module to write
+/// native PE import and export tables from the unified containers.
+///
+/// # Arguments
+/// * `assembly` - Source [`crate::cilassembly::CilAssembly`] with native table data
+/// * `mmap_file` - Target [`crate::cilassembly::write::output::Output`] file
+/// * `layout_plan` - [`crate::cilassembly::write::planner::LayoutPlan`] with table locations
+fn write_native_tables(
+    assembly: &CilAssembly,
+    mmap_file: &mut output::Output,
+    layout_plan: &planner::LayoutPlan,
+) -> Result<()> {
+    // Use the NativeTablesWriter for native PE table generation
+    let mut native_writer = writers::NativeTablesWriter::new(assembly, mmap_file, layout_plan);
+    native_writer.write_native_tables()?;
+
+    Ok(())
+}
+
 /// Updates the COR20 header with the new metadata size.
 ///
 /// The COR20 header contains the metadata size field that must be updated
@@ -730,6 +754,9 @@ mod tests {
 
         write_table_modifications(&assembly, &mut mmap_file, &layout_plan)
             .expect("Failed to write table modifications");
+
+        write_native_tables(&assembly, &mut mmap_file, &layout_plan)
+            .expect("Failed to write native tables");
 
         update_pe_structure(&assembly, &mut mmap_file, &layout_plan)
             .expect("Failed to update PE structure");

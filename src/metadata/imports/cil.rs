@@ -125,10 +125,9 @@
 //! - [`dashmap::DashMap`] for high-performance index lookups
 //! - Reference counting enables safe sharing across threads without contention
 
-use std::sync::Arc;
-
 use crossbeam_skiplist::SkipMap;
 use dashmap::DashMap;
+use std::sync::Arc;
 
 use crate::{
     metadata::{

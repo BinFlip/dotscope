@@ -10,6 +10,7 @@
 //! - [`crate::cilassembly::write::writers::heap::HeapWriter`] - Metadata heap writing (strings, blobs, GUIDs, user strings)
 //! - [`crate::cilassembly::write::writers::table::TableWriter`] - Metadata table serialization and updates
 //! - [`crate::cilassembly::write::writers::pe::PeWriter`] - PE structure updates including checksums and relocations
+//! - [`crate::cilassembly::write::writers::native::NativeTablesWriter`] - Native PE import/export table generation
 //!
 //! # Architecture
 //!
@@ -108,11 +109,13 @@
 //! - [`crate::cilassembly::write::utils`] - Shared utility functions
 
 mod heap;
+mod native;
 mod pe;
 mod relocation;
 mod table;
 
 pub use heap::*;
+pub use native::*;
 pub use pe::*;
 pub use relocation::*;
 pub use table::*;

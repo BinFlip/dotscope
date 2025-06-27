@@ -42,7 +42,7 @@
 //! # Usage Examples
 //!
 //! ```rust,ignore
-//! use crate::cilassembly::write::planner::pe::{extract_pe_layout, section_contains_metadata};
+//! use crate::cilassembly::write::planner::pe::extract_pe_layout;
 //! use crate::cilassembly::CilAssembly;
 //!
 //! # let assembly = CilAssembly::empty(); // placeholder
@@ -53,10 +53,11 @@
 //! println!("Number of sections: {}", pe_layout.section_count);
 //!
 //! // Check which sections contain metadata
-//! for section in &pe_layout.sections {
-//!     if section_contains_metadata(&section.name) {
+//! for section in assembly.view().file().sections() {
+//!     let name = std::str::from_utf8(&section.name).unwrap_or("<invalid>").trim_end_matches('\0');
+//!     if assembly.view().file().section_contains_metadata(name) {
 //!         println!("Metadata section: {} at RVA 0x{:08X}",
-//!                  section.name, section.virtual_address);
+//!                  name, section.virtual_address);
 //!     }
 //! }
 //! # Ok::<(), crate::Error>(())
@@ -327,22 +328,6 @@ pub fn get_text_section_rva(assembly: &CilAssembly) -> Result<u32> {
     })
 }
 
-/// Determines if a section contains .NET metadata.
-///
-/// Checks if a section name indicates it contains .NET metadata streams.
-/// Most .NET assemblies store metadata in the .text section.
-///
-/// # Arguments
-/// * `section_name` - The name of the section to check
-///
-/// # Returns
-/// Returns `true` if the section typically contains .NET metadata.
-pub fn section_contains_metadata(section_name: &str) -> bool {
-    // Most .NET assemblies have metadata in the .text section
-    // But we should verify by checking if the metadata RVA falls within this section
-    section_name == ".text" || section_name.starts_with(".text")
-}
-
 /// Aligns an offset to the PE file alignment boundary.
 ///
 /// PE files require data to be aligned to specific boundaries for optimal loading.
@@ -401,14 +386,6 @@ mod tests {
             "Should have typical PE sections, got: {:?}",
             section_names
         );
-    }
-
-    #[test]
-    fn test_section_contains_metadata() {
-        assert!(section_contains_metadata(".text"));
-        assert!(section_contains_metadata(".text$B"));
-        assert!(!section_contains_metadata(".rdata"));
-        assert!(!section_contains_metadata(".rsrc"));
     }
 
     #[test]

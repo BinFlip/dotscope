@@ -95,13 +95,12 @@ use crate::{
     metadata::tables::TableId,
     Error, Result,
 };
+use goblin::pe::data_directories::DataDirectoryType;
 
-// Re-export submodules
-pub mod calc;
-pub mod metadata;
-pub mod pe;
+mod calc;
+mod metadata;
+mod pe;
 
-// Re-export important types from submodules for convenience
 pub use calc::HeapExpansions;
 pub use metadata::{MetadataModifications, StreamModification};
 
@@ -152,6 +151,10 @@ pub struct LayoutPlan {
     /// Table modification regions requiring updates.
     /// Contains information about modified metadata tables.
     pub table_modifications: Vec<TableModificationRegion>,
+
+    /// Native PE table requirements for import/export table generation.
+    /// Contains space allocation and placement information for native PE tables.
+    pub native_table_requirements: NativeTableRequirements,
 }
 
 /// Complete file layout plan showing where everything goes in the new file.
@@ -285,6 +288,36 @@ pub struct SectionUpdate {
     pub new_virtual_size: Option<u32>,
 }
 
+/// Requirements for native PE import/export table generation.
+///
+/// Contains information needed to allocate space and position native PE tables
+/// in the output file. This includes import tables (IAT/ILT) and export tables (EAT)
+/// when the assembly contains native dependencies or exports.
+#[derive(Debug, Clone, Default)]
+pub struct NativeTableRequirements {
+    /// Space needed for import tables (Import Directory, IAT, ILT, names).
+    /// Zero if no native imports are present.
+    pub import_table_size: u64,
+
+    /// Space needed for export tables (Export Directory, EAT, names, ordinals).
+    /// Zero if no native exports are present.
+    pub export_table_size: u64,
+
+    /// Preferred RVA for import table placement.
+    /// Calculated based on available address space and alignment requirements.
+    pub import_table_rva: Option<u32>,
+
+    /// Preferred RVA for export table placement.
+    /// Calculated based on available address space and alignment requirements.
+    pub export_table_rva: Option<u32>,
+
+    /// Whether import tables are needed for this assembly.
+    pub needs_import_tables: bool,
+
+    /// Whether export tables are needed for this assembly.
+    pub needs_export_tables: bool,
+}
+
 /// Information about a table modification region.
 ///
 /// Contains details about modifications needed for a specific metadata table,
@@ -362,14 +395,22 @@ impl<'a> LayoutPlanner<'a> {
         // Identify table modification regions
         let table_modifications = self.identify_table_modifications()?;
 
+        // Calculate native PE table requirements
+        let native_table_requirements = self.calculate_native_table_requirements()?;
+
         // Calculate complete file layout with proper section placement
-        let file_layout = self.calculate_file_layout(&heap_expansions, &metadata_modifications)?;
+        let mut file_layout =
+            self.calculate_file_layout(&heap_expansions, &metadata_modifications)?;
+
+        // Update file layout to accommodate native table requirements
+        self.update_layout_for_native_tables(&mut file_layout, &native_table_requirements)?;
 
         // Determine PE updates needed
         let pe_updates = self.calculate_pe_updates(&file_layout)?;
 
-        // Recalculate total size based on file layout
-        let total_size = self.calculate_total_size_from_layout(&file_layout);
+        // Recalculate total size based on file layout and native table requirements
+        let total_size =
+            self.calculate_total_size_from_layout(&file_layout, &native_table_requirements);
 
         Ok(LayoutPlan {
             total_size,
@@ -379,11 +420,11 @@ impl<'a> LayoutPlanner<'a> {
             metadata_modifications,
             heap_expansions,
             table_modifications,
+            native_table_requirements,
         })
     }
 
     fn get_original_file_size(&self) -> Result<u64> {
-        // Get the exact size from the assembly view's underlying file data
         let file_data = self.assembly.view().data();
         Ok(file_data.len() as u64)
     }
@@ -392,7 +433,6 @@ impl<'a> LayoutPlanner<'a> {
         let changes = self.assembly.changes();
         let mut table_modifications = Vec::new();
 
-        // For each modified table, create a modification region
         for table_id in changes.modified_tables() {
             if let Some(table_mod) = changes.get_table_modifications(table_id) {
                 let modification_region =
@@ -409,24 +449,19 @@ impl<'a> LayoutPlanner<'a> {
         table_id: TableId,
         table_mod: &TableModifications,
     ) -> Result<TableModificationRegion> {
-        // Get original table information from the view
         let view = self.assembly.view();
         let tables = view.tables().ok_or_else(|| Error::WriteLayoutFailed {
             message: "No tables found in assembly".to_string(),
         })?;
 
-        // Calculate original size and offset
         let original_row_count = tables.table_row_count(table_id);
         let row_size = calculate_table_row_size(table_id, &tables.info);
         let original_size = original_row_count as u64 * row_size as u64;
 
-        // Calculate new size needed
         let new_row_count = calc::calculate_new_row_count(self.assembly, table_id, table_mod)?;
         let new_size = new_row_count as u64 * row_size as u64;
 
-        // Determine if complete replacement is needed
         let needs_replacement = matches!(table_mod, TableModifications::Replaced(_));
-
         Ok(TableModificationRegion {
             table_id,
             original_offset: 0, // Will be calculated during actual writing
@@ -434,6 +469,464 @@ impl<'a> LayoutPlanner<'a> {
             new_size,
             needs_replacement,
         })
+    }
+
+    /// Calculates native PE table requirements for import/export tables.
+    fn calculate_native_table_requirements(&self) -> Result<NativeTableRequirements> {
+        let mut requirements = NativeTableRequirements::default();
+
+        if let Some(imports) = self.assembly.native_imports() {
+            if !imports.native().is_empty() {
+                requirements.needs_import_tables = true;
+
+                let is_pe32_plus = self.is_pe32_plus_format()?;
+                match imports.native().get_import_table_data(is_pe32_plus) {
+                    Ok(import_data) => {
+                        requirements.import_table_size = import_data.len() as u64;
+                    }
+                    Err(_) => {
+                        // If table generation fails, estimate conservatively
+                        // Each DLL needs ~64 bytes + function names + descriptors
+                        let dll_count = imports.native().dll_count();
+                        let function_count = imports.native().total_function_count();
+                        requirements.import_table_size =
+                            (dll_count * 64 + function_count * 32 + 1024) as u64;
+                    }
+                }
+            }
+        }
+
+        if let Some(exports) = self.assembly.native_exports() {
+            if !exports.native().is_empty() {
+                requirements.needs_export_tables = true;
+
+                match exports.native().get_export_table_data() {
+                    Ok(export_data) => {
+                        requirements.export_table_size = export_data.len() as u64;
+                    }
+                    Err(_) => {
+                        // If table generation fails, estimate conservatively
+                        // Export directory + function addresses + names + ordinals
+                        let function_count = exports.native().function_count();
+                        requirements.export_table_size = (40 + function_count * 16 + 512) as u64;
+                        // 40 = sizeof(IMAGE_EXPORT_DIRECTORY)
+                    }
+                }
+            }
+        }
+
+        self.calculate_native_table_rvas(&mut requirements)?;
+
+        Ok(requirements)
+    }
+
+    /// Calculates optimal RVAs for native PE tables.
+    ///
+    /// This method implements the following allocation strategy:
+    /// 1. Try to reuse existing import/export table locations if space allows
+    /// 2. Find available space within existing sections
+    /// 3. Allocate new space at the end of the file if needed
+    ///
+    /// The method ensures that import and export table RVAs don't overlap
+    /// by tracking allocated regions and adjusting subsequent allocations.
+    ///
+    /// # Arguments
+    /// * `requirements` - Mutable reference to native table requirements
+    ///
+    /// # Returns
+    /// Returns `Ok(())` if RVA allocation succeeded.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::WriteLayoutFailed`] if no suitable RVA can be found.
+    fn calculate_native_table_rvas(
+        &self,
+        requirements: &mut NativeTableRequirements,
+    ) -> Result<()> {
+        let view = self.assembly.view();
+
+        let (existing_import_rva, existing_import_size) = view
+            .file()
+            .get_data_directory(DataDirectoryType::ImportTable)
+            .map_or((None, 0), |(rva, size)| (Some(rva), size));
+        let (existing_export_rva, existing_export_size) = view
+            .file()
+            .get_data_directory(DataDirectoryType::ExportTable)
+            .map_or((None, 0), |(rva, size)| (Some(rva), size));
+
+        // Track allocated regions to prevent overlaps
+        let mut allocated_regions: Vec<(u32, u32)> = Vec::new();
+
+        if requirements.needs_import_tables {
+            requirements.import_table_rva = self.calculate_table_rva(
+                existing_import_rva,
+                existing_import_size,
+                requirements.import_table_size,
+                &allocated_regions,
+            )?;
+
+            // Add the import table region to exclusions
+            if let Some(import_rva) = requirements.import_table_rva {
+                allocated_regions.push((import_rva, requirements.import_table_size as u32));
+            }
+        }
+
+        if requirements.needs_export_tables {
+            requirements.export_table_rva = self.calculate_table_rva(
+                existing_export_rva,
+                existing_export_size,
+                requirements.export_table_size,
+                &allocated_regions,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Calculates RVA for a specific table (import or export) with collision avoidance.
+    ///
+    /// Implements the allocation strategy while avoiding conflicts with already allocated regions:
+    /// 1. If existing location has sufficient space and no conflicts, reuse it
+    /// 2. If no existing location, find space within a suitable section that doesn't conflict
+    /// 3. As last resort, allocate at end of last section with proper spacing
+    fn calculate_table_rva(
+        &self,
+        existing_rva: Option<u32>,
+        existing_size: u32,
+        required_size: u64,
+        allocated_regions: &[(u32, u32)],
+    ) -> Result<Option<u32>> {
+        let required_size_u32 = required_size as u32;
+
+        // Strategy 1: Try to reuse existing location if space allows and no conflicts
+        if let Some(rva) = existing_rva {
+            if existing_size >= required_size_u32
+                && !self.conflicts_with_regions(rva, required_size_u32, allocated_regions)
+            {
+                return Ok(Some(rva));
+            }
+
+            if let Ok(available_space) = self.get_available_space_after_rva(rva, existing_size) {
+                let total_available = existing_size + available_space;
+                if total_available >= required_size_u32
+                    && !self.conflicts_with_regions(rva, required_size_u32, allocated_regions)
+                {
+                    return Ok(Some(rva));
+                }
+            }
+        }
+
+        // Strategy 2: Find space within existing sections that doesn't conflict
+        if let Some(rva) = self.find_space_in_sections(required_size_u32, allocated_regions)? {
+            return Ok(Some(rva));
+        }
+
+        // Strategy 3: Allocate at end of sections within boundaries, avoiding conflicts
+        if let Ok(rva) = self.allocate_at_end_of_sections(required_size_u32, allocated_regions) {
+            return Ok(Some(rva));
+        }
+
+        // Strategy 4: Extend a suitable section to make space, avoiding conflicts
+        let rva = self.extend_section_for_allocation(required_size_u32, allocated_regions)?;
+        Ok(Some(rva))
+    }
+
+    /// Checks if a region conflicts with any allocated regions.
+    fn conflicts_with_regions(
+        &self,
+        rva: u32,
+        size: u32,
+        allocated_regions: &[(u32, u32)],
+    ) -> bool {
+        let end_rva = rva + size;
+        for &(allocated_rva, allocated_size) in allocated_regions {
+            let allocated_end = allocated_rva + allocated_size;
+            if rva < allocated_end && end_rva > allocated_rva {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Gets genuinely available space after a specific RVA within the same section.
+    ///
+    /// This method now properly checks for actual padding bytes (0x00 or 0xCC)
+    /// after the specified RVA to determine how much space is genuinely available
+    /// for reuse.
+    fn get_available_space_after_rva(&self, rva: u32, used_size: u32) -> Result<u32> {
+        let view = self.assembly.view();
+        let file = view.file();
+
+        for section in file.sections() {
+            let section_start = section.virtual_address;
+            let section_end = section.virtual_address + section.virtual_size;
+
+            if rva >= section_start && rva < section_end {
+                let table_end = rva + used_size;
+
+                if table_end > section_end {
+                    return Ok(0);
+                }
+
+                return self.get_padding_space_after_rva(section, table_end, section_end);
+            }
+        }
+
+        Err(Error::WriteLayoutFailed {
+            message: format!("Could not find section containing RVA 0x{:x}", rva),
+        })
+    }
+
+    /// Gets contiguous padding space after a specific RVA within a section.
+    ///
+    /// This method analyzes the section content starting from the given RVA
+    /// to find how many contiguous padding bytes (0x00 or 0xCC) are available.
+    fn get_padding_space_after_rva(
+        &self,
+        section: &goblin::pe::section_table::SectionTable,
+        start_rva: u32,
+        section_end_rva: u32,
+    ) -> Result<u32> {
+        let view = self.assembly.view();
+        let file = view.file();
+
+        if section.size_of_raw_data == 0 {
+            return Ok(0);
+        }
+
+        let start_file_offset = match file.rva_to_offset(start_rva as usize) {
+            Ok(offset) => offset,
+            Err(_) => return Ok(0),
+        };
+
+        let section_file_offset = match file.rva_to_offset(section.virtual_address as usize) {
+            Ok(offset) => offset,
+            Err(_) => return Ok(0),
+        };
+
+        let offset_in_section = start_file_offset.saturating_sub(section_file_offset);
+        if offset_in_section >= section.size_of_raw_data as usize {
+            return Ok(0);
+        }
+
+        let remaining_raw_size =
+            (section.size_of_raw_data as usize).saturating_sub(offset_in_section);
+        if remaining_raw_size == 0 {
+            return Ok(0);
+        }
+
+        let section_data = match file.data_slice(start_file_offset, remaining_raw_size) {
+            Ok(data) => data,
+            Err(_) => return Ok(0),
+        };
+
+        let mut padding_count = 0;
+        for &byte in section_data {
+            if byte == 0x00 || byte == 0xCC {
+                padding_count += 1;
+            } else {
+                break;
+            }
+        }
+
+        let max_rva_space = section_end_rva.saturating_sub(start_rva);
+        let padding_rva_space = std::cmp::min(padding_count as u32, max_rva_space);
+
+        Ok(padding_rva_space)
+    }
+
+    /// Finds available space within existing sections for a table.
+    ///
+    /// This method now properly checks for actual padding bytes (0x00 or 0xCC)
+    /// to ensure the space is genuinely available, not just theoretically unused.
+    fn find_space_in_sections(
+        &self,
+        required_size: u32,
+        allocated_regions: &[(u32, u32)],
+    ) -> Result<Option<u32>> {
+        let view = self.assembly.view();
+        let file = view.file();
+        let preferred_sections = [".text", ".rdata", ".data"];
+
+        for section in file.sections() {
+            let section_name = std::str::from_utf8(&section.name)
+                .unwrap_or("")
+                .trim_end_matches('\0');
+
+            let is_preferred = preferred_sections.contains(&section_name);
+            if is_preferred {
+                if let Some(allocation_rva) =
+                    self.find_padding_space_in_section(section, required_size)?
+                {
+                    if !self.conflicts_with_regions(
+                        allocation_rva,
+                        required_size,
+                        allocated_regions,
+                    ) {
+                        return Ok(Some(allocation_rva));
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Allocates space at the end of sections, but only within section boundaries.
+    ///
+    /// This method attempts to find space at the end of sections without creating
+    /// overlay data outside proper PE section boundaries. It fails if no suitable
+    /// space is found within section limits.
+    fn allocate_at_end_of_sections(
+        &self,
+        required_size: u32,
+        allocated_regions: &[(u32, u32)],
+    ) -> Result<u32> {
+        let view = self.assembly.view();
+        let file = view.file();
+
+        let mut sections: Vec<_> = file.sections().collect();
+        sections.sort_by_key(|s| std::cmp::Reverse(s.virtual_address));
+
+        for section in sections {
+            let raw_data_end = section.virtual_address + section.size_of_raw_data;
+            let virtual_end = section.virtual_address + section.virtual_size;
+
+            let available_space = virtual_end.saturating_sub(raw_data_end);
+            if available_space >= required_size {
+                // Align to 8-byte boundary for PE tables
+                let aligned_rva = (raw_data_end + 7) & !7;
+                if aligned_rva + required_size <= virtual_end
+                    && !self.conflicts_with_regions(aligned_rva, required_size, allocated_regions)
+                {
+                    return Ok(aligned_rva);
+                }
+            }
+        }
+
+        Err(Error::WriteLayoutFailed {
+            message: format!(
+                "No space available within section boundaries for {} bytes allocation. \
+                 Consider expanding section virtual sizes or using a different allocation strategy.",
+                required_size
+            ),
+        })
+    }
+
+    /// Allocates space by extending the last section.
+    ///
+    /// This method allocates space at the end of the last section, expanding
+    /// the file size as needed. The new file size will be calculated to accommodate
+    /// this allocation.
+    fn extend_section_for_allocation(
+        &self,
+        _required_size: u32,
+        allocated_regions: &[(u32, u32)],
+    ) -> Result<u32> {
+        let view = self.assembly.view();
+        let file = view.file();
+
+        // Find the last section (highest virtual address + virtual size)
+        let mut last_section = None;
+        let mut highest_end = 0;
+
+        for section in file.sections() {
+            let section_end = section.virtual_address + section.virtual_size;
+            if section_end >= highest_end {
+                highest_end = section_end;
+                last_section = Some(section);
+            }
+        }
+
+        if let Some(_section) = last_section {
+            let mut actual_end = highest_end;
+            for &(allocated_rva, allocated_size) in allocated_regions {
+                let allocated_end = allocated_rva + allocated_size;
+                if allocated_end > actual_end {
+                    actual_end = allocated_end;
+                }
+            }
+
+            let allocation_rva = actual_end;
+            let aligned_rva = (allocation_rva + 7) & !7;
+
+            // This allocation will be handled by extending the total file size
+            // and updating the section virtual size in update_layout_for_native_tables
+            Ok(aligned_rva)
+        } else {
+            Err(Error::WriteLayoutFailed {
+                message: "No sections found for native table allocation".to_string(),
+            })
+        }
+    }
+
+    /// Finds contiguous padding space within a section.
+    ///
+    /// This method analyzes the actual section content byte-by-byte to find
+    /// contiguous areas of padding bytes (0x00 or 0xCC) that are large enough
+    /// for the required allocation. This ensures we only allocate in genuinely
+    /// available space, not just theoretically unused space.
+    fn find_padding_space_in_section(
+        &self,
+        section: &goblin::pe::section_table::SectionTable,
+        required_size: u32,
+    ) -> Result<Option<u32>> {
+        let view = self.assembly.view();
+        let file = view.file();
+
+        if section.size_of_raw_data == 0 {
+            return Ok(None);
+        }
+
+        let section_file_offset = match file.rva_to_offset(section.virtual_address as usize) {
+            Ok(offset) => offset,
+            Err(_) => {
+                return Ok(None);
+            }
+        };
+
+        let section_data =
+            match file.data_slice(section_file_offset, section.size_of_raw_data as usize) {
+                Ok(data) => data,
+                Err(_) => {
+                    return Ok(None);
+                }
+            };
+
+        let aligned_required_size = ((required_size + 7) & !7) as usize;
+
+        let mut current_padding_start = None;
+        let mut current_padding_length = 0;
+        for (i, &byte) in section_data.iter().enumerate() {
+            if byte == 0x00 || byte == 0xCC {
+                if current_padding_start.is_none() {
+                    current_padding_start = Some(i);
+                    current_padding_length = 1;
+                } else {
+                    current_padding_length += 1;
+                }
+
+                if current_padding_length >= aligned_required_size {
+                    let padding_start_offset = current_padding_start.unwrap();
+                    let aligned_start = (padding_start_offset + 7) & !7;
+                    if aligned_start + aligned_required_size
+                        <= padding_start_offset + current_padding_length
+                    {
+                        let allocation_rva = section.virtual_address + aligned_start as u32;
+
+                        if allocation_rva + required_size
+                            <= section.virtual_address + section.virtual_size
+                        {
+                            return Ok(Some(allocation_rva));
+                        }
+                    }
+                }
+            } else {
+                current_padding_start = None;
+                current_padding_length = 0;
+            }
+        }
+
+        Ok(None)
     }
 
     /// Calculates the complete file layout with proper section placement.
@@ -481,7 +974,6 @@ impl<'a> LayoutPlanner<'a> {
         let mut section_updates = Vec::new();
         let mut section_table_needs_update = false;
 
-        // Check each section to see if it moved or grew
         for (index, new_section) in file_layout.sections.iter().enumerate() {
             if let Some(original_section) = original_sections.get(index) {
                 let mut update = SectionUpdate {
@@ -526,8 +1018,12 @@ impl<'a> LayoutPlanner<'a> {
         })
     }
 
-    /// Calculates total file size from the complete file layout.
-    fn calculate_total_size_from_layout(&self, file_layout: &FileLayout) -> u64 {
+    /// Calculates total file size from the complete file layout and native table requirements.
+    fn calculate_total_size_from_layout(
+        &self,
+        file_layout: &FileLayout,
+        native_requirements: &NativeTableRequirements,
+    ) -> u64 {
         // Find the maximum end offset of all regions
         let mut max_end = 0u64;
 
@@ -539,7 +1035,46 @@ impl<'a> LayoutPlanner<'a> {
             max_end = max_end.max(section.file_region.offset + section.file_region.size);
         }
 
+        // Account for native table space requirements
+        if let Some(import_rva) = native_requirements.import_table_rva {
+            if let Ok(import_offset) = self.rva_to_file_offset_for_planning(import_rva) {
+                let import_end = import_offset + native_requirements.import_table_size;
+                max_end = max_end.max(import_end);
+            }
+        }
+
+        if let Some(export_rva) = native_requirements.export_table_rva {
+            if let Ok(export_offset) = self.rva_to_file_offset_for_planning(export_rva) {
+                let export_end = export_offset + native_requirements.export_table_size;
+                max_end = max_end.max(export_end);
+            }
+        }
+
         max_end
+    }
+
+    /// Converts RVA to file offset for planning purposes.
+    ///
+    /// This is a simplified version that assumes a 1:1 mapping for new allocations
+    /// beyond existing sections. For existing sections, it uses the section mapping.
+    fn rva_to_file_offset_for_planning(&self, rva: u32) -> Result<u64> {
+        let view = self.assembly.view();
+        let file = view.file();
+
+        for section in file.sections() {
+            let section_start = section.virtual_address;
+            let section_end = section.virtual_address + section.virtual_size;
+
+            if rva >= section_start && rva < section_end {
+                let offset_in_section = rva - section_start;
+                let file_offset = section.pointer_to_raw_data as u64 + offset_in_section as u64;
+                return Ok(file_offset);
+            }
+        }
+
+        // RVA is beyond existing sections - assume 1:1 mapping for simplicity
+        // This is a conservative approach for newly allocated space
+        Ok(rva as u64)
     }
 
     /// Calculates section layouts, potentially relocating sections if metadata grows.
@@ -561,9 +1096,9 @@ impl<'a> LayoutPlanner<'a> {
             // Convert section name from byte array to string
             let section_name = std::str::from_utf8(&original_section.name)
                 .unwrap_or("<invalid>")
-                .trim_end_matches('\0')
-                .to_string();
-            let contains_metadata = pe::section_contains_metadata(&section_name);
+                .trim_end_matches('\0');
+            let contains_metadata = view.file().section_contains_metadata(section_name);
+            let section_name = section_name.to_string();
 
             let (new_size, metadata_streams) = if contains_metadata {
                 // This section contains .NET metadata - calculate new size with expansions
@@ -613,6 +1148,52 @@ impl<'a> LayoutPlanner<'a> {
         }
 
         Ok(new_sections)
+    }
+
+    /// Updates the file layout to accommodate native table allocations.
+    ///
+    /// This method extends section virtual sizes when native tables are allocated
+    /// beyond the current section boundaries.
+    fn update_layout_for_native_tables(
+        &self,
+        file_layout: &mut FileLayout,
+        native_requirements: &NativeTableRequirements,
+    ) -> Result<()> {
+        for section in &mut file_layout.sections {
+            let section_start = section.virtual_address;
+            let mut section_end = section_start + section.virtual_size;
+            let mut needs_extension = false;
+
+            if let Some(import_rva) = native_requirements.import_table_rva {
+                if import_rva >= section_start && (import_rva <= section_end) {
+                    let required_end = import_rva + native_requirements.import_table_size as u32;
+                    if required_end > section_end {
+                        section_end = std::cmp::max(section_end, required_end);
+                        needs_extension = true;
+                    }
+                }
+            }
+
+            if let Some(export_rva) = native_requirements.export_table_rva {
+                if export_rva >= section_start && (export_rva <= section_end) {
+                    let required_end = export_rva + native_requirements.export_table_size as u32;
+                    if required_end > section_end {
+                        section_end = std::cmp::max(section_end, required_end);
+                        needs_extension = true;
+                    }
+                }
+            }
+
+            if needs_extension {
+                let new_virtual_size = section_end - section_start;
+                let size_increase = new_virtual_size - section.virtual_size;
+
+                section.virtual_size = new_virtual_size;
+                section.file_region.size += size_increase as u64;
+            }
+        }
+
+        Ok(())
     }
 
     /// Calculates metadata stream layouts within a section.
@@ -667,6 +1248,31 @@ impl<'a> LayoutPlanner<'a> {
         }
 
         Ok(stream_layouts)
+    }
+
+    /// Determines if this is a PE32+ format file.
+    ///
+    /// Returns `true` for PE32+ (64-bit) format, `false` for PE32 (32-bit) format.
+    /// This affects the size of ILT/IAT entries and ordinal import bit positions.
+    ///
+    /// # Returns
+    /// Returns `true` if PE32+ format, `false` if PE32 format.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error`] if the PE format cannot be determined.
+    fn is_pe32_plus_format(&self) -> Result<bool> {
+        let view = self.assembly.view();
+        let optional_header =
+            view.file()
+                .header_optional()
+                .as_ref()
+                .ok_or_else(|| Error::WriteLayoutFailed {
+                    message: "Missing optional header for PE format detection in planner"
+                        .to_string(),
+                })?;
+
+        // PE32 magic is 0x10b, PE32+ magic is 0x20b
+        Ok(optional_header.standard_fields.magic != 0x10b)
     }
 }
 

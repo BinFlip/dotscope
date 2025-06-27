@@ -46,7 +46,10 @@ use std::collections::HashMap;
 
 use crate::{
     cilassembly::{HeapChanges, TableModifications},
-    metadata::{cilassemblyview::CilAssemblyView, tables::TableId},
+    metadata::{
+        cilassemblyview::CilAssemblyView, exports::UnifiedExportContainer,
+        imports::UnifiedImportContainer, tables::TableId,
+    },
 };
 
 /// Internal structure for tracking all modifications to an assembly.
@@ -85,7 +88,7 @@ use crate::{
 ///
 /// This type is not [`Send`] or [`Sync`] because it contains mutable state
 /// that is not protected by synchronization primitives.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct AssemblyChanges {
     /// Table-level modifications, keyed by table ID
     ///
@@ -117,6 +120,13 @@ pub struct AssemblyChanges {
     /// Tracks user strings that have been added to the #US heap. User strings
     /// are typically Unicode string literals used by IL instructions.
     pub userstring_heap_changes: HeapChanges<String>,
+
+    /// Native import/export container for PE import/export tables
+    ///
+    /// Contains unified containers that manage both CIL and native imports/exports.
+    /// These are lazily initialized when native PE functionality is first used.
+    pub native_imports: Option<UnifiedImportContainer>,
+    pub native_exports: Option<UnifiedExportContainer>,
 }
 
 impl AssemblyChanges {
@@ -125,11 +135,20 @@ impl AssemblyChanges {
     /// All heap changes are initialized with the proper original heap byte sizes
     /// from the view to ensure correct index calculations.
     /// Table changes remain an empty HashMap and are allocated on first use.
+    ///
+    /// If the PE file contains existing native imports or exports, they are parsed
+    /// and populated into the respective containers to enable round-trip verification.
     pub fn new(view: &CilAssemblyView) -> Self {
         let string_heap_size = Self::get_heap_byte_size(view, "#Strings");
         let blob_heap_size = Self::get_heap_byte_size(view, "#Blob");
         let guid_heap_size = Self::get_heap_byte_size(view, "#GUID");
         let userstring_heap_size = Self::get_heap_byte_size(view, "#US");
+
+        // Parse existing native imports from the PE file
+        let native_imports = Self::parse_native_imports(view);
+
+        // Parse existing native exports from the PE file
+        let native_exports = Self::parse_native_exports(view);
 
         Self {
             table_changes: HashMap::new(),
@@ -137,6 +156,8 @@ impl AssemblyChanges {
             blob_heap_changes: HeapChanges::new(blob_heap_size),
             guid_heap_changes: HeapChanges::new(guid_heap_size),
             userstring_heap_changes: HeapChanges::new(userstring_heap_size),
+            native_imports,
+            native_exports,
         }
     }
 
@@ -150,6 +171,8 @@ impl AssemblyChanges {
             blob_heap_changes: HeapChanges::new(1),
             guid_heap_changes: HeapChanges::new(1),
             userstring_heap_changes: HeapChanges::new(1),
+            native_imports: None,
+            native_exports: None,
         }
     }
 
@@ -162,6 +185,46 @@ impl AssemblyChanges {
             .unwrap_or(1)
     }
 
+    /// Parse existing native imports from the PE file.
+    ///
+    /// If the PE file contains native import tables, this method parses them
+    /// using goblin and populates a UnifiedImportContainer with the existing data.
+    fn parse_native_imports(view: &CilAssemblyView) -> Option<UnifiedImportContainer> {
+        if let Some(goblin_imports) = view.file().imports() {
+            if !goblin_imports.is_empty() {
+                let mut container = UnifiedImportContainer::new();
+                if container
+                    .native_mut()
+                    .populate_from_goblin(goblin_imports)
+                    .is_ok()
+                {
+                    return Some(container);
+                }
+            }
+        }
+        None
+    }
+
+    /// Parse existing native exports from the PE file.
+    ///
+    /// If the PE file contains native export tables, this method parses them
+    /// using goblin and populates a UnifiedExportContainer with the existing data.
+    fn parse_native_exports(view: &CilAssemblyView) -> Option<UnifiedExportContainer> {
+        if let Some(goblin_exports) = view.file().exports() {
+            if !goblin_exports.is_empty() {
+                let mut container = UnifiedExportContainer::new();
+                if container
+                    .native_mut()
+                    .populate_from_goblin(goblin_exports)
+                    .is_ok()
+                {
+                    return Some(container);
+                }
+            }
+        }
+        None
+    }
+
     /// Returns true if any changes have been made to the assembly.
     ///
     /// This checks if any table changes exist or if any heap has additions.
@@ -171,6 +234,14 @@ impl AssemblyChanges {
             || self.blob_heap_changes.has_additions()
             || self.guid_heap_changes.has_additions()
             || self.userstring_heap_changes.has_additions()
+            || self
+                .native_imports
+                .as_ref()
+                .is_some_and(|imports| !imports.is_empty())
+            || self
+                .native_exports
+                .as_ref()
+                .is_some_and(|exports| !exports.is_empty())
     }
 
     /// Returns the number of tables that have been modified.
@@ -191,6 +262,50 @@ impl AssemblyChanges {
     /// Returns an iterator over all modified table IDs.
     pub fn modified_tables(&self) -> impl Iterator<Item = TableId> + '_ {
         self.table_changes.keys().copied()
+    }
+
+    /// Gets mutable access to the native imports container, initializing it if needed.
+    ///
+    /// This method lazily initializes the native imports container on first access.
+    /// The container provides unified access to both CIL and native PE imports.
+    ///
+    /// # Returns
+    ///
+    /// Mutable reference to the unified import container.
+    pub fn native_imports_mut(&mut self) -> &mut UnifiedImportContainer {
+        self.native_imports
+            .get_or_insert_with(UnifiedImportContainer::new)
+    }
+
+    /// Gets read-only access to the native imports container, if it exists.
+    ///
+    /// # Returns
+    ///
+    /// Optional reference to the unified import container.
+    pub fn native_imports(&self) -> Option<&UnifiedImportContainer> {
+        self.native_imports.as_ref()
+    }
+
+    /// Gets mutable access to the native exports container, initializing it if needed.
+    ///
+    /// This method lazily initializes the native exports container on first access.
+    /// The container provides unified access to both CIL and native PE exports.
+    ///
+    /// # Returns
+    ///
+    /// Mutable reference to the unified export container.
+    pub fn native_exports_mut(&mut self) -> &mut UnifiedExportContainer {
+        self.native_exports
+            .get_or_insert_with(UnifiedExportContainer::new)
+    }
+
+    /// Gets read-only access to the native exports container, if it exists.
+    ///
+    /// # Returns
+    ///
+    /// Optional reference to the unified export container.
+    pub fn native_exports(&self) -> Option<&UnifiedExportContainer> {
+        self.native_exports.as_ref()
     }
 
     /// Gets the table modifications for a specific table, if any.

@@ -177,6 +177,8 @@ impl<'a> PeWriter<'a> {
             self.update_base_relocations()?;
         }
 
+        self.update_native_table_directories()?;
+
         Ok(())
     }
 
@@ -348,6 +350,111 @@ impl<'a> PeWriter<'a> {
         relocation_writer.write_relocation_table()?;
 
         Ok(())
+    }
+
+    /// Updates PE data directory entries for native import/export tables.
+    ///
+    /// This method updates the PE optional header's data directory to point to
+    /// native import and export tables when they are present in the assembly.
+    /// The data directory contains RVA and size information for various PE tables.
+    ///
+    /// # PE Data Directory Entries
+    /// - Index 1: Import Table (IMAGE_DIRECTORY_ENTRY_IMPORT)
+    /// - Index 0: Export Table (IMAGE_DIRECTORY_ENTRY_EXPORT)
+    ///
+    /// # Process
+    /// 1. Check if native tables are present in the layout plan
+    /// 2. Calculate RVAs and sizes for import/export tables
+    /// 3. Update the appropriate data directory entries in the PE optional header
+    /// 4. Ensure proper alignment and validation of addresses
+    ///
+    /// # Returns
+    /// Returns `Ok(())` if directory updates completed successfully.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error`] if directory updates fail due to invalid addresses
+    /// or insufficient space in the PE optional header.
+    fn update_native_table_directories(&mut self) -> Result<()> {
+        let requirements = &self.layout_plan.native_table_requirements;
+        if !requirements.needs_import_tables && !requirements.needs_export_tables {
+            return Ok(());
+        }
+
+        let data_directory_offset = self.find_data_directory_offset()?;
+
+        if requirements.needs_import_tables {
+            if let Some(import_rva) = requirements.import_table_rva {
+                let import_entry_offset = data_directory_offset + 8; // Import table is entry 1, each entry is 8 bytes
+                self.output
+                    .write_u32_le_at(import_entry_offset, import_rva)?; // RVA
+                self.output.write_u32_le_at(
+                    import_entry_offset + 4,
+                    requirements.import_table_size as u32,
+                )?; // Size
+            }
+        }
+
+        if requirements.needs_export_tables {
+            if let Some(export_rva) = requirements.export_table_rva {
+                let export_entry_offset = data_directory_offset; // Index 0
+                self.output
+                    .write_u32_le_at(export_entry_offset, export_rva)?; // RVA
+                self.output.write_u32_le_at(
+                    export_entry_offset + 4,
+                    requirements.export_table_size as u32,
+                )?; // Size
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Finds the offset of the PE data directory in the optional header.
+    ///
+    /// The data directory is located at different offsets depending on whether
+    /// this is a PE32 or PE32+ file. The data directory contains 16 entries,
+    /// each 8 bytes (RVA + Size).
+    ///
+    /// # Returns
+    /// Returns the absolute file offset of the start of the data directory.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::WriteLayoutFailed`] if the data directory cannot be located.
+    fn find_data_directory_offset(&self) -> Result<u64> {
+        let view = self.assembly.view();
+        let pe_headers_region = &self.layout_plan.file_layout.pe_headers;
+
+        // Get the PE type (PE32 or PE32+) from the assembly
+        let optional_header =
+            view.file()
+                .header_optional()
+                .as_ref()
+                .ok_or_else(|| Error::WriteLayoutFailed {
+                    message: "Missing optional header for PE data directory location".to_string(),
+                })?;
+        let is_pe32_plus = optional_header.standard_fields.magic != 0x10b;
+
+        // PE signature (4) + COFF header (20) = 24 bytes before optional header
+        let optional_header_start = pe_headers_region.offset + 24;
+
+        // Data directory offset depends on PE type:
+        // PE32: 96 bytes from start of optional header
+        // PE32+: 112 bytes from start of optional header
+        let data_directory_offset = if is_pe32_plus {
+            optional_header_start + 112
+        } else {
+            optional_header_start + 96
+        };
+
+        // Validate that this is within the PE headers region
+        // Data directory has 16 entries * 8 bytes = 128 bytes
+        if data_directory_offset + 128 > pe_headers_region.offset + pe_headers_region.size {
+            return Err(Error::WriteLayoutFailed {
+                message: "PE data directory extends beyond PE headers region".to_string(),
+            });
+        }
+
+        Ok(data_directory_offset)
     }
 
     /// Creates section move information from the layout plan.

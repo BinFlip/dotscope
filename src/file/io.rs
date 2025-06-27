@@ -1220,6 +1220,60 @@ pub fn write_prefixed_string_utf16(value: &str, buffer: &mut Vec<u8>) {
     }
 }
 
+/// Write a null-terminated UTF-8 string at a specific offset.
+///
+/// Writes the string bytes followed by a null terminator to the buffer at the
+/// specified offset, advancing the offset by the number of bytes written.
+/// This is commonly used for PE format string tables and null-terminated string data.
+///
+/// # Arguments
+///
+/// * `data` - The buffer to write to
+/// * `offset` - Mutable reference to the current position (will be advanced)
+/// * `value` - The string to write
+///
+/// # Returns
+/// * `Ok(())` - If the string was written successfully
+/// * `Err(OutOfBounds)` - If there is insufficient space in the buffer
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use dotscope::file::io::write_string_at;
+///
+/// let mut buffer = [0u8; 10];
+/// let mut offset = 0;
+///
+/// write_string_at(&mut buffer, &mut offset, "Hello")?;
+/// assert_eq!(offset, 6); // 5 chars + null terminator
+/// assert_eq!(&buffer[0..6], b"Hello\0");
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+///
+/// # Thread Safety
+///
+/// This function is thread-safe and can be called concurrently from multiple threads.
+/// Note that the offset parameter is modified, so each thread should use its own offset variable.
+pub fn write_string_at(data: &mut [u8], offset: &mut usize, value: &str) -> Result<()> {
+    let string_bytes = value.as_bytes();
+    let total_length = string_bytes.len() + 1; // +1 for null terminator
+
+    // Check bounds
+    if *offset + total_length > data.len() {
+        return Err(crate::Error::OutOfBounds);
+    }
+
+    // Write string bytes
+    data[*offset..*offset + string_bytes.len()].copy_from_slice(string_bytes);
+    *offset += string_bytes.len();
+
+    // Write null terminator
+    data[*offset] = 0;
+    *offset += 1;
+
+    Ok(())
+}
+
 /// Reads a compressed integer from a byte buffer according to ECMA-335 II.24.2.4.
 ///
 /// Compressed integers are used throughout .NET metadata to encode length prefixes
@@ -1992,5 +2046,77 @@ mod tests {
         write_prefixed_string_utf16("中", &mut buffer);
         // "中" is U+4E2D, should be encoded as 0x2D 0x4E in little-endian
         assert_eq!(buffer, vec![2, 0x2D, 0x4E]);
+    }
+
+    #[test]
+    fn test_write_string_at() {
+        let mut buffer = [0u8; 20];
+        let mut offset = 0;
+
+        // Test writing a simple string
+        write_string_at(&mut buffer, &mut offset, "Hello").unwrap();
+        assert_eq!(offset, 6); // 5 chars + null terminator
+        assert_eq!(&buffer[0..6], b"Hello\0");
+
+        // Test writing another string after the first
+        write_string_at(&mut buffer, &mut offset, "World").unwrap();
+        assert_eq!(offset, 12); // Previous 6 + 5 chars + null terminator
+        assert_eq!(&buffer[6..12], b"World\0");
+
+        // Test that the complete buffer contains expected data
+        assert_eq!(&buffer[0..12], b"Hello\0World\0");
+    }
+
+    #[test]
+    fn test_write_string_at_empty_string() {
+        let mut buffer = [0u8; 5];
+        let mut offset = 0;
+
+        write_string_at(&mut buffer, &mut offset, "").unwrap();
+        assert_eq!(offset, 1); // Just null terminator
+        assert_eq!(&buffer[0..1], b"\0");
+    }
+
+    #[test]
+    fn test_write_string_at_exact_fit() {
+        let mut buffer = [0u8; 6];
+        let mut offset = 0;
+
+        write_string_at(&mut buffer, &mut offset, "Hello").unwrap();
+        assert_eq!(offset, 6);
+        assert_eq!(&buffer, b"Hello\0");
+    }
+
+    #[test]
+    fn test_write_string_at_bounds_error() {
+        let mut buffer = [0u8; 5];
+        let mut offset = 0;
+
+        // Try to write a string that won't fit (6 bytes needed, 5 available)
+        let result = write_string_at(&mut buffer, &mut offset, "Hello");
+        assert!(result.is_err());
+        assert_eq!(offset, 0); // Offset should not be modified on error
+    }
+
+    #[test]
+    fn test_write_string_at_with_offset() {
+        let mut buffer = [0u8; 10];
+        let mut offset = 3; // Start writing at offset 3
+
+        write_string_at(&mut buffer, &mut offset, "Hi").unwrap();
+        assert_eq!(offset, 6); // 3 + 2 chars + null terminator
+        assert_eq!(&buffer[3..6], b"Hi\0");
+        assert_eq!(&buffer[0..3], &[0, 0, 0]); // First 3 bytes should remain zero
+    }
+
+    #[test]
+    fn test_write_string_at_utf8() {
+        let mut buffer = [0u8; 20];
+        let mut offset = 0;
+
+        // Test with UTF-8 characters
+        write_string_at(&mut buffer, &mut offset, "café").unwrap();
+        assert_eq!(offset, 6); // 4 UTF-8 bytes + 1 null terminator
+        assert_eq!(&buffer[0..6], "café\0".as_bytes());
     }
 }

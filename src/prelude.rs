@@ -517,17 +517,27 @@ pub use crate::disassembler::{
 // Import/Export Analysis
 // ================================================================================================
 //
-// This section provides analysis of assembly dependencies through import and export
-// tables. These types enable understanding of inter-assembly relationships, dependency
-// analysis, and assembly composition patterns.
+// This section provides analysis of assembly dependencies through both managed (.NET) and
+// native PE import/export tables. These types enable understanding of inter-assembly
+// relationships, dependency analysis, assembly composition patterns, and native DLL dependencies.
+//
+// The unified containers provide a single interface for both CIL and native imports/exports,
+// while individual containers allow focused analysis of specific import/export types.
 
 /// Import and export analysis.
 ///
 /// Tools for analyzing assembly dependencies, exported types, and import relationships
-/// essential for understanding assembly composition and dependency graphs.
+/// essential for understanding assembly composition and dependency graphs. Includes both
+/// managed (.NET) imports/exports and native PE import/export table support.
 pub use crate::metadata::{
-    exports::Exports,
-    imports::{Import, ImportContainer, ImportRc, Imports},
+    exports::{
+        ExportEntry, ExportFunction, ExportSource, ExportTarget, ExportedFunction, Exports,
+        NativeExportRef, NativeExports, UnifiedExportContainer,
+    },
+    imports::{
+        DllDependency, DllSource, Import, ImportContainer, ImportEntry, ImportRc, Imports,
+        NativeImportRef, NativeImports, UnifiedImportContainer,
+    },
 };
 
 // ================================================================================================
@@ -681,6 +691,13 @@ pub use crate::metadata::tables::{
     MethodSpecBuilder, ModuleBuilder, ModuleRefBuilder, NestedClassBuilder, ParamBuilder,
     PropertyBuilder, PropertyMapBuilder, StandAloneSigBuilder,
 };
+
+/// Native PE import and export builders.
+///
+/// Create native PE import and export tables that integrate with the dotscope builder pattern.
+/// These builders handle native DLL dependencies, function imports by name and ordinal,
+/// export functions, and export forwarders for mixed-mode assemblies and PE files.
+pub use crate::metadata::{exports::NativeExportsBuilder, imports::NativeImportsBuilder};
 
 /// Method semantic relationship constants.
 ///
