@@ -9,7 +9,7 @@ use crate::{
     metadata::{
         signatures::parse_property_signature,
         streams::{Blob, Strings},
-        tables::{Property, PropertyRc},
+        tables::{Property, PropertyRc, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -146,5 +146,30 @@ impl PropertyRaw {
     /// This function does not return errors. It always returns `Ok(())`.
     pub fn apply(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl TableRow for PropertyRaw {
+    /// Calculates the byte size of a single Property table row.
+    ///
+    /// The size depends on the metadata heap size configuration:
+    /// - **flags**: 2 bytes (`PropertyAttributes` bitmask)
+    /// - **name**: String heap index size (2 or 4 bytes)
+    /// - **signature**: Blob heap index size (2 or 4 bytes)
+    ///
+    /// ## Arguments
+    ///
+    /// * `sizes` - Table size configuration information
+    ///
+    /// ## Returns
+    ///
+    /// * `u32` - Total row size in bytes (6-10 bytes typically)
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* flags */          2 +
+            /* name */           sizes.str_bytes() +
+            /* type_signature */ sizes.blob_bytes()
+        )
     }
 }

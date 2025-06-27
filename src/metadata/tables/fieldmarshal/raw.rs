@@ -31,7 +31,10 @@ use crate::{
     metadata::{
         marshalling::parse_marshalling_descriptor,
         streams::Blob,
-        tables::{CodedIndex, FieldMap, FieldMarshal, FieldMarshalRc, ParamMap, TableId},
+        tables::{
+            CodedIndex, CodedIndexType, FieldMap, FieldMarshal, FieldMarshalRc, ParamMap, TableId,
+            TableInfoRef, TableRow,
+        },
         token::Token,
         typesystem::CilTypeReference,
     },
@@ -203,5 +206,25 @@ impl FieldMarshalRaw {
                 blob.get(self.native_type as usize)?,
             )?),
         }))
+    }
+}
+
+impl TableRow for FieldMarshalRaw {
+    /// Calculate the binary size of one `FieldMarshal` table row
+    ///
+    /// Returns the total byte size of a single `FieldMarshal` table row based on the table
+    /// configuration. The size varies depending on the size of coded indexes and heap indexes.
+    ///
+    /// # Size Breakdown
+    /// - `parent`: Variable bytes (`HasFieldMarshal` coded index)
+    /// - `native_type`: Variable bytes (Blob heap index)
+    ///
+    /// Total: Variable size depending on coded index and heap size configuration
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* parent */      sizes.coded_index_bytes(CodedIndexType::HasFieldMarshal) +
+            /* native_type */ sizes.blob_bytes()
+        )
     }
 }

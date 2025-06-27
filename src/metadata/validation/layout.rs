@@ -400,8 +400,7 @@ mod tests {
         for &size in &valid_sizes {
             assert!(
                 LayoutValidator::validate_packing_size(size).is_ok(),
-                "Packing size {} should be valid",
-                size
+                "Packing size {size} should be valid"
             );
         }
     }
@@ -414,8 +413,7 @@ mod tests {
         for &size in &invalid_sizes {
             assert!(
                 LayoutValidator::validate_packing_size(size).is_err(),
-                "Packing size {} should be invalid",
-                size
+                "Packing size {size} should be invalid"
             );
         }
     }

@@ -73,7 +73,10 @@ use crate::{
     metadata::{
         customattributes::{parse_custom_attribute_blob, CustomAttributeValue},
         streams::Blob,
-        tables::{CodedIndex, CustomAttribute, CustomAttributeRc, MemberRefSignature},
+        tables::{
+            CodedIndex, CodedIndexType, CustomAttribute, CustomAttributeRc, MemberRefSignature,
+            TableInfoRef, TableRow,
+        },
         token::Token,
         typesystem::CilTypeReference,
     },
@@ -271,5 +274,31 @@ impl CustomAttributeRaw {
             constructor: constructor_ref,
             value,
         }))
+    }
+}
+
+impl TableRow for CustomAttributeRaw {
+    /// Calculate the byte size of a CustomAttribute table row
+    ///
+    /// Computes the total size based on variable-size coded indexes and heap indexes.
+    /// The size depends on whether the metadata uses 2-byte or 4-byte indexes.
+    ///
+    /// # Row Layout (ECMA-335 §II.22.10)
+    /// - `parent`: 2 or 4 bytes (`HasCustomAttribute` coded index)
+    /// - `constructor`: 2 or 4 bytes (`CustomAttributeType` coded index)
+    /// - `value`: 2 or 4 bytes (blob heap index)
+    ///
+    /// # Arguments
+    /// * `sizes` - Table sizing information for index widths
+    ///
+    /// # Returns
+    /// Total byte size of one CustomAttribute table row
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* parent */      sizes.coded_index_bytes(CodedIndexType::HasCustomAttribute) +
+            /* constructor */ sizes.coded_index_bytes(CodedIndexType::CustomAttributeType) +
+            /* value */       sizes.blob_bytes()
+        )
     }
 }

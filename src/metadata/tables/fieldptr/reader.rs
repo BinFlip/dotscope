@@ -8,13 +8,6 @@ use crate::{
 };
 
 impl RowReadable for FieldPtrRaw {
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* field */ sizes.table_index_bytes(TableId::Field)
-        )
-    }
-
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(FieldPtrRaw {
             rid,

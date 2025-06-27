@@ -241,7 +241,7 @@ mod tests {
 
         let result = constant.apply();
         if let Err(ref e) = result {
-            println!("Error applying string constant: {}", e);
+            println!("Error applying string constant: {e}");
         }
         assert!(
             result.is_ok(),

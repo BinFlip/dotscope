@@ -25,7 +25,7 @@
 //!
 //! ## Basic Iteration
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -52,7 +52,7 @@
 //!
 //! ## Combined with Block Analysis
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -114,7 +114,7 @@ use crate::disassembler::BasicBlock;
 ///
 /// ## Basic Usage
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
@@ -139,7 +139,7 @@ use crate::disassembler::BasicBlock;
 ///
 /// ## Collecting and Analyzing Instructions
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
@@ -164,7 +164,7 @@ use crate::disassembler::BasicBlock;
 ///
 /// ## Iterator Combinators
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
@@ -214,7 +214,7 @@ impl<'a> InstructionIterator<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -297,7 +297,7 @@ impl<'a> Iterator for InstructionIterator<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///

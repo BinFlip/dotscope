@@ -47,16 +47,19 @@ use std::sync::Arc;
 
 use crate::metadata::token::Token;
 
+mod builder;
 mod loader;
 mod owned;
 mod raw;
 mod reader;
+mod writer;
 
+pub use builder::*;
 pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;
 
-/// Concurrent map for storing `InterfaceImpl` entries indexed by [`Token`].
+/// Concurrent map for storing `InterfaceImpl` entries indexed by [`crate::metadata::token::Token`].
 ///
 /// This thread-safe map enables efficient lookup of interface implementations by their
 /// associated tokens during metadata processing and runtime type resolution.

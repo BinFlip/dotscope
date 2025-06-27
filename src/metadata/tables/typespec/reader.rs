@@ -1,3 +1,38 @@
+//! Implementation of `RowReadable` for `TypeSpecRaw` metadata table entries.
+//!
+//! This module provides binary deserialization support for the `TypeSpec` table (ID 0x1B),
+//! enabling reading of type specification information from .NET PE files. The TypeSpec
+//! table defines complex type specifications through signatures stored in the blob heap,
+//! supporting generic type instantiation, array definitions, pointer types, and complex
+//! type composition.
+//!
+//! ## Table Structure (ECMA-335 §II.22.39)
+//!
+//! | Field | Type | Description |
+//! |-------|------|-------------|
+//! | `Signature` | Blob heap index | Type specification signature data |
+//!
+//! ## Usage Context
+//!
+//! TypeSpec entries are used for:
+//! - **Generic Instantiations**: `List<T>`, `Dictionary<K,V>`, custom generic types
+//! - **Array Types**: Single and multi-dimensional arrays with bounds
+//! - **Pointer Types**: Managed and unmanaged pointers, reference types  
+//! - **Modified Types**: Types with `const`, `volatile`, and other modifiers
+//! - **Constructed Types**: Complex compositions of primitive and defined types
+//! - **Function Pointers**: Method signatures as type specifications
+//!
+//! ## Thread Safety
+//!
+//! The `RowReadable` implementation is stateless and safe for concurrent use across
+//! multiple threads during metadata loading operations.
+//!
+//! ## Related Modules
+//!
+//! - [`crate::metadata::tables::typespec::writer`] - Binary serialization support
+//! - [`crate::metadata::tables::typespec`] - High-level TypeSpec table interface
+//! - [`crate::metadata::signatures`] - Type signature parsing and representation
+
 use crate::{
     file::io::read_le_at_dyn,
     metadata::{
@@ -8,25 +43,6 @@ use crate::{
 };
 
 impl RowReadable for TypeSpecRaw {
-    /// Calculates the byte size of a single `TypeSpec` table row.
-    ///
-    /// The `TypeSpec` table contains a single column:
-    /// - **Signature**: Blob heap index (2 or 4 bytes depending on heap size)
-    ///
-    /// ## Arguments
-    ///
-    /// * `sizes` - Table size information including blob heap size thresholds
-    ///
-    /// ## Returns
-    ///
-    /// The total byte size for one `TypeSpec` table row.
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* signature */ sizes.blob_bytes()
-        )
-    }
-
     /// Reads a single `TypeSpec` table row from binary data.
     ///
     /// Parses the binary representation of a `TypeSpec` table entry, extracting

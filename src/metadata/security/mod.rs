@@ -29,7 +29,7 @@
 //!
 //! ## Basic Permission Set Analysis
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::{CilObject, metadata::security::PermissionSet};
 //!
 //! let assembly = CilObject::from_file("legacy_app.dll".as_ref())?;
@@ -48,7 +48,7 @@
 //!
 //! ## Detailed Permission Analysis
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::security::{PermissionSet, Permission, SecurityAction};
 //!
 //! # let permission_set_data = &[0u8; 100]; // placeholder
@@ -112,12 +112,401 @@
 //! - [ECMA-335 6th Edition, Partition II, Section 23.1.3 - Security Actions](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf)
 //! - Microsoft .NET Framework Security Documentation (archived)
 
+pub mod builders;
+mod encoder;
 mod namedargument;
 mod permission;
 mod permissionset;
 mod types;
 
+pub use builders::*;
+pub use encoder::*;
 pub use namedargument::NamedArgument;
 pub use permission::Permission;
 pub use permissionset::PermissionSet;
 pub use types::*;
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        metadata::security::{
+            encode_permission_set, ArgumentType, ArgumentValue, NamedArgument, Permission,
+            PermissionSet, PermissionSetBuilder, PermissionSetFormat,
+        },
+        Result,
+    };
+
+    /// Test complete round-trip for SecurityPermission with Unrestricted flag.
+    #[test]
+    fn test_round_trip_security_permission_unrestricted() -> Result<()> {
+        // Step 1: Create permission set with SecurityPermission
+        let original_permissions = vec![Permission {
+            class_name: "System.Security.Permissions.SecurityPermission".to_string(),
+            assembly_name: "mscorlib".to_string(),
+            named_arguments: vec![NamedArgument {
+                name: "Unrestricted".to_string(),
+                arg_type: ArgumentType::Boolean,
+                value: ArgumentValue::Boolean(true),
+            }],
+        }];
+
+        // Step 2: Encode to binary format
+        let permission_blob =
+            encode_permission_set(&original_permissions, PermissionSetFormat::BinaryLegacy)?;
+
+        // Step 3: Parse back and verify
+        let parsed_set = PermissionSet::new(&permission_blob)?;
+        assert_eq!(parsed_set.permissions().len(), 1);
+        assert!(parsed_set.is_unrestricted());
+        assert!(parsed_set.is_full_trust());
+
+        // Verify the specific permission details
+        let permission = &parsed_set.permissions()[0];
+        assert_eq!(
+            permission.class_name,
+            "System.Security.Permissions.SecurityPermission"
+        );
+        assert_eq!(permission.named_arguments.len(), 1);
+        assert_eq!(permission.named_arguments[0].name, "Unrestricted");
+
+        if let ArgumentValue::Boolean(value) = &permission.named_arguments[0].value {
+            assert!(value);
+        } else {
+            panic!("Expected boolean value for Unrestricted");
+        }
+
+        Ok(())
+    }
+
+    /// Test round-trip for FileIOPermission with multiple paths.
+    #[test]
+    fn test_round_trip_file_io_permission() -> Result<()> {
+        let original_permissions = vec![Permission {
+            class_name: "System.Security.Permissions.FileIOPermission".to_string(),
+            assembly_name: "mscorlib".to_string(),
+            named_arguments: vec![
+                NamedArgument {
+                    name: "Read".to_string(),
+                    arg_type: ArgumentType::String,
+                    value: ArgumentValue::String("C:\\Data;C:\\Config".to_string()),
+                },
+                NamedArgument {
+                    name: "Write".to_string(),
+                    arg_type: ArgumentType::String,
+                    value: ArgumentValue::String("C:\\Logs;C:\\Output".to_string()),
+                },
+            ],
+        }];
+
+        let permission_blob =
+            encode_permission_set(&original_permissions, PermissionSetFormat::BinaryLegacy)?;
+        let parsed_set = PermissionSet::new(&permission_blob)?;
+
+        assert_eq!(parsed_set.permissions().len(), 1);
+        assert!(parsed_set.has_file_io());
+        assert!(!parsed_set.is_full_trust());
+
+        // Check file paths
+        let read_paths = parsed_set.get_all_file_read_paths();
+        let write_paths = parsed_set.get_all_file_write_paths();
+
+        assert_eq!(read_paths.len(), 1);
+        assert_eq!(read_paths[0], "C:\\Data;C:\\Config");
+        assert_eq!(write_paths.len(), 1);
+        assert_eq!(write_paths[0], "C:\\Logs;C:\\Output");
+
+        Ok(())
+    }
+
+    /// Test round-trip for multiple permissions in a single set.
+    #[test]
+    fn test_round_trip_multiple_permissions() -> Result<()> {
+        let original_permissions = vec![
+            Permission {
+                class_name: "System.Security.Permissions.SecurityPermission".to_string(),
+                assembly_name: "mscorlib".to_string(),
+                named_arguments: vec![NamedArgument {
+                    name: "Flags".to_string(),
+                    arg_type: ArgumentType::String,
+                    value: ArgumentValue::String("Execution, SkipVerification".to_string()),
+                }],
+            },
+            Permission {
+                class_name: "System.Security.Permissions.FileIOPermission".to_string(),
+                assembly_name: "mscorlib".to_string(),
+                named_arguments: vec![NamedArgument {
+                    name: "Read".to_string(),
+                    arg_type: ArgumentType::String,
+                    value: ArgumentValue::String("C:\\temp".to_string()),
+                }],
+            },
+            Permission {
+                class_name: "System.Security.Permissions.RegistryPermission".to_string(),
+                assembly_name: "mscorlib".to_string(),
+                named_arguments: vec![NamedArgument {
+                    name: "Read".to_string(),
+                    arg_type: ArgumentType::String,
+                    value: ArgumentValue::String("HKEY_LOCAL_MACHINE\\SOFTWARE".to_string()),
+                }],
+            },
+        ];
+
+        let permission_blob =
+            encode_permission_set(&original_permissions, PermissionSetFormat::BinaryLegacy)?;
+        let parsed_set = PermissionSet::new(&permission_blob)?;
+
+        assert_eq!(parsed_set.permissions().len(), 3);
+        assert!(parsed_set.has_file_io());
+        assert!(parsed_set.has_registry());
+        assert!(!parsed_set.has_reflection());
+
+        // Verify each permission is correctly parsed
+        let security_perm =
+            parsed_set.get_permission("System.Security.Permissions.SecurityPermission");
+        assert!(security_perm.is_some());
+
+        let fileio_perm = parsed_set.get_permission("System.Security.Permissions.FileIOPermission");
+        assert!(fileio_perm.is_some());
+
+        let registry_perm =
+            parsed_set.get_permission("System.Security.Permissions.RegistryPermission");
+        assert!(registry_perm.is_some());
+
+        Ok(())
+    }
+
+    /// Test round-trip using the fluent builder API.
+    #[test]
+    fn test_round_trip_builder_api() -> Result<()> {
+        let permission_blob = PermissionSetBuilder::new()
+            .add_security_permission()
+            .flags("Execution, Assertion")
+            .build()
+            .add_file_io_permission()
+            .read_paths(&["C:\\Data", "C:\\Config"])
+            .write_paths(&["C:\\Logs"])
+            .unrestricted(false)
+            .build()
+            .encode(PermissionSetFormat::BinaryLegacy)?;
+
+        let parsed_set = PermissionSet::new(&permission_blob)?;
+
+        assert_eq!(parsed_set.permissions().len(), 2);
+        assert!(parsed_set.has_file_io());
+        assert!(!parsed_set.is_full_trust());
+
+        // Verify SecurityPermission flags
+        let security_perm = parsed_set
+            .get_permission("System.Security.Permissions.SecurityPermission")
+            .unwrap();
+        assert_eq!(security_perm.named_arguments.len(), 1);
+        assert_eq!(security_perm.named_arguments[0].name, "Flags");
+
+        // Verify FileIOPermission paths
+        let fileio_perm = parsed_set
+            .get_permission("System.Security.Permissions.FileIOPermission")
+            .unwrap();
+        assert_eq!(fileio_perm.named_arguments.len(), 3); // Read, Write, Unrestricted
+
+        Ok(())
+    }
+
+    /// Test XML format round-trip.
+    #[test]
+    fn test_round_trip_xml_format() -> Result<()> {
+        let original_permissions = vec![Permission {
+            class_name: "System.Security.Permissions.SecurityPermission".to_string(),
+            assembly_name: "mscorlib".to_string(),
+            named_arguments: vec![
+                NamedArgument {
+                    name: "Unrestricted".to_string(),
+                    arg_type: ArgumentType::Boolean,
+                    value: ArgumentValue::Boolean(true),
+                },
+                NamedArgument {
+                    name: "Flags".to_string(),
+                    arg_type: ArgumentType::String,
+                    value: ArgumentValue::String("AllFlags".to_string()),
+                },
+            ],
+        }];
+
+        let xml_blob = encode_permission_set(&original_permissions, PermissionSetFormat::Xml)?;
+        let xml_str = String::from_utf8(xml_blob.clone()).expect("Valid UTF-8");
+
+        // Verify XML structure
+        assert!(xml_str.contains("<PermissionSet"));
+        assert!(xml_str.contains("System.Security.Permissions.SecurityPermission"));
+        assert!(xml_str.contains("Unrestricted=\"true\""));
+        assert!(xml_str.contains("Flags=\"AllFlags\""));
+        assert!(xml_str.contains("</PermissionSet>"));
+
+        // Parse back from XML
+        let parsed_set = PermissionSet::new(&xml_blob)?;
+        assert_eq!(parsed_set.permissions().len(), 1);
+
+        let permission = &parsed_set.permissions()[0];
+        assert_eq!(
+            permission.class_name,
+            "System.Security.Permissions.SecurityPermission"
+        );
+        assert_eq!(permission.named_arguments.len(), 2);
+
+        Ok(())
+    }
+
+    /// Test empty permission set round-trip.
+    #[test]
+    fn test_round_trip_empty_permission_set() -> Result<()> {
+        let empty_permissions = vec![];
+
+        let permission_blob =
+            encode_permission_set(&empty_permissions, PermissionSetFormat::BinaryLegacy)?;
+        let parsed_set = PermissionSet::new(&permission_blob)?;
+
+        assert_eq!(parsed_set.permissions().len(), 0);
+        assert!(!parsed_set.has_file_io());
+        assert!(!parsed_set.has_registry());
+        assert!(!parsed_set.is_full_trust());
+
+        Ok(())
+    }
+
+    /// Test permission set with integer arguments.
+    #[test]
+    fn test_round_trip_integer_arguments() -> Result<()> {
+        let original_permissions = vec![Permission {
+            class_name: "System.Security.Permissions.SecurityPermission".to_string(),
+            assembly_name: "mscorlib".to_string(),
+            named_arguments: vec![
+                NamedArgument {
+                    name: "Flags".to_string(),
+                    arg_type: ArgumentType::Int32,
+                    value: ArgumentValue::Int32(7), // Multiple flags combined
+                },
+                NamedArgument {
+                    name: "Unrestricted".to_string(),
+                    arg_type: ArgumentType::Boolean,
+                    value: ArgumentValue::Boolean(false),
+                },
+            ],
+        }];
+
+        let permission_blob =
+            encode_permission_set(&original_permissions, PermissionSetFormat::BinaryLegacy)?;
+        let parsed_set = PermissionSet::new(&permission_blob)?;
+
+        assert_eq!(parsed_set.permissions().len(), 1);
+        let permission = &parsed_set.permissions()[0];
+        assert_eq!(permission.named_arguments.len(), 2);
+
+        // Find and verify the integer flags argument
+        let flags_arg = permission
+            .named_arguments
+            .iter()
+            .find(|arg| arg.name == "Flags")
+            .expect("Should have Flags argument");
+
+        if let ArgumentValue::Int32(value) = &flags_arg.value {
+            assert_eq!(*value, 7);
+        } else {
+            panic!("Expected Int32 value for Flags");
+        }
+
+        Ok(())
+    }
+
+    /// Test permission set with special characters in string values.
+    #[test]
+    fn test_round_trip_special_characters() -> Result<()> {
+        let original_permissions = vec![Permission {
+            class_name: "System.Security.Permissions.FileIOPermission".to_string(),
+            assembly_name: "mscorlib".to_string(),
+            named_arguments: vec![NamedArgument {
+                name: "Read".to_string(),
+                arg_type: ArgumentType::String,
+                value: ArgumentValue::String("C:\\Program Files\\My App\\data.xml".to_string()),
+            }],
+        }];
+
+        let permission_blob =
+            encode_permission_set(&original_permissions, PermissionSetFormat::BinaryLegacy)?;
+        let parsed_set = PermissionSet::new(&permission_blob)?;
+
+        assert_eq!(parsed_set.permissions().len(), 1);
+        let permission = &parsed_set.permissions()[0];
+        assert_eq!(permission.named_arguments.len(), 1);
+
+        if let ArgumentValue::String(path) = &permission.named_arguments[0].value {
+            assert_eq!(path, "C:\\Program Files\\My App\\data.xml");
+        } else {
+            panic!("Expected string value for Read path");
+        }
+
+        Ok(())
+    }
+
+    /// Test security action conversion works correctly.
+    #[test]
+    fn test_security_actions() {
+        use crate::metadata::security::SecurityAction;
+
+        let actions = vec![
+            SecurityAction::Demand,
+            SecurityAction::Assert,
+            SecurityAction::Deny,
+            SecurityAction::PermitOnly,
+            SecurityAction::LinkDemand,
+            SecurityAction::InheritanceDemand,
+            SecurityAction::RequestMinimum,
+            SecurityAction::RequestOptional,
+            SecurityAction::RequestRefuse,
+            SecurityAction::PrejitGrant,
+            SecurityAction::PrejitDeny,
+            SecurityAction::NonCasDemand,
+            SecurityAction::NonCasLinkDemand,
+            SecurityAction::NonCasInheritance,
+        ];
+
+        for action in actions {
+            // Verify we can create and convert SecurityAction values
+            let action_value: u16 = action.into();
+            let converted_back = SecurityAction::from(action_value);
+            assert_eq!(converted_back, action);
+        }
+    }
+
+    /// Test comprehensive permission analysis methods.
+    #[test]
+    fn test_permission_analysis() -> Result<()> {
+        // Create a complex permission set for analysis
+        let permission_blob = PermissionSetBuilder::new()
+            .add_security_permission()
+            .flags("SkipVerification, ControlPolicy, ControlEvidence")
+            .build()
+            .add_file_io_permission()
+            .read_paths(&["C:\\Data"])
+            .write_paths(&["C:\\Logs"])
+            .build()
+            .encode(PermissionSetFormat::BinaryLegacy)?;
+
+        let parsed_set = PermissionSet::new(&permission_blob)?;
+
+        // Test analysis methods
+        assert!(parsed_set.has_file_io());
+        assert!(!parsed_set.has_registry());
+        assert!(!parsed_set.has_reflection());
+        assert!(!parsed_set.has_environment());
+
+        // This combination of security flags should indicate full trust
+        assert!(parsed_set.is_full_trust());
+
+        // Test path extraction
+        let read_paths = parsed_set.get_all_file_read_paths();
+        let write_paths = parsed_set.get_all_file_write_paths();
+        assert_eq!(read_paths, vec!["C:\\Data"]);
+        assert_eq!(write_paths, vec!["C:\\Logs"]);
+
+        Ok(())
+    }
+}

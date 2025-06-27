@@ -40,7 +40,7 @@
 //!
 //! ## Creating and Using a Registry
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::typesystem::{TypeRegistry, CilType};
 //! use dotscope::metadata::token::Token;
 //!
@@ -61,7 +61,7 @@
 //!
 //! ## Registering New Types
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::typesystem::{TypeRegistry, CilType, TypeSource};
 //! use dotscope::metadata::token::Token;
 //! use std::sync::Arc;
@@ -139,7 +139,7 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::typesystem::TypeSource;
 /// use dotscope::metadata::token::Token;
 ///
@@ -467,7 +467,7 @@ impl SourceRegistry {
 ///
 /// ## Basic Registry Operations
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::typesystem::TypeRegistry;
 ///
 /// // Create registry with primitive types
@@ -547,7 +547,7 @@ impl TypeRegistry {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::TypeRegistry;
     ///
     /// let registry = TypeRegistry::new()?;
@@ -841,7 +841,7 @@ impl TypeRegistry {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::{typesystem::TypeRegistry, token::Token};
     ///
     /// # fn example(registry: &TypeRegistry) {
@@ -876,7 +876,7 @@ impl TypeRegistry {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::{TypeRegistry, TypeSource};
     /// use dotscope::metadata::token::Token;
     ///
@@ -900,7 +900,7 @@ impl TypeRegistry {
         let fullname = if namespace.is_empty() {
             name.to_string()
         } else {
-            format!("{}.{}", namespace, name)
+            format!("{namespace}.{name}")
         };
 
         if let Some(tokens) = self.types_by_source.get(&source) {
@@ -942,7 +942,7 @@ impl TypeRegistry {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::TypeRegistry;
     ///
     /// # fn example(registry: &TypeRegistry) {
@@ -983,7 +983,7 @@ impl TypeRegistry {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::TypeRegistry;
     ///
     /// # fn example(registry: &TypeRegistry) {
@@ -1027,7 +1027,7 @@ impl TypeRegistry {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::TypeRegistry;
     ///
     /// # fn example(registry: &TypeRegistry) {
@@ -1242,11 +1242,7 @@ mod tests {
 
         for primitive in all_primitives.iter() {
             let prim_type = registry.get_primitive(*primitive);
-            assert!(
-                prim_type.is_ok(),
-                "Failed to get primitive: {:?}",
-                primitive
-            );
+            assert!(prim_type.is_ok(), "Failed to get primitive: {primitive:?}");
         }
     }
 

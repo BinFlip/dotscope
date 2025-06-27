@@ -382,8 +382,7 @@ mod tests {
         // Should have no errors for a properly formed static constructor
         assert!(
             errors.is_empty(),
-            "Valid static constructor should not generate errors: {:?}",
-            errors
+            "Valid static constructor should not generate errors: {errors:?}"
         );
     }
 
@@ -479,8 +478,7 @@ mod tests {
         // Should have no errors for a properly formed abstract method
         assert!(
             errors.is_empty(),
-            "Valid abstract method should not generate errors: {:?}",
-            errors
+            "Valid abstract method should not generate errors: {errors:?}"
         );
     }
 

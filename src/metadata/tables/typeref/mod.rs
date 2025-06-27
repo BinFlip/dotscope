@@ -17,9 +17,12 @@
 //! ## ECMA-335 Reference
 //! See ECMA-335, Partition II, Section 22.38 for the complete `TypeRef` table specification.
 
+mod builder;
 mod loader;
 mod raw;
 mod reader;
+mod writer;
 
+pub use builder::*;
 pub(crate) use loader::*;
 pub use raw::*;

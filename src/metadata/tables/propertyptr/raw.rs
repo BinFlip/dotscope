@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::{
     metadata::{
-        tables::{PropertyPtr, PropertyPtrRc},
+        tables::{PropertyPtr, PropertyPtrRc, TableId, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -104,5 +104,25 @@ impl PropertyPtrRaw {
     /// This method always returns `Ok(())` and does not produce errors, but the `Result` type is used for consistency.
     pub fn apply(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl TableRow for PropertyPtrRaw {
+    /// Calculate the binary size of one `PropertyPtr` table row
+    ///
+    /// Computes the total byte size required for one `PropertyPtr` row based on the
+    /// current metadata table sizes. The row size depends on whether the Property
+    /// table uses 2-byte or 4-byte indices.
+    ///
+    /// # Arguments
+    /// * `sizes` - Table sizing information for calculating variable-width fields
+    ///
+    /// # Returns
+    /// Total byte size of one `PropertyPtr` table row
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* property */ sizes.table_index_bytes(TableId::Property)
+        )
     }
 }

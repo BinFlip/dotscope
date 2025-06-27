@@ -69,10 +69,10 @@ pub struct FieldRva {
 
     /// The metadata token for this field RVA.
     ///
-    /// A [`Token`] that uniquely identifies this field RVA across the entire assembly.
+    /// A [`crate::metadata::token::Token`] that uniquely identifies this field RVA across the entire assembly.
     /// The token encodes both the table type (`FieldRva`) and the row ID.
     ///
-    /// [`Token`]: crate::metadata::token::Token
+    /// [`crate::metadata::token::Token`]: crate::metadata::token::Token
     pub token: Token,
 
     /// The byte offset of this field RVA in the metadata tables stream.

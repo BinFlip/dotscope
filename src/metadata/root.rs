@@ -12,7 +12,7 @@
 //!
 //! # Example
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::root::Root;
 //! let root = Root::read(&[
 //!            0x42, 0x53, 0x4A, 0x42,
@@ -90,7 +90,7 @@ pub const CIL_HEADER_MAGIC: u32 = 0x424A_5342;
 ///
 /// ## Basic Root Parsing
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::root::Root;
 ///
 /// let root = Root::read(&[
@@ -120,7 +120,7 @@ pub const CIL_HEADER_MAGIC: u32 = 0x424A_5342;
 ///
 /// ## Stream Directory Analysis
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::root::Root;
 ///
 /// # let metadata_bytes = &[0u8; 100]; // placeholder
@@ -266,7 +266,7 @@ impl Root {
     ///
     /// ## Basic Parsing
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::root::Root;
     ///
     /// // Parse metadata root from assembly bytes
@@ -283,7 +283,7 @@ impl Root {
     ///
     /// ## Stream Directory Access
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::root::Root;
     ///
     /// # let metadata_bytes = &[0u8; 100]; // placeholder

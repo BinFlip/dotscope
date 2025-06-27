@@ -481,8 +481,7 @@ mod tests {
 
             assert!(
                 !block.is_exit(),
-                "Block with {:?} should not be exit",
-                flow_type
+                "Block with {flow_type:?} should not be exit"
             );
         }
     }
@@ -519,7 +518,7 @@ mod tests {
     #[test]
     fn test_basic_block_debug_format() {
         let block = BasicBlock::new(5, 0x3000, 0x2000);
-        let debug_str = format!("{:?}", block);
+        let debug_str = format!("{block:?}");
 
         assert!(debug_str.contains("BasicBlock"));
         assert!(debug_str.contains("id: 5"));

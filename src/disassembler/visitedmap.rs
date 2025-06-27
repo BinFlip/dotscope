@@ -676,7 +676,7 @@ mod tests {
 
             for i in 0..elements {
                 map.set(i, true);
-                assert!(map.get(i), "Element {} should be set to true", i);
+                assert!(map.get(i), "Element {i} should be set to true");
             }
 
             let last_element = elements - 1;

@@ -24,7 +24,7 @@ Add `dotscope` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-dotscope = "0.1"
+dotscope = "0.3.2"
 ```
 
 ### Basic Usage

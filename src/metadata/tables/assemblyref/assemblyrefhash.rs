@@ -82,7 +82,7 @@ use std::fmt::Write;
 fn bytes_to_hex(bytes: &[u8]) -> String {
     let mut hex_string = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
-        write!(&mut hex_string, "{:02x}", byte).unwrap();
+        write!(&mut hex_string, "{byte:02x}").unwrap();
     }
     hex_string
 }
@@ -191,7 +191,7 @@ impl AssemblyRefHash {
             _ => "Unknown",
         };
 
-        format!("{}: {}", algorithm, hex)
+        format!("{algorithm}: {hex}")
     }
 
     /// Verify if this hash matches input data using MD5 algorithm

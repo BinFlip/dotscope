@@ -20,8 +20,8 @@ use crate::{
         cor20header::Cor20Header,
         streams::Strings,
         tables::{
-            CodedIndex, ManifestResource, ManifestResourceAttributes, ManifestResourceRc,
-            MetadataTable,
+            CodedIndex, CodedIndexType, ManifestResource, ManifestResourceAttributes,
+            ManifestResourceRc, MetadataTable, TableInfoRef, TableRow,
         },
         token::Token,
         typesystem::CilTypeReference,
@@ -174,5 +174,30 @@ impl ManifestResourceRaw {
     /// Always returns `Ok(())` as `ManifestResource` entries don't modify other tables.
     pub fn apply(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl TableRow for ManifestResourceRaw {
+    /// Calculate the row size for `ManifestResource` table entries
+    ///
+    /// Returns the total byte size of a single `ManifestResource` table row based on the
+    /// table configuration. The size varies depending on the size of heap indexes and
+    /// coded index configurations in the metadata.
+    ///
+    /// # Size Breakdown
+    /// - `offset_field`: 4 bytes (resource data offset)
+    /// - `flags`: 4 bytes (resource visibility and access flags)
+    /// - `name`: 2 or 4 bytes (string heap index for resource name)
+    /// - `implementation`: 2 or 4 bytes (coded index for resource location)
+    ///
+    /// Total: 12-16 bytes depending on heap and coded index size configuration
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* offset_field */   4 +
+            /* flags */          4 +
+            /* name */           sizes.str_bytes() +
+            /* implementation */ sizes.coded_index_bytes(CodedIndexType::Implementation)
+        )
     }
 }

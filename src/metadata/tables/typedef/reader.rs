@@ -1,3 +1,54 @@
+//! Implementation of `RowReadable` for `TypeDefRaw` metadata table entries.
+//!
+//! This module provides binary deserialization support for the `TypeDef` table (ID 0x02),
+//! enabling reading of type definition metadata from .NET PE files. The TypeDef table
+//! defines all types (classes, interfaces, value types, enums, delegates) within the
+//! current module, serving as the core of the type system.
+//!
+//! ## Table Structure (ECMA-335 §II.22.37)
+//!
+//! | Field | Type | Description |
+//! |-------|------|-------------|
+//! | `Flags` | `u32` | Type attributes bitmask (visibility, layout, semantics) |
+//! | `TypeName` | String heap index | Simple name of the type |
+//! | `TypeNamespace` | String heap index | Namespace containing the type |
+//! | `Extends` | Coded index (`TypeDefOrRef`) | Base type reference |
+//! | `FieldList` | Field table index | First field belonging to this type |
+//! | `MethodList` | MethodDef table index | First method belonging to this type |
+//!
+//! ## Type Attributes (Flags)
+//!
+//! The flags field encodes various type characteristics:
+//! - **Visibility**: Public, nested public, nested private, etc.
+//! - **Layout**: Auto, sequential, explicit field layout
+//! - **Semantics**: Class, interface, abstract, sealed
+//! - **String Format**: ANSI, Unicode, auto string marshalling
+//! - **Initialization**: Before field init requirements
+//!
+//! ## Coded Index Context
+//!
+//! The `Extends` field uses a `TypeDefOrRef` coded index that can reference:
+//! - **TypeDef** (tag 0) - Base type defined in current module
+//! - **TypeRef** (tag 1) - Base type from external assembly
+//! - **TypeSpec** (tag 2) - Generic or complex base type
+//!
+//! ## Member Lists
+//!
+//! The `FieldList` and `MethodList` fields point to the first field and method
+//! belonging to this type. Members are organized as contiguous ranges, with
+//! the next type's list marking the end of the current type's members.
+//!
+//! ## Thread Safety
+//!
+//! The `RowReadable` implementation is stateless and safe for concurrent use across
+//! multiple threads during metadata loading operations.
+//!
+//! ## Related Modules
+//!
+//! - [`crate::metadata::tables::typedef::writer`] - Binary serialization support
+//! - [`crate::metadata::tables::typedef`] - High-level TypeDef table interface
+//! - [`crate::metadata::tables::typedef::raw`] - Raw TypeDef structure definition
+
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{
@@ -8,31 +59,6 @@ use crate::{
 };
 
 impl RowReadable for TypeDefRaw {
-    /// Calculates the byte size of a `TypeDef` table row.
-    ///
-    /// The row size depends on the size configuration of various heaps and tables:
-    /// - Flags: Always 4 bytes
-    /// - TypeName/TypeNamespace: 2 or 4 bytes depending on string heap size
-    /// - Extends: 2 or 4 bytes depending on coded index size for `TypeDefOrRef`
-    /// - FieldList/MethodList: 2 or 4 bytes depending on target table sizes
-    ///
-    /// ## Arguments
-    /// * `sizes` - Table size information for calculating index widths
-    ///
-    /// ## Returns
-    /// The total byte size required for one `TypeDef` table row.
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* flags */             4 +
-            /* type_name */         sizes.str_bytes() +
-            /* type_namespace */    sizes.str_bytes() +
-            /* extends */           sizes.coded_index_bytes(CodedIndexType::TypeDefOrRef) +
-            /* field_list */        sizes.table_index_bytes(TableId::Field) +
-            /* method_list */       sizes.table_index_bytes(TableId::MethodDef)
-        )
-    }
-
     /// Reads a `TypeDef` table row from binary metadata.
     ///
     /// Parses the binary representation of a `TypeDef` table row according to the

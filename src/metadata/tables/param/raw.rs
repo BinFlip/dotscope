@@ -8,7 +8,7 @@ use std::sync::{atomic::AtomicBool, Arc, OnceLock};
 use crate::{
     metadata::{
         streams::Strings,
-        tables::{Param, ParamRc},
+        tables::{Param, ParamRc, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -81,7 +81,7 @@ pub struct ParamRaw {
     ///
     /// 2-byte bitmask defining parameter characteristics including direction,
     /// optional status, default values, and marshalling information.
-    /// See [`ParamAttributes`](crate::metadata::tables::ParamAttributes) for flag definitions.
+    /// See [`crate::metadata::tables::ParamAttributes`] for flag definitions.
     pub flags: u32,
 
     /// Parameter sequence number defining order in method signature.
@@ -159,5 +159,31 @@ impl ParamRaw {
             is_by_ref: AtomicBool::new(false),
             custom_attributes: Arc::new(boxcar::Vec::new()),
         }))
+    }
+}
+
+impl TableRow for ParamRaw {
+    /// Calculate the byte size of a Param table row
+    ///
+    /// Computes the total size based on fixed-size fields plus variable-size string heap indexes.
+    /// The size depends on whether the metadata uses 2-byte or 4-byte string heap indexes.
+    ///
+    /// # Row Layout (ECMA-335 §II.22.33)
+    /// - `flags`: 2 bytes (fixed)
+    /// - `sequence`: 2 bytes (fixed)
+    /// - `name`: 2 or 4 bytes (string heap index)
+    ///
+    /// # Arguments
+    /// * `sizes` - Table sizing information for heap index widths
+    ///
+    /// # Returns
+    /// Total byte size of one Param table row
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* flags */     2 +
+            /* sequence */  2 +
+            /* name */      sizes.str_bytes()
+        )
     }
 }

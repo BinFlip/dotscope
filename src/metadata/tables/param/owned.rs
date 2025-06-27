@@ -64,7 +64,7 @@ pub struct Param {
     /// Parameter attributes bitmask according to ECMA-335 §II.23.1.13.
     ///
     /// Defines parameter characteristics including direction (in/out), optional status,
-    /// default values, and marshalling information. See [`ParamAttributes`](crate::metadata::tables::ParamAttributes)
+    /// default values, and marshalling information. See [`crate::metadata::tables::ParamAttributes`]
     /// for available flags.
     pub flags: u32,
 
@@ -169,14 +169,14 @@ impl Param {
         self.is_by_ref.store(signature.by_ref, Ordering::Relaxed);
 
         for modifier in &signature.modifiers {
-            match types.get(modifier) {
+            match types.get(&modifier.modifier_type) {
                 Some(new_mod) => {
                     self.modifiers.push(new_mod.into());
                 }
                 None => {
                     return Err(malformed_error!(
                         "Failed to resolve modifier type - {}",
-                        modifier.value()
+                        modifier.modifier_type.value()
                     ))
                 }
             }

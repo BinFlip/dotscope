@@ -38,7 +38,9 @@ use crate::{
     metadata::{
         security::{PermissionSet, Security, SecurityAction},
         streams::Blob,
-        tables::{CodedIndex, DeclSecurity, DeclSecurityRc},
+        tables::{
+            CodedIndex, CodedIndexType, DeclSecurity, DeclSecurityRc, TableInfoRef, TableRow,
+        },
         token::Token,
         typesystem::CilTypeReference,
     },
@@ -223,5 +225,31 @@ impl DeclSecurityRaw {
             permission_set,
             custom_attributes: Arc::new(boxcar::Vec::new()),
         }))
+    }
+}
+
+impl TableRow for DeclSecurityRaw {
+    /// Calculate the byte size of a DeclSecurity table row
+    ///
+    /// Computes the total size based on fixed-size fields and variable-size indexes.
+    /// The size depends on whether the metadata uses 2-byte or 4-byte indexes.
+    ///
+    /// # Row Layout (ECMA-335 §II.22.11)
+    /// - `action`: 2 bytes (fixed size security action enumeration)
+    /// - `parent`: 2 or 4 bytes (`HasDeclSecurity` coded index)
+    /// - `permission_set`: 2 or 4 bytes (Blob heap index)
+    ///
+    /// # Arguments
+    /// * `sizes` - Table sizing information for index widths
+    ///
+    /// # Returns
+    /// Total byte size of one DeclSecurity table row
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* action */         2 +
+            /* parent */         sizes.coded_index_bytes(CodedIndexType::HasDeclSecurity) +
+            /* permission_set */ sizes.blob_bytes()
+        )
     }
 }

@@ -54,16 +54,19 @@ use crate::metadata::{
     token::Token,
 };
 
+mod builder;
 mod loader;
 mod owned;
 mod raw;
 mod reader;
+mod writer;
 
+pub use builder::*;
 pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;
 
-/// Concurrent map for storing `MemberRef` entries indexed by [`Token`].
+/// Concurrent map for storing `MemberRef` entries indexed by [`crate::metadata::token::Token`].
 ///
 /// This thread-safe map enables efficient lookup of member references by their
 /// associated tokens during metadata processing and member resolution operations.

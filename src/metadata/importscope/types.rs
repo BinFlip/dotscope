@@ -1,35 +1,235 @@
-//! Import declaration types for Portable PDB `ImportScope` format.
+//! Import declaration type definitions for Portable PDB debugging metadata.
 //!
-//! This module defines all the types used to represent import declarations
-//! from Portable PDB files. These types provide structured access to the
-//! import information that defines namespace and type visibility within
-//! debugging scopes.
+//! This module defines comprehensive type-safe representations for import declarations used in
+//! Portable PDB files. These types provide structured access to import information that defines
+//! namespace and type visibility within debugging scopes, enabling accurate symbol resolution
+//! and context-aware debugging experiences in .NET development environments.
+//!
+//! # Architecture
+//!
+//! The type system implements a discriminated union approach using Rust enums to represent
+//! the different categories of import declarations supported by the Portable PDB specification.
+//! Each variant contains the specific data fields required for that import type, ensuring
+//! type safety and preventing invalid combinations of import parameters.
+//!
+//! ## Core Design Principles
+//!
+//! - **Type Safety**: Strong typing prevents invalid import parameter combinations
+//! - **Memory Efficiency**: Owned string data minimizes allocation overhead
+//! - **Iteration Support**: Complete iterator implementation for collection processing
+//! - **Thread Safety**: All types support concurrent access and sharing
 //!
 //! # Key Components
 //!
-//! - [`crate::metadata::importscope::types::ImportKind`] - Enumeration of all supported import declaration types
-//! - [`crate::metadata::importscope::types::ImportDeclaration`] - Structured representation of individual import declarations
-//! - [`crate::metadata::importscope::types::ImportsInfo`] - Container for all imports in a scope with iterator support
+//! ## Primary Types
+//!
+//! - [`crate::metadata::importscope::types::ImportKind`] - Enumeration of all 9 supported import declaration types
+//! - [`crate::metadata::importscope::types::ImportDeclaration`] - Type-safe representation of individual import declarations
+//! - [`crate::metadata::importscope::types::ImportsInfo`] - Complete container for import scope with full iteration support
+//!
+//! ## Import Classification System
+//!
+//! Import declarations are classified into four main categories:
+//!
+//! ### Namespace Imports
+//! - **Direct Namespace**: Using statements for entire namespaces
+//! - **Assembly Namespace**: Namespace imports from specific assemblies
+//! - **XML Namespace**: XML namespace imports with alias support
+//!
+//! ### Type Imports
+//! - **Specific Types**: Direct imports of individual types from external assemblies
+//!
+//! ### Alias Definitions
+//! - **Assembly Aliases**: Local names for external assembly references
+//! - **Namespace Aliases**: Local names for namespace hierarchies
+//! - **Type Aliases**: Local names for specific type references
+//! - **Combined Aliases**: Assembly-qualified namespace aliases
+//!
+//! ### Reference Imports
+//! - **Assembly Reference Aliases**: Import aliases from ancestor scopes
 //!
 //! # Import Declaration Types
 //!
-//! The Portable PDB format supports 9 different import declaration types:
-//! - **Namespace Imports**: Direct namespace access and assembly-qualified namespace access
-//! - **Type Imports**: Specific type member imports
-//! - **XML Namespace**: XML namespace imports with prefix support
-//! - **Alias Definitions**: Various forms of alias definitions for assemblies, namespaces, and types
+//! The Portable PDB format supports 9 distinct import declaration types according to the
+//! official specification. Each type has specific parameter requirements and semantic meaning:
+//!
+//! ## Basic Import Types (1-3)
+//!
+//! 1. **ImportNamespace**: Direct namespace using statements
+//!    ```text
+//!    using System.Collections.Generic;
+//!    ```
+//!
+//! 2. **ImportAssemblyNamespace**: Assembly-qualified namespace imports
+//!    ```text
+//!    using System.Linq from MyAssembly;
+//!    ```
+//!
+//! 3. **ImportType**: Specific type member imports
+//!    ```text
+//!    using Console = System.Console;
+//!    ```
+//!
+//! ## Advanced Import Types (4-5)
+//!
+//! 4. **ImportXmlNamespace**: XML namespace imports with prefix
+//!    ```text
+//!    Imports <xmlns:ns="http://example.com">
+//!    ```
+//!
+//! 5. **ImportAssemblyReferenceAlias**: Assembly reference aliases from ancestor scopes
+//!    ```text
+//!    extern alias MyAlias;
+//!    ```
+//!
+//! ## Alias Definition Types (6-9)
+//!
+//! 6. **DefineAssemblyAlias**: Assembly alias definitions
+//!    ```text
+//!    extern alias CoreLib;
+//!    ```
+//!
+//! 7. **DefineNamespaceAlias**: Namespace alias definitions
+//!    ```text
+//!    using Collections = System.Collections;
+//!    ```
+//!
+//! 8. **DefineAssemblyNamespaceAlias**: Assembly-qualified namespace aliases
+//!    ```text
+//!    using MyCollections = System.Collections from SpecialAssembly;
+//!    ```
+//!
+//! 9. **DefineTypeAlias**: Type alias definitions
+//!    ```text
+//!    using StringList = System.Collections.Generic.List<string>;
+//!    ```
+//!
+//! # Usage Examples
+//!
+//! ## Working with Import Kinds
+//!
+//! ```rust
+//! use dotscope::metadata::importscope::ImportKind;
+//!
+//! // Parse kind from binary data
+//! let kind = ImportKind::from_u32(1).expect("Valid import kind");
+//! assert_eq!(kind, ImportKind::ImportNamespace);
+//!
+//! // Check kind properties
+//! match kind {
+//!     ImportKind::ImportNamespace => println!("Basic namespace import"),
+//!     ImportKind::DefineAssemblyAlias => println!("Assembly alias definition"),
+//!     _ => println!("Other import type"),
+//! }
+//! ```
+//!
+//! ## Processing Import Declarations
+//!
+//! ```rust
+//! use dotscope::metadata::importscope::{ImportDeclaration, ImportsInfo};
+//! use dotscope::metadata::token::Token;
+//!
+//! // Create sample import declarations
+//! let namespace_import = ImportDeclaration::ImportNamespace {
+//!     namespace: "System.Collections.Generic".to_string(),
+//! };
+//!
+//! let type_import = ImportDeclaration::ImportType {
+//!     type_ref: Token::new(0x01000001),
+//! };
+//!
+//! let assembly_import = ImportDeclaration::ImportAssemblyNamespace {
+//!     assembly_ref: Token::new(0x23000001),
+//!     namespace: "System.Linq".to_string(),
+//! };
+//!
+//! // Create imports container
+//! let imports = ImportsInfo::with_declarations(vec![
+//!     namespace_import,
+//!     type_import,
+//!     assembly_import,
+//! ]);
+//!
+//! // Process imports by category
+//! for declaration in &imports {
+//!     match declaration {
+//!         ImportDeclaration::ImportNamespace { namespace } => {
+//!             println!("Using namespace: {}", namespace);
+//!         }
+//!         ImportDeclaration::ImportType { type_ref } => {
+//!             println!("Importing type: {:?}", type_ref);
+//!         }
+//!         ImportDeclaration::ImportAssemblyNamespace { assembly_ref, namespace } => {
+//!             println!("Using {} from assembly {:?}", namespace, assembly_ref);
+//!         }
+//!         _ => println!("Other import declaration"),
+//!     }
+//! }
+//! ```
+//!
+//! ## Working with Alias Declarations
+//!
+//! ```rust
+//! use dotscope::metadata::importscope::ImportDeclaration;
+//! use dotscope::metadata::token::Token;
+//!
+//! // Assembly alias definition
+//! let assembly_alias = ImportDeclaration::DefineAssemblyAlias {
+//!     alias: "CoreLib".to_string(),
+//!     assembly_ref: Token::new(0x23000001),
+//! };
+//!
+//! // Namespace alias definition
+//! let namespace_alias = ImportDeclaration::DefineNamespaceAlias {
+//!     alias: "Collections".to_string(),
+//!     namespace: "System.Collections.Generic".to_string(),
+//! };
+//!
+//! // Type alias definition
+//! let type_alias = ImportDeclaration::DefineTypeAlias {
+//!     alias: "StringList".to_string(),
+//!     type_ref: Token::new(0x02000001),
+//! };
+//!
+//! // Process alias declarations for scope building
+//! for alias_decl in [assembly_alias, namespace_alias, type_alias] {
+//!     match alias_decl {
+//!         ImportDeclaration::DefineAssemblyAlias { alias, assembly_ref } => {
+//!             println!("Assembly alias '{}' -> {:?}", alias, assembly_ref);
+//!         }
+//!         ImportDeclaration::DefineNamespaceAlias { alias, namespace } => {
+//!             println!("Namespace alias '{}' -> {}", alias, namespace);
+//!         }
+//!         ImportDeclaration::DefineTypeAlias { alias, type_ref } => {
+//!             println!("Type alias '{}' -> {:?}", alias, type_ref);
+//!         }
+//!         _ => unreachable!(),
+//!     }
+//! }
+//! ```
 //!
 //! # Thread Safety
 //!
 //! All types in this module are thread-safe and implement [`std::marker::Send`] and [`std::marker::Sync`].
-//! The import declaration types contain only owned data and can be safely shared across threads.
+//! The import declaration types contain only owned data (strings and primitive tokens) and can be
+//! safely shared across threads. The iterator implementations are also thread-safe, enabling
+//! concurrent processing of import declarations.
 //!
 //! # Integration
 //!
 //! This module integrates with:
 //! - [`crate::metadata::importscope::parser`] - Binary parsing of imports blobs using these types
-//! - [`crate::metadata::tables`] - ImportScope table processing and token resolution
+//! - [`crate::metadata::tables`] - ImportScope table processing and metadata token resolution
 //! - [`crate::metadata::token`] - Metadata token representation for type and assembly references
+//! - [`crate::metadata::typesystem`] - Type system integration for import resolution
+//! - [`crate::metadata::streams`] - String and blob heap integration for data resolution
+//!
+//! # Standards Compliance
+//!
+//! - **Portable PDB**: Full compliance with Portable PDB import scope specification
+//! - **ECMA-335**: Compatible with .NET metadata standards for debugging information
+//! - **Type Safety**: Prevents invalid combinations of import parameters through strong typing
+//! - **Memory Safety**: Owned data eliminates lifetime management complexity
 
 use crate::metadata::token::Token;
 

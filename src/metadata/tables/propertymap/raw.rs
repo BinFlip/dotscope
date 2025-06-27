@@ -9,7 +9,7 @@ use crate::{
     metadata::{
         tables::{
             MetadataTable, PropertyList, PropertyMap, PropertyMapEntry, PropertyMapEntryRc,
-            PropertyPtrMap,
+            PropertyPtrMap, TableId, TableInfoRef, TableRow,
         },
         token::Token,
         typesystem::TypeRegistry,
@@ -270,5 +270,29 @@ impl PropertyMapRaw {
                 self.parent | 0x0200_0000
             )),
         }
+    }
+}
+
+impl TableRow for PropertyMapRaw {
+    /// Calculates the byte size of a `PropertyMap` table row.
+    ///
+    /// The size depends on whether the `TypeDef` and Property tables use 2-byte or 4-byte indices,
+    /// which is determined by the number of rows in each table.
+    ///
+    /// ## Size Calculation
+    /// - **parent**: 2 or 4 bytes (depending on `TypeDef` table size)
+    /// - **`property_list`**: 2 or 4 bytes (depending on Property table size)
+    ///
+    /// ## Arguments
+    /// * `sizes` - Table size information for determining index sizes
+    ///
+    /// ## Returns
+    /// The total byte size of a `PropertyMap` table row (4 or 8 bytes).
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* parent */        sizes.table_index_bytes(TableId::TypeDef) +
+            /* property_list */ sizes.table_index_bytes(TableId::Property)
+        )
     }
 }

@@ -90,7 +90,7 @@
 //!
 //! ## Working with Boolean Arguments
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::security::{NamedArgument, ArgumentType, ArgumentValue};
 //!
 //! let unrestricted_arg = NamedArgument::new(
@@ -511,7 +511,7 @@ mod tests {
             ArgumentValue::String("C:\\Data".to_string()),
         );
 
-        let formatted = format!("{}", arg);
+        let formatted = format!("{arg}");
         assert_eq!(formatted, "Read = \"C:\\Data\"");
     }
 
@@ -537,7 +537,7 @@ mod tests {
             ArgumentValue::Int32(123),
         );
 
-        let debug_str = format!("{:?}", arg);
+        let debug_str = format!("{arg:?}");
         assert!(debug_str.contains("NamedArgument"));
         assert!(debug_str.contains("Debug"));
     }

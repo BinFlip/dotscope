@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use crate::{
     metadata::{
-        tables::{FieldLayout, FieldLayoutRc, FieldMap},
+        tables::{FieldLayout, FieldLayoutRc, FieldMap, TableId, TableInfoRef, TableRow},
         token::Token,
         validation::FieldValidator,
     },
@@ -160,5 +160,25 @@ impl FieldLayoutRaw {
                 }
             },
         }))
+    }
+}
+
+impl TableRow for FieldLayoutRaw {
+    /// Calculate the binary size of one `FieldLayout` table row
+    ///
+    /// Returns the total byte size of a single `FieldLayout` table row based on the table
+    /// configuration. The size varies depending on the size of the Field table index.
+    ///
+    /// # Size Breakdown
+    /// - `field_offset`: 4 bytes (field byte offset within type)
+    /// - `field`: Variable bytes (Field table index)
+    ///
+    /// Total: 6-8 bytes depending on Field table index size configuration
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* field_offset */ 4 +
+            /* field */        sizes.table_index_bytes(TableId::Field)
+        )
     }
 }

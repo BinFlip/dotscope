@@ -202,7 +202,7 @@ impl FieldBuilder {
 
     /// Create a backing field for an auto-property
     pub fn backing_field(property_name: &str, field_type: CilTypeRc) -> Self {
-        Self::private_field(&format!("<{}>k__BackingField", property_name), field_type)
+        Self::private_field(&format!("<{property_name}>k__BackingField"), field_type)
             .with_flags(FieldAttributes::COMPILER_CONTROLLED)
     }
 

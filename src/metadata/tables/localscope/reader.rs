@@ -21,18 +21,6 @@ impl RowReadable for LocalScopeRaw {
             length: read_le_at::<u32>(data, offset)?,       // Always 4 bytes
         })
     }
-
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            sizes.table_index_bytes(TableId::MethodDef) +      // method
-            sizes.table_index_bytes(TableId::ImportScope) +    // import_scope
-            sizes.table_index_bytes(TableId::LocalVariable) +  // variable_list
-            sizes.table_index_bytes(TableId::LocalConstant) +  // constant_list
-            4 +  // start_offset (always 4 bytes)
-            4    // length (always 4 bytes)
-        )
-    }
 }
 
 #[cfg(test)]

@@ -21,7 +21,10 @@ use crate::{
     metadata::{
         method::MethodMap,
         streams::Strings,
-        tables::{CodedIndex, FieldMap, FieldPtrMap, MetadataTable, MethodPtrMap},
+        tables::{
+            CodedIndex, CodedIndexType, FieldMap, FieldPtrMap, MetadataTable, MethodPtrMap,
+            TableId, TableInfoRef, TableRow,
+        },
         token::Token,
         typesystem::{CilType, CilTypeRc, CilTypeReference},
     },
@@ -320,5 +323,32 @@ impl TypeDefRaw {
     /// Returns an error if the operation fails for any reason.
     pub fn apply(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl TableRow for TypeDefRaw {
+    /// Calculates the byte size of a `TypeDef` table row.
+    ///
+    /// The row size depends on the size configuration of various heaps and tables:
+    /// - Flags: Always 4 bytes
+    /// - TypeName/TypeNamespace: 2 or 4 bytes depending on string heap size
+    /// - Extends: 2 or 4 bytes depending on coded index size for `TypeDefOrRef`
+    /// - FieldList/MethodList: 2 or 4 bytes depending on target table sizes
+    ///
+    /// ## Arguments
+    /// * `sizes` - Table size information for calculating index widths
+    ///
+    /// ## Returns
+    /// The total byte size required for one `TypeDef` table row.
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* flags */             4 +
+            /* type_name */         sizes.str_bytes() +
+            /* type_namespace */    sizes.str_bytes() +
+            /* extends */           sizes.coded_index_bytes(CodedIndexType::TypeDefOrRef) +
+            /* field_list */        sizes.table_index_bytes(TableId::Field) +
+            /* method_list */       sizes.table_index_bytes(TableId::MethodDef)
+        )
     }
 }

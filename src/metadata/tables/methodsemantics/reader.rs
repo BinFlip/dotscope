@@ -10,27 +10,6 @@ use crate::{
 };
 
 impl RowReadable for MethodSemanticsRaw {
-    /// Calculates the byte size of a `MethodSemantics` table row.
-    ///
-    /// The row size depends on the metadata table sizes and is calculated as:
-    /// - `semantics`: 2 bytes (fixed)
-    /// - `method`: 2 or 4 bytes (depends on `MethodDef` table size)
-    /// - `association`: 2 or 4 bytes (depends on `HasSemantics` coded index size)
-    ///
-    /// ## Arguments
-    /// * `sizes` - Table size information for calculating index widths
-    ///
-    /// ## Returns
-    /// Total byte size of one table row
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* semantics */   2 +
-            /* method */      sizes.table_index_bytes(TableId::MethodDef) +
-            /* association */ sizes.coded_index_bytes(CodedIndexType::HasSemantics)
-        )
-    }
-
     /// Reads a single `MethodSemantics` table row from binary data.
     ///
     /// Parses the binary representation according to ECMA-335 §II.22.28:

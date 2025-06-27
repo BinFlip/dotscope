@@ -1,3 +1,65 @@
+//! Implementation of `RowReadable` for `ParamRaw` metadata table entries.
+//!
+//! This module provides binary deserialization support for the `Param` table (ID 0x08),
+//! enabling reading of method parameter metadata from .NET PE files. The Param table
+//! contains information about method parameters including their names, attributes,
+//! sequence numbers, and marshalling details, forming a crucial part of method signatures.
+//!
+//! ## Table Structure (ECMA-335 §II.22.33)
+//!
+//! | Field | Type | Description |
+//! |-------|------|-------------|
+//! | `Flags` | `u16` | Parameter attributes bitmask |
+//! | `Sequence` | `u16` | Parameter sequence number (0 = return type, 1+ = parameters) |
+//! | `Name` | String heap index | Parameter name identifier |
+//!
+//! ## Parameter Attributes
+//!
+//! The `Flags` field contains parameter attributes with common values:
+//! - `0x0001` - `In` (input parameter)
+//! - `0x0002` - `Out` (output parameter)
+//! - `0x0010` - `Optional` (optional parameter with default value)
+//! - `0x1000` - `HasDefault` (parameter has default value)
+//! - `0x2000` - `HasFieldMarshal` (parameter has marshalling information)
+//!
+//! ## Usage Context
+//!
+//! Param entries are used for:
+//! - **Method Signatures**: Defining parameter information for method definitions
+//! - **Parameter Attributes**: Specifying parameter direction, optionality, and marshalling
+//! - **Default Values**: Linking to default parameter values in Constant table
+//! - **Reflection Operations**: Runtime parameter discovery and invocation
+//! - **Interop Support**: P/Invoke parameter marshalling and type conversion
+//!
+//! ## Sequence Numbers
+//!
+//! Parameter sequence numbers follow a specific convention:
+//! - **Sequence 0**: Return type parameter (when return type has attributes)
+//! - **Sequence 1+**: Method parameters in declaration order
+//! - **Contiguous**: Sequence numbers must be contiguous for proper resolution
+//! - **Method Scope**: Sequence numbers are relative to the containing method
+//!
+//! ## Parameter Resolution
+//!
+//! Parameters are associated with methods through several mechanisms:
+//! - **Direct Range**: Method parameter lists define contiguous Param table ranges
+//! - **ParamPtr Indirection**: Optional indirection through ParamPtr table
+//! - **Sequence Ordering**: Parameters ordered by sequence number within method scope
+//! - **Attribute Resolution**: Parameter attributes resolved from various tables
+//!
+//! ## Thread Safety
+//!
+//! The `RowReadable` implementation is stateless and safe for concurrent use across
+//! multiple threads during metadata loading operations.
+//!
+//! ## Related Modules
+//!
+//! - [`crate::metadata::tables::param::writer`] - Binary serialization support
+//! - [`crate::metadata::tables::param`] - High-level Param interface
+//! - [`crate::metadata::tables::param::raw`] - Raw structure definition
+//! - [`crate::metadata::tables::methoddef`] - Method parameter associations
+//! - [`crate::metadata::tables::paramptr`] - Parameter indirection support
+
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{
@@ -8,27 +70,6 @@ use crate::{
 };
 
 impl RowReadable for ParamRaw {
-    /// Calculates the byte size of a Param table row.
-    ///
-    /// The row size depends on string heap size and is calculated as:
-    /// - `flags`: 2 bytes (fixed)
-    /// - `sequence`: 2 bytes (fixed)
-    /// - `name`: 2 or 4 bytes (depends on string heap size)
-    ///
-    /// ## Arguments
-    /// * `sizes` - Table size information for calculating heap index widths
-    ///
-    /// ## Returns
-    /// Total byte size of one table row
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* flags */     2 +
-            /* sequence */  2 +
-            /* name */      sizes.str_bytes()
-        )
-    }
-
     /// Reads a single Param table row from binary data.
     ///
     /// Parses the binary representation according to ECMA-335 §II.22.33:

@@ -21,7 +21,7 @@ use std::sync::Arc;
 use crate::{
     metadata::{
         streams::Blob,
-        tables::{CodedIndex, ConstantRc},
+        tables::{CodedIndex, CodedIndexType, ConstantRc, TableInfoRef, TableRow},
         token::Token,
         typesystem::{CilPrimitive, CilTypeReference},
     },
@@ -217,5 +217,33 @@ impl ConstantRaw {
                 blob.get(self.value as usize)?,
             )?),
         }))
+    }
+}
+
+impl TableRow for ConstantRaw {
+    /// Calculate the byte size of a Constant table row
+    ///
+    /// Computes the total size based on fixed-size fields and variable-size indexes.
+    /// The size depends on whether the metadata uses 2-byte or 4-byte indexes.
+    ///
+    /// # Row Layout (ECMA-335 §II.22.9)
+    /// - `base`: 1 byte (fixed size element type)
+    /// - `padding`: 1 byte (fixed size reserved padding)
+    /// - `parent`: 2 or 4 bytes (`HasConstant` coded index)
+    /// - `value`: 2 or 4 bytes (Blob heap index)
+    ///
+    /// # Arguments
+    /// * `sizes` - Table sizing information for index widths
+    ///
+    /// # Returns
+    /// Total byte size of one Constant table row
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* base */    1 +
+            /* padding */ 1 +
+            /* parent */  sizes.coded_index_bytes(CodedIndexType::HasConstant) +
+            /* value */   sizes.blob_bytes()
+        )
     }
 }

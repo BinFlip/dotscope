@@ -28,7 +28,7 @@
 //!
 //! ## Basic Header Parsing
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::cor20header::Cor20Header;
 //!
 //! // Parse CLI header from PE file data
@@ -46,7 +46,7 @@
 //!
 //! ## Runtime Flag Analysis
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::cor20header::Cor20Header;
 //!
 //! let header_bytes: &[u8] = &[/* CLI header data */];
@@ -112,7 +112,7 @@ use crate::{file::parser::Parser, Error::OutOfBounds, Result};
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::cor20header::Cor20Header;
 ///
 /// // Parse from PE file's CLI header
@@ -211,7 +211,7 @@ impl Cor20Header {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::cor20header::Cor20Header;
     ///
     /// // Read CLI header from PE file

@@ -8,7 +8,7 @@
 use crate::{
     metadata::{
         method::MethodMap,
-        tables::{StateMachineMethod, StateMachineMethodRc},
+        tables::{StateMachineMethod, StateMachineMethodRc, TableId, TableInfoRef, TableRow},
         token::Token,
     },
     Error::TypeNotFound,
@@ -129,5 +129,25 @@ impl StateMachineMethodRaw {
             move_next_method,
             kickoff_method,
         }))
+    }
+}
+
+impl TableRow for StateMachineMethodRaw {
+    /// Calculate the row size for `StateMachineMethod` table entries
+    ///
+    /// Returns the total byte size of a single `StateMachineMethod` table row based on the
+    /// table configuration. The size varies depending on the size of table indexes in the metadata.
+    ///
+    /// # Size Breakdown
+    /// - `move_next_method`: 2 or 4 bytes (table index into `MethodDef` table)
+    /// - `kickoff_method`: 2 or 4 bytes (table index into `MethodDef` table)
+    ///
+    /// Total: 4-8 bytes depending on table index size configuration
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            sizes.table_index_bytes(TableId::MethodDef) +   // move_next_method (MethodDef table index)
+            sizes.table_index_bytes(TableId::MethodDef)     // kickoff_method (MethodDef table index)
+        )
     }
 }
