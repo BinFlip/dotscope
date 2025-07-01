@@ -1092,8 +1092,6 @@ mod tests {
         // Verify basic properties
         assert!(!table_data1.is_empty());
         assert!(table_data1.len() > 100); // Should contain substantial data
-
-        println!("✅ Import table string layout fix verified!");
     }
 
     #[test]
@@ -1194,30 +1192,30 @@ mod tests {
             }
         }
 
-        println!("✅ ILT multiple functions per DLL fix verified!");
-        println!(
-            "   - user32.dll: {} functions",
+        // Verify function counts
+        assert_eq!(
             imports
                 .get_descriptor("user32.dll")
                 .unwrap()
                 .functions
-                .len()
+                .len(),
+            2
         );
-        println!(
-            "   - kernel32.dll: {} functions",
+        assert_eq!(
             imports
                 .get_descriptor("kernel32.dll")
                 .unwrap()
                 .functions
-                .len()
+                .len(),
+            2
         );
-        println!(
-            "   - mscoree.dll: {} functions",
+        assert_eq!(
             imports
                 .get_descriptor("mscoree.dll")
                 .unwrap()
                 .functions
-                .len()
+                .len(),
+            1
         );
     }
 }

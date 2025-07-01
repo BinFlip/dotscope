@@ -101,7 +101,10 @@ mod calc;
 mod metadata;
 mod pe;
 
-pub use calc::HeapExpansions;
+pub use calc::{
+    calculate_blob_heap_size, calculate_guid_heap_size, calculate_heap_expansions,
+    calculate_string_heap_size, calculate_userstring_heap_size, HeapExpansions,
+};
 pub use metadata::{MetadataModifications, StreamModification};
 
 /// Layout plan for section-by-section copy with proper relocations.
@@ -390,7 +393,7 @@ impl<'a> LayoutPlanner<'a> {
         let heap_expansions = calc::calculate_heap_expansions(self.assembly)?;
 
         // Identify metadata modifications needed
-        let metadata_modifications = metadata::identify_metadata_modifications(self.assembly)?;
+        let mut metadata_modifications = metadata::identify_metadata_modifications(self.assembly)?;
 
         // Identify table modification regions
         let table_modifications = self.identify_table_modifications()?;
@@ -400,7 +403,7 @@ impl<'a> LayoutPlanner<'a> {
 
         // Calculate complete file layout with proper section placement
         let mut file_layout =
-            self.calculate_file_layout(&heap_expansions, &metadata_modifications)?;
+            self.calculate_file_layout(&heap_expansions, &mut metadata_modifications)?;
 
         // Update file layout to accommodate native table requirements
         self.update_layout_for_native_tables(&mut file_layout, &native_table_requirements)?;
@@ -932,7 +935,7 @@ impl<'a> LayoutPlanner<'a> {
     fn calculate_file_layout(
         &self,
         heap_expansions: &HeapExpansions,
-        metadata_modifications: &MetadataModifications,
+        metadata_modifications: &mut MetadataModifications,
     ) -> Result<FileLayout> {
         let view = self.assembly.view();
 
@@ -1049,7 +1052,13 @@ impl<'a> LayoutPlanner<'a> {
             }
         }
 
-        max_end
+        // Account for trailing data like certificate tables that exist beyond normal sections
+        // Get the original file size to ensure we don't truncate important trailing data
+        let original_file_size = self.assembly.view().data().len() as u64;
+
+        // Only use the original file size if it's larger than our calculated layout
+        // This preserves trailing data while allowing files to shrink if modifications reduce size
+        max_end.max(original_file_size)
     }
 
     /// Converts RVA to file offset for planning purposes.
@@ -1080,13 +1089,27 @@ impl<'a> LayoutPlanner<'a> {
     fn calculate_section_layouts(
         &self,
         heap_expansions: &HeapExpansions,
-        metadata_modifications: &MetadataModifications,
+        metadata_modifications: &mut MetadataModifications,
     ) -> Result<Vec<SectionFileLayout>> {
         let view = self.assembly.view();
         let original_sections: Vec<_> = view.file().sections().collect();
         let mut new_sections = Vec::new();
 
-        // Start sections after section table
+        // Check if any sections actually need relocation
+        // Small expansions can often be accommodated in-place
+        let _total_expansion = heap_expansions.total_heap_addition;
+        let _has_significant_changes = _total_expansion > 4096; // More than 4KB of changes
+
+        // Also check if any stream modifications require additional data beyond original file size
+        let _has_stream_additions = metadata_modifications
+            .stream_modifications
+            .iter()
+            .any(|stream_mod| stream_mod.additional_data_size > 0);
+
+        // Preserve layout optimization disabled due to bugs
+        // Always use full relocation path for reliability
+
+        // Original behavior for when expansion is actually needed
         let section_table_end =
             pe::calculate_pe_headers_size(self.assembly)? + (original_sections.len() * 40) as u64;
         let mut current_offset = pe::align_to_file_alignment(section_table_end);
@@ -1200,7 +1223,7 @@ impl<'a> LayoutPlanner<'a> {
         &self,
         section_start_offset: u64,
         _heap_expansions: &HeapExpansions,
-        metadata_modifications: &MetadataModifications,
+        metadata_modifications: &mut MetadataModifications,
     ) -> Result<Vec<StreamFileLayout>> {
         let view = self.assembly.view();
         let original_streams = view.streams();
@@ -1247,6 +1270,116 @@ impl<'a> LayoutPlanner<'a> {
         }
 
         Ok(stream_layouts)
+    }
+
+    /// Preserves original metadata stream layouts for small changes.
+    ///
+    /// When making small modifications that don't require section relocations,
+    /// this function preserves the original stream offsets and sizes instead of
+    /// recalculating them. This prevents corruption of the stream directory.
+    fn preserve_original_stream_layouts(
+        &self,
+        section_start_offset: u64,
+        _heap_expansions: &HeapExpansions,
+        metadata_modifications: &mut MetadataModifications,
+    ) -> Result<Vec<StreamFileLayout>> {
+        let view = self.assembly.view();
+        let original_streams = view.streams();
+        let mut stream_layouts = Vec::new();
+
+        // Calculate the metadata root offset within the section to get original stream offsets
+        let metadata_root_rva = view.cor20header().meta_data_rva as u64;
+        let section_rva = pe::get_text_section_rva(self.assembly)? as u64;
+        let metadata_offset_in_section = metadata_root_rva - section_rva;
+        let metadata_root_offset = section_start_offset + metadata_offset_in_section;
+
+        for original_stream in original_streams {
+            let stream_name = &original_stream.name;
+            let mut new_size = original_stream.size;
+            let mut has_additions = false;
+
+            // Check if this stream has additions (only size changes for small modifications)
+            for stream_mod in &metadata_modifications.stream_modifications {
+                if stream_mod.name == *stream_name {
+                    new_size = stream_mod.new_size as u32;
+                    has_additions = stream_mod.additional_data_size > 0;
+                    break;
+                }
+            }
+
+            // Preserve original offset but use new size if stream was modified
+            let original_offset = metadata_root_offset + original_stream.offset as u64;
+            let aligned_size = ((new_size + 3) & !3) as u64;
+
+            stream_layouts.push(StreamFileLayout {
+                name: stream_name.clone(),
+                file_region: FileRegion {
+                    offset: original_offset,
+                    size: aligned_size,
+                },
+                size: new_size,
+                has_additions,
+            });
+        }
+
+        Ok(stream_layouts)
+    }
+
+    /// Fixes metadata modification write offsets when preserving original layouts.
+    ///
+    /// When we preserve the original section layout for small changes, the write offsets
+    /// calculated during initial metadata modification planning are incorrect because they
+    /// assume sections will be relocated. This function recalculates the write offsets
+    /// to point to the correct locations within the preserved layout.
+    fn fix_metadata_modifications_for_preserved_layout(
+        &self,
+        metadata_modifications: &mut MetadataModifications,
+    ) -> Result<()> {
+        let view = self.assembly.view();
+
+        // Get metadata root offset in the preserved layout
+        let metadata_root_rva = view.cor20header().meta_data_rva as u64;
+
+        // Find the text section RVA by looking for the section containing metadata
+        let text_section = view
+            .file()
+            .sections()
+            .find(|s| {
+                let name = std::str::from_utf8(&s.name)
+                    .unwrap_or("")
+                    .trim_end_matches('\0');
+                view.file().section_contains_metadata(name)
+            })
+            .ok_or_else(|| Error::WriteLayoutFailed {
+                message: "Could not find metadata section for RVA calculation".to_string(),
+            })?;
+
+        let section_rva = text_section.virtual_address as u64;
+        let metadata_offset_in_section = metadata_root_rva - section_rva;
+
+        // The text section stays at its original offset when preserving layout
+        let text_section_offset = text_section.pointer_to_raw_data as u64;
+
+        let metadata_root_offset = text_section_offset + metadata_offset_in_section;
+
+        // Fix write offsets for each stream modification
+        for stream_mod in &mut metadata_modifications.stream_modifications {
+            // Find the original stream to get its offset and size
+            if let Some(original_stream) = view.streams().iter().find(|s| s.name == stream_mod.name)
+            {
+                // Calculate where additional data should be written:
+                // metadata_root_offset + original_stream.offset + original_stream.size
+                let corrected_write_offset = metadata_root_offset
+                    + original_stream.offset as u64
+                    + original_stream.size as u64;
+
+                // Fixing write offset for preserved layout
+
+                stream_mod.write_offset = corrected_write_offset;
+            }
+        }
+
+        Ok(())
     }
 
     /// Determines if this is a PE32+ format file.

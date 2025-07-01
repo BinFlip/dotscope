@@ -923,8 +923,8 @@ mod tests {
         let magic = u32::from_le_bytes([encoded[4], encoded[5], encoded[6], encoded[7]]);
         assert_eq!(magic, RESOURCE_MAGIC);
 
-        // For now, just test that encoding works - parsing will be fixed separately
-        println!("Successfully encoded {} bytes", encoded.len());
+        // Verify encoding works and produces reasonable output
+        assert!(encoded.len() > 20); // Should have headers and data
     }
 
     /// Test that demonstrates the complete DotNetResourceEncoder API
@@ -971,11 +971,9 @@ mod tests {
         ]);
         assert_eq!(magic, RESOURCE_MAGIC);
 
-        println!(
-            "Successfully encoded {} resources into {} bytes",
-            encoder.resource_count(),
-            encoded_data.len()
-        );
+        // Verify encoding completed successfully
+        assert_eq!(encoder.resource_count(), 14);
+        assert!(encoded_data.len() > 100);
     }
 
     #[test]
@@ -985,26 +983,17 @@ mod tests {
 
         let buffer = encoder.encode_dotnet_format().unwrap();
 
-        println!("Generated buffer length: {}", buffer.len());
-
-        // Use our own parser to see what data_section_offset is generated
+        // Use our own parser to verify the generated data is valid
         let mut resource = crate::metadata::resources::Resource::parse(&buffer).unwrap();
-        println!(
-            "Parsed data_section_offset: 0x{:X}",
-            resource.data_section_offset
-        );
 
-        println!("Our encoder characteristics:");
-        println!("  type_names.len(): {}", resource.type_names.len());
-        println!("  rr_version: {}", resource.rr_version);
-        println!("  resource_count: {}", resource.resource_count);
-        println!("  padding: {}", resource.padding);
+        // Verify basic characteristics
+        assert_eq!(resource.rr_version, 2);
+        assert_eq!(resource.resource_count, 1);
 
-        // Try to parse the resources and see what happens
-        match resource.read_resources(&buffer) {
-            Ok(_) => println!("Successfully parsed resources with our current parser"),
-            Err(e) => println!("Failed to parse with current parser: {e:?}"),
-        }
+        // Try to parse the resources to verify validity
+        resource
+            .read_resources(&buffer)
+            .expect("Should be able to parse generated resources");
     }
 
     #[test]

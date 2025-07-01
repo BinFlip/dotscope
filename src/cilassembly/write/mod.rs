@@ -86,6 +86,11 @@ use std::path::Path;
 
 use crate::{cilassembly::CilAssembly, Result};
 
+pub(crate) use planner::{
+    calculate_blob_heap_size, calculate_guid_heap_size, calculate_heap_expansions,
+    calculate_string_heap_size, calculate_userstring_heap_size, HeapExpansions,
+};
+
 mod output;
 mod planner;
 mod utils;
@@ -346,7 +351,8 @@ fn copy_metadata_section_without_streams(
     // Add the size of all stream directory entries
     for stream in view.streams().iter() {
         metadata_root_size += 8; // offset(4) + size(4)
-        metadata_root_size += (stream.name.len() + 1 + 3) & !3; // name + null + padding to 4 bytes
+        let name_size = (stream.name.len() + 1 + 3) & !3; // name + null + padding to 4 bytes
+        metadata_root_size += name_size;
     }
 
     if metadata_root_start + metadata_root_size <= original_offset + original_size {
@@ -358,24 +364,44 @@ fn copy_metadata_section_without_streams(
     }
 
     // Copy the original stream data to their new locations
+    // Skip copying streams that will be completely rebuilt
     for stream_layout in &section_layout.metadata_streams {
-        // Find the original stream
         let original_stream = view.streams().iter().find(|s| s.name == stream_layout.name);
 
         if let Some(original_stream) = original_stream {
-            // Copy original stream data to new location
-            let original_stream_start = original_offset
-                + metadata_offset_in_section as usize
-                + original_stream.offset as usize;
-            let original_stream_size = original_stream.size as usize;
+            let needs_rebuilding = match stream_layout.name.as_str() {
+                "#Strings" => {
+                    let changes = &assembly.changes().string_heap_changes;
+                    changes.has_modifications() || changes.has_removals()
+                }
+                "#Blob" => assembly.changes().blob_heap_changes.has_changes(),
+                "#GUID" => {
+                    let changes = &assembly.changes().guid_heap_changes;
+                    changes.has_modifications() || changes.has_removals()
+                }
+                "#US" => {
+                    let changes = &assembly.changes().userstring_heap_changes;
+                    changes.has_modifications() || changes.has_removals()
+                }
+                _ => false,
+            };
 
-            // Make sure we don't read beyond the section
-            if original_stream_start + original_stream_size <= original_offset + original_size {
-                let stream_data = &original_data
-                    [original_stream_start..original_stream_start + original_stream_size];
-                let new_stream_offset = stream_layout.file_region.offset as usize;
-                let output_slice = mmap_file.get_mut_slice(new_stream_offset, stream_data.len())?;
-                output_slice.copy_from_slice(stream_data);
+            // Only copy original stream data if we're not rebuilding the entire heap
+            if !needs_rebuilding {
+                let original_stream_start = original_offset
+                    + metadata_offset_in_section as usize
+                    + original_stream.offset as usize;
+                let original_stream_size = original_stream.size as usize;
+
+                // Make sure we don't read beyond the section
+                if original_stream_start + original_stream_size <= original_offset + original_size {
+                    let stream_data = &original_data
+                        [original_stream_start..original_stream_start + original_stream_size];
+                    let new_stream_offset = stream_layout.file_region.offset as usize;
+                    let output_slice =
+                        mmap_file.get_mut_slice(new_stream_offset, stream_data.len())?;
+                    output_slice.copy_from_slice(stream_data);
+                }
             }
         }
     }
@@ -469,11 +495,33 @@ fn update_metadata_root(
     let metadata_root_offset = metadata_section.file_region.offset + metadata_offset_in_section;
 
     // Update stream directory entries with new offsets and sizes
-    let mut stream_dir_offset = metadata_root_offset + 16 + view.metadata_root().length as u64 + 4; // Skip header
+    // The parser expects the stream directory at: 16 + version_string.len() + 4
+    let version_string = view.metadata_root().version.clone();
+    let version_string_len = version_string.len() as u64;
+    let mut stream_dir_offset = metadata_root_offset + 16 + version_string_len + 4;
 
     for stream_layout in &metadata_section.metadata_streams {
         // Calculate where this stream actually is relative to the new metadata root location
+        if stream_layout.file_region.offset < metadata_root_offset {
+            return Err(crate::Error::WriteLayoutFailed {
+                message: format!(
+                    "Stream '{}' offset ({}) is before metadata root offset ({})",
+                    stream_layout.name, stream_layout.file_region.offset, metadata_root_offset
+                ),
+            });
+        }
+
         let actual_relative_offset = stream_layout.file_region.offset - metadata_root_offset;
+
+        // Validate that the relative offset fits in u32
+        if actual_relative_offset > u32::MAX as u64 {
+            return Err(crate::Error::WriteLayoutFailed {
+                message: format!(
+                    "Stream '{}' relative offset ({}) exceeds u32::MAX",
+                    stream_layout.name, actual_relative_offset
+                ),
+            });
+        }
 
         // Write the offset field
         mmap_file.write_u32_le_at(stream_dir_offset, actual_relative_offset as u32)?;
@@ -583,17 +631,55 @@ fn update_cor20_header(
             message: "No metadata section found for COR20 update".to_string(),
         })?;
 
-    // Calculate where the COR20 header should be (typically near the start of .text section)
-    // From our debug analysis, it's at file offset 520, which is .text_start + 8
-    let cor20_file_offset = metadata_section.file_region.offset + 8; // 512 + 8 = 520
+    // Find the actual COR20 header location
+    // The COR20 header RVA is in the .NET directory entry (entry 14) of the PE Optional Header
+    // We need to convert this RVA to the new file offset
+    let view = assembly.view();
+    let file = view.file();
+    let cor20_rva = file.clr().0; // Get the CLR directory RVA
 
-    // Calculate the new metadata size
+    // Convert the COR20 RVA to file offset using the new section layout
+    let cor20_file_offset = if (cor20_rva as u32) >= metadata_section.virtual_address
+        && (cor20_rva as u32) < metadata_section.virtual_address + metadata_section.virtual_size
+    {
+        // COR20 header is in this section
+        let cor20_offset_in_section = cor20_rva - metadata_section.virtual_address as usize;
+        metadata_section.file_region.offset + cor20_offset_in_section as u64
+    } else {
+        // COR20 header is in a different section - this shouldn't happen for normal .NET assemblies
+        return Err(crate::Error::WriteLayoutFailed {
+            message: "COR20 header not found in metadata section".to_string(),
+        });
+    };
+
+    // Calculate the new metadata size and RVA
     // The metadata spans from the metadata root to the end of our last stream
-    let metadata_root_rva = view.cor20header().meta_data_rva as u64;
-    let section_rva = metadata_section.virtual_address as u64;
-    let metadata_offset_in_section = metadata_root_rva - section_rva;
+
+    // Find where the metadata root is located within the new section layout
+    // We need to find the actual metadata root location in the new file
+    let original_metadata_root_rva = view.cor20header().meta_data_rva as u64;
+    // Find the text section RVA from the original file
+    let view = assembly.view();
+    let original_section_rva = view
+        .file()
+        .sections()
+        .find(|section| {
+            let name = std::str::from_utf8(&section.name)
+                .unwrap_or("")
+                .trim_end_matches('\0');
+            view.file().section_contains_metadata(name)
+        })
+        .map(|section| section.virtual_address as u64)
+        .ok_or_else(|| crate::Error::WriteLayoutFailed {
+            message: "Could not find metadata section for RVA calculation".to_string(),
+        })?;
+    let original_metadata_offset_in_section = original_metadata_root_rva - original_section_rva;
+
+    // In the new layout, the metadata remains at the same relative position within the section
+    let new_section_rva = metadata_section.virtual_address as u64;
+    let new_metadata_rva = new_section_rva + original_metadata_offset_in_section;
     let metadata_start_file_offset =
-        metadata_section.file_region.offset + metadata_offset_in_section;
+        metadata_section.file_region.offset + original_metadata_offset_in_section;
 
     // Find the end of the last stream
     let mut max_stream_end = metadata_start_file_offset;
@@ -603,6 +689,12 @@ fn update_cor20_header(
     }
 
     let new_metadata_size = max_stream_end - metadata_start_file_offset;
+
+    // Update the metadata RVA field in the COR20 header
+    // The metadata RVA is at offset 8 in the COR20 header
+
+    let metadata_rva_offset = cor20_file_offset + 8;
+    mmap_file.write_u32_le_at(metadata_rva_offset, new_metadata_rva as u32)?;
 
     // Update the metadata size field in the COR20 header
     // The metadata size is at offset 12 (0xC) in the COR20 header

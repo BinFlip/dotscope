@@ -57,7 +57,6 @@
 use std::path::{Path, PathBuf};
 
 use memmap2::{MmapMut, MmapOptions};
-use tempfile::NamedTempFile;
 
 use crate::{Error, Result};
 
@@ -87,13 +86,10 @@ use crate::{Error, Result};
 /// to ensure atomic rename operations work correctly (same filesystem requirement).
 /// Only after successful completion is the file moved to its final location.
 pub struct Output {
-    /// The memory mapping of the temporary file
+    /// The memory mapping of the target file
     mmap: MmapMut,
 
-    /// The temporary file (keeps it alive)
-    temp_file: NamedTempFile,
-
-    /// The final target path
+    /// The target path
     target_path: PathBuf,
 
     /// Whether the file has been finalized
@@ -103,12 +99,13 @@ pub struct Output {
 impl Output {
     /// Creates a new memory-mapped output file.
     ///
-    /// This creates a temporary file of the specified size and maps it into memory.
-    /// The temporary file will be atomically moved to the target path when finalized.
+    /// This creates a file directly at the target path and maps it into memory
+    /// for efficient writing operations. If finalization fails or the output
+    /// is dropped without being finalized, the file will be automatically cleaned up.
     ///
     /// # Arguments
     ///
-    /// * `target_path` - The final path where the file should be created
+    /// * `target_path` - The path where the file should be created
     /// * `size` - The total size of the file to create
     ///
     /// # Returns
@@ -118,35 +115,32 @@ impl Output {
     /// # Errors
     ///
     /// Returns [`crate::Error::WriteMmapFailed`] in the following cases:
-    /// - Target path has no parent directory
-    /// - Temporary file creation fails
+    /// - Target file creation fails
     /// - File size setting fails
     /// - Memory mapping creation fails
     pub fn create<P: AsRef<Path>>(target_path: P, size: u64) -> Result<Self> {
         let target_path = target_path.as_ref().to_path_buf();
 
-        // Create temporary file in the same directory as the target
-        // This ensures the atomic rename will work (same filesystem)
-        let temp_dir = target_path.parent().ok_or_else(|| Error::WriteMmapFailed {
-            message: "Target path has no parent directory".to_string(),
-        })?;
-
-        let temp_file = NamedTempFile::new_in(temp_dir).map_err(|e| Error::WriteMmapFailed {
-            message: format!("Failed to create temporary file: {e}"),
-        })?;
+        // Create the file directly at the target location
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&target_path)
+            .map_err(|e| Error::WriteMmapFailed {
+                message: format!("Failed to create target file: {e}"),
+            })?;
 
         // Set the file size
-        temp_file
-            .as_file()
-            .set_len(size)
-            .map_err(|e| Error::WriteMmapFailed {
-                message: format!("Failed to set file size: {e}"),
-            })?;
+        file.set_len(size).map_err(|e| Error::WriteMmapFailed {
+            message: format!("Failed to set file size: {e}"),
+        })?;
 
         // Create memory mapping
         let mmap = unsafe {
             MmapOptions::new()
-                .map_mut(temp_file.as_file())
+                .map_mut(&file)
                 .map_err(|e| Error::WriteMmapFailed {
                     message: format!("Failed to create memory mapping: {e}"),
                 })?
@@ -154,7 +148,6 @@ impl Output {
 
         Ok(Self {
             mmap,
-            temp_file,
             target_path,
             finalized: false,
         })
@@ -206,6 +199,17 @@ impl Output {
     /// Returns [`crate::Error::WriteMmapFailed`] if the range is invalid or exceeds file bounds.
     pub fn get_mut_slice(&mut self, start: usize, size: usize) -> Result<&mut [u8]> {
         let end = start + size;
+        if end > self.mmap.len() {
+            return Err(crate::Error::WriteMmapFailed {
+                message: format!(
+                    "Write would exceed file size: start={}, size={}, end={}, file_size={}",
+                    start,
+                    size,
+                    end,
+                    self.mmap.len()
+                ),
+            });
+        }
         self.get_mut_range(start, end)
     }
 
@@ -318,24 +322,19 @@ impl Output {
         })
     }
 
-    /// Finalizes the file by flushing, syncing, and atomically moving to the target path.
+    /// Finalizes the file by flushing all pending writes.
     ///
-    /// This operation ensures data durability and atomically completes the file creation:
-    /// 1. Flushes the memory mapping to write cached data
-    /// 2. Syncs the temporary file to ensure disk persistence
-    /// 3. Drops the memory mapping to release file handles (important on Windows)
-    /// 4. Atomically renames the temporary file to the target path
+    /// This operation ensures data durability and marks the file as complete:
+    /// 1. Flushes the memory mapping to write cached data to disk
+    /// 2. Marks the file as finalized to prevent cleanup on drop
     ///
-    /// After calling this method, the file is complete and available at the target path.
-    /// The temporary file is consumed and no longer accessible. This method can only
-    /// be called once per [`crate::cilassembly::write::output::Output`] instance.
+    /// After calling this method, the file is complete and will remain at the target path.
+    /// This method can only be called once per [`crate::cilassembly::write::output::Output`] instance.
     ///
     /// # Errors
     /// Returns [`crate::Error::WriteFinalizationFailed`] in the following cases:
     /// - File has already been finalized
     /// - Memory mapping flush fails
-    /// - File sync operation fails
-    /// - Atomic rename operation fails
     pub fn finalize(mut self) -> Result<()> {
         if self.finalized {
             return Err(Error::WriteFinalizationFailed {
@@ -350,44 +349,7 @@ impl Output {
                 message: format!("Failed to flush memory mapping: {e}"),
             })?;
 
-        // Sync to ensure data is written to disk
-        self.temp_file
-            .as_file()
-            .sync_all()
-            .map_err(|e| Error::WriteFinalizationFailed {
-                message: format!("Failed to sync temporary file: {e}"),
-            })?;
-
-        // Extract target path before taking ownership
-        let target_path = self.target_path.clone();
-
-        // Create a dummy temp file and mmap to replace the originals
-        let dummy_temp = NamedTempFile::new().map_err(|e| Error::WriteFinalizationFailed {
-            message: format!("Failed to create dummy temp file: {e}"),
-        })?;
-        let dummy_mmap = unsafe {
-            memmap2::MmapOptions::new()
-                .len(1)
-                .map_mut(dummy_temp.as_file())
-                .map_err(|e| Error::WriteFinalizationFailed {
-                    message: format!("Failed to create dummy memory mapping: {e}"),
-                })?
-        };
-
-        // Replace the mmap and temp_file with dummies, which drops the originals
-        let _old_mmap = std::mem::replace(&mut self.mmap, dummy_mmap);
-        let temp_file = std::mem::replace(&mut self.temp_file, dummy_temp);
-
-        // Explicitly drop the old mmap to release Windows file handles
-        drop(_old_mmap);
-
-        // Atomically move to target path
-        temp_file
-            .persist(target_path)
-            .map_err(|e| Error::WriteFinalizationFailed {
-                message: format!("Failed to move temporary file to target: {}", e.error),
-            })?;
-
+        // Mark as finalized
         self.finalized = true;
         Ok(())
     }
@@ -398,23 +360,22 @@ impl Output {
     pub fn target_path(&self) -> &Path {
         &self.target_path
     }
-
-    /// Gets the current temporary file path.
-    ///
-    /// Returns the path to the temporary file where data is currently being written.
-    /// This path becomes invalid after finalization.
-    pub fn temp_path(&self) -> &Path {
-        self.temp_file.path()
-    }
 }
 
 impl Drop for Output {
     fn drop(&mut self) {
         if !self.finalized {
-            // Try to flush on drop, but don't panic if it fails
+            // File was not finalized, so we should clean it up
+            // First try to flush any pending writes
             let _ = self.flush();
+
+            // Drop the mmap first to release the file handle
+            // This is done implicitly when mmap is dropped
+
+            // Then delete the incomplete file
+            let _ = std::fs::remove_file(&self.target_path);
         }
-        // tempfile::NamedTempFile will automatically clean up the temp file
+        // If finalized, the file should remain at the target location
     }
 }
 

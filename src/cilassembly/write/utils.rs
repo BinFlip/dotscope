@@ -415,4 +415,51 @@ mod tests {
         let field_size = calculate_table_row_size(TableId::Field, &table_info);
         assert!(field_size > 0, "Field table should have positive row size");
     }
+
+    #[test]
+    fn test_align_to_basic_cases() {
+        assert_eq!(align_to(0, 4), 0, "Zero should align to zero");
+        assert_eq!(align_to(1, 4), 4, "1 should align to 4");
+        assert_eq!(align_to(4, 4), 4, "4 should remain 4");
+        assert_eq!(align_to(5, 4), 8, "5 should align to 8");
+    }
+
+    #[test]
+    fn test_align_to_power_of_two() {
+        assert_eq!(
+            align_to(7, 8),
+            8,
+            "7 should align to 8 with 8-byte alignment"
+        );
+        assert_eq!(
+            align_to(15, 16),
+            16,
+            "15 should align to 16 with 16-byte alignment"
+        );
+        assert_eq!(
+            align_to(33, 32),
+            64,
+            "33 should align to 64 with 32-byte alignment"
+        );
+    }
+
+    #[test]
+    fn test_align_to_already_aligned() {
+        assert_eq!(align_to(8, 4), 8, "8 should remain aligned to 4");
+        assert_eq!(align_to(16, 8), 16, "16 should remain aligned to 8");
+        assert_eq!(align_to(32, 16), 32, "32 should remain aligned to 16");
+    }
+
+    #[test]
+    fn test_align_to_4_bytes() {
+        assert_eq!(align_to_4_bytes(0), 0, "0 should remain 0");
+        assert_eq!(align_to_4_bytes(1), 4, "1 should align to 4");
+        assert_eq!(align_to_4_bytes(2), 4, "2 should align to 4");
+        assert_eq!(align_to_4_bytes(3), 4, "3 should align to 4");
+        assert_eq!(align_to_4_bytes(4), 4, "4 should remain 4");
+        assert_eq!(align_to_4_bytes(5), 8, "5 should align to 8");
+    }
+
+    // Note: Layout search functionality is tested through integration tests
+    // that use real assemblies with proper FileLayout structures.
 }

@@ -371,6 +371,7 @@ impl Root {
         }
 
         let stream_count = read_le_at::<u16>(data, &mut (version_string.len() + 18))?;
+
         if stream_count == 0 || stream_count > 6 || (stream_count * 9) as usize > data.len() {
             // 9 - min size that a valid StreamHeader can be; Must have streams, no duplicates, no more than 6 possible
             return Err(malformed_error!("Invalid stream count"));
@@ -380,7 +381,7 @@ impl Root {
         let mut stream_offset = version_string.len() + 20;
         let mut streams_seen = [false; 6];
 
-        for _ in 0..stream_count {
+        for _i in 0..stream_count {
             if stream_offset > data.len() {
                 return Err(OutOfBounds);
             }

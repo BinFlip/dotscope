@@ -657,8 +657,9 @@ pub use crate::metadata::tables::{
 ///
 /// BuilderContext coordinates metadata creation across all builders, managing heap operations,
 /// table modifications, and cross-reference resolution. CilAssembly provides the mutable assembly
-/// interface required for metadata modification operations.
-pub use crate::cilassembly::{BuilderContext, CilAssembly};
+/// interface required for metadata modification operations. ReferenceHandlingStrategy controls
+/// how references are handled when removing heap entries or table rows.
+pub use crate::cilassembly::{BuilderContext, CilAssembly, ReferenceHandlingStrategy};
 
 /// Assembly and module builders.
 ///

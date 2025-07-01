@@ -621,7 +621,6 @@ mod tests {
         };
 
         let encoded = encode_custom_attribute_value(&custom_attr).unwrap();
-        println!("Debug encoded bytes: {encoded:02X?}");
 
         // Expected format:
         // 0x01, 0x00 - Prolog
@@ -632,18 +631,15 @@ mod tests {
         // field name length + "FieldValue"
         // 42 as I4
 
-        println!("Expected prolog: 01 00");
-        println!("Expected named count: 01 00");
-        println!("Expected field indicator: 53");
-        println!("Expected type tag: 08");
-
         // Check actual structure
         if encoded.len() >= 6 {
-            println!("Actual structure:");
-            println!("  Prolog: {:02X} {:02X}", encoded[0], encoded[1]);
-            println!("  Named count: {:02X} {:02X}", encoded[2], encoded[3]);
-            println!("  Field indicator: {:02X}", encoded[4]);
-            println!("  Type tag: {:02X}", encoded[5]);
+            // Verify structure: prolog, named count, field indicator, type tag
+            assert_eq!(encoded[0], 0x01);
+            assert_eq!(encoded[1], 0x00);
+            assert_eq!(encoded[2], 0x01);
+            assert_eq!(encoded[3], 0x00);
+            assert_eq!(encoded[4], 0x53);
+            assert_eq!(encoded[5], 0x08);
         }
     }
 
@@ -655,43 +651,35 @@ mod tests {
         };
 
         let encoded = encode_custom_attribute_value(&custom_attr).unwrap();
-        println!("Debug Type args encoded bytes: {encoded:02X?}");
 
         // Expected format:
         // 0x01, 0x00 - Prolog
         // Type string: compressed length + "System.String"
         // 0x00, 0x00 - Named args count (0, little-endian u16)
 
-        println!("Byte breakdown:");
+        // Verify byte structure
         let mut pos = 0;
-        println!("  Prolog: {:02X} {:02X}", encoded[pos], encoded[pos + 1]);
+        assert_eq!(encoded[pos], 0x01);
+        assert_eq!(encoded[pos + 1], 0x00);
         pos += 2;
 
         // String encoding: first read compressed length
         if pos < encoded.len() {
             let str_len = encoded[pos];
-            println!("  String length: {str_len:02X} ({str_len})");
             pos += 1;
 
             if pos + str_len as usize <= encoded.len() {
                 let string_bytes = &encoded[pos..pos + str_len as usize];
                 let string_str = String::from_utf8_lossy(string_bytes);
-                println!("  String content: {string_bytes:02X?} ('{string_str}')");
+                assert_eq!(string_str, "System.String");
                 pos += str_len as usize;
             }
         }
 
         if pos + 1 < encoded.len() {
-            println!(
-                "  Named count: {:02X} {:02X}",
-                encoded[pos],
-                encoded[pos + 1]
-            );
-            pos += 2;
-        }
-
-        if pos < encoded.len() {
-            println!("  Remaining bytes: {:02X?}", &encoded[pos..]);
+            // Verify named count is 0
+            assert_eq!(encoded[pos], 0x00);
+            assert_eq!(encoded[pos + 1], 0x00);
         }
     }
 }

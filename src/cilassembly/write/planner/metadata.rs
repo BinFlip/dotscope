@@ -278,42 +278,34 @@ pub fn extract_metadata_layout(
 pub fn identify_metadata_modifications(assembly: &CilAssembly) -> Result<MetadataModifications> {
     let changes = assembly.changes();
 
-    // Check if any heap has additions or table modifications that would require metadata root updates
-    let root_needs_update = changes.string_heap_changes.has_additions()
-        || changes.blob_heap_changes.has_additions()
-        || changes.guid_heap_changes.has_additions()
-        || changes.userstring_heap_changes.has_additions()
-        || !changes.table_changes.is_empty();
-
     // Identify which streams need modifications
     let mut stream_modifications = Vec::new();
-
-    if changes.string_heap_changes.has_additions() {
-        stream_modifications.push(create_string_stream_modification(
-            assembly,
-            &changes.string_heap_changes,
-        )?);
+    if changes.string_heap_changes.has_additions()
+        || changes.string_heap_changes.has_modifications()
+        || changes.string_heap_changes.has_removals()
+    {
+        stream_modifications.push(create_string_stream_modification(assembly)?);
     }
 
-    if changes.blob_heap_changes.has_additions() {
-        stream_modifications.push(create_blob_stream_modification(
-            assembly,
-            &changes.blob_heap_changes,
-        )?);
+    if changes.blob_heap_changes.has_additions()
+        || changes.blob_heap_changes.has_modifications()
+        || changes.blob_heap_changes.has_removals()
+    {
+        stream_modifications.push(create_blob_stream_modification(assembly)?);
     }
 
-    if changes.guid_heap_changes.has_additions() {
-        stream_modifications.push(create_guid_stream_modification(
-            assembly,
-            &changes.guid_heap_changes,
-        )?);
+    if changes.guid_heap_changes.has_additions()
+        || changes.guid_heap_changes.has_modifications()
+        || changes.guid_heap_changes.has_removals()
+    {
+        stream_modifications.push(create_guid_stream_modification(assembly)?);
     }
 
-    if changes.userstring_heap_changes.has_additions() {
-        stream_modifications.push(create_userstring_stream_modification(
-            assembly,
-            &changes.userstring_heap_changes,
-        )?);
+    if changes.userstring_heap_changes.has_additions()
+        || changes.userstring_heap_changes.has_modifications()
+        || changes.userstring_heap_changes.has_removals()
+    {
+        stream_modifications.push(create_userstring_stream_modification(assembly)?);
     }
 
     // Check if table stream needs modification due to table additions
@@ -322,7 +314,7 @@ pub fn identify_metadata_modifications(assembly: &CilAssembly) -> Result<Metadat
     }
 
     Ok(MetadataModifications {
-        root_needs_update,
+        root_needs_update: !stream_modifications.is_empty(),
         stream_modifications,
     })
 }
@@ -335,10 +327,7 @@ pub fn identify_metadata_modifications(assembly: &CilAssembly) -> Result<Metadat
 /// # Arguments
 /// * `assembly` - The [`crate::cilassembly::CilAssembly`] for context
 /// * `heap_changes` - The [`crate::cilassembly::HeapChanges<String>`] containing string additions
-fn create_string_stream_modification(
-    assembly: &CilAssembly,
-    heap_changes: &crate::cilassembly::HeapChanges<String>,
-) -> Result<StreamModification> {
+fn create_string_stream_modification(assembly: &CilAssembly) -> Result<StreamModification> {
     let view = assembly.view();
 
     // Find the stream in the original file
@@ -350,14 +339,23 @@ fn create_string_stream_modification(
             message: "Stream #Strings not found in original file".to_string(),
         })?;
 
-    let additional_data_size = calc::calculate_string_heap_size(heap_changes)?;
+    let rebuilt_heap_size = assembly.calculate_string_heap_size()?;
     let (write_offset, size_field_offset) = calculate_stream_offsets(assembly, "#Strings")?;
+
+    let string_changes = &assembly.changes().string_heap_changes;
+    let (new_size, additional_data_size) =
+        if string_changes.has_modifications() || string_changes.has_removals() {
+            let additional = rebuilt_heap_size.saturating_sub(stream.size as u64);
+            (rebuilt_heap_size, additional)
+        } else {
+            (stream.size as u64 + rebuilt_heap_size, rebuilt_heap_size)
+        };
 
     Ok(StreamModification {
         name: "#Strings".to_string(),
         original_offset: stream.offset as u64,
         original_size: stream.size as u64,
-        new_size: stream.size as u64 + additional_data_size,
+        new_size,
         additional_data_size,
         write_offset,
         size_field_offset,
@@ -372,10 +370,7 @@ fn create_string_stream_modification(
 /// # Arguments
 /// * `assembly` - The [`crate::cilassembly::CilAssembly`] for context
 /// * `heap_changes` - The [`crate::cilassembly::HeapChanges<Vec<u8>>`] containing blob additions
-fn create_blob_stream_modification(
-    assembly: &CilAssembly,
-    heap_changes: &crate::cilassembly::HeapChanges<Vec<u8>>,
-) -> Result<StreamModification> {
+fn create_blob_stream_modification(assembly: &CilAssembly) -> Result<StreamModification> {
     let view = assembly.view();
 
     // Find the stream in the original file
@@ -387,14 +382,22 @@ fn create_blob_stream_modification(
             message: "Stream #Blob not found in original file".to_string(),
         })?;
 
-    let additional_data_size = calc::calculate_blob_heap_size(heap_changes)?;
+    let rebuilt_heap_size = assembly.calculate_blob_heap_size()?;
     let (write_offset, size_field_offset) = calculate_stream_offsets(assembly, "#Blob")?;
+
+    let blob_changes = &assembly.changes().blob_heap_changes;
+    let (new_size, additional_data_size) = if blob_changes.has_changes() {
+        let additional = rebuilt_heap_size.saturating_sub(stream.size as u64);
+        (rebuilt_heap_size, additional)
+    } else {
+        (stream.size as u64, 0)
+    };
 
     Ok(StreamModification {
         name: "#Blob".to_string(),
         original_offset: stream.offset as u64,
         original_size: stream.size as u64,
-        new_size: stream.size as u64 + additional_data_size,
+        new_size,
         additional_data_size,
         write_offset,
         size_field_offset,
@@ -409,10 +412,7 @@ fn create_blob_stream_modification(
 /// # Arguments
 /// * `assembly` - The [`crate::cilassembly::CilAssembly`] for context
 /// * `heap_changes` - The [`crate::cilassembly::HeapChanges<[u8; 16]>`] containing GUID additions
-fn create_guid_stream_modification(
-    assembly: &CilAssembly,
-    heap_changes: &crate::cilassembly::HeapChanges<[u8; 16]>,
-) -> Result<StreamModification> {
+fn create_guid_stream_modification(assembly: &CilAssembly) -> Result<StreamModification> {
     let view = assembly.view();
 
     // Find the stream in the original file
@@ -424,14 +424,23 @@ fn create_guid_stream_modification(
             message: "Stream #GUID not found in original file".to_string(),
         })?;
 
-    let additional_data_size = calc::calculate_guid_heap_size(heap_changes)?;
+    let rebuilt_heap_size = assembly.calculate_guid_heap_size()?;
     let (write_offset, size_field_offset) = calculate_stream_offsets(assembly, "#GUID")?;
+
+    let guid_changes = &assembly.changes().guid_heap_changes;
+    let (new_size, additional_data_size) =
+        if guid_changes.has_modifications() || guid_changes.has_removals() {
+            let additional = rebuilt_heap_size.saturating_sub(stream.size as u64);
+            (rebuilt_heap_size, additional)
+        } else {
+            (stream.size as u64 + rebuilt_heap_size, rebuilt_heap_size)
+        };
 
     Ok(StreamModification {
         name: "#GUID".to_string(),
         original_offset: stream.offset as u64,
         original_size: stream.size as u64,
-        new_size: stream.size as u64 + additional_data_size,
+        new_size,
         additional_data_size,
         write_offset,
         size_field_offset,
@@ -446,10 +455,7 @@ fn create_guid_stream_modification(
 /// # Arguments
 /// * `assembly` - The [`crate::cilassembly::CilAssembly`] for context
 /// * `heap_changes` - The [`crate::cilassembly::HeapChanges<String>`] containing user string additions
-fn create_userstring_stream_modification(
-    assembly: &CilAssembly,
-    heap_changes: &crate::cilassembly::HeapChanges<String>,
-) -> Result<StreamModification> {
+fn create_userstring_stream_modification(assembly: &CilAssembly) -> Result<StreamModification> {
     let view = assembly.view();
 
     // Find the stream in the original file
@@ -461,14 +467,23 @@ fn create_userstring_stream_modification(
             message: "Stream #US not found in original file".to_string(),
         })?;
 
-    let additional_data_size = calc::calculate_userstring_heap_size(heap_changes)?;
+    let rebuilt_heap_size = assembly.calculate_userstring_heap_size()?;
     let (write_offset, size_field_offset) = calculate_stream_offsets(assembly, "#US")?;
+
+    let userstring_changes = &assembly.changes().userstring_heap_changes;
+    let (new_size, additional_data_size) =
+        if userstring_changes.has_modifications() || userstring_changes.has_removals() {
+            let additional = rebuilt_heap_size.saturating_sub(stream.size as u64);
+            (rebuilt_heap_size, additional)
+        } else {
+            (stream.size as u64 + rebuilt_heap_size, rebuilt_heap_size)
+        };
 
     Ok(StreamModification {
         name: "#US".to_string(),
         original_offset: stream.offset as u64,
         original_size: stream.size as u64,
-        new_size: stream.size as u64 + additional_data_size,
+        new_size,
         additional_data_size,
         write_offset,
         size_field_offset,

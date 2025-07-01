@@ -231,6 +231,14 @@ impl<'a> UserStrings<'a> {
     pub fn iter(&self) -> UserStringsIterator<'_> {
         UserStringsIterator::new(self)
     }
+
+    /// Returns the raw underlying data of the userstring heap.
+    ///
+    /// This provides access to the complete heap data including the null byte at offset 0
+    /// and all userstring entries in their original binary format.
+    pub fn raw_data(&self) -> &[u8] {
+        self.data
+    }
 }
 
 impl<'a> IntoIterator for &'a UserStrings<'a> {

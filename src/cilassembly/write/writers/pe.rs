@@ -169,6 +169,8 @@ impl<'a> PeWriter<'a> {
     /// Returns [`crate::Error`] if PE updates fail due to invalid structure or
     /// insufficient output buffer space.
     pub fn write_pe_updates(&mut self) -> Result<()> {
+        self.clear_certificate_table();
+
         if self.layout_plan.pe_updates.checksum_needs_update {
             self.update_pe_checksum()?;
         }
@@ -297,6 +299,29 @@ impl<'a> PeWriter<'a> {
         Ok(checksum as u32)
     }
 
+    /// Clears the PE certificate table directory entry to prevent corruption.
+    ///
+    /// When we modify a PE file and change its size, any existing certificate table
+    /// entry may become invalid and point beyond the end of the file. This function
+    /// safely clears the certificate table entry (directory entry 4) to prevent
+    /// file corruption and parsing errors.
+    ///
+    /// This function is designed to be safe and will silently fail if the certificate
+    /// table entry cannot be accessed (e.g., if the PE headers are malformed).
+    fn clear_certificate_table(&mut self) {
+        // Certificate table is directory entry 4, each entry is 8 bytes (RVA + Size)
+        if let Ok(data_directory_offset) = self.find_data_directory_offset() {
+            let certificate_entry_offset = data_directory_offset + (4 * 8); // Entry 4
+
+            // Clear both RVA and Size (8 bytes total)
+            if let Ok(()) = self.output.write_u32_le_at(certificate_entry_offset, 0) {
+                let _ = self.output.write_u32_le_at(certificate_entry_offset + 4, 0);
+            }
+        }
+        // Silently fail if we can't clear it - better to have a working binary
+        // than to fail entirely
+    }
+
     /// Checks if base relocation updates are needed.
     ///
     /// Base relocations are typically not needed for pure .NET assemblies since they use
@@ -359,14 +384,16 @@ impl<'a> PeWriter<'a> {
     /// The data directory contains RVA and size information for various PE tables.
     ///
     /// # PE Data Directory Entries
-    /// - Index 1: Import Table (IMAGE_DIRECTORY_ENTRY_IMPORT)
     /// - Index 0: Export Table (IMAGE_DIRECTORY_ENTRY_EXPORT)
+    /// - Index 1: Import Table (IMAGE_DIRECTORY_ENTRY_IMPORT)
+    /// - Index 4: Certificate Table (IMAGE_DIRECTORY_ENTRY_SECURITY)
     ///
     /// # Process
     /// 1. Check if native tables are present in the layout plan
     /// 2. Calculate RVAs and sizes for import/export tables
     /// 3. Update the appropriate data directory entries in the PE optional header
-    /// 4. Ensure proper alignment and validation of addresses
+    /// 4. Clear the certificate table entry to prevent corruption after file expansion
+    /// 5. Ensure proper alignment and validation of addresses
     ///
     /// # Returns
     /// Returns `Ok(())` if directory updates completed successfully.
@@ -539,8 +566,11 @@ mod tests {
 
         // Test the section move detection
         let needs_relocation = pe_writer.needs_relocation_updates();
-        println!("Assembly needs relocation updates: {needs_relocation}");
         // For a typical layout plan without actual section moves, this should be false
+        assert!(
+            !needs_relocation,
+            "Should not need relocation updates for minimal changes"
+        );
     }
 
     #[test]

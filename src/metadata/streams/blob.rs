@@ -437,7 +437,7 @@ impl<'a> Blob<'a> {
     /// - [`crate::file::parser::Parser`]: For compressed integer parsing
     /// - [ECMA-335 II.23.2](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Compressed integer format
     pub fn get(&self, index: usize) -> Result<&'a [u8]> {
-        if index > self.data.len() {
+        if index >= self.data.len() {
             return Err(OutOfBounds);
         }
 
@@ -545,6 +545,15 @@ impl<'a> Blob<'a> {
     #[must_use]
     pub fn iter(&self) -> BlobIterator<'_> {
         BlobIterator::new(self)
+    }
+
+    /// Returns the raw underlying data of the blob heap.
+    ///
+    /// This provides access to the complete heap data including the null byte at offset 0
+    /// and all blob entries in their original binary format.
+    #[must_use]
+    pub fn data(&self) -> &[u8] {
+        self.data
     }
 }
 

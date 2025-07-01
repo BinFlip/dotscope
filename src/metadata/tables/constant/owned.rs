@@ -240,9 +240,6 @@ mod tests {
             ConstantBuilder::field_string_constant(1, field.clone(), "test_value").build();
 
         let result = constant.apply();
-        if let Err(ref e) = result {
-            println!("Error applying string constant: {e}");
-        }
         assert!(
             result.is_ok(),
             "Expected successful application of string constant to field"

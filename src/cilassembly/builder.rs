@@ -712,6 +712,203 @@ impl BuilderContext {
         self.assembly
             .add_native_export_forwarder(function_name, ordinal, target)
     }
+
+    /// Updates an existing string in the string heap at the specified index.
+    ///
+    /// This provides a high-level API for modifying strings without needing
+    /// to directly interact with the assembly's heap changes.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The heap index to modify (1-based, following ECMA-335 conventions)
+    /// * `new_value` - The new string value to store at that index
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the modification was successful.
+    pub fn update_string(&mut self, index: u32, new_value: &str) -> Result<()> {
+        self.assembly.update_string(index, new_value)
+    }
+
+    /// Removes a string from the string heap with configurable reference handling.
+    ///
+    /// This provides a high-level API for removing strings with user-controlled
+    /// reference handling strategy.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
+    /// * `remove_references` - If true, automatically removes all references; if false, fails if references exist
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the removal was successful.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// # let mut context: BuilderContext = todo!();
+    /// // Safe removal - fail if any references exist
+    /// context.remove_string(42, false)?;
+    ///
+    /// // Aggressive removal - remove all references too
+    /// context.remove_string(43, true)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn remove_string(&mut self, index: u32, remove_references: bool) -> Result<()> {
+        use crate::cilassembly::ReferenceHandlingStrategy;
+        let strategy = if remove_references {
+            ReferenceHandlingStrategy::RemoveReferences
+        } else {
+            ReferenceHandlingStrategy::FailIfReferenced
+        };
+        self.assembly.remove_string(index, strategy)
+    }
+
+    /// Updates an existing blob in the blob heap at the specified index.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The heap index to modify (1-based, following ECMA-335 conventions)
+    /// * `new_data` - The new blob data to store at that index
+    pub fn update_blob(&mut self, index: u32, new_data: &[u8]) -> Result<()> {
+        self.assembly.update_blob(index, new_data)
+    }
+
+    /// Removes a blob from the blob heap with configurable reference handling.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
+    /// * `remove_references` - If true, automatically removes all references; if false, fails if references exist
+    pub fn remove_blob(&mut self, index: u32, remove_references: bool) -> Result<()> {
+        use crate::cilassembly::ReferenceHandlingStrategy;
+        let strategy = if remove_references {
+            ReferenceHandlingStrategy::RemoveReferences
+        } else {
+            ReferenceHandlingStrategy::FailIfReferenced
+        };
+        self.assembly.remove_blob(index, strategy)
+    }
+
+    /// Updates an existing GUID in the GUID heap at the specified index.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The heap index to modify (1-based, following ECMA-335 conventions)
+    /// * `new_guid` - The new 16-byte GUID to store at that index
+    pub fn update_guid(&mut self, index: u32, new_guid: &[u8; 16]) -> Result<()> {
+        self.assembly.update_guid(index, new_guid)
+    }
+
+    /// Removes a GUID from the GUID heap with configurable reference handling.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
+    /// * `remove_references` - If true, automatically removes all references; if false, fails if references exist
+    pub fn remove_guid(&mut self, index: u32, remove_references: bool) -> Result<()> {
+        use crate::cilassembly::ReferenceHandlingStrategy;
+        let strategy = if remove_references {
+            ReferenceHandlingStrategy::RemoveReferences
+        } else {
+            ReferenceHandlingStrategy::FailIfReferenced
+        };
+        self.assembly.remove_guid(index, strategy)
+    }
+
+    /// Updates an existing user string in the user string heap at the specified index.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The heap index to modify (1-based, following ECMA-335 conventions)
+    /// * `new_value` - The new string value to store at that index
+    pub fn update_userstring(&mut self, index: u32, new_value: &str) -> Result<()> {
+        self.assembly.update_userstring(index, new_value)
+    }
+
+    /// Removes a user string from the user string heap with configurable reference handling.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
+    /// * `remove_references` - If true, automatically removes all references; if false, fails if references exist
+    pub fn remove_userstring(&mut self, index: u32, remove_references: bool) -> Result<()> {
+        use crate::cilassembly::ReferenceHandlingStrategy;
+        let strategy = if remove_references {
+            ReferenceHandlingStrategy::RemoveReferences
+        } else {
+            ReferenceHandlingStrategy::FailIfReferenced
+        };
+        self.assembly.remove_userstring(index, strategy)
+    }
+
+    /// Updates an existing table row at the specified RID.
+    ///
+    /// This provides a high-level API for modifying table rows without needing
+    /// to directly interact with the assembly's table changes.
+    ///
+    /// # Arguments
+    ///
+    /// * `table_id` - The table containing the row to modify
+    /// * `rid` - The Row ID to modify (1-based, following ECMA-335 conventions)
+    /// * `new_row` - The new row data to store at that RID
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the modification was successful.
+    pub fn update_table_row(
+        &mut self,
+        table_id: TableId,
+        rid: u32,
+        new_row: TableDataOwned,
+    ) -> Result<()> {
+        self.assembly.update_table_row(table_id, rid, new_row)
+    }
+
+    /// Removes a table row with configurable reference handling.
+    ///
+    /// This provides a high-level API for removing table rows with user-controlled
+    /// reference handling strategy.
+    ///
+    /// # Arguments
+    ///
+    /// * `table_id` - The table containing the row to remove
+    /// * `rid` - The Row ID to remove (1-based, following ECMA-335 conventions)
+    /// * `remove_references` - If true, automatically removes all references; if false, fails if references exist
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the removal was successful.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// # use dotscope::metadata::tables::TableId;
+    /// # let mut context: BuilderContext = todo!();
+    /// // Safe removal - fail if any references exist
+    /// context.remove_table_row(TableId::TypeDef, 15, false)?;
+    ///
+    /// // Aggressive removal - remove all references too
+    /// context.remove_table_row(TableId::MethodDef, 42, true)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn remove_table_row(
+        &mut self,
+        table_id: TableId,
+        rid: u32,
+        remove_references: bool,
+    ) -> Result<()> {
+        use crate::cilassembly::ReferenceHandlingStrategy;
+        let strategy = if remove_references {
+            ReferenceHandlingStrategy::RemoveReferences
+        } else {
+            ReferenceHandlingStrategy::FailIfReferenced
+        };
+        self.assembly.delete_table_row(table_id, rid, strategy)
+    }
 }
 
 #[cfg(test)]

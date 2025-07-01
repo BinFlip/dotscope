@@ -122,7 +122,6 @@ fn extend_crafted_2() -> Result<()> {
         CilAssemblyView::from_file(temp_path).expect("Modified assembly should load successfully");
 
     // Verify heap additions
-
     // Check strings
     let strings = modified_view
         .strings()

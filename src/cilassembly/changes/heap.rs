@@ -44,11 +44,28 @@
 //! This type is [`Send`] and [`Sync`] when `T` is [`Send`] and [`Sync`], as it only contains
 //! owned data without interior mutability.
 
-/// Tracks additions to metadata heaps (strings, blobs, GUIDs, user strings).
+use std::collections::{HashMap, HashSet};
+
+/// Reference handling strategy for heap item removal operations.
 ///
-/// Heaps in .NET metadata are append-only during editing to maintain existing
-/// index references. This structure tracks only new additions, which are
-/// appended to the original heap during binary generation. It integrates with
+/// Defines how the system should handle existing references when a heap item
+/// is removed or modified. This gives users control over the behavior when
+/// dependencies exist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReferenceHandlingStrategy {
+    /// Fail the operation if any references exist to the item
+    FailIfReferenced,
+    /// Remove all references when deleting the item (cascade deletion)
+    RemoveReferences,
+    /// Replace references with a default/null value (typically index 0)
+    NullifyReferences,
+}
+
+/// Tracks changes to metadata heaps (strings, blobs, GUIDs, user strings).
+///
+/// This structure tracks additions, modifications, and removals to .NET metadata heaps.
+/// While heaps were traditionally append-only, this extended version supports
+/// user-requested modifications and removals with configurable reference handling.
 /// [`crate::cilassembly::changes::assembly::AssemblyChanges`] to provide comprehensive
 /// modification tracking.
 ///
@@ -93,6 +110,26 @@ pub struct HeapChanges<T> {
     /// index assignments.
     pub appended_items: Vec<T>,
 
+    /// Items modified in the original heap
+    ///
+    /// Maps heap index to new value. These modifications override the
+    /// original heap content at the specified indices during binary generation.
+    pub modified_items: HashMap<u32, T>,
+
+    /// Indices of items removed from the original heap
+    ///
+    /// Items at these indices will be skipped during binary generation.
+    /// The reference handling strategy determines how existing references
+    /// to these indices are managed.
+    pub removed_indices: HashSet<u32>,
+
+    /// Reference handling strategy for each removed index
+    ///
+    /// Maps removed heap index to the strategy that should be used when
+    /// handling references to that index. This allows per-removal control
+    /// over how dependencies are managed.
+    pub removal_strategies: HashMap<u32, ReferenceHandlingStrategy>,
+
     /// Next byte offset to assign (continues from original heap byte size)
     ///
     /// This offset is incremented by the actual byte size of each new item added
@@ -118,6 +155,9 @@ impl<T> HeapChanges<T> {
     pub fn new(original_byte_size: u32) -> Self {
         Self {
             appended_items: Vec::new(),
+            modified_items: HashMap::new(),
+            removed_indices: HashSet::new(),
+            removal_strategies: HashMap::new(),
             next_index: original_byte_size,
         }
     }
@@ -130,6 +170,83 @@ impl<T> HeapChanges<T> {
     /// Returns true if any items have been added to this heap.
     pub fn has_additions(&self) -> bool {
         !self.appended_items.is_empty()
+    }
+
+    /// Returns the number of items that have been modified in this heap.
+    pub fn modifications_count(&self) -> usize {
+        self.modified_items.len()
+    }
+
+    /// Returns true if any items have been modified in this heap.
+    pub fn has_modifications(&self) -> bool {
+        !self.modified_items.is_empty()
+    }
+
+    /// Returns the number of items that have been removed from this heap.
+    pub fn removals_count(&self) -> usize {
+        self.removed_indices.len()
+    }
+
+    /// Returns true if any items have been removed from this heap.
+    pub fn has_removals(&self) -> bool {
+        !self.removed_indices.is_empty()
+    }
+
+    /// Returns true if any changes (additions, modifications, or removals) have been made.
+    pub fn has_changes(&self) -> bool {
+        self.has_additions() || self.has_modifications() || self.has_removals()
+    }
+
+    /// Adds a modification to the heap at the specified index.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The heap index to modify
+    /// * `new_value` - The new value to store at that index
+    pub fn add_modification(&mut self, index: u32, new_value: T) {
+        self.modified_items.insert(index, new_value);
+    }
+
+    /// Adds a removal to the heap at the specified index.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The heap index to remove
+    /// * `strategy` - The reference handling strategy for this removal
+    pub fn add_removal(&mut self, index: u32, strategy: ReferenceHandlingStrategy) {
+        self.removed_indices.insert(index);
+        self.removal_strategies.insert(index, strategy);
+    }
+
+    /// Marks an appended item for removal by not including it in the final write.
+    /// This is used when removing a newly added string before it's written to disk.
+    pub fn mark_appended_for_removal(&mut self, index: u32) {
+        self.removed_indices.insert(index);
+    }
+
+    /// Gets the modification at the specified index, if any.
+    pub fn get_modification(&self, index: u32) -> Option<&T> {
+        self.modified_items.get(&index)
+    }
+
+    /// Returns true if the specified index has been removed.
+    pub fn is_removed(&self, index: u32) -> bool {
+        self.removed_indices.contains(&index)
+    }
+
+    /// Gets the removal strategy for the specified index, if it's been removed.
+    pub fn get_removal_strategy(&self, index: u32) -> Option<ReferenceHandlingStrategy> {
+        self.removal_strategies.get(&index).copied()
+    }
+
+    /// Returns an iterator over all modified items and their indices.
+    pub fn modified_items_iter(&self) -> impl Iterator<Item = (&u32, &T)> {
+        self.modified_items.iter()
+    }
+
+    /// Returns an iterator over all removed indices.
+    pub fn removed_indices_iter(&self) -> impl Iterator<Item = &u32> {
+        self.removed_indices.iter()
     }
 
     /// Returns the index that would be assigned to the next added item.
@@ -229,8 +346,8 @@ impl HeapChanges<String> {
                 // UTF-16 encoding: each character can be 2 or 4 bytes
                 let utf16_bytes: usize = s.encode_utf16().map(|_| 2).sum(); // Simplified: assume BMP only
 
-                // Total length includes UTF-16 data + null terminator (2 bytes) + terminal byte (1 byte)
-                let total_length = utf16_bytes + 2 + 1;
+                // Total length includes UTF-16 data + terminal byte (1 byte)
+                let total_length = utf16_bytes + 1;
 
                 let compressed_length_size = if total_length < 0x80 {
                     1 // Single byte for lengths < 128
@@ -249,21 +366,16 @@ impl HeapChanges<String> {
             .iter()
             .scan(current_index, |index, item| {
                 let current = *index;
-
-                // UTF-16 encoding: each character can be 2 or 4 bytes
-                let utf16_bytes: usize = item.encode_utf16().map(|_| 2).sum(); // Simplified: assume BMP only
-
-                // Total length includes UTF-16 data + null terminator (2 bytes) + terminal byte (1 byte)
-                let total_length = utf16_bytes + 2 + 1;
-
+                // Calculate the size of this userstring entry
+                let utf16_bytes: usize = item.encode_utf16().map(|_| 2).sum();
+                let total_length = utf16_bytes + 1;
                 let compressed_length_size = if total_length < 0x80 {
-                    1 // Single byte for lengths < 128
+                    1
                 } else if total_length < 0x4000 {
-                    2 // Two bytes for lengths < 16384
+                    2
                 } else {
-                    4 // Four bytes for larger lengths
+                    4
                 };
-
                 *index += (compressed_length_size + total_length) as u32;
                 Some((current, item))
             })
@@ -272,7 +384,7 @@ impl HeapChanges<String> {
     /// Calculates the size these userstring additions will add to the binary #US heap.
     ///
     /// The #US heap stores UTF-16 encoded strings with compressed length prefixes (ECMA-335 II.24.2.4).
-    /// Each string contributes: compressed_length_size + UTF-16_byte_length + null_terminator(2) + terminal_byte(1)
+    /// Each string contributes: compressed_length_size + UTF-16_byte_length + terminal_byte(1)
     pub fn binary_userstring_heap_size(&self) -> usize {
         self.appended_items
             .iter()
@@ -280,8 +392,8 @@ impl HeapChanges<String> {
                 // UTF-16 encoding: each character can be 2 or 4 bytes
                 let utf16_bytes: usize = s.encode_utf16().map(|_| 2).sum(); // Simplified: assume BMP only
 
-                // Total length includes UTF-16 data + null terminator (2 bytes) + terminal byte (1 byte)
-                let total_length = utf16_bytes + 2 + 1;
+                // Total length includes UTF-16 data + terminal byte (1 byte)
+                let total_length = utf16_bytes + 1;
 
                 let compressed_length_size = if total_length < 0x80 {
                     1 // Single byte for lengths < 128
@@ -346,13 +458,50 @@ mod tests {
         let mut changes = HeapChanges::new(100);
         assert_eq!(changes.next_index(), 100);
         assert!(!changes.has_additions());
+        assert!(!changes.has_changes());
 
         changes.appended_items.push("test".to_string());
         changes.next_index += 5; // "test" + null terminator = 5 bytes
 
         assert!(changes.has_additions());
+        assert!(changes.has_changes());
         assert_eq!(changes.additions_count(), 1);
         assert_eq!(changes.next_index(), 105);
+    }
+
+    #[test]
+    fn test_heap_changes_modifications() {
+        let mut changes = HeapChanges::<String>::new(100);
+        assert!(!changes.has_modifications());
+        assert!(!changes.has_changes());
+
+        changes.add_modification(50, "modified".to_string());
+
+        assert!(changes.has_modifications());
+        assert!(changes.has_changes());
+        assert_eq!(changes.modifications_count(), 1);
+        assert_eq!(changes.get_modification(50), Some(&"modified".to_string()));
+        assert_eq!(changes.get_modification(99), None);
+    }
+
+    #[test]
+    fn test_heap_changes_removals() {
+        let mut changes = HeapChanges::<String>::new(100);
+        assert!(!changes.has_removals());
+        assert!(!changes.has_changes());
+
+        changes.add_removal(25, ReferenceHandlingStrategy::FailIfReferenced);
+
+        assert!(changes.has_removals());
+        assert!(changes.has_changes());
+        assert_eq!(changes.removals_count(), 1);
+        assert!(changes.is_removed(25));
+        assert!(!changes.is_removed(30));
+        assert_eq!(
+            changes.get_removal_strategy(25),
+            Some(ReferenceHandlingStrategy::FailIfReferenced)
+        );
+        assert_eq!(changes.get_removal_strategy(30), None);
     }
 
     #[test]

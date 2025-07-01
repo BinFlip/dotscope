@@ -286,10 +286,7 @@ impl Orchestrator {
 
         // If we found any validation errors, report them
         if !all_errors.is_empty() {
-            eprintln!("Validation found {} issues:", all_errors.len());
-            for (i, error) in all_errors.iter().enumerate() {
-                eprintln!("  {}: {}", i + 1, error);
-            }
+            // TODO: Consider making validation error reporting configurable
             // For now, we'll just log the errors rather than fail validation
             // In the future, this could be configurable
         }

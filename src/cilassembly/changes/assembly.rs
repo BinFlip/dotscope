@@ -227,13 +227,13 @@ impl AssemblyChanges {
 
     /// Returns true if any changes have been made to the assembly.
     ///
-    /// This checks if any table changes exist or if any heap has additions.
+    /// This checks if any table changes exist or if any heap has changes (additions, modifications, or removals).
     pub fn has_changes(&self) -> bool {
         !self.table_changes.is_empty()
-            || self.string_heap_changes.has_additions()
-            || self.blob_heap_changes.has_additions()
-            || self.guid_heap_changes.has_additions()
-            || self.userstring_heap_changes.has_additions()
+            || self.string_heap_changes.has_changes()
+            || self.blob_heap_changes.has_changes()
+            || self.guid_heap_changes.has_changes()
+            || self.userstring_heap_changes.has_changes()
             || self
                 .native_imports
                 .as_ref()
@@ -257,6 +257,16 @@ impl AssemblyChanges {
     /// Returns the total number of blob heap additions.
     pub fn blob_additions_count(&self) -> usize {
         self.blob_heap_changes.appended_items.len()
+    }
+
+    /// Returns the total number of GUID heap additions.
+    pub fn guid_additions_count(&self) -> usize {
+        self.guid_heap_changes.appended_items.len()
+    }
+
+    /// Returns the total number of user string heap additions.
+    pub fn userstring_additions_count(&self) -> usize {
+        self.userstring_heap_changes.appended_items.len()
     }
 
     /// Returns an iterator over all modified table IDs.

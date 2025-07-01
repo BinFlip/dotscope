@@ -202,6 +202,10 @@ impl<'a> CilAssemblyViewData<'a> {
         let mut blob_heap = None;
 
         for stream in &metadata_root.stream_headers {
+            if stream.offset as usize + stream.size as usize > metadata_slice.len() {
+                return Err(crate::Error::OutOfBounds);
+            }
+
             let stream_data =
                 &metadata_slice[stream.offset as usize..(stream.offset + stream.size) as usize];
 

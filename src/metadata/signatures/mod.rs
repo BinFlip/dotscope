@@ -1221,8 +1221,6 @@ mod tests {
 
         assert_eq!(property_sig.params[0].by_ref, reparsed.params[0].by_ref);
         assert_eq!(property_sig.params[0].base, reparsed.params[0].base);
-
-        println!("✓ All byref parameter types round-trip correctly");
     }
 
     #[test]

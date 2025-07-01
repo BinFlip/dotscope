@@ -756,7 +756,7 @@ impl<'a> Strings<'a> {
     /// - [`crate::metadata::tables`]: Metadata tables containing string references
     /// - [ECMA-335 II.24.2.3](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Strings heap specification
     pub fn get(&self, index: usize) -> Result<&'a str> {
-        if index > self.data.len() {
+        if index >= self.data.len() {
             return Err(OutOfBounds);
         }
 
