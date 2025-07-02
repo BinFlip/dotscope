@@ -136,7 +136,7 @@
 //! ```
 
 use crate::{
-    cilassembly::references::ReferenceTracker,
+    cilassembly::{references::ReferenceTracker, write::HeapExpansions},
     metadata::{
         cilassemblyview::CilAssemblyView,
         exports::UnifiedExportContainer,
@@ -1188,6 +1188,13 @@ impl CilAssembly {
         &self.view
     }
 
+    /// Gets a reference to the underlying PE file.
+    ///
+    /// This is a convenience method equivalent to `self.view().file()`.
+    pub fn file(&self) -> &crate::file::File {
+        self.view.file()
+    }
+
     /// Gets a reference to the changes for write operations.
     pub fn changes(&self) -> &AssemblyChanges {
         &self.changes
@@ -1507,50 +1514,12 @@ impl CilAssembly {
         self.changes.native_exports()
     }
 
-    /// Calculate the size needed for string heap modifications.
-    ///
-    /// Returns the total aligned byte size needed for the string heap after all changes,
-    /// handling both addition-only scenarios and heap rebuilding scenarios.
-    pub fn calculate_string_heap_size(&self) -> Result<u64> {
-        crate::cilassembly::write::calculate_string_heap_size(
-            &self.changes.string_heap_changes,
-            self,
-        )
-    }
-
-    /// Calculate the size needed for blob heap modifications.
-    ///
-    /// Returns the total aligned byte size needed for the blob heap after all changes,
-    /// handling both addition-only scenarios and heap rebuilding scenarios.
-    pub fn calculate_blob_heap_size(&self) -> Result<u64> {
-        crate::cilassembly::write::calculate_blob_heap_size(&self.changes.blob_heap_changes, self)
-    }
-
-    /// Calculate the size needed for GUID heap modifications.
-    ///
-    /// Returns the total byte size needed for the GUID heap after all changes,
-    /// handling both addition-only scenarios and heap rebuilding scenarios.
-    pub fn calculate_guid_heap_size(&self) -> Result<u64> {
-        crate::cilassembly::write::calculate_guid_heap_size(&self.changes.guid_heap_changes, self)
-    }
-
-    /// Calculate the size needed for user string heap modifications.
-    ///
-    /// Returns the total aligned byte size needed for the user string heap after all changes,
-    /// handling both addition-only scenarios and heap rebuilding scenarios.
-    pub fn calculate_userstring_heap_size(&self) -> Result<u64> {
-        crate::cilassembly::write::calculate_userstring_heap_size(
-            &self.changes.userstring_heap_changes,
-            self,
-        )
-    }
-
     /// Calculate all heap expansions needed for layout planning.
     ///
     /// Returns comprehensive heap expansion information including sizes for all heap types
     /// and total expansion requirements.
-    pub fn calculate_heap_expansions(&self) -> Result<crate::cilassembly::write::HeapExpansions> {
-        crate::cilassembly::write::calculate_heap_expansions(self)
+    pub fn calculate_heap_expansions(&self) -> Result<HeapExpansions> {
+        HeapExpansions::calculate(self)
     }
 }
 

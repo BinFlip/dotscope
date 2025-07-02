@@ -38,7 +38,7 @@
 
 use crate::{
     cilassembly::{
-        write::{output::Output, planner::LayoutPlan},
+        write::{output::Output, planner::LayoutPlan, writers::WriterBase},
         CilAssembly,
     },
     metadata::{exports::UnifiedExportContainer, imports::UnifiedImportContainer},
@@ -63,12 +63,8 @@ use crate::{
 /// Created via [`NativeTablesWriter::new`] and used during the write process
 /// to generate native PE tables when unified containers contain native data.
 pub struct NativeTablesWriter<'a> {
-    /// Reference to the [`crate::cilassembly::CilAssembly`] containing native tables
-    assembly: &'a CilAssembly,
-    /// Mutable reference to the [`crate::cilassembly::write::output::Output`] buffer for writing
-    output: &'a mut Output,
-    /// Reference to the [`crate::cilassembly::write::planner::LayoutPlan`] for offset calculations
-    layout_plan: &'a LayoutPlan,
+    /// Base writer context containing assembly, output, and layout plan
+    base: WriterBase<'a>,
 }
 
 impl<'a> NativeTablesWriter<'a> {
@@ -85,9 +81,7 @@ impl<'a> NativeTablesWriter<'a> {
         layout_plan: &'a LayoutPlan,
     ) -> Self {
         Self {
-            assembly,
-            output,
-            layout_plan,
+            base: WriterBase::new(assembly, output, layout_plan),
         }
     }
 
@@ -111,13 +105,13 @@ impl<'a> NativeTablesWriter<'a> {
     /// Returns [`crate::Error`] if table generation fails due to invalid data
     /// or insufficient output buffer space.
     pub fn write_native_tables(&mut self) -> Result<()> {
-        if let Some(imports) = self.assembly.native_imports() {
+        if let Some(imports) = self.base.assembly.native_imports() {
             if !imports.is_empty() {
                 self.write_import_tables(imports)?;
             }
         }
 
-        if let Some(exports) = self.assembly.native_exports() {
+        if let Some(exports) = self.base.assembly.native_exports() {
             if !exports.is_empty() {
                 self.write_export_tables(exports)?;
             }
@@ -148,7 +142,7 @@ impl<'a> NativeTablesWriter<'a> {
             return Ok(());
         }
 
-        let requirements = &self.layout_plan.native_table_requirements;
+        let requirements = &self.base.layout_plan.native_table_requirements;
         if let Some(import_rva) = requirements.import_table_rva {
             // We need to get a mutable reference to set the correct base RVA
             // Since we only have an immutable reference, we'll need to work around this
@@ -163,7 +157,7 @@ impl<'a> NativeTablesWriter<'a> {
             }
 
             let file_offset = self.rva_to_file_offset(import_rva)?;
-            self.output.write_at(file_offset, &import_table_data)?;
+            self.base.output.write_at(file_offset, &import_table_data)?;
         } else {
             return Err(Error::WriteLayoutFailed {
                 message: "Import table RVA not calculated in layout plan".to_string(),
@@ -196,7 +190,7 @@ impl<'a> NativeTablesWriter<'a> {
             return Ok(());
         }
 
-        let requirements = &self.layout_plan.native_table_requirements;
+        let requirements = &self.base.layout_plan.native_table_requirements;
         if let Some(export_rva) = requirements.export_table_rva {
             let mut native_exports_copy = native_exports.clone();
             native_exports_copy.set_export_table_base_rva(export_rva);
@@ -207,7 +201,7 @@ impl<'a> NativeTablesWriter<'a> {
             }
 
             let file_offset = self.rva_to_file_offset(export_rva)?;
-            self.output.write_at(file_offset, &export_table_data)?;
+            self.base.output.write_at(file_offset, &export_table_data)?;
         } else {
             return Err(Error::WriteLayoutFailed {
                 message: "Export table RVA not calculated in layout plan".to_string(),
@@ -233,7 +227,7 @@ impl<'a> NativeTablesWriter<'a> {
     /// Returns [`crate::Error`] if the RVA cannot be converted to a valid file offset.
     fn rva_to_file_offset(&self, rva: u32) -> Result<u64> {
         // First try to use the layout plan's section information (for relocated sections)
-        for section_layout in &self.layout_plan.file_layout.sections {
+        for section_layout in &self.base.layout_plan.file_layout.sections {
             let section_start = section_layout.virtual_address;
             let section_end = section_layout.virtual_address + section_layout.virtual_size;
 
@@ -245,7 +239,7 @@ impl<'a> NativeTablesWriter<'a> {
         }
 
         // Fall back to original assembly sections (for unchanged sections)
-        let view = self.assembly.view();
+        let view = self.base.assembly.view();
         let file = view.file();
 
         for section in file.sections() {
@@ -273,7 +267,7 @@ impl<'a> NativeTablesWriter<'a> {
     /// # Errors
     /// Returns [`crate::Error`] if the PE format cannot be determined.
     fn is_pe32_plus_format(&self) -> Result<bool> {
-        let view = self.assembly.view();
+        let view = self.base.assembly.view();
         let optional_header =
             view.file()
                 .header_optional()
@@ -291,7 +285,7 @@ impl<'a> NativeTablesWriter<'a> {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{write::planner::create_layout_plan, BuilderContext, CilAssembly},
+        cilassembly::{write::planner::LayoutPlan, BuilderContext, CilAssembly},
         metadata::{
             cilassemblyview::CilAssemblyView, exports::NativeExportsBuilder,
             imports::NativeImportsBuilder,
@@ -306,7 +300,7 @@ mod tests {
             .expect("Failed to load test assembly");
         let assembly = CilAssembly::new(view);
 
-        let layout_plan = create_layout_plan(&assembly).expect("Failed to create layout plan");
+        let layout_plan = LayoutPlan::create(&assembly).expect("Failed to create layout plan");
 
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let mut output = crate::cilassembly::write::output::Output::create(
@@ -318,7 +312,7 @@ mod tests {
         let writer = NativeTablesWriter::new(&assembly, &mut output, &layout_plan);
 
         // Should create successfully
-        assert!(!std::ptr::eq(writer.assembly, std::ptr::null()));
+        assert!(!std::ptr::eq(writer.base.assembly, std::ptr::null()));
     }
 
     #[test]
@@ -327,7 +321,7 @@ mod tests {
             .expect("Failed to load test assembly");
         let assembly = CilAssembly::new(view);
 
-        let layout_plan = create_layout_plan(&assembly).expect("Failed to create layout plan");
+        let layout_plan = LayoutPlan::create(&assembly).expect("Failed to create layout plan");
 
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let mut output = crate::cilassembly::write::output::Output::create(
@@ -360,7 +354,7 @@ mod tests {
         assert!(result.is_ok());
 
         let assembly = context.finish();
-        let layout_plan = create_layout_plan(&assembly).expect("Failed to create layout plan");
+        let layout_plan = LayoutPlan::create(&assembly).expect("Failed to create layout plan");
 
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let mut output = crate::cilassembly::write::output::Output::create(
@@ -395,7 +389,7 @@ mod tests {
         assert!(result.is_ok());
 
         let assembly = context.finish();
-        let layout_plan = create_layout_plan(&assembly).expect("Failed to create layout plan");
+        let layout_plan = LayoutPlan::create(&assembly).expect("Failed to create layout plan");
 
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let mut output = crate::cilassembly::write::output::Output::create(
@@ -435,7 +429,7 @@ mod tests {
         assert!(result.is_ok());
 
         let assembly = context.finish();
-        let layout_plan = create_layout_plan(&assembly).expect("Failed to create layout plan");
+        let layout_plan = LayoutPlan::create(&assembly).expect("Failed to create layout plan");
 
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let mut output = crate::cilassembly::write::output::Output::create(

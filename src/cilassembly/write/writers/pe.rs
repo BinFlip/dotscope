@@ -101,7 +101,11 @@
 
 use crate::{
     cilassembly::{
-        write::{output::Output, planner::LayoutPlan, writers::RelocationWriter},
+        write::{
+            output::Output,
+            planner::{FileRegion, LayoutPlan},
+            writers::{RelocationWriter, WriterBase},
+        },
         CilAssembly,
     },
     Error, Result,
@@ -126,12 +130,8 @@ use crate::{
 /// Created via [`crate::cilassembly::write::writers::pe::PeWriter::new`] and used throughout
 /// the PE update process to modify checksums and relocation tables.
 pub struct PeWriter<'a> {
-    /// Reference to the [`crate::cilassembly::CilAssembly`] containing PE modifications
-    assembly: &'a CilAssembly,
-    /// Mutable reference to the [`crate::cilassembly::write::output::Output`] buffer for writing
-    output: &'a mut Output,
-    /// Reference to the [`crate::cilassembly::write::planner::LayoutPlan`] for offset calculations
-    layout_plan: &'a LayoutPlan,
+    /// Base writer context containing assembly, output, and layout plan
+    base: WriterBase<'a>,
 }
 
 impl<'a> PeWriter<'a> {
@@ -148,9 +148,7 @@ impl<'a> PeWriter<'a> {
         layout_plan: &'a LayoutPlan,
     ) -> Self {
         Self {
-            assembly,
-            output,
-            layout_plan,
+            base: WriterBase::new(assembly, output, layout_plan),
         }
     }
 
@@ -171,7 +169,7 @@ impl<'a> PeWriter<'a> {
     pub fn write_pe_updates(&mut self) -> Result<()> {
         self.clear_certificate_table();
 
-        if self.layout_plan.pe_updates.checksum_needs_update {
+        if self.base.layout_plan.pe_updates.checksum_needs_update {
             self.update_pe_checksum()?;
         }
 
@@ -195,10 +193,12 @@ impl<'a> PeWriter<'a> {
     fn update_pe_checksum(&mut self) -> Result<()> {
         let checksum_offset = self.find_checksum_field_offset()?;
 
-        let file_size = self.layout_plan.total_size as usize;
+        let file_size = self.base.layout_plan.total_size as usize;
         let checksum = self.calculate_pe_checksum(checksum_offset, file_size)?;
 
-        self.output.write_u32_le_at(checksum_offset, checksum)?;
+        self.base
+            .output
+            .write_u32_le_at(checksum_offset, checksum)?;
         Ok(())
     }
 
@@ -218,8 +218,8 @@ impl<'a> PeWriter<'a> {
         // PE32: offset 64 from start of optional header
         // PE32+: offset 64 from start of optional header
 
-        let _view = self.assembly.view();
-        let pe_headers_region = &self.layout_plan.file_layout.pe_headers;
+        let _view = self.base.assembly.view();
+        let pe_headers_region = &self.base.layout_plan.file_layout.pe_headers;
 
         // PE signature (4) + COFF header (20) = 24 bytes before optional header
         let optional_header_start = pe_headers_region.offset + 24;
@@ -228,7 +228,9 @@ impl<'a> PeWriter<'a> {
         let checksum_offset = optional_header_start + 64;
 
         // Validate that this is within the PE headers region
-        if checksum_offset + 4 > pe_headers_region.offset + pe_headers_region.size {
+        if !pe_headers_region.contains(checksum_offset)
+            || !pe_headers_region.contains(checksum_offset + 3)
+        {
             return Err(Error::WriteLayoutFailed {
                 message: "PE checksum field offset is outside PE headers region".to_string(),
             });
@@ -271,10 +273,10 @@ impl<'a> PeWriter<'a> {
 
             // Read 16-bit word (handle odd file sizes)
             let word = if offset + 1 < file_size {
-                let slice = self.output.get_mut_slice(offset, 2)?;
+                let slice = self.base.output.get_mut_slice(offset, 2)?;
                 u16::from_le_bytes([slice[0], slice[1]]) as u64
             } else if offset < file_size {
-                let slice = self.output.get_mut_slice(offset, 1)?;
+                let slice = self.base.output.get_mut_slice(offset, 1)?;
                 slice[0] as u64
             } else {
                 break;
@@ -314,8 +316,15 @@ impl<'a> PeWriter<'a> {
             let certificate_entry_offset = data_directory_offset + (4 * 8); // Entry 4
 
             // Clear both RVA and Size (8 bytes total)
-            if let Ok(()) = self.output.write_u32_le_at(certificate_entry_offset, 0) {
-                let _ = self.output.write_u32_le_at(certificate_entry_offset + 4, 0);
+            if let Ok(()) = self
+                .base
+                .output
+                .write_u32_le_at(certificate_entry_offset, 0)
+            {
+                let _ = self
+                    .base
+                    .output
+                    .write_u32_le_at(certificate_entry_offset + 4, 0);
             }
         }
         // Silently fail if we can't clear it - better to have a working binary
@@ -332,10 +341,17 @@ impl<'a> PeWriter<'a> {
     /// Returns `true` if any section moved to a different virtual address, indicating
     /// that base relocations may need updating.
     fn needs_relocation_updates(&self) -> bool {
-        let view = self.assembly.view();
+        let view = self.base.assembly.view();
         let original_sections: Vec<_> = view.file().sections().collect();
 
-        for (index, new_section) in self.layout_plan.file_layout.sections.iter().enumerate() {
+        for (index, new_section) in self
+            .base
+            .layout_plan
+            .file_layout
+            .sections
+            .iter()
+            .enumerate()
+        {
             if let Some(original_section) = original_sections.get(index) {
                 if new_section.virtual_address != original_section.virtual_address {
                     return true;
@@ -368,7 +384,7 @@ impl<'a> PeWriter<'a> {
         }
 
         let mut relocation_writer =
-            RelocationWriter::with_assembly(self.output, &section_moves, self.assembly);
+            RelocationWriter::with_assembly(self.base.output, &section_moves, self.base.assembly);
 
         relocation_writer.parse_relocation_table()?;
         relocation_writer.update_relocations()?;
@@ -402,7 +418,7 @@ impl<'a> PeWriter<'a> {
     /// Returns [`crate::Error`] if directory updates fail due to invalid addresses
     /// or insufficient space in the PE optional header.
     fn update_native_table_directories(&mut self) -> Result<()> {
-        let requirements = &self.layout_plan.native_table_requirements;
+        let requirements = &self.base.layout_plan.native_table_requirements;
         if !requirements.needs_import_tables && !requirements.needs_export_tables {
             return Ok(());
         }
@@ -412,9 +428,10 @@ impl<'a> PeWriter<'a> {
         if requirements.needs_import_tables {
             if let Some(import_rva) = requirements.import_table_rva {
                 let import_entry_offset = data_directory_offset + 8; // Import table is entry 1, each entry is 8 bytes
-                self.output
+                self.base
+                    .output
                     .write_u32_le_at(import_entry_offset, import_rva)?; // RVA
-                self.output.write_u32_le_at(
+                self.base.output.write_u32_le_at(
                     import_entry_offset + 4,
                     requirements.import_table_size as u32,
                 )?; // Size
@@ -424,9 +441,10 @@ impl<'a> PeWriter<'a> {
         if requirements.needs_export_tables {
             if let Some(export_rva) = requirements.export_table_rva {
                 let export_entry_offset = data_directory_offset; // Index 0
-                self.output
+                self.base
+                    .output
                     .write_u32_le_at(export_entry_offset, export_rva)?; // RVA
-                self.output.write_u32_le_at(
+                self.base.output.write_u32_le_at(
                     export_entry_offset + 4,
                     requirements.export_table_size as u32,
                 )?; // Size
@@ -448,8 +466,8 @@ impl<'a> PeWriter<'a> {
     /// # Errors
     /// Returns [`crate::Error::WriteLayoutFailed`] if the data directory cannot be located.
     fn find_data_directory_offset(&self) -> Result<u64> {
-        let view = self.assembly.view();
-        let pe_headers_region = &self.layout_plan.file_layout.pe_headers;
+        let view = self.base.assembly.view();
+        let pe_headers_region = &self.base.layout_plan.file_layout.pe_headers;
 
         // Get the PE type (PE32 or PE32+) from the assembly
         let optional_header =
@@ -475,7 +493,10 @@ impl<'a> PeWriter<'a> {
 
         // Validate that this is within the PE headers region
         // Data directory has 16 entries * 8 bytes = 128 bytes
-        if data_directory_offset + 128 > pe_headers_region.offset + pe_headers_region.size {
+        let data_directory_region = FileRegion::new(data_directory_offset, 128);
+        if !pe_headers_region.contains(data_directory_offset)
+            || data_directory_region.end_offset() > pe_headers_region.end_offset()
+        {
             return Err(Error::WriteLayoutFailed {
                 message: "PE data directory extends beyond PE headers region".to_string(),
             });
@@ -486,11 +507,18 @@ impl<'a> PeWriter<'a> {
 
     /// Creates section move information from the layout plan.
     fn create_section_moves(&self) -> Vec<super::relocation::SectionMove> {
-        let view = self.assembly.view();
+        let view = self.base.assembly.view();
         let original_sections: Vec<_> = view.file().sections().collect();
         let mut section_moves = Vec::new();
 
-        for (index, new_section) in self.layout_plan.file_layout.sections.iter().enumerate() {
+        for (index, new_section) in self
+            .base
+            .layout_plan
+            .file_layout
+            .sections
+            .iter()
+            .enumerate()
+        {
             if let Some(original_section) = original_sections.get(index) {
                 if new_section.virtual_address != original_section.virtual_address {
                     section_moves.push(super::relocation::SectionMove {
@@ -510,7 +538,7 @@ impl<'a> PeWriter<'a> {
 mod tests {
     use super::PeWriter;
     use crate::{
-        cilassembly::write::{output::Output, planner::create_layout_plan},
+        cilassembly::write::{output::Output, planner::LayoutPlan},
         CilAssemblyView,
     };
     use std::path::Path;
@@ -523,7 +551,7 @@ mod tests {
             .expect("Failed to load test assembly");
         let assembly = view.to_owned();
 
-        let layout_plan = create_layout_plan(&assembly).expect("Failed to create layout plan");
+        let layout_plan = LayoutPlan::create(&assembly).expect("Failed to create layout plan");
 
         // Verify that PE headers have a reasonable size
         assert!(
@@ -541,7 +569,7 @@ mod tests {
         let original_data = view.data().to_vec();
         let assembly = view.to_owned();
 
-        let layout_plan = create_layout_plan(&assembly).expect("Failed to create layout plan");
+        let layout_plan = LayoutPlan::create(&assembly).expect("Failed to create layout plan");
 
         // Create a temporary file for the output
         let temp_file = NamedTempFile::new().expect("Failed to create temporary file");
@@ -579,7 +607,7 @@ mod tests {
             .expect("Failed to load test assembly");
         let assembly = view.to_owned();
 
-        let layout_plan = create_layout_plan(&assembly).expect("Failed to create layout plan");
+        let layout_plan = LayoutPlan::create(&assembly).expect("Failed to create layout plan");
 
         // Create a temporary file for the output
         let temp_file = NamedTempFile::new().expect("Failed to create temporary file");

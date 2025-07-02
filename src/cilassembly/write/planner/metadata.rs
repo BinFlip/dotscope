@@ -339,7 +339,7 @@ fn create_string_stream_modification(assembly: &CilAssembly) -> Result<StreamMod
             message: "Stream #Strings not found in original file".to_string(),
         })?;
 
-    let rebuilt_heap_size = assembly.calculate_string_heap_size()?;
+    let rebuilt_heap_size = HeapExpansions::calculate_string_heap_size(assembly)?;
     let (write_offset, size_field_offset) = calculate_stream_offsets(assembly, "#Strings")?;
 
     let string_changes = &assembly.changes().string_heap_changes;
@@ -382,7 +382,7 @@ fn create_blob_stream_modification(assembly: &CilAssembly) -> Result<StreamModif
             message: "Stream #Blob not found in original file".to_string(),
         })?;
 
-    let rebuilt_heap_size = assembly.calculate_blob_heap_size()?;
+    let rebuilt_heap_size = HeapExpansions::calculate_blob_heap_size(assembly)?;
     let (write_offset, size_field_offset) = calculate_stream_offsets(assembly, "#Blob")?;
 
     let blob_changes = &assembly.changes().blob_heap_changes;
@@ -424,7 +424,7 @@ fn create_guid_stream_modification(assembly: &CilAssembly) -> Result<StreamModif
             message: "Stream #GUID not found in original file".to_string(),
         })?;
 
-    let rebuilt_heap_size = assembly.calculate_guid_heap_size()?;
+    let rebuilt_heap_size = HeapExpansions::calculate_guid_heap_size(assembly)?;
     let (write_offset, size_field_offset) = calculate_stream_offsets(assembly, "#GUID")?;
 
     let guid_changes = &assembly.changes().guid_heap_changes;
@@ -467,7 +467,7 @@ fn create_userstring_stream_modification(assembly: &CilAssembly) -> Result<Strea
             message: "Stream #US not found in original file".to_string(),
         })?;
 
-    let rebuilt_heap_size = assembly.calculate_userstring_heap_size()?;
+    let rebuilt_heap_size = HeapExpansions::calculate_userstring_heap_size(assembly)?;
     let (write_offset, size_field_offset) = calculate_stream_offsets(assembly, "#US")?;
 
     let userstring_changes = &assembly.changes().userstring_heap_changes;
@@ -687,7 +687,7 @@ mod tests {
         let assembly = view.to_owned();
 
         let heap_expansions =
-            calc::calculate_heap_expansions(&assembly).expect("Should calculate heap expansions");
+            HeapExpansions::calculate(&assembly).expect("Should calculate heap expansions");
 
         let metadata_layout = extract_metadata_layout(&assembly, &heap_expansions)
             .expect("Should extract metadata layout");

@@ -86,10 +86,7 @@ use std::path::Path;
 
 use crate::{cilassembly::CilAssembly, Result};
 
-pub(crate) use planner::{
-    calculate_blob_heap_size, calculate_guid_heap_size, calculate_heap_expansions,
-    calculate_string_heap_size, calculate_userstring_heap_size, HeapExpansions,
-};
+pub(crate) use planner::HeapExpansions;
 
 mod output;
 mod planner;
@@ -140,7 +137,7 @@ pub fn write_assembly_to_file<P: AsRef<Path>>(
     let output_path = output_path.as_ref();
 
     // Phase 1: Calculate complete file layout with proper section placement
-    let layout_plan = planner::create_layout_plan(assembly)?;
+    let layout_plan = planner::LayoutPlan::create(assembly)?;
 
     // Phase 2: Create memory-mapped output file with calculated total size
     let mut mmap_file = output::Output::create(output_path, layout_plan.total_size)?;
@@ -741,7 +738,7 @@ mod tests {
 
         // Create layout plan
         let layout_plan =
-            planner::create_layout_plan(&assembly).expect("Failed to create layout plan");
+            planner::LayoutPlan::create(&assembly).expect("Failed to create layout plan");
 
         // Create temporary output file
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
@@ -788,7 +785,7 @@ mod tests {
         let assembly = view.to_owned();
 
         let layout_plan =
-            planner::create_layout_plan(&assembly).expect("Failed to create layout plan");
+            planner::LayoutPlan::create(&assembly).expect("Failed to create layout plan");
 
         // Basic sanity checks
         // Note: After migrating heaps to use byte offsets instead of indices,
@@ -819,7 +816,7 @@ mod tests {
         let assembly = view.to_owned();
 
         let layout_plan =
-            planner::create_layout_plan(&assembly).expect("Failed to create layout plan");
+            planner::LayoutPlan::create(&assembly).expect("Failed to create layout plan");
 
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let mut mmap_file = output::Output::create(temp_file.path(), layout_plan.total_size)

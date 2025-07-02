@@ -422,3 +422,268 @@ pub enum TableId {
     /// standard Portable PDB tables.
     CustomDebugInformation = 0x37,
 }
+
+/// Macro that provides unified dispatch from TableId enum values to their corresponding Raw table types.
+///
+/// This macro eliminates code duplication across the framework by providing a single source of truth
+/// for TableId → Raw type mapping. It takes an expression that will be applied to each Raw type,
+/// enabling generic operations across all metadata table types.
+///
+/// # Usage Examples
+///
+/// For table row size calculation:
+/// ```rust,ignore
+/// use crate::metadata::tables::dispatch_table_type;
+/// dispatch_table_type!(table_id, |RawType| RawType::row_size(table_info))
+/// ```
+///
+/// For table writing operations:
+/// ```rust,ignore  
+/// use crate::metadata::tables::dispatch_table_type;
+/// dispatch_table_type!(table_id, |RawType| {
+///     if let Some(table) = self.tables_header.table::<RawType>() {
+///         self.write_typed_table(table, table_offset)
+///     } else {
+///         Ok(0)
+///     }
+/// })
+/// ```
+///
+/// For generic table operations:
+/// ```rust,ignore
+/// use crate::metadata::tables::dispatch_table_type;
+/// dispatch_table_type!(table_id, |RawType| {
+///     // Any operation that needs to work with the concrete Raw type
+///     process_table::<RawType>(context)
+/// })
+/// ```
+///
+/// # Design Pattern
+///
+/// This macro implements the "dispatch to concrete type" pattern, allowing code to:
+/// 1. Accept a runtime `TableId` value
+/// 2. Map it to the corresponding compile-time `*Raw` type
+/// 3. Execute type-specific operations with full type safety
+/// 4. Avoid large match statements and code duplication
+///
+/// The pattern is essential for metadata operations that need to work generically
+/// across all table types while maintaining type safety and performance.
+#[macro_export]
+macro_rules! dispatch_table_type {
+    ($table_id:expr, |$RawType:ident| $expr:expr) => {
+        match $table_id {
+            $crate::metadata::tables::TableId::Module => {
+                type $RawType = $crate::metadata::tables::ModuleRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::TypeRef => {
+                type $RawType = $crate::metadata::tables::TypeRefRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::TypeDef => {
+                type $RawType = $crate::metadata::tables::TypeDefRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::FieldPtr => {
+                type $RawType = $crate::metadata::tables::FieldPtrRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::Field => {
+                type $RawType = $crate::metadata::tables::FieldRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::MethodPtr => {
+                type $RawType = $crate::metadata::tables::MethodPtrRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::MethodDef => {
+                type $RawType = $crate::metadata::tables::MethodDefRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::ParamPtr => {
+                type $RawType = $crate::metadata::tables::ParamPtrRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::Param => {
+                type $RawType = $crate::metadata::tables::ParamRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::InterfaceImpl => {
+                type $RawType = $crate::metadata::tables::InterfaceImplRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::MemberRef => {
+                type $RawType = $crate::metadata::tables::MemberRefRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::Constant => {
+                type $RawType = $crate::metadata::tables::ConstantRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::CustomAttribute => {
+                type $RawType = $crate::metadata::tables::CustomAttributeRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::FieldMarshal => {
+                type $RawType = $crate::metadata::tables::FieldMarshalRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::DeclSecurity => {
+                type $RawType = $crate::metadata::tables::DeclSecurityRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::ClassLayout => {
+                type $RawType = $crate::metadata::tables::ClassLayoutRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::FieldLayout => {
+                type $RawType = $crate::metadata::tables::FieldLayoutRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::StandAloneSig => {
+                type $RawType = $crate::metadata::tables::StandAloneSigRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::EventMap => {
+                type $RawType = $crate::metadata::tables::EventMapRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::EventPtr => {
+                type $RawType = $crate::metadata::tables::EventPtrRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::Event => {
+                type $RawType = $crate::metadata::tables::EventRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::PropertyMap => {
+                type $RawType = $crate::metadata::tables::PropertyMapRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::PropertyPtr => {
+                type $RawType = $crate::metadata::tables::PropertyPtrRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::Property => {
+                type $RawType = $crate::metadata::tables::PropertyRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::MethodSemantics => {
+                type $RawType = $crate::metadata::tables::MethodSemanticsRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::MethodImpl => {
+                type $RawType = $crate::metadata::tables::MethodImplRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::ModuleRef => {
+                type $RawType = $crate::metadata::tables::ModuleRefRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::TypeSpec => {
+                type $RawType = $crate::metadata::tables::TypeSpecRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::ImplMap => {
+                type $RawType = $crate::metadata::tables::ImplMapRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::FieldRVA => {
+                type $RawType = $crate::metadata::tables::FieldRvaRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::EncLog => {
+                type $RawType = $crate::metadata::tables::EncLogRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::EncMap => {
+                type $RawType = $crate::metadata::tables::EncMapRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::Assembly => {
+                type $RawType = $crate::metadata::tables::AssemblyRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::AssemblyProcessor => {
+                type $RawType = $crate::metadata::tables::AssemblyProcessorRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::AssemblyOS => {
+                type $RawType = $crate::metadata::tables::AssemblyOsRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::AssemblyRef => {
+                type $RawType = $crate::metadata::tables::AssemblyRefRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::AssemblyRefProcessor => {
+                type $RawType = $crate::metadata::tables::AssemblyRefProcessorRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::AssemblyRefOS => {
+                type $RawType = $crate::metadata::tables::AssemblyRefOsRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::File => {
+                type $RawType = $crate::metadata::tables::FileRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::ExportedType => {
+                type $RawType = $crate::metadata::tables::ExportedTypeRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::ManifestResource => {
+                type $RawType = $crate::metadata::tables::ManifestResourceRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::NestedClass => {
+                type $RawType = $crate::metadata::tables::NestedClassRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::GenericParam => {
+                type $RawType = $crate::metadata::tables::GenericParamRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::MethodSpec => {
+                type $RawType = $crate::metadata::tables::MethodSpecRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::GenericParamConstraint => {
+                type $RawType = $crate::metadata::tables::GenericParamConstraintRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::Document => {
+                type $RawType = $crate::metadata::tables::DocumentRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::MethodDebugInformation => {
+                type $RawType = $crate::metadata::tables::MethodDebugInformationRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::LocalScope => {
+                type $RawType = $crate::metadata::tables::LocalScopeRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::LocalVariable => {
+                type $RawType = $crate::metadata::tables::LocalVariableRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::LocalConstant => {
+                type $RawType = $crate::metadata::tables::LocalConstantRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::ImportScope => {
+                type $RawType = $crate::metadata::tables::ImportScopeRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::StateMachineMethod => {
+                type $RawType = $crate::metadata::tables::StateMachineMethodRaw;
+                $expr
+            }
+            $crate::metadata::tables::TableId::CustomDebugInformation => {
+                type $RawType = $crate::metadata::tables::CustomDebugInformationRaw;
+                $expr
+            }
+        }
+    };
+}

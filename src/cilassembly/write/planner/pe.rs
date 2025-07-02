@@ -10,9 +10,6 @@
 //! - [`crate::cilassembly::write::planner::pe::extract_pe_layout`] - Main PE structure extraction
 //! - [`crate::cilassembly::write::planner::pe::PeLayout`] - Complete PE structure information
 //! - [`crate::cilassembly::write::planner::pe::SectionLayout`] - Individual section layout details
-//! - [`crate::cilassembly::write::planner::pe::get_pe_signature_offset`] - PE header location utilities
-//! - [`crate::cilassembly::write::planner::pe::calculate_pe_headers_size`] - Header size calculations
-//! - [`crate::cilassembly::write::planner::pe::align_to_file_alignment`] - PE alignment utilities
 //!
 //! # Architecture
 //!
@@ -153,8 +150,7 @@ pub struct SectionLayout {
 /// Returns [`crate::Error::WriteLayoutFailed`] if PE structure analysis fails or
 /// required headers are missing.
 pub fn extract_pe_layout(assembly: &CilAssembly) -> Result<PeLayout> {
-    let view = assembly.view();
-    let file = view.file();
+    let file = assembly.file();
 
     // Use the already parsed goblin PE structure instead of manual parsing
     let dos_header = file.header_dos();
@@ -228,125 +224,6 @@ pub fn extract_section_layouts_from_goblin(file: &File) -> Result<Vec<SectionLay
     Ok(sections)
 }
 
-/// Gets the PE signature offset from the DOS header.
-///
-/// Reads the PE offset from the DOS header at offset 0x3C to locate
-/// the PE signature ("PE\0\0") within the file.
-///
-/// # Arguments
-/// * `assembly` - The [`crate::cilassembly::CilAssembly`] to analyze
-///
-/// # Returns
-/// Returns the file offset where the PE signature is located.
-///
-/// # Errors
-/// Returns [`crate::Error::WriteLayoutFailed`] if the file is too small to contain
-/// a valid DOS header.
-pub fn get_pe_signature_offset(assembly: &CilAssembly) -> Result<u64> {
-    let view = assembly.view();
-    let data = view.data();
-
-    if data.len() < 64 {
-        return Err(Error::WriteLayoutFailed {
-            message: "File too small to contain DOS header".to_string(),
-        });
-    }
-
-    // PE offset is at offset 0x3C in DOS header
-    let pe_offset = u32::from_le_bytes([data[60], data[61], data[62], data[63]]);
-    Ok(pe_offset as u64)
-}
-
-/// Calculates the size of PE headers (including optional header).
-///
-/// Computes the total size of PE signature, COFF header, and optional header
-/// by reading the optional header size from the COFF header.
-///
-/// # Arguments
-/// * `assembly` - The [`crate::cilassembly::CilAssembly`] to analyze
-///
-/// # Returns
-/// Returns the total size in bytes of all PE headers.
-///
-/// # Errors
-/// Returns [`crate::Error::WriteLayoutFailed`] if the file is too small or
-/// headers are malformed.
-pub fn calculate_pe_headers_size(assembly: &CilAssembly) -> Result<u64> {
-    // PE signature (4) + COFF header (20) + Optional header size
-    // We need to read the optional header size from the COFF header
-    let pe_sig_offset = get_pe_signature_offset(assembly)?;
-    let view = assembly.view();
-    let data = view.data();
-
-    let coff_header_offset = pe_sig_offset + 4; // Skip PE signature
-
-    if data.len() < (coff_header_offset + 20) as usize {
-        return Err(Error::WriteLayoutFailed {
-            message: "File too small to contain COFF header".to_string(),
-        });
-    }
-
-    // Optional header size is at offset 16 in COFF header
-    let opt_header_size_offset = coff_header_offset + 16;
-    let opt_header_size = u16::from_le_bytes([
-        data[opt_header_size_offset as usize],
-        data[opt_header_size_offset as usize + 1],
-    ]);
-
-    Ok(4 + 20 + opt_header_size as u64) // PE sig + COFF + Optional header
-}
-
-/// Gets the RVA of the .text section.
-///
-/// Locates the .text section (or .text-prefixed section) which typically
-/// contains .NET metadata and executable code.
-///
-/// # Arguments
-/// * `assembly` - The [`crate::cilassembly::CilAssembly`] to search
-///
-/// # Returns
-/// Returns the RVA (Relative Virtual Address) of the .text section.
-///
-/// # Errors
-/// Returns [`crate::Error::WriteLayoutFailed`] if no .text section is found.
-pub fn get_text_section_rva(assembly: &CilAssembly) -> Result<u32> {
-    let view = assembly.view();
-    let sections = view.file().sections();
-
-    for section in sections {
-        // Convert section name from byte array to string for comparison
-        let section_name = std::str::from_utf8(&section.name)
-            .unwrap_or("<invalid>")
-            .trim_end_matches('\0');
-        if section_name == ".text" || section_name.starts_with(".text") {
-            return Ok(section.virtual_address);
-        }
-    }
-
-    Err(Error::WriteLayoutFailed {
-        message: "Could not find .text section".to_string(),
-    })
-}
-
-/// Aligns an offset to the PE file alignment boundary.
-///
-/// PE files require data to be aligned to specific boundaries for optimal loading.
-/// This function aligns offsets to the standard 512-byte file alignment.
-///
-/// # Arguments
-/// * `offset` - The offset to align
-///
-/// # Returns
-/// Returns the offset rounded up to the next file alignment boundary.
-///
-/// # Note
-/// Uses 512-byte alignment which is standard for PE files. Some files may use
-/// different alignments, but 512 bytes is the most common.
-pub fn align_to_file_alignment(offset: u64) -> u64 {
-    let file_alignment = 512u64; // Standard file alignment for PE files
-    offset.div_ceil(file_alignment) * file_alignment
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,36 +262,5 @@ mod tests {
             section_names.contains(&".text") || section_names.contains(&".rdata"),
             "Should have typical PE sections, got: {section_names:?}"
         );
-    }
-
-    #[test]
-    fn test_align_to_file_alignment() {
-        assert_eq!(align_to_file_alignment(0), 0);
-        assert_eq!(align_to_file_alignment(1), 512);
-        assert_eq!(align_to_file_alignment(512), 512);
-        assert_eq!(align_to_file_alignment(513), 1024);
-    }
-
-    #[test]
-    fn test_get_pe_signature_offset() {
-        let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))
-            .expect("Failed to load test assembly");
-        let assembly = view.to_owned();
-
-        let pe_offset = get_pe_signature_offset(&assembly).expect("Should get PE signature offset");
-        assert!(pe_offset > 0, "PE signature offset should be positive");
-        assert!(pe_offset < 1024, "PE signature offset should be reasonable");
-    }
-
-    #[test]
-    fn test_calculate_pe_headers_size() {
-        let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))
-            .expect("Failed to load test assembly");
-        let assembly = view.to_owned();
-
-        let headers_size =
-            calculate_pe_headers_size(&assembly).expect("Should calculate headers size");
-        assert!(headers_size >= 24, "Headers should be at least 24 bytes");
-        assert!(headers_size <= 1024, "Headers size should be reasonable");
     }
 }

@@ -58,7 +58,7 @@ use std::path::{Path, PathBuf};
 
 use memmap2::{MmapMut, MmapOptions};
 
-use crate::{Error, Result};
+use crate::{cilassembly::write::planner::FileRegion, Error, Result};
 
 /// A memory-mapped output file that supports atomic operations.
 ///
@@ -359,6 +359,69 @@ impl Output {
     /// Returns the final destination path specified during creation.
     pub fn target_path(&self) -> &Path {
         &self.target_path
+    }
+
+    /// Gets a mutable slice for a FileRegion.
+    ///
+    /// Convenience method that accepts a FileRegion instead of separate offset and size parameters.
+    /// This makes it easier to work with layout regions throughout the writing pipeline.
+    ///
+    /// # Arguments
+    /// * `region` - The file region to get a slice for
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::WriteMmapFailed`] if the region is invalid or exceeds file bounds.
+    ///
+    /// # Examples
+    /// ```rust,ignore
+    /// let region = FileRegion::new(0x1000, 0x500);
+    /// let slice = output.get_mut_slice_region(&region)?;
+    /// ```
+    pub fn get_mut_slice_region(&mut self, region: &FileRegion) -> Result<&mut [u8]> {
+        self.get_mut_slice(region.offset as usize, region.size as usize)
+    }
+
+    /// Writes data to a FileRegion.
+    ///
+    /// Convenience method that writes data starting at the region's offset.
+    /// The data size should not exceed the region's size.
+    ///
+    /// # Arguments
+    /// * `region` - The file region to write to
+    /// * `data` - Byte slice to write to the region
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::WriteMmapFailed`] if the write would exceed file bounds.
+    ///
+    /// # Examples
+    /// ```rust,ignore
+    /// let region = FileRegion::new(0x1000, 0x500);
+    /// output.write_to_region(&region, &data)?;
+    /// ```
+    pub fn write_to_region(&mut self, region: &FileRegion, data: &[u8]) -> Result<()> {
+        self.write_at(region.offset, data)
+    }
+
+    /// Validates that a region is within file bounds.
+    ///
+    /// Utility method to check if a FileRegion is completely within the file bounds.
+    /// This is useful for validation before performing operations on regions.
+    ///
+    /// # Arguments
+    /// * `region` - The file region to validate
+    ///
+    /// # Returns
+    /// Returns `true` if the region is completely within file bounds.
+    ///
+    /// # Examples
+    /// ```rust,ignore
+    /// let region = FileRegion::new(0x1000, 0x500);
+    /// if output.region_is_valid(&region) {
+    ///     let slice = output.get_mut_slice_region(&region)?;
+    /// }
+    /// ```
+    pub fn region_is_valid(&self, region: &FileRegion) -> bool {
+        region.end_offset() <= self.size()
     }
 }
 

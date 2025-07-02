@@ -111,28 +111,18 @@ use crate::{
     cilassembly::{
         write::{
             output::Output,
-            planner::{LayoutPlan, TableModificationRegion},
+            planner::{FileRegion, LayoutPlan, TableModificationRegion},
             utils::calculate_table_row_size,
         },
         CilAssembly, Operation, TableModifications, TableOperation,
     },
+    dispatch_table_type,
     file::io::write_le_at,
     metadata::{
         streams::TablesHeader,
         tables::{
-            AssemblyOsRaw, AssemblyProcessorRaw, AssemblyRaw, AssemblyRefOsRaw,
-            AssemblyRefProcessorRaw, AssemblyRefRaw, ClassLayoutRaw, ConstantRaw,
-            CustomAttributeRaw, CustomDebugInformationRaw, DeclSecurityRaw, DocumentRaw, EncLogRaw,
-            EncMapRaw, EventMapRaw, EventPtrRaw, EventRaw, ExportedTypeRaw, FieldLayoutRaw,
-            FieldMarshalRaw, FieldPtrRaw, FieldRaw, FieldRvaRaw, FileRaw,
-            GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw, ImportScopeRaw,
-            InterfaceImplRaw, LocalConstantRaw, LocalScopeRaw, LocalVariableRaw,
-            ManifestResourceRaw, MemberRefRaw, MetadataTable, MethodDebugInformationRaw,
-            MethodDefRaw, MethodImplRaw, MethodPtrRaw, MethodSemanticsRaw, MethodSpecRaw,
-            ModuleRaw, ModuleRefRaw, NestedClassRaw, ParamPtrRaw, ParamRaw, PropertyMapRaw,
-            PropertyPtrRaw, PropertyRaw, RowReadable, RowWritable, StandAloneSigRaw,
-            StateMachineMethodRaw, TableDataOwned, TableId, TableInfo, TableInfoRef, TypeDefRaw,
-            TypeRefRaw, TypeSpecRaw,
+            MetadataTable, RowReadable, RowWritable, TableDataOwned, TableId, TableInfo,
+            TableInfoRef,
         },
     },
     Error, Result,
@@ -289,8 +279,6 @@ impl<'a> TableWriter<'a> {
         let mut current_offset = tables_stream_offset + header_size as u64;
 
         for table_id in self.tables_header.present_tables() {
-            table_offsets.insert(table_id, current_offset);
-
             // Use updated row counts if table has been modified
             let mut row_count = self.tables_header.table_row_count(table_id);
             if let Some(table_mod) = self.assembly.changes().get_table_modifications(table_id) {
@@ -310,7 +298,10 @@ impl<'a> TableWriter<'a> {
 
             let row_size = self.get_table_row_size(table_id);
             let table_size = row_count as u64 * row_size as u64;
-            current_offset += table_size;
+
+            let table_region = FileRegion::new(current_offset, table_size);
+            table_offsets.insert(table_id, table_region.offset);
+            current_offset = table_region.end_offset();
         }
 
         // Now apply modifications with correct offsets
@@ -544,71 +535,13 @@ impl<'a> TableWriter<'a> {
     /// # Errors
     /// Returns [`crate::Error`] if table writing fails.
     fn write_table_by_id(&mut self, table_id: TableId, table_offset: u64) -> Result<u64> {
-        macro_rules! serialize_table {
-            ($raw_type:ty) => {
-                if let Some(table) = self.tables_header.table::<$raw_type>() {
-                    self.write_typed_table(table, table_offset)
-                } else {
-                    Ok(0)
-                }
-            };
-        }
-
-        match table_id {
-            TableId::Module => serialize_table!(ModuleRaw),
-            TableId::TypeRef => serialize_table!(TypeRefRaw),
-            TableId::TypeDef => serialize_table!(TypeDefRaw),
-            TableId::FieldPtr => serialize_table!(FieldPtrRaw),
-            TableId::Field => serialize_table!(FieldRaw),
-            TableId::MethodPtr => serialize_table!(MethodPtrRaw),
-            TableId::MethodDef => serialize_table!(MethodDefRaw),
-            TableId::ParamPtr => serialize_table!(ParamPtrRaw),
-            TableId::Param => serialize_table!(ParamRaw),
-            TableId::InterfaceImpl => serialize_table!(InterfaceImplRaw),
-            TableId::MemberRef => serialize_table!(MemberRefRaw),
-            TableId::Constant => serialize_table!(ConstantRaw),
-            TableId::CustomAttribute => serialize_table!(CustomAttributeRaw),
-            TableId::FieldMarshal => serialize_table!(FieldMarshalRaw),
-            TableId::DeclSecurity => serialize_table!(DeclSecurityRaw),
-            TableId::ClassLayout => serialize_table!(ClassLayoutRaw),
-            TableId::FieldLayout => serialize_table!(FieldLayoutRaw),
-            TableId::StandAloneSig => serialize_table!(StandAloneSigRaw),
-            TableId::EventMap => serialize_table!(EventMapRaw),
-            TableId::EventPtr => serialize_table!(EventPtrRaw),
-            TableId::Event => serialize_table!(EventRaw),
-            TableId::PropertyMap => serialize_table!(PropertyMapRaw),
-            TableId::PropertyPtr => serialize_table!(PropertyPtrRaw),
-            TableId::Property => serialize_table!(PropertyRaw),
-            TableId::MethodSemantics => serialize_table!(MethodSemanticsRaw),
-            TableId::MethodImpl => serialize_table!(MethodImplRaw),
-            TableId::ModuleRef => serialize_table!(ModuleRefRaw),
-            TableId::TypeSpec => serialize_table!(TypeSpecRaw),
-            TableId::ImplMap => serialize_table!(ImplMapRaw),
-            TableId::FieldRVA => serialize_table!(FieldRvaRaw),
-            TableId::EncLog => serialize_table!(EncLogRaw),
-            TableId::EncMap => serialize_table!(EncMapRaw),
-            TableId::Assembly => serialize_table!(AssemblyRaw),
-            TableId::AssemblyProcessor => serialize_table!(AssemblyProcessorRaw),
-            TableId::AssemblyOS => serialize_table!(AssemblyOsRaw),
-            TableId::AssemblyRef => serialize_table!(AssemblyRefRaw),
-            TableId::AssemblyRefProcessor => serialize_table!(AssemblyRefProcessorRaw),
-            TableId::AssemblyRefOS => serialize_table!(AssemblyRefOsRaw),
-            TableId::File => serialize_table!(FileRaw),
-            TableId::ExportedType => serialize_table!(ExportedTypeRaw),
-            TableId::ManifestResource => serialize_table!(ManifestResourceRaw),
-            TableId::NestedClass => serialize_table!(NestedClassRaw),
-            TableId::GenericParam => serialize_table!(GenericParamRaw),
-            TableId::MethodSpec => serialize_table!(MethodSpecRaw),
-            TableId::GenericParamConstraint => serialize_table!(GenericParamConstraintRaw),
-            TableId::Document => serialize_table!(DocumentRaw),
-            TableId::MethodDebugInformation => serialize_table!(MethodDebugInformationRaw),
-            TableId::LocalScope => serialize_table!(LocalScopeRaw),
-            TableId::LocalVariable => serialize_table!(LocalVariableRaw),
-            TableId::LocalConstant => serialize_table!(LocalConstantRaw),
-            TableId::ImportScope => serialize_table!(ImportScopeRaw),
-            TableId::StateMachineMethod => serialize_table!(StateMachineMethodRaw),
-            TableId::CustomDebugInformation => serialize_table!(CustomDebugInformationRaw),
-        }
+        dispatch_table_type!(table_id, |RawType| {
+            if let Some(table) = self.tables_header.table::<RawType>() {
+                self.write_typed_table(table, table_offset)
+            } else {
+                Ok(0)
+            }
+        })
     }
 
     /// Writes a typed metadata table by delegating to each row's [`crate::metadata::tables::RowWritable`] implementation.
