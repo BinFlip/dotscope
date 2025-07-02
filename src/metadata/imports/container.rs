@@ -1,6 +1,6 @@
 //! Unified import container combining both CIL and native PE imports.
 //!
-//! This module provides the [`ImportContainer`] which serves as a unified interface
+//! This module provides the [`crate::metadata::imports::UnifiedImportContainer`] which serves as a unified interface
 //! for managing both managed (.NET) imports and native PE import tables. It builds
 //! on the existing sophisticated CIL import functionality while adding native support
 //! through composition rather than duplication.

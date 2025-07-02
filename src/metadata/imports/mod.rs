@@ -22,11 +22,11 @@
 //!
 //! ## Primary Types
 //!
-//! - [`Import`] - Individual imported entity with complete metadata
-//! - [`Imports`] - Main container with multi-index lookup capabilities
-//! - [`ImportType`] - Classification as method or type import
-//! - [`ImportSourceId`] - Token-based source identification
-//! - [`ImportContainer`] - Trait for source aggregation patterns
+//! - [`crate::metadata::imports::Import`] - Individual imported entity with complete metadata
+//! - [`crate::metadata::imports::Imports`] - Main container with multi-index lookup capabilities
+//! - [`crate::metadata::imports::ImportType`] - Classification as method or type import
+//! - [`crate::metadata::imports::ImportSourceId`] - Token-based source identification
+//! - [`crate::metadata::imports::UnifiedImportContainer`] - Trait for source aggregation patterns
 //!
 //! ## Import Categories
 //!
@@ -64,7 +64,7 @@
 //!
 //! This module integrates with:
 //! - [`crate::metadata::tables`] - For metadata table access and token resolution
-//! - [`crate::cilassembly`] - For assembly-level import coordination
+//! - [`crate::CilAssembly`] - For assembly-level import coordination
 //! - [`crate::metadata::exports`] - For cross-assembly reference resolution
 
 pub use builder::NativeImportsBuilder;

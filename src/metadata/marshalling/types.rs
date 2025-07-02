@@ -306,7 +306,7 @@ pub mod VARIANT_TYPE {
 ///
 /// # Parsing
 ///
-/// Use [`parse_marshalling_descriptor`] to parse from binary format:
+/// Use [`crate::metadata::marshalling::parse_marshalling_descriptor`] to parse from binary format:
 /// ```rust,ignore
 /// let bytes = &[NATIVE_TYPE::LPSTR, 0x05]; // LPSTR with size param 5
 /// let info = parse_marshalling_descriptor(bytes)?;

@@ -96,9 +96,9 @@
 //! # Integration
 //!
 //! This module integrates with:
-//! - [`crate::metadata::security::encoder`] - For encoding built permission sets to binary/XML formats
-//! - [`crate::metadata::security::permissionset`] - For validation and parsing of encoded permissions
-//! - [`crate::metadata::security::types`] - For core permission and argument type definitions
+//! - [`crate::metadata::security::encode_permission_set`] - For encoding built permission sets to binary/XML formats
+//! - [`crate::metadata::security::PermissionSet`] - For validation and parsing of encoded permissions
+//! - [`crate::metadata::security::Permission`] - For core permission type definitions
 
 use crate::{
     metadata::security::{
@@ -283,8 +283,8 @@ impl PermissionSetBuilder {
     /// # Errors
     ///
     /// Returns [`crate::Error`] in the following cases:
-    /// - [`crate::error::MalformedError`] - When permission data contains unsupported types
-    /// - [`crate::error::MalformedError`] - When the target format is [`crate::metadata::security::PermissionSetFormat::Unknown`]
+    /// - [`crate::Error::Malformed`] - When permission data contains unsupported types
+    /// - [`crate::Error::Malformed`] - When the target format is [`crate::metadata::security::PermissionSetFormat::Unknown`]
     ///
     /// # Examples
     ///

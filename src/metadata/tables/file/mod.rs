@@ -54,7 +54,7 @@
 //! - **Security assurance**: Prevents malicious file substitution
 //!
 //! # Import Integration
-//! Files can participate in import resolution through [`ImportContainer`]:
+//! Files can participate in import resolution through [`crate::metadata::imports::UnifiedImportContainer`]:
 //! - Module files can export types and members
 //! - Import analysis traverses file dependencies
 //! - Cross-file reference resolution

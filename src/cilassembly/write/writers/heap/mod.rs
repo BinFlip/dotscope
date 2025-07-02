@@ -9,10 +9,11 @@
 //!
 //! - [`crate::cilassembly::write::writers::heap::HeapWriter`] - Stateful writer for all heap modifications
 //! - [`crate::cilassembly::write::writers::heap::HeapWriter::write_all_heaps`] - Main entry point for heap writing
-//! - [`crate::cilassembly::write::writers::heap::HeapWriter::write_string_heap_additions`] - String heap appending
-//! - [`crate::cilassembly::write::writers::heap::HeapWriter::write_blob_heap_additions`] - Blob heap appending
-//! - [`crate::cilassembly::write::writers::heap::HeapWriter::write_guid_heap_additions`] - GUID heap appending
-//! - [`crate::cilassembly::write::writers::heap::HeapWriter::write_userstring_heap_additions`] - User string heap appending
+//! - [`crate::cilassembly::write::writers::heap::strings`] - String heap writing with UTF-8 encoding
+//! - [`crate::cilassembly::write::writers::heap::blobs`] - Blob heap writing with compression handling  
+//! - [`crate::cilassembly::write::writers::heap::guids`] - GUID heap writing with 16-byte alignment
+//! - [`crate::cilassembly::write::writers::heap::userstrings`] - User string heap writing with UTF-16 encoding
+//! - [`crate::cilassembly::write::writers::heap::utilities`] - Shared heap utilities and helper functions
 //!
 //! # Architecture
 //!

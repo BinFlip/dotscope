@@ -17,7 +17,7 @@
 //!
 //! # Key Components
 //!
-//! - [`Exports`] - Main container for exported type metadata
+//! - [`crate::metadata::exports::Exports`] - Main container for exported type metadata
 //! - [`crate::metadata::tables::ExportedTypeRc`] - Reference-counted exported type instances
 //! - [`crate::metadata::tables::ExportedTypeMap`] - Thread-safe concurrent map implementation
 //!
@@ -62,7 +62,7 @@
 //!
 //! This module integrates with:
 //! - [`crate::metadata::tables`] - For metadata table access and token resolution
-//! - [`crate::cilassembly`] - For assembly-level export coordination
+//! - [`crate::CilAssembly`] - For assembly-level export coordination
 //! - [`crate::metadata::imports`] - For cross-assembly reference resolution
 
 pub use builder::NativeExportsBuilder;

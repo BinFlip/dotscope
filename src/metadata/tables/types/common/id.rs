@@ -468,6 +468,13 @@ pub enum TableId {
 ///
 /// The pattern is essential for metadata operations that need to work generically
 /// across all table types while maintaining type safety and performance.
+///
+/// # Framework Usage
+///
+/// This macro is successfully used throughout the framework for:
+/// - Table row size calculations during binary generation
+/// - Table writing operations during assembly serialization  
+/// - Any scenario requiring TableId → Raw type dispatch with uniform operations
 #[macro_export]
 macro_rules! dispatch_table_type {
     ($table_id:expr, |$RawType:ident| $expr:expr) => {

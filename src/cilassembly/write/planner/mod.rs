@@ -12,7 +12,10 @@
 //! - [`crate::cilassembly::write::planner::FileLayout`] - Detailed file structure with section placements
 //! - [`crate::cilassembly::write::planner::SectionFileLayout`] - Individual section layout with metadata stream details
 //! - [`crate::cilassembly::write::planner::PeUpdates`] - PE header modification requirements
-//! - [`crate::cilassembly::write::planner::calc`] - Size calculation utilities module
+//! - [`crate::cilassembly::write::planner::calc`] - Comprehensive size and alignment calculation module
+//! - [`crate::cilassembly::write::planner::calc::heaps`] - Heap expansion calculations
+//! - [`crate::cilassembly::write::planner::calc::tables`] - Table size and modification calculations
+//! - [`crate::cilassembly::write::planner::calc::alignment`] - ECMA-335 alignment utilities
 //! - [`crate::cilassembly::write::planner::metadata`] - Metadata layout planning module
 //! - [`crate::cilassembly::write::planner::pe`] - PE structure analysis module
 //!
