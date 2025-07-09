@@ -4,6 +4,71 @@
 //! metadata tables and heap entries. It enables safe removal and modification
 //! operations by identifying all dependent references that need to be handled
 //! according to the user's specified strategy.
+//!
+//! # Key Components
+//!
+//! - [`crate::cilassembly::references::TableReference`] - Represents a reference from one metadata location to another
+//! - [`crate::cilassembly::references::ReferenceTracker`] - Tracks cross-references between heap entries and table rows
+//!
+//! # Architecture
+//!
+//! The reference tracking system maintains bidirectional maps between heap indices
+//! and table references to enable efficient lookup operations. This is essential
+//! for implementing safe deletion and modification operations that respect referential
+//! integrity constraints.
+//!
+//! ## Reference Types
+//! The system tracks references to all four metadata heaps:
+//! - **String Heap References**: Points to #Strings heap entries
+//! - **Blob Heap References**: Points to #Blob heap entries  
+//! - **GUID Heap References**: Points to #GUID heap entries
+//! - **User String References**: Points to #US (User String) heap entries
+//! - **Table Row References**: Points to specific table rows by RID
+//!
+//! ## Tracking Strategy
+//! References are tracked using hash maps that provide O(1) lookup time for
+//! finding all references to a specific heap index or table row. This enables
+//! efficient validation during deletion operations.
+//!
+//! # Usage Examples
+//!
+//! ```rust,ignore
+//! use crate::cilassembly::references::{ReferenceTracker, TableReference};
+//! use crate::metadata::tables::TableId;
+//!
+//! // Create a reference tracker
+//! let mut tracker = ReferenceTracker::new();
+//!
+//! // Create a reference from TypeDef table to string heap
+//! let reference = TableReference {
+//!     table_id: TableId::TypeDef,
+//!     row_rid: 1,
+//!     column_name: "Name".to_string(),
+//! };
+//!
+//! // Track the reference
+//! tracker.add_string_reference(42, reference);
+//!
+//! // Check for references before deletion
+//! if let Some(refs) = tracker.get_string_references(42) {
+//!     println!("String index 42 has {} references", refs.len());
+//! }
+//!
+//! // Remove references when deleting a row
+//! tracker.remove_references_from_row(TableId::TypeDef, 1);
+//! ```
+//!
+//! # Thread Safety
+//!
+//! This type is [`Send`] and [`Sync`] as it contains only owned data without
+//! interior mutability. However, the contained hash maps are not designed for
+//! concurrent access patterns.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::cilassembly::validation::ReferentialIntegrityValidator`] - Uses reference tracking for validation
+//! - [`crate::cilassembly::changes::ReferenceHandlingStrategy`] - Defines how references should be handled during modifications
 
 use crate::metadata::tables::TableId;
 use std::collections::HashMap;

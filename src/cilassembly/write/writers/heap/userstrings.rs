@@ -3,9 +3,7 @@
 //! This module handles writing modifications to the #US (UserString) heap, including simple additions
 //! and complex operations involving modifications and removals that require heap rebuilding.
 
-use crate::{
-    cilassembly::write::planner::StreamModification, file::io::write_compressed_uint, Result,
-};
+use crate::{cilassembly::write::planner::StreamModification, Error, Result};
 
 impl<'a> super::HeapWriter<'a> {
     /// Writes user string heap modifications including additions, modifications, and removals.
@@ -24,17 +22,18 @@ impl<'a> super::HeapWriter<'a> {
     /// # Arguments
     ///
     /// * `stream_mod` - The [`crate::cilassembly::write::planner::metadata::StreamModification`] for the #US heap
-    pub(super) fn write_userstring_heap_additions(
-        &mut self,
-        stream_mod: &StreamModification,
-    ) -> Result<()> {
+    pub(super) fn write_userstring_heap(&mut self, stream_mod: &StreamModification) -> Result<()> {
         let userstring_changes = &self.base.assembly.changes().userstring_heap_changes;
-        if userstring_changes.has_modifications() || userstring_changes.has_removals() {
-            return self.rebuild_userstring_heap(stream_mod);
+        if userstring_changes.has_additions()
+            || userstring_changes.has_modifications()
+            || userstring_changes.has_removals()
+        {
+            return self.write_userstring_heap_with_changes(stream_mod);
         }
 
-        let (_stream_layout, write_start) = self.prepare_heap_write(stream_mod)?;
+        let (stream_layout, write_start) = self.base.get_stream_write_position(stream_mod)?;
         let mut write_pos = write_start;
+        let stream_end = stream_layout.file_region.end_offset() as usize;
 
         for user_string in &self
             .base
@@ -55,14 +54,11 @@ impl<'a> super::HeapWriter<'a> {
             let total_length = utf16_data_length + 1; // UTF-16 data + terminator byte
 
             // Write compressed integer length prefix (ECMA-335 II.24.2.4)
-            let mut length_buffer = Vec::new();
-            let start_len = length_buffer.len();
-            crate::file::io::write_compressed_uint(total_length as u32, &mut length_buffer);
-            let bytes_written = length_buffer.len() - start_len;
-
-            let length_slice = self.base.output.get_mut_slice(write_pos, bytes_written)?;
-            length_slice.copy_from_slice(&length_buffer);
-            write_pos += bytes_written;
+            write_pos = self
+                .base
+                .output
+                .write_compressed_uint_at(write_pos as u64, total_length as u32)?
+                as usize;
 
             // Write the UTF-16 string data
             let string_slice = self
@@ -76,6 +72,16 @@ impl<'a> super::HeapWriter<'a> {
             // According to .NET runtime: 0 = no chars >= 0x80, 1 = has chars >= 0x80
             let has_high_chars = user_string.chars().any(|c| c as u32 >= 0x80);
             let terminator_byte = if has_high_chars { 1 } else { 0 };
+
+            // Ensure we won't exceed stream boundary
+            if write_pos + 1 > stream_end {
+                return Err(Error::WriteLayoutFailed {
+                    message: format!(
+                        "UserString heap overflow: write would exceed allocated space by {} bytes",
+                        (write_pos + 1) - stream_end
+                    ),
+                });
+            }
 
             let terminal_slice = self.base.output.get_mut_slice(write_pos, 1)?;
             terminal_slice[0] = terminator_byte;
@@ -103,11 +109,11 @@ impl<'a> super::HeapWriter<'a> {
     /// # Arguments
     ///
     /// * `stream_mod` - The [`crate::cilassembly::write::planner::metadata::StreamModification`] for the #US heap
-    pub(super) fn write_userstring_heap_with_modifications(
+    pub(super) fn write_userstring_heap_legacy_compat(
         &mut self,
         stream_mod: &StreamModification,
     ) -> Result<()> {
-        let (_stream_layout, write_start) = self.prepare_heap_write(stream_mod)?;
+        let (_stream_layout, write_start) = self.base.get_stream_write_position(stream_mod)?;
         let mut write_pos = write_start;
 
         let userstring_changes = &self.base.assembly.changes().userstring_heap_changes;
@@ -138,13 +144,13 @@ impl<'a> super::HeapWriter<'a> {
             self.write_single_userstring(appended_string, &mut write_pos)?;
         }
 
-        self.add_heap_padding_to_4_bytes(write_pos, write_start)?;
+        self.base.output.add_heap_padding(write_pos, write_start)?;
         Ok(())
     }
 
-    /// Rebuilds the entire user string heap when modifications or removals are present.
+    /// Writes the user string heap when modifications or removals are present.
     ///
-    /// This method provides comprehensive userstring heap rebuilding that handles
+    /// This method provides comprehensive userstring heap writing that handles
     /// complex scenarios involving modifications to original heap data and appended
     /// userstrings that require maintaining API index contracts.
     ///
@@ -166,14 +172,15 @@ impl<'a> super::HeapWriter<'a> {
     /// # Arguments
     ///
     /// * `stream_mod` - The [`crate::cilassembly::write::planner::metadata::StreamModification`] for the #US heap
-    pub(super) fn rebuild_userstring_heap(
+    pub(super) fn write_userstring_heap_with_changes(
         &mut self,
         stream_mod: &StreamModification,
     ) -> Result<()> {
-        let (_stream_layout, write_start) = self.prepare_heap_write(stream_mod)?;
+        let (stream_layout, write_start) = self.base.get_stream_write_position(stream_mod)?;
         let mut write_pos = write_start;
 
         let userstring_changes = &self.base.assembly.changes().userstring_heap_changes;
+        let stream_end = stream_layout.file_region.end_offset() as usize;
 
         // Check if we have modifications to the ORIGINAL userstring heap (not appended ones)
         let original_data_len = if let Some(us_heap) = self.base.assembly.view().userstrings() {
@@ -200,7 +207,12 @@ impl<'a> super::HeapWriter<'a> {
         if let Some(us_heap) = self.base.assembly.view().userstrings() {
             if needs_rebuild {
                 // We have modifications, need to rebuild the entire heap
-                self.rebuild_complete_userstring_heap(&mut write_pos, us_heap, userstring_changes)?;
+                self.write_complete_userstring_heap(
+                    &mut write_pos,
+                    us_heap,
+                    userstring_changes,
+                    stream_end,
+                )?;
             } else {
                 // No modifications to original heap, copy it exactly to preserve byte structure
                 let original_data = us_heap.raw_data();
@@ -236,16 +248,25 @@ impl<'a> super::HeapWriter<'a> {
                     .cloned()
                     .unwrap_or_else(|| appended_userstring.clone());
 
+                // Ensure we won't exceed stream boundary
+                let entry_size = self.calculate_userstring_entry_size(&final_userstring) as usize;
+                if write_pos + entry_size > stream_end {
+                    return Err(crate::Error::WriteLayoutFailed {
+                        message: format!("UserString heap overflow: write would exceed allocated space by {} bytes", 
+                            (write_pos + entry_size) - stream_end)
+                    });
+                }
+
                 self.write_single_userstring(&final_userstring, &mut write_pos)?;
             }
         }
 
-        self.add_heap_padding_to_4_bytes(write_pos, write_start)?;
+        self.base.output.add_heap_padding(write_pos, write_start)?;
 
         Ok(())
     }
 
-    /// Rebuilds the complete userstring heap (original + appended) maintaining API index contract.
+    /// Writes the complete userstring heap (original + appended) maintaining API index contract.
     ///
     /// This method implements the most comprehensive userstring heap rebuilding strategy,
     /// ensuring that all API indices remain stable even when string sizes change due to
@@ -273,11 +294,12 @@ impl<'a> super::HeapWriter<'a> {
     /// * `write_pos` - Mutable reference to current write position
     /// * `original_heap` - Reference to the original UserStrings heap
     /// * `userstring_changes` - Reference to the heap changes to apply
-    pub(super) fn rebuild_complete_userstring_heap(
+    pub(super) fn write_complete_userstring_heap(
         &mut self,
         write_pos: &mut usize,
         original_heap: &crate::metadata::streams::UserStrings,
         userstring_changes: &crate::cilassembly::changes::HeapChanges<String>,
+        stream_end: usize,
     ) -> Result<()> {
         // Start with null byte
         let heap_start = *write_pos;
@@ -352,6 +374,15 @@ impl<'a> super::HeapWriter<'a> {
         let mut final_position = heap_start + 1; // Start after null byte
 
         for (_api_index, userstring) in all_userstrings {
+            // Ensure we won't exceed stream boundary
+            let entry_size = self.calculate_userstring_entry_size(&userstring) as usize;
+            if final_position + entry_size > stream_end {
+                return Err(crate::Error::WriteLayoutFailed {
+                    message: format!("UserString heap overflow during writing: write would exceed allocated space by {} bytes", 
+                        (final_position + entry_size) - stream_end)
+                });
+            }
+
             // Write userstring continuously, not at specific API index positions
             // API indices are logical indices, not byte offsets in userstring heaps
             self.write_single_userstring_at(&userstring, final_position)?;
@@ -399,28 +430,23 @@ impl<'a> super::HeapWriter<'a> {
         let total_length = utf16_data_length + 1; // UTF-16 data + terminator byte
 
         // Write compressed integer length prefix
-        let mut length_buffer = Vec::new();
-        let start_len = length_buffer.len();
-        write_compressed_uint(total_length as u32, &mut length_buffer);
-        let bytes_written = length_buffer.len() - start_len;
-
-        let length_slice = self.base.output.get_mut_slice(*write_pos, bytes_written)?;
-        length_slice.copy_from_slice(&length_buffer);
-        *write_pos += bytes_written;
-
-        // Write the UTF-16 string data
-        let string_slice = self
+        *write_pos = self
             .base
             .output
-            .get_mut_slice(*write_pos, utf16_bytes.len())?;
-        string_slice.copy_from_slice(&utf16_bytes);
-        *write_pos += utf16_bytes.len();
+            .write_compressed_uint_at(*write_pos as u64, total_length as u32)?
+            as usize;
+
+        // Write the UTF-16 string data
+        self.base
+            .output
+            .write_and_advance(write_pos, &utf16_bytes)?;
 
         // Write the terminator byte
-        let terminator_slice = self.base.output.get_mut_slice(*write_pos, 1)?;
         let has_high_chars = user_string.chars().any(|c| c as u32 >= 0x80);
-        terminator_slice[0] = if has_high_chars { 1 } else { 0 };
-        *write_pos += 1;
+        let terminator_byte = if has_high_chars { 1 } else { 0 };
+        self.base
+            .output
+            .write_and_advance(write_pos, &[terminator_byte])?;
 
         Ok(())
     }
@@ -451,14 +477,11 @@ impl<'a> super::HeapWriter<'a> {
         let mut write_pos = target_pos;
 
         // Write compressed integer length prefix
-        let mut length_buffer = Vec::new();
-        let start_len = length_buffer.len();
-        write_compressed_uint(total_length as u32, &mut length_buffer);
-        let bytes_written = length_buffer.len() - start_len;
-
-        let length_slice = self.base.output.get_mut_slice(write_pos, bytes_written)?;
-        length_slice.copy_from_slice(&length_buffer);
-        write_pos += bytes_written;
+        write_pos = self
+            .base
+            .output
+            .write_compressed_uint_at(write_pos as u64, total_length as u32)?
+            as usize;
 
         // Write the UTF-16 string data
         let string_slice = self
@@ -469,9 +492,10 @@ impl<'a> super::HeapWriter<'a> {
         write_pos += utf16_bytes.len();
 
         // Write the terminator byte
-        let terminator_slice = self.base.output.get_mut_slice(write_pos, 1)?;
         let has_high_chars = user_string.chars().any(|c| c as u32 >= 0x80);
-        terminator_slice[0] = if has_high_chars { 1 } else { 0 };
+        let terminator_byte = if has_high_chars { 1 } else { 0 };
+        let terminator_slice = self.base.output.get_mut_slice(write_pos, 1)?;
+        terminator_slice[0] = terminator_byte;
 
         Ok(())
     }

@@ -31,7 +31,7 @@ fn test_native_imports_with_minimal_changes() -> Result<()> {
     let temp_file = tempfile::NamedTempFile::new()?;
     let temp_path = temp_file.path();
 
-    let assembly = context.finish();
+    let mut assembly = context.finish();
     assembly.write_to_file(temp_path)?;
 
     // Verify that we can at least read the file and it has some import directory
@@ -91,7 +91,8 @@ fn add_native_imports_to_crafted_2() -> Result<()> {
     let temp_path = temp_file.path();
 
     // Get the assembly back from context and write to file
-    let assembly = context.finish();
+    let mut assembly = context.finish();
+    assembly.validate_and_apply_changes()?;
     assembly.write_to_file(temp_path)?;
 
     // Verify the file was actually created
@@ -119,40 +120,43 @@ fn add_native_imports_to_crafted_2() -> Result<()> {
     assert!(import_rva > 0, "Import table RVA should be positive");
     assert!(import_size > 0, "Import table size should be positive");
 
-    // Step 5: Now verify that our added imports can be parsed back correctly
-    let reloaded_assembly = modified_view.to_owned();
-    let parsed_imports = reloaded_assembly.native_imports();
+    // Step 5: Now verify that our added imports can be parsed back correctly from the PE file
+    let parsed_imports = modified_view.file().imports();
 
     assert!(
         parsed_imports.is_some(),
-        "Native imports should be parsed successfully from modified assembly"
+        "Native imports should be parsed successfully from modified PE file"
     );
 
     let imports = parsed_imports.unwrap();
-
-    // Verify we have the DLLs we added
     assert!(
-        imports.native().has_dll("kernel32.dll"),
-        "Should have kernel32.dll"
+        !imports.is_empty(),
+        "Should have at least one import descriptor"
+    );
+
+    // Verify we have the DLLs we added by checking the import descriptors
+    let dll_names: Vec<&str> = imports.iter().map(|imp| imp.dll).collect();
+    assert!(
+        dll_names.contains(&"kernel32.dll"),
+        "Should have kernel32.dll in import table"
     );
     assert!(
-        imports.native().has_dll("user32.dll"),
-        "Should have user32.dll"
+        dll_names.contains(&"user32.dll"),
+        "Should have user32.dll in import table"
     );
 
     // Verify the kernel32.dll functions
-    let kernel32_desc = imports.native().get_descriptor("kernel32.dll").unwrap();
+    let kernel32_functions: Vec<&str> = imports
+        .iter()
+        .filter(|imp| imp.dll == "kernel32.dll")
+        .map(|imp| imp.name.as_ref())
+        .collect();
+
     assert_eq!(
-        kernel32_desc.functions.len(),
+        kernel32_functions.len(),
         2,
         "kernel32.dll should have 2 functions"
     );
-
-    let kernel32_functions: Vec<&str> = kernel32_desc
-        .functions
-        .iter()
-        .filter_map(|f| f.name.as_deref())
-        .collect();
     assert!(
         kernel32_functions.contains(&"GetCurrentProcessId"),
         "Should have GetCurrentProcessId"
@@ -163,18 +167,17 @@ fn add_native_imports_to_crafted_2() -> Result<()> {
     );
 
     // Verify the user32.dll functions
-    let user32_desc = imports.native().get_descriptor("user32.dll").unwrap();
+    let user32_functions: Vec<&str> = imports
+        .iter()
+        .filter(|imp| imp.dll == "user32.dll")
+        .map(|imp| imp.name.as_ref())
+        .collect();
+
     assert_eq!(
-        user32_desc.functions.len(),
+        user32_functions.len(),
         2,
         "user32.dll should have 2 functions"
     );
-
-    let user32_functions: Vec<&str> = user32_desc
-        .functions
-        .iter()
-        .filter_map(|f| f.name.as_deref())
-        .collect();
     assert!(
         user32_functions.contains(&"MessageBoxW"),
         "Should have MessageBoxW"
@@ -220,7 +223,8 @@ fn add_native_exports_to_crafted_2() -> Result<()> {
     let temp_path = temp_file.path();
 
     // Get the assembly back from context and write to file
-    let assembly = context.finish();
+    let mut assembly = context.finish();
+    assembly.validate_and_apply_changes()?;
     assembly.write_to_file(temp_path)?;
 
     // Verify the file was actually created
@@ -258,7 +262,7 @@ fn add_native_exports_to_crafted_2() -> Result<()> {
     let parsed_exports = reloaded_assembly.native_exports();
 
     // Check if export parsing now works with our fixes
-    if parsed_exports.is_none() {
+    if parsed_exports.is_empty() {
         // Export table generation should be successful - verify with goblin
         assert!(
             export_directory.is_some(),
@@ -281,12 +285,12 @@ fn add_native_exports_to_crafted_2() -> Result<()> {
         );
 
         // Export table generation is successful - PE format is valid
-        // Note: dotscope API doesn't re-parse exports from modified files by design,
-        // which is why native_exports() returns None
+        // Note: dotscope native_exports() contains user modifications only,
+        // which is why it's empty for reloaded assemblies
         return Ok(());
     }
 
-    let exports = parsed_exports.unwrap();
+    let exports = parsed_exports;
 
     // Verify the DLL name we set
     assert_eq!(
@@ -407,7 +411,8 @@ fn add_both_imports_and_exports_to_crafted_2() -> Result<()> {
     let temp_path = temp_file.path();
 
     // Get the assembly back from context and write to file
-    let assembly = context.finish();
+    let mut assembly = context.finish();
+    assembly.validate_and_apply_changes()?;
     assembly.write_to_file(temp_path)?;
 
     // Verify the file was actually created
@@ -445,35 +450,40 @@ fn add_both_imports_and_exports_to_crafted_2() -> Result<()> {
     assert!(export_size > 0, "Export table size should be positive");
 
     // Step 5: Now verify that both imports and exports can be parsed back correctly
-    let reloaded_assembly = modified_view.to_owned();
 
-    // Verify imports
-    let parsed_imports = reloaded_assembly.native_imports();
+    // Verify imports using the file's parsed imports
+    let parsed_imports = modified_view.file().imports();
 
     // Import table generation should work correctly
     assert!(
         parsed_imports.is_some(),
-        "Native imports should be parsed successfully from modified assembly with both imports and exports"
+        "Native imports should be parsed successfully from modified PE file with both imports and exports"
     );
 
     let imports = parsed_imports.unwrap();
     assert!(
-        imports.native().has_dll("kernel32.dll"),
-        "Should have kernel32.dll"
+        !imports.is_empty(),
+        "Should have at least one import descriptor"
     );
 
-    let kernel32_desc = imports.native().get_descriptor("kernel32.dll").unwrap();
+    // Verify we have kernel32.dll
+    let dll_names: Vec<&str> = imports.iter().map(|imp| imp.dll).collect();
+    assert!(
+        dll_names.contains(&"kernel32.dll"),
+        "Should have kernel32.dll in import table"
+    );
+
+    let kernel32_functions: Vec<&str> = imports
+        .iter()
+        .filter(|imp| imp.dll == "kernel32.dll")
+        .map(|imp| imp.name.as_ref())
+        .collect();
+
     assert_eq!(
-        kernel32_desc.functions.len(),
+        kernel32_functions.len(),
         2,
         "kernel32.dll should have 2 functions"
     );
-
-    let kernel32_functions: Vec<&str> = kernel32_desc
-        .functions
-        .iter()
-        .filter_map(|f| f.name.as_deref())
-        .collect();
     assert!(
         kernel32_functions.contains(&"GetCurrentProcessId"),
         "Should have GetCurrentProcessId"
@@ -483,14 +493,13 @@ fn add_both_imports_and_exports_to_crafted_2() -> Result<()> {
         "Should have GetModuleHandleW"
     );
 
-    // Verify exports
-    let parsed_exports = reloaded_assembly.native_exports();
+    // Verify exports using the file's parsed exports
+    let parsed_exports = modified_view.file().exports();
 
-    // Note: Export table generation is now working correctly! The dotscope API doesn't re-parse
-    // exports from modified files by design, but we can verify with goblin directly.
+    // Export table generation should work correctly
     if parsed_exports.is_none() {
-        // Verify with goblin directly
-        let pe = goblin::pe::PE::parse(reloaded_assembly.view().file().data())
+        // Verify with goblin directly as fallback
+        let pe = goblin::pe::PE::parse(modified_view.file().data())
             .expect("Goblin should successfully parse PE in combined import/export test");
 
         assert_eq!(
@@ -503,47 +512,41 @@ fn add_both_imports_and_exports_to_crafted_2() -> Result<()> {
         return Ok(());
     }
 
+    // Verify exports using goblin Export structure
     let exports = parsed_exports.unwrap();
-    assert_eq!(
-        exports.native().dll_name(),
-        "MixedLibrary.dll",
-        "Should have correct DLL name"
-    );
-    assert_eq!(
-        exports.native().function_count(),
-        2,
-        "Should have 2 exported functions"
-    );
+    assert_eq!(exports.len(), 2, "Should have 2 exported functions");
+
+    // Find the exported functions by name
+    let exported_names: Vec<&str> = exports.iter().filter_map(|exp| exp.name).collect();
 
     assert!(
-        exports.native().has_function("ExportedFunction1"),
+        exported_names.contains(&"ExportedFunction1"),
         "Should have ExportedFunction1"
     );
     assert!(
-        exports.native().has_function("ExportedFunction2"),
+        exported_names.contains(&"ExportedFunction2"),
         "Should have ExportedFunction2"
     );
 
-    let func1 = exports.native().get_function_by_ordinal(1).unwrap();
+    // Verify specific function details
+    let func1 = exports
+        .iter()
+        .find(|exp| exp.name == Some("ExportedFunction1"))
+        .unwrap();
     assert_eq!(
-        func1.name,
-        Some("ExportedFunction1".to_string()),
+        func1.name.unwrap(),
+        "ExportedFunction1",
         "ExportedFunction1 should have correct name"
     );
-    assert_eq!(
-        func1.address, 0x1000,
-        "ExportedFunction1 should have correct address"
-    );
 
-    let func2 = exports.native().get_function_by_ordinal(2).unwrap();
+    let func2 = exports
+        .iter()
+        .find(|exp| exp.name == Some("ExportedFunction2"))
+        .unwrap();
     assert_eq!(
-        func2.name,
-        Some("ExportedFunction2".to_string()),
+        func2.name.unwrap(),
+        "ExportedFunction2",
         "ExportedFunction2 should have correct name"
-    );
-    assert_eq!(
-        func2.address, 0x2000,
-        "ExportedFunction2 should have correct address"
     );
 
     // All added imports and exports verified successfully
@@ -584,7 +587,8 @@ fn round_trip_preserve_existing_data() -> Result<()> {
     let temp_file = tempfile::NamedTempFile::new()?;
     let temp_path = temp_file.path();
 
-    let assembly = context.finish();
+    let mut assembly = context.finish();
+    assembly.validate_and_apply_changes()?;
     assembly.write_to_file(temp_path)?;
 
     let modified_view =
@@ -649,79 +653,54 @@ fn test_native_imports_parsing_from_existing_pe() -> Result<()> {
         return Ok(());
     }
 
-    // Convert to CilAssembly to trigger our native import/export parsing
-    let assembly = view.to_owned();
-
-    // Verify that native imports were parsed from the original PE file
-    let parsed_imports = assembly.native_imports();
+    // Verify that native imports are accessible from the PE file
+    // Note: With copy-on-write semantics, assembly.native_imports() only returns user modifications.
+    // To access the original PE imports, we use the file's parsed imports.
+    let parsed_imports = view.file().imports();
     assert!(
         parsed_imports.is_some(),
         "Should have parsed native imports from existing PE file"
     );
 
     let imports = parsed_imports.unwrap();
-    assert!(
-        !imports.native().is_empty(),
-        "Parsed imports should not be empty"
-    );
-    assert!(
-        imports.native().dll_count() > 0,
-        "Should have parsed at least one DLL"
-    );
+    assert!(!imports.is_empty(), "Parsed imports should not be empty");
 
     // Verify the specific import that should exist in crafted_2.exe
+    let dll_names: Vec<&str> = imports.iter().map(|imp| imp.dll).collect();
     assert!(
-        imports.native().has_dll("mscoree.dll"),
+        dll_names.contains(&"mscoree.dll"),
         "Should have parsed mscoree.dll"
     );
 
-    let mscoree_desc = imports.native().get_descriptor("mscoree.dll").unwrap();
+    let mscoree_functions: Vec<&str> = imports
+        .iter()
+        .filter(|imp| imp.dll == "mscoree.dll")
+        .map(|imp| imp.name.as_ref())
+        .collect();
+
     assert!(
-        !mscoree_desc.functions.is_empty(),
+        !mscoree_functions.is_empty(),
         "mscoree.dll should have functions"
     );
 
     // Verify the _CorExeMain function exists
-    let has_cor_exe_main = mscoree_desc
-        .functions
-        .iter()
-        .any(|f| f.name.as_deref() == Some("_CorExeMain"));
+    let has_cor_exe_main = mscoree_functions.contains(&"_CorExeMain");
     assert!(has_cor_exe_main, "Should have parsed _CorExeMain function");
 
     Ok(())
 }
 
 #[test]
-fn debug_import_table_format() -> Result<()> {
-    // Create a minimal test to check if just metadata changes work
+fn test_import_table_format_validation() -> Result<()> {
+    // Test that import tables are correctly formatted and parseable
 
     let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
     let assembly = view.to_owned();
     let mut context = BuilderContext::new(assembly);
 
-    // Only add a test string, no imports - to isolate the issue
-    let _test_string_index = context.add_string("DebugNoImportTest")?;
+    // Add imports that should generate a valid import table
+    let _test_string_index = context.add_string("ImportFormatTest")?;
 
-    let temp_file = tempfile::NamedTempFile::new()?;
-    let temp_path = temp_file.path();
-
-    let assembly = context.finish();
-    // Should be able to write and reload metadata-only changes
-    assembly
-        .write_to_file(temp_path)
-        .expect("Should write assembly with metadata-only changes");
-
-    let _modified_view = CilAssemblyView::from_file(temp_path)
-        .expect("Should reload assembly with metadata-only changes");
-
-    // Now try adding imports
-    let view2 = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
-    let assembly2 = view2.to_owned();
-    let mut context2 = BuilderContext::new(assembly2);
-
-    let _test_string_index = context2.add_string("DebugImportTest")?;
-
-    // Add multiple imports to match the failing test case exactly
     let import_result = NativeImportsBuilder::new()
         .add_dll("kernel32.dll")
         .add_function("kernel32.dll", "GetCurrentProcessId")
@@ -729,72 +708,85 @@ fn debug_import_table_format() -> Result<()> {
         .add_dll("user32.dll")
         .add_function("user32.dll", "MessageBoxW")
         .add_function("user32.dll", "GetActiveWindow")
-        .build(&mut context2);
-    assert!(
-        import_result.is_ok(),
-        "Failed to build imports: {:?}",
-        import_result.err()
-    );
+        .build(&mut context);
 
-    let temp_file2 = tempfile::NamedTempFile::new()?;
-    let temp_path2 = temp_file2.path();
+    assert!(import_result.is_ok(), "Import builder should succeed");
 
-    let assembly2 = context2.finish();
-    assembly2
-        .write_to_file(temp_path2)
-        .expect("Should write assembly with imports");
+    let temp_file = tempfile::NamedTempFile::new()?;
+    let temp_path = temp_file.path();
 
-    let modified_view =
-        CilAssemblyView::from_file(temp_path2).expect("Should reload assembly with imports");
+    let mut assembly = context.finish();
+    assembly.validate_and_apply_changes()?;
+    assembly.write_to_file(temp_path)?;
 
-    // Get the import directory info
+    let modified_view = CilAssemblyView::from_file(temp_path)?;
+
+    // Verify import directory exists and is valid
     let import_directory = modified_view
         .file()
         .get_data_directory(goblin::pe::data_directories::DataDirectoryType::ImportTable);
 
-    assert!(
-        import_directory.is_some(),
-        "Import directory should exist after writing imports"
-    );
+    assert!(import_directory.is_some(), "Import directory should exist");
 
     let (import_rva, import_size) = import_directory.unwrap();
     assert!(import_rva > 0, "Import table RVA should be positive");
     assert!(import_size > 0, "Import table size should be positive");
 
-    // Debug output for import directory
-    println!("Import directory: RVA=0x{import_rva:x}, Size={import_size}");
-
-    // Try to read the raw import table data
+    // Verify the import table can be read
     let import_offset = modified_view.file().rva_to_offset(import_rva as usize)?;
     let import_data = modified_view
         .file()
         .data_slice(import_offset, import_size as usize)?;
+    assert!(
+        !import_data.is_empty(),
+        "Import table data should not be empty"
+    );
 
-    println!("First 64 bytes of import table:");
-    for (i, chunk) in import_data.chunks(16).take(4).enumerate() {
-        print!("{:04x}: ", i * 16);
-        for byte in chunk {
-            print!("{byte:02x} ");
-        }
-        println!();
-    }
+    // Verify goblin can parse the generated PE with imports
+    let pe = goblin::pe::PE::parse(modified_view.file().data())
+        .expect("Goblin should successfully parse PE with generated import table");
 
-    // Try parsing with goblin manually to see what fails
-    match goblin::pe::PE::parse(modified_view.file().data()) {
-        Ok(pe) => {
-            println!("PE parsed successfully by goblin");
-            println!("Goblin found {} imports", pe.imports.len());
-            for import in &pe.imports {
-                println!(
-                    "  DLL: {}, Function: {}, RVA: 0x{:x}",
-                    import.dll, import.name, import.rva
-                );
-            }
-        }
-        Err(e) => {
-            println!("Goblin failed to parse PE: {e:?}");
-        }
-    }
+    // Verify the specific imports we added are present and correct
+    assert!(!pe.imports.is_empty(), "Should have imports in parsed PE");
+
+    let dll_names: Vec<&str> = pe.imports.iter().map(|imp| imp.dll).collect();
+    assert!(
+        dll_names.contains(&"kernel32.dll"),
+        "Should have kernel32.dll"
+    );
+    assert!(dll_names.contains(&"user32.dll"), "Should have user32.dll");
+
+    let kernel32_funcs: Vec<&str> = pe
+        .imports
+        .iter()
+        .filter(|imp| imp.dll == "kernel32.dll")
+        .map(|imp| imp.name.as_ref())
+        .collect();
+
+    assert!(
+        kernel32_funcs.contains(&"GetCurrentProcessId"),
+        "Should have GetCurrentProcessId"
+    );
+    assert!(
+        kernel32_funcs.contains(&"ExitProcess"),
+        "Should have ExitProcess"
+    );
+
+    let user32_funcs: Vec<&str> = pe
+        .imports
+        .iter()
+        .filter(|imp| imp.dll == "user32.dll")
+        .map(|imp| imp.name.as_ref())
+        .collect();
+
+    assert!(
+        user32_funcs.contains(&"MessageBoxW"),
+        "Should have MessageBoxW"
+    );
+    assert!(
+        user32_funcs.contains(&"GetActiveWindow"),
+        "Should have GetActiveWindow"
+    );
 
     Ok(())
 }

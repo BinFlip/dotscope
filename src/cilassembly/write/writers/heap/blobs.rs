@@ -3,9 +3,7 @@
 //! This module handles writing modifications to the #Blob heap, including simple additions
 //! and complex operations involving modifications and removals that require heap rebuilding.
 
-use crate::{
-    cilassembly::write::planner::StreamModification, file::io::write_compressed_uint, Result,
-};
+use crate::{cilassembly::write::planner::StreamModification, Error, Result};
 
 impl<'a> super::HeapWriter<'a> {
     /// Writes blob heap modifications including additions, modifications, and removals.
@@ -22,52 +20,39 @@ impl<'a> super::HeapWriter<'a> {
     /// # Arguments
     ///
     /// * `stream_mod` - The [`crate::cilassembly::write::planner::metadata::StreamModification`] for the #Blob heap
-    pub(super) fn write_blob_heap_additions(
-        &mut self,
-        stream_mod: &StreamModification,
-    ) -> Result<()> {
+    pub(super) fn write_blob_heap(&mut self, stream_mod: &StreamModification) -> Result<()> {
         let blob_changes = &self.base.assembly.changes().blob_heap_changes;
 
-        // Always rebuild blob heap to preserve byte offsets (similar to userstring fix)
+        // Always write blob heap with changes to preserve byte offsets
         // The append-only approach corrupts original blob offsets during sequential copying
         if blob_changes.has_changes() {
-            return self.rebuild_blob_heap(stream_mod);
+            return self.write_blob_heap_with_changes(stream_mod);
         }
 
-        let (_stream_layout, write_start) = self.prepare_heap_write(stream_mod)?;
+        let (stream_layout, write_start) = self.base.get_stream_write_position(stream_mod)?;
         let mut write_pos = write_start;
+        let stream_end = stream_layout.file_region.end_offset() as usize;
 
         // Copy original blob heap data first to preserve existing blobs
         if let Some(blob_heap) = self.base.assembly.view().blobs() {
             // Start with null byte
-            let null_slice = self.base.output.get_mut_slice(write_pos, 1)?;
-            null_slice[0] = 0;
-            write_pos += 1;
+            self.base.output.write_and_advance(&mut write_pos, &[0])?;
 
             // Copy all original blobs sequentially
             for (_, blob) in blob_heap.iter() {
-                let length = blob.len();
-
                 // Write length prefix
-                let mut length_buffer = Vec::new();
-                write_compressed_uint(length as u32, &mut length_buffer);
-                let length_slice = self
+                write_pos = self
                     .base
                     .output
-                    .get_mut_slice(write_pos, length_buffer.len())?;
-                length_slice.copy_from_slice(&length_buffer);
-                write_pos += length_buffer.len();
+                    .write_compressed_uint_at(write_pos as u64, blob.len() as u32)?
+                    as usize;
 
                 // Write blob data
-                let blob_slice = self.base.output.get_mut_slice(write_pos, blob.len())?;
-                blob_slice.copy_from_slice(blob);
-                write_pos += blob.len();
+                self.base.output.write_and_advance(&mut write_pos, blob)?;
             }
         } else {
             // No original heap, start with null byte
-            let null_slice = self.base.output.get_mut_slice(write_pos, 1)?;
-            null_slice[0] = 0;
-            write_pos += 1;
+            self.base.output.write_and_advance(&mut write_pos, &[0])?;
         }
 
         // Append new blobs, applying modifications if present
@@ -104,23 +89,27 @@ impl<'a> super::HeapWriter<'a> {
 
             let length = final_blob.len();
 
-            // Write length prefix using standard ECMA-335 compressed integer format
-            let mut length_buffer = Vec::new();
-            write_compressed_uint(length as u32, &mut length_buffer);
+            // Ensure we won't exceed stream boundary
+            if write_pos + final_blob.len() > stream_end {
+                return Err(Error::WriteLayoutFailed {
+                    message: format!(
+                        "Blob heap overflow: write would exceed allocated space by {} bytes",
+                        (write_pos + final_blob.len()) - stream_end
+                    ),
+                });
+            }
 
-            let length_slice = self
+            // Write length prefix
+            write_pos = self
                 .base
                 .output
-                .get_mut_slice(write_pos, length_buffer.len())?;
-            length_slice.copy_from_slice(&length_buffer);
-            write_pos += length_buffer.len();
+                .write_compressed_uint_at(write_pos as u64, length as u32)?
+                as usize;
 
-            let blob_slice = self
-                .base
+            // Write blob data
+            self.base
                 .output
-                .get_mut_slice(write_pos, final_blob.len())?;
-            blob_slice.copy_from_slice(&final_blob);
-            write_pos += final_blob.len();
+                .write_and_advance(&mut write_pos, &final_blob)?;
 
             // Advance API index by actual blob size (same as add_blob logic)
             let prefix_size = if length < 128 {
@@ -134,14 +123,14 @@ impl<'a> super::HeapWriter<'a> {
         }
 
         // Add special blob padding to avoid creating extra blob entries during parsing
-        self.add_heap_padding_to_4_bytes(write_pos, write_start)?;
+        self.base.output.add_heap_padding(write_pos, write_start)?;
 
         Ok(())
     }
 
-    /// Rebuilds the entire blob heap when modifications or removals are present.
+    /// Writes the blob heap when modifications or removals are present.
     ///
-    /// This method provides comprehensive blob heap rebuilding that:
+    /// This method provides comprehensive blob heap writing that:
     /// - Preserves all valid blob entries and their byte offsets
     /// - Applies in-place modifications where possible
     /// - Handles blob removals by skipping entries
@@ -158,19 +147,21 @@ impl<'a> super::HeapWriter<'a> {
     /// # Arguments
     ///
     /// * `stream_mod` - The [`crate::cilassembly::write::planner::metadata::StreamModification`] for the #Blob heap
-    pub(super) fn rebuild_blob_heap(&mut self, stream_mod: &StreamModification) -> Result<()> {
-        let (_stream_layout, write_start) = self.prepare_heap_write(stream_mod)?;
+    pub(super) fn write_blob_heap_with_changes(
+        &mut self,
+        stream_mod: &StreamModification,
+    ) -> Result<()> {
+        let (stream_layout, write_start) = self.base.get_stream_write_position(stream_mod)?;
         let mut write_pos = write_start;
 
         let blob_changes = &self.base.assembly.changes().blob_heap_changes;
+        let stream_end = stream_layout.file_region.end_offset() as usize;
 
         // Step 1: Rebuild blob heap entry by entry, applying modifications
         let mut rebuilt_original_count = 0;
         if let Some(blob_heap) = self.base.assembly.view().blobs() {
             // Start with null byte
-            let null_slice = self.base.output.get_mut_slice(write_pos, 1)?;
-            null_slice[0] = 0;
-            write_pos += 1;
+            self.base.output.write_and_advance(&mut write_pos, &[0])?;
 
             // Rebuild each blob, applying modifications
             for (offset, blob) in blob_heap.iter() {
@@ -251,6 +242,15 @@ impl<'a> super::HeapWriter<'a> {
                 appended_blob.clone()
             };
 
+            // Ensure we won't exceed stream boundary
+            let entry_size = self.calculate_blob_entry_size(&blob_data) as usize;
+            if write_pos + entry_size > stream_end {
+                return Err(Error::WriteLayoutFailed {
+                    message: format!("Blob heap overflow during writing: write would exceed allocated space by {} bytes", 
+                        (write_pos + entry_size) - stream_end)
+                });
+            }
+
             self.write_single_blob(&blob_data, &mut write_pos)?;
             appended_count += 1;
         }
@@ -259,7 +259,7 @@ impl<'a> super::HeapWriter<'a> {
 
         // Add padding to align to 4-byte boundary (ECMA-335 II.24.2.2)
         // Use a pattern that won't create valid blob entries
-        self.add_heap_padding_to_4_bytes(write_pos, write_start)?;
+        self.base.output.add_heap_padding(write_pos, write_start)?;
         Ok(())
     }
 
@@ -276,23 +276,15 @@ impl<'a> super::HeapWriter<'a> {
     /// * `blob` - The blob data to write
     /// * `write_pos` - Mutable reference to the current write position, updated after writing
     pub(super) fn write_single_blob(&mut self, blob: &[u8], write_pos: &mut usize) -> Result<()> {
-        let length = blob.len();
-
-        // Write compressed length using standard ECMA-335 format
-        let mut length_buffer = Vec::new();
-        write_compressed_uint(length as u32, &mut length_buffer);
-
-        let length_slice = self
+        // Write compressed length using
+        *write_pos = self
             .base
             .output
-            .get_mut_slice(*write_pos, length_buffer.len())?;
-        length_slice.copy_from_slice(&length_buffer);
-        *write_pos += length_buffer.len();
+            .write_compressed_uint_at(*write_pos as u64, blob.len() as u32)?
+            as usize;
 
         // Write blob data
-        let blob_slice = self.base.output.get_mut_slice(*write_pos, blob.len())?;
-        blob_slice.copy_from_slice(blob);
-        *write_pos += blob.len();
+        self.base.output.write_and_advance(write_pos, blob)?;
 
         Ok(())
     }

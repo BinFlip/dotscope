@@ -499,6 +499,16 @@ pub enum Error {
         message: String,
     },
 
+    /// Referential integrity validation failed.
+    ///
+    /// This error occurs when validation detects operations that would
+    /// violate referential integrity constraints.
+    #[error("Validation error: Referential integrity constraint violated - {message}")]
+    ValidationReferentialIntegrity {
+        /// Details about the referential integrity violation
+        message: String,
+    },
+
     /// Heap bounds validation failed.
     ///
     /// This error occurs when metadata heap indices are out of bounds

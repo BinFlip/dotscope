@@ -134,9 +134,9 @@
 //! assembly.write_to_file(Path::new("modified.dll"))?;
 //! # Ok::<(), dotscope::Error>(())
 //! ```
-
 use crate::{
-    cilassembly::{references::ReferenceTracker, write::HeapExpansions},
+    cilassembly::write::HeapExpansions,
+    file::File,
     metadata::{
         cilassemblyview::CilAssemblyView,
         exports::UnifiedExportContainer,
@@ -150,9 +150,9 @@ mod builder;
 mod changes;
 mod modifications;
 mod operation;
-mod references;
+pub mod references;
 mod remapping;
-mod validation;
+pub mod validation;
 mod write;
 
 pub use builder::*;
@@ -168,7 +168,7 @@ use self::{
 
 /// A mutable view of a .NET assembly that tracks changes for editing operations.
 ///
-/// `CilAssembly` provides an editing layer on top of [`crate::metadata::cilassemblyview::CilAssemblyView`], using
+/// `CilAssembly` provides an editing layer on top of [`metadata::cilassemblyview::CilAssemblyView`], using
 /// a copy-on-write strategy to track modifications while preserving the original
 /// assembly data. Changes are stored separately and merged when writing to disk.
 ///
@@ -610,496 +610,6 @@ impl CilAssembly {
         let table_operation = TableOperation::new(operation);
         table_changes.apply_operation(table_operation)?;
 
-        self.handle_table_row_references(table_id, rid, _strategy)?;
-
-        Ok(())
-    }
-
-    /// Handles references to a table row being deleted according to the specified strategy.
-    ///
-    /// This method implements the reference handling logic for table row deletions.
-    /// It finds all references to the specified table row and handles them according
-    /// to the user's chosen strategy.
-    ///
-    /// # Arguments
-    ///
-    /// * `table_id` - The table containing the row being deleted
-    /// * `rid` - The Row ID being deleted
-    /// * `strategy` - How to handle references to this row
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` if reference handling was successful.
-    fn handle_table_row_references(
-        &mut self,
-        table_id: TableId,
-        rid: u32,
-        strategy: ReferenceHandlingStrategy,
-    ) -> Result<()> {
-        // Create a reference tracker and scan for references
-        // In a full implementation, this would be populated by scanning all tables
-        let _reference_tracker = ReferenceTracker::new();
-
-        // Find references to this table row (placeholder implementation)
-        let references = self.find_references_to_table_row(table_id, rid)?;
-
-        match strategy {
-            ReferenceHandlingStrategy::FailIfReferenced => {
-                if !references.is_empty() {
-                    return Err(crate::Error::WriteLayoutFailed {
-                        message: format!(
-                            "Cannot delete {}:{} - still referenced by {} locations",
-                            table_id as u32,
-                            rid,
-                            references.len()
-                        ),
-                    });
-                }
-            }
-            ReferenceHandlingStrategy::RemoveReferences => {
-                // Remove all rows that reference this row
-                for reference in references {
-                    self.delete_table_row(reference.table_id, reference.row_rid, strategy)?;
-                }
-            }
-            ReferenceHandlingStrategy::NullifyReferences => {
-                // Update all references to point to RID 0 (null)
-                for reference in references {
-                    // This would require updating the specific field in the referencing row
-                    // For now, this is a placeholder implementation
-                    self.nullify_table_reference(reference)?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Finds all references to a specific table row.
-    ///
-    /// Scans all metadata tables to find references to the specified table row.
-    /// This implementation examines all tables for direct table references and coded indices
-    /// that point to the target table:rid combination.
-    fn find_references_to_table_row(
-        &self,
-        table_id: TableId,
-        rid: u32,
-    ) -> Result<Vec<crate::cilassembly::references::TableReference>> {
-        use crate::metadata::tables::TableId as TId;
-        let mut references = Vec::new();
-
-        // Get the tables from the original view
-        let Some(tables) = self.view.tables() else {
-            return Ok(references);
-        };
-
-        // Scan all present tables for references to our target
-        for scanning_table_id in tables.present_tables() {
-            match scanning_table_id {
-                // TypeDef table
-                TId::TypeDef => {
-                    if let Some(typedef_table) =
-                        tables.table::<crate::metadata::tables::TypeDefRaw>()
-                    {
-                        for (scanning_rid, row) in typedef_table.iter().enumerate() {
-                            let scanning_rid = scanning_rid as u32 + 1; // Convert to 1-based RID
-                                                                        // Check 'extends' field (CodedIndex TypeDefOrRef)
-                            if row.extends.tag == table_id && row.extends.row == rid {
-                                references.push(crate::cilassembly::references::TableReference {
-                                    table_id: TId::TypeDef,
-                                    row_rid: scanning_rid,
-                                    column_name: "extends".to_string(),
-                                });
-                            }
-                        }
-                    }
-                }
-                // MethodDef table
-                TId::MethodDef => {
-                    if let Some(_methoddef_table) =
-                        tables.table::<crate::metadata::tables::MethodDefRaw>()
-                    {
-                        // MethodDef references are typically reverse (methods belong to types)
-                        // We would check if the method belongs to the target type
-                        // For now, we'll skip detailed checking since it requires range analysis
-                    }
-                }
-                // MemberRef table
-                TId::MemberRef => {
-                    if let Some(memberref_table) =
-                        tables.table::<crate::metadata::tables::MemberRefRaw>()
-                    {
-                        for (scanning_rid, row) in memberref_table.iter().enumerate() {
-                            let scanning_rid = scanning_rid as u32 + 1; // Convert to 1-based RID
-                                                                        // Check 'class' field (CodedIndex MemberRefParent)
-                            if row.class.tag == table_id && row.class.row == rid {
-                                references.push(crate::cilassembly::references::TableReference {
-                                    table_id: TId::MemberRef,
-                                    row_rid: scanning_rid,
-                                    column_name: "class".to_string(),
-                                });
-                            }
-                        }
-                    }
-                }
-                // InterfaceImpl table
-                TId::InterfaceImpl => {
-                    if let Some(interfaceimpl_table) =
-                        tables.table::<crate::metadata::tables::InterfaceImplRaw>()
-                    {
-                        for (scanning_rid, row) in interfaceimpl_table.iter().enumerate() {
-                            let scanning_rid = scanning_rid as u32 + 1; // Convert to 1-based RID
-                                                                        // Check 'class' field (direct TypeDef reference)
-                            if table_id == TId::TypeDef && row.class == rid {
-                                references.push(crate::cilassembly::references::TableReference {
-                                    table_id: TId::InterfaceImpl,
-                                    row_rid: scanning_rid,
-                                    column_name: "class".to_string(),
-                                });
-                            }
-                            // Check 'interface' field (CodedIndex TypeDefOrRef)
-                            if row.interface.tag == table_id && row.interface.row == rid {
-                                references.push(crate::cilassembly::references::TableReference {
-                                    table_id: TId::InterfaceImpl,
-                                    row_rid: scanning_rid,
-                                    column_name: "interface".to_string(),
-                                });
-                            }
-                        }
-                    }
-                }
-                // CustomAttribute table
-                TId::CustomAttribute => {
-                    if let Some(customattr_table) =
-                        tables.table::<crate::metadata::tables::CustomAttributeRaw>()
-                    {
-                        for (scanning_rid, row) in customattr_table.iter().enumerate() {
-                            let scanning_rid = scanning_rid as u32 + 1; // Convert to 1-based RID
-                                                                        // Check 'parent' field (CodedIndex HasCustomAttribute)
-                            if row.parent.tag == table_id && row.parent.row == rid {
-                                references.push(crate::cilassembly::references::TableReference {
-                                    table_id: TId::CustomAttribute,
-                                    row_rid: scanning_rid,
-                                    column_name: "parent".to_string(),
-                                });
-                            }
-                            // Check 'constructor' field (CodedIndex CustomAttributeType)
-                            if row.constructor.tag == table_id && row.constructor.row == rid {
-                                references.push(crate::cilassembly::references::TableReference {
-                                    table_id: TId::CustomAttribute,
-                                    row_rid: scanning_rid,
-                                    column_name: "constructor".to_string(),
-                                });
-                            }
-                        }
-                    }
-                }
-                // TypeRef table
-                TId::TypeRef => {
-                    if let Some(typeref_table) =
-                        tables.table::<crate::metadata::tables::TypeRefRaw>()
-                    {
-                        for (scanning_rid, row) in typeref_table.iter().enumerate() {
-                            let scanning_rid = scanning_rid as u32 + 1; // Convert to 1-based RID
-                                                                        // Check 'resolution_scope' field (CodedIndex ResolutionScope)
-                            if row.resolution_scope.tag == table_id
-                                && row.resolution_scope.row == rid
-                            {
-                                references.push(crate::cilassembly::references::TableReference {
-                                    table_id: TId::TypeRef,
-                                    row_rid: scanning_rid,
-                                    column_name: "resolution_scope".to_string(),
-                                });
-                            }
-                        }
-                    }
-                }
-                // NestedClass table
-                TId::NestedClass => {
-                    if let Some(nestedclass_table) =
-                        tables.table::<crate::metadata::tables::NestedClassRaw>()
-                    {
-                        for (scanning_rid, row) in nestedclass_table.iter().enumerate() {
-                            let scanning_rid = scanning_rid as u32 + 1; // Convert to 1-based RID
-                                                                        // Check 'nested_class' field (direct TypeDef reference)
-                            if table_id == TId::TypeDef && row.nested_class == rid {
-                                references.push(crate::cilassembly::references::TableReference {
-                                    table_id: TId::NestedClass,
-                                    row_rid: scanning_rid,
-                                    column_name: "nested_class".to_string(),
-                                });
-                            }
-                            // Check 'enclosing_class' field (direct TypeDef reference)
-                            if table_id == TId::TypeDef && row.enclosing_class == rid {
-                                references.push(crate::cilassembly::references::TableReference {
-                                    table_id: TId::NestedClass,
-                                    row_rid: scanning_rid,
-                                    column_name: "enclosing_class".to_string(),
-                                });
-                            }
-                        }
-                    }
-                }
-                // Add more table scanning as needed
-                _ => {
-                    // For tables we haven't implemented scanning for yet,
-                    // we skip them. This is still a significant improvement
-                    // over the placeholder implementation.
-                }
-            }
-        }
-
-        Ok(references)
-    }
-
-    /// Nullifies a specific table reference by updating the referencing field to 0.
-    ///
-    /// Updates the specific field in the referencing table row to null/zero.
-    /// This implementation handles the most common reference types but can be
-    /// extended for additional table/field combinations as needed.
-    fn nullify_table_reference(
-        &mut self,
-        reference: crate::cilassembly::references::TableReference,
-    ) -> Result<()> {
-        use crate::metadata::tables::{CodedIndex, TableId as TId};
-        use crate::metadata::token::Token;
-
-        // Get the current row from the table
-        let Some(tables) = self.view.tables() else {
-            return Err(crate::Error::WriteLayoutFailed {
-                message: "No tables available for reference nullification".to_string(),
-            });
-        };
-
-        match reference.table_id {
-            TId::TypeDef => {
-                if let Some(typedef_table) = tables.table::<crate::metadata::tables::TypeDefRaw>() {
-                    if let Some(current_row) = typedef_table.get(reference.row_rid) {
-                        let mut modified_row = current_row.clone();
-
-                        match reference.column_name.as_str() {
-                            "extends" => {
-                                // Nullify the extends field (CodedIndex TypeDefOrRef)
-                                modified_row.extends = CodedIndex {
-                                    tag: TId::TypeDef, // Doesn't matter since row is 0
-                                    row: 0,
-                                    token: Token::new(0),
-                                };
-                            }
-                            _ => {
-                                return Err(crate::Error::WriteLayoutFailed {
-                                    message: format!(
-                                        "Unknown TypeDef column: {}",
-                                        reference.column_name
-                                    ),
-                                });
-                            }
-                        }
-
-                        // Apply the update using our existing update mechanism
-                        self.update_table_row(
-                            TId::TypeDef,
-                            reference.row_rid,
-                            crate::metadata::tables::TableDataOwned::TypeDef(modified_row),
-                        )?;
-                    }
-                }
-            }
-            TId::MemberRef => {
-                if let Some(memberref_table) =
-                    tables.table::<crate::metadata::tables::MemberRefRaw>()
-                {
-                    if let Some(current_row) = memberref_table.get(reference.row_rid) {
-                        let mut modified_row = current_row.clone();
-
-                        match reference.column_name.as_str() {
-                            "class" => {
-                                // Nullify the class field (CodedIndex MemberRefParent)
-                                modified_row.class = CodedIndex {
-                                    tag: TId::TypeDef, // Doesn't matter since row is 0
-                                    row: 0,
-                                    token: Token::new(0),
-                                };
-                            }
-                            _ => {
-                                return Err(crate::Error::WriteLayoutFailed {
-                                    message: format!(
-                                        "Unknown MemberRef column: {}",
-                                        reference.column_name
-                                    ),
-                                });
-                            }
-                        }
-
-                        // Apply the update
-                        self.update_table_row(
-                            TId::MemberRef,
-                            reference.row_rid,
-                            crate::metadata::tables::TableDataOwned::MemberRef(modified_row),
-                        )?;
-                    }
-                }
-            }
-            TId::InterfaceImpl => {
-                if let Some(interfaceimpl_table) =
-                    tables.table::<crate::metadata::tables::InterfaceImplRaw>()
-                {
-                    if let Some(current_row) = interfaceimpl_table.get(reference.row_rid) {
-                        let mut modified_row = current_row.clone();
-
-                        match reference.column_name.as_str() {
-                            "class" => {
-                                // Nullify the class field (direct TypeDef reference)
-                                modified_row.class = 0;
-                            }
-                            "interface" => {
-                                // Nullify the interface field (CodedIndex TypeDefOrRef)
-                                modified_row.interface = CodedIndex {
-                                    tag: TId::TypeDef, // Doesn't matter since row is 0
-                                    row: 0,
-                                    token: Token::new(0),
-                                };
-                            }
-                            _ => {
-                                return Err(crate::Error::WriteLayoutFailed {
-                                    message: format!(
-                                        "Unknown InterfaceImpl column: {}",
-                                        reference.column_name
-                                    ),
-                                });
-                            }
-                        }
-
-                        // Apply the update
-                        self.update_table_row(
-                            TId::InterfaceImpl,
-                            reference.row_rid,
-                            crate::metadata::tables::TableDataOwned::InterfaceImpl(modified_row),
-                        )?;
-                    }
-                }
-            }
-            TId::CustomAttribute => {
-                if let Some(customattr_table) =
-                    tables.table::<crate::metadata::tables::CustomAttributeRaw>()
-                {
-                    if let Some(current_row) = customattr_table.get(reference.row_rid) {
-                        let mut modified_row = current_row.clone();
-
-                        match reference.column_name.as_str() {
-                            "parent" => {
-                                // Nullify the parent field (CodedIndex HasCustomAttribute)
-                                modified_row.parent = CodedIndex {
-                                    tag: TId::TypeDef, // Doesn't matter since row is 0
-                                    row: 0,
-                                    token: Token::new(0),
-                                };
-                            }
-                            "constructor" => {
-                                // Nullify the constructor field (CodedIndex CustomAttributeType)
-                                modified_row.constructor = CodedIndex {
-                                    tag: TId::MethodDef, // Doesn't matter since row is 0
-                                    row: 0,
-                                    token: Token::new(0),
-                                };
-                            }
-                            _ => {
-                                return Err(crate::Error::WriteLayoutFailed {
-                                    message: format!(
-                                        "Unknown CustomAttribute column: {}",
-                                        reference.column_name
-                                    ),
-                                });
-                            }
-                        }
-
-                        // Apply the update
-                        self.update_table_row(
-                            TId::CustomAttribute,
-                            reference.row_rid,
-                            crate::metadata::tables::TableDataOwned::CustomAttribute(modified_row),
-                        )?;
-                    }
-                }
-            }
-            TId::TypeRef => {
-                if let Some(typeref_table) = tables.table::<crate::metadata::tables::TypeRefRaw>() {
-                    if let Some(current_row) = typeref_table.get(reference.row_rid) {
-                        let mut modified_row = current_row.clone();
-
-                        match reference.column_name.as_str() {
-                            "resolution_scope" => {
-                                // Nullify the resolution_scope field (CodedIndex ResolutionScope)
-                                modified_row.resolution_scope = CodedIndex {
-                                    tag: TId::Module, // Doesn't matter since row is 0
-                                    row: 0,
-                                    token: Token::new(0),
-                                };
-                            }
-                            _ => {
-                                return Err(crate::Error::WriteLayoutFailed {
-                                    message: format!(
-                                        "Unknown TypeRef column: {}",
-                                        reference.column_name
-                                    ),
-                                });
-                            }
-                        }
-
-                        // Apply the update
-                        self.update_table_row(
-                            TId::TypeRef,
-                            reference.row_rid,
-                            crate::metadata::tables::TableDataOwned::TypeRef(modified_row),
-                        )?;
-                    }
-                }
-            }
-            TId::NestedClass => {
-                if let Some(nestedclass_table) =
-                    tables.table::<crate::metadata::tables::NestedClassRaw>()
-                {
-                    if let Some(current_row) = nestedclass_table.get(reference.row_rid) {
-                        let mut modified_row = current_row.clone();
-
-                        match reference.column_name.as_str() {
-                            "nested_class" => {
-                                // Nullify the nested_class field (direct TypeDef reference)
-                                modified_row.nested_class = 0;
-                            }
-                            "enclosing_class" => {
-                                // Nullify the enclosing_class field (direct TypeDef reference)
-                                modified_row.enclosing_class = 0;
-                            }
-                            _ => {
-                                return Err(crate::Error::WriteLayoutFailed {
-                                    message: format!(
-                                        "Unknown NestedClass column: {}",
-                                        reference.column_name
-                                    ),
-                                });
-                            }
-                        }
-
-                        // Apply the update
-                        self.update_table_row(
-                            TId::NestedClass,
-                            reference.row_rid,
-                            crate::metadata::tables::TableDataOwned::NestedClass(modified_row),
-                        )?;
-                    }
-                }
-            }
-            _ => {
-                return Err(crate::Error::WriteLayoutFailed {
-                    message: format!(
-                        "Reference nullification not implemented for table: {:?}",
-                        reference.table_id
-                    ),
-                });
-            }
-        }
-
         Ok(())
     }
 
@@ -1170,7 +680,7 @@ impl CilAssembly {
     /// # Arguments
     ///
     /// * `path` - The path where the modified assembly should be written
-    pub fn write_to_file<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
+    pub fn write_to_file<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<()> {
         write::write_assembly_to_file(self, path)
     }
 
@@ -1191,7 +701,7 @@ impl CilAssembly {
     /// Gets a reference to the underlying PE file.
     ///
     /// This is a convenience method equivalent to `self.view().file()`.
-    pub fn file(&self) -> &crate::file::File {
+    pub fn file(&self) -> &File {
         self.view.file()
     }
 
@@ -1484,7 +994,7 @@ impl CilAssembly {
     ///     println!("DLL dependencies: {:?}", dll_names);
     /// }
     /// ```
-    pub fn native_imports(&self) -> Option<&UnifiedImportContainer> {
+    pub fn native_imports(&self) -> &UnifiedImportContainer {
         self.changes.native_imports()
     }
 
@@ -1510,7 +1020,7 @@ impl CilAssembly {
     ///     println!("Exported functions: {:?}", function_names);
     /// }
     /// ```
-    pub fn native_exports(&self) -> Option<&UnifiedExportContainer> {
+    pub fn native_exports(&self) -> &UnifiedExportContainer {
         self.changes.native_exports()
     }
 

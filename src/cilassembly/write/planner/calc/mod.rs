@@ -68,12 +68,14 @@
 //! - [`crate::cilassembly::write::utils`] - Utility functions for table calculations
 //! - [`crate::metadata::tables`] - Table schema and size information
 
-mod alignment;
-pub(crate) mod heaps;
+mod heaps;
 mod tables;
 
-pub use super::heap_expansions::HeapExpansions;
-pub use alignment::compressed_uint_size;
+pub use crate::cilassembly::write::planner::heap_expansions::HeapExpansions;
+pub(crate) use heaps::{
+    calculate_blob_heap_size, calculate_guid_heap_size, calculate_string_heap_size,
+    calculate_string_heap_total_size, calculate_userstring_heap_size,
+};
 pub use tables::{calculate_new_row_count, calculate_table_stream_expansion};
 
 #[cfg(test)]

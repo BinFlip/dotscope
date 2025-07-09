@@ -4,11 +4,80 @@
 //! coordinating the complete layout planning process. LayoutPlan serves as the
 //! central coordinator that brings together all aspects of layout planning.
 //!
+//! # Key Components
+//!
+//! - [`LayoutPlan`] - Central coordinator for complete layout planning with comprehensive analysis methods
+//!
 //! # Architecture
 //!
 //! LayoutPlan implements a type-driven approach where the plan itself provides
 //! methods for creation, analysis, and coordination rather than relying on
-//! external functions.
+//! external functions. It serves as the complete blueprint for binary generation.
+//!
+//! ## Planning Process
+//!
+//! The layout planning process follows these stages:
+//!
+//! 1. **Heap Analysis**: Calculate heap expansions needed for metadata modifications
+//! 2. **Metadata Processing**: Identify all metadata modifications and stream changes
+//! 3. **Table Analysis**: Identify table modification regions and requirements
+//! 4. **Native Tables**: Calculate native PE table requirements (imports/exports)
+//! 5. **File Layout**: Create complete file layout with proper section placement
+//! 6. **RVA Allocation**: Allocate RVAs for native tables using the complete layout
+//! 7. **Layout Updates**: Update layout to accommodate native table requirements
+//! 8. **PE Updates**: Determine PE header updates needed for the new structure
+//! 9. **Size Calculation**: Calculate total size based on complete layout
+//!
+//! ## Coordination Role
+//!
+//! LayoutPlan coordinates between:
+//! - Heap expansion calculations
+//! - Metadata modification tracking
+//! - File layout planning
+//! - PE header updates
+//! - Native table requirements
+//!
+//! # Usage Examples
+//!
+//! ```rust,ignore
+//! use crate::cilassembly::write::planner::layout::plan::LayoutPlan;
+//! use crate::cilassembly::CilAssembly;
+//!
+//! # let mut assembly = CilAssembly::new(view);
+//! // Create a complete layout plan using type-driven API
+//! let layout_plan = LayoutPlan::create(&mut assembly)?;
+//!
+//! // Access components with rich methods
+//! let tables_offset = layout_plan.tables_stream_offset(&assembly)?;
+//! let metadata_section = layout_plan.file_layout.find_metadata_section()?;
+//!
+//! // Check what updates are needed
+//! if layout_plan.requires_updates() {
+//!     println!("File modifications needed: {}", layout_plan.summary());
+//! }
+//!
+//! // Analyze specific modifications
+//! for table_id in layout_plan.modified_table_ids() {
+//!     if let Some(modification) = layout_plan.find_table_modification(table_id) {
+//!         println!("Table {:?} will be modified", table_id);
+//!     }
+//! }
+//! # Ok::<(), crate::Error>(())
+//! ```
+//!
+//! # Thread Safety
+//!
+//! This type is [`Send`] and [`Sync`] as it contains only computed planning data
+//! without any shared mutable state, making it safe for concurrent access.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::cilassembly::write::planner::layout`] - File layout coordination
+//! - [`crate::cilassembly::write::planner::metadata`] - Metadata modification tracking
+//! - [`crate::cilassembly::write::planner::tables`] - Table analysis and native table requirements
+//! - [`crate::cilassembly::write::planner::updates`] - PE header update calculations
+//! - [`crate::cilassembly::write::planner::memory`] - Size calculation utilities
 
 use crate::{
     cilassembly::{
@@ -30,38 +99,65 @@ use crate::{
 /// It serves as the complete blueprint for transforming a modified assembly into
 /// a valid binary file.
 ///
-/// # Type-Driven API
-/// Instead of using static `create_layout_plan()` functions, LayoutPlan provides
+/// # Design Philosophy
+///
+/// Instead of using static `create_layout_plan()` functions, [`LayoutPlan`] provides
 /// a `create()` method that encapsulates the planning process and makes the API
-/// more discoverable and intuitive.
+/// more discoverable and intuitive. This type-driven approach centralizes all
+/// layout planning logic within the plan itself.
 ///
 /// # Structure
+///
 /// The plan calculates the complete new file structure including:
 /// - PE section relocations when metadata grows
 /// - New stream offsets after section relocation
 /// - Updated metadata root structure
 /// - Complete file layout from start to finish
 /// - All required PE header modifications
+/// - Native table requirements and RVA allocations
 ///
-/// # Examples
+/// # Fields
+///
+/// - `total_size` - Total size needed for the output file in bytes
+/// - `original_size` - Size of the original file for comparison
+/// - `file_layout` - Complete file layout plan with section placements
+/// - `pe_updates` - PE structure updates needed for header modifications
+/// - `metadata_modifications` - Metadata modifications that need to be applied
+/// - `heap_expansions` - Heap expansion information with calculated sizes
+/// - `table_modifications` - Table modification regions requiring updates
+/// - `native_table_requirements` - Native PE table requirements for import/export tables
+///
+/// # Usage Examples
+///
 /// ```rust,ignore
-/// use crate::cilassembly::write::planner::layout::LayoutPlan;
+/// use crate::cilassembly::write::planner::layout::plan::LayoutPlan;
 /// use crate::cilassembly::CilAssembly;
 ///
-/// # let assembly = CilAssembly::empty(); // placeholder
+/// # let mut assembly = CilAssembly::new(view);
 /// // Create a complete layout plan using type-driven API
-/// let layout_plan = LayoutPlan::create(&assembly)?;
+/// let layout_plan = LayoutPlan::create(&mut assembly)?;
 ///
 /// // Access components with rich methods
 /// let tables_offset = layout_plan.tables_stream_offset(&assembly)?;
 /// let metadata_section = layout_plan.file_layout.find_metadata_section()?;
 ///
 /// // Check what updates are needed
-/// if layout_plan.pe_updates.section_table_needs_update {
-///     println!("PE section table needs updating");
+/// if layout_plan.requires_updates() {
+///     println!("File modifications needed: {}", layout_plan.summary());
+/// }
+///
+/// // Analyze size impact
+/// let size_increase = layout_plan.size_increase();
+/// if size_increase > 0 {
+///     println!("File will grow by {} bytes", size_increase);
 /// }
 /// # Ok::<(), crate::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// This type is [`Send`] and [`Sync`] as it contains only computed planning data
+/// without any shared mutable state, making it safe for concurrent access.
 #[derive(Debug, Clone)]
 pub struct LayoutPlan {
     /// Total size needed for the output file in bytes.
@@ -105,27 +201,50 @@ impl LayoutPlan {
     /// modifications, expansions, and relocations needed to produce a valid output file.
     ///
     /// # Arguments
-    /// * `assembly` - The assembly containing modifications to analyze
+    ///
+    /// * `assembly` - The [`crate::cilassembly::CilAssembly`] containing modifications to analyze
     ///
     /// # Returns
-    /// Returns a complete layout plan with all layout information.
+    ///
+    /// Returns a complete [`LayoutPlan`] with all layout information calculated.
     ///
     /// # Errors
-    /// Returns an error if layout planning fails due to invalid assembly structure
-    /// or calculation errors.
+    ///
+    /// Returns [`crate::Error`] if layout planning fails due to:
+    /// - Invalid assembly structure
+    /// - Calculation errors during size computation
+    /// - File layout conflicts or overlaps
+    /// - Native table allocation failures
     ///
     /// # Process
-    /// 1. Analyzes heap expansions and metadata modifications
-    /// 2. Calculates section relocations and size changes
-    /// 3. Determines PE header updates required
-    /// 4. Creates complete file layout with proper alignment
+    ///
+    /// The creation process follows these stages:
+    /// 1. **Heap Analysis**: Calculate heap expansions needed for metadata modifications
+    /// 2. **Metadata Processing**: Identify all metadata modifications and stream changes
+    /// 3. **Table Analysis**: Identify table modification regions and requirements
+    /// 4. **Native Tables**: Calculate native PE table requirements (imports/exports)
+    /// 5. **File Layout**: Create complete file layout with proper section placement
+    /// 6. **RVA Allocation**: Allocate RVAs for native tables using the complete layout
+    /// 7. **Layout Updates**: Update layout to accommodate native table requirements
+    /// 8. **PE Updates**: Determine PE header updates needed for the new structure
+    /// 9. **Size Calculation**: Calculate total size based on complete layout
     ///
     /// # Examples
+    ///
     /// ```rust,ignore
-    /// let layout_plan = LayoutPlan::create(&assembly)?;
+    /// use crate::cilassembly::write::planner::layout::plan::LayoutPlan;
+    /// use crate::cilassembly::CilAssembly;
+    ///
+    /// # let mut assembly = CilAssembly::new(view);
+    /// // Create a complete layout plan
+    /// let layout_plan = LayoutPlan::create(&mut assembly)?;
+    ///
     /// println!("Total size: {} bytes", layout_plan.total_size);
+    /// println!("Size increase: {} bytes", layout_plan.size_increase());
+    /// println!("Updates needed: {}", layout_plan.requires_updates());
+    /// # Ok::<(), crate::Error>(())
     /// ```
-    pub fn create(assembly: &CilAssembly) -> Result<Self> {
+    pub fn create(assembly: &mut CilAssembly) -> Result<Self> {
         // Get the original file size from the assembly view
         let original_size = assembly.file().file_size();
 
@@ -138,12 +257,23 @@ impl LayoutPlan {
         // Identify table modification regions
         let table_modifications = tables::identify_table_modifications(assembly)?;
 
-        // Calculate native PE table requirements
-        let native_table_requirements = tables::calculate_native_table_requirements(assembly)?;
+        // Calculate native PE table requirements (size calculation only, no RVA allocation yet)
+        let mut native_table_requirements = tables::calculate_native_table_requirements(assembly)?;
 
         // Calculate complete file layout with proper section placement
         let mut file_layout =
             FileLayout::calculate(assembly, &heap_expansions, &mut metadata_modifications)?;
+
+        // Now allocate RVAs for native tables using the complete file layout
+        if native_table_requirements.needs_import_tables
+            || native_table_requirements.needs_export_tables
+        {
+            tables::allocate_native_table_rvas_with_layout(
+                assembly,
+                &file_layout,
+                &mut native_table_requirements,
+            )?;
+        }
 
         // Update file layout to accommodate native table requirements
         updates::update_layout_for_native_tables(&mut file_layout, &native_table_requirements)?;
@@ -326,9 +456,8 @@ mod tests {
     fn test_layout_plan_create() {
         let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))
             .expect("Failed to load test assembly");
-        let assembly = view.to_owned();
-
-        let result = LayoutPlan::create(&assembly);
+        let mut assembly = view.to_owned();
+        let result = LayoutPlan::create(&mut assembly);
         assert!(result.is_ok(), "Layout plan creation should succeed");
 
         let plan = result.unwrap();
@@ -345,9 +474,8 @@ mod tests {
     fn test_layout_plan_basic_properties() {
         let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))
             .expect("Failed to load test assembly");
-        let assembly = view.to_owned();
-
-        let layout_plan = LayoutPlan::create(&assembly).expect("Failed to create layout plan");
+        let mut assembly = view.to_owned();
+        let layout_plan = LayoutPlan::create(&mut assembly).expect("Failed to create layout plan");
 
         // Basic sanity checks
         assert!(
@@ -370,9 +498,8 @@ mod tests {
     fn test_tables_stream_offset() {
         let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))
             .expect("Failed to load test assembly");
-        let assembly = view.to_owned();
-
-        let layout_plan = LayoutPlan::create(&assembly).expect("Failed to create layout plan");
+        let mut assembly = view.to_owned();
+        let layout_plan = LayoutPlan::create(&mut assembly).expect("Failed to create layout plan");
 
         let tables_offset = layout_plan.tables_stream_offset(&assembly);
         assert!(

@@ -897,10 +897,10 @@ mod tests {
             let mut changes = AssemblyChanges::empty();
 
             // Add some strings to heap
-            let mut string_changes = HeapChanges::new(203732); // WindowsBase.dll string heap size
+            let mut string_changes = HeapChanges::new(203731); // WindowsBase.dll string heap size
             string_changes.appended_items.push("Hello".to_string());
             string_changes.appended_items.push("World".to_string());
-            string_changes.next_index = 203734; // Original size + 2
+            string_changes.next_index = 203733; // Original size + 2
             changes.string_heap_changes = string_changes;
 
             let remapper = IndexRemapper::build_from_changes(&changes, &view);
@@ -908,11 +908,11 @@ mod tests {
             // Check that original indices are preserved
             assert_eq!(remapper.map_string_index(1), Some(1));
             assert_eq!(remapper.map_string_index(100), Some(100));
-            assert_eq!(remapper.map_string_index(203732), Some(203732));
+            assert_eq!(remapper.map_string_index(203731), Some(203731));
 
             // Check that new strings get sequential mapping
-            assert_eq!(remapper.map_string_index(203733), Some(203733)); // First new string
-            assert_eq!(remapper.map_string_index(203734), Some(203734)); // Second new string
+            assert_eq!(remapper.map_string_index(203732), Some(203732)); // First new string
+            assert_eq!(remapper.map_string_index(203733), Some(203733)); // Second new string
         }
     }
 
@@ -1025,9 +1025,9 @@ mod tests {
             let mut changes = AssemblyChanges::empty();
 
             // Add string changes
-            let mut string_changes = HeapChanges::new(203732);
+            let mut string_changes = HeapChanges::new(203731);
             string_changes.appended_items.push("Test".to_string());
-            string_changes.next_index = 203733;
+            string_changes.next_index = 203732;
             changes.string_heap_changes = string_changes;
 
             // Add blob changes
@@ -1052,7 +1052,7 @@ mod tests {
             assert!(!remapper.table_maps.is_empty());
 
             // Test specific mappings
-            assert_eq!(remapper.map_string_index(203733), Some(203733));
+            assert_eq!(remapper.map_string_index(203732), Some(203732));
             assert_eq!(remapper.map_blob_index(77817), Some(77817));
             assert!(remapper.get_table_remapper(TableId::TypeDef).is_some());
         }

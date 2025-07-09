@@ -80,7 +80,10 @@
 use crate::{
     cilassembly::{
         write::{
-            planner::calc::{self, HeapExpansions},
+            planner::calc::{
+                self, calculate_string_heap_total_size, calculate_table_stream_expansion,
+                HeapExpansions,
+            },
             utils::align_to_4_bytes,
         },
         CilAssembly,
@@ -233,13 +236,25 @@ pub fn extract_metadata_layout(
 
         // Add expansion size for heap streams and table stream
         match stream.name.as_str() {
-            "#Strings" => size += heap_expansions.string_heap_addition as u32,
+            "#Strings" => {
+                // Check if we need heap reconstruction
+                let string_changes = &assembly.changes().string_heap_changes;
+                if string_changes.has_additions()
+                    || string_changes.has_modifications()
+                    || string_changes.has_removals()
+                {
+                    // Use total reconstructed heap size for any changes
+                    let total_heap_size =
+                        calculate_string_heap_total_size(&string_changes, assembly)?;
+                    size = total_heap_size as u32;
+                }
+            }
             "#Blob" => size += heap_expansions.blob_heap_addition as u32,
             "#GUID" => size += heap_expansions.guid_heap_addition as u32,
             "#US" => size += heap_expansions.userstring_heap_addition as u32,
             "#~" | "#-" => {
                 // Add space for additional table rows
-                let table_expansion = calc::calculate_table_stream_expansion(assembly)?;
+                let table_expansion = calculate_table_stream_expansion(assembly)?;
                 size += table_expansion as u32;
             }
             _ => {} // Other streams remain unchanged
@@ -339,17 +354,22 @@ fn create_string_stream_modification(assembly: &CilAssembly) -> Result<StreamMod
             message: "Stream #Strings not found in original file".to_string(),
         })?;
 
-    let rebuilt_heap_size = HeapExpansions::calculate_string_heap_size(assembly)?;
     let (write_offset, size_field_offset) = calculate_stream_offsets(assembly, "#Strings")?;
 
     let string_changes = &assembly.changes().string_heap_changes;
-    let (new_size, additional_data_size) =
-        if string_changes.has_modifications() || string_changes.has_removals() {
-            let additional = rebuilt_heap_size.saturating_sub(stream.size as u64);
-            (rebuilt_heap_size, additional)
-        } else {
-            (stream.size as u64 + rebuilt_heap_size, rebuilt_heap_size)
-        };
+    let has_modifications = string_changes.has_modifications();
+    let has_removals = string_changes.has_removals();
+    let has_additions = string_changes.has_additions();
+
+    let (new_size, additional_data_size) = if has_additions || has_modifications || has_removals {
+        // Heap writer always does reconstruction for ANY changes, so use total reconstructed heap size
+        let total_heap_size = calculate_string_heap_total_size(&string_changes, assembly)?;
+        let additional = total_heap_size.saturating_sub(stream.size as u64);
+        (total_heap_size, additional)
+    } else {
+        // No changes at all
+        (stream.size as u64, 0)
+    };
 
     Ok(StreamModification {
         name: "#Strings".to_string(),
@@ -644,12 +664,11 @@ pub fn calculate_metadata_root_header_size(assembly: &CilAssembly) -> Result<u64
 
     let mut size = 16u64; // Base header
 
-    // Add version string size (we'll use the original size)
-    let version_string = get_metadata_version_string();
-    let version_size = ((version_string.len() + 4) & !3) as u64; // Align to 4 bytes
-    size += version_size;
+    // Add version string size (use the original metadata root's length field)
+    let metadata_root = view.metadata_root();
+    size += metadata_root.length as u64;
 
-    size += 2; // Flags and stream count
+    size += 4; // Flags (2 bytes) and stream count (2 bytes)
 
     // Add stream directory size
     for stream in streams {

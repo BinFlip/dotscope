@@ -313,13 +313,31 @@ impl HeapChanges<String> {
     ///
     /// This properly calculates byte positions for string heap entries by tracking
     /// the cumulative size of each string including null terminators.
+    /// When strings are modified, this uses the FINAL modified sizes for proper indexing.
     pub fn string_items_with_indices(&self) -> impl Iterator<Item = (u32, &String)> {
         let mut current_index = self.next_index;
-        // Calculate total size of all items to find the starting index
+        // Calculate total size of all items using FINAL sizes (after modifications)
         let total_size: u32 = self
             .appended_items
             .iter()
-            .map(|s| (s.len() + 1) as u32) // UTF-8 bytes + null terminator
+            .enumerate()
+            .map(|(_i, original_string)| {
+                // Calculate the API index for this appended item
+                let mut api_index = self.next_index;
+                for item in self.appended_items.iter().rev() {
+                    api_index -= (item.len() + 1) as u32;
+                    if std::ptr::eq(item, original_string) {
+                        break;
+                    }
+                }
+
+                // Check if this string is modified and use the final size
+                if let Some(modified_string) = self.get_modification(api_index) {
+                    (modified_string.len() + 1) as u32
+                } else {
+                    (original_string.len() + 1) as u32
+                }
+            })
             .sum();
         current_index -= total_size;
 
@@ -327,7 +345,24 @@ impl HeapChanges<String> {
             .iter()
             .scan(current_index, |index, item| {
                 let current = *index;
-                *index += (item.len() + 1) as u32; // UTF-8 bytes + null terminator
+
+                // Calculate the API index for this item
+                let mut api_index = self.next_index;
+                for rev_item in self.appended_items.iter().rev() {
+                    api_index -= (rev_item.len() + 1) as u32;
+                    if std::ptr::eq(rev_item, item) {
+                        break;
+                    }
+                }
+
+                // Use final size (modified or original) for index advancement
+                let final_size = if let Some(modified_string) = self.get_modification(api_index) {
+                    (modified_string.len() + 1) as u32
+                } else {
+                    (item.len() + 1) as u32
+                };
+
+                *index += final_size;
                 Some((current, item))
             })
     }

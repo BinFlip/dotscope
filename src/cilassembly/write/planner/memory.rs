@@ -1,23 +1,119 @@
 //! Memory and size calculation utilities for layout planning.
 //!
-//! This module provides basic memory-related calculations for assembly binary generation,
-//! focusing on file size determinations and memory layout utilities.
+//! This module provides comprehensive memory-related calculations for assembly binary generation,
+//! focusing on file size determinations, memory layout utilities, and space allocation strategies.
+//! It handles the complex task of finding and allocating space within PE sections while respecting
+//! section boundaries and maintaining proper alignment.
+//!
+//! # Key Components
+//!
+//! - [`rva_to_file_offset_for_planning`] - RVA to file offset conversion for planning
+//! - [`calculate_total_size_from_layout`] - Total file size calculation from layout
+//! - [`get_available_space_after_rva`] - Available space analysis after specific RVA
+//! - [`find_space_in_sections`] - Space allocation within existing sections
+//! - [`allocate_at_end_of_sections`] - Allocation at section boundaries
+//! - [`extend_section_for_allocation`] - Section extension for additional space
+//!
+//! # Architecture
+//!
+//! The memory management system provides several allocation strategies:
+//!
+//! ## Padding Space Allocation
+//! The system can find and utilize padding bytes (0x00 or 0xCC) within existing sections:
+//! - Scans section content for contiguous padding regions
+//! - Ensures proper 8-byte alignment for PE tables
+//! - Validates that space is genuinely available, not just theoretically unused
+//!
+//! ## Section Boundary Allocation
+//! For larger allocations, the system can utilize space at section boundaries:
+//! - Allocates space between raw data end and virtual section end
+//! - Maintains proper PE structure without creating overlays
+//! - Respects section virtual size limits
+//!
+//! ## Section Extension
+//! When existing space is insufficient, the system can extend sections:
+//! - Extends the last section to accommodate new allocations
+//! - Updates virtual sizes to maintain PE structure integrity
+//! - Calculates new file sizes to accommodate extensions
+//!
+//! # Usage Examples
+//!
+//! ```rust,ignore
+//! use crate::cilassembly::write::planner::memory::{
+//!     calculate_total_size_from_layout, find_space_in_sections
+//! };
+//! use crate::cilassembly::CilAssembly;
+//! use crate::cilassembly::write::planner::{FileLayout, NativeTableRequirements};
+//!
+//! # let assembly = CilAssembly::new(view);
+//! # let file_layout = FileLayout::calculate(&assembly, &heap_expansions, &mut metadata_modifications)?;
+//! # let native_requirements = NativeTableRequirements::default();
+//! // Calculate total file size from layout
+//! let total_size = calculate_total_size_from_layout(&assembly, &file_layout, &native_requirements);
+//! println!("Total file size: {} bytes", total_size);
+//!
+//! // Find space for a table within existing sections
+//! let allocated_regions = vec![(0x2000, 0x100)]; // Example allocated regions
+//! if let Some(rva) = find_space_in_sections(&assembly, 0x200, &allocated_regions)? {
+//!     println!("Found space at RVA: 0x{:X}", rva);
+//! }
+//! # Ok::<(), crate::Error>(())
+//! ```
+//!
+//! # Thread Safety
+//!
+//! All functions in this module are [`Send`] and [`Sync`] as they perform pure calculations
+//! and analysis on immutable data without maintaining any mutable state.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::cilassembly::write::planner::validation`] - Space allocation validation
+//! - [`crate::cilassembly::write::planner::FileLayout`] - File layout planning
+//! - [`crate::cilassembly::write::planner::NativeTableRequirements`] - Native table space requirements
+//! - [`crate::cilassembly::file`] - PE file structure analysis
 
-use crate::{cilassembly::CilAssembly, Error, Result};
-
-use super::{validation, FileLayout, NativeTableRequirements};
+use crate::{
+    cilassembly::{
+        write::planner::{validation, FileLayout, NativeTableRequirements},
+        CilAssembly,
+    },
+    Error, Result,
+};
 
 /// Converts RVA to file offset for planning purposes.
 ///
 /// This is a simplified version that assumes a 1:1 mapping for new allocations
-/// beyond existing sections. For existing sections, it uses the section mapping.
+/// beyond existing sections. For existing sections, it uses the section mapping
+/// to provide accurate file offset calculations.
 ///
 /// # Arguments
-/// * `assembly` - The assembly to analyze
+///
+/// * `assembly` - The [`crate::cilassembly::CilAssembly`] to analyze
 /// * `rva` - The RVA (Relative Virtual Address) to convert
 ///
 /// # Returns
-/// Returns the corresponding file offset.
+///
+/// Returns the corresponding file offset as a [`u64`].
+///
+/// # Algorithm
+///
+/// 1. **Section Scan**: Iterate through all sections to find the one containing the RVA
+/// 2. **Offset Calculation**: For RVAs within sections, calculate file offset using section mapping
+/// 3. **Fallback**: For RVAs beyond existing sections, assume 1:1 mapping for new allocations
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use crate::cilassembly::write::planner::memory::rva_to_file_offset_for_planning;
+/// use crate::cilassembly::CilAssembly;
+///
+/// # let assembly = CilAssembly::new(view);
+/// // Convert RVA to file offset
+/// let file_offset = rva_to_file_offset_for_planning(&assembly, 0x2000)?;
+/// println!("RVA 0x2000 maps to file offset: 0x{:X}", file_offset);
+/// # Ok::<(), crate::Error>(())
+/// ```
 pub fn rva_to_file_offset_for_planning(assembly: &CilAssembly, rva: u32) -> Result<u64> {
     let file = assembly.file();
 
@@ -41,15 +137,41 @@ pub fn rva_to_file_offset_for_planning(assembly: &CilAssembly, rva: u32) -> Resu
 ///
 /// This function determines the final file size by finding the maximum end offset
 /// of all file regions including headers, sections, and native tables. It also
-/// preserves any trailing data from the original file.
+/// preserves any trailing data from the original file to ensure certificate
+/// tables and other trailing structures are not truncated.
 ///
 /// # Arguments
-/// * `assembly` - The assembly for context
-/// * `file_layout` - The complete file layout with all regions
+///
+/// * `assembly` - The [`crate::cilassembly::CilAssembly`] for context
+/// * `file_layout` - The complete [`crate::cilassembly::write::planner::FileLayout`] with all regions
 /// * `native_requirements` - Native table space requirements
 ///
 /// # Returns
-/// Returns the total file size needed in bytes.
+///
+/// Returns the total file size needed in bytes as a [`u64`].
+///
+/// # Algorithm
+///
+/// 1. **Region Analysis**: Find maximum end offset of all file regions (headers, sections)
+/// 2. **Native Table Space**: Account for import and export table space requirements
+/// 3. **Trailing Data**: Preserve original file size if it extends beyond calculated layout
+/// 4. **Size Determination**: Return maximum of calculated size and original file size
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use crate::cilassembly::write::planner::memory::calculate_total_size_from_layout;
+/// use crate::cilassembly::CilAssembly;
+/// use crate::cilassembly::write::planner::{FileLayout, NativeTableRequirements};
+///
+/// # let assembly = CilAssembly::new(view);
+/// # let file_layout = FileLayout::calculate(&assembly, &heap_expansions, &mut metadata_modifications)?;
+/// # let native_requirements = NativeTableRequirements::default();
+/// // Calculate total file size
+/// let total_size = calculate_total_size_from_layout(&assembly, &file_layout, &native_requirements);
+/// println!("Total file size: {} bytes", total_size);
+/// # Ok::<(), crate::Error>(())
+/// ```
 pub fn calculate_total_size_from_layout(
     assembly: &CilAssembly,
     file_layout: &FileLayout,
@@ -63,7 +185,8 @@ pub fn calculate_total_size_from_layout(
     max_end = max_end.max(file_layout.section_table.offset + file_layout.section_table.size);
 
     for section in &file_layout.sections {
-        max_end = max_end.max(section.file_region.offset + section.file_region.size);
+        let section_end = section.file_region.offset + section.file_region.size;
+        max_end = max_end.max(section_end);
     }
 
     // Account for native table space requirements

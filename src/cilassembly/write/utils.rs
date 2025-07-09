@@ -10,6 +10,7 @@
 //! - [`crate::cilassembly::write::utils::find_metadata_section`] - Metadata section location utility
 //! - [`crate::cilassembly::write::utils::find_stream_layout`] - Stream layout search utility
 //! - [`crate::cilassembly::write::utils::calculate_table_row_size`] - Universal table row size calculation
+//! - [`crate::cilassembly::write::utils::compressed_uint_size`] - ECMA-335 compressed integer size calculation
 //! - [`crate::cilassembly::write::utils::align_to`] - General alignment utility
 //! - [`crate::cilassembly::write::utils::align_to_4_bytes`] - ECMA-335 metadata alignment utility
 //!
@@ -158,6 +159,40 @@ pub fn find_stream_layout<'a>(
 /// - Cross-table reference fields (depending on target table sizes)
 pub fn calculate_table_row_size(table_id: TableId, table_info: &TableInfoRef) -> u32 {
     dispatch_table_type!(table_id, |RawType| RawType::row_size(table_info))
+}
+
+/// Calculates the size of a compressed uint according to ECMA-335.
+///
+/// Returns the number of bytes needed to encode the given value using the
+/// ECMA-335 compressed integer format used in blob and userstring heaps:
+/// - Values < 0x80 use 1 byte
+/// - Values < 0x4000 use 2 bytes  
+/// - Larger values use 4 bytes
+///
+/// This function is used throughout the write pipeline for calculating
+/// heap entry sizes and layout planning.
+///
+/// # Arguments
+/// * `value` - The value to calculate encoding size for
+///
+/// # Returns
+/// The number of bytes (1, 2, or 4) needed to encode the value
+///
+/// # Examples
+/// ```ignore
+/// # use crate::cilassembly::write::utils::compressed_uint_size;
+/// assert_eq!(compressed_uint_size(50), 1);    // 0-127: 1 byte
+/// assert_eq!(compressed_uint_size(200), 2);   // 128-16383: 2 bytes  
+/// assert_eq!(compressed_uint_size(20000), 4); // 16384+: 4 bytes
+/// ```
+pub fn compressed_uint_size(value: usize) -> u64 {
+    if value < 0x80 {
+        1
+    } else if value < 0x4000 {
+        2
+    } else {
+        4
+    }
 }
 
 /// Aligns a value to the next multiple of the given alignment.
@@ -393,6 +428,24 @@ mod tests {
         assert_eq!(align_to_4_bytes(3), 4, "3 should align to 4");
         assert_eq!(align_to_4_bytes(4), 4, "4 should remain 4");
         assert_eq!(align_to_4_bytes(5), 8, "5 should align to 8");
+    }
+
+    #[test]
+    fn test_compressed_uint_size() {
+        // Single byte range (0-127)
+        assert_eq!(compressed_uint_size(0), 1);
+        assert_eq!(compressed_uint_size(50), 1);
+        assert_eq!(compressed_uint_size(0x7F), 1);
+
+        // Two byte range (128-16383)
+        assert_eq!(compressed_uint_size(0x80), 2);
+        assert_eq!(compressed_uint_size(200), 2);
+        assert_eq!(compressed_uint_size(0x3FFF), 2);
+
+        // Four byte range (16384+)
+        assert_eq!(compressed_uint_size(0x4000), 4);
+        assert_eq!(compressed_uint_size(20000), 4);
+        assert_eq!(compressed_uint_size(0x10000), 4);
     }
 
     // Note: Layout search functionality is tested through integration tests

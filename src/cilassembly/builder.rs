@@ -22,7 +22,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    cilassembly::CilAssembly,
+    cilassembly::{CilAssembly, ReferenceHandlingStrategy},
     metadata::{
         signatures::{
             encode_field_signature, encode_local_var_signature, encode_method_signature,
@@ -757,7 +757,6 @@ impl BuilderContext {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn remove_string(&mut self, index: u32, remove_references: bool) -> Result<()> {
-        use crate::cilassembly::ReferenceHandlingStrategy;
         let strategy = if remove_references {
             ReferenceHandlingStrategy::RemoveReferences
         } else {
@@ -783,7 +782,6 @@ impl BuilderContext {
     /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
     /// * `remove_references` - If true, automatically removes all references; if false, fails if references exist
     pub fn remove_blob(&mut self, index: u32, remove_references: bool) -> Result<()> {
-        use crate::cilassembly::ReferenceHandlingStrategy;
         let strategy = if remove_references {
             ReferenceHandlingStrategy::RemoveReferences
         } else {
@@ -809,7 +807,6 @@ impl BuilderContext {
     /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
     /// * `remove_references` - If true, automatically removes all references; if false, fails if references exist
     pub fn remove_guid(&mut self, index: u32, remove_references: bool) -> Result<()> {
-        use crate::cilassembly::ReferenceHandlingStrategy;
         let strategy = if remove_references {
             ReferenceHandlingStrategy::RemoveReferences
         } else {
@@ -835,7 +832,6 @@ impl BuilderContext {
     /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
     /// * `remove_references` - If true, automatically removes all references; if false, fails if references exist
     pub fn remove_userstring(&mut self, index: u32, remove_references: bool) -> Result<()> {
-        use crate::cilassembly::ReferenceHandlingStrategy;
         let strategy = if remove_references {
             ReferenceHandlingStrategy::RemoveReferences
         } else {
@@ -901,7 +897,6 @@ impl BuilderContext {
         rid: u32,
         remove_references: bool,
     ) -> Result<()> {
-        use crate::cilassembly::ReferenceHandlingStrategy;
         let strategy = if remove_references {
             ReferenceHandlingStrategy::RemoveReferences
         } else {

@@ -84,7 +84,13 @@
 
 use std::path::Path;
 
-use crate::{cilassembly::CilAssembly, Result};
+use crate::{
+    cilassembly::{
+        remapping::IndexRemapper, write::planner::calc::calculate_string_heap_total_size,
+        CilAssembly,
+    },
+    Result,
+};
 
 pub(crate) use planner::HeapExpansions;
 
@@ -131,7 +137,7 @@ mod writers;
 /// - Properly handles memory-mapped file cleanup on error
 /// - Assumes all input data has been validated elsewhere
 pub fn write_assembly_to_file<P: AsRef<Path>>(
-    assembly: &CilAssembly,
+    assembly: &mut CilAssembly,
     output_path: P,
 ) -> Result<()> {
     let output_path = output_path.as_ref();
@@ -139,25 +145,36 @@ pub fn write_assembly_to_file<P: AsRef<Path>>(
     // Phase 1: Calculate complete file layout with proper section placement
     let layout_plan = planner::LayoutPlan::create(assembly)?;
 
+    // Cache the original metadata RVA before any copying that might corrupt the COR20 header
+    let original_metadata_rva = assembly.view().cor20header().meta_data_rva;
+
     // Phase 2: Create memory-mapped output file with calculated total size
     let mut mmap_file = output::Output::create(output_path, layout_plan.total_size)?;
 
-    // Phase 3: Copy PE headers to their locations
-    copy_pe_headers(assembly, &mut mmap_file, &layout_plan)?;
+    // Phase 2.5: Create optimized WriteContext for copy operations (limited scope to avoid borrow conflicts)
+    {
+        let context = WriteContext::new(assembly, &layout_plan)?;
 
-    // Phase 4: Copy section table to its location
-    copy_section_table(assembly, &mut mmap_file, &layout_plan)?;
+        // Phase 3: Copy PE headers to their locations (using optimized context)
+        copy_pe_headers(&context, &mut mmap_file, &layout_plan)?;
 
-    // Phase 5: Copy each section to its new calculated location
-    copy_sections_to_new_locations(assembly, &mut mmap_file, &layout_plan)?;
+        // Phase 4: Copy section table to its location (using optimized context)
+        copy_section_table(&context, &mut mmap_file, &layout_plan)?;
 
-    // Phase 6: Update PE headers with new section offsets and sizes
-    update_pe_headers(assembly, &mut mmap_file, &layout_plan)?;
+        // Phase 5: Copy each section to its new calculated location (using optimized context)
+        copy_sections_to_new_locations(&context, &mut mmap_file, &layout_plan)?;
 
-    // Phase 7: Update metadata root with new stream offsets
-    update_metadata_root(assembly, &mut mmap_file, &layout_plan)?;
+        // Phase 6: Update metadata root with new stream offsets
+        update_metadata_root(
+            &context,
+            &mut mmap_file,
+            &layout_plan,
+            original_metadata_rva,
+        )?;
+    }
 
     // Phase 8: Write streams with additional data to their new locations
+    // Note: The heap writers handle both original data preservation and new additions
     write_streams_with_additions(assembly, &mut mmap_file, &layout_plan)?;
 
     // Phase 9: Write table modifications
@@ -166,16 +183,190 @@ pub fn write_assembly_to_file<P: AsRef<Path>>(
     // Phase 9.1: Write native PE import/export tables
     write_native_tables(assembly, &mut mmap_file, &layout_plan)?;
 
-    // Phase 9.5: Update COR20 header with new metadata size
-    update_cor20_header(assembly, &mut mmap_file, &layout_plan)?;
+    // Phase 9.5: Update all PE structures (headers, sections, COR20, data directories, checksums)
+    {
+        let mut pe_writer = writers::PeWriter::new(assembly, &mut mmap_file, &layout_plan);
+        pe_writer.write_all_pe_updates()?;
+    }
 
-    // Phase 9.6: Update PE structure (checksums and relocations)
-    update_pe_structure(assembly, &mut mmap_file, &layout_plan)?;
+    // Phase 9.7: Completely zero out the original metadata location to ensure only the new .meta section is valid
+    zero_original_metadata_location(
+        assembly,
+        &mut mmap_file,
+        &layout_plan,
+        original_metadata_rva,
+    )?;
 
     // Phase 10: Finalize the file
     mmap_file.finalize()?;
 
     Ok(())
+}
+
+/// Helper function to copy a region of data using cached context.
+///
+/// This consolidates the common pattern used across all copy functions:
+/// 1. Extract source slice from cached data
+/// 2. Get destination slice with bounds checking
+/// 3. Copy data
+///
+/// # Arguments
+/// * `context` - Cached [`WriteContext`] with pre-calculated data references
+/// * `output` - Target [`crate::cilassembly::write::output::Output`] buffer
+/// * `src_offset` - Offset in the original data to copy from
+/// * `dest_offset` - Offset in the output buffer to copy to
+/// * `size` - Number of bytes to copy
+fn copy_data_region(
+    context: &WriteContext,
+    output: &mut output::Output,
+    src_offset: usize,
+    dest_offset: usize,
+    size: usize,
+) -> Result<()> {
+    let source_slice = &context.data[src_offset..src_offset + size];
+    let target_slice = output.get_mut_slice(dest_offset, size)?;
+    target_slice.copy_from_slice(source_slice);
+    Ok(())
+}
+
+/// Cached context for write operations to avoid expensive repeated calculations.
+///
+/// This structure pre-calculates and caches all expensive lookups and calculations
+/// that are needed across multiple copy and update functions, eliminating the need
+/// for repeated `assembly.view()` calls, section finding, and offset calculations.
+struct WriteContext<'a> {
+    // Core references (calculated once)
+    assembly: &'a CilAssembly,
+    view: &'a crate::metadata::cilassemblyview::CilAssemblyView,
+    data: &'a [u8],
+
+    // Cached section information
+    original_sections: Vec<goblin::pe::section_table::SectionTable>,
+    original_metadata_section: Option<goblin::pe::section_table::SectionTable>,
+    meta_section_layout: Option<&'a planner::SectionFileLayout>,
+
+    // Pre-calculated RVA and offset information (expensive calculations done once)
+    original_metadata_rva: u32,
+    original_cor20_rva: u32,
+    metadata_file_offset: u64,
+    cor20_file_offset: u64,
+    metadata_offset_in_section: u64,
+    cor20_offset_in_section: u64,
+
+    // Cached metadata structure information
+    metadata_root_header_size: u64,
+    stream_directory_offset: u64,
+    version_length_padded: u64,
+
+    // Cached PE header information
+    pe_signature_offset: u32,
+    is_pe32_plus: bool,
+    data_directory_offset: u32,
+}
+
+impl<'a> WriteContext<'a> {
+    /// Creates a new WriteContext by performing all expensive calculations once.
+    ///
+    /// This method does all the heavy lifting upfront:
+    /// - Gets assembly view and data references
+    /// - Finds and caches all sections
+    /// - Calculates all RVA-to-offset mappings
+    /// - Determines metadata structure layouts
+    /// - Analyzes PE header structure
+    ///
+    /// # Arguments
+    /// * `assembly` - Source [`crate::cilassembly::CilAssembly`] to analyze
+    /// * `layout_plan` - [`crate::cilassembly::write::planner::LayoutPlan`] with new layout
+    fn new(assembly: &'a CilAssembly, layout_plan: &'a planner::LayoutPlan) -> Result<Self> {
+        let view = assembly.view();
+        let data = view.data();
+
+        // Cache section information (expensive section enumeration done once)
+        let original_sections: Vec<_> = view.file().sections().cloned().collect();
+        let original_metadata_section = original_sections
+            .iter()
+            .find(|section| {
+                let section_name = std::str::from_utf8(&section.name)
+                    .unwrap_or("")
+                    .trim_end_matches('\0');
+                view.file().section_contains_metadata(section_name)
+            })
+            .cloned();
+
+        // Find .meta section layout
+        let meta_section_layout = layout_plan
+            .file_layout
+            .sections
+            .iter()
+            .find(|section| section.contains_metadata && section.name == ".meta");
+
+        // Pre-calculate expensive RVA and offset information
+        let cor20_header = view.cor20header();
+        let original_metadata_rva = cor20_header.meta_data_rva;
+        let original_cor20_rva = view.file().clr().0 as u32;
+
+        let (
+            metadata_file_offset,
+            cor20_file_offset,
+            metadata_offset_in_section,
+            cor20_offset_in_section,
+        ) = if let Some(ref orig_metadata_section) = original_metadata_section {
+            let metadata_offset_in_sec =
+                original_metadata_rva - orig_metadata_section.virtual_address;
+            let cor20_offset_in_sec = original_cor20_rva - orig_metadata_section.virtual_address;
+            let metadata_file_off =
+                orig_metadata_section.pointer_to_raw_data as u64 + metadata_offset_in_sec as u64;
+            let cor20_file_off =
+                orig_metadata_section.pointer_to_raw_data as u64 + cor20_offset_in_sec as u64;
+            (
+                metadata_file_off,
+                cor20_file_off,
+                metadata_offset_in_sec as u64,
+                cor20_offset_in_sec as u64,
+            )
+        } else {
+            (0, 0, 0, 0)
+        };
+
+        // Pre-calculate metadata structure information
+        let version_string = view.metadata_root().version.clone();
+        let version_length = version_string.as_bytes().len() as u64;
+        let version_length_padded = (version_length + 3) & !3; // 4-byte align
+        let metadata_root_header_size = 16 + version_length_padded + 4; // signature + version + flags + stream_count
+        let stream_directory_offset = metadata_root_header_size;
+
+        // Pre-calculate PE header information
+        let pe_signature_offset = view.file().header().dos_header.pe_pointer;
+        let is_pe32_plus = view
+            .file()
+            .header()
+            .optional_header
+            .as_ref()
+            .map(|oh| oh.windows_fields.image_base >= 0x100000000)
+            .unwrap_or(false);
+        let data_directory_offset = pe_signature_offset + 24 + if is_pe32_plus { 112 } else { 96 };
+
+        Ok(WriteContext {
+            assembly,
+            view,
+            data,
+            original_sections,
+            original_metadata_section,
+            meta_section_layout,
+            original_metadata_rva,
+            original_cor20_rva,
+            metadata_file_offset,
+            cor20_file_offset,
+            metadata_offset_in_section,
+            cor20_offset_in_section,
+            metadata_root_header_size,
+            stream_directory_offset,
+            version_length_padded,
+            pe_signature_offset,
+            is_pe32_plus,
+            data_directory_offset,
+        })
+    }
 }
 
 /// Copies PE headers (DOS header, PE signature, COFF header, Optional header) to their locations.
@@ -184,31 +375,33 @@ pub fn write_assembly_to_file<P: AsRef<Path>>(
 /// to section tables and metadata references.
 ///
 /// # Arguments
-/// * `assembly` - Source [`crate::cilassembly::CilAssembly`] for original data
+/// * `context` - Cached [`crate::cilassembly::write::WriteContext`] with pre-calculated references
 /// * `mmap_file` - Target [`crate::cilassembly::write::output::Output`] file
 /// * `layout_plan` - [`crate::cilassembly::write::planner::LayoutPlan`] with calculated offsets
 fn copy_pe_headers(
-    assembly: &CilAssembly,
+    context: &WriteContext,
     mmap_file: &mut output::Output,
     layout_plan: &planner::LayoutPlan,
 ) -> Result<()> {
-    let view = assembly.view();
-    let original_data = view.data();
-
     // Copy DOS header
     let dos_region = &layout_plan.file_layout.dos_header;
-    let dos_slice =
-        mmap_file.get_mut_slice(dos_region.offset as usize, dos_region.size as usize)?;
-    dos_slice.copy_from_slice(&original_data[0..dos_region.size as usize]);
+    copy_data_region(
+        context,
+        mmap_file,
+        0,
+        dos_region.offset as usize,
+        dos_region.size as usize,
+    )?;
 
     // Copy PE headers (PE signature + COFF + Optional header)
     let pe_region = &layout_plan.file_layout.pe_headers;
-    let pe_slice = mmap_file.get_mut_slice(pe_region.offset as usize, pe_region.size as usize)?;
-    pe_slice.copy_from_slice(
-        &original_data[pe_region.offset as usize..(pe_region.offset + pe_region.size) as usize],
-    );
-
-    Ok(())
+    copy_data_region(
+        context,
+        mmap_file,
+        pe_region.offset as usize,
+        pe_region.offset as usize,
+        pe_region.size as usize,
+    )
 }
 
 /// Copies the section table to its location in the output file.
@@ -217,31 +410,113 @@ fn copy_pe_headers(
 /// but the initial structure is preserved from the original assembly.
 ///
 /// # Arguments
-/// * `assembly` - Source [`crate::cilassembly::CilAssembly`] for original section data
+/// * `context` - Cached [`crate::cilassembly::write::WriteContext`] with pre-calculated section data
 /// * `mmap_file` - Target [`crate::cilassembly::write::output::Output`] file
 /// * `layout_plan` - [`crate::cilassembly::write::planner::LayoutPlan`] with section layout
 fn copy_section_table(
-    assembly: &CilAssembly,
+    context: &WriteContext,
     mmap_file: &mut output::Output,
     layout_plan: &planner::LayoutPlan,
 ) -> Result<()> {
-    let view = assembly.view();
-    let original_data = view.data();
-    let original_sections: Vec<_> = view.file().sections().collect();
+    // Use cached sections instead of recalculating
+    let original_sections = &context.original_sections;
 
     // Calculate original section table location
     let pe_headers_end =
         layout_plan.file_layout.pe_headers.offset + layout_plan.file_layout.pe_headers.size;
     let original_section_table_offset = pe_headers_end as usize;
-    let section_table_size = original_sections.len() * 40; // 40 bytes per section entry
+    let _section_table_size = layout_plan.file_layout.sections.len() * 40; // 40 bytes per section entry
 
-    // Copy the original section table to the new location
+    // Write the new section table based on our calculated layout
     let section_table_region = &layout_plan.file_layout.section_table;
-    let original_section_data = &original_data
-        [original_section_table_offset..original_section_table_offset + section_table_size];
-    let output_slice =
-        mmap_file.get_mut_slice(section_table_region.offset as usize, section_table_size)?;
-    output_slice.copy_from_slice(original_section_data);
+
+    for (section_index, new_section_layout) in layout_plan.file_layout.sections.iter().enumerate() {
+        let section_entry_offset = section_table_region.offset + (section_index * 40) as u64;
+
+        // Find the corresponding original section to get header info
+        let original_section = if new_section_layout.name == ".meta" {
+            // .meta is a new section with no original counterpart
+            None
+        } else if new_section_layout.contains_metadata {
+            // For other metadata sections, use cached original metadata section
+            context.original_metadata_section.as_ref()
+        } else {
+            // For non-metadata sections, find by name match
+            original_sections.iter().find(|section| {
+                let section_name = std::str::from_utf8(&section.name)
+                    .unwrap_or("")
+                    .trim_end_matches('\0');
+                section_name == new_section_layout.name
+            })
+        };
+
+        if let Some(orig_section) = original_section {
+            // Copy the original section header (40 bytes)
+            let orig_section_offset = original_section_table_offset
+                + (original_sections
+                    .iter()
+                    .position(|s| std::ptr::eq(s, orig_section))
+                    .unwrap()
+                    * 40);
+            let orig_section_data = &context.data[orig_section_offset..orig_section_offset + 40];
+            let output_slice = mmap_file.get_mut_slice(section_entry_offset as usize, 40)?;
+            output_slice.copy_from_slice(orig_section_data);
+
+            // Update with new layout values
+            // Update VirtualSize (offset 8)
+            mmap_file.write_u32_le_at(section_entry_offset + 8, new_section_layout.virtual_size)?;
+            // Update VirtualAddress (offset 12)
+            mmap_file.write_u32_le_at(
+                section_entry_offset + 12,
+                new_section_layout.virtual_address,
+            )?;
+            // Update SizeOfRawData (offset 16)
+            mmap_file.write_u32_le_at(
+                section_entry_offset + 16,
+                new_section_layout.file_region.size as u32,
+            )?;
+            // Update PointerToRawData (offset 20)
+            mmap_file.write_u32_le_at(
+                section_entry_offset + 20,
+                new_section_layout.file_region.offset as u32,
+            )?;
+            // Update Characteristics (offset 36)
+            mmap_file.write_u32_le_at(
+                section_entry_offset + 36,
+                new_section_layout.characteristics,
+            )?;
+        } else if new_section_layout.name == ".meta" {
+            // Handle new .meta section - create section header from scratch
+            let output_slice = mmap_file.get_mut_slice(section_entry_offset as usize, 40)?;
+
+            // Initialize with zeros
+            output_slice.fill(0);
+
+            // Write section name (first 8 bytes)
+            let name_bytes = b".meta\0\0\0";
+            output_slice[0..8].copy_from_slice(name_bytes);
+
+            // Write VirtualSize (offset 8)
+            let virtual_size_bytes = new_section_layout.virtual_size.to_le_bytes();
+            output_slice[8..12].copy_from_slice(&virtual_size_bytes);
+
+            // Write VirtualAddress (offset 12)
+            let virtual_addr_bytes = new_section_layout.virtual_address.to_le_bytes();
+            output_slice[12..16].copy_from_slice(&virtual_addr_bytes);
+
+            // Write SizeOfRawData (offset 16)
+            let raw_size_bytes = (new_section_layout.file_region.size as u32).to_le_bytes();
+            output_slice[16..20].copy_from_slice(&raw_size_bytes);
+
+            // Write PointerToRawData (offset 20)
+            let raw_ptr_bytes = (new_section_layout.file_region.offset as u32).to_le_bytes();
+            output_slice[20..24].copy_from_slice(&raw_ptr_bytes);
+
+            // Write Characteristics (offset 36)
+            let characteristics_bytes = new_section_layout.characteristics.to_le_bytes();
+            output_slice[36..40].copy_from_slice(&characteristics_bytes);
+        }
+    }
 
     Ok(())
 }
@@ -252,20 +527,27 @@ fn copy_section_table(
 /// Streams are written separately with their modifications.
 ///
 /// # Arguments
-/// * `assembly` - Source [`crate::cilassembly::CilAssembly`] for original section data
+/// * `context` - Cached [`crate::cilassembly::write::WriteContext`] with pre-calculated section data
 /// * `mmap_file` - Target [`crate::cilassembly::write::output::Output`] file
 /// * `layout_plan` - [`crate::cilassembly::write::planner::LayoutPlan`] with new section locations
 fn copy_sections_to_new_locations(
-    assembly: &CilAssembly,
+    context: &WriteContext,
     mmap_file: &mut output::Output,
     layout_plan: &planner::LayoutPlan,
 ) -> Result<()> {
-    let view = assembly.view();
-    let original_data = view.data();
-    let original_sections: Vec<_> = view.file().sections().collect();
+    // Use cached sections instead of recalculating
+    let original_sections = &context.original_sections;
 
-    for (index, new_section_layout) in layout_plan.file_layout.sections.iter().enumerate() {
-        if let Some(original_section) = original_sections.get(index) {
+    for new_section_layout in &layout_plan.file_layout.sections {
+        // Find the matching original section by name
+        let original_section = original_sections.iter().find(|section| {
+            let section_name = std::str::from_utf8(&section.name)
+                .unwrap_or("")
+                .trim_end_matches('\0');
+            section_name == new_section_layout.name
+        });
+
+        if let Some(original_section) = original_section {
             let original_offset = original_section.pointer_to_raw_data as usize;
             let original_size = original_section.size_of_raw_data as usize;
 
@@ -276,23 +558,130 @@ fn copy_sections_to_new_locations(
 
             let new_offset = new_section_layout.file_region.offset as usize;
 
-            // For metadata sections, we'll copy only the non-stream parts
-            // Streams will be written separately with their additions
-            if new_section_layout.contains_metadata {
-                copy_metadata_section_without_streams(
-                    assembly,
-                    mmap_file,
-                    original_data,
-                    original_offset,
-                    original_size,
-                    new_offset,
-                    new_section_layout,
-                )?;
-            } else {
-                // Non-metadata section - copy as-is
-                let section_data = &original_data[original_offset..original_offset + original_size];
-                let output_slice = mmap_file.get_mut_slice(new_offset, section_data.len())?;
-                output_slice.copy_from_slice(section_data);
+            // Check if this section copy would overwrite the section table
+            let section_table_start = layout_plan.file_layout.section_table.offset as usize;
+            let section_table_end =
+                section_table_start + layout_plan.file_layout.section_table.size as usize;
+
+            if new_offset < section_table_end && new_offset + original_size > section_table_start {
+                // Section copy would overwrite section table - skip or handle accordingly
+            }
+
+            // Copy the entire section content to preserve any non-metadata parts
+            // For metadata sections, stream writers will later overwrite the metadata portions
+            let copy_size =
+                std::cmp::min(original_size, new_section_layout.file_region.size as usize);
+            copy_data_region(context, mmap_file, original_offset, new_offset, copy_size)?;
+        } else if new_section_layout.name == ".meta" && new_section_layout.contains_metadata {
+            // Special case: .meta section doesn't have a matching original section
+            // Copy the original metadata from its original location
+            copy_original_metadata_to_meta_section(
+                context,
+                mmap_file,
+                layout_plan,
+                new_section_layout,
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Copies the original metadata content to the new .meta section.
+///
+/// This function locates the original metadata in its original section and copies
+/// all the original stream data to the corresponding locations in the .meta section.
+///
+/// # Arguments
+/// * `context` - Cached [`crate::cilassembly::write::WriteContext`] with pre-calculated metadata information
+/// * `mmap_file` - Target [`crate::cilassembly::write::output::Output`] file
+/// * `_layout_plan` - [`crate::cilassembly::write::planner::LayoutPlan`] with metadata layout
+/// * `meta_section_layout` - The .meta section layout information
+fn copy_original_metadata_to_meta_section(
+    context: &WriteContext,
+    mmap_file: &mut output::Output,
+    _layout_plan: &planner::LayoutPlan,
+    meta_section_layout: &planner::SectionFileLayout,
+) -> Result<()> {
+    // Use cached RVA and offset calculations (all expensive calculations already done)
+    let original_metadata_rva = context.original_metadata_rva;
+    let cor20_rva = context.original_cor20_rva;
+    let cor20_offset_in_section = context.cor20_offset_in_section;
+    let original_cor20_file_offset = context.cor20_file_offset;
+    let original_metadata_file_offset = context.metadata_file_offset;
+    let version_length_padded = context.version_length_padded;
+
+    // Copy COR20 header separately (should be exactly 72 bytes)
+    let cor20_size = 72u64; // COR20 header is always 72 bytes according to ECMA-335
+    let new_cor20_offset = meta_section_layout.file_region.offset + cor20_offset_in_section as u64;
+
+    copy_data_region(
+        context,
+        mmap_file,
+        original_cor20_file_offset as usize,
+        new_cor20_offset as usize,
+        cor20_size as usize,
+    )?;
+
+    // Copy only the metadata root signature, version, and flags (but NOT the stream directory)
+    // The metadata RVA in COR20 header points to where the metadata root should be
+    let metadata_rva_offset_from_cor20 = original_metadata_rva - cor20_rva;
+    let metadata_root_target_offset = new_cor20_offset + metadata_rva_offset_from_cor20 as u64;
+
+    // Only copy the fixed part: signature(4) + major(2) + minor(2) + reserved(4) + length(4) + version_string + flags(2) + stream_count(2)
+    // But NOT the actual stream directory entries that follow
+    let fixed_metadata_header_size = 16 + version_length_padded + 2; // Everything before stream_count
+
+    copy_data_region(
+        context,
+        mmap_file,
+        original_metadata_file_offset as usize,
+        metadata_root_target_offset as usize,
+        fixed_metadata_header_size as usize,
+    )?;
+
+    // Write the correct stream count based on the actual streams in the layout
+    let stream_count_offset = metadata_root_target_offset + fixed_metadata_header_size;
+    let stream_count = context.view.streams().len() as u16; // Use actual number of streams
+    let stream_count_slice = mmap_file.get_mut_slice(stream_count_offset as usize, 2)?;
+    stream_count_slice.copy_from_slice(&stream_count.to_le_bytes());
+
+    // Copy original stream data for streams that won't be rewritten by heap writers
+    // The #~ stream (tables) needs to be copied here since it's not handled by heap writers
+    for stream_layout in &meta_section_layout.metadata_streams {
+        let original_stream = context
+            .view
+            .streams()
+            .iter()
+            .find(|s| s.name == stream_layout.name);
+
+        if let Some(orig_stream) = original_stream {
+            // Only copy streams that are not handled by heap writers
+            let should_copy = match stream_layout.name.as_str() {
+                "#Strings" | "#Blob" | "#GUID" | "#US" => false, // These are handled by heap writers
+                _ => true, // Copy everything else (especially #~ tables stream)
+            };
+
+            if should_copy {
+                let original_stream_file_offset =
+                    original_metadata_file_offset + orig_stream.offset as u64;
+                let original_stream_size = orig_stream.size as usize;
+
+                // Ensure we don't read beyond the original file
+                if original_stream_file_offset + original_stream_size as u64
+                    <= context.data.len() as u64
+                {
+                    let new_stream_offset = stream_layout.file_region.offset as usize;
+
+                    // Copy the original stream data to the new location
+                    copy_data_region(
+                        context,
+                        mmap_file,
+                        original_stream_file_offset as usize,
+                        new_stream_offset,
+                        original_stream_size,
+                    )?;
+                }
             }
         }
     }
@@ -314,28 +703,33 @@ fn copy_sections_to_new_locations(
 /// * `new_offset` - New section file offset
 /// * `section_layout` - [`crate::cilassembly::write::planner::SectionFileLayout`] with stream locations
 fn copy_metadata_section_without_streams(
-    assembly: &CilAssembly,
+    context: &WriteContext,
     mmap_file: &mut output::Output,
-    original_data: &[u8],
+    _original_data: &[u8],
     original_offset: usize,
     original_size: usize,
     new_offset: usize,
     section_layout: &planner::SectionFileLayout,
+    original_section: &goblin::pe::section_table::SectionTable,
+    original_metadata_rva: u32,
 ) -> Result<()> {
-    let view = assembly.view();
+    let view = context.view;
 
-    // Get metadata root location within the section
-    let metadata_root_rva = view.cor20header().meta_data_rva as u64;
-    let section_rva = section_layout.virtual_address as u64;
-    let metadata_offset_in_section = metadata_root_rva - section_rva;
+    // Get metadata root location within the section using cached value
+    let metadata_root_rva = original_metadata_rva as u64;
+    let original_section_rva = original_section.virtual_address as u64;
+    let metadata_offset_in_section = metadata_root_rva - original_section_rva;
 
     // Copy everything before metadata root
     if metadata_offset_in_section > 0 {
         let pre_metadata_size = metadata_offset_in_section as usize;
-        let pre_metadata_data =
-            &original_data[original_offset..original_offset + pre_metadata_size];
-        let output_slice = mmap_file.get_mut_slice(new_offset, pre_metadata_size)?;
-        output_slice.copy_from_slice(pre_metadata_data);
+        copy_data_region(
+            context,
+            mmap_file,
+            original_offset,
+            new_offset,
+            pre_metadata_size,
+        )?;
     }
 
     // Copy the complete metadata root header including stream directory
@@ -353,11 +747,14 @@ fn copy_metadata_section_without_streams(
     }
 
     if metadata_root_start + metadata_root_size <= original_offset + original_size {
-        let metadata_root_data =
-            &original_data[metadata_root_start..metadata_root_start + metadata_root_size];
         let new_metadata_offset = new_offset + metadata_offset_in_section as usize;
-        let output_slice = mmap_file.get_mut_slice(new_metadata_offset, metadata_root_size)?;
-        output_slice.copy_from_slice(metadata_root_data);
+        copy_data_region(
+            context,
+            mmap_file,
+            metadata_root_start,
+            new_metadata_offset,
+            metadata_root_size,
+        )?;
     }
 
     // Copy the original stream data to their new locations
@@ -368,17 +765,17 @@ fn copy_metadata_section_without_streams(
         if let Some(original_stream) = original_stream {
             let needs_rebuilding = match stream_layout.name.as_str() {
                 "#Strings" => {
-                    let changes = &assembly.changes().string_heap_changes;
-                    changes.has_modifications() || changes.has_removals()
+                    let changes = &context.assembly.changes().string_heap_changes;
+                    changes.has_additions() || changes.has_modifications() || changes.has_removals()
                 }
-                "#Blob" => assembly.changes().blob_heap_changes.has_changes(),
+                "#Blob" => context.assembly.changes().blob_heap_changes.has_changes(),
                 "#GUID" => {
-                    let changes = &assembly.changes().guid_heap_changes;
-                    changes.has_modifications() || changes.has_removals()
+                    let changes = &context.assembly.changes().guid_heap_changes;
+                    changes.has_additions() || changes.has_modifications() || changes.has_removals()
                 }
                 "#US" => {
-                    let changes = &assembly.changes().userstring_heap_changes;
-                    changes.has_modifications() || changes.has_removals()
+                    let changes = &context.assembly.changes().userstring_heap_changes;
+                    changes.has_additions() || changes.has_modifications() || changes.has_removals()
                 }
                 _ => false,
             };
@@ -392,64 +789,16 @@ fn copy_metadata_section_without_streams(
 
                 // Make sure we don't read beyond the section
                 if original_stream_start + original_stream_size <= original_offset + original_size {
-                    let stream_data = &original_data
-                        [original_stream_start..original_stream_start + original_stream_size];
                     let new_stream_offset = stream_layout.file_region.offset as usize;
-                    let output_slice =
-                        mmap_file.get_mut_slice(new_stream_offset, stream_data.len())?;
-                    output_slice.copy_from_slice(stream_data);
+                    copy_data_region(
+                        context,
+                        mmap_file,
+                        original_stream_start,
+                        new_stream_offset,
+                        original_stream_size,
+                    )?;
                 }
             }
-        }
-    }
-
-    Ok(())
-}
-
-/// Updates PE headers with new section offsets and sizes.
-///
-/// Applies calculated section layout changes to the PE section table
-/// to reflect new positions and sizes after metadata modifications.
-///
-/// # Arguments
-/// * `_assembly` - Source [`crate::cilassembly::CilAssembly`] (currently unused)
-/// * `mmap_file` - Target [`crate::cilassembly::write::output::Output`] file to update
-/// * `layout_plan` - [`crate::cilassembly::write::planner::LayoutPlan`] with PE updates
-fn update_pe_headers(
-    _assembly: &CilAssembly,
-    mmap_file: &mut output::Output,
-    layout_plan: &planner::LayoutPlan,
-) -> Result<()> {
-    if !layout_plan.pe_updates.section_table_needs_update {
-        return Ok(()); // No updates needed
-    }
-
-    // Copy the section table from the original position to the new position
-    let section_table_region = &layout_plan.file_layout.section_table;
-
-    // Apply section updates
-    for section_update in &layout_plan.pe_updates.section_updates {
-        let section_entry_offset =
-            section_table_region.offset + (section_update.section_index * 40) as u64;
-
-        // Update file offset if changed
-        if let Some(new_file_offset) = section_update.new_file_offset {
-            let offset_field_offset = section_entry_offset + 20; // PointerToRawData field
-            mmap_file.write_u32_le_at(offset_field_offset, new_file_offset as u32)?;
-        }
-
-        // Update file size if changed
-        if let Some(new_file_size) = section_update.new_file_size {
-            // Add a small buffer to ensure we don't hit boundary issues
-            let padded_size = (new_file_size + 15) & !15; // Round up to 16-byte boundary for safety
-            let size_field_offset = section_entry_offset + 16; // SizeOfRawData field
-            mmap_file.write_u32_le_at(size_field_offset, padded_size)?;
-        }
-
-        // Update virtual size if changed
-        if let Some(new_virtual_size) = section_update.new_virtual_size {
-            let vsize_field_offset = section_entry_offset + 8; // VirtualSize field
-            mmap_file.write_u32_le_at(vsize_field_offset, new_virtual_size)?;
         }
     }
 
@@ -466,91 +815,277 @@ fn update_pe_headers(
 /// * `mmap_file` - Target [`crate::cilassembly::write::output::Output`] file to update
 /// * `layout_plan` - [`crate::cilassembly::write::planner::LayoutPlan`] with stream locations
 fn update_metadata_root(
-    assembly: &CilAssembly,
+    context: &WriteContext,
     mmap_file: &mut output::Output,
     layout_plan: &planner::LayoutPlan,
+    _original_metadata_rva: u32,
 ) -> Result<()> {
-    if !layout_plan.metadata_modifications.root_needs_update {
-        return Ok(()); // No updates needed
-    }
-
-    // Find the metadata section
+    // TEMPORARY: Use the assembly reference to ensure compatibility
+    let assembly = context.assembly;
+    // Find the .meta section
     let metadata_section = layout_plan
         .file_layout
         .sections
         .iter()
-        .find(|section| section.contains_metadata)
+        .find(|section| section.contains_metadata && section.name == ".meta")
         .ok_or_else(|| crate::Error::WriteLayoutFailed {
-            message: "No metadata section found".to_string(),
+            message: "No .meta section found for metadata root update".to_string(),
         })?;
 
-    // Get metadata root location within the section
     let view = assembly.view();
-    let metadata_root_rva = view.cor20header().meta_data_rva as u64;
-    let section_rva = metadata_section.virtual_address as u64;
-    let metadata_offset_in_section = metadata_root_rva - section_rva;
-    let metadata_root_offset = metadata_section.file_region.offset + metadata_offset_in_section;
 
-    // Update stream directory entries with new offsets and sizes
-    // The parser expects the stream directory at: 16 + version_string.len() + 4
+    // Calculate the metadata root location within the .meta section
+    // Use the same calculation as copy_original_metadata_to_meta_section to ensure alignment
+    let original_cor20_rva = view.file().clr().0 as u32;
+    let original_metadata_rva = view.cor20header().meta_data_rva;
+    let metadata_rva_offset_from_cor20 = original_metadata_rva - original_cor20_rva;
+
+    // Calculate the COR20 offset within the .meta section (same as in copy function)
+    let original_sections: Vec<_> = view.file().sections().collect();
+    let original_metadata_section = original_sections
+        .iter()
+        .find(|section| {
+            let section_name = std::str::from_utf8(&section.name)
+                .unwrap_or("")
+                .trim_end_matches('\0');
+            view.file().section_contains_metadata(section_name)
+        })
+        .unwrap();
+
+    let cor20_offset_in_section = original_cor20_rva - original_metadata_section.virtual_address;
+    let new_cor20_offset = metadata_section.file_region.offset + cor20_offset_in_section as u64;
+    let metadata_root_offset = new_cor20_offset + metadata_rva_offset_from_cor20 as u64;
+
+    // Calculate the stream directory offset within the metadata root
+    // Based on ECMA-335 II.24.2.1: metadata root = signature + version info + stream directory
+    // Stream directory starts after: signature(4) + major(2) + minor(2) + reserved(4) + length(4) + version_string + flags(2) + stream_count(2)
     let version_string = view.metadata_root().version.clone();
-    let version_string_len = version_string.len() as u64;
-    let mut stream_dir_offset = metadata_root_offset + 16 + version_string_len + 4;
+    let version_length = version_string.as_bytes().len() as u64;
+    let version_length_padded = (version_length + 3) & !3; // 4-byte align
+
+    let stream_directory_offset = metadata_root_offset + 16 + version_length_padded + 4; // +4 for flags(2) + stream_count(2)
+
+    // Reconstruct the complete stream directory with new offsets and sizes
+    let mut stream_directory_data = Vec::new();
 
     for stream_layout in &metadata_section.metadata_streams {
-        // Calculate where this stream actually is relative to the new metadata root location
-        if stream_layout.file_region.offset < metadata_root_offset {
-            return Err(crate::Error::WriteLayoutFailed {
-                message: format!(
-                    "Stream '{}' offset ({}) is before metadata root offset ({})",
-                    stream_layout.name, stream_layout.file_region.offset, metadata_root_offset
-                ),
-            });
+        // Find the corresponding original stream
+        let original_stream = view.streams().iter().find(|s| s.name == stream_layout.name);
+        if let Some(_original_stream) = original_stream {
+            // Calculate the stream offset relative to the metadata root start
+            // This matches ECMA-335 II.24.2.1 - stream offsets are relative to metadata root start
+            let relative_stream_offset = stream_layout.file_region.offset - metadata_root_offset;
+
+            // Write offset (4 bytes, little-endian)
+            stream_directory_data.extend_from_slice(&(relative_stream_offset as u32).to_le_bytes());
+
+            // For the #Strings stream, recalculate the actual heap size to ensure accuracy
+            let actual_stream_size = if stream_layout.name == "#Strings" {
+                let string_changes = &assembly.changes().string_heap_changes;
+                if string_changes.has_additions()
+                    || string_changes.has_modifications()
+                    || string_changes.has_removals()
+                {
+                    // Recalculate the total reconstructed heap size to match what the heap writer actually produces
+                    match calculate_string_heap_total_size(string_changes, assembly) {
+                        Ok(total_size) => total_size as u32,
+                        Err(_) => stream_layout.size,
+                    }
+                } else {
+                    stream_layout.size
+                }
+            } else {
+                stream_layout.size
+            };
+
+            // Write size (4 bytes, little-endian)
+            let size_bytes = actual_stream_size.to_le_bytes();
+            stream_directory_data.extend_from_slice(&size_bytes);
+
+            // Write stream name (null-terminated, 4-byte aligned)
+            let name_bytes = stream_layout.name.as_bytes();
+            stream_directory_data.extend_from_slice(name_bytes);
+            stream_directory_data.push(0); // null terminator
+
+            // Pad to 4-byte boundary
+            while stream_directory_data.len() % 4 != 0 {
+                stream_directory_data.push(0);
+            }
         }
+    }
 
-        let actual_relative_offset = stream_layout.file_region.offset - metadata_root_offset;
+    // Write the complete stream directory
+    let stream_dir_slice = mmap_file.get_mut_slice(
+        stream_directory_offset as usize,
+        stream_directory_data.len(),
+    )?;
+    stream_dir_slice.copy_from_slice(&stream_directory_data);
 
-        // Validate that the relative offset fits in u32
-        if actual_relative_offset > u32::MAX as u64 {
-            return Err(crate::Error::WriteLayoutFailed {
-                message: format!(
-                    "Stream '{}' relative offset ({}) exceeds u32::MAX",
-                    stream_layout.name, actual_relative_offset
-                ),
-            });
+    // Copy original stream data for unmodified streams
+    // TODO: This function is not currently called, so this call is commented out
+    // copy_original_stream_data(context, mmap_file, metadata_section)?;
+
+    Ok(())
+}
+
+/// Copies original stream data to new stream locations for unmodified streams.
+///
+/// This function copies the original stream content for streams that are not being
+/// reconstructed by heap writers (e.g., #~, #US, #GUID, #Blob streams).
+fn copy_original_stream_data(
+    context: &WriteContext,
+    mmap_file: &mut output::Output,
+    metadata_section: &planner::SectionFileLayout,
+) -> Result<()> {
+    let view = context.view;
+
+    // Use cached RVA and offset calculations (expensive calculations already done)
+    let original_metadata_file_offset = context.metadata_file_offset;
+
+    for stream_layout in &metadata_section.metadata_streams {
+        // Only copy streams that won't be written by heap writers
+        // The #Strings stream will be reconstructed by the string heap writer
+        if stream_layout.name != "#Strings" {
+            // Find the original stream
+            let original_stream = view.streams().iter().find(|s| s.name == stream_layout.name);
+            if let Some(original_stream) = original_stream {
+                let original_stream_file_offset =
+                    original_metadata_file_offset + original_stream.offset as u64;
+                let original_stream_size = original_stream.size as usize;
+
+                // Copy original stream data to new location
+                copy_data_region(
+                    context,
+                    mmap_file,
+                    original_stream_file_offset as usize,
+                    stream_layout.file_region.offset as usize,
+                    original_stream_size,
+                )?;
+            }
         }
-
-        // Write the offset field
-        mmap_file.write_u32_le_at(stream_dir_offset, actual_relative_offset as u32)?;
-
-        // Write the size field
-        mmap_file.write_u32_le_at(stream_dir_offset + 4, stream_layout.size)?;
-
-        // Move to next stream directory entry
-        let name_len = ((stream_layout.name.len() + 1 + 3) & !3) as u64; // Name + null + align
-        stream_dir_offset += 8 + name_len; // offset + size + name
     }
 
     Ok(())
 }
 
-/// Writes streams with additional data to their new locations.
+/// Copies original stream data to the .meta section.
 ///
-/// Uses the [`crate::cilassembly::write::writers::heap`] module to write
-/// modified metadata heaps with their additional data.
+/// The heap writers expect original stream data to be in place before they add modifications.
+/// This function copies the original heap content from the original metadata location
+/// to the new stream locations in the .meta section.
 ///
 /// # Arguments
-/// * `assembly` - Source [`crate::cilassembly::CilAssembly`] with heap modifications
+/// * `assembly` - Source [`crate::cilassembly::CilAssembly`] with original stream data
 /// * `mmap_file` - Target [`crate::cilassembly::write::output::Output`] file
-/// * `layout_plan` - [`crate::cilassembly::write::planner::LayoutPlan`] with heap locations
+/// * `layout_plan` - [`crate::cilassembly::write::planner::LayoutPlan`] with stream locations
+fn copy_original_streams_to_meta_section(
+    context: &WriteContext,
+    mmap_file: &mut output::Output,
+    _layout_plan: &planner::LayoutPlan,
+) -> Result<()> {
+    let view = context.view;
+
+    // Use cached .meta section (expensive search already done)
+    let meta_section =
+        context
+            .meta_section_layout
+            .ok_or_else(|| crate::Error::WriteLayoutFailed {
+                message: "No .meta section found for stream copying".to_string(),
+            })?;
+
+    // Use cached original metadata section and offset calculations (expensive calculations already done)
+    let original_metadata_offset = context.metadata_file_offset;
+
+    // Copy each original stream to its new location in the .meta section
+    for stream_layout in &meta_section.metadata_streams {
+        let original_stream = view.streams().iter().find(|s| s.name == stream_layout.name);
+
+        if let Some(orig_stream) = original_stream {
+            let original_stream_offset = original_metadata_offset + orig_stream.offset as u64;
+            let original_stream_size = orig_stream.size as usize;
+
+            // Ensure we don't read beyond the original file
+            if original_stream_offset + original_stream_size as u64 <= context.data.len() as u64 {
+                let new_stream_offset = stream_layout.file_region.offset;
+
+                // Copy the original stream data to the new location
+                copy_data_region(
+                    context,
+                    mmap_file,
+                    original_stream_offset as usize,
+                    new_stream_offset as usize,
+                    original_stream_size,
+                )?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn write_streams_with_additions(
-    assembly: &CilAssembly,
+    assembly: &mut CilAssembly,
     mmap_file: &mut output::Output,
     layout_plan: &planner::LayoutPlan,
 ) -> Result<()> {
-    // Use the existing HeapWriter for stream modifications
+    // Phase 8a: Write all heaps and collect index mappings
     let mut heap_writer = writers::HeapWriter::new(assembly, mmap_file, layout_plan);
-    heap_writer.write_all_heaps()?;
+    let heap_index_mappings = heap_writer.write_all_heaps()?;
+
+    // Phase 8b: Apply index remapping to update cross-references
+    if !heap_index_mappings.is_empty() {
+        apply_heap_index_remapping(assembly, &heap_index_mappings)?;
+    }
+
+    Ok(())
+}
+
+/// Applies heap index remapping to update all metadata table cross-references.
+///
+/// This function creates an IndexRemapper with the provided heap index mappings
+/// and applies it to update all metadata table references that point to heap indices.
+///
+/// # Arguments
+///
+/// * `assembly` - Mutable reference to the assembly to update
+/// * `heap_index_mappings` - Map of heap names to their index mappings (original -> final)
+fn apply_heap_index_remapping(
+    assembly: &mut CilAssembly,
+    heap_index_mappings: &std::collections::HashMap<String, std::collections::HashMap<u32, u32>>,
+) -> Result<()> {
+    // Create an IndexRemapper with the collected heap mappings
+    let mut remapper = IndexRemapper {
+        string_map: std::collections::HashMap::new(),
+        blob_map: std::collections::HashMap::new(),
+        guid_map: std::collections::HashMap::new(),
+        userstring_map: std::collections::HashMap::new(),
+        table_maps: std::collections::HashMap::new(),
+    };
+
+    // Populate the appropriate heap mappings
+    for (heap_name, index_mapping) in heap_index_mappings {
+        match heap_name.as_str() {
+            "#Strings" => {
+                remapper.string_map = index_mapping.clone();
+            }
+            "#Blob" => {
+                remapper.blob_map = index_mapping.clone();
+            }
+            "#GUID" => {
+                remapper.guid_map = index_mapping.clone();
+            }
+            "#US" => {
+                remapper.userstring_map = index_mapping.clone();
+            }
+            _ => {
+                // Unknown heap type
+            }
+        }
+    }
+
+    // Apply the remapping to update cross-references in the assembly changes
+    let changes = &mut assembly.changes;
+    remapper.apply_to_assembly(changes)?;
 
     Ok(())
 }
@@ -597,127 +1132,94 @@ fn write_native_tables(
     Ok(())
 }
 
-/// Updates the COR20 header with the new metadata size.
+/// Zeros out the original metadata location in the copied section.
 ///
-/// The COR20 header contains the metadata size field that must be updated
-/// when metadata streams are modified or relocated.
+/// Since we're moving all metadata to a new .meta section, we need to overwrite
+/// the original metadata location with zeros to ensure it doesn't interfere.
+/// However, we need to be careful not to zero out any data that might be needed.
 ///
 /// # Arguments
-/// * `assembly` - Source [`crate::cilassembly::CilAssembly`] for metadata size calculation
+/// * `assembly` - Source [`crate::cilassembly::CilAssembly`] for metadata structure
 /// * `mmap_file` - Target [`crate::cilassembly::write::output::Output`] file to update
-/// * `layout_plan` - [`crate::cilassembly::write::planner::LayoutPlan`] with metadata layout
-fn update_cor20_header(
+/// * `layout_plan` - [`crate::cilassembly::write::planner::LayoutPlan`] with layout information
+/// * `original_metadata_rva` - Original metadata RVA to calculate the location to zero
+fn zero_original_metadata_location(
     assembly: &CilAssembly,
     mmap_file: &mut output::Output,
     layout_plan: &planner::LayoutPlan,
+    original_metadata_rva: u32,
 ) -> Result<()> {
     let view = assembly.view();
+    let original_sections: Vec<_> = view.file().sections().collect();
 
-    // Find the COR20 header location
-    // COR20 header RVA is in the .NET directory entry (entry 14) of the PE Optional Header
-    let _cor20_rva = view.cor20header().meta_data_rva; // This gives us metadata RVA, we need COR20 RVA
+    // Find the original metadata section to determine the file offset to zero
+    let original_metadata_section = original_sections.iter().find(|section| {
+        let section_name = std::str::from_utf8(&section.name)
+            .unwrap_or("")
+            .trim_end_matches('\0');
+        view.file().section_contains_metadata(section_name)
+    });
 
-    // The COR20 header is typically at a fixed offset from the .text section start
-    // Let's find it by looking at the metadata section
-    let metadata_section = layout_plan
-        .file_layout
-        .sections
-        .iter()
-        .find(|section| section.contains_metadata)
-        .ok_or_else(|| crate::Error::WriteLayoutFailed {
-            message: "No metadata section found for COR20 update".to_string(),
-        })?;
+    if let Some(orig_section) = original_metadata_section {
+        // Calculate both COR20 header and metadata offsets
+        let original_cor20_rva = view.file().clr().0 as u32;
+        let cor20_offset_in_section = original_cor20_rva - orig_section.virtual_address;
+        let metadata_offset_in_section = original_metadata_rva - orig_section.virtual_address;
 
-    // Find the actual COR20 header location
-    // The COR20 header RVA is in the .NET directory entry (entry 14) of the PE Optional Header
-    // We need to convert this RVA to the new file offset
-    let view = assembly.view();
-    let file = view.file();
-    let cor20_rva = file.clr().0; // Get the CLR directory RVA
-
-    // Convert the COR20 RVA to file offset using the new section layout
-    let cor20_file_offset = if (cor20_rva as u32) >= metadata_section.virtual_address
-        && (cor20_rva as u32) < metadata_section.virtual_address + metadata_section.virtual_size
-    {
-        // COR20 header is in this section
-        let cor20_offset_in_section = cor20_rva - metadata_section.virtual_address as usize;
-        metadata_section.file_region.offset + cor20_offset_in_section as u64
-    } else {
-        // COR20 header is in a different section - this shouldn't happen for normal .NET assemblies
-        return Err(crate::Error::WriteLayoutFailed {
-            message: "COR20 header not found in metadata section".to_string(),
-        });
-    };
-
-    // Calculate the new metadata size and RVA
-    // The metadata spans from the metadata root to the end of our last stream
-
-    // Find where the metadata root is located within the new section layout
-    // We need to find the actual metadata root location in the new file
-    let original_metadata_root_rva = view.cor20header().meta_data_rva as u64;
-    // Find the text section RVA from the original file
-    let view = assembly.view();
-    let original_section_rva = view
-        .file()
-        .sections()
-        .find(|section| {
-            let name = std::str::from_utf8(&section.name)
+        // Find the corresponding copied section in the new layout
+        let copied_section = layout_plan.file_layout.sections.iter().find(|section| {
+            let orig_name = std::str::from_utf8(&orig_section.name)
                 .unwrap_or("")
                 .trim_end_matches('\0');
-            view.file().section_contains_metadata(name)
-        })
-        .map(|section| section.virtual_address as u64)
-        .ok_or_else(|| crate::Error::WriteLayoutFailed {
-            message: "Could not find metadata section for RVA calculation".to_string(),
-        })?;
-    let original_metadata_offset_in_section = original_metadata_root_rva - original_section_rva;
+            section.name == orig_name && !section.contains_metadata
+        });
 
-    // In the new layout, the metadata remains at the same relative position within the section
-    let new_section_rva = metadata_section.virtual_address as u64;
-    let new_metadata_rva = new_section_rva + original_metadata_offset_in_section;
-    let metadata_start_file_offset =
-        metadata_section.file_region.offset + original_metadata_offset_in_section;
+        if let Some(section_layout) = copied_section {
+            // Zero out the COR20 header (72 bytes)
+            let cor20_file_offset =
+                section_layout.file_region.offset + cor20_offset_in_section as u64;
+            let cor20_size = 72u64;
 
-    // Find the end of the last stream
-    let mut max_stream_end = metadata_start_file_offset;
-    for stream_layout in &metadata_section.metadata_streams {
-        let stream_end = stream_layout.file_region.offset + stream_layout.size as u64;
-        max_stream_end = max_stream_end.max(stream_end);
+            // Zero out the metadata area
+            let metadata_file_offset =
+                section_layout.file_region.offset + metadata_offset_in_section as u64;
+            let original_metadata_size = view.cor20header().meta_data_size as u64;
+
+            // Ensure we don't exceed section boundaries and don't interfere with the new .meta section
+            let section_end = section_layout.file_region.offset + section_layout.file_region.size;
+            let meta_section = layout_plan
+                .file_layout
+                .sections
+                .iter()
+                .find(|s| s.contains_metadata);
+
+            // Check bounds for COR20 header
+            if cor20_file_offset + cor20_size <= section_end {
+                if let Some(meta) = meta_section {
+                    let would_overlap_meta = !(cor20_file_offset + cor20_size
+                        <= meta.file_region.offset
+                        || cor20_file_offset >= meta.file_region.offset + meta.file_region.size);
+                    if !would_overlap_meta {
+                        let zero_buffer = vec![0u8; cor20_size as usize];
+                        mmap_file.write_at(cor20_file_offset, &zero_buffer)?;
+                    }
+                }
+            }
+
+            // Check bounds for metadata
+            if metadata_file_offset + original_metadata_size <= section_end {
+                if let Some(meta) = meta_section {
+                    let would_overlap_meta = !(metadata_file_offset + original_metadata_size
+                        <= meta.file_region.offset
+                        || metadata_file_offset >= meta.file_region.offset + meta.file_region.size);
+                    if !would_overlap_meta {
+                        let zero_buffer = vec![0u8; original_metadata_size as usize];
+                        mmap_file.write_at(metadata_file_offset, &zero_buffer)?;
+                    }
+                }
+            }
+        }
     }
-
-    let new_metadata_size = max_stream_end - metadata_start_file_offset;
-
-    // Update the metadata RVA field in the COR20 header
-    // The metadata RVA is at offset 8 in the COR20 header
-
-    let metadata_rva_offset = cor20_file_offset + 8;
-    mmap_file.write_u32_le_at(metadata_rva_offset, new_metadata_rva as u32)?;
-
-    // Update the metadata size field in the COR20 header
-    // The metadata size is at offset 12 (0xC) in the COR20 header
-    let metadata_size_offset = cor20_file_offset + 12;
-    mmap_file.write_u32_le_at(metadata_size_offset, new_metadata_size as u32)?;
-
-    Ok(())
-}
-
-/// Updates PE structure including checksums and relocations.
-///
-/// Uses the [`crate::cilassembly::write::writers::PeWriter`] to perform
-/// final PE structure updates including checksums and relocation data.
-///
-/// # Arguments
-/// * `assembly` - Source [`crate::cilassembly::CilAssembly`] for PE structure
-/// * `mmap_file` - Target [`crate::cilassembly::write::output::Output`] file to update
-/// * `layout_plan` - [`crate::cilassembly::write::planner::LayoutPlan`] with PE layout
-fn update_pe_structure(
-    assembly: &CilAssembly,
-    mmap_file: &mut output::Output,
-    layout_plan: &planner::LayoutPlan,
-) -> Result<()> {
-    // Use the PE writer for PE structure updates
-    let mut pe_writer = writers::PeWriter::new(assembly, mmap_file, layout_plan);
-    pe_writer.write_pe_updates()?;
 
     Ok(())
 }
@@ -734,11 +1236,11 @@ mod tests {
         // Load a test assembly
         let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))
             .expect("Failed to load test assembly");
-        let assembly = view.to_owned();
+        let mut assembly = view.to_owned();
 
         // Create layout plan
         let layout_plan =
-            planner::LayoutPlan::create(&assembly).expect("Failed to create layout plan");
+            planner::LayoutPlan::create(&mut assembly).expect("Failed to create layout plan");
 
         // Create temporary output file
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
@@ -746,8 +1248,9 @@ mod tests {
             .expect("Failed to create mmap file");
 
         // Test the PE headers copy operation
-        copy_pe_headers(&assembly, &mut mmap_file, &layout_plan)
-            .expect("Failed to copy PE headers");
+        let context =
+            WriteContext::new(&assembly, &layout_plan).expect("Failed to create WriteContext");
+        copy_pe_headers(&context, &mut mmap_file, &layout_plan).expect("Failed to copy PE headers");
 
         // Verify DOS header is copied correctly
         let dos_slice = mmap_file
@@ -782,10 +1285,10 @@ mod tests {
     fn test_layout_plan_basic_properties() {
         let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))
             .expect("Failed to load test assembly");
-        let assembly = view.to_owned();
+        let mut assembly = view.to_owned();
 
         let layout_plan =
-            planner::LayoutPlan::create(&assembly).expect("Failed to create layout plan");
+            planner::LayoutPlan::create(&mut assembly).expect("Failed to create layout plan");
 
         // Basic sanity checks
         // Note: After migrating heaps to use byte offsets instead of indices,
@@ -813,32 +1316,38 @@ mod tests {
     fn test_section_by_section_write_no_panic() {
         let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))
             .expect("Failed to load test assembly");
-        let assembly = view.to_owned();
+        let mut assembly = view.to_owned();
 
         let layout_plan =
-            planner::LayoutPlan::create(&assembly).expect("Failed to create layout plan");
+            planner::LayoutPlan::create(&mut assembly).expect("Failed to create layout plan");
 
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let mut mmap_file = output::Output::create(temp_file.path(), layout_plan.total_size)
             .expect("Failed to create mmap file");
 
         // Test each phase of the section-by-section approach
-        copy_pe_headers(&assembly, &mut mmap_file, &layout_plan)
-            .expect("Failed to copy PE headers");
+        let context =
+            WriteContext::new(&assembly, &layout_plan).expect("Failed to create WriteContext");
+        copy_pe_headers(&context, &mut mmap_file, &layout_plan).expect("Failed to copy PE headers");
 
-        copy_section_table(&assembly, &mut mmap_file, &layout_plan)
+        copy_section_table(&context, &mut mmap_file, &layout_plan)
             .expect("Failed to copy section table");
 
-        copy_sections_to_new_locations(&assembly, &mut mmap_file, &layout_plan)
+        copy_sections_to_new_locations(&context, &mut mmap_file, &layout_plan)
             .expect("Failed to copy sections");
 
-        update_pe_headers(&assembly, &mut mmap_file, &layout_plan)
-            .expect("Failed to update PE headers");
+        // PE headers are now updated via consolidated PeWriter
 
-        update_metadata_root(&assembly, &mut mmap_file, &layout_plan)
-            .expect("Failed to update metadata root");
+        let original_metadata_rva = context.original_metadata_rva;
+        update_metadata_root(
+            &context,
+            &mut mmap_file,
+            &layout_plan,
+            original_metadata_rva,
+        )
+        .expect("Failed to update metadata root");
 
-        write_streams_with_additions(&assembly, &mut mmap_file, &layout_plan)
+        write_streams_with_additions(&mut assembly, &mut mmap_file, &layout_plan)
             .expect("Failed to write streams");
 
         write_table_modifications(&assembly, &mut mmap_file, &layout_plan)
@@ -847,7 +1356,6 @@ mod tests {
         write_native_tables(&assembly, &mut mmap_file, &layout_plan)
             .expect("Failed to write native tables");
 
-        update_pe_structure(&assembly, &mut mmap_file, &layout_plan)
-            .expect("Failed to update PE structure");
+        // PE structure updates are now handled via consolidated PeWriter
     }
 }

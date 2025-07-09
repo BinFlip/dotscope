@@ -58,7 +58,9 @@ use std::path::{Path, PathBuf};
 
 use memmap2::{MmapMut, MmapOptions};
 
-use crate::{cilassembly::write::planner::FileRegion, Error, Result};
+use crate::{
+    cilassembly::write::planner::FileRegion, file::io::write_compressed_uint, Error, Result,
+};
 
 /// A memory-mapped output file that supports atomic operations.
 ///
@@ -300,6 +302,124 @@ impl Output {
     /// * `value` - 64-bit value to write in little-endian format
     pub fn write_u64_le_at(&mut self, offset: u64, value: u64) -> Result<()> {
         self.write_at(offset, &value.to_le_bytes())
+    }
+
+    /// Writes a compressed unsigned integer at the specified offset.
+    ///
+    /// Uses ECMA-335 compressed integer encoding:
+    /// - Values < 0x80: 1 byte
+    /// - Values < 0x4000: 2 bytes (with high bit set)
+    /// - Larger values: 4 bytes (with high 2 bits set)
+    ///
+    /// # Arguments
+    /// * `offset` - Byte offset where to write the compressed integer
+    /// * `value` - 32-bit value to encode and write
+    ///
+    /// # Returns
+    /// Returns the new offset after writing (offset + bytes_written).
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::WriteMmapFailed`] if the write would exceed file bounds.
+    pub fn write_compressed_uint_at(&mut self, offset: u64, value: u32) -> Result<u64> {
+        let mut buffer = Vec::new();
+        write_compressed_uint(value, &mut buffer);
+
+        self.write_at(offset, &buffer)?;
+        Ok(offset + buffer.len() as u64)
+    }
+
+    /// Writes data with automatic 4-byte alignment padding.
+    ///
+    /// Writes the data at the specified offset and adds 0xFF padding bytes to align
+    /// to the next 4-byte boundary. The 0xFF bytes are safe for all heap types as
+    /// they create invalid entries that won't be parsed.
+    ///
+    /// # Arguments
+    /// * `offset` - Byte offset where to write the data
+    /// * `data` - Data to write
+    ///
+    /// # Returns
+    /// Returns the new aligned offset after writing and padding.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::WriteMmapFailed`] if the write would exceed file bounds.
+    pub fn write_aligned_data(&mut self, offset: u64, data: &[u8]) -> Result<u64> {
+        // Write the data
+        self.write_at(offset, data)?;
+        let data_end = offset + data.len() as u64;
+
+        // Calculate padding needed for 4-byte alignment
+        let padding_needed = (4 - (data.len() % 4)) % 4;
+
+        if padding_needed > 0 {
+            // Fill padding with 0xFF bytes to prevent creation of valid heap entries
+            let padding_slice = self.get_mut_slice(data_end as usize, padding_needed)?;
+            padding_slice.fill(0xFF);
+        }
+
+        Ok(data_end + padding_needed as u64)
+    }
+
+    /// Writes data and returns the next position for sequential writing.
+    ///
+    /// Convenience method that combines writing data with position tracking,
+    /// eliminating the common pattern of manual position updates.
+    ///
+    /// # Arguments
+    /// * `position` - Current write position, will be updated to point after the written data
+    /// * `data` - Data to write
+    ///
+    /// # Returns
+    /// Returns the new position after writing.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::WriteMmapFailed`] if the write would exceed file bounds.
+    pub fn write_and_advance(&mut self, position: &mut usize, data: &[u8]) -> Result<()> {
+        let slice = self.get_mut_slice(*position, data.len())?;
+        slice.copy_from_slice(data);
+        *position += data.len();
+        Ok(())
+    }
+
+    /// Fills a region with the specified byte value.
+    ///
+    /// Efficient method for filling large regions with a single byte value,
+    /// commonly used for padding and zero-initialization.
+    ///
+    /// # Arguments
+    /// * `offset` - Starting byte offset
+    /// * `size` - Number of bytes to fill
+    /// * `fill_byte` - Byte value to fill with
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::WriteMmapFailed`] if the region would exceed file bounds.
+    pub fn fill_region(&mut self, offset: u64, size: usize, fill_byte: u8) -> Result<()> {
+        let slice = self.get_mut_slice(offset as usize, size)?;
+        slice.fill(fill_byte);
+        Ok(())
+    }
+
+    /// Adds heap padding to align written data to 4-byte boundary.
+    ///
+    /// Calculates the padding needed based on the number of bytes written since heap_start
+    /// and fills the padding with 0xFF bytes to prevent creation of valid heap entries.
+    /// This matches the existing heap padding pattern used throughout the writers.
+    ///
+    /// # Arguments
+    /// * `current_pos` - Current write position after writing heap data
+    /// * `heap_start` - Starting position of the heap being written
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::WriteMmapFailed`] if the padding would exceed file bounds.
+    pub fn add_heap_padding(&mut self, current_pos: usize, heap_start: usize) -> Result<()> {
+        let bytes_written = current_pos - heap_start;
+        let padding_needed = (4 - (bytes_written % 4)) % 4;
+
+        if padding_needed > 0 {
+            self.fill_region(current_pos as u64, padding_needed, 0xFF)?;
+        }
+
+        Ok(())
     }
 
     /// Gets the total size of the file.

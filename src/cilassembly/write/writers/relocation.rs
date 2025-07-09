@@ -5,15 +5,25 @@
 //! relocation tables according to the PE/COFF specification when assembly sections move
 //! to different virtual addresses.
 //!
-//! # Base Relocation Format
+//! # Key Components
 //!
+//! - [`crate::cilassembly::write::writers::relocation::RelocationWriter`] - Main writer for base relocation table management
+//! - [`crate::cilassembly::write::writers::relocation::RelocationBlock`] - Individual relocation block for 4KB pages
+//! - [`crate::cilassembly::write::writers::relocation::RelocationEntry`] - Single relocation entry within a block
+//! - [`crate::cilassembly::write::writers::relocation::SectionMove`] - Section movement information
+//! - [`crate::cilassembly::write::writers::relocation::RelocationTypes`] - PE relocation type constants
+//!
+//! # Architecture
+//!
+//! The base relocation system handles section movements in mixed-mode assemblies:
+//!
+//! ## Base Relocation Format
 //! Base relocations are stored in the .reloc section and consist of:
 //! - **Relocation blocks**: Each covering a 4KB page of virtual memory
 //! - **Block header**: Virtual address and total block size
 //! - **Relocation entries**: Type and offset within the page
 //!
-//! # Relocation Types
-//!
+//! ## Relocation Types
 //! Common relocation types include:
 //! - `IMAGE_REL_BASED_ABSOLUTE` (0): No operation, used for padding
 //! - `IMAGE_REL_BASED_HIGH` (1): High 16 bits of 32-bit address
@@ -21,16 +31,58 @@
 //! - `IMAGE_REL_BASED_HIGHLOW` (3): Full 32-bit address
 //! - `IMAGE_REL_BASED_DIR64` (10): Full 64-bit address
 //!
-//! # Usage
+//! ## Section Movement Handling
+//! When sections move to different virtual addresses:
+//! - Parse existing relocation blocks from the .reloc section
+//! - Create address mapping for moved sections
+//! - Update relocation entries to point to new addresses
+//! - Handle cross-page relocations by moving entries between blocks
+//! - Maintain proper block alignment and padding
+//!
+//! # Usage Examples
 //!
 //! ```rust,ignore
-//! use crate::cilassembly::write::writers::relocation::RelocationWriter;
+//! use crate::cilassembly::write::writers::relocation::{RelocationWriter, SectionMove};
+//! use crate::cilassembly::write::output::Output;
 //!
-//! let mut writer = RelocationWriter::new(output, section_moves);
+//! # let mut output = Output::new(4096)?;
+//! # let section_moves = vec![
+//! #     SectionMove {
+//! #         old_virtual_address: 0x1000,
+//! #         new_virtual_address: 0x2000,
+//! #         virtual_size: 0x1000,
+//! #     }
+//! # ];
+//!
+//! // Create relocation writer with section movement information
+//! let mut writer = RelocationWriter::new(&mut output, &section_moves);
+//!
+//! // Parse existing relocation table
 //! writer.parse_relocation_table()?;
+//!
+//! // Update relocations based on section movements
 //! writer.update_relocations()?;
+//!
+//! // Write updated relocation table back to file
 //! writer.write_relocation_table()?;
+//!
+//! println!("Base relocations updated successfully");
+//! # Ok::<(), crate::Error>(())
 //! ```
+//!
+//! # Thread Safety
+//!
+//! The [`crate::cilassembly::write::writers::relocation::RelocationWriter`] is designed for single-threaded use during binary
+//! generation. It maintains mutable state for relocation block management and is not thread-safe.
+//! Each relocation update operation should be completed atomically within a single thread.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::cilassembly::write::writers::pe`] - PE structure updates and section management
+//! - [`crate::cilassembly::write::output`] - Binary output buffer management
+//! - [`crate::cilassembly::write::planner`] - Layout planning and section movement detection
+//! - [`crate::file`] - PE file structure parsing and RVA conversion
 
 use crate::{
     cilassembly::write::output::Output, cilassembly::CilAssembly, file::io::read_le, Error, Result,
@@ -80,7 +132,28 @@ pub struct RelocationEntry {
 impl RelocationEntry {
     /// Creates a new relocation entry from a raw 16-bit value.
     ///
-    /// The raw format packs both type (high 4 bits) and offset (low 12 bits).
+    /// The raw format packs both type (high 4 bits) and offset (low 12 bits)
+    /// according to the PE/COFF specification for relocation entries.
+    ///
+    /// # Arguments
+    ///
+    /// * `raw` - The raw 16-bit value containing packed type and offset information
+    ///
+    /// # Returns
+    ///
+    /// Returns a new [`RelocationEntry`] with decoded type and offset fields.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use crate::cilassembly::write::writers::relocation::RelocationEntry;
+    ///
+    /// // Raw value: type 3 (HIGHLOW) with offset 0x123
+    /// let raw = (3 << 12) | 0x123;
+    /// let entry = RelocationEntry::from_raw(raw);
+    /// assert_eq!(entry.relocation_type, 3);
+    /// assert_eq!(entry.offset, 0x123);
+    /// ```
     pub fn from_raw(raw: u16) -> Self {
         Self {
             offset: raw & 0x0FFF,
@@ -89,11 +162,53 @@ impl RelocationEntry {
     }
 
     /// Converts the relocation entry to its raw 16-bit representation.
+    ///
+    /// Encodes the entry's type and offset into the packed 16-bit format
+    /// required by the PE/COFF specification for relocation entries.
+    ///
+    /// # Returns
+    ///
+    /// Returns the raw 16-bit value with type in high 4 bits and offset in low 12 bits.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use crate::cilassembly::write::writers::relocation::RelocationEntry;
+    ///
+    /// let entry = RelocationEntry {
+    ///     offset: 0x123,
+    ///     relocation_type: 3,
+    /// };
+    /// let raw = entry.to_raw();
+    /// assert_eq!(raw, (3 << 12) | 0x123);
+    /// ```
     pub fn to_raw(&self) -> u16 {
         ((self.relocation_type as u16) << 12) | (self.offset & 0x0FFF)
     }
 
     /// Gets the size in bytes for this relocation type.
+    ///
+    /// Different relocation types operate on different sizes of data:
+    /// - `IMAGE_REL_BASED_ABSOLUTE`: 0 bytes (no operation)
+    /// - `IMAGE_REL_BASED_HIGH/LOW`: 2 bytes (16-bit operations)
+    /// - `IMAGE_REL_BASED_HIGHLOW`: 4 bytes (32-bit addresses)
+    /// - `IMAGE_REL_BASED_DIR64`: 8 bytes (64-bit addresses)
+    ///
+    /// # Returns
+    ///
+    /// Returns the size in bytes that this relocation type operates on.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use crate::cilassembly::write::writers::relocation::{RelocationEntry, RelocationTypes};
+    ///
+    /// let entry = RelocationEntry {
+    ///     offset: 0x100,
+    ///     relocation_type: RelocationTypes::IMAGE_REL_BASED_HIGHLOW,
+    /// };
+    /// assert_eq!(entry.size_bytes(), 4);
+    /// ```
     pub fn size_bytes(&self) -> usize {
         match self.relocation_type {
             RelocationTypes::IMAGE_REL_BASED_ABSOLUTE => 0,
@@ -250,7 +365,33 @@ impl<'a> RelocationWriter<'a> {
     /// Parses the existing base relocation table from the .reloc section.
     ///
     /// Locates the .reloc section in the PE file and parses all relocation blocks
-    /// and their entries according to the PE/COFF specification.
+    /// and their entries according to the PE/COFF specification. Each block covers
+    /// a 4KB page of virtual memory and contains entries for addresses that need
+    /// relocation when the image is loaded at a different base address.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if parsing completed successfully, even if no relocation
+    /// table exists (pure .NET assemblies often have no relocations).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error`] if the relocation table structure is malformed
+    /// or if the .reloc section cannot be accessed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use crate::cilassembly::write::writers::relocation::RelocationWriter;
+    ///
+    /// # let mut output = crate::cilassembly::write::output::Output::new(4096)?;
+    /// # let section_moves = vec![];
+    /// # let assembly = crate::cilassembly::CilAssembly::empty();
+    /// let mut writer = RelocationWriter::with_assembly(&mut output, &section_moves, &assembly);
+    /// writer.parse_relocation_table()?;
+    /// println!("Parsed {} relocation blocks", writer.relocation_blocks.len());
+    /// # Ok::<(), crate::Error>(())
+    /// ```
     pub fn parse_relocation_table(&mut self) -> Result<()> {
         let (section_offset, section_size) = self.find_reloc_section()?;
 
@@ -292,7 +433,45 @@ impl<'a> RelocationWriter<'a> {
     /// Updates relocation entries based on section movements.
     ///
     /// Adjusts relocation targets when sections move to different virtual addresses,
-    /// ensuring that relocated addresses point to the correct locations.
+    /// ensuring that relocated addresses point to the correct locations. This is
+    /// essential for mixed-mode assemblies where native code contains absolute
+    /// addresses that must be updated when sections are relocated.
+    ///
+    /// # Process
+    ///
+    /// 1. Creates address mapping from old to new section locations
+    /// 2. For each relocation block, checks if entries point to moved sections
+    /// 3. Updates entry targets to new addresses
+    /// 4. Handles cross-page relocations by moving entries between blocks
+    /// 5. Maintains proper block structure and alignment
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if relocation updates completed successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error`] if relocation updates fail due to invalid
+    /// relocation structure or I/O errors.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use crate::cilassembly::write::writers::relocation::{RelocationWriter, SectionMove};
+    ///
+    /// # let mut output = crate::cilassembly::write::output::Output::new(4096)?;
+    /// # let section_moves = vec![SectionMove {
+    /// #     old_virtual_address: 0x1000,
+    /// #     new_virtual_address: 0x2000,
+    /// #     virtual_size: 0x1000,
+    /// # }];
+    /// # let assembly = crate::cilassembly::CilAssembly::empty();
+    /// let mut writer = RelocationWriter::with_assembly(&mut output, &section_moves, &assembly);
+    /// writer.parse_relocation_table()?;
+    /// writer.update_relocations()?;
+    /// println!("Relocations updated for {} section moves", section_moves.len());
+    /// # Ok::<(), crate::Error>(())
+    /// ```
     pub fn update_relocations(&mut self) -> Result<()> {
         if self.section_moves.is_empty() || self.relocation_blocks.is_empty() {
             return Ok(());

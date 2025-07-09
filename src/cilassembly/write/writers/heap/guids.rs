@@ -19,20 +19,32 @@ impl<'a> super::HeapWriter<'a> {
     /// # Arguments
     ///
     /// * `stream_mod` - The [`crate::cilassembly::write::planner::metadata::StreamModification`] for the #GUID heap
-    pub(super) fn write_guid_heap_additions(
-        &mut self,
-        stream_mod: &StreamModification,
-    ) -> Result<()> {
+    pub(super) fn write_guid_heap(&mut self, stream_mod: &StreamModification) -> Result<()> {
         let guid_changes = &self.base.assembly.changes().guid_heap_changes;
 
-        if guid_changes.has_modifications() || guid_changes.has_removals() {
-            return self.rebuild_guid_heap(stream_mod);
+        if guid_changes.has_additions()
+            || guid_changes.has_modifications()
+            || guid_changes.has_removals()
+        {
+            return self.write_guid_heap_with_changes(stream_mod);
         }
 
-        let (_, write_start) = self.prepare_heap_write(stream_mod)?;
+        let (stream_layout, write_start) = self.base.get_stream_write_position(stream_mod)?;
         let mut write_pos = write_start;
 
+        let stream_end = stream_layout.file_region.end_offset() as usize;
+
         for guid in guid_changes.appended_items.iter() {
+            // Ensure we won't exceed stream boundary
+            if write_pos + 16 > stream_end {
+                return Err(crate::Error::WriteLayoutFailed {
+                    message: format!(
+                        "GUID heap overflow: write would exceed allocated space by {} bytes",
+                        (write_pos + 16) - stream_end
+                    ),
+                });
+            }
+
             let guid_slice = self.base.output.get_mut_slice(write_pos, 16)?;
             guid_slice.copy_from_slice(guid);
             write_pos += 16;
@@ -41,9 +53,9 @@ impl<'a> super::HeapWriter<'a> {
         Ok(())
     }
 
-    /// Rebuilds the entire GUID heap when modifications or removals are present.
+    /// Writes the GUID heap when modifications or removals are present.
     ///
-    /// This method provides comprehensive GUID heap rebuilding that:
+    /// This method provides comprehensive GUID heap writing that:
     /// - Preserves valid GUID entries in sequential order (1-based indexing)
     /// - Applies in-place modifications for existing GUIDs
     /// - Handles GUID removals by skipping entries
@@ -67,11 +79,16 @@ impl<'a> super::HeapWriter<'a> {
     /// # Arguments
     ///
     /// * `stream_mod` - The [`crate::cilassembly::write::planner::metadata::StreamModification`] for the #GUID heap
-    pub(super) fn rebuild_guid_heap(&mut self, stream_mod: &StreamModification) -> Result<()> {
-        let (_stream_layout, write_start) = self.prepare_heap_write(stream_mod)?;
+    pub(super) fn write_guid_heap_with_changes(
+        &mut self,
+        stream_mod: &StreamModification,
+    ) -> Result<()> {
+        let (stream_layout, write_start) = self.base.get_stream_write_position(stream_mod)?;
         let mut write_pos = write_start;
+        let allocated_total_bytes = stream_layout.file_region.size as usize;
 
         let guid_changes = &self.base.assembly.changes().guid_heap_changes;
+        let stream_end = stream_layout.file_region.end_offset() as usize;
 
         // Step 1: Start with original GUIDs that aren't removed
         let mut guids_to_write: Vec<[u8; 16]> = Vec::new();
@@ -114,6 +131,14 @@ impl<'a> super::HeapWriter<'a> {
 
         let start_write_pos = write_pos;
         for guid_to_write in guids_to_write {
+            // Ensure we won't exceed stream boundary
+            if write_pos + 16 > stream_end {
+                return Err(crate::Error::WriteLayoutFailed {
+                    message: format!("GUID heap overflow during writing: write would exceed allocated space by {} bytes", 
+                        (write_pos + 16) - stream_end)
+                });
+            }
+
             let guid_slice = self.base.output.get_mut_slice(write_pos, 16)?;
             guid_slice.copy_from_slice(&guid_to_write);
             write_pos += 16;
@@ -122,10 +147,9 @@ impl<'a> super::HeapWriter<'a> {
         let total_bytes_written = write_pos - start_write_pos;
 
         // Clear any remaining bytes to prevent garbage data from being interpreted as GUIDs
-        // This is crucial when rebuilding the heap because we might write fewer bytes than the allocated space
-        let expected_total_bytes = stream_mod.additional_data_size as usize;
-        if total_bytes_written < expected_total_bytes {
-            let remaining_bytes = expected_total_bytes - total_bytes_written;
+        // This is crucial when writing the heap because we might write fewer bytes than the allocated space
+        if total_bytes_written < allocated_total_bytes {
+            let remaining_bytes = allocated_total_bytes - total_bytes_written;
             let clear_slice = self.base.output.get_mut_slice(write_pos, remaining_bytes)?;
             clear_slice.fill(0);
         }

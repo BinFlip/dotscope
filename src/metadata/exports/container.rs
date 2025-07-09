@@ -145,6 +145,18 @@ pub struct ExportedFunction {
     pub forwarder_target: Option<String>,
 }
 
+impl Clone for UnifiedExportContainer {
+    fn clone(&self) -> Self {
+        Self {
+            cil: self.cil.clone(),
+            native: self.native.clone(),
+            unified_name_cache: DashMap::new(), // Reset cache on clone
+            unified_function_cache: DashMap::new(), // Reset cache on clone
+            cache_dirty: AtomicBool::new(true), // Mark cache as dirty
+        }
+    }
+}
+
 impl UnifiedExportContainer {
     /// Create a new empty export container.
     ///

@@ -56,11 +56,8 @@ fn test_string_addition_round_trip() -> Result<()> {
     // Step 1: Load original assembly
     let mut assembly = create_test_assembly()?;
     let original_view = assembly.view();
-    let original_strings_count = original_view
-        .strings()
-        .map(|s| s.iter().count())
-        .unwrap_or(0);
-
+    let original_strings = original_view.strings().expect("Should have strings");
+    let original_strings_count = original_strings.iter().count();
     // Step 2: Add new strings
     let test_strings = vec!["TestString1", "TestString2", "TestString3"];
     let mut added_indices = Vec::new();
@@ -70,11 +67,14 @@ fn test_string_addition_round_trip() -> Result<()> {
         added_indices.push(index);
     }
 
-    // Step 3: Write to temporary file
+    // Step 3: Validate and apply changes
+    assembly.validate_and_apply_changes()?;
+
+    // Step 4: Write to temporary file
     let temp_file = NamedTempFile::new()?;
     assembly.write_to_file(temp_file.path())?;
 
-    // Step 4: Load the written file
+    // Step 5: Load the written file
     let written_view = CilAssemblyView::from_file(temp_file.path())?;
 
     // Step 5: Verify changes are persisted
@@ -115,7 +115,10 @@ fn test_string_modification_round_trip() -> Result<()> {
     // Step 2: Modify the string
     assembly.update_string(string_index, modified_string)?;
 
-    // Step 3: Write to temporary file
+    // Step 3: Validate and apply changes
+    assembly.validate_and_apply_changes()?;
+
+    // Step 4: Write to temporary file
     let temp_file = NamedTempFile::new()?;
     assembly.write_to_file(temp_file.path())?;
 
@@ -161,7 +164,10 @@ fn test_string_removal_round_trip() -> Result<()> {
     // Step 2: Remove one string
     assembly.remove_string(remove_index, ReferenceHandlingStrategy::FailIfReferenced)?;
 
-    // Step 3: Write to temporary file
+    // Step 3: Validate and apply changes
+    assembly.validate_and_apply_changes()?;
+
+    // Step 4: Write to temporary file
     let temp_file = NamedTempFile::new()?;
     assembly.write_to_file(temp_file.path())?;
 
@@ -226,7 +232,10 @@ fn test_blob_operations_round_trip() -> Result<()> {
     // Modify the first blob
     assembly.update_blob(blob1_index, &modified_blob_data)?;
 
-    // Step 3: Write to temporary file
+    // Step 3: Validate and apply changes
+    assembly.validate_and_apply_changes()?;
+
+    // Step 4: Write to temporary file
     let temp_file = NamedTempFile::new()?;
     assembly.write_to_file(temp_file.path())?;
 
@@ -295,7 +304,10 @@ fn test_guid_operations_round_trip() -> Result<()> {
     // Modify the first GUID
     assembly.update_guid(guid1_index, &modified_guid)?;
 
-    // Step 3: Write to temporary file
+    // Step 3: Validate and apply changes
+    assembly.validate_and_apply_changes()?;
+
+    // Step 4: Write to temporary file
     let temp_file = NamedTempFile::new()?;
     assembly.write_to_file(temp_file.path())?;
 
@@ -355,7 +367,10 @@ fn test_userstring_operations_round_trip() -> Result<()> {
     // Modify the first user string
     assembly.update_userstring(us1_index, modified_userstring)?;
 
-    // Step 3: Write to temporary file
+    // Step 3: Validate and apply changes
+    assembly.validate_and_apply_changes()?;
+
+    // Step 4: Write to temporary file
     let temp_file = NamedTempFile::new()?;
     assembly.write_to_file(temp_file.path())?;
 
@@ -428,7 +443,10 @@ fn test_mixed_operations_round_trip() -> Result<()> {
     assembly.update_string(string_index, modified_string)?;
     assembly.update_blob(blob_index, &modified_blob)?;
 
-    // Step 3: Write to temporary file
+    // Step 3: Validate and apply changes
+    assembly.validate_and_apply_changes()?;
+
+    // Step 4: Write to temporary file
     let temp_file = NamedTempFile::new()?;
     assembly.write_to_file(temp_file.path())?;
 
@@ -523,7 +541,8 @@ fn test_builder_context_round_trip() -> Result<()> {
     context.update_blob(blob_index, &[4, 5, 6])?;
 
     // Step 3: Finish and write
-    let assembly = context.finish();
+    let mut assembly = context.finish();
+    assembly.validate_and_apply_changes()?;
     let temp_file = NamedTempFile::new()?;
     assembly.write_to_file(temp_file.path())?;
 

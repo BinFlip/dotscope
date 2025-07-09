@@ -92,7 +92,7 @@
 
 use crate::metadata::tables::TableId;
 
-mod calc;
+pub(crate) mod calc;
 mod heap_expansions;
 mod layout;
 mod memory;
@@ -211,9 +211,8 @@ mod tests {
     fn test_create_layout_plan() {
         let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))
             .expect("Failed to load test assembly");
-        let assembly = view.to_owned();
-
-        let result = LayoutPlan::create(&assembly);
+        let mut assembly = view.to_owned();
+        let result = LayoutPlan::create(&mut assembly);
         assert!(result.is_ok(), "Layout plan creation should succeed");
 
         let plan = result.unwrap();
@@ -230,9 +229,8 @@ mod tests {
     fn test_layout_plan_basic_properties() {
         let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))
             .expect("Failed to load test assembly");
-        let assembly = view.to_owned();
-
-        let layout_plan = LayoutPlan::create(&assembly).expect("Failed to create layout plan");
+        let mut assembly = view.to_owned();
+        let layout_plan = LayoutPlan::create(&mut assembly).expect("Failed to create layout plan");
 
         // Basic sanity checks
         assert!(

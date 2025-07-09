@@ -87,14 +87,13 @@ impl<'a> NativeTablesWriter<'a> {
 
     /// Writes native PE import and export tables if they exist.
     ///
-    /// This method examines the assembly's unified import/export containers and
-    /// generates the corresponding PE table structures when native data is present.
-    /// It handles both import tables (IAT/ILT) and export tables (EAT) generation.
+    /// This method uses the already-unified containers from the assembly (unified during
+    /// the planning phase) to generate the corresponding PE table structures.
     ///
     /// # Process
-    /// 1. Check for native imports in the unified import container
+    /// 1. Use the already-unified import container from assembly changes
     /// 2. Generate import descriptors, IAT, and ILT if imports exist
-    /// 3. Check for native exports in the unified export container
+    /// 3. Use the already-unified export container from assembly changes
     /// 4. Generate export directory and related tables if exports exist
     /// 5. Update PE directory entries to point to the new tables
     ///
@@ -105,15 +104,31 @@ impl<'a> NativeTablesWriter<'a> {
     /// Returns [`crate::Error`] if table generation fails due to invalid data
     /// or insufficient output buffer space.
     pub fn write_native_tables(&mut self) -> Result<()> {
-        if let Some(imports) = self.base.assembly.native_imports() {
-            if !imports.is_empty() {
-                self.write_import_tables(imports)?;
+        // Only write import tables if the layout plan actually allocated space for them
+        if self
+            .base
+            .layout_plan
+            .native_table_requirements
+            .needs_import_tables
+        {
+            // Use the already-unified imports from assembly changes (unified during planning)
+            let unified_imports = self.base.assembly.native_imports();
+            if !unified_imports.is_empty() {
+                self.write_import_tables(unified_imports)?;
             }
         }
 
-        if let Some(exports) = self.base.assembly.native_exports() {
-            if !exports.is_empty() {
-                self.write_export_tables(exports)?;
+        // Only write export tables if the layout plan actually allocated space for them
+        if self
+            .base
+            .layout_plan
+            .native_table_requirements
+            .needs_export_tables
+        {
+            // Use the already-unified exports from assembly changes (unified during planning)
+            let unified_exports = self.base.assembly.native_exports();
+            if !unified_exports.is_empty() {
+                self.write_export_tables(unified_exports)?;
             }
         }
 
@@ -298,9 +313,8 @@ mod tests {
     fn test_native_tables_writer_creation() {
         let view = CilAssemblyView::from_file(Path::new("tests/samples/WindowsBase.dll"))
             .expect("Failed to load test assembly");
-        let assembly = CilAssembly::new(view);
-
-        let layout_plan = LayoutPlan::create(&assembly).expect("Failed to create layout plan");
+        let mut assembly = CilAssembly::new(view);
+        let layout_plan = LayoutPlan::create(&mut assembly).expect("Failed to create layout plan");
 
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let mut output = crate::cilassembly::write::output::Output::create(
@@ -319,9 +333,8 @@ mod tests {
     fn test_native_tables_writer_with_no_native_data() {
         let view = CilAssemblyView::from_file(Path::new("tests/samples/WindowsBase.dll"))
             .expect("Failed to load test assembly");
-        let assembly = CilAssembly::new(view);
-
-        let layout_plan = LayoutPlan::create(&assembly).expect("Failed to create layout plan");
+        let mut assembly = CilAssembly::new(view);
+        let layout_plan = LayoutPlan::create(&mut assembly).expect("Failed to create layout plan");
 
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let mut output = crate::cilassembly::write::output::Output::create(
@@ -353,8 +366,8 @@ mod tests {
 
         assert!(result.is_ok());
 
-        let assembly = context.finish();
-        let layout_plan = LayoutPlan::create(&assembly).expect("Failed to create layout plan");
+        let mut assembly = context.finish();
+        let layout_plan = LayoutPlan::create(&mut assembly).expect("Failed to create layout plan");
 
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let mut output = crate::cilassembly::write::output::Output::create(
@@ -388,8 +401,8 @@ mod tests {
 
         assert!(result.is_ok());
 
-        let assembly = context.finish();
-        let layout_plan = LayoutPlan::create(&assembly).expect("Failed to create layout plan");
+        let mut assembly = context.finish();
+        let layout_plan = LayoutPlan::create(&mut assembly).expect("Failed to create layout plan");
 
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let mut output = crate::cilassembly::write::output::Output::create(
@@ -428,8 +441,8 @@ mod tests {
             .build(&mut context);
         assert!(result.is_ok());
 
-        let assembly = context.finish();
-        let layout_plan = LayoutPlan::create(&assembly).expect("Failed to create layout plan");
+        let mut assembly = context.finish();
+        let layout_plan = LayoutPlan::create(&mut assembly).expect("Failed to create layout plan");
 
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let mut output = crate::cilassembly::write::output::Output::create(

@@ -100,13 +100,11 @@
 //! - [`crate::cilassembly::changes`] - Source of heap modification data
 //! - [`crate::cilassembly::write::utils`] - Shared utility functions for layout searches
 
+use std::collections::HashMap;
+
 use crate::{
     cilassembly::{
-        write::{
-            output::Output,
-            planner::{LayoutPlan, StreamFileLayout, StreamModification},
-            writers::WriterBase,
-        },
+        write::{output::Output, planner::LayoutPlan, writers::WriterBase},
         CilAssembly,
     },
     Result,
@@ -116,7 +114,6 @@ mod blobs;
 mod guids;
 mod strings;
 mod userstrings;
-mod utilities;
 
 /// A stateful writer for metadata heap modifications that encapsulates all necessary context.
 ///
@@ -159,62 +156,26 @@ impl<'a> HeapWriter<'a> {
         }
     }
 
-    /// Common helper that finds stream layout and calculates write positions.
-    ///
-    /// Returns ([`crate::cilassembly::write::planner::StreamFileLayout`], write_start_position).
-    ///
-    /// # Arguments
-    /// * `stream_mod` - The [`crate::cilassembly::write::planner::metadata::StreamModification`] to prepare for writing
-    fn prepare_heap_write(
-        &self,
-        stream_mod: &StreamModification,
-    ) -> Result<(&StreamFileLayout, usize)> {
-        let stream_layout = self.base.find_stream_layout(&stream_mod.name)?;
-
-        let write_start = if self.is_heap_rebuilding(&stream_mod.name) {
-            stream_layout.file_region.offset as usize
-        } else {
-            self.find_actual_heap_data_end(stream_layout, stream_mod, &stream_mod.name)?
-        };
-
-        Ok((stream_layout, write_start))
-    }
-
-    /// Determines if a heap is being rebuilt (has any changes) or just appended to.
-    fn is_heap_rebuilding(&self, stream_name: &str) -> bool {
-        let changes = self.base.assembly.changes();
-        match stream_name {
-            "#Strings" => {
-                changes.string_heap_changes.has_modifications()
-                    || changes.string_heap_changes.has_removals()
-            }
-            "#Blob" => changes.blob_heap_changes.has_changes(),
-            "#GUID" => {
-                changes.guid_heap_changes.has_modifications()
-                    || changes.guid_heap_changes.has_removals()
-            }
-            "#US" => {
-                changes.userstring_heap_changes.has_modifications()
-                    || changes.userstring_heap_changes.has_removals()
-            }
-            _ => false,
-        }
-    }
-
-    /// Writes heap modifications based on the copy-first approach.
+    /// Writes heap modifications and returns index mappings for cross-reference updates.
     ///
     /// Handles additions, modifications, and removals of heap entries. This method
     /// iterates through all [`crate::cilassembly::write::planner::metadata::StreamModification`] entries and
     /// writes the appropriate heap changes based on stream type.
     ///
-    /// For modifications and removals, the original heap content is updated in place
-    /// where possible, while additions are appended to the end.
+    /// For modifications and removals, the heap reconstruction approach is used to maintain
+    /// referential integrity, and index mappings are returned for updating cross-references.
+    ///
+    /// # Returns
+    /// Returns (index_mappings, actual_heap_sizes) where:
+    /// - index_mappings: [`std::collections::HashMap<String, std::collections::HashMap<u32, u32>>`] with
+    ///   heap-specific index mappings (heap_name -> original_index -> final_index).
+    /// - actual_heap_sizes: [`std::collections::HashMap<String, usize>`] with actual written heap sizes.
     ///
     /// # Errors
     /// Returns [`crate::Error`] if any heap writing operation fails due to invalid data
     /// or insufficient output buffer space.
-    pub fn write_all_heaps(&mut self) -> Result<()> {
-        // Process each modified stream and append new data
+    pub fn write_all_heaps(&mut self) -> Result<HashMap<String, HashMap<u32, u32>>> {
+        let mut all_index_mappings = HashMap::new();
         for stream_mod in self
             .base
             .layout_plan
@@ -224,16 +185,20 @@ impl<'a> HeapWriter<'a> {
         {
             match stream_mod.name.as_str() {
                 "#Strings" => {
-                    self.write_string_heap_additions(stream_mod)?;
+                    if let Some(string_mapping) =
+                        self.write_string_heap_with_reconstruction(stream_mod)?
+                    {
+                        all_index_mappings.insert("#Strings".to_string(), string_mapping);
+                    }
                 }
                 "#Blob" => {
-                    self.write_blob_heap_additions(stream_mod)?;
+                    self.write_blob_heap(stream_mod)?;
                 }
                 "#GUID" => {
-                    self.write_guid_heap_additions(stream_mod)?;
+                    self.write_guid_heap(stream_mod)?;
                 }
                 "#US" => {
-                    self.write_userstring_heap_additions(stream_mod)?;
+                    self.write_userstring_heap(stream_mod)?;
                 }
                 _ => {
                     // Skip unknown streams
@@ -241,7 +206,7 @@ impl<'a> HeapWriter<'a> {
             }
         }
 
-        Ok(())
+        Ok(all_index_mappings)
     }
 }
 
@@ -255,10 +220,10 @@ mod tests {
         // Test with assembly that has no modifications
         let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))
             .expect("Failed to load test assembly");
-        let assembly = view.to_owned();
+        let mut assembly = view.to_owned();
 
         // Since there are no modifications, this should succeed without doing anything
-        let layout_plan = LayoutPlan::create(&assembly).expect("Failed to create layout plan");
+        let layout_plan = LayoutPlan::create(&mut assembly).expect("Failed to create layout plan");
 
         // For testing, we'd need a mock Output, but for now just verify the layout plan
         assert_eq!(

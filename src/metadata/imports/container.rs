@@ -138,6 +138,18 @@ pub struct DllDependency {
     pub functions: Vec<String>,
 }
 
+impl Clone for UnifiedImportContainer {
+    fn clone(&self) -> Self {
+        Self {
+            cil: self.cil.clone(),
+            native: self.native.clone(),
+            unified_name_cache: DashMap::new(), // Reset cache on clone
+            unified_dll_cache: DashMap::new(),  // Reset cache on clone
+            cache_dirty: AtomicBool::new(true), // Mark cache as dirty
+        }
+    }
+}
+
 impl UnifiedImportContainer {
     /// Create a new empty import container.
     ///
@@ -152,8 +164,6 @@ impl UnifiedImportContainer {
             cache_dirty: AtomicBool::new(true),
         }
     }
-
-    // === COMPONENT ACCESS ===
 
     /// Get the CIL imports container.
     ///
@@ -210,8 +220,6 @@ impl UnifiedImportContainer {
         self.invalidate_cache();
         &mut self.native
     }
-
-    // === UNIFIED SEARCH METHODS ===
 
     /// Find all imports by name across both CIL and native sources.
     ///
@@ -336,8 +344,6 @@ impl UnifiedImportContainer {
         self.cil.len() + self.native.total_function_count()
     }
 
-    // === CONVENIENCE METHODS ===
-
     /// Add a native function import.
     ///
     /// Convenience method for adding native function imports. The DLL
@@ -391,8 +397,6 @@ impl UnifiedImportContainer {
         self.invalidate_cache();
         Ok(())
     }
-
-    // === PE INTEGRATION METHODS ===
 
     /// Get native import table data for PE writing.
     ///
@@ -449,8 +453,6 @@ impl UnifiedImportContainer {
 
         Ok(())
     }
-
-    // === PRIVATE HELPERS ===
 
     /// Ensure unified caches are up to date.
     fn ensure_cache_fresh(&self) {

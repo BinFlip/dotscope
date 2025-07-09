@@ -112,7 +112,7 @@ use crate::{
     cilassembly::{
         write::{
             output::Output,
-            planner::{LayoutPlan, SectionFileLayout, StreamFileLayout},
+            planner::{LayoutPlan, SectionFileLayout, StreamFileLayout, StreamModification},
             utils::{find_metadata_section, find_stream_layout},
         },
         CilAssembly,
@@ -235,5 +235,30 @@ impl<'a> WriterBase<'a> {
     /// Useful for writers that need to understand the expansion amount.
     pub fn original_file_size(&self) -> u64 {
         self.layout_plan.original_size
+    }
+
+    /// Gets the stream layout and write position for writing operations.
+    ///
+    /// In the .meta section approach, streams are always written from the beginning
+    /// of their allocated stream region. This method encapsulates the common pattern
+    /// of finding the stream layout and calculating the write start position.
+    ///
+    /// Returns ([`crate::cilassembly::write::planner::StreamFileLayout`], write_start_position).
+    ///
+    /// # Arguments
+    /// * `stream_mod` - The [`crate::cilassembly::write::planner::metadata::StreamModification`] to prepare for writing
+    ///
+    /// # Returns
+    /// Returns a tuple containing the stream layout and the write start position (as usize).
+    ///
+    /// # Errors
+    /// Returns [`crate::Error`] if the stream layout cannot be found.
+    pub fn get_stream_write_position(
+        &self,
+        stream_mod: &StreamModification,
+    ) -> Result<(&StreamFileLayout, usize)> {
+        let stream_layout = self.find_stream_layout(&stream_mod.name)?;
+        let write_start = stream_layout.file_region.offset as usize;
+        Ok((stream_layout, write_start))
     }
 }

@@ -107,7 +107,8 @@ fn extend_crafted_2() -> Result<()> {
     let temp_path = temp_file.path();
 
     // Get the assembly back from context and write to file
-    let assembly = context.finish();
+    let mut assembly = context.finish();
+    assembly.validate_and_apply_changes()?;
     assembly.write_to_file(temp_path)?;
 
     // Verify the file was actually created

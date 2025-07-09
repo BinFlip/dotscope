@@ -2,10 +2,70 @@
 //!
 //! This module provides specialized size calculation logic for all .NET metadata heap types,
 //! implementing exact ECMA-335 specification requirements for heap encoding and alignment.
+//! These calculations are essential for determining the exact binary size requirements
+//! during the assembly write pipeline.
+//!
+//! # Key Components
+//!
+//! - [`calculate_string_heap_size`] - Calculates size for #Strings heap modifications
+//! - [`calculate_string_heap_total_size`] - Calculates complete reconstructed string heap size
+//! - [`calculate_blob_heap_size`] - Calculates size for #Blob heap modifications
+//! - [`calculate_guid_heap_size`] - Calculates size for #GUID heap modifications
+//! - [`calculate_userstring_heap_size`] - Calculates size for #US heap modifications
+//!
+//! # Architecture
+//!
+//! The size calculation system handles two distinct scenarios:
+//!
+//! ## Addition-Only Scenario
+//! When only new items are added to heaps, calculations are straightforward:
+//! - Calculate size of new items only
+//! - Apply appropriate encoding (null terminators, compressed lengths, etc.)
+//! - Apply 4-byte alignment requirements
+//!
+//! ## Heap Rebuilding Scenario
+//! When modifications or removals are present, the entire heap must be rebuilt:
+//! - Calculate size of original items (excluding removed ones)
+//! - Apply modifications to existing items
+//! - Add new items
+//! - Maintain proper offset relationships for reference stability
+//!
+//! ## ECMA-335 Compliance
+//! All calculations implement exact ECMA-335 specification requirements:
+//! - **String Heap**: UTF-8 null-terminated strings with 4-byte alignment
+//! - **Blob Heap**: Length-prefixed binary data with compressed length headers
+//! - **GUID Heap**: 16-byte raw GUID values (naturally aligned)
+//! - **UserString Heap**: UTF-16 strings with compressed length headers and termination
+//!
+//! # Usage Examples
+//!
+//! ```rust,ignore
+//! use crate::cilassembly::write::planner::calc::heaps::calculate_string_heap_size;
+//! use crate::cilassembly::{CilAssembly, HeapChanges};
+//!
+//! # let assembly = CilAssembly::new(view);
+//! # let heap_changes = HeapChanges::<String>::new(100);
+//! // Calculate additional space needed for string modifications
+//! let additional_size = calculate_string_heap_size(&heap_changes, &assembly)?;
+//! println!("Need {} additional bytes for string heap", additional_size);
+//! # Ok::<(), crate::Error>(())
+//! ```
+//!
+//! # Thread Safety
+//!
+//! All functions in this module are [`Send`] and [`Sync`] as they operate on immutable
+//! references to heap changes and assembly data without maintaining any mutable state.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::cilassembly::write::planner`] - Uses calculations for layout planning
+//! - [`crate::cilassembly::write::writers::heap`] - Validates size calculations against actual writing
+//! - [`crate::cilassembly::write::utils`] - Uses utility functions for alignment and compression
 
 use crate::{
     cilassembly::{
-        write::{planner::calc::compressed_uint_size, utils::align_to},
+        write::utils::{align_to, compressed_uint_size},
         CilAssembly, HeapChanges,
     },
     Result,
@@ -34,62 +94,25 @@ pub(crate) fn calculate_string_heap_size(
     let mut total_size = 0u64;
 
     if heap_changes.has_modifications() || heap_changes.has_removals() {
-        // NEW APPROACH: Offset-preserving heap rebuild
-        // 1. Preserve original heap size (with all modifications in-place)
-        // 2. Add size of appended strings that aren't removed
+        // When there are modifications or removals, we need to calculate the total size
+        // using the same logic as calculate_string_heap_total_size to ensure consistency
+        let total_size = calculate_string_heap_total_size(heap_changes, assembly)?;
 
-        if let Some(strings_heap) = assembly.view().strings() {
-            // Step 1: Start with original heap size (preserve layout)
-            let mut original_heap_end = 0;
-            for (offset, string) in strings_heap.iter() {
-                let string_end = offset + string.to_string().len() + 1; // +1 for null terminator
-                if string_end > original_heap_end {
-                    original_heap_end = string_end;
-                }
-            }
-            total_size += original_heap_end as u64;
-
-            // Step 2: Add size of modified original strings that need to be appended
-            // (when they're too big for in-place replacement)
-            for (offset, string) in strings_heap.iter() {
-                let heap_index = offset as u32;
-                if let Some(modified_string) = heap_changes.get_modification(heap_index) {
-                    let original_size = string.to_string().len() + 1; // include null terminator
-                    let new_size = modified_string.len() + 1; // include null terminator
-
-                    if new_size > original_size {
-                        // Too big for in-place - will be appended at end
-                        total_size += new_size as u64;
-                    }
-                }
-            }
-
-            // Step 3: Add size of appended strings that aren't removed
-            for (heap_index, appended_string) in heap_changes.string_items_with_indices() {
-                if !heap_changes.is_removed(heap_index) {
-                    // Apply modification if present, otherwise use original appended string
-                    let final_string = heap_changes
-                        .get_modification(heap_index)
-                        .cloned()
-                        .unwrap_or_else(|| appended_string.clone());
-                    let string_size = final_string.len() as u64 + 1; // +1 for null terminator
-                    total_size += string_size;
-                }
-            }
+        // But we need to subtract the existing heap size since calculate_string_heap_size
+        // is supposed to return only the ADDITIONAL size needed
+        let existing_heap_size = if let Some(_strings_heap) = assembly.view().strings() {
+            assembly
+                .view()
+                .streams()
+                .iter()
+                .find(|stream| stream.name == "#Strings")
+                .map(|stream| stream.size as u64)
+                .unwrap_or(1)
         } else {
-            // No original heap - just count appended strings
-            total_size += 1; // mandatory null byte
-            for (heap_index, appended_string) in heap_changes.string_items_with_indices() {
-                if !heap_changes.is_removed(heap_index) {
-                    let final_string = heap_changes
-                        .get_modification(heap_index)
-                        .cloned()
-                        .unwrap_or_else(|| appended_string.clone());
-                    let string_size = final_string.len() as u64 + 1;
-                    total_size += string_size;
-                }
-            }
-        }
+            1u64
+        };
+
+        return Ok(total_size - existing_heap_size);
     } else {
         // Addition-only scenario - calculate size of additions only
         for string in &heap_changes.appended_items {
@@ -101,6 +124,101 @@ pub(crate) fn calculate_string_heap_size(
     // Align to 4-byte boundary (ECMA-335 II.24.2.2)
     // Note: String heap padding uses 0xFF bytes to avoid creating empty string entries
     let aligned_size = align_to(total_size, 4);
+
+    Ok(aligned_size)
+}
+
+/// Calculates the complete reconstructed string heap size.
+///
+/// This function calculates the total size of the reconstructed string heap,
+/// including all original strings (excluding removed ones), modified strings,
+/// and new strings. This is used for metadata layout planning when heap
+/// reconstruction is required.
+///
+/// # Arguments
+/// * `heap_changes` - The [`crate::cilassembly::HeapChanges<String>`] containing string changes
+/// * `assembly` - The [`crate::cilassembly::CilAssembly`] for accessing original heap data
+///
+/// # Returns
+/// Returns the total aligned byte size of the complete reconstructed heap.
+pub(crate) fn calculate_string_heap_total_size(
+    heap_changes: &HeapChanges<String>,
+    assembly: &CilAssembly,
+) -> Result<u64> {
+    // This function must match EXACTLY what reconstruct_string_heap_in_memory does
+    // to ensure stream directory size matches actual written heap size
+
+    // Start with the actual end of existing content (where new strings will be added)
+    let existing_content_end = if let Some(strings_heap) = assembly.view().strings() {
+        let mut actual_end = 1u64; // Start after mandatory null byte at index 0
+        for (offset, string) in strings_heap.iter() {
+            if !heap_changes.is_removed(offset as u32) {
+                let string_len =
+                    if let Some(modified_string) = heap_changes.get_modification(offset as u32) {
+                        modified_string.len() as u64
+                    } else {
+                        string.len() as u64
+                    };
+                let string_end = offset as u64 + string_len + 1; // +1 for null terminator
+                actual_end = actual_end.max(string_end);
+            }
+        }
+        actual_end
+    } else {
+        1u64
+    };
+
+    // Account for the original heap size and padding logic (matching reconstruction exactly)
+    let original_heap_size = if let Some(_strings_heap) = assembly.view().strings() {
+        assembly
+            .view()
+            .streams()
+            .iter()
+            .find(|stream| stream.name == "#Strings")
+            .map(|stream| stream.size as u64)
+            .unwrap_or(1)
+    } else {
+        1u64
+    };
+
+    // Apply the same padding logic as the reconstruction function
+    let mut final_index_position = existing_content_end;
+    if final_index_position < original_heap_size {
+        let padding_needed = original_heap_size - final_index_position;
+        final_index_position += padding_needed;
+    } else if final_index_position == original_heap_size {
+        // Don't add padding when we're exactly at the boundary
+        // This matches the reconstruction logic
+    }
+
+    // Add space for new appended strings
+    // We need to calculate the final size of each appended string accounting for modifications
+    let mut additional_size = 0u64;
+    for (_i, appended_string) in heap_changes.appended_items.iter().enumerate() {
+        // Calculate the API index for this appended string by working backwards from next_index
+        let mut api_index = heap_changes.next_index;
+        for item in heap_changes.appended_items.iter().rev() {
+            api_index -= (item.len() + 1) as u32;
+            if std::ptr::eq(item, appended_string) {
+                break;
+            }
+        }
+
+        // Check if this appended string has been modified and use the final size
+        let final_string_len =
+            if let Some(modified_string) = heap_changes.get_modification(api_index) {
+                modified_string.len()
+            } else {
+                appended_string.len()
+            };
+        additional_size += final_string_len as u64 + 1; // +1 for null terminator
+    }
+
+    let total_size = final_index_position + additional_size;
+
+    // Apply 4-byte alignment (same as reconstruction)
+    let aligned_size = align_to(total_size, 4);
+
     Ok(aligned_size)
 }
 
@@ -111,15 +229,36 @@ pub(crate) fn calculate_string_heap_size(
 /// rebuilt heap rather than just additions.
 ///
 /// # Arguments
+///
 /// * `heap_changes` - The [`crate::cilassembly::HeapChanges<Vec<u8>>`] containing blob changes
 /// * `assembly` - The [`crate::cilassembly::CilAssembly`] for accessing original heap data
 ///
 /// # Returns
+///
 /// Returns the total aligned byte size needed for the blob heap after all changes.
 ///
+/// # Errors
+///
+/// Returns [`crate::Error`] if there are issues accessing the original blob heap data.
+///
 /// # Format
+///
 /// Each blob is stored as: compressed_length + binary_data, where compressed_length
-/// is 1, 2, or 4 bytes depending on the data size.
+/// is 1, 2, or 4 bytes depending on the data size according to ECMA-335 specification.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use crate::cilassembly::write::planner::calc::heaps::calculate_blob_heap_size;
+/// use crate::cilassembly::{CilAssembly, HeapChanges};
+///
+/// # let assembly = CilAssembly::new(view);
+/// # let heap_changes = HeapChanges::<Vec<u8>>::new(100);
+/// // Calculate size for blob heap modifications
+/// let size = calculate_blob_heap_size(&heap_changes, &assembly)?;
+/// println!("Blob heap needs {} bytes", size);
+/// # Ok::<(), crate::Error>(())
+/// ```
 pub(crate) fn calculate_blob_heap_size(
     heap_changes: &HeapChanges<Vec<u8>>,
     assembly: &CilAssembly,
@@ -207,14 +346,36 @@ pub(crate) fn calculate_blob_heap_size(
 /// rebuilt heap rather than just additions.
 ///
 /// # Arguments
+///
 /// * `heap_changes` - The [`crate::cilassembly::HeapChanges<[u8; 16]>`] containing GUID changes
 /// * `assembly` - The [`crate::cilassembly::CilAssembly`] for accessing original heap data
 ///
 /// # Returns
+///
 /// Returns the total byte size needed for the GUID heap after all changes.
 ///
+/// # Errors
+///
+/// Returns [`crate::Error`] if there are issues accessing the original GUID heap data.
+///
 /// # Format
-/// Each GUID is stored as 16 consecutive bytes in the heap.
+///
+/// Each GUID is stored as 16 consecutive bytes in the heap according to ECMA-335 specification.
+/// GUIDs are naturally aligned to 4-byte boundaries.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use crate::cilassembly::write::planner::calc::heaps::calculate_guid_heap_size;
+/// use crate::cilassembly::{CilAssembly, HeapChanges};
+///
+/// # let assembly = CilAssembly::new(view);
+/// # let heap_changes = HeapChanges::<[u8; 16]>::new(100);
+/// // Calculate size for GUID heap modifications
+/// let size = calculate_guid_heap_size(&heap_changes, &assembly)?;
+/// println!("GUID heap needs {} bytes", size);
+/// # Ok::<(), crate::Error>(())
+/// ```
 pub(crate) fn calculate_guid_heap_size(
     heap_changes: &HeapChanges<[u8; 16]>,
     assembly: &CilAssembly,
@@ -274,15 +435,36 @@ pub(crate) fn calculate_guid_heap_size(
 /// rebuilt heap rather than just additions.
 ///
 /// # Arguments
+///
 /// * `heap_changes` - The [`crate::cilassembly::HeapChanges<String>`] containing user string changes
 /// * `assembly` - The [`crate::cilassembly::CilAssembly`] for accessing original heap data
 ///
 /// # Returns
+///
 /// Returns the total aligned byte size needed for the userstring heap after all changes.
 ///
+/// # Errors
+///
+/// Returns [`crate::Error`] if there are issues accessing the original userstring heap data.
+///
 /// # Format
+///
 /// Each user string is stored as: compressed_length + UTF-16_bytes + terminator, where the length
-/// indicates the total size including the terminator byte.
+/// indicates the total size including the terminator byte according to ECMA-335 specification.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use crate::cilassembly::write::planner::calc::heaps::calculate_userstring_heap_size;
+/// use crate::cilassembly::{CilAssembly, HeapChanges};
+///
+/// # let assembly = CilAssembly::new(view);
+/// # let heap_changes = HeapChanges::<String>::new(100);
+/// // Calculate size for userstring heap modifications
+/// let size = calculate_userstring_heap_size(&heap_changes, &assembly)?;
+/// println!("Userstring heap needs {} bytes", size);
+/// # Ok::<(), crate::Error>(())
+/// ```
 pub(crate) fn calculate_userstring_heap_size(
     heap_changes: &HeapChanges<String>,
     assembly: &CilAssembly,
