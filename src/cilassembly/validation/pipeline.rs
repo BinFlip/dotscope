@@ -67,7 +67,7 @@
 use crate::{
     cilassembly::{
         validation::{
-            BasicSchemaValidator, ConflictResolver, LastWriteWinsResolver,
+            BasicSchemaValidator, ConflictResolver, LastWriteWinsResolver, ReferenceScanner,
             ReferentialIntegrityValidator, RidConsistencyValidator, ValidationStage,
         },
         AssemblyChanges,
@@ -109,13 +109,29 @@ impl ValidationPipeline {
         self
     }
 
-    /// Validates all changes using the configured stages.
+    /// Validates the given changes using all stages in the pipeline.
     ///
-    /// Runs each validation stage in sequence. If any stage fails,
-    /// validation stops and returns the error.
+    /// This method builds a reference scanner once and shares it among all validation
+    /// stages for optimal performance. All stages must pass for validation to succeed.
+    ///
+    /// # Arguments
+    ///
+    /// * `changes` - The [`crate::cilassembly::AssemblyChanges`] to validate
+    /// * `original` - The original [`crate::metadata::cilassemblyview::CilAssemblyView`] for context
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if all validation stages pass, or an [`crate::Error`] from
+    /// the first stage that fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error`] if any validation stage fails.
     pub fn validate(&self, changes: &AssemblyChanges, original: &CilAssemblyView) -> Result<()> {
+        let scanner = ReferenceScanner::new(original)?;
+
         for stage in &self.stages {
-            stage.validate(changes, original)?;
+            stage.validate(changes, original, Some(&scanner))?;
         }
         Ok(())
     }
@@ -137,7 +153,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        cilassembly::{AssemblyChanges, HeapChanges, TableModifications},
+        cilassembly::{
+            AssemblyChanges, HeapChanges, Operation, ReferenceHandlingStrategy, TableModifications,
+            TableOperation,
+        },
         metadata::{
             cilassemblyview::CilAssemblyView,
             tables::{CodedIndex, TableDataOwned, TableId, TypeDefRaw},
@@ -163,10 +182,8 @@ mod tests {
     fn test_validation_pipeline_default() {
         let pipeline = ValidationPipeline::default();
 
-        // Verify that default pipeline has expected stages
         assert_eq!(pipeline.stages.len(), 3);
 
-        // Check stage names to ensure correct stages are loaded
         assert_eq!(pipeline.stages[0].name(), "Basic Schema Validation");
         assert_eq!(pipeline.stages[1].name(), "RID Consistency Validation");
         assert_eq!(
@@ -182,7 +199,6 @@ mod tests {
             let changes = AssemblyChanges::empty();
             let pipeline = ValidationPipeline::default();
 
-            // Empty changes should pass all validation
             let result = pipeline.validate(&changes, &view);
             assert!(result.is_ok(), "Empty changes should pass validation");
         }
@@ -194,7 +210,6 @@ mod tests {
         if let Ok(view) = CilAssemblyView::from_file(&path) {
             let mut changes = AssemblyChanges::empty();
 
-            // Add replaced table (should be valid)
             let rows = vec![create_test_row(), create_test_row(), create_test_row()];
             let replaced_modifications = TableModifications::Replaced(rows);
             changes
@@ -213,7 +228,6 @@ mod tests {
         if let Ok(view) = CilAssemblyView::from_file(&path) {
             let mut changes = AssemblyChanges::empty();
 
-            // Add heap changes (should be valid)
             let mut string_changes = HeapChanges::new(1000);
             string_changes
                 .appended_items
@@ -241,6 +255,7 @@ mod tests {
                 &self,
                 _changes: &AssemblyChanges,
                 _original: &CilAssemblyView,
+                _scanner: Option<&ReferenceScanner>,
             ) -> crate::Result<()> {
                 Err(crate::Error::Error("Always fails".to_string()))
             }
@@ -254,7 +269,6 @@ mod tests {
         if let Ok(view) = CilAssemblyView::from_file(&path) {
             let changes = AssemblyChanges::empty();
 
-            // Create pipeline with custom failing stage
             let pipeline = ValidationPipeline::new()
                 .add_stage(BasicSchemaValidator)
                 .add_stage(AlwaysFailValidator)
@@ -282,6 +296,7 @@ mod tests {
                 &self,
                 _changes: &AssemblyChanges,
                 _original: &CilAssemblyView,
+                _scanner: Option<&ReferenceScanner>,
             ) -> crate::Result<()> {
                 Ok(())
             }
@@ -295,6 +310,7 @@ mod tests {
                 &self,
                 _changes: &AssemblyChanges,
                 _original: &CilAssemblyView,
+                _scanner: Option<&ReferenceScanner>,
             ) -> crate::Result<()> {
                 Ok(())
             }
@@ -307,9 +323,159 @@ mod tests {
             .add_stage(StageA)
             .add_stage(StageB);
 
-        // Verify stages are in the correct order
         assert_eq!(pipeline.stages.len(), 2);
         assert_eq!(pipeline.stages[0].name(), "Stage A");
         assert_eq!(pipeline.stages[1].name(), "Stage B");
+    }
+
+    #[test]
+    fn test_validation_pipeline_cached_references() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            let changes = AssemblyChanges::empty();
+            let pipeline = ValidationPipeline::default();
+
+            let result = pipeline.validate(&changes, &view);
+            assert!(result.is_ok(), "Validation should pass with empty changes");
+        }
+    }
+
+    #[test]
+    fn test_validation_pipeline_comprehensive_integration() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            let mut changes = AssemblyChanges::empty();
+
+            // Use a more aggressive validation pipeline with NullifyReferences strategy
+            let pipeline = ValidationPipeline::new()
+                .add_stage(BasicSchemaValidator)
+                .add_stage(RidConsistencyValidator)
+                .add_stage(ReferentialIntegrityValidator::new(
+                    ReferenceHandlingStrategy::NullifyReferences,
+                ))
+                .with_resolver(LastWriteWinsResolver);
+
+            let mut table_modifications = TableModifications::new_sparse(1);
+            let valid_insert = TableOperation::new(Operation::Insert(100, create_test_row()));
+            table_modifications.apply_operation(valid_insert).unwrap();
+            changes
+                .table_changes
+                .insert(TableId::TypeDef, table_modifications);
+
+            let mut string_changes = HeapChanges::new(1000);
+            string_changes
+                .appended_items
+                .push("Integration Test String".to_string());
+            string_changes.next_index = 1001;
+            changes.string_heap_changes = string_changes;
+
+            let mut blob_changes = HeapChanges::new(500);
+            blob_changes
+                .appended_items
+                .push(vec![0x01, 0x02, 0x03, 0x04]);
+            blob_changes.next_index = 501;
+            changes.blob_heap_changes = blob_changes;
+
+            let result = pipeline.validate(&changes, &view);
+            assert!(
+                result.is_ok(),
+                "Comprehensive validation should pass with valid changes"
+            );
+        }
+    }
+
+    #[test]
+    fn test_referential_integrity_validation_with_resolution_strategies() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            // First, let's find a TypeDef that's actually referenced
+            // We'll use the ReferenceScanner to find references before testing
+            let scanner = ReferenceScanner::new(&view).unwrap();
+            let mut referenced_typedef_rid = None;
+
+            // Check TypeDef RIDs 1-10 to find one that's referenced
+            if let Some(tables) = view.tables() {
+                if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
+                    for rid in 1..=std::cmp::min(10, typedef_table.row_count) {
+                        let refs = scanner.find_references_to_table_row(TableId::TypeDef, rid);
+                        if !refs.is_empty() {
+                            referenced_typedef_rid = Some(rid);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Skip test if no referenced TypeDef found
+            let referenced_rid = match referenced_typedef_rid {
+                Some(rid) => rid,
+                None => {
+                    // Skip test if no referenced TypeDef found - this is expected for some samples
+                    return;
+                }
+            };
+
+            // Create changes that will cause referential integrity violations
+            let mut changes = AssemblyChanges::empty();
+
+            // Delete the TypeDef that we know is referenced
+            let mut table_modifications = TableModifications::new_sparse(1);
+            let delete_op = TableOperation::new(Operation::Delete(referenced_rid));
+            table_modifications.apply_operation(delete_op).unwrap();
+            changes
+                .table_changes
+                .insert(TableId::TypeDef, table_modifications);
+
+            // Test 1: Default FailIfReferenced strategy should fail
+            let fail_if_referenced_validator =
+                ReferentialIntegrityValidator::new(ReferenceHandlingStrategy::FailIfReferenced);
+            let fail_pipeline = ValidationPipeline::new()
+                .add_stage(BasicSchemaValidator)
+                .add_stage(RidConsistencyValidator)
+                .add_stage(fail_if_referenced_validator);
+
+            let result = fail_pipeline.validate(&changes, &view);
+            assert!(
+                result.is_err(),
+                "FailIfReferenced strategy should fail when deleting referenced TypeDef RID {referenced_rid}"
+            );
+
+            if let Err(e) = result {
+                assert!(
+                    e.to_string().contains("referential integrity")
+                        || e.to_string().contains("referenced")
+                        || e.to_string().contains("integrity"),
+                    "Error should mention referential integrity or references: {e}"
+                );
+            }
+
+            // Test 2: NullifyReferences strategy should succeed and nullify references
+            let nullify_validator =
+                ReferentialIntegrityValidator::new(ReferenceHandlingStrategy::NullifyReferences);
+            let nullify_pipeline = ValidationPipeline::new()
+                .add_stage(BasicSchemaValidator)
+                .add_stage(RidConsistencyValidator)
+                .add_stage(nullify_validator);
+
+            let result = nullify_pipeline.validate(&changes, &view);
+            assert!(
+                result.is_ok(),
+                "NullifyReferences strategy should succeed by nullifying references: {result:?}"
+            );
+
+            // Test 3: RemoveReferences strategy should succeed with cascade deletion
+            let remove_validator =
+                ReferentialIntegrityValidator::new(ReferenceHandlingStrategy::RemoveReferences);
+            let remove_pipeline = ValidationPipeline::new()
+                .add_stage(BasicSchemaValidator)
+                .add_stage(RidConsistencyValidator)
+                .add_stage(remove_validator);
+
+            let result = remove_pipeline.validate(&changes, &view);
+            assert!(
+                result.is_ok(),
+                "RemoveReferences strategy should succeed with cascade deletion: {result:?}"
+            );
+        }
     }
 }

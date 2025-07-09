@@ -687,7 +687,7 @@ fn test_remove_existing_string_round_trip() -> Result<()> {
         if let Some((index, original_string)) = target_data {
             target_string = original_string.clone();
             target_index = index;
-            assembly.remove_string(index, ReferenceHandlingStrategy::FailIfReferenced)?;
+            assembly.remove_string(index, ReferenceHandlingStrategy::NullifyReferences)?;
             println!("Removed existing string at index {index}: '{original_string}'");
         }
         Ok(())

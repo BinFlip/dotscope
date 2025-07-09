@@ -64,7 +64,10 @@
 //! - [`crate::metadata::tables::TableDataOwned`] - Validates row data compatibility
 
 use crate::{
-    cilassembly::{validation::ValidationStage, AssemblyChanges, Operation, TableModifications},
+    cilassembly::{
+        validation::{ReferenceScanner, ValidationStage},
+        AssemblyChanges, Operation, TableModifications,
+    },
     metadata::{
         cilassemblyview::CilAssemblyView,
         tables::{TableDataOwned, TableId},
@@ -119,7 +122,12 @@ use crate::{
 pub struct BasicSchemaValidator;
 
 impl ValidationStage for BasicSchemaValidator {
-    fn validate(&self, changes: &AssemblyChanges, _original: &CilAssemblyView) -> Result<()> {
+    fn validate(
+        &self,
+        changes: &AssemblyChanges,
+        _original: &CilAssemblyView,
+        _scanner: Option<&ReferenceScanner>,
+    ) -> Result<()> {
         for (table_id, table_modifications) in &changes.table_changes {
             match table_modifications {
                 TableModifications::Sparse { operations, .. } => {
@@ -253,20 +261,83 @@ impl BasicSchemaValidator {
         _rid: u32,
         row_data: &TableDataOwned,
     ) -> Result<()> {
-        // Validate that row data type matches the table
-        let valid = match (table_id, row_data) {
-            (TableId::TypeDef, TableDataOwned::TypeDef(_)) => true,
-            (TableId::MethodDef, TableDataOwned::MethodDef(_)) => true,
-            (TableId::Field, TableDataOwned::Field(_)) => true,
-            (TableId::TypeRef, TableDataOwned::TypeRef(_)) => true,
-            (TableId::MemberRef, TableDataOwned::MemberRef(_)) => true,
-            (TableId::CustomAttribute, TableDataOwned::CustomAttribute(_)) => true,
-            (TableId::Assembly, TableDataOwned::Assembly(_)) => true,
-            (TableId::Module, TableDataOwned::Module(_)) => true,
-            (TableId::Param, TableDataOwned::Param(_)) => true,
-            // ToDo: Add more matches as TableDataOwned variants are implemented
-            _ => false,
-        };
+        let valid = matches!(
+            (table_id, row_data),
+            (TableId::Module, TableDataOwned::Module(_))
+                | (TableId::TypeRef, TableDataOwned::TypeRef(_))
+                | (TableId::TypeDef, TableDataOwned::TypeDef(_))
+                | (TableId::FieldPtr, TableDataOwned::FieldPtr(_))
+                | (TableId::Field, TableDataOwned::Field(_))
+                | (TableId::MethodPtr, TableDataOwned::MethodPtr(_))
+                | (TableId::MethodDef, TableDataOwned::MethodDef(_))
+                | (TableId::ParamPtr, TableDataOwned::ParamPtr(_))
+                | (TableId::Param, TableDataOwned::Param(_))
+                | (TableId::InterfaceImpl, TableDataOwned::InterfaceImpl(_))
+                | (TableId::MemberRef, TableDataOwned::MemberRef(_))
+                | (TableId::Constant, TableDataOwned::Constant(_))
+                | (TableId::CustomAttribute, TableDataOwned::CustomAttribute(_))
+                | (TableId::FieldMarshal, TableDataOwned::FieldMarshal(_))
+                | (TableId::DeclSecurity, TableDataOwned::DeclSecurity(_))
+                | (TableId::ClassLayout, TableDataOwned::ClassLayout(_))
+                | (TableId::FieldLayout, TableDataOwned::FieldLayout(_))
+                | (TableId::StandAloneSig, TableDataOwned::StandAloneSig(_))
+                | (TableId::EventMap, TableDataOwned::EventMap(_))
+                | (TableId::EventPtr, TableDataOwned::EventPtr(_))
+                | (TableId::Event, TableDataOwned::Event(_))
+                | (TableId::PropertyMap, TableDataOwned::PropertyMap(_))
+                | (TableId::PropertyPtr, TableDataOwned::PropertyPtr(_))
+                | (TableId::Property, TableDataOwned::Property(_))
+                | (TableId::MethodSemantics, TableDataOwned::MethodSemantics(_))
+                | (TableId::MethodImpl, TableDataOwned::MethodImpl(_))
+                | (TableId::ModuleRef, TableDataOwned::ModuleRef(_))
+                | (TableId::TypeSpec, TableDataOwned::TypeSpec(_))
+                | (TableId::ImplMap, TableDataOwned::ImplMap(_))
+                | (TableId::FieldRVA, TableDataOwned::FieldRVA(_))
+                | (TableId::EncLog, TableDataOwned::EncLog(_))
+                | (TableId::EncMap, TableDataOwned::EncMap(_))
+                | (TableId::Assembly, TableDataOwned::Assembly(_))
+                | (
+                    TableId::AssemblyProcessor,
+                    TableDataOwned::AssemblyProcessor(_)
+                )
+                | (TableId::AssemblyOS, TableDataOwned::AssemblyOS(_))
+                | (TableId::AssemblyRef, TableDataOwned::AssemblyRef(_))
+                | (
+                    TableId::AssemblyRefProcessor,
+                    TableDataOwned::AssemblyRefProcessor(_)
+                )
+                | (TableId::AssemblyRefOS, TableDataOwned::AssemblyRefOS(_))
+                | (TableId::File, TableDataOwned::File(_))
+                | (TableId::ExportedType, TableDataOwned::ExportedType(_))
+                | (
+                    TableId::ManifestResource,
+                    TableDataOwned::ManifestResource(_)
+                )
+                | (TableId::NestedClass, TableDataOwned::NestedClass(_))
+                | (TableId::GenericParam, TableDataOwned::GenericParam(_))
+                | (TableId::MethodSpec, TableDataOwned::MethodSpec(_))
+                | (
+                    TableId::GenericParamConstraint,
+                    TableDataOwned::GenericParamConstraint(_)
+                )
+                | (TableId::Document, TableDataOwned::Document(_))
+                | (
+                    TableId::MethodDebugInformation,
+                    TableDataOwned::MethodDebugInformation(_)
+                )
+                | (TableId::LocalScope, TableDataOwned::LocalScope(_))
+                | (TableId::LocalVariable, TableDataOwned::LocalVariable(_))
+                | (TableId::LocalConstant, TableDataOwned::LocalConstant(_))
+                | (TableId::ImportScope, TableDataOwned::ImportScope(_))
+                | (
+                    TableId::StateMachineMethod,
+                    TableDataOwned::StateMachineMethod(_)
+                )
+                | (
+                    TableId::CustomDebugInformation,
+                    TableDataOwned::CustomDebugInformation(_)
+                )
+        );
 
         if !valid {
             return Err(Error::ValidationTableSchemaMismatch {
@@ -314,7 +385,6 @@ mod tests {
         if let Ok(view) = CilAssemblyView::from_file(&path) {
             let mut changes = AssemblyChanges::empty();
 
-            // Add valid table operation
             let mut table_modifications = TableModifications::new_sparse(1);
             let insert_op = TableOperation::new(Operation::Insert(100, create_test_row()));
             table_modifications.apply_operation(insert_op).unwrap();
@@ -323,7 +393,7 @@ mod tests {
                 .insert(TableId::TypeDef, table_modifications);
 
             let validator = BasicSchemaValidator;
-            let result = validator.validate(&changes, &view);
+            let result = validator.validate(&changes, &view, None);
             assert!(
                 result.is_ok(),
                 "Valid operations should pass basic schema validation"
@@ -337,7 +407,6 @@ mod tests {
         if let Ok(view) = CilAssemblyView::from_file(&path) {
             let mut changes = AssemblyChanges::empty();
 
-            // Add invalid operation with RID 0
             let mut table_modifications = TableModifications::new_sparse(1);
             let invalid_op = TableOperation::new(Operation::Insert(0, create_test_row()));
             table_modifications.apply_operation(invalid_op).unwrap();
@@ -346,7 +415,7 @@ mod tests {
                 .insert(TableId::TypeDef, table_modifications);
 
             let validator = BasicSchemaValidator;
-            let result = validator.validate(&changes, &view);
+            let result = validator.validate(&changes, &view, None);
             assert!(result.is_err(), "RID 0 should fail validation");
 
             if let Err(e) = result {
@@ -364,7 +433,6 @@ mod tests {
         if let Ok(view) = CilAssemblyView::from_file(&path) {
             let mut changes = AssemblyChanges::empty();
 
-            // Try to insert TypeDef row into MethodDef table (schema mismatch)
             let mut table_modifications = TableModifications::new_sparse(1);
             let mismatch_op = TableOperation::new(Operation::Insert(100, create_test_row()));
             table_modifications.apply_operation(mismatch_op).unwrap();
@@ -373,7 +441,7 @@ mod tests {
                 .insert(TableId::MethodDef, table_modifications); // Wrong table!
 
             let validator = BasicSchemaValidator;
-            let result = validator.validate(&changes, &view);
+            let result = validator.validate(&changes, &view, None);
             assert!(result.is_err(), "Schema mismatch should fail validation");
 
             if let Err(e) = result {

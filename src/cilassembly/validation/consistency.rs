@@ -65,7 +65,8 @@
 
 use crate::{
     cilassembly::{
-        validation::ValidationStage, AssemblyChanges, Operation, TableModifications, TableOperation,
+        validation::{ReferenceScanner, ValidationStage},
+        AssemblyChanges, Operation, TableModifications, TableOperation,
     },
     metadata::{cilassemblyview::CilAssemblyView, tables::TableId},
     Error, Result,
@@ -119,7 +120,12 @@ use std::collections::HashMap;
 pub struct RidConsistencyValidator;
 
 impl ValidationStage for RidConsistencyValidator {
-    fn validate(&self, changes: &AssemblyChanges, _original: &CilAssemblyView) -> Result<()> {
+    fn validate(
+        &self,
+        changes: &AssemblyChanges,
+        _original: &CilAssemblyView,
+        _scanner: Option<&ReferenceScanner>,
+    ) -> Result<()> {
         for (table_id, table_modifications) in &changes.table_changes {
             if let TableModifications::Sparse { operations, .. } = table_modifications {
                 self.validate_rid_consistency(*table_id, operations)?;
@@ -187,7 +193,6 @@ impl RidConsistencyValidator {
 
         for (rid, ops) in &rid_operations {
             if ops.len() > 1 {
-                // Multiple operations on same RID - check for conflicts
                 let has_insert = ops
                     .iter()
                     .any(|op| matches!(op.operation, Operation::Insert(_, _)));
@@ -203,7 +208,6 @@ impl RidConsistencyValidator {
                     });
                 }
 
-                // Multiple inserts on same RID
                 let insert_count = ops
                     .iter()
                     .filter(|op| matches!(op.operation, Operation::Insert(_, _)))
@@ -255,7 +259,6 @@ mod tests {
         if let Ok(view) = CilAssemblyView::from_file(&path) {
             let mut changes = AssemblyChanges::empty();
 
-            // Add operations on different RIDs (no conflicts)
             let mut table_modifications = TableModifications::new_sparse(1);
             let op1 = TableOperation::new(Operation::Insert(100, create_test_row()));
             let op2 = TableOperation::new(Operation::Insert(101, create_test_row()));
@@ -266,7 +269,7 @@ mod tests {
                 .insert(TableId::TypeDef, table_modifications);
 
             let validator = RidConsistencyValidator;
-            let result = validator.validate(&changes, &view);
+            let result = validator.validate(&changes, &view, None);
             assert!(
                 result.is_ok(),
                 "Non-conflicting operations should pass validation"
@@ -280,7 +283,6 @@ mod tests {
         if let Ok(view) = CilAssemblyView::from_file(&path) {
             let mut changes = AssemblyChanges::empty();
 
-            // Add conflicting insert and delete operations on same RID
             let mut table_modifications = TableModifications::new_sparse(1);
             let insert_op = TableOperation::new(Operation::Insert(100, create_test_row()));
             let delete_op = TableOperation::new(Operation::Delete(100));
@@ -291,7 +293,7 @@ mod tests {
                 .insert(TableId::TypeDef, table_modifications);
 
             let validator = RidConsistencyValidator;
-            let result = validator.validate(&changes, &view);
+            let result = validator.validate(&changes, &view, None);
             assert!(
                 result.is_err(),
                 "Insert/delete conflict should fail validation"
@@ -312,7 +314,6 @@ mod tests {
         if let Ok(view) = CilAssemblyView::from_file(&path) {
             let mut changes = AssemblyChanges::empty();
 
-            // Add multiple insert operations on same RID
             let mut table_modifications = TableModifications::new_sparse(1);
             let insert_op1 = TableOperation::new(Operation::Insert(100, create_test_row()));
             let insert_op2 = TableOperation::new(Operation::Insert(100, create_test_row()));
@@ -323,7 +324,7 @@ mod tests {
                 .insert(TableId::TypeDef, table_modifications);
 
             let validator = RidConsistencyValidator;
-            let result = validator.validate(&changes, &view);
+            let result = validator.validate(&changes, &view, None);
             assert!(
                 result.is_err(),
                 "Multiple insert conflict should fail validation"

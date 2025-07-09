@@ -166,13 +166,11 @@ mod tests {
         let operations = vec![
             {
                 let mut op = TableOperation::new(Operation::Insert(100, create_test_row()));
-                // Make first operation older
                 op.timestamp = 1000; // Microseconds since epoch
                 op
             },
             {
                 let mut op = TableOperation::new(Operation::Update(100, create_test_row()));
-                // Make second operation newer
                 op.timestamp = 2000; // Later timestamp
                 op
             },
@@ -194,7 +192,6 @@ mod tests {
             );
 
             if let Some(OperationResolution::UseOperation(op)) = resolution.operations.get(&100) {
-                // Should use the newer Update operation
                 assert!(
                     matches!(op.operation, Operation::Update(100, _)),
                     "Should use Update operation"
@@ -236,7 +233,6 @@ mod tests {
             );
 
             if let Some(OperationResolution::UseOperation(op)) = resolution.operations.get(&100) {
-                // Should use the newer Delete operation
                 assert!(
                     matches!(op.operation, Operation::Delete(100)),
                     "Should use Delete operation"

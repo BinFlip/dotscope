@@ -139,6 +139,7 @@ pub trait ValidationStage {
     ///
     /// * `changes` - The [`crate::cilassembly::AssemblyChanges`] containing modifications to validate
     /// * `original` - The original [`crate::metadata::cilassemblyview::CilAssemblyView`] for reference and context
+    /// * `scanner` - Optional pre-built [`crate::cilassembly::validation::ReferenceScanner`] for efficient reference tracking
     ///
     /// # Returns
     ///
@@ -156,21 +157,27 @@ pub trait ValidationStage {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use crate::cilassembly::validation::ValidationStage;
+    /// use crate::cilassembly::validation::{ValidationStage, ReferenceScanner};
     /// use crate::cilassembly::AssemblyChanges;
     /// use crate::metadata::cilassemblyview::CilAssemblyView;
     ///
     /// # let validator = CustomValidator;
     /// # let changes = AssemblyChanges::new();
     /// # let view = CilAssemblyView::from_file("test.dll")?;
-    /// // Validate changes
-    /// match validator.validate(&changes, &view) {
+    /// # let scanner = ReferenceScanner::new(&view)?;
+    /// // Validate changes with cached reference tracking
+    /// match validator.validate(&changes, &view, Some(&scanner)) {
     ///     Ok(()) => println!("Validation passed"),
     ///     Err(e) => println!("Validation failed: {}", e),
     /// }
     /// # Ok::<(), crate::Error>(())
     /// ```
-    fn validate(&self, changes: &AssemblyChanges, original: &CilAssemblyView) -> Result<()>;
+    fn validate(
+        &self,
+        changes: &AssemblyChanges,
+        original: &CilAssemblyView,
+        scanner: Option<&ReferenceScanner>,
+    ) -> Result<()>;
 
     /// Returns the name of this validation stage.
     ///

@@ -150,20 +150,23 @@ mod builder;
 mod changes;
 mod modifications;
 mod operation;
-pub mod references;
+mod references;
 mod remapping;
-pub mod validation;
+mod validation;
 mod write;
 
 pub use builder::*;
 pub use changes::ReferenceHandlingStrategy;
+pub use validation::{
+    BasicSchemaValidator, LastWriteWinsResolver, ReferentialIntegrityValidator,
+    RidConsistencyValidator, ValidationPipeline,
+};
 
 use self::{
     changes::{AssemblyChanges, HeapChanges},
     modifications::TableModifications,
     operation::{Operation, TableOperation},
     remapping::IndexRemapper,
-    validation::ValidationPipeline,
 };
 
 /// A mutable view of a .NET assembly that tracks changes for editing operations.
@@ -661,7 +664,55 @@ impl CilAssembly {
     /// or an error describing the first validation failure.
     pub fn validate_and_apply_changes(&mut self) -> Result<()> {
         let remapper = {
-            let pipeline = ValidationPipeline::default();
+            let pipeline = validation::ValidationPipeline::default();
+            pipeline.validate(&self.changes, &self.view)?;
+
+            IndexRemapper::build_from_changes(&self.changes, &self.view)
+        };
+
+        remapper.apply_to_assembly(&mut self.changes)?;
+
+        Ok(())
+    }
+
+    /// Validates and applies changes using a custom validation pipeline.
+    ///
+    /// This method allows you to specify a custom validation pipeline with different
+    /// reference handling strategies and conflict resolution approaches. This is useful
+    /// when you need more aggressive handling of referential integrity violations.
+    ///
+    /// # Arguments
+    ///
+    /// * `pipeline` - The [`crate::cilassembly::validation::ValidationPipeline`] to use for validation
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if all validations pass and conflicts are resolved,
+    /// or an error describing the first validation failure.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use crate::cilassembly::validation::{ValidationPipeline, ReferentialIntegrityValidator};
+    /// use crate::cilassembly::ReferenceHandlingStrategy;
+    ///
+    /// # let mut assembly = CilAssembly::from_view(view);
+    /// // Use a more aggressive validation pipeline
+    /// let pipeline = ValidationPipeline::new()
+    ///     .add_stage(BasicSchemaValidator)
+    ///     .add_stage(RidConsistencyValidator)
+    ///     .add_stage(ReferentialIntegrityValidator::new(
+    ///         ReferenceHandlingStrategy::NullifyReferences
+    ///     ));
+    ///
+    /// assembly.validate_and_apply_changes_with_pipeline(&pipeline)?;
+    /// # Ok::<(), crate::Error>(())
+    /// ```
+    pub fn validate_and_apply_changes_with_pipeline(
+        &mut self,
+        pipeline: &ValidationPipeline,
+    ) -> Result<()> {
+        let remapper = {
             pipeline.validate(&self.changes, &self.view)?;
 
             IndexRemapper::build_from_changes(&self.changes, &self.view)

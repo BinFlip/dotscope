@@ -506,7 +506,11 @@ pub use metadata::cilassemblyview::CilAssemblyView;
 /// assembly.write_to_file("modified_assembly.dll")?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
-pub use cilassembly::{BuilderContext, CilAssembly, ReferenceHandlingStrategy};
+pub use cilassembly::{
+    BasicSchemaValidator, BuilderContext, CilAssembly, LastWriteWinsResolver,
+    ReferenceHandlingStrategy, ReferentialIntegrityValidator, RidConsistencyValidator,
+    ValidationPipeline,
+};
 mod cilassembly;
 
 /// Main entry point for working with .NET assemblies.

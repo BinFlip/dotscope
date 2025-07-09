@@ -659,7 +659,19 @@ pub use crate::metadata::tables::{
 /// table modifications, and cross-reference resolution. CilAssembly provides the mutable assembly
 /// interface required for metadata modification operations. ReferenceHandlingStrategy controls
 /// how references are handled when removing heap entries or table rows.
-pub use crate::cilassembly::{BuilderContext, CilAssembly, ReferenceHandlingStrategy};
+pub use crate::{BuilderContext, CilAssembly, ReferenceHandlingStrategy};
+
+/// Assembly validation pipeline components.
+///
+/// ValidationPipeline orchestrates multiple validation stages for assembly modifications.
+/// Individual validators handle specific aspects like schema validation, RID consistency,
+/// and referential integrity. Conflict resolvers handle operation conflicts with different
+/// strategies (last-write-wins, etc.). These components enable comprehensive validation
+/// of assembly modifications before they are applied.
+pub use crate::{
+    BasicSchemaValidator, LastWriteWinsResolver, ReferentialIntegrityValidator,
+    RidConsistencyValidator, ValidationPipeline,
+};
 
 /// Assembly and module builders.
 ///
