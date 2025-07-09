@@ -246,7 +246,7 @@ impl<'a> WriterBase<'a> {
     /// Returns ([`crate::cilassembly::write::planner::StreamFileLayout`], write_start_position).
     ///
     /// # Arguments
-    /// * `stream_mod` - The [`crate::cilassembly::write::planner::metadata::StreamModification`] to prepare for writing
+    /// * `stream_mod` - The [`crate::cilassembly::write::planner::StreamModification`] to prepare for writing
     ///
     /// # Returns
     /// Returns a tuple containing the stream layout and the write start position (as usize).

@@ -418,12 +418,6 @@ impl TypeSignatureEncoder {
     /// # Returns
     ///
     /// Success or error result from encoding.
-    ///
-    /// # Note
-    ///
-    /// This is a simplified implementation that treats all modifiers as optional.
-    /// A full implementation would need to distinguish between required and
-    /// optional modifiers based on their semantic meaning.
     fn encode_custom_modifiers(modifiers: &[CustomModifier], buffer: &mut Vec<u8>) -> Result<()> {
         for modifier in modifiers {
             let modifier_type = if modifier.is_required {

@@ -1,13 +1,13 @@
 //! Core assembly change tracking structure.
 //!
-//! This module provides the [`crate::cilassembly::changes::assembly::AssemblyChanges`] structure
+//! This module provides the [`crate::cilassembly::changes::AssemblyChanges`] structure
 //! for tracking all modifications made to a .NET assembly during the modification process.
 //! It implements sparse change tracking to minimize memory overhead and enable efficient
 //! merging operations during assembly output.
 //!
 //! # Key Components
 //!
-//! - [`crate::cilassembly::changes::assembly::AssemblyChanges`] - Core change tracking structure for assembly modifications
+//! - [`crate::cilassembly::changes::AssemblyChanges`] - Core change tracking structure for assembly modifications
 //!
 //! # Architecture
 //!
@@ -24,7 +24,7 @@
 //! # Usage Examples
 //!
 //! ```rust,ignore
-//! use crate::cilassembly::changes::assembly::AssemblyChanges;
+//! use crate::cilassembly::changes::AssemblyChanges;
 //! use crate::metadata::cilassemblyview::CilAssemblyView;
 //! use std::path::Path;
 //!
@@ -69,7 +69,7 @@ use crate::{
 /// # Usage Examples
 ///
 /// ```rust,ignore
-/// use crate::cilassembly::changes::assembly::AssemblyChanges;
+/// use crate::cilassembly::changes::AssemblyChanges;
 /// use crate::metadata::cilassemblyview::CilAssemblyView;
 /// use std::path::Path;
 ///

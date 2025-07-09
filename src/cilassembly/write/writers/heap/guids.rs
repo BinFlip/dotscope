@@ -18,7 +18,7 @@ impl<'a> super::HeapWriter<'a> {
     ///
     /// # Arguments
     ///
-    /// * `stream_mod` - The [`crate::cilassembly::write::planner::metadata::StreamModification`] for the #GUID heap
+    /// * `stream_mod` - The [`crate::cilassembly::write::planner::StreamModification`] for the #GUID heap
     pub(super) fn write_guid_heap(&mut self, stream_mod: &StreamModification) -> Result<()> {
         let guid_changes = &self.base.assembly.changes().guid_heap_changes;
 
@@ -78,7 +78,7 @@ impl<'a> super::HeapWriter<'a> {
     ///
     /// # Arguments
     ///
-    /// * `stream_mod` - The [`crate::cilassembly::write::planner::metadata::StreamModification`] for the #GUID heap
+    /// * `stream_mod` - The [`crate::cilassembly::write::planner::StreamModification`] for the #GUID heap
     pub(super) fn write_guid_heap_with_changes(
         &mut self,
         stream_mod: &StreamModification,

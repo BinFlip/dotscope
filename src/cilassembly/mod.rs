@@ -8,7 +8,7 @@
 //!
 //! ## **Copy-on-Write Semantics**
 //! - Original [`crate::metadata::cilassemblyview::CilAssemblyView`] remains immutable and unchanged
-//! - Modifications are tracked separately in [`crate::cilassembly::changes::assembly::AssemblyChanges`]
+//! - Modifications are tracked separately in [`crate::cilassembly::changes::AssemblyChanges`]
 //! - Changes are lazily allocated only when modifications are made
 //! - Read operations efficiently merge original data with changes
 //!
@@ -20,7 +20,7 @@
 //!
 //! # Core Components
 //!
-//! ## **Change Tracking ([`crate::cilassembly::changes::assembly::AssemblyChanges`])**
+//! ## **Change Tracking ([`crate::cilassembly::changes::AssemblyChanges`])**
 //! Central structure that tracks all modifications:
 //! ```text
 //! AssemblyChanges
@@ -100,7 +100,7 @@
 //!
 //! ## **Core Types**
 //! - [`crate::cilassembly::CilAssembly`] - Main mutable assembly (this file)
-//! - [`crate::cilassembly::changes::assembly::AssemblyChanges`] - Central change tracking
+//! - [`crate::cilassembly::changes::AssemblyChanges`] - Central change tracking
 //! - [`crate::cilassembly::changes::heap::HeapChanges`] - Heap modification tracking
 //! - [`crate::cilassembly::modifications::TableModifications`] - Table change strategies
 //! - [`crate::cilassembly::operation::TableOperation`] - Timestamped operations
@@ -168,7 +168,7 @@ use self::{
 
 /// A mutable view of a .NET assembly that tracks changes for editing operations.
 ///
-/// `CilAssembly` provides an editing layer on top of [`metadata::cilassemblyview::CilAssemblyView`], using
+/// `CilAssembly` provides an editing layer on top of [`crate::metadata::cilassemblyview::CilAssemblyView`], using
 /// a copy-on-write strategy to track modifications while preserving the original
 /// assembly data. Changes are stored separately and merged when writing to disk.
 ///

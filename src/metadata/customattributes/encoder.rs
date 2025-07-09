@@ -88,7 +88,7 @@
 //! This module integrates with:
 //! - [`crate::metadata::customattributes::types`] - Type definitions for encoding
 //! - [`crate::metadata::customattributes::parser`] - Round-trip validation with parsing
-//! - [`crate::cilassembly::write`] - Assembly modification and blob heap integration
+//! - [`crate::cilassembly::CilAssembly`] - Assembly modification and blob heap integration
 //! - [`crate::metadata::typesystem`] - Type system for accurate encoding
 
 use crate::{

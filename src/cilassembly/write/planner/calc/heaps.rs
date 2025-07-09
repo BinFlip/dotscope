@@ -40,7 +40,7 @@
 //! # Usage Examples
 //!
 //! ```rust,ignore
-//! use crate::cilassembly::write::planner::calc::heaps::calculate_string_heap_size;
+//! use crate::cilassembly::write::planner::calc::calculate_string_heap_size;
 //! use crate::cilassembly::{CilAssembly, HeapChanges};
 //!
 //! # let assembly = CilAssembly::new(view);
@@ -194,7 +194,7 @@ pub(crate) fn calculate_string_heap_total_size(
     // Add space for new appended strings
     // We need to calculate the final size of each appended string accounting for modifications
     let mut additional_size = 0u64;
-    for (_i, appended_string) in heap_changes.appended_items.iter().enumerate() {
+    for appended_string in heap_changes.appended_items.iter() {
         // Calculate the API index for this appended string by working backwards from next_index
         let mut api_index = heap_changes.next_index;
         for item in heap_changes.appended_items.iter().rev() {
@@ -249,7 +249,7 @@ pub(crate) fn calculate_string_heap_total_size(
 /// # Examples
 ///
 /// ```rust,ignore
-/// use crate::cilassembly::write::planner::calc::heaps::calculate_blob_heap_size;
+/// use crate::cilassembly::write::planner::calc::calculate_blob_heap_size;
 /// use crate::cilassembly::{CilAssembly, HeapChanges};
 ///
 /// # let assembly = CilAssembly::new(view);
@@ -366,7 +366,7 @@ pub(crate) fn calculate_blob_heap_size(
 /// # Examples
 ///
 /// ```rust,ignore
-/// use crate::cilassembly::write::planner::calc::heaps::calculate_guid_heap_size;
+/// use crate::cilassembly::write::planner::calc::calculate_guid_heap_size;
 /// use crate::cilassembly::{CilAssembly, HeapChanges};
 ///
 /// # let assembly = CilAssembly::new(view);
@@ -455,7 +455,7 @@ pub(crate) fn calculate_guid_heap_size(
 /// # Examples
 ///
 /// ```rust,ignore
-/// use crate::cilassembly::write::planner::calc::heaps::calculate_userstring_heap_size;
+/// use crate::cilassembly::write::planner::calc::calculate_userstring_heap_size;
 /// use crate::cilassembly::{CilAssembly, HeapChanges};
 ///
 /// # let assembly = CilAssembly::new(view);

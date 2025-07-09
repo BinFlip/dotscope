@@ -340,7 +340,6 @@ impl SourceRegistry {
 //             CilFlavor::Pinned => 22u8.hash(&mut hasher),
 //             CilFlavor::FnPtr { signature: _ } => {
 //                 // Function pointer signatures are complex, so we just use a simple marker
-//                 // A full implementation would hash the entire signature
 //                 23u8.hash(&mut hasher);
 //             }
 //             CilFlavor::GenericParameter { index, method } => {

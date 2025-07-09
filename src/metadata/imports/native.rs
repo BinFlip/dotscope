@@ -99,7 +99,7 @@
 //!
 //! This module integrates with:
 //! - [`crate::metadata::imports::container`] - Unified import container combining CIL and native
-//! - [`crate::cilassembly::write`] - PE writing pipeline for import table generation
+//! - [`crate::cilassembly::CilAssembly`] - PE writing pipeline for import table generation
 //! - [`goblin`] - PE parsing library for import directory analysis
 
 use std::collections::HashMap;

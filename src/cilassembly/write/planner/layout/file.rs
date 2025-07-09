@@ -519,7 +519,7 @@ impl FileLayout {
         // Start streams after metadata root header including the stream directory
         // Calculate the exact position where streams should start (after the stream directory)
         let version_string = view.metadata_root().version.clone();
-        let version_length = version_string.as_bytes().len() as u64;
+        let version_length = version_string.len() as u64;
         let version_length_padded = (version_length + 3) & !3; // 4-byte align
         let stream_directory_start = metadata_root_offset + 16 + version_length_padded + 4; // +4 for flags + stream_count
 

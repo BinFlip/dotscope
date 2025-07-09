@@ -21,7 +21,7 @@ impl<'a> super::HeapWriter<'a> {
     ///
     /// # Arguments
     ///
-    /// * `stream_mod` - The [`crate::cilassembly::write::planner::metadata::StreamModification`] for the #US heap
+    /// * `stream_mod` - The [`crate::cilassembly::write::planner::StreamModification`] for the #US heap
     pub(super) fn write_userstring_heap(&mut self, stream_mod: &StreamModification) -> Result<()> {
         let userstring_changes = &self.base.assembly.changes().userstring_heap_changes;
         if userstring_changes.has_additions()
@@ -108,7 +108,7 @@ impl<'a> super::HeapWriter<'a> {
     ///
     /// # Arguments
     ///
-    /// * `stream_mod` - The [`crate::cilassembly::write::planner::metadata::StreamModification`] for the #US heap
+    /// * `stream_mod` - The [`crate::cilassembly::write::planner::StreamModification`] for the #US heap
     pub(super) fn write_userstring_heap_legacy_compat(
         &mut self,
         stream_mod: &StreamModification,
@@ -171,7 +171,7 @@ impl<'a> super::HeapWriter<'a> {
     ///
     /// # Arguments
     ///
-    /// * `stream_mod` - The [`crate::cilassembly::write::planner::metadata::StreamModification`] for the #US heap
+    /// * `stream_mod` - The [`crate::cilassembly::write::planner::StreamModification`] for the #US heap
     pub(super) fn write_userstring_heap_with_changes(
         &mut self,
         stream_mod: &StreamModification,

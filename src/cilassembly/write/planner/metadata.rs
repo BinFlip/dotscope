@@ -12,7 +12,7 @@
 //! - [`crate::cilassembly::write::planner::metadata::MetadataLayout`] - Complete metadata structure information
 //! - [`crate::cilassembly::write::planner::metadata::MetadataModifications`] - Required modification tracking
 //! - [`crate::cilassembly::write::planner::metadata::StreamLayout`] - Individual stream layout information
-//! - [`crate::cilassembly::write::planner::metadata::StreamModification`] - Stream modification details
+//! - [`crate::cilassembly::write::planner::StreamModification`] - Stream modification details
 //!
 //! # Architecture
 //!
@@ -44,7 +44,7 @@
 //!
 //! ```rust,ignore
 //! use crate::cilassembly::write::planner::metadata::{extract_metadata_layout, identify_metadata_modifications};
-//! use crate::cilassembly::write::planner::calc::calculate_heap_expansions;
+//! use crate::cilassembly::write::planner::HeapExpansions;
 //! use crate::cilassembly::CilAssembly;
 //!
 //! # let assembly = CilAssembly::empty(); // placeholder
@@ -245,7 +245,7 @@ pub fn extract_metadata_layout(
                 {
                     // Use total reconstructed heap size for any changes
                     let total_heap_size =
-                        calculate_string_heap_total_size(&string_changes, assembly)?;
+                        calculate_string_heap_total_size(string_changes, assembly)?;
                     size = total_heap_size as u32;
                 }
             }
@@ -363,7 +363,7 @@ fn create_string_stream_modification(assembly: &CilAssembly) -> Result<StreamMod
 
     let (new_size, additional_data_size) = if has_additions || has_modifications || has_removals {
         // Heap writer always does reconstruction for ANY changes, so use total reconstructed heap size
-        let total_heap_size = calculate_string_heap_total_size(&string_changes, assembly)?;
+        let total_heap_size = calculate_string_heap_total_size(string_changes, assembly)?;
         let additional = total_heap_size.saturating_sub(stream.size as u64);
         (total_heap_size, additional)
     } else {

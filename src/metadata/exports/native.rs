@@ -112,7 +112,7 @@
 //!
 //! This module integrates with:
 //! - [`crate::metadata::exports::container`] - Unified export container combining CIL and native
-//! - [`crate::cilassembly::write`] - PE writing pipeline for export table generation
+//! - [`crate::cilassembly::CilAssembly`] - PE writing pipeline for export table generation
 //! - [`goblin`] - PE parsing library for export directory analysis
 
 use std::collections::HashMap;

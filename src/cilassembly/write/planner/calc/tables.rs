@@ -29,7 +29,7 @@
 //! # Usage Examples
 //!
 //! ```rust,ignore
-//! use crate::cilassembly::write::planner::calc::tables::{
+//! use crate::cilassembly::write::planner::calc::{
 //!     calculate_table_stream_expansion, calculate_new_row_count
 //! };
 //! use crate::cilassembly::CilAssembly;
@@ -98,7 +98,7 @@ use crate::{
 /// # Examples
 ///
 /// ```rust,ignore
-/// use crate::cilassembly::write::planner::calc::tables::calculate_table_stream_expansion;
+/// use crate::cilassembly::write::planner::calc::calculate_table_stream_expansion;
 /// use crate::cilassembly::CilAssembly;
 ///
 /// # let assembly = CilAssembly::new(view);
@@ -188,7 +188,7 @@ pub fn calculate_table_stream_expansion(assembly: &CilAssembly) -> Result<u64> {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use crate::cilassembly::write::planner::calc::tables::calculate_new_row_count;
+/// use crate::cilassembly::write::planner::calc::calculate_new_row_count;
 /// use crate::cilassembly::{CilAssembly, TableModifications};
 /// use crate::metadata::tables::TableId;
 ///

@@ -467,9 +467,7 @@ impl Clone for Exports {
         // Create a new Exports container and copy all entries
         let new_exports = Self::new();
         for entry in self.data.iter() {
-            new_exports
-                .data
-                .insert(entry.key().clone(), entry.value().clone());
+            new_exports.data.insert(*entry.key(), entry.value().clone());
         }
         new_exports
     }

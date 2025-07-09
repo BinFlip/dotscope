@@ -52,7 +52,7 @@
 //!
 //! ```rust,ignore
 //! use crate::cilassembly::remapping::{IndexRemapper, RidRemapper};
-//! use crate::cilassembly::changes::assembly::AssemblyChanges;
+//! use crate::cilassembly::changes::AssemblyChanges;
 //! use crate::metadata::cilassemblyview::CilAssemblyView;
 //! use crate::metadata::tables::TableId;
 //! use std::path::Path;

@@ -1117,7 +1117,7 @@ impl Clone for Imports {
         // Create a new Imports container and copy all entries
         let new_imports = Self::new();
         for entry in self.data.iter() {
-            let token = entry.key().clone();
+            let token = *entry.key();
             let import = entry.value().clone();
             new_imports.data.insert(token, import.clone());
 
@@ -1125,21 +1125,21 @@ impl Clone for Imports {
             new_imports
                 .by_name
                 .entry(import.name.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(token);
 
             let fullname = import.fullname();
             new_imports
                 .by_fullname
                 .entry(fullname)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(token);
 
             if !import.namespace.is_empty() {
                 new_imports
                     .by_namespace
                     .entry(import.namespace.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(token);
             }
         }

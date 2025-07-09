@@ -66,7 +66,7 @@ pub enum ReferenceHandlingStrategy {
 /// This structure tracks additions, modifications, and removals to .NET metadata heaps.
 /// While heaps were traditionally append-only, this extended version supports
 /// user-requested modifications and removals with configurable reference handling.
-/// [`crate::cilassembly::changes::assembly::AssemblyChanges`] to provide comprehensive
+/// [`crate::cilassembly::changes::AssemblyChanges`] to provide comprehensive
 /// modification tracking.
 ///
 /// # Type Parameters
@@ -320,8 +320,7 @@ impl HeapChanges<String> {
         let total_size: u32 = self
             .appended_items
             .iter()
-            .enumerate()
-            .map(|(_i, original_string)| {
+            .map(|original_string| {
                 // Calculate the API index for this appended item
                 let mut api_index = self.next_index;
                 for item in self.appended_items.iter().rev() {

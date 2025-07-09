@@ -330,7 +330,7 @@ impl<'a> WriteContext<'a> {
 
         // Pre-calculate metadata structure information
         let version_string = view.metadata_root().version.clone();
-        let version_length = version_string.as_bytes().len() as u64;
+        let version_length = version_string.len() as u64;
         let version_length_padded = (version_length + 3) & !3; // 4-byte align
         let metadata_root_header_size = 16 + version_length_padded + 4; // signature + version + flags + stream_count
         let stream_directory_offset = metadata_root_header_size;
@@ -613,7 +613,7 @@ fn copy_original_metadata_to_meta_section(
 
     // Copy COR20 header separately (should be exactly 72 bytes)
     let cor20_size = 72u64; // COR20 header is always 72 bytes according to ECMA-335
-    let new_cor20_offset = meta_section_layout.file_region.offset + cor20_offset_in_section as u64;
+    let new_cor20_offset = meta_section_layout.file_region.offset + cor20_offset_in_section;
 
     copy_data_region(
         context,
@@ -860,7 +860,7 @@ fn update_metadata_root(
     // Based on ECMA-335 II.24.2.1: metadata root = signature + version info + stream directory
     // Stream directory starts after: signature(4) + major(2) + minor(2) + reserved(4) + length(4) + version_string + flags(2) + stream_count(2)
     let version_string = view.metadata_root().version.clone();
-    let version_length = version_string.as_bytes().len() as u64;
+    let version_length = version_string.len() as u64;
     let version_length_padded = (version_length + 3) & !3; // 4-byte align
 
     let stream_directory_offset = metadata_root_offset + 16 + version_length_padded + 4; // +4 for flags(2) + stream_count(2)

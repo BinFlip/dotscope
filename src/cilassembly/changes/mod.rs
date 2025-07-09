@@ -6,7 +6,7 @@
 //!
 //! # Key Components
 //!
-//! - [`crate::cilassembly::changes::assembly::AssemblyChanges`] - Core change tracking structure for assembly modifications
+//! - [`crate::cilassembly::changes::AssemblyChanges`] - Core change tracking structure for assembly modifications
 //! - [`crate::cilassembly::changes::heap::HeapChanges`] - Heap-specific change tracking for metadata heaps
 //!
 //! # Architecture

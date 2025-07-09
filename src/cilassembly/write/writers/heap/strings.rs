@@ -90,7 +90,7 @@ impl<'a> super::HeapWriter<'a> {
 
         // Phase 2: Add all new strings
         // Process in order of appended items to ensure proper sequential placement
-        for (_i, original_string) in string_changes.appended_items.iter().enumerate() {
+        for original_string in string_changes.appended_items.iter() {
             // Calculate the original heap index for this item
             let original_heap_index = {
                 let mut calculated_index = string_changes.next_index;
@@ -146,7 +146,7 @@ impl<'a> super::HeapWriter<'a> {
     ///
     /// # Arguments
     ///
-    /// * `stream_mod` - The [`crate::cilassembly::write::planner::metadata::StreamModification`] for the #Strings heap
+    /// * `stream_mod` - The [`crate::cilassembly::write::planner::StreamModification`] for the #Strings heap
     ///
     /// # Returns
     /// Returns Some((index_mapping, actual_size)) if reconstruction was performed, None if no changes needed.
@@ -204,7 +204,7 @@ impl<'a> super::HeapWriter<'a> {
     ///
     /// # Arguments
     ///
-    /// * `stream_mod` - The [`crate::cilassembly::write::planner::metadata::StreamModification`] for the #Strings heap
+    /// * `stream_mod` - The [`crate::cilassembly::write::planner::StreamModification`] for the #Strings heap
     pub(super) fn write_string_heap_with_changes(
         &mut self,
         stream_mod: &StreamModification,

@@ -7,7 +7,7 @@
 //!
 //! # Key Components
 //!
-//! - [`crate::cilassembly::write::planner::calc::calculate_heap_expansions`] - Main entry point for heap size calculations
+//! - [`crate::cilassembly::write::planner::HeapExpansions::calculate`] - Main entry point for heap size calculations
 //! - [`crate::cilassembly::write::planner::calc::HeapExpansions`] - Structure containing all heap expansion information
 //! - [`crate::cilassembly::write::planner::calc::calculate_string_heap_size`] - String heap size calculation with null termination
 //! - [`crate::cilassembly::write::planner::calc::calculate_blob_heap_size`] - Blob heap size with compressed length prefixes
@@ -42,12 +42,12 @@
 //! # Usage Examples
 //!
 //! ```rust,ignore
-//! use crate::cilassembly::write::planner::calc::calculate_heap_expansions;
+//! use crate::cilassembly::write::planner::HeapExpansions;
 //! use crate::cilassembly::CilAssembly;
 //!
 //! # let assembly = CilAssembly::empty(); // placeholder
 //! // Calculate all heap expansions for layout planning
-//! let expansions = calculate_heap_expansions(&assembly)?;
+//! let expansions = HeapExpansions::calculate(&assembly)?;
 //!
 //! println!("String heap needs {} additional bytes", expansions.string_heap_addition);
 //! println!("Total expansion: {} bytes", expansions.total_heap_addition);

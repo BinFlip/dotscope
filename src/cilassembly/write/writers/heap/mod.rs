@@ -159,7 +159,7 @@ impl<'a> HeapWriter<'a> {
     /// Writes heap modifications and returns index mappings for cross-reference updates.
     ///
     /// Handles additions, modifications, and removals of heap entries. This method
-    /// iterates through all [`crate::cilassembly::write::planner::metadata::StreamModification`] entries and
+    /// iterates through all [`crate::cilassembly::write::planner::StreamModification`] entries and
     /// writes the appropriate heap changes based on stream type.
     ///
     /// For modifications and removals, the heap reconstruction approach is used to maintain

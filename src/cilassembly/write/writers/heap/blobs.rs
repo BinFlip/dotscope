@@ -19,7 +19,7 @@ impl<'a> super::HeapWriter<'a> {
     ///
     /// # Arguments
     ///
-    /// * `stream_mod` - The [`crate::cilassembly::write::planner::metadata::StreamModification`] for the #Blob heap
+    /// * `stream_mod` - The [`crate::cilassembly::write::planner::StreamModification`] for the #Blob heap
     pub(super) fn write_blob_heap(&mut self, stream_mod: &StreamModification) -> Result<()> {
         let blob_changes = &self.base.assembly.changes().blob_heap_changes;
 
@@ -146,7 +146,7 @@ impl<'a> super::HeapWriter<'a> {
     ///
     /// # Arguments
     ///
-    /// * `stream_mod` - The [`crate::cilassembly::write::planner::metadata::StreamModification`] for the #Blob heap
+    /// * `stream_mod` - The [`crate::cilassembly::write::planner::StreamModification`] for the #Blob heap
     pub(super) fn write_blob_heap_with_changes(
         &mut self,
         stream_mod: &StreamModification,

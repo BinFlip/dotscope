@@ -7,15 +7,16 @@
 //!
 //! # Key Components
 //!
-//! - [`crate::cilassembly::write::planner::create_layout_plan`] - Main entry point for layout planning
+//! - [`crate::cilassembly::write::planner::LayoutPlan::create`] - Main entry point for layout planning
 //! - [`crate::cilassembly::write::planner::LayoutPlan`] - Complete layout plan with all file structure information
 //! - [`crate::cilassembly::write::planner::FileLayout`] - Detailed file structure with section placements
 //! - [`crate::cilassembly::write::planner::SectionFileLayout`] - Individual section layout with metadata stream details
 //! - [`crate::cilassembly::write::planner::PeUpdates`] - PE header modification requirements
 //! - [`crate::cilassembly::write::planner::calc`] - Comprehensive size and alignment calculation module
-//! - [`crate::cilassembly::write::planner::calc::heaps`] - Heap expansion calculations
-//! - [`crate::cilassembly::write::planner::calc::tables`] - Table size and modification calculations
-//! - [`crate::cilassembly::write::planner::calc::alignment`] - ECMA-335 alignment utilities
+//! - [`crate::cilassembly::write::planner::HeapExpansions`] - Heap expansion calculations
+//! - [`crate::cilassembly::write::planner::calc::calculate_table_stream_expansion`] - Table size calculations
+//! - [`crate::cilassembly::write::planner::calc::calculate_new_row_count`] - Row count calculations
+//! - [`crate::cilassembly::write::utils::align_to_4_bytes`] - ECMA-335 alignment utilities
 //! - [`crate::cilassembly::write::planner::metadata`] - Metadata layout planning module
 //! - [`crate::cilassembly::write::planner::pe`] - PE structure analysis module
 //!
@@ -54,12 +55,12 @@
 //! # Usage Examples
 //!
 //! ```rust,ignore
-//! use crate::cilassembly::write::planner::create_layout_plan;
+//! use crate::cilassembly::write::planner::LayoutPlan;
 //! use crate::cilassembly::CilAssembly;
 //!
 //! # let assembly = CilAssembly::empty(); // placeholder
 //! // Create comprehensive layout plan
-//! let layout_plan = create_layout_plan(&assembly)?;
+//! let layout_plan = LayoutPlan::create(&assembly)?;
 //!
 //! println!("Original size: {} bytes", layout_plan.original_size);
 //! println!("New size: {} bytes", layout_plan.total_size);

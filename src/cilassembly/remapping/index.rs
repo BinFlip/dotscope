@@ -32,7 +32,7 @@
 //!
 //! ```rust,ignore
 //! use crate::cilassembly::remapping::index::IndexRemapper;
-//! use crate::cilassembly::changes::assembly::AssemblyChanges;
+//! use crate::cilassembly::changes::AssemblyChanges;
 //! use crate::metadata::cilassemblyview::CilAssemblyView;
 //! use std::path::Path;
 //!
@@ -60,7 +60,7 @@
 //!
 //! This module integrates with:
 //! - [`crate::cilassembly::remapping::rid`] - Per-table RID remapping
-//! - [`crate::cilassembly::changes::assembly::AssemblyChanges`] - Change tracking data
+//! - [`crate::cilassembly::changes::AssemblyChanges`] - Change tracking data
 //! - [`crate::cilassembly::write`] - Binary output generation system
 //! - [`crate::metadata::cilassemblyview::CilAssemblyView`] - Original assembly data
 
@@ -103,7 +103,7 @@ use crate::{
 ///
 /// ```rust,ignore
 /// use crate::cilassembly::remapping::index::IndexRemapper;
-/// use crate::cilassembly::changes::assembly::AssemblyChanges;
+/// use crate::cilassembly::changes::AssemblyChanges;
 /// use crate::metadata::cilassemblyview::CilAssemblyView;
 /// use crate::metadata::tables::TableId;
 /// use std::path::Path;
@@ -150,7 +150,7 @@ impl IndexRemapper {
     ///
     /// # Arguments
     ///
-    /// * `changes` - The [`crate::cilassembly::changes::assembly::AssemblyChanges`] containing all modifications
+    /// * `changes` - The [`crate::cilassembly::changes::AssemblyChanges`] containing all modifications
     /// * `original_view` - The original [`crate::metadata::cilassemblyview::CilAssemblyView`] for baseline data
     ///
     /// # Returns
@@ -185,7 +185,7 @@ impl IndexRemapper {
     ///
     /// # Arguments
     ///
-    /// * `changes` - The [`crate::cilassembly::changes::assembly::AssemblyChanges`] to analyze
+    /// * `changes` - The [`crate::cilassembly::changes::AssemblyChanges`] to analyze
     /// * `original_view` - The original assembly view for baseline heap sizes
     fn build_heap_remapping(&mut self, changes: &AssemblyChanges, original_view: &CilAssemblyView) {
         if changes.string_heap_changes.has_changes() {
@@ -447,7 +447,7 @@ impl IndexRemapper {
     ///
     /// # Arguments
     ///
-    /// * `changes` - Mutable reference to [`crate::cilassembly::changes::assembly::AssemblyChanges`] to update
+    /// * `changes` - Mutable reference to [`crate::cilassembly::changes::AssemblyChanges`] to update
     ///
     /// # Returns
     ///

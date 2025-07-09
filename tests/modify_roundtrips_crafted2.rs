@@ -586,26 +586,22 @@ fn test_large_scale_operations_round_trip() -> Result<()> {
     // (original heap content may exist, so we check for minimums)
     assert!(
         string_count >= 50,
-        "Should have at least 50 additional strings (added 50, found {})",
-        string_count
+        "Should have at least 50 additional strings (added 50, found {string_count})"
     );
 
     assert!(
         blob_count >= 5,
-        "Should have at least 5 additional blobs (added 5, found {})",
-        blob_count
+        "Should have at least 5 additional blobs (added 5, found {blob_count})"
     );
 
     assert!(
         guid_count >= 10,
-        "Should have at least 10 additional GUIDs (added 10, found {})",
-        guid_count
+        "Should have at least 10 additional GUIDs (added 10, found {guid_count})"
     );
 
     assert!(
         userstring_count >= 15,
-        "Should have at least 15 additional user strings (added 15, found {})",
-        userstring_count
+        "Should have at least 15 additional user strings (added 15, found {userstring_count})"
     );
 
     Ok(())
