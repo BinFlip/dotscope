@@ -30,7 +30,6 @@ use strum::{EnumCount, IntoEnumIterator};
 use crate::{
     file::io::{read_le, read_le_at},
     metadata::tables::types::{CodedIndexType, TableId},
-    Error::OutOfBounds,
     Result,
 };
 
@@ -226,7 +225,7 @@ impl TableInfo {
 
         for table_id in TableId::iter() {
             if data.len() < next_row_offset {
-                return Err(OutOfBounds);
+                return Err(out_of_bounds_error!());
             }
 
             if (valid_bitvec & (1 << table_id as usize)) == 0 {
@@ -353,7 +352,7 @@ impl TableInfo {
         let index = value >> tag_bits;
 
         if tag as usize >= tables.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         Ok((tables[tag as usize], index))
@@ -406,7 +405,7 @@ impl TableInfo {
         let tag = tables
             .iter()
             .position(|&table| table == table_id)
-            .ok_or(OutOfBounds)?;
+            .ok_or(out_of_bounds_error!())?;
 
         // Calculate the number of bits needed for the tag
         // This casting is intentional for the coded index calculation

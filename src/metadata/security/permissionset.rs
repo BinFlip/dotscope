@@ -276,7 +276,6 @@ use crate::{
         security_classes, ArgumentType, ArgumentValue, NamedArgument, Permission,
         PermissionSetFormat, SecurityPermissionFlags,
     },
-    Error::OutOfBounds,
     Result,
 };
 use quick_xml::{
@@ -474,11 +473,11 @@ impl PermissionSet {
             let class_name = if class_name_length > 0 {
                 let start = parser.pos();
                 let Some(end) = usize::checked_add(start, class_name_length) else {
-                    return Err(OutOfBounds);
+                    return Err(out_of_bounds_error!());
                 };
 
                 if end >= data.len() {
-                    return Err(OutOfBounds);
+                    return Err(out_of_bounds_error!());
                 }
 
                 parser.advance_by(class_name_length)?;

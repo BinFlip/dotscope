@@ -171,15 +171,15 @@ pub(crate) struct LoaderContext<'a> {
 
     // === Metadata Streams ===
     /// Tables stream containing all metadata table definitions.
-    pub meta: &'a Option<TablesHeader<'a>>,
+    pub meta: Option<&'a TablesHeader<'a>>,
     /// String heap containing UTF-8 encoded names and identifiers.
-    pub strings: &'a Option<Strings<'a>>,
+    pub strings: Option<&'a Strings<'a>>,
     /// User string heap containing literal string constants.
-    pub userstrings: &'a Option<UserStrings<'a>>,
+    pub userstrings: Option<&'a UserStrings<'a>>,
     /// GUID heap containing unique identifiers for types and assemblies.
-    pub guids: &'a Option<Guid<'a>>,
+    pub guids: Option<&'a Guid<'a>>,
     /// Blob heap containing binary data (signatures, custom attributes, etc.).
-    pub blobs: &'a Option<Blob<'a>>,
+    pub blobs: Option<&'a Blob<'a>>,
 
     // === Assembly and Module Tables ===
     /// Assembly definition (single entry per assembly).

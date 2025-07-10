@@ -79,7 +79,7 @@ impl MetadataLoader for AssemblyProcessorLoader {
     /// This method is thread-safe as it only reads from the context and performs
     /// atomic operations when setting the assembly processor data.
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(ref header) = context.meta {
+        if let Some(header) = context.meta {
             if let Some(table) = header.table::<AssemblyProcessorRaw>() {
                 if let Some(row) = table.get(1) {
                     let owned = row.to_owned()?;

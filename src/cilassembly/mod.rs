@@ -665,7 +665,7 @@ impl CilAssembly {
     pub fn validate_and_apply_changes(&mut self) -> Result<()> {
         let remapper = {
             let pipeline = validation::ValidationPipeline::default();
-            pipeline.validate(&self.changes, &self.view)?;
+            pipeline.validate(Some(&self.changes), &self.view)?;
 
             IndexRemapper::build_from_changes(&self.changes, &self.view)
         };
@@ -713,7 +713,7 @@ impl CilAssembly {
         pipeline: &ValidationPipeline,
     ) -> Result<()> {
         let remapper = {
-            pipeline.validate(&self.changes, &self.view)?;
+            pipeline.validate(Some(&self.changes), &self.view)?;
 
             IndexRemapper::build_from_changes(&self.changes, &self.view)
         };

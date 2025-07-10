@@ -41,7 +41,7 @@
 //! - [ECMA-335 II.24.2.4](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf)
 
 use crate::file::io::{read_compressed_int, read_compressed_int_at};
-use crate::{Error::OutOfBounds, Result};
+use crate::Result;
 
 use widestring::U16Str;
 
@@ -123,7 +123,7 @@ impl<'a> UserStrings<'a> {
     /// ```
     pub fn from(data: &'a [u8]) -> Result<UserStrings<'a>> {
         if data.is_empty() || data[0] != 0 {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         Ok(UserStrings { data })
@@ -161,7 +161,7 @@ impl<'a> UserStrings<'a> {
     /// May panic if the underlying slice conversion fails due to memory alignment issues
     pub fn get(&self, index: usize) -> Result<&'a U16Str> {
         if index >= self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         let (total_bytes, compressed_length_size) = read_compressed_int_at(self.data, index)?;
@@ -185,7 +185,7 @@ impl<'a> UserStrings<'a> {
 
         let total_data_end = data_start + total_bytes;
         if total_data_end > self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         if utf16_length % 2 != 0 {

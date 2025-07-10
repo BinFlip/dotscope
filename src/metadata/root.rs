@@ -41,7 +41,6 @@
 use crate::{
     file::io::{read_le, read_le_at},
     metadata::streams::StreamHeader,
-    Error::OutOfBounds,
     Result,
 };
 
@@ -312,7 +311,7 @@ impl Root {
     /// as it performs no mutations and uses only stack-allocated temporary variables.
     pub fn read(data: &[u8]) -> Result<Root> {
         if data.len() < 36 {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         let signature = read_le::<u32>(data)?;
@@ -329,7 +328,7 @@ impl Root {
                 let data_len = u32::try_from(data.len())
                     .map_err(|_| malformed_error!("Data length too large"))?;
                 if str_end > data_len {
-                    return Err(OutOfBounds);
+                    return Err(out_of_bounds_error!());
                 }
             }
             None => {
@@ -383,7 +382,7 @@ impl Root {
 
         for _i in 0..stream_count {
             if stream_offset > data.len() {
-                return Err(OutOfBounds);
+                return Err(out_of_bounds_error!());
             }
 
             let new_stream = StreamHeader::from(&data[stream_offset..])?;
@@ -391,13 +390,13 @@ impl Root {
                 || new_stream.size as usize > data.len()
                 || new_stream.name.len() > 32
             {
-                return Err(OutOfBounds);
+                return Err(out_of_bounds_error!());
             }
 
             match u32::checked_add(new_stream.offset, new_stream.size) {
                 Some(range) => {
                     if range as usize > data.len() {
-                        return Err(OutOfBounds);
+                        return Err(out_of_bounds_error!());
                     }
                 }
                 None => {

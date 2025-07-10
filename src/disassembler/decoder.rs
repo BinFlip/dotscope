@@ -63,7 +63,6 @@ use crate::{
         method::{ExceptionHandler, Method},
         token::Token,
     },
-    Error::OutOfBounds,
     Result,
 };
 
@@ -129,7 +128,7 @@ impl<'a> Decoder<'a> {
         visited: Arc<VisitedMap>,
     ) -> Result<Self> {
         if offset > parser.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         Ok(Decoder {
@@ -238,7 +237,7 @@ impl<'a> Decoder<'a> {
     /// Returns [`crate::Error::OutOfBounds`] if the block offset exceeds parser bounds.
     fn decode_block(&mut self, block_id: usize) -> Result<()> {
         if self.blocks[block_id].offset > self.parser.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         if self.visited.get(self.blocks[block_id].offset) {

@@ -106,7 +106,6 @@
 use crate::{
     file::io::{read_le, read_le_at},
     metadata::method::{ExceptionHandler, ExceptionHandlerFlags, MethodBodyFlags, SectionFlags},
-    Error::OutOfBounds,
     Result,
 };
 
@@ -230,7 +229,7 @@ impl MethodBody {
             MethodBodyFlags::TINY_FORMAT => {
                 let size_code = (first_byte >> 2) as usize;
                 if size_code + 1 > data.len() {
-                    return Err(OutOfBounds);
+                    return Err(out_of_bounds_error!());
                 }
 
                 Ok(MethodBody {
@@ -246,7 +245,7 @@ impl MethodBody {
             }
             MethodBodyFlags::FAT_FORMAT => {
                 if data.len() < 12 {
-                    return Err(OutOfBounds);
+                    return Err(out_of_bounds_error!());
                 }
 
                 let first_duo = read_le::<u16>(data)?;
@@ -254,7 +253,7 @@ impl MethodBody {
                 let size_header = (first_duo >> 12) * 4;
                 let size_code = read_le::<u32>(&data[4..])?;
                 if data.len() < (size_code as usize + size_header as usize) {
-                    return Err(OutOfBounds);
+                    return Err(out_of_bounds_error!());
                 }
 
                 let local_var_sig_token = read_le::<u32>(&data[8..])?;

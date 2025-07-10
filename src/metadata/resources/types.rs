@@ -66,11 +66,7 @@
 /// The magic number that identifies a .NET resource file (0xBEEFCACE)
 pub const RESOURCE_MAGIC: u32 = 0xBEEF_CACE;
 
-use crate::{
-    file::parser::Parser,
-    Error::{self, TypeError},
-    Result,
-};
+use crate::{file::parser::Parser, Error::TypeError, Result};
 
 /// Represents all data types that can be stored in .NET resource files.
 ///
@@ -581,7 +577,7 @@ impl ResourceType {
                 let end_pos = start_pos + length as usize;
 
                 if end_pos > parser.data().len() {
-                    return Err(Error::OutOfBounds);
+                    return Err(out_of_bounds_error!());
                 }
 
                 let data = parser.data()[start_pos..end_pos].to_vec();
@@ -598,7 +594,7 @@ impl ResourceType {
                 let end_pos = start_pos + length as usize;
 
                 if end_pos > parser.data().len() {
-                    return Err(Error::OutOfBounds);
+                    return Err(out_of_bounds_error!());
                 }
 
                 let data = parser.data()[start_pos..end_pos].to_vec();

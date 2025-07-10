@@ -202,7 +202,7 @@
 
 use std::{ffi::CStr, str};
 
-use crate::{Error::OutOfBounds, Result};
+use crate::Result;
 
 /// ECMA-335 compliant `#Strings` heap providing UTF-8 identifier string access.
 ///
@@ -757,7 +757,7 @@ impl<'a> Strings<'a> {
     /// - [ECMA-335 II.24.2.3](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Strings heap specification
     pub fn get(&self, index: usize) -> Result<&'a str> {
         if index >= self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         // ToDo: Potentially cache this? 'expensive' verifications performed on each lookup. If the same

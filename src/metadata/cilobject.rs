@@ -164,12 +164,12 @@
 //! - [`crate::metadata::typesystem`] - Type resolution and signature parsing
 //! - [`crate::metadata::validation`] - Configurable validation during loading
 //! - Low-level PE file parsing and memory management components
-use ouroboros::self_referencing;
 use std::{path::Path, sync::Arc};
 
 use crate::{
     file::File,
     metadata::{
+        cilassemblyview::CilAssemblyView,
         cor20header::Cor20Header,
         exports::UnifiedExportContainer,
         imports::UnifiedImportContainer,
@@ -188,7 +188,6 @@ use crate::{
     Result,
 };
 
-#[self_referencing]
 /// A fully parsed and loaded .NET assembly representation.
 ///
 /// `CilObject` is the main entry point for analyzing .NET PE files, providing
@@ -244,12 +243,10 @@ use crate::{
 /// to ensure correctness in multi-threaded scenarios. All accessor methods can be
 /// safely called concurrently from multiple threads.
 pub struct CilObject {
-    // Holds the input data, either as memory buffer or mmaped file
-    file: Arc<File>,
-    #[borrows(file)]
-    #[not_covariant]
-    // Holds the references to the metadata inside the file, e.g. tables use reference-based access and are parsed lazily on access
-    data: CilObjectData<'this>,
+    /// Handles file lifetime management and provides raw metadata access
+    assembly_view: CilAssemblyView,
+    /// Contains resolved metadata structures (types, methods, etc.)
+    data: CilObjectData,
 }
 
 impl CilObject {
@@ -292,7 +289,7 @@ impl CilObject {
     ///
     /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn from_file(file: &Path) -> Result<Self> {
-        Self::from_file_with_validation(file, ValidationConfig::minimal())
+        Self::from_file_with_validation(file, ValidationConfig::disabled())
     }
 
     /// Creates a new `CilObject` by parsing a .NET assembly from a file with custom validation configuration.
@@ -337,8 +334,16 @@ impl CilObject {
         file: &Path,
         validation_config: ValidationConfig,
     ) -> Result<Self> {
-        let input = Arc::new(File::from_file(file)?);
-        Self::load_with_validation(input, validation_config)
+        let assembly_view = CilAssemblyView::from_file_with_validation(file, validation_config)?;
+        let data = CilObjectData::from_assembly_view(&assembly_view)?;
+        if validation_config.should_validate_owned() {
+            Orchestrator::validate_loaded_data(&data, validation_config)?;
+        }
+
+        Ok(CilObject {
+            assembly_view,
+            data,
+        })
     }
 
     /// Creates a new `CilObject` by parsing a .NET assembly from a memory buffer.
@@ -383,7 +388,7 @@ impl CilObject {
     ///
     /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn from_mem(data: Vec<u8>) -> Result<Self> {
-        Self::from_mem_with_validation(data, ValidationConfig::minimal())
+        Self::from_mem_with_validation(data, ValidationConfig::disabled())
     }
 
     /// Creates a new `CilObject` by parsing a .NET assembly from a memory buffer with custom validation configuration.
@@ -423,39 +428,16 @@ impl CilObject {
         data: Vec<u8>,
         validation_config: ValidationConfig,
     ) -> Result<Self> {
-        let input = Arc::new(File::from_mem(data)?);
-        Self::load_with_validation(input, validation_config)
-    }
-
-    /// Creates a new instance of a `File` by parsing the provided memory and building internal
-    /// data structures which are needed to analyse this file properly
-    ///
-    /// # Arguments
-    /// * 'file' - The file to parse
-    fn load(file: Arc<File>) -> Result<Self> {
-        Self::load_with_validation(file, ValidationConfig::default())
-    }
-
-    /// Creates a new instance of a `File` by parsing the provided memory and building internal
-    /// data structures which are needed to analyse this file properly, with custom validation
-    ///
-    /// # Arguments
-    /// * `file` - The file to parse
-    /// * `validation_config` - Configuration specifying which validation checks to perform
-    fn load_with_validation(file: Arc<File>, validation_config: ValidationConfig) -> Result<Self> {
-        match CilObject::try_new(file, |file| {
-            match CilObjectData::from_file(file.clone(), file.data()) {
-                Ok(loaded) => {
-                    Orchestrator::validate_loaded_data(&loaded, validation_config)?;
-
-                    Ok(loaded)
-                }
-                Err(error) => Err(error),
-            }
-        }) {
-            Ok(asm) => Ok(asm),
-            Err(error) => Err(error),
+        let assembly_view = CilAssemblyView::from_mem_with_validation(data, validation_config)?;
+        let object_data = CilObjectData::from_assembly_view(&assembly_view)?;
+        if validation_config.should_validate_owned() {
+            Orchestrator::validate_loaded_data(&object_data, validation_config)?;
         }
+
+        Ok(CilObject {
+            assembly_view,
+            data: object_data,
+        })
     }
 
     /// Returns the COR20 header containing .NET-specific PE information.
@@ -485,7 +467,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn cor20header(&self) -> &Cor20Header {
-        self.with_data(|data| &data.header)
+        self.assembly_view.cor20header()
     }
 
     /// Returns the metadata root header containing stream directory information.
@@ -518,7 +500,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn metadata_root(&self) -> &Root {
-        self.with_data(|data| &data.header_root)
+        self.assembly_view.metadata_root()
     }
 
     /// Returns the metadata tables header from the #~ or #- stream.
@@ -556,7 +538,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn tables(&self) -> Option<&TablesHeader> {
-        self.with_data(|data| data.meta.as_ref())
+        self.assembly_view.tables()
     }
 
     /// Returns the strings heap from the #Strings stream.
@@ -586,7 +568,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn strings(&self) -> Option<&Strings> {
-        self.with_data(|data| data.strings.as_ref())
+        self.assembly_view.strings()
     }
 
     /// Returns the user strings heap from the #US stream.
@@ -616,7 +598,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn userstrings(&self) -> Option<&UserStrings> {
-        self.with_data(|data| data.userstrings.as_ref())
+        self.assembly_view.userstrings()
     }
 
     /// Returns the GUID heap from the #GUID stream.
@@ -646,7 +628,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn guids(&self) -> Option<&Guid> {
-        self.with_data(|data| data.guids.as_ref())
+        self.assembly_view.guids()
     }
 
     /// Returns the blob heap from the #Blob stream.
@@ -676,7 +658,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn blob(&self) -> Option<&Blob> {
-        self.with_data(|data| data.blobs.as_ref())
+        self.assembly_view.blobs()
     }
 
     /// Returns all assembly references used by this assembly.
@@ -710,7 +692,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn refs_assembly(&self) -> &AssemblyRefMap {
-        self.with_data(|data| &data.refs_assembly)
+        &self.data.refs_assembly
     }
 
     /// Returns all module references used by this assembly.
@@ -738,7 +720,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn refs_module(&self) -> &ModuleRefMap {
-        self.with_data(|data| &data.refs_module)
+        &self.data.refs_module
     }
 
     /// Returns all member references used by this assembly.
@@ -766,7 +748,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn refs_members(&self) -> &MemberRefMap {
-        self.with_data(|data| &data.refs_member)
+        &self.data.refs_member
     }
 
     /// Returns the primary module information for this assembly.
@@ -795,7 +777,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn module(&self) -> Option<&ModuleRc> {
-        self.with_data(|data| data.module.get())
+        self.data.module.get()
     }
 
     /// Returns the assembly metadata for this .NET assembly.
@@ -828,7 +810,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn assembly(&self) -> Option<&AssemblyRc> {
-        self.with_data(|data| data.assembly.get())
+        self.data.assembly.get()
     }
 
     /// Returns assembly OS information if present.
@@ -842,7 +824,7 @@ impl CilObject {
     /// - `Some(&AssemblyOsRc)` if OS information is present
     /// - `None` if no `AssemblyOS` table entry exists (typical for most assemblies)
     pub fn assembly_os(&self) -> Option<&AssemblyOsRc> {
-        self.with_data(|data| data.assembly_os.get())
+        self.data.assembly_os.get()
     }
 
     /// Returns assembly processor information if present.
@@ -856,7 +838,7 @@ impl CilObject {
     /// - `Some(&AssemblyProcessorRc)` if processor information is present  
     /// - `None` if no `AssemblyProcessor` table entry exists (typical for most assemblies)
     pub fn assembly_processor(&self) -> Option<&AssemblyProcessorRc> {
-        self.with_data(|data| data.assembly_processor.get())
+        self.data.assembly_processor.get()
     }
 
     /// Returns the imports container with all P/Invoke and COM import information.
@@ -884,7 +866,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn imports(&self) -> &UnifiedImportContainer {
-        self.with_data(|data| &data.import_container)
+        &self.data.import_container
     }
 
     /// Returns the exports container with all exported function information.
@@ -919,7 +901,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn exports(&self) -> &UnifiedExportContainer {
-        self.with_data(|data| &data.export_container)
+        &self.data.export_container
     }
 
     /// Returns the methods container with all method definitions and metadata.
@@ -950,7 +932,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn methods(&self) -> &MethodMap {
-        self.with_data(|data| &data.methods)
+        &self.data.methods
     }
 
     /// Returns the method specifications container with all generic method instantiations.
@@ -979,7 +961,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn method_specs(&self) -> &MethodSpecMap {
-        self.with_data(|data| &data.method_specs)
+        &self.data.method_specs
     }
 
     /// Returns the resources container with all embedded and linked resources.
@@ -1007,7 +989,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn resources(&self) -> &Resources {
-        self.with_data(|data| &data.resources)
+        &self.data.resources
     }
 
     /// Returns the type registry containing all type definitions and references.
@@ -1045,7 +1027,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn types(&self) -> &TypeRegistry {
-        self.with_data(|data| &data.types)
+        &self.data.types
     }
 
     /// Returns the underlying file representation of this assembly.
@@ -1082,7 +1064,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn file(&self) -> &Arc<File> {
-        self.borrow_file()
+        self.assembly_view.file()
     }
 
     /// Performs comprehensive validation on the loaded assembly.
@@ -1128,7 +1110,19 @@ impl CilObject {
     /// - Invalid generic constraints
     /// - Type system inconsistencies
     pub fn validate(&self, config: ValidationConfig) -> Result<()> {
-        self.with_data(|data| Orchestrator::validate_loaded_data(data, config))
+        if config == ValidationConfig::disabled() {
+            return Ok(());
+        }
+
+        if config.should_validate_raw() {
+            self.assembly_view.validate_raw(config)?;
+        }
+
+        if config.should_validate_owned() {
+            Orchestrator::validate_loaded_data(&self.data, config)?;
+        }
+
+        Ok(())
     }
 }
 

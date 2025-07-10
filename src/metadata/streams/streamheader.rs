@@ -159,7 +159,7 @@
 //! - **ECMA-335 II.24.2.2**: Stream header format and directory structure
 //! - **ECMA-335 II.24.2**: Complete metadata stream architecture overview
 
-use crate::{file::io::read_le, Error::OutOfBounds, Result};
+use crate::{file::io::read_le, Result};
 
 /// ECMA-335 compliant stream header providing metadata stream location and identification.
 ///
@@ -504,7 +504,7 @@ impl StreamHeader {
     /// - [ECMA-335 II.24.2.2](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Official stream header specification
     pub fn from(data: &[u8]) -> Result<StreamHeader> {
         if data.len() < 9 {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         let offset = read_le::<u32>(data)?;

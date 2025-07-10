@@ -118,7 +118,8 @@ use crate::{
         root::Root,
         streams::{Blob, Guid, StreamHeader, Strings, TablesHeader, UserStrings},
     },
-    Result,
+    BasicSchemaValidator, Error, ReferentialIntegrityValidator, Result, RidConsistencyValidator,
+    ValidationConfig, ValidationPipeline,
 };
 
 /// Raw assembly view data holding references to file structures.
@@ -187,12 +188,31 @@ impl<'a> CilAssemblyViewData<'a> {
     /// essential structures cannot be located (e.g., missing CLR header).
     pub fn from_file(file: Arc<File>, data: &'a [u8]) -> Result<Self> {
         let (clr_rva, clr_size) = file.clr();
+        if clr_rva == 0 || clr_size == 0 {
+            return Err(Error::NotSupported);
+        }
+
         let clr_offset = file.rva_to_offset(clr_rva)?;
-        let cor20_header = Cor20Header::read(&data[clr_offset..clr_offset + clr_size])?;
+        let clr_end = clr_offset
+            .checked_add(clr_size)
+            .ok_or(out_of_bounds_error!())?;
+
+        if clr_size > data.len() || clr_offset > data.len() || clr_end > data.len() {
+            return Err(out_of_bounds_error!());
+        }
+
+        let cor20_header = Cor20Header::read(&data[clr_offset..clr_end])?;
 
         let metadata_offset = file.rva_to_offset(cor20_header.meta_data_rva as usize)?;
-        let metadata_slice =
-            &data[metadata_offset..metadata_offset + cor20_header.meta_data_size as usize];
+        let metadata_end = metadata_offset
+            .checked_add(cor20_header.meta_data_size as usize)
+            .ok_or(out_of_bounds_error!())?;
+
+        if metadata_end > data.len() {
+            return Err(out_of_bounds_error!());
+        }
+
+        let metadata_slice = &data[metadata_offset..metadata_end];
         let metadata_root = Root::read(metadata_slice)?;
 
         let mut metadata_tables = None;
@@ -202,12 +222,17 @@ impl<'a> CilAssemblyViewData<'a> {
         let mut blob_heap = None;
 
         for stream in &metadata_root.stream_headers {
-            if stream.offset as usize + stream.size as usize > metadata_slice.len() {
-                return Err(crate::Error::OutOfBounds);
+            let stream_offset = stream.offset as usize;
+            let stream_size = stream.size as usize;
+            let stream_end = stream_offset
+                .checked_add(stream_size)
+                .ok_or(out_of_bounds_error!())?;
+
+            if stream_end > metadata_slice.len() {
+                return Err(out_of_bounds_error!());
             }
 
-            let stream_data =
-                &metadata_slice[stream.offset as usize..(stream.offset + stream.size) as usize];
+            let stream_data = &metadata_slice[stream_offset..stream_end];
 
             match stream.name.as_str() {
                 "#~" | "#-" => {
@@ -313,8 +338,50 @@ impl CilAssemblyView {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn from_file(file: &Path) -> Result<Self> {
+        Self::from_file_with_validation(file, ValidationConfig::disabled())
+    }
+
+    /// Creates a new `CilAssemblyView` by loading a .NET assembly from disk with custom validation configuration.
+    ///
+    /// This method allows you to control which validation checks are performed during loading.
+    /// Raw validation (stage 1) is performed if enabled in the configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `file` - Path to the .NET assembly file (.dll, .exe, or .netmodule)
+    /// * `validation_config` - Configuration specifying which validation checks to perform
+    ///
+    /// # Returns
+    ///
+    /// Returns a `CilAssemblyView` providing raw access to assembly metadata
+    /// or an error if the file cannot be loaded, essential structures are missing,
+    /// or validation checks fail.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::{CilAssemblyView, ValidationConfig};
+    /// use std::path::Path;
+    ///
+    /// // Load with minimal validation for maximum performance
+    /// let view = CilAssemblyView::from_file_with_validation(
+    ///     Path::new("assembly.dll"),
+    ///     ValidationConfig::minimal()
+    /// )?;
+    ///
+    /// // Load with comprehensive validation for maximum safety
+    /// let view = CilAssemblyView::from_file_with_validation(
+    ///     Path::new("assembly.dll"),
+    ///     ValidationConfig::comprehensive()
+    /// )?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn from_file_with_validation(
+        file: &Path,
+        validation_config: ValidationConfig,
+    ) -> Result<Self> {
         let input = Arc::new(File::from_file(file)?);
-        Self::load(input)
+        Self::load_with_validation(input, validation_config)
     }
 
     /// Creates a new `CilAssemblyView` by parsing a .NET assembly from a memory buffer.
@@ -337,14 +404,71 @@ impl CilAssemblyView {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn from_mem(data: Vec<u8>) -> Result<Self> {
-        let input = Arc::new(File::from_mem(data)?);
-        Self::load(input)
+        Self::from_mem_with_validation(data, ValidationConfig::disabled())
     }
 
-    fn load(file: Arc<File>) -> Result<Self> {
-        CilAssemblyView::try_new(file, |file| {
+    /// Creates a new `CilAssemblyView` by parsing a .NET assembly from a memory buffer with custom validation configuration.
+    ///
+    /// This method allows you to control which validation checks are performed during loading.
+    /// Raw validation (stage 1) is performed if enabled in the configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Raw bytes of the .NET assembly in PE format
+    /// * `validation_config` - Configuration specifying which validation checks to perform
+    ///
+    /// # Returns
+    ///
+    /// Returns a `CilAssemblyView` providing raw access to assembly metadata
+    /// or an error if the data cannot be parsed or validation checks fail.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::{CilAssemblyView, ValidationConfig};
+    ///
+    /// let file_data = std::fs::read("assembly.dll")?;
+    ///
+    /// // Load with production validation settings
+    /// let view = CilAssemblyView::from_mem_with_validation(
+    ///     file_data,
+    ///     ValidationConfig::production()
+    /// )?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn from_mem_with_validation(
+        data: Vec<u8>,
+        validation_config: ValidationConfig,
+    ) -> Result<Self> {
+        let input = Arc::new(File::from_mem(data)?);
+        Self::load_with_validation(input, validation_config)
+    }
+
+    /// Internal method for loading a CilAssemblyView from a File structure with validation.
+    ///
+    /// This method serves as the common implementation for validation-enabled loading operations.
+    /// It first loads the assembly normally, then performs raw validation (stage 1) if enabled
+    /// in the configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `file` - Arc-wrapped File containing the PE assembly data
+    /// * `validation_config` - Configuration specifying which validation checks to perform
+    ///
+    /// # Returns
+    ///
+    /// Returns a fully constructed `CilAssemblyView` with parsed metadata structures
+    /// or an error if parsing or validation fails.
+    fn load_with_validation(file: Arc<File>, validation_config: ValidationConfig) -> Result<Self> {
+        let view = CilAssemblyView::try_new(file, |file| {
             CilAssemblyViewData::from_file(file.clone(), file.data())
-        })
+        })?;
+
+        if validation_config.should_validate_raw() {
+            view.validate_raw(validation_config)?;
+        }
+
+        Ok(view)
     }
 
     /// Returns the COR20 header containing .NET-specific PE information.
@@ -475,6 +599,54 @@ impl CilAssemblyView {
     /// ```
     pub fn to_owned(self) -> CilAssembly {
         CilAssembly::new(self)
+    }
+
+    /// Performs raw validation (stage 1) on the loaded assembly view.
+    ///
+    /// This method validates the raw assembly data using the validation pipeline
+    /// without any modifications (changes = None). It performs basic structural
+    /// validation and integrity checks on the raw metadata.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Validation configuration specifying which validations to perform
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if validation passes, or an error describing validation failures.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::{CilAssemblyView, ValidationConfig};
+    /// use std::path::Path;
+    ///
+    /// let view = CilAssemblyView::from_file(Path::new("assembly.dll"))?;
+    /// view.validate_raw(ValidationConfig::production())?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn validate_raw(&self, config: ValidationConfig) -> Result<()> {
+        let pipeline = if config == ValidationConfig::disabled() {
+            return Ok(());
+        } else if config == ValidationConfig::minimal() {
+            ValidationPipeline::new().add_stage(BasicSchemaValidator)
+        } else if config == ValidationConfig::production() {
+            ValidationPipeline::default()
+        } else if config == ValidationConfig::comprehensive() {
+            ValidationPipeline::new()
+                .add_stage(BasicSchemaValidator)
+                .add_stage(RidConsistencyValidator)
+                .add_stage(ReferentialIntegrityValidator::default())
+        } else if config == ValidationConfig::strict() {
+            ValidationPipeline::new()
+                .add_stage(BasicSchemaValidator)
+                .add_stage(RidConsistencyValidator)
+                .add_stage(ReferentialIntegrityValidator::default())
+        } else {
+            ValidationPipeline::default()
+        };
+
+        pipeline.validate(None, self)
     }
 }
 

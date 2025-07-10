@@ -144,7 +144,7 @@
 //! - **ECMA-335 II.24.2.5**: `#GUID` heap specification
 //! - **RFC 4122**: UUID/GUID format and generation standards
 
-use crate::{Error::OutOfBounds, Result};
+use crate::Result;
 
 /// ECMA-335 GUID heap providing indexed access to 128-bit globally unique identifiers.
 ///
@@ -502,7 +502,7 @@ impl<'a> Guid<'a> {
     /// - [ECMA-335 II.24.2.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): GUID heap specification
     pub fn get(&self, index: usize) -> Result<uguid::Guid> {
         if index < 1 || (index - 1) * 16 + 16 > self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         let offset_start = (index - 1) * 16;

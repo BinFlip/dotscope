@@ -193,58 +193,73 @@ use crate::{
 /// However, the execution plans it generates can safely coordinate parallel loader execution.
 ///
 /// ```rust, ignore
-/// Level 0: [
-///   Property (depends on: )
-///   Field (depends on: )
-///   AssemblyProcessor (depends on: )
-///   AssemblyRef (depends on: )
-///   Module (depends on: )
-///   Param (depends on: )
-///   Assembly (depends on: )
-///   File (depends on: )
-///   AssemblyOS (depends on: )
-///   ModuleRef (depends on: )
-/// ]
-/// Level 1: [
-///   TypeRef (depends on: AssemblyRef, ModuleRef)
-///   FieldRVA (depends on: Field)
-///   Constant (depends on: Property, Field, Param)
-///   AssemblyRefProcessor (depends on: AssemblyRef)
-///   AssemblyRefOS (depends on: AssemblyRef)
-///   ExportedType (depends on: File, AssemblyRef)
-///   ManifestResource (depends on: File, AssemblyRef)
-///   FieldLayout (depends on: Field)
-///   MethodDef (depends on: Param)
-///   FieldMarshal (depends on: Param, Field)
-/// ]
-/// Level 2: [
-///   TypeDef (depends on: MethodDef, Field)
-/// ]
-/// Level 3: [
-///   ClassLayout (depends on: TypeDef)
-///   TypeSpec (depends on: TypeRef, TypeDef)
-///   DeclSecurity (depends on: TypeDef, MethodDef, Assembly)
-/// ]
-/// Level 4: [
-///   Event (depends on: TypeRef, TypeSpec, TypeDef)
-///   NestedClass (depends on: TypeSpec, TypeRef, TypeDef)
-///   StandAloneSig (depends on: TypeDef, TypeSpec, MethodDef, TypeRef)
-///   InterfaceImpl (depends on: TypeRef, TypeSpec, TypeDef)
-///   PropertyMap (depends on: Property, TypeDef, TypeRef, TypeSpec)
-///   MemberRef (depends on: TypeDef, MethodDef, TypeRef, TypeSpec, ModuleRef)
-///   GenericParam (depends on: TypeSpec, MethodDef, TypeRef, TypeDef)
-/// ]
-/// Level 5: [
-///   MethodImpl (depends on: MemberRef, TypeRef, TypeDef, MethodDef)
-///   GenericParamConstraint (depends on: MemberRef, TypeRef, TypeSpec, MethodDef, GenericParam, TypeDef)
-///   ImplMap (depends on: ModuleRef, Module, MemberRef, MethodDef)
-///   MethodSpec (depends on: MemberRef, TypeDef, TypeSpec, MethodDef, TypeRef)
-///   EventMap (depends on: Event)
-/// ]
-/// Level 6: [
-///   CustomAttribute (depends on: TypeRef, Field, TypeDef, MemberRef, Param, InterfaceImpl, DeclSecurity, Property, TypeSpec, ExportedType, ManifestResource, AssemblyRef, MethodSpec, File, Event, ModuleRef, StandAloneSig, MethodDef, Module, GenericParamConstraint, GenericParam, Assembly)
-///   MethodSemantics (depends on: PropertyMap, EventMap, Event, Property)
-/// ]
+// Level 0: [
+//   ModuleRef (depends on: )
+//   LocalConstant (depends on: )
+//   Param (depends on: )
+//   AssemblyRef (depends on: )
+//   Document (depends on: )
+//   Assembly (depends on: )
+//   StateMachineMethod (depends on: )
+//   EncLog (depends on: )
+//   Field (depends on: )
+//   AssemblyOS (depends on: )
+//   LocalVariable (depends on: )
+//   MethodDebugInformation (depends on: )
+//   ImportScope (depends on: )
+//   PropertyPtr (depends on: )
+//   Property (depends on: )
+//   MethodPtr (depends on: )
+//   File (depends on: )
+//   Module (depends on: )
+//   ParamPtr (depends on: )
+//   FieldPtr (depends on: )
+//   AssemblyProcessor (depends on: )
+//   EventPtr (depends on: )
+//   EncMap (depends on: )
+// ]
+// Level 1: [
+//   Constant (depends on: Property, Param, Field)
+//   FieldRVA (depends on: Field)
+//   MethodDef (depends on: Param, ParamPtr)
+//   ManifestResource (depends on: File, AssemblyRef)
+//   FieldMarshal (depends on: Param, Field)
+//   FieldLayout (depends on: Field)
+//   AssemblyRefOS (depends on: AssemblyRef)
+//   ExportedType (depends on: AssemblyRef, File)
+//   AssemblyRefProcessor (depends on: AssemblyRef)
+//   TypeRef (depends on: ModuleRef, AssemblyRef)
+// ]
+// Level 2: [
+//   LocalScope (depends on: ImportScope, LocalConstant, MethodDef, LocalVariable)
+//   TypeDef (depends on: FieldPtr, Field, MethodPtr, TypeRef, MethodDef)
+// ]
+// Level 3: [
+//   DeclSecurity (depends on: TypeDef, Assembly, MethodDef)
+//   ClassLayout (depends on: TypeDef)
+//   TypeSpec (depends on: TypeDef, TypeRef)
+// ]
+// Level 4: [
+//   GenericParam (depends on: TypeDef, TypeRef, TypeSpec, MethodDef)
+//   PropertyMap (depends on: TypeSpec, PropertyPtr, TypeDef, TypeRef, Property)
+//   NestedClass (depends on: TypeRef, TypeSpec, TypeDef)
+//   InterfaceImpl (depends on: TypeDef, TypeRef, TypeSpec)
+//   MemberRef (depends on: TypeRef, MethodDef, TypeSpec, ModuleRef, TypeDef)
+//   StandAloneSig (depends on: MethodDef, TypeSpec, TypeDef, TypeRef)
+//   Event (depends on: TypeDef, TypeSpec, TypeRef)
+// ]
+// Level 5: [
+//   GenericParamConstraint (depends on: TypeRef, TypeSpec, GenericParam, MethodDef, MemberRef, TypeDef)
+//   EventMap (depends on: Event, EventPtr)
+//   MethodSpec (depends on: TypeDef, MemberRef, TypeSpec, TypeRef, MethodDef)
+//   ImplMap (depends on: ModuleRef, MemberRef, Module, MethodDef)
+//   MethodImpl (depends on: TypeRef, MemberRef, TypeDef, MethodDef)
+// ]
+// Level 6: [
+//   CustomAttribute (depends on: MethodSpec, Module, File, ExportedType, TypeRef, TypeSpec, MethodDef, StandAloneSig, ModuleRef, Assembly, Field, InterfaceImpl, Param, ManifestResource, TypeDef, MemberRef, Property, DeclSecurity, Event, AssemblyRef, GenericParam, GenericParamConstraint)
+//   CustomDebugInformation (depends on: Property, MethodSpec, Field, InterfaceImpl, MemberRef, LocalScope, AssemblyRef, LocalConstant, File, LocalVariable, StandAloneSig, TypeSpec, Event, MethodDef, ModuleRef, Param, Assembly, ImportScope, DeclSecurity, TypeDef, TypeRef, Module, ManifestResource, ExportedType, GenericParam, GenericParamConstraint, Document)
+//   MethodSemantics (depends on: PropertyMap, EventMap, Event, Property)
+// ]
 /// ```
 pub(crate) struct LoaderGraph<'a> {
     /// Maps a `TableId` to its loader

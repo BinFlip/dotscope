@@ -140,7 +140,7 @@ mod physical;
 use std::path::Path;
 
 use crate::{
-    Error::{Empty, GoblinErr, OutOfBounds},
+    Error::{Empty, GoblinErr},
     Result,
 };
 use goblin::pe::{
@@ -837,7 +837,7 @@ impl File {
     pub fn va_to_offset(&self, va: usize) -> Result<usize> {
         let ib = self.imagebase();
         if ib > va as u64 {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         let rva_u64 = va as u64 - ib;

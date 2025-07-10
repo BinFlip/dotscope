@@ -109,7 +109,6 @@
 use crate::{
     file::io::{read_be_at, read_le_at, CilIO},
     metadata::token::Token,
-    Error::OutOfBounds,
     Result,
 };
 
@@ -262,7 +261,7 @@ impl<'a> Parser<'a> {
     /// ```
     pub fn seek(&mut self, pos: usize) -> Result<()> {
         if pos >= self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         self.position = pos;
@@ -312,7 +311,7 @@ impl<'a> Parser<'a> {
     /// ```
     pub fn advance_by(&mut self, step: usize) -> Result<()> {
         if self.position + step >= self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         self.position += step;
@@ -374,7 +373,7 @@ impl<'a> Parser<'a> {
     /// ```
     pub fn peek_byte(&self) -> Result<u8> {
         if self.position >= self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
         Ok(self.data[self.position])
     }
@@ -405,7 +404,7 @@ impl<'a> Parser<'a> {
     pub fn align(&mut self, alignment: usize) -> Result<()> {
         let padding = (alignment - (self.position % alignment)) % alignment;
         if self.position + padding > self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
         self.position += padding;
         Ok(())
@@ -625,7 +624,7 @@ impl<'a> Parser<'a> {
 
         loop {
             if self.position >= self.data.len() {
-                return Err(OutOfBounds);
+                return Err(out_of_bounds_error!());
             }
 
             let byte = self.data[self.position];
@@ -679,7 +678,7 @@ impl<'a> Parser<'a> {
         }
 
         if end >= self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         let string_data = &self.data[start..end];
@@ -716,7 +715,7 @@ impl<'a> Parser<'a> {
         let length = self.read_7bit_encoded_int()? as usize;
 
         if self.position + length > self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         let string_data = &self.data[self.position..self.position + length];
@@ -758,7 +757,7 @@ impl<'a> Parser<'a> {
     pub fn read_prefixed_string_utf16(&mut self) -> Result<String> {
         let length = self.read_7bit_encoded_int()? as usize;
         if self.position + length > self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         if length % 2 != 0 || length < 2 {
@@ -806,7 +805,10 @@ mod tests {
 
         // Error on empty data
         let mut parser = Parser::new(&[]);
-        assert!(matches!(parser.read_compressed_uint(), Err(OutOfBounds)));
+        assert!(matches!(
+            parser.read_compressed_uint(),
+            Err(crate::Error::OutOfBounds { .. })
+        ));
     }
 
     #[test]
@@ -844,7 +846,10 @@ mod tests {
         // Test unexpected end of data
         let mut parser = Parser::new(&[0x08]); // Just one byte
         assert!(matches!(parser.read_compressed_uint(), Ok(8)));
-        assert!(matches!(parser.read_compressed_uint(), Err(OutOfBounds)));
+        assert!(matches!(
+            parser.read_compressed_uint(),
+            Err(crate::Error::OutOfBounds { .. })
+        ));
     }
 
     #[test]

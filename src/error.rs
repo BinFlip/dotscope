@@ -135,6 +135,7 @@ use crate::metadata::{tables::TableId, token::Token};
 /// let actual = 2;
 /// let error = malformed_error!("Expected {} bytes, got {}", expected, actual);
 /// ```
+#[macro_export]
 macro_rules! malformed_error {
     // Single string version
     ($msg:expr) => {
@@ -149,6 +150,36 @@ macro_rules! malformed_error {
     ($fmt:expr, $($arg:tt)*) => {
         crate::Error::Malformed {
             message: format!($fmt, $($arg)*),
+            file: file!(),
+            line: line!(),
+        }
+    };
+}
+
+/// Helper macro for creating out-of-bounds errors with source location information.
+///
+/// This macro simplifies the creation of [`crate::Error::OutOfBounds`] errors by automatically
+/// capturing the current file and line number where the out-of-bounds access was detected.
+///
+/// # Returns
+///
+/// Returns a [`crate::Error::OutOfBounds`] variant with automatically captured source
+/// location information for debugging purposes.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # use dotscope::out_of_bounds_error;
+/// // Replace: Err(Error::OutOfBounds)
+/// // With:    Err(out_of_bounds_error!())
+/// if index >= data.len() {
+///     return Err(out_of_bounds_error!());
+/// }
+/// ```
+#[macro_export]
+macro_rules! out_of_bounds_error {
+    () => {
+        crate::Error::OutOfBounds {
             file: file!(),
             line: line!(),
         }
@@ -230,8 +261,20 @@ pub enum Error {
     ///
     /// This error occurs when trying to read data beyond the end of the file
     /// or stream. It's a safety check to prevent buffer overruns during parsing.
-    #[error("Out of Bound read would have occurred!")]
-    OutOfBounds,
+    /// The error includes the source location where the out-of-bounds access
+    /// was detected for debugging purposes.
+    ///
+    /// # Fields
+    ///
+    /// * `file` - Source file where the error was detected
+    /// * `line` - Source line where the error was detected
+    #[error("Out of Bounds - {file}:{line}")]
+    OutOfBounds {
+        /// The source file in which this error occurred
+        file: &'static str,
+        /// The source line in which this error occurred
+        line: u32,
+    },
 
     /// This file type is not supported.
     ///

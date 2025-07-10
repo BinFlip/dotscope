@@ -312,7 +312,6 @@ use crate::{
         RowReadable, StandAloneSigRaw, StateMachineMethodRaw, TableAccess, TableData, TableId,
         TableInfo, TableInfoRef, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
     },
-    Error::OutOfBounds,
     Result,
 };
 
@@ -1010,7 +1009,7 @@ impl<'a> TablesHeader<'a> {
     /// - [ECMA-335 II.24.2.6](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Tables header specification
     pub fn from(data: &'a [u8]) -> Result<TablesHeader<'a>> {
         if data.len() < 24 {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         let valid_bitvec = read_le::<u64>(&data[8..])?;
@@ -1037,7 +1036,7 @@ impl<'a> TablesHeader<'a> {
         let mut current_offset = tables_header.tables_offset as usize;
         for table_id in TableId::iter() {
             if current_offset > data.len() {
-                return Err(OutOfBounds);
+                return Err(out_of_bounds_error!());
             }
 
             tables_header.add_table(&data[current_offset..], table_id, &mut current_offset)?;

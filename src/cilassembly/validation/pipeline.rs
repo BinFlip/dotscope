@@ -114,9 +114,12 @@ impl ValidationPipeline {
     /// This method builds a reference scanner once and shares it among all validation
     /// stages for optimal performance. All stages must pass for validation to succeed.
     ///
+    /// If no changes are provided (None), an empty AssemblyChanges is created for
+    /// raw assembly validation without any proposed modifications.
+    ///
     /// # Arguments
     ///
-    /// * `changes` - The [`crate::cilassembly::AssemblyChanges`] to validate
+    /// * `changes` - Optional [`crate::cilassembly::AssemblyChanges`] to validate, or None for raw assembly validation
     /// * `original` - The original [`crate::metadata::cilassemblyview::CilAssemblyView`] for context
     ///
     /// # Returns
@@ -127,11 +130,39 @@ impl ValidationPipeline {
     /// # Errors
     ///
     /// Returns [`crate::Error`] if any validation stage fails.
-    pub fn validate(&self, changes: &AssemblyChanges, original: &CilAssemblyView) -> Result<()> {
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use crate::cilassembly::validation::ValidationPipeline;
+    /// use crate::cilassembly::AssemblyChanges;
+    /// use crate::metadata::cilassemblyview::CilAssemblyView;
+    ///
+    /// # let view = CilAssemblyView::from_file("test.dll")?;
+    /// let pipeline = ValidationPipeline::default();
+    ///
+    /// // Validate with changes
+    /// let changes = AssemblyChanges::new(&view);
+    /// pipeline.validate(Some(&changes), &view)?;
+    ///
+    /// // Validate without changes (raw assembly)
+    /// pipeline.validate(None, &view)?;
+    /// # Ok::<(), crate::Error>(())
+    /// ```
+    pub fn validate(
+        &self,
+        changes: Option<&AssemblyChanges>,
+        original: &CilAssemblyView,
+    ) -> Result<()> {
         let scanner = ReferenceScanner::new(original)?;
 
+        let changes_ref = match changes {
+            Some(changes) => changes,
+            None => &AssemblyChanges::empty(),
+        };
+
         for stage in &self.stages {
-            stage.validate(changes, original, Some(&scanner))?;
+            stage.validate(changes_ref, original, Some(&scanner))?;
         }
         Ok(())
     }
@@ -199,7 +230,7 @@ mod tests {
             let changes = AssemblyChanges::empty();
             let pipeline = ValidationPipeline::default();
 
-            let result = pipeline.validate(&changes, &view);
+            let result = pipeline.validate(Some(&changes), &view);
             assert!(result.is_ok(), "Empty changes should pass validation");
         }
     }
@@ -217,7 +248,7 @@ mod tests {
                 .insert(TableId::TypeDef, replaced_modifications);
 
             let pipeline = ValidationPipeline::default();
-            let result = pipeline.validate(&changes, &view);
+            let result = pipeline.validate(Some(&changes), &view);
             assert!(result.is_ok(), "Replaced table should pass validation");
         }
     }
@@ -241,7 +272,7 @@ mod tests {
             changes.blob_heap_changes = blob_changes;
 
             let pipeline = ValidationPipeline::default();
-            let result = pipeline.validate(&changes, &view);
+            let result = pipeline.validate(Some(&changes), &view);
             assert!(result.is_ok(), "Heap changes should pass validation");
         }
     }
@@ -274,7 +305,7 @@ mod tests {
                 .add_stage(AlwaysFailValidator)
                 .with_resolver(LastWriteWinsResolver);
 
-            let result = pipeline.validate(&changes, &view);
+            let result = pipeline.validate(Some(&changes), &view);
             assert!(result.is_err(), "Pipeline with failing stage should fail");
 
             if let Err(e) = result {
@@ -335,7 +366,7 @@ mod tests {
             let changes = AssemblyChanges::empty();
             let pipeline = ValidationPipeline::default();
 
-            let result = pipeline.validate(&changes, &view);
+            let result = pipeline.validate(Some(&changes), &view);
             assert!(result.is_ok(), "Validation should pass with empty changes");
         }
     }
@@ -376,11 +407,31 @@ mod tests {
             blob_changes.next_index = 501;
             changes.blob_heap_changes = blob_changes;
 
-            let result = pipeline.validate(&changes, &view);
+            let result = pipeline.validate(Some(&changes), &view);
             assert!(
                 result.is_ok(),
                 "Comprehensive validation should pass with valid changes"
             );
+        }
+    }
+
+    #[test]
+    fn test_validation_pipeline_raw_assembly_validation() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            let pipeline = ValidationPipeline::default();
+
+            // Test raw assembly validation (no changes)
+            let result = pipeline.validate(None, &view);
+            assert!(
+                result.is_ok(),
+                "Raw assembly validation should pass for valid assembly"
+            );
+
+            // Test validation with empty changes
+            let empty_changes = AssemblyChanges::empty();
+            let result = pipeline.validate(Some(&empty_changes), &view);
+            assert!(result.is_ok(), "Validation with empty changes should pass");
         }
     }
 
@@ -434,7 +485,7 @@ mod tests {
                 .add_stage(RidConsistencyValidator)
                 .add_stage(fail_if_referenced_validator);
 
-            let result = fail_pipeline.validate(&changes, &view);
+            let result = fail_pipeline.validate(Some(&changes), &view);
             assert!(
                 result.is_err(),
                 "FailIfReferenced strategy should fail when deleting referenced TypeDef RID {referenced_rid}"
@@ -457,7 +508,7 @@ mod tests {
                 .add_stage(RidConsistencyValidator)
                 .add_stage(nullify_validator);
 
-            let result = nullify_pipeline.validate(&changes, &view);
+            let result = nullify_pipeline.validate(Some(&changes), &view);
             assert!(
                 result.is_ok(),
                 "NullifyReferences strategy should succeed by nullifying references: {result:?}"
@@ -471,7 +522,7 @@ mod tests {
                 .add_stage(RidConsistencyValidator)
                 .add_stage(remove_validator);
 
-            let result = remove_pipeline.validate(&changes, &view);
+            let result = remove_pipeline.validate(Some(&changes), &view);
             assert!(
                 result.is_ok(),
                 "RemoveReferences strategy should succeed with cascade deletion: {result:?}"

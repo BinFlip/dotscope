@@ -166,7 +166,7 @@
 //! The module is designed to be the foundational layer for all binary data access throughout
 //! the dotscope library, ensuring consistent and safe parsing and generation behavior across all components.
 
-use crate::{Error::OutOfBounds, Result};
+use crate::Result;
 
 /// Trait for implementing type-specific safe binary data reading operations.
 ///
@@ -547,11 +547,11 @@ pub fn read_le<T: CilIO>(data: &[u8]) -> Result<T> {
 pub fn read_le_at<T: CilIO>(data: &[u8], offset: &mut usize) -> Result<T> {
     let type_len = std::mem::size_of::<T>();
     if (type_len + *offset) > data.len() {
-        return Err(OutOfBounds);
+        return Err(out_of_bounds_error!());
     }
 
     let Ok(read) = data[*offset..*offset + type_len].try_into() else {
-        return Err(OutOfBounds);
+        return Err(out_of_bounds_error!());
     };
 
     *offset += type_len;
@@ -682,11 +682,11 @@ pub fn read_be<T: CilIO>(data: &[u8]) -> Result<T> {
 pub fn read_be_at<T: CilIO>(data: &[u8], offset: &mut usize) -> Result<T> {
     let type_len = std::mem::size_of::<T>();
     if (type_len + *offset) > data.len() {
-        return Err(OutOfBounds);
+        return Err(out_of_bounds_error!());
     }
 
     let Ok(read) = data[*offset..*offset + type_len].try_into() else {
-        return Err(OutOfBounds);
+        return Err(out_of_bounds_error!());
     };
 
     *offset += type_len;
@@ -820,7 +820,7 @@ pub fn write_le<T: CilIO>(data: &mut [u8], value: T) -> Result<()> {
 pub fn write_le_at<T: CilIO>(data: &mut [u8], offset: &mut usize, value: T) -> Result<()> {
     let type_len = std::mem::size_of::<T>();
     if (type_len + *offset) > data.len() {
-        return Err(OutOfBounds);
+        return Err(out_of_bounds_error!());
     }
 
     let bytes = value.to_le_bytes();
@@ -965,7 +965,7 @@ pub fn write_be<T: CilIO>(data: &mut [u8], value: T) -> Result<()> {
 pub fn write_be_at<T: CilIO>(data: &mut [u8], offset: &mut usize, value: T) -> Result<()> {
     let type_len = std::mem::size_of::<T>();
     if (type_len + *offset) > data.len() {
-        return Err(OutOfBounds);
+        return Err(out_of_bounds_error!());
     }
 
     let bytes = value.to_be_bytes();
@@ -1260,7 +1260,7 @@ pub fn write_string_at(data: &mut [u8], offset: &mut usize, value: &str) -> Resu
 
     // Check bounds
     if *offset + total_length > data.len() {
-        return Err(crate::Error::OutOfBounds);
+        return Err(out_of_bounds_error!());
     }
 
     // Write string bytes
@@ -1315,7 +1315,7 @@ pub fn write_string_at(data: &mut [u8], offset: &mut usize, value: &str) -> Resu
 /// ```
 pub fn read_compressed_int(data: &[u8], offset: &mut usize) -> Result<(usize, usize)> {
     if *offset >= data.len() {
-        return Err(OutOfBounds);
+        return Err(out_of_bounds_error!());
     }
 
     let first_byte = data[*offset];
@@ -1327,7 +1327,7 @@ pub fn read_compressed_int(data: &[u8], offset: &mut usize) -> Result<(usize, us
     } else if first_byte & 0xC0 == 0x80 {
         // Two bytes: 10xxxxxx xxxxxxxx
         if *offset + 1 >= data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
         let second_byte = data[*offset + 1];
         let value = (((first_byte & 0x3F) as usize) << 8) | (second_byte as usize);
@@ -1336,7 +1336,7 @@ pub fn read_compressed_int(data: &[u8], offset: &mut usize) -> Result<(usize, us
     } else {
         // Four bytes: 110xxxxx xxxxxxxx xxxxxxxx xxxxxxxx
         if *offset + 3 >= data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
         let mut value = ((first_byte & 0x1F) as usize) << 24;
         value |= (data[*offset + 1] as usize) << 16;
@@ -1551,10 +1551,10 @@ mod tests {
         let buffer = [0xFF, 0xFF, 0xFF, 0xFF];
 
         let result = read_le::<u64>(&buffer);
-        assert!(matches!(result, Err(OutOfBounds)));
+        assert!(matches!(result, Err(crate::Error::OutOfBounds { .. })));
 
         let result = read_le::<f64>(&buffer);
-        assert!(matches!(result, Err(OutOfBounds)));
+        assert!(matches!(result, Err(crate::Error::OutOfBounds { .. })));
     }
 
     #[test]
@@ -1844,10 +1844,10 @@ mod tests {
 
         // Try to write u32 (4 bytes) into 2-byte buffer
         let result = write_le(&mut buffer, 0x12345678u32);
-        assert!(matches!(result, Err(OutOfBounds)));
+        assert!(matches!(result, Err(crate::Error::OutOfBounds { .. })));
 
         let result = write_be(&mut buffer, 0x12345678u32);
-        assert!(matches!(result, Err(OutOfBounds)));
+        assert!(matches!(result, Err(crate::Error::OutOfBounds { .. })));
     }
 
     #[test]

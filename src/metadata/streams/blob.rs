@@ -146,7 +146,7 @@
 //! - **ECMA-335 II.24.2.4**: `#Blob` heap specification
 //! - **ECMA-335 II.23.2**: Signature encoding formats stored in blobs
 
-use crate::{file::parser::Parser, Error::OutOfBounds, Result};
+use crate::{file::parser::Parser, Result};
 
 /// ECMA-335 binary blob heap providing indexed access to variable-length data.
 ///
@@ -438,7 +438,7 @@ impl<'a> Blob<'a> {
     /// - [ECMA-335 II.23.2](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Compressed integer format
     pub fn get(&self, index: usize) -> Result<&'a [u8]> {
         if index >= self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         let mut parser = Parser::new(&self.data[index..]);
@@ -446,15 +446,15 @@ impl<'a> Blob<'a> {
         let skip = parser.pos();
 
         let Some(data_start) = index.checked_add(skip) else {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         };
 
         let Some(data_end) = data_start.checked_add(len) else {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         };
 
         if data_start > self.data.len() || data_end > self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         Ok(&self.data[data_start..data_end])

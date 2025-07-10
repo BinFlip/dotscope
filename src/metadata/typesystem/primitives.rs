@@ -98,7 +98,7 @@ use crate::{
         token::Token,
         typesystem::{CilFlavor, ELEMENT_TYPE},
     },
-    Error::{self, OutOfBounds, TypeConversionInvalid, TypeNotPrimitive},
+    Error::{self, TypeConversionInvalid, TypeNotPrimitive},
     Result,
 };
 
@@ -393,14 +393,14 @@ impl CilPrimitiveData {
         match type_byte {
             ELEMENT_TYPE::BOOLEAN => {
                 if data.is_empty() {
-                    Err(OutOfBounds)
+                    Err(out_of_bounds_error!())
                 } else {
                     Ok(CilPrimitiveData::Boolean(data[0] != 0))
                 }
             }
             ELEMENT_TYPE::CHAR => {
                 if data.len() < 2 {
-                    Err(OutOfBounds)
+                    Err(out_of_bounds_error!())
                 } else {
                     let code = u16::from_le_bytes([data[0], data[1]]);
                     match char::from_u32(u32::from(code)) {
@@ -2284,15 +2284,15 @@ mod tests {
     fn test_from_blob_error_cases() {
         let result = CilPrimitiveData::from_bytes(ELEMENT_TYPE::BOOLEAN, &[]);
         assert!(result.is_err());
-        assert!(matches!(result, Err(Error::OutOfBounds)));
+        assert!(matches!(result, Err(crate::Error::OutOfBounds { .. })));
 
         let result = CilPrimitiveData::from_bytes(ELEMENT_TYPE::CHAR, &[]);
         assert!(result.is_err());
-        assert!(matches!(result, Err(Error::OutOfBounds)));
+        assert!(matches!(result, Err(crate::Error::OutOfBounds { .. })));
 
         let result = CilPrimitiveData::from_bytes(ELEMENT_TYPE::I4, &[1, 2]);
         assert!(result.is_err());
-        assert!(matches!(result, Err(Error::OutOfBounds)));
+        assert!(matches!(result, Err(crate::Error::OutOfBounds { .. })));
 
         let result = CilPrimitiveData::from_bytes(ELEMENT_TYPE::STRING, &[]);
         assert!(result.is_ok());

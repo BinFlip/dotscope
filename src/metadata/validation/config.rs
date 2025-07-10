@@ -96,6 +96,14 @@ pub struct ValidationConfig {
 
     /// Maximum nesting depth for nested classes (default: 64)
     pub max_nesting_depth: usize,
+
+    /// Enable raw assembly validation during CilAssemblyView loading (stage 1)
+    /// This enables the validation pipeline to run on raw assembly data
+    pub enable_raw_validation: bool,
+
+    /// Enable owned data validation during CilObject loading (stage 2)
+    /// This enables validation of resolved, owned data structures
+    pub enable_owned_validation: bool,
 }
 
 impl Default for ValidationConfig {
@@ -109,6 +117,8 @@ impl Default for ValidationConfig {
             enable_method_validation: true,
             enable_token_validation: true,
             max_nesting_depth: 64,
+            enable_raw_validation: true,
+            enable_owned_validation: true,
         }
     }
 }
@@ -142,6 +152,8 @@ impl ValidationConfig {
             enable_method_validation: false,
             enable_token_validation: false,
             max_nesting_depth: 0,
+            enable_raw_validation: false,
+            enable_owned_validation: false,
         }
     }
 
@@ -174,6 +186,8 @@ impl ValidationConfig {
             enable_method_validation: false,
             enable_token_validation: false,
             max_nesting_depth: 64,
+            enable_raw_validation: true,
+            enable_owned_validation: false,
         }
     }
 
@@ -217,6 +231,8 @@ impl ValidationConfig {
             enable_method_validation: true,     // Runtime enforces method constraints
             enable_token_validation: false,     // Runtime validates critical token references
             max_nesting_depth: 64,              // Reasonable runtime limit
+            enable_raw_validation: true,        // Enable raw validation for safety
+            enable_owned_validation: true,      // Enable owned validation for completeness
         }
     }
 
@@ -239,6 +255,61 @@ impl ValidationConfig {
             enable_method_validation: true,
             enable_token_validation: true,
             max_nesting_depth: 64,
+            enable_raw_validation: true,
+            enable_owned_validation: true,
+        }
+    }
+
+    /// Returns true if raw validation should be performed during CilAssemblyView loading.
+    #[must_use]
+    pub fn should_validate_raw(&self) -> bool {
+        self.enable_raw_validation
+    }
+
+    /// Returns true if owned validation should be performed during CilObject loading.
+    #[must_use]
+    pub fn should_validate_owned(&self) -> bool {
+        self.enable_owned_validation
+    }
+
+    /// Creates a configuration for raw validation only (stage 1).
+    ///
+    /// This configuration is suitable for scenarios where you only need basic
+    /// structural validation of the raw assembly data without the overhead
+    /// of full semantic validation.
+    #[must_use]
+    pub fn raw_only() -> Self {
+        Self {
+            enable_structural_validation: true,
+            enable_cross_table_validation: false,
+            enable_field_layout_validation: false,
+            enable_type_system_validation: false,
+            enable_semantic_validation: false,
+            enable_method_validation: false,
+            enable_token_validation: false,
+            max_nesting_depth: 64,
+            enable_raw_validation: true,
+            enable_owned_validation: false,
+        }
+    }
+
+    /// Creates a configuration for owned validation only (stage 2).
+    ///
+    /// This configuration assumes that raw validation has already been performed
+    /// and focuses on validating the resolved, owned data structures.
+    #[must_use]
+    pub fn owned_only() -> Self {
+        Self {
+            enable_structural_validation: false,
+            enable_cross_table_validation: true,
+            enable_field_layout_validation: true,
+            enable_type_system_validation: true,
+            enable_semantic_validation: true,
+            enable_method_validation: true,
+            enable_token_validation: true,
+            max_nesting_depth: 64,
+            enable_raw_validation: false,
+            enable_owned_validation: true,
         }
     }
 }
@@ -258,6 +329,8 @@ mod tests {
         assert!(!disabled.enable_method_validation);
         assert!(!disabled.enable_token_validation);
         assert_eq!(disabled.max_nesting_depth, 0);
+        assert!(!disabled.enable_raw_validation);
+        assert!(!disabled.enable_owned_validation);
 
         let minimal = ValidationConfig::minimal();
         assert!(minimal.enable_structural_validation);
@@ -265,6 +338,8 @@ mod tests {
         assert!(!minimal.enable_semantic_validation);
         assert!(!minimal.enable_method_validation);
         assert!(!minimal.enable_token_validation);
+        assert!(minimal.enable_raw_validation);
+        assert!(!minimal.enable_owned_validation);
 
         let comprehensive = ValidationConfig::comprehensive();
         assert!(comprehensive.enable_structural_validation);
@@ -274,6 +349,8 @@ mod tests {
         assert!(comprehensive.enable_semantic_validation);
         assert!(comprehensive.enable_method_validation);
         assert!(comprehensive.enable_token_validation);
+        assert!(comprehensive.enable_raw_validation);
+        assert!(comprehensive.enable_owned_validation);
 
         let production = ValidationConfig::production();
         assert!(production.enable_structural_validation);
@@ -283,6 +360,8 @@ mod tests {
         assert!(production.enable_semantic_validation);
         assert!(production.enable_method_validation);
         assert!(!production.enable_token_validation);
+        assert!(production.enable_raw_validation);
+        assert!(production.enable_owned_validation);
     }
 
     #[test]
@@ -290,5 +369,28 @@ mod tests {
         let default = ValidationConfig::default();
         let comprehensive = ValidationConfig::comprehensive();
         assert_eq!(default, comprehensive);
+    }
+
+    #[test]
+    fn test_validation_stage_methods() {
+        let production = ValidationConfig::production();
+        assert!(production.should_validate_raw());
+        assert!(production.should_validate_owned());
+
+        let disabled = ValidationConfig::disabled();
+        assert!(!disabled.should_validate_raw());
+        assert!(!disabled.should_validate_owned());
+
+        let raw_only = ValidationConfig::raw_only();
+        assert!(raw_only.should_validate_raw());
+        assert!(!raw_only.should_validate_owned());
+        assert!(raw_only.enable_structural_validation);
+        assert!(!raw_only.enable_cross_table_validation);
+
+        let owned_only = ValidationConfig::owned_only();
+        assert!(!owned_only.should_validate_raw());
+        assert!(owned_only.should_validate_owned());
+        assert!(!owned_only.enable_structural_validation);
+        assert!(owned_only.enable_cross_table_validation);
     }
 }

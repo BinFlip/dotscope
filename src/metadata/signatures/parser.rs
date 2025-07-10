@@ -1852,7 +1852,7 @@ mod tests {
         let mut parser = SignatureParser::new(&[0xFF, 0x01]);
         assert!(matches!(
             parser.parse_method_signature(),
-            Err(crate::Error::OutOfBounds)
+            Err(crate::Error::OutOfBounds { .. })
         ));
 
         // Test invalid field signature format
