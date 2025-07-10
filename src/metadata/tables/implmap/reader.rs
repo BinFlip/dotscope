@@ -8,26 +8,6 @@ use crate::{
 };
 
 impl RowReadable for ImplMapRaw {
-    /// Calculates the byte size of an `ImplMap` table row based on table sizing information.
-    ///
-    /// The row size depends on the size of coded indexes and string/table references,
-    /// which vary based on the total number of entries in referenced tables.
-    ///
-    /// # Row Layout
-    /// - `mapping_flags`: 2 bytes (fixed size)
-    /// - `member_forwarded`: Variable size `MemberForwarded` coded index
-    /// - `import_name`: Variable size string heap index (2 or 4 bytes)
-    /// - `import_scope`: Variable size `ModuleRef` table index (2 or 4 bytes)
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* mapping_flags */    2 +
-            /* member_forwarded */ sizes.coded_index_bytes(CodedIndexType::MemberForwarded) +
-            /* import_name */      sizes.str_bytes() +
-            /* import_scope */     sizes.table_index_bytes(TableId::ModuleRef)
-        )
-    }
-
     /// Reads a single `ImplMap` table row from binary metadata stream.
     ///
     /// Parses the binary representation of an `ImplMap` entry, reading fields

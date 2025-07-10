@@ -49,7 +49,11 @@
 use std::sync::Arc;
 
 use crate::{
-    metadata::{tables::AssemblyProcessorRc, token::Token},
+    metadata::{
+        tables::{AssemblyProcessorRc, TableRow},
+        token::Token,
+    },
+    prelude::TableInfoRef,
     Result,
 };
 
@@ -129,5 +133,25 @@ impl AssemblyProcessorRaw {
     /// Always returns `Ok(())` as `AssemblyProcessor` entries don't modify other tables.
     pub fn apply(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl TableRow for AssemblyProcessorRaw {
+    /// Calculate the byte size of an `AssemblyProcessor` table row
+    ///
+    /// Returns the fixed size since `AssemblyProcessor` contains only a single primitive integer field.
+    /// Total size is always 4 bytes (1 × 4-byte integer).
+    ///
+    /// # Row Layout
+    /// - processor: 4 bytes (fixed)
+    ///
+    /// # Arguments
+    /// * `_sizes` - Unused for `AssemblyProcessor` since no heap indexes are present
+    ///
+    /// # Returns
+    /// Fixed size of 4 bytes for all `AssemblyProcessor` rows
+    #[rustfmt::skip]
+    fn row_size(_sizes: &TableInfoRef) -> u32 {
+        /* processor */ 4
     }
 }

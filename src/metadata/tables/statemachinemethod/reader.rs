@@ -1,3 +1,43 @@
+//! Implementation of `RowReadable` for `StateMachineMethodRaw` metadata table entries.
+//!
+//! This module provides binary deserialization support for the `StateMachineMethod` table (ID 0x36),
+//! enabling reading of state machine method mapping information from Portable PDB files. The
+//! StateMachineMethod table maps compiler-generated state machine methods (like MoveNext) back
+//! to their original user-written async/await and iterator methods.
+//!
+//! ## Table Structure (Portable PDB)
+//!
+//! | Field | Type | Description |
+//! |-------|------|-------------|
+//! | `MoveNextMethod` | MethodDef table index | Compiler-generated state machine method |
+//! | `KickoffMethod` | MethodDef table index | Original user-written method |
+//!
+//! ## Debugging Context
+//!
+//! This table is essential for providing proper debugging experiences with modern C# features:
+//! - **Async/Await**: Maps async state machine MoveNext methods to original async methods
+//! - **Iterator Methods**: Maps iterator state machine methods to yield-returning methods
+//! - **Stepping Support**: Enables debuggers to step through user code rather than generated code
+//! - **Breakpoint Mapping**: Allows breakpoints in user methods to work correctly
+//!
+//! ## State Machine Patterns
+//!
+//! The table handles several compiler-generated patterns:
+//! - **Async Methods**: User async method → compiler-generated async state machine
+//! - **Iterator Methods**: User yield method → compiler-generated iterator state machine  
+//! - **Async Iterators**: User async iterator → compiler-generated async iterator state machine
+//!
+//! ## Thread Safety
+//!
+//! The `RowReadable` implementation is stateless and safe for concurrent use across
+//! multiple threads during metadata loading operations.
+//!
+//! ## Related Modules
+//!
+//! - [`crate::metadata::tables::statemachinemethod::writer`] - Binary serialization support
+//! - [`crate::metadata::tables::statemachinemethod`] - High-level StateMachineMethod interface
+//! - [`crate::metadata::tables::statemachinemethod::raw`] - Raw structure definition
+
 use crate::{
     file::io::read_le_at_dyn,
     metadata::{
@@ -16,14 +56,6 @@ impl RowReadable for StateMachineMethodRaw {
             move_next_method: read_le_at_dyn(data, offset, sizes.is_large(TableId::MethodDef))?,
             kickoff_method: read_le_at_dyn(data, offset, sizes.is_large(TableId::MethodDef))?,
         })
-    }
-
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            sizes.table_index_bytes(TableId::MethodDef) +   // move_next_method (MethodDef table index)
-            sizes.table_index_bytes(TableId::MethodDef)     // kickoff_method (MethodDef table index)
-        )
     }
 }
 

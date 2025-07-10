@@ -8,15 +8,6 @@ use crate::{
 };
 
 impl RowReadable for CustomAttributeRaw {
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* parent */    sizes.coded_index_bytes(CodedIndexType::HasCustomAttribute) +
-            /* type */     sizes.coded_index_bytes(CodedIndexType::CustomAttributeType) +
-            /* value */     sizes.blob_bytes()
-        )
-    }
-
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(CustomAttributeRaw {
             rid,

@@ -140,7 +140,7 @@ mod physical;
 use std::path::Path;
 
 use crate::{
-    Error::{Empty, GoblinErr, OutOfBounds},
+    Error::{Empty, GoblinErr},
     Result,
 };
 use goblin::pe::{
@@ -611,6 +611,137 @@ impl File {
         })
     }
 
+    /// Returns the RVA and size of a specific data directory entry.
+    ///
+    /// This method provides unified access to PE data directory entries by type.
+    /// It returns the virtual address and size if the directory exists and is valid,
+    /// or `None` if the directory doesn't exist or has zero address/size.
+    ///
+    /// # Arguments
+    /// * `dir_type` - The type of data directory to retrieve
+    ///
+    /// # Returns
+    /// - `Some((rva, size))` if the directory exists with non-zero address and size
+    /// - `None` if the directory doesn't exist or has zero address/size
+    ///
+    /// # Panics
+    ///
+    /// Panics if the PE file has no optional header (which should not happen for valid PE files).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::File;
+    /// use goblin::pe::data_directories::DataDirectoryType;
+    /// use std::path::Path;
+    ///
+    /// let file = File::from_file(Path::new("example.dll"))?;
+    ///
+    /// // Check for import table
+    /// if let Some((import_rva, import_size)) = file.get_data_directory(DataDirectoryType::ImportTable) {
+    ///     println!("Import table at RVA 0x{:x}, size: {} bytes", import_rva, import_size);
+    /// }
+    ///
+    /// // Check for export table
+    /// if let Some((export_rva, export_size)) = file.get_data_directory(DataDirectoryType::ExportTable) {
+    ///     println!("Export table at RVA 0x{:x}, size: {} bytes", export_rva, export_size);
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn get_data_directory(&self, dir_type: DataDirectoryType) -> Option<(u32, u32)> {
+        self.with_pe(|pe| {
+            pe.header
+                .optional_header
+                .unwrap()
+                .data_directories
+                .dirs()
+                .find(|(directory_type, directory)| {
+                    *directory_type == dir_type
+                        && directory.virtual_address != 0
+                        && directory.size != 0
+                })
+                .map(|(_, directory)| (directory.virtual_address, directory.size))
+        })
+    }
+
+    /// Returns the parsed import data from the PE file.
+    ///
+    /// Uses goblin's PE parsing to extract import table information including
+    /// DLL dependencies and imported functions. Returns the parsed import data
+    /// if an import directory exists.
+    ///
+    /// # Returns
+    /// - `Some(imports)` if import directory exists and was successfully parsed
+    /// - `None` if no import directory exists or parsing failed
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::File;
+    /// use std::path::Path;
+    ///
+    /// let file = File::from_file(Path::new("example.dll"))?;
+    /// if let Some(imports) = file.imports() {
+    ///     for import in imports {
+    ///         println!("DLL: {}", import.dll);
+    ///         if !import.name.is_empty() {
+    ///             println!("  Function: {}", import.name);
+    ///         } else if import.ordinal != 0 {
+    ///             println!("  Ordinal: {}", import.ordinal);
+    ///         }
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn imports(&self) -> Option<&Vec<goblin::pe::import::Import>> {
+        self.with_pe(|pe| {
+            if pe.imports.is_empty() {
+                None
+            } else {
+                Some(&pe.imports)
+            }
+        })
+    }
+
+    /// Returns the parsed export data from the PE file.
+    ///
+    /// Uses goblin's PE parsing to extract export table information including
+    /// exported functions and their addresses. Returns the parsed export data
+    /// if an export directory exists.
+    ///
+    /// # Returns
+    /// - `Some(exports)` if export directory exists and was successfully parsed
+    /// - `None` if no export directory exists or parsing failed
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::File;
+    /// use std::path::Path;
+    ///
+    /// let file = File::from_file(Path::new("example.dll"))?;
+    /// if let Some(exports) = file.exports() {
+    ///     for export in exports {
+    ///         if let Some(name) = &export.name {
+    ///             println!("Export: {} -> 0x{:X}", name, export.rva);
+    ///         }
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn exports(&self) -> Option<&Vec<goblin::pe::export::Export>> {
+        self.with_pe(|pe| {
+            if pe.exports.is_empty() {
+                None
+            } else {
+                Some(&pe.exports)
+            }
+        })
+    }
+
     /// Returns the raw data of the loaded file.
     ///
     /// This provides access to the entire PE file contents as a byte slice.
@@ -710,7 +841,7 @@ impl File {
     pub fn va_to_offset(&self, va: usize) -> Result<usize> {
         let ib = self.imagebase();
         if ib > va as u64 {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         let rva_u64 = va as u64 - ib;
@@ -835,6 +966,305 @@ impl File {
             ))
         })
     }
+
+    /// Determines if a section contains .NET metadata by checking the actual metadata RVA.
+    ///
+    /// This method reads the CLR runtime header to get the metadata RVA and checks
+    /// if it falls within the specified section's address range. This is more accurate
+    /// than name-based heuristics since metadata can technically be located in any section.
+    ///
+    /// # Arguments
+    /// * `section_name` - The name of the section to check (e.g., ".text")
+    ///
+    /// # Returns
+    /// Returns `true` if the section contains .NET metadata, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::File;
+    /// use std::path::Path;
+    ///
+    /// let file = File::from_file(Path::new("example.dll"))?;
+    ///
+    /// if file.section_contains_metadata(".text") {
+    ///     println!("The .text section contains .NET metadata");
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn section_contains_metadata(&self, section_name: &str) -> bool {
+        let (clr_rva, _clr_size) = match self.clr() {
+            #[allow(clippy::cast_possible_truncation)]
+            (rva, size) if rva > 0 && size >= 72 => (rva as u32, size),
+            _ => return false, // No CLR header means no .NET metadata
+        };
+
+        let Ok(clr_offset) = self.rva_to_offset(clr_rva as usize) else {
+            return false;
+        };
+
+        let Ok(clr_data) = self.data_slice(clr_offset, 72) else {
+            return false;
+        };
+
+        if clr_data.len() < 12 {
+            return false;
+        }
+
+        let meta_data_rva =
+            u32::from_le_bytes([clr_data[8], clr_data[9], clr_data[10], clr_data[11]]);
+
+        if meta_data_rva == 0 {
+            return false; // No metadata
+        }
+
+        for section in self.sections() {
+            let current_section_name = std::str::from_utf8(&section.name)
+                .unwrap_or("")
+                .trim_end_matches('\0');
+
+            if current_section_name == section_name {
+                let section_start = section.virtual_address;
+                let section_end = section.virtual_address + section.virtual_size;
+                return meta_data_rva >= section_start && meta_data_rva < section_end;
+            }
+        }
+
+        false // Section not found
+    }
+
+    /// Gets the file alignment value from the PE header.
+    ///
+    /// This method extracts the file alignment value from the PE optional header.
+    /// This is typically 512 bytes for most .NET assemblies.
+    ///
+    /// # Returns
+    /// Returns the file alignment value in bytes.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::WriteLayoutFailed`] if the PE header cannot be accessed.
+    pub fn file_alignment(&self) -> crate::Result<u32> {
+        let optional_header = self.header().optional_header.as_ref().ok_or_else(|| {
+            crate::Error::WriteLayoutFailed {
+                message: "Missing optional header for file alignment".to_string(),
+            }
+        })?;
+
+        Ok(optional_header.windows_fields.file_alignment)
+    }
+
+    /// Gets the section alignment value from the PE header.
+    ///
+    /// This method extracts the section alignment value from the PE optional header.
+    /// This is typically 4096 bytes (page size) for most .NET assemblies.
+    ///
+    /// # Returns
+    /// Returns the section alignment value in bytes.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::WriteLayoutFailed`] if the PE header cannot be accessed.
+    pub fn section_alignment(&self) -> crate::Result<u32> {
+        let optional_header = self.header().optional_header.as_ref().ok_or_else(|| {
+            crate::Error::WriteLayoutFailed {
+                message: "Missing optional header for section alignment".to_string(),
+            }
+        })?;
+
+        Ok(optional_header.windows_fields.section_alignment)
+    }
+
+    /// Determines if this is a PE32+ format file.
+    ///
+    /// Returns `true` for PE32+ (64-bit) format, `false` for PE32 (32-bit) format.
+    /// This affects the size of ILT/IAT entries and ordinal import bit positions.
+    ///
+    /// # Returns
+    /// Returns `true` if PE32+ format, `false` if PE32 format.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::WriteLayoutFailed`] if the PE format cannot be determined.
+    pub fn is_pe32_plus_format(&self) -> crate::Result<bool> {
+        let optional_header =
+            self.header_optional()
+                .as_ref()
+                .ok_or_else(|| crate::Error::WriteLayoutFailed {
+                    message: "Missing optional header for PE format detection".to_string(),
+                })?;
+
+        // PE32 magic is 0x10b, PE32+ magic is 0x20b
+        Ok(optional_header.standard_fields.magic != 0x10b)
+    }
+
+    /// Gets the RVA of the .text section.
+    ///
+    /// Locates the .text section (or .text-prefixed section) which typically
+    /// contains .NET metadata and executable code.
+    ///
+    /// # Returns
+    /// Returns the RVA (Relative Virtual Address) of the .text section.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::WriteLayoutFailed`] if no .text section is found.
+    pub fn text_section_rva(&self) -> crate::Result<u32> {
+        for section in self.sections() {
+            // Convert section name from byte array to string for comparison
+            let section_name = std::str::from_utf8(&section.name)
+                .unwrap_or("<invalid>")
+                .trim_end_matches('\0');
+            if section_name == ".text" || section_name.starts_with(".text") {
+                return Ok(section.virtual_address);
+            }
+        }
+
+        Err(crate::Error::WriteLayoutFailed {
+            message: "Could not find .text section".to_string(),
+        })
+    }
+
+    /// Gets the file offset of the .text section.
+    ///
+    /// This method finds the .text section in the PE file and returns its file offset.
+    /// This is needed for calculating absolute file offsets for metadata components.
+    ///
+    /// # Returns
+    /// Returns the file offset of the .text section.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::WriteLayoutFailed`] if no .text section is found.
+    pub fn text_section_file_offset(&self) -> crate::Result<u64> {
+        for section in self.sections() {
+            // Convert section name from byte array to string for comparison
+            let section_name = std::str::from_utf8(&section.name)
+                .unwrap_or("<invalid>")
+                .trim_end_matches('\0');
+            if section_name == ".text" || section_name.starts_with(".text") {
+                return Ok(u64::from(section.pointer_to_raw_data));
+            }
+        }
+
+        Err(crate::Error::WriteLayoutFailed {
+            message: "Could not find .text section for file offset".to_string(),
+        })
+    }
+
+    /// Gets the raw size of the .text section.
+    ///
+    /// This method finds the .text section and returns its raw data size.
+    /// This is needed for calculating metadata expansion requirements.
+    ///
+    /// # Returns
+    /// Returns the raw size of the .text section in bytes.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::WriteLayoutFailed`] if no .text section is found.
+    pub fn text_section_raw_size(&self) -> crate::Result<u32> {
+        for section in self.sections() {
+            // Convert section name from byte array to string for comparison
+            let section_name = std::str::from_utf8(&section.name)
+                .unwrap_or("<invalid>")
+                .trim_end_matches('\0');
+            if section_name == ".text" || section_name.starts_with(".text") {
+                return Ok(section.size_of_raw_data);
+            }
+        }
+
+        Err(crate::Error::WriteLayoutFailed {
+            message: "Could not find .text section for size calculation".to_string(),
+        })
+    }
+
+    /// Gets the total size of the file.
+    ///
+    /// Returns the size of the underlying file data in bytes.
+    ///
+    /// # Returns
+    /// Returns the file size in bytes.
+    #[must_use]
+    pub fn file_size(&self) -> u64 {
+        u64::try_from(self.data().len()).unwrap_or(u64::MAX)
+    }
+
+    /// Gets the PE signature offset from the DOS header.
+    ///
+    /// Reads the PE offset from the DOS header at offset 0x3C to locate
+    /// the PE signature ("PE\0\0") within the file.
+    ///
+    /// # Returns
+    /// Returns the file offset where the PE signature is located.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::WriteLayoutFailed`] if the file is too small to contain
+    /// a valid DOS header.
+    pub fn pe_signature_offset(&self) -> crate::Result<u64> {
+        let data = self.data();
+
+        if data.len() < 64 {
+            return Err(crate::Error::WriteLayoutFailed {
+                message: "File too small to contain DOS header".to_string(),
+            });
+        }
+
+        // PE offset is at offset 0x3C in DOS header
+        let pe_offset = u32::from_le_bytes([data[60], data[61], data[62], data[63]]);
+        Ok(u64::from(pe_offset))
+    }
+
+    /// Calculates the size of PE headers (including optional header).
+    ///
+    /// Computes the total size of PE signature, COFF header, and optional header
+    /// by reading the optional header size from the COFF header.
+    ///
+    /// # Returns
+    /// Returns the total size in bytes of all PE headers.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::WriteLayoutFailed`] if the file is too small or
+    /// headers are malformed.
+    pub fn pe_headers_size(&self) -> crate::Result<u64> {
+        // PE signature (4) + COFF header (20) + Optional header size
+        // We need to read the optional header size from the COFF header
+        let pe_sig_offset = self.pe_signature_offset()?;
+        let data = self.data();
+
+        let coff_header_offset = pe_sig_offset + 4; // Skip PE signature
+
+        #[allow(clippy::cast_possible_truncation)]
+        if data.len() < (coff_header_offset + 20) as usize {
+            return Err(crate::Error::WriteLayoutFailed {
+                message: "File too small to contain COFF header".to_string(),
+            });
+        }
+
+        // Optional header size is at offset 16 in COFF header
+        let opt_header_size_offset = coff_header_offset + 16;
+        #[allow(clippy::cast_possible_truncation)]
+        let opt_header_size = u16::from_le_bytes([
+            data[opt_header_size_offset as usize],
+            data[opt_header_size_offset as usize + 1],
+        ]);
+
+        Ok(4 + 20 + u64::from(opt_header_size)) // PE sig + COFF + Optional header
+    }
+
+    /// Aligns an offset to this file's PE file alignment boundary.
+    ///
+    /// PE files require data to be aligned to specific boundaries for optimal loading.
+    /// This method uses the actual file alignment value from the PE header rather than
+    /// assuming a hardcoded value.
+    ///
+    /// # Arguments
+    /// * `offset` - The offset to align
+    ///
+    /// # Returns
+    /// Returns the offset rounded up to the next file alignment boundary.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::WriteLayoutFailed`] if the PE header cannot be accessed.
+    pub fn align_to_file_alignment(&self, offset: u64) -> crate::Result<u64> {
+        let file_alignment = u64::from(self.file_alignment()?);
+        Ok(offset.div_ceil(file_alignment) * file_alignment)
+    }
 }
 
 #[cfg(test)]
@@ -921,5 +1351,93 @@ mod tests {
         if File::from_mem(data.to_vec()).is_ok() {
             panic!("This should not load!")
         }
+    }
+
+    /// Tests the unified get_data_directory method.
+    #[test]
+    fn test_get_data_directory() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        let file = File::from_file(&path).unwrap();
+
+        // Test CLR runtime header (should exist for .NET assemblies)
+        let clr_dir = file.get_data_directory(DataDirectoryType::ClrRuntimeHeader);
+        assert!(clr_dir.is_some(), "CLR runtime header should exist");
+        let (clr_rva, clr_size) = clr_dir.unwrap();
+        assert!(clr_rva > 0, "CLR RVA should be non-zero");
+        assert!(clr_size > 0, "CLR size should be non-zero");
+
+        // Verify it matches the existing clr() method
+        let (expected_rva, expected_size) = file.clr();
+        assert_eq!(
+            clr_rva as usize, expected_rva,
+            "CLR RVA should match clr() method"
+        );
+        assert_eq!(
+            clr_size as usize, expected_size,
+            "CLR size should match clr() method"
+        );
+
+        // Test non-existent directory (should return None)
+        let _base_reloc_dir = file.get_data_directory(DataDirectoryType::BaseRelocationTable);
+        // For a typical .NET assembly, base relocation table might not exist
+        // We don't assert anything specific here as it depends on the assembly
+
+        // The method should handle any directory type gracefully
+        let tls_dir = file.get_data_directory(DataDirectoryType::TlsTable);
+        // TLS table typically doesn't exist in .NET assemblies, but method should not panic
+        if let Some((tls_rva, tls_size)) = tls_dir {
+            assert!(
+                tls_rva > 0 && tls_size > 0,
+                "If TLS directory exists, it should have valid values"
+            );
+        }
+    }
+
+    /// Tests the pe_signature_offset method.
+    #[test]
+    fn test_pe_signature_offset() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/crafted_2.exe");
+        let file = File::from_file(&path).expect("Failed to load test assembly");
+
+        let pe_offset = file
+            .pe_signature_offset()
+            .expect("Should get PE signature offset");
+        assert!(pe_offset > 0, "PE signature offset should be positive");
+        assert!(pe_offset < 1024, "PE signature offset should be reasonable");
+    }
+
+    /// Tests the pe_headers_size method.
+    #[test]
+    fn test_pe_headers_size() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/crafted_2.exe");
+        let file = File::from_file(&path).expect("Failed to load test assembly");
+
+        let headers_size = file
+            .pe_headers_size()
+            .expect("Should calculate headers size");
+        assert!(headers_size >= 24, "Headers should be at least 24 bytes");
+        assert!(headers_size <= 1024, "Headers size should be reasonable");
+    }
+
+    /// Tests the align_to_file_alignment method.
+    #[test]
+    fn test_align_to_file_alignment() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/crafted_2.exe");
+        let file = File::from_file(&path).expect("Failed to load test assembly");
+
+        // Test alignment with actual file alignment from PE header
+        let alignment = file.file_alignment().expect("Should get file alignment");
+
+        // Test various offsets
+        assert_eq!(file.align_to_file_alignment(0).unwrap(), 0);
+        assert_eq!(file.align_to_file_alignment(1).unwrap(), alignment as u64);
+        assert_eq!(
+            file.align_to_file_alignment(alignment as u64).unwrap(),
+            alignment as u64
+        );
+        assert_eq!(
+            file.align_to_file_alignment(alignment as u64 + 1).unwrap(),
+            (alignment * 2) as u64
+        );
     }
 }

@@ -1,3 +1,55 @@
+//! Implementation of `RowReadable` for `PropertyRaw` metadata table entries.
+//!
+//! This module provides binary deserialization support for the `Property` table (ID 0x17),
+//! enabling reading of property definition metadata from .NET PE files. The Property table
+//! defines properties exposed by types, including their names, signatures, attributes, and
+//! accessor methods, forming a crucial part of the .NET type system.
+//!
+//! ## Table Structure (ECMA-335 §II.22.34)
+//!
+//! | Field | Type | Description |
+//! |-------|------|-------------|
+//! | `Flags` | `u16` | Property attributes bitmask |
+//! | `Name` | String heap index | Property name identifier |
+//! | `Type` | Blob heap index | Property signature (type, parameters for indexers) |
+//!
+//! ## Property Attributes
+//!
+//! The `Flags` field contains property attributes with common values:
+//! - `0x0200` - `SpecialName` (property has special naming conventions)
+//! - `0x0400` - `RTSpecialName` (runtime should verify name encoding)
+//! - `0x1000` - `HasDefault` (property has a default value defined)
+//!
+//! ## Usage Context
+//!
+//! Property entries are used for:
+//! - **Type Definition**: Defining properties exposed by classes, interfaces, and value types
+//! - **Accessor Methods**: Linking to getter/setter methods through MethodSemantics table
+//! - **Reflection Operations**: Runtime property discovery and invocation
+//! - **Property Inheritance**: Supporting property override and inheritance relationships
+//! - **Indexer Support**: Defining indexed properties with parameters
+//!
+//! ## Property System Architecture
+//!
+//! Properties in .NET follow a specific architecture:
+//! - **Property Declaration**: Defines the property name, type, and attributes
+//! - **Accessor Methods**: Getter and setter methods linked via MethodSemantics
+//! - **Default Values**: Optional default values stored in Constant table
+//! - **Custom Attributes**: Additional metadata stored in CustomAttribute table
+//!
+//! ## Thread Safety
+//!
+//! The `RowReadable` implementation is stateless and safe for concurrent use across
+//! multiple threads during metadata loading operations.
+//!
+//! ## Related Modules
+//!
+//! - [`crate::metadata::tables::property::writer`] - Binary serialization support
+//! - [`crate::metadata::tables::property`] - High-level Property interface
+//! - [`crate::metadata::tables::property::raw`] - Raw structure definition
+//! - [`crate::metadata::tables::methodsemantics`] - Property accessor method mapping
+//! - [`crate::metadata::tables::propertymap`] - Type-property ownership mapping
+
 use crate::{
     file::io::{read_le_at, read_le_at_dyn},
     metadata::{
@@ -8,29 +60,6 @@ use crate::{
 };
 
 impl RowReadable for PropertyRaw {
-    /// Calculates the byte size of a single Property table row.
-    ///
-    /// The size depends on the metadata heap size configuration:
-    /// - **flags**: 2 bytes (`PropertyAttributes` bitmask)
-    /// - **name**: String heap index size (2 or 4 bytes)
-    /// - **signature**: Blob heap index size (2 or 4 bytes)
-    ///
-    /// ## Arguments
-    ///
-    /// * `sizes` - Table size configuration information
-    ///
-    /// ## Returns
-    ///
-    /// * `u32` - Total row size in bytes (6-10 bytes typically)
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* flags */          2 +
-            /* name */           sizes.str_bytes() +
-            /* type_signature */ sizes.blob_bytes()
-        )
-    }
-
     /// Reads a single Property table row from metadata bytes.
     ///
     /// This method parses a Property entry from the metadata stream, extracting

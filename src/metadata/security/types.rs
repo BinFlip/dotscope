@@ -640,6 +640,31 @@ pub enum SecurityAction {
     Unknown(u16),
 }
 
+impl From<SecurityAction> for u16 {
+    fn from(action: SecurityAction) -> Self {
+        match action {
+            SecurityAction::Deny => 0x0001,
+            SecurityAction::Demand => 0x0002,
+            SecurityAction::Assert => 0x0003,
+            SecurityAction::NonCasDemand => 0x0004,
+            SecurityAction::LinkDemand => 0x0005,
+            SecurityAction::InheritanceDemand => 0x0006,
+            SecurityAction::RequestMinimum => 0x0007,
+            SecurityAction::RequestOptional => 0x0008,
+            SecurityAction::RequestRefuse => 0x0009,
+            SecurityAction::PrejitGrant => 0x000A,
+            SecurityAction::PrejitDeny => 0x000B,
+            SecurityAction::NonCasLinkDemand => 0x000C,
+            SecurityAction::NonCasInheritance => 0x000D,
+            SecurityAction::LinkDemandChoice => 0x000E,
+            SecurityAction::InheritanceDemandChoice => 0x000F,
+            SecurityAction::DemandChoice => 0x0010,
+            SecurityAction::PermitOnly => 0x0011,
+            SecurityAction::Unknown(invalid) => invalid,
+        }
+    }
+}
+
 impl From<u16> for SecurityAction {
     fn from(value: u16) -> Self {
         match value {
@@ -787,19 +812,19 @@ pub enum ArgumentValue {
 impl fmt::Display for ArgumentValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ArgumentValue::Boolean(v) => write!(f, "{}", v),
-            ArgumentValue::Int32(v) => write!(f, "{}", v),
-            ArgumentValue::Int64(v) => write!(f, "{}", v),
-            ArgumentValue::String(v) => write!(f, "\"{}\"", v),
-            ArgumentValue::Type(v) => write!(f, "typeof({})", v),
-            ArgumentValue::Enum(t, v) => write!(f, "{}({})", t, v),
+            ArgumentValue::Boolean(v) => write!(f, "{v}"),
+            ArgumentValue::Int32(v) => write!(f, "{v}"),
+            ArgumentValue::Int64(v) => write!(f, "{v}"),
+            ArgumentValue::String(v) => write!(f, "\"{v}\""),
+            ArgumentValue::Type(v) => write!(f, "typeof({v})"),
+            ArgumentValue::Enum(t, v) => write!(f, "{t}({v})"),
             ArgumentValue::Array(v) => {
                 write!(f, "[")?;
                 for (i, val) in v.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", val)?;
+                    write!(f, "{val}")?;
                 }
                 write!(f, "]")
             }
@@ -1144,7 +1169,7 @@ pub mod security_classes {
 /// - **.NET Framework 1.0-3.5**: All formats supported
 /// - **.NET Framework 4.0+**: All formats supported but CAS deprecated
 /// - **.NET Core/.NET 5+**: Limited support, mainly for compatibility analysis
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PermissionSetFormat {
     /// XML format - permission sets serialized as XML.
     ///

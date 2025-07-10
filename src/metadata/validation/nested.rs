@@ -297,19 +297,69 @@ impl NestedClassValidator {
         Ok(())
     }
 
-    /// Validates nesting depth does not exceed reasonable limits
+    /// Validates nesting depth does not exceed reasonable limits.
+    ///
+    /// Performs depth validation for all nested class chains to ensure they don't
+    /// exceed reasonable limits that could cause stack overflow conditions during
+    /// type loading or runtime processing. While the .NET runtime doesn't enforce
+    /// a specific nesting depth limit, excessive nesting can cause stack overflow
+    /// issues and is generally considered poor design.
+    ///
+    /// ## Validation Process
+    ///
+    /// The method walks up each nesting chain from nested types to their roots:
+    /// 1. **Build Chain Map**: Creates mapping from nested to enclosing types
+    /// 2. **Chain Traversal**: Follows nesting relationships from leaf to root
+    /// 3. **Depth Counting**: Measures depth of each nesting chain
+    /// 4. **Limit Checking**: Ensures no chain exceeds the maximum depth
+    ///
+    /// ## Depth Calculation
+    ///
+    /// Depth is measured as the number of nesting levels:
+    /// - **Depth 0**: Top-level class (no enclosing class)
+    /// - **Depth 1**: Class nested directly in top-level class
+    /// - **Depth 2**: Class nested in depth-1 class
+    /// - **Depth N**: Class nested N levels deep
     ///
     /// # Arguments
+    ///
     /// * `nested_relationships` - Slice of (`nested_token`, `enclosing_token`) pairs
-    /// * `max_depth` - Maximum allowed nesting depth (default: 64 levels)
+    ///   representing all nesting relationships to validate
+    /// * `max_depth` - Maximum allowed nesting depth (typical default: 64 levels)
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if all nesting chains are within depth limits, or an error
+    /// identifying the first chain that exceeds the limit.
     ///
     /// # Errors
-    /// Returns an error if nesting depth exceeds the specified limit
     ///
-    /// # Note
-    /// While the .NET runtime doesn't enforce a specific nesting depth limit,
-    /// excessive nesting can cause stack overflow issues and is generally
-    /// considered poor design.
+    /// Returns [`crate::Error`] when:
+    /// - **Depth Exceeded**: A nesting chain exceeds the specified maximum depth
+    /// - **Chain Processing Error**: Error processing nesting relationships
+    ///
+    /// # Examples
+    ///
+    /// ## Valid Depth Hierarchy
+    /// ```text
+    /// OuterClass              (Depth 0)
+    /// └── MiddleClass         (Depth 1)
+    ///     └── InnerClass      (Depth 2)
+    /// ```
+    /// Maximum depth is 2, which is typically acceptable.
+    ///
+    /// ## Invalid Deep Hierarchy
+    /// ```text
+    /// Level0 → Level1 → Level2 → ... → Level65
+    /// ```
+    /// Depth 65 exceeds typical limits and would be rejected.
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is safe for concurrent execution as it:
+    /// - Uses local collections for relationship mapping
+    /// - Performs read-only analysis of input relationships
+    /// - Contains no shared mutable state between calls
     pub fn validate_nesting_depth(
         nested_relationships: &[(Token, Token)],
         max_depth: usize,

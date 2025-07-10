@@ -45,9 +45,9 @@ pub struct ImplMap {
     /// Platform Invoke attribute flags controlling marshalling behavior.
     ///
     /// A 2-byte bitmask specifying calling conventions, character sets, error handling,
-    /// and other P/Invoke characteristics. See [`PInvokeAttributes`] for flag definitions.
+    /// and other P/Invoke characteristics. See [`crate::metadata::tables::PInvokeAttributes`] for flag definitions.
     ///
-    /// [`PInvokeAttributes`]: crate::metadata::tables::implmap::PInvokeAttributes
+    /// [`crate::metadata::tables::PInvokeAttributes`]: crate::metadata::tables::implmap::PInvokeAttributes
     pub mapping_flags: u32,
 
     /// Resolved reference to the managed method being forwarded to native code.

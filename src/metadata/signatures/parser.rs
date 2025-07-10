@@ -116,11 +116,11 @@ use crate::{
     file::parser::Parser,
     metadata::{
         signatures::{
-            SignatureArray, SignatureField, SignatureLocalVariable, SignatureLocalVariables,
-            SignatureMethod, SignatureMethodSpec, SignatureParameter, SignaturePointer,
-            SignatureProperty, SignatureSzArray, SignatureTypeSpec, TypeSignature,
+            CustomModifier, SignatureArray, SignatureField, SignatureLocalVariable,
+            SignatureLocalVariables, SignatureMethod, SignatureMethodSpec, SignatureParameter,
+            SignaturePointer, SignatureProperty, SignatureSzArray, SignatureTypeSpec,
+            TypeSignature,
         },
-        token::Token,
         typesystem::{ArrayDimensions, ELEMENT_TYPE},
     },
     Error::RecursionLimit,
@@ -341,7 +341,7 @@ impl<'a> SignatureParser<'a> {
     /// signatures. The maximum depth is [`MAX_RECURSION_DEPTH`] levels.
     ///
     /// # Returns
-    /// A [`TypeSignature`] representing the parsed type information.
+    /// A [`crate::metadata::signatures::TypeSignature`] representing the parsed type information.
     ///
     /// # Errors
     /// - [`crate::error::Error::RecursionLimit`]: Maximum recursion depth exceeded
@@ -511,18 +511,23 @@ impl<'a> SignatureParser<'a> {
     /// - Modifiers are relatively uncommon in most .NET code
     /// - Vector allocation is avoided when no modifiers are present
     /// - Parsing cost is linear in the number of modifiers
-    fn parse_custom_mods(&mut self) -> Result<Vec<Token>> {
+    fn parse_custom_mods(&mut self) -> Result<Vec<CustomModifier>> {
         let mut mods = Vec::new();
 
         while self.parser.has_more_data() {
-            let next_byte = self.parser.peek_byte()?;
-            if next_byte != 0x20 && next_byte != 0x1F {
-                break;
-            }
+            let is_required = match self.parser.peek_byte()? {
+                0x20 => false,
+                0x1F => true,
+                _ => break,
+            };
 
             self.parser.advance()?;
 
-            mods.push(self.parser.read_compressed_token()?);
+            let modifier_token = self.parser.read_compressed_token()?;
+            mods.push(CustomModifier {
+                is_required,
+                modifier_type: modifier_token,
+            });
         }
 
         Ok(mods)
@@ -1265,8 +1270,13 @@ impl<'a> SignatureParser<'a> {
             while self.parser.has_more_data() {
                 match self.parser.peek_byte()? {
                     0x1F | 0x20 => {
+                        let is_required = self.parser.peek_byte()? == 0x1F;
                         self.parser.advance()?;
-                        custom_mods.push(self.parser.read_compressed_token()?);
+                        let modifier_token = self.parser.read_compressed_token()?;
+                        custom_mods.push(CustomModifier {
+                            is_required,
+                            modifier_type: modifier_token,
+                        });
                     }
                     0x45 => {
                         // PINNED constraint (ELEMENT_TYPE_PINNED) - II.23.2.9
@@ -1578,6 +1588,8 @@ impl<'a> SignatureParser<'a> {
 
 #[cfg(test)]
 mod tests {
+    use crate::prelude::Token;
+
     use super::*;
 
     #[test]
@@ -1757,7 +1769,19 @@ mod tests {
         ]);
 
         let mods = parser.parse_custom_mods().unwrap();
-        assert_eq!(mods, vec![Token::new(0x1B000010), Token::new(0x01000012)]);
+        assert_eq!(
+            mods,
+            vec![
+                CustomModifier {
+                    is_required: false,
+                    modifier_type: Token::new(0x1B000010)
+                },
+                CustomModifier {
+                    is_required: true,
+                    modifier_type: Token::new(0x01000012)
+                }
+            ]
+        );
 
         // Verify we can still parse the type after the modifiers
         let type_sig = parser.parse_type().unwrap();
@@ -1828,7 +1852,7 @@ mod tests {
         let mut parser = SignatureParser::new(&[0xFF, 0x01]);
         assert!(matches!(
             parser.parse_method_signature(),
-            Err(crate::Error::OutOfBounds)
+            Err(crate::Error::OutOfBounds { .. })
         ));
 
         // Test invalid field signature format

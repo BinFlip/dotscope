@@ -69,10 +69,9 @@ use crate::{
         },
         signatures::parse_method_signature,
         streams::{Blob, Strings},
-        tables::{ParamMap, ParamPtrMap},
+        tables::{MetadataTable, ParamMap, ParamPtrMap, TableId, TableInfoRef, TableRow},
         token::Token,
     },
-    prelude::MetadataTable,
     Result,
 };
 
@@ -370,5 +369,37 @@ impl MethodDefRaw {
     /// Always returns `Ok(())` as `MethodDef` entries don't modify other tables directly.
     pub fn apply(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl TableRow for MethodDefRaw {
+    /// Calculate the byte size of a MethodDef table row
+    ///
+    /// Computes the total size based on fixed-size fields plus variable-size heap and table indexes.
+    /// The size depends on whether the metadata uses 2-byte or 4-byte indexes.
+    ///
+    /// # Row Layout (ECMA-335 §II.22.26)
+    /// - `rva`: 4 bytes (fixed)
+    /// - `impl_flags`: 2 bytes (fixed)
+    /// - `flags`: 2 bytes (fixed)
+    /// - `name`: 2 or 4 bytes (string heap index)
+    /// - `signature`: 2 or 4 bytes (blob heap index)
+    /// - `param_list`: 2 or 4 bytes (Param table index)
+    ///
+    /// # Arguments
+    /// * `sizes` - Table sizing information for heap and table index widths
+    ///
+    /// # Returns
+    /// Total byte size of one MethodDef table row
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* rva */           4 +
+            /* impl_flags */    2 +
+            /* flags */         2 +
+            /* name */          sizes.str_bytes() +
+            /* signature */     sizes.blob_bytes() +
+            /* param_list */    sizes.table_index_bytes(TableId::Param)
+        )
     }
 }

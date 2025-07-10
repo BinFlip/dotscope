@@ -154,14 +154,14 @@ pub enum Immediate {
 impl UpperHex for Immediate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Immediate::Int8(value) => write!(f, "{:02X}", value),
-            Immediate::UInt8(value) => write!(f, "{:02X}", value),
-            Immediate::Int16(value) => write!(f, "{:04X}", value),
-            Immediate::UInt16(value) => write!(f, "{:04X}", value),
-            Immediate::Int32(value) => write!(f, "{:08X}", value),
-            Immediate::UInt32(value) => write!(f, "{:08X}", value),
-            Immediate::Int64(value) => write!(f, "{:016X}", value),
-            Immediate::UInt64(value) => write!(f, "{:016X}", value),
+            Immediate::Int8(value) => write!(f, "{value:02X}"),
+            Immediate::UInt8(value) => write!(f, "{value:02X}"),
+            Immediate::Int16(value) => write!(f, "{value:04X}"),
+            Immediate::UInt16(value) => write!(f, "{value:04X}"),
+            Immediate::Int32(value) => write!(f, "{value:08X}"),
+            Immediate::UInt32(value) => write!(f, "{value:08X}"),
+            Immediate::Int64(value) => write!(f, "{value:016X}"),
+            Immediate::UInt64(value) => write!(f, "{value:016X}"),
             Immediate::Float32(value) => write!(f, "{:08X}", value.to_bits()),
             Immediate::Float64(value) => write!(f, "{:016X}", value.to_bits()),
         }
@@ -579,19 +579,19 @@ impl fmt::Debug for Instruction {
                 // No operand to display
             }
             Operand::Immediate(imm) => {
-                write!(f, " 0x{:X}", imm)?;
+                write!(f, " 0x{imm:X}")?;
             }
             Operand::Target(target) => {
-                write!(f, " -> 0x{:08X}", target)?;
+                write!(f, " -> 0x{target:08X}")?;
             }
             Operand::Token(token) => {
                 write!(f, " token:0x{:08X}", token.value())?;
             }
             Operand::Local(local) => {
-                write!(f, " local:{}", local)?;
+                write!(f, " local:{local}")?;
             }
             Operand::Argument(arg) => {
-                write!(f, " arg:{}", arg)?;
+                write!(f, " arg:{arg}")?;
             }
             Operand::Switch(items) => {
                 write!(f, " switch[{}]:(", items.len())?;
@@ -599,7 +599,7 @@ impl fmt::Debug for Instruction {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "0x{:08X}", item)?;
+                    write!(f, "0x{item:08X}")?;
                     // Limit output for very large switch tables
                     if i >= 5 && items.len() > 6 {
                         write!(f, ", ...{} more", items.len() - 6)?;
@@ -633,7 +633,7 @@ impl fmt::Debug for Instruction {
                 if i > 0 {
                     write!(f, ", ")?;
                 }
-                write!(f, "0x{:08X}", target)?;
+                write!(f, "0x{target:08X}")?;
                 // Limit output for instructions with many targets
                 if i >= 3 && self.branch_targets.len() > 4 {
                     write!(f, ", ...{} more", self.branch_targets.len() - 4)?;
@@ -673,7 +673,7 @@ mod tests {
         // Test that they implement expected traits
         for op_type in types.iter() {
             assert_eq!(*op_type, *op_type); // PartialEq
-            assert!(!format!("{:?}", op_type).is_empty()); // Debug
+            assert!(!format!("{op_type:?}").is_empty()); // Debug
         }
     }
 
@@ -722,7 +722,7 @@ mod tests {
 
         for imm in immediates.iter() {
             // Test Debug trait
-            assert!(!format!("{:?}", imm).is_empty());
+            assert!(!format!("{imm:?}").is_empty());
 
             // Test Clone trait
             let cloned = *imm;
@@ -767,7 +767,7 @@ mod tests {
 
         for operand in operands.iter() {
             // Test Debug trait
-            assert!(!format!("{:?}", operand).is_empty());
+            assert!(!format!("{operand:?}").is_empty());
 
             // Test Clone trait
             let cloned = operand.clone();
@@ -801,7 +801,7 @@ mod tests {
 
         for flow_type in flow_types.iter() {
             assert_eq!(*flow_type, *flow_type); // PartialEq
-            assert!(!format!("{:?}", flow_type).is_empty()); // Debug
+            assert!(!format!("{flow_type:?}").is_empty()); // Debug
         }
     }
 
@@ -819,7 +819,7 @@ mod tests {
 
         // Test traits
         assert_eq!(stack_behavior, stack_behavior); // PartialEq
-        assert!(!format!("{:?}", stack_behavior).is_empty()); // Debug
+        assert!(!format!("{stack_behavior:?}").is_empty()); // Debug
 
         let cloned = stack_behavior;
         assert_eq!(stack_behavior, cloned);
@@ -841,7 +841,7 @@ mod tests {
 
         for category in categories.iter() {
             assert_eq!(*category, *category); // PartialEq
-            assert!(!format!("{:?}", category).is_empty()); // Debug
+            assert!(!format!("{category:?}").is_empty()); // Debug
         }
     }
 
@@ -1209,7 +1209,7 @@ mod tests {
             },
             branch_targets: vec![],
         };
-        let debug_str = format!("{:?}", add_instruction);
+        let debug_str = format!("{add_instruction:?}");
         assert!(debug_str.contains("0000000000001000"));
         assert!(debug_str.contains("58"));
         assert!(debug_str.contains("add"));
@@ -1235,7 +1235,7 @@ mod tests {
             },
             branch_targets: vec![],
         };
-        let debug_str = format!("{:?}", immediate_instruction);
+        let debug_str = format!("{immediate_instruction:?}");
         assert!(debug_str.contains("0000000000002000"));
         assert!(debug_str.contains("20"));
         assert!(debug_str.contains("ldc.i4"));
@@ -1261,7 +1261,7 @@ mod tests {
             },
             branch_targets: vec![0x4000],
         };
-        let debug_str = format!("{:?}", branch_instruction);
+        let debug_str = format!("{branch_instruction:?}");
         assert!(debug_str.contains("0000000000003000"));
         assert!(debug_str.contains("38"));
         assert!(debug_str.contains("br"));
@@ -1288,7 +1288,7 @@ mod tests {
             },
             branch_targets: vec![],
         };
-        let debug_str = format!("{:?}", token_instruction);
+        let debug_str = format!("{token_instruction:?}");
         assert!(debug_str.contains("0000000000005000"));
         assert!(debug_str.contains("28"));
         assert!(debug_str.contains("call"));
@@ -1314,7 +1314,7 @@ mod tests {
             },
             branch_targets: vec![],
         };
-        let debug_str = format!("{:?}", local_instruction);
+        let debug_str = format!("{local_instruction:?}");
         assert!(debug_str.contains("0000000000006000"));
         assert!(debug_str.contains("11"));
         assert!(debug_str.contains("ldloc.s"));
@@ -1340,7 +1340,7 @@ mod tests {
             },
             branch_targets: vec![],
         };
-        let debug_str = format!("{:?}", arg_instruction);
+        let debug_str = format!("{arg_instruction:?}");
         assert!(debug_str.contains("0000000000007000"));
         assert!(debug_str.contains("0E"));
         assert!(debug_str.contains("ldarg.s"));
@@ -1365,7 +1365,7 @@ mod tests {
             },
             branch_targets: vec![0x8100, 0x8200, 0x8300],
         };
-        let debug_str = format!("{:?}", switch_instruction);
+        let debug_str = format!("{switch_instruction:?}");
         assert!(debug_str.contains("0000000000008000"));
         assert!(debug_str.contains("45"));
         assert!(debug_str.contains("switch"));
@@ -1393,7 +1393,7 @@ mod tests {
             },
             branch_targets: vec![],
         };
-        let debug_str = format!("{:?}", prefixed_instruction);
+        let debug_str = format!("{prefixed_instruction:?}");
         assert!(debug_str.contains("0000000000009000"));
         assert!(debug_str.contains("FE:6F"));
         assert!(debug_str.contains("callvirt"));
@@ -1417,7 +1417,7 @@ mod tests {
             },
             branch_targets: vec![],
         };
-        let debug_str = format!("{:?}", float_instruction);
+        let debug_str = format!("{float_instruction:?}");
         assert!(debug_str.contains("000000000000A000"));
         assert!(debug_str.contains("23"));
         assert!(debug_str.contains("ldc.r8"));
@@ -1488,16 +1488,16 @@ mod tests {
 
         for imm in max_immediates.iter() {
             let _: u64 = (*imm).into(); // Should not panic
-            assert!(!format!("{:?}", imm).is_empty());
+            assert!(!format!("{imm:?}").is_empty());
         }
 
         // Test empty switch
         let empty_switch = Operand::Switch(vec![]);
-        assert!(!format!("{:?}", empty_switch).is_empty());
+        assert!(!format!("{empty_switch:?}").is_empty());
 
         // Test large switch - Note: Operand::Switch Debug just uses Vec's Debug format
         let large_switch = Operand::Switch((0..10).collect());
-        let debug_str = format!("{:?}", large_switch);
+        let debug_str = format!("{large_switch:?}");
         assert!(debug_str.contains("Switch"));
         assert!(debug_str.contains("["));
         assert!(debug_str.contains("]"));

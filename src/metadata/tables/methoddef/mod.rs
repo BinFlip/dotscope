@@ -106,9 +106,12 @@
 //! - Partition I, §8.4.3: Virtual method dispatch and inheritance
 //! - Table ID: 0x06
 //! - Purpose: Define method implementations within types
+mod builder;
 mod loader;
 mod raw;
 mod reader;
+mod writer;
 
+pub use builder::*;
 pub(crate) use loader::*;
 pub use raw::*;

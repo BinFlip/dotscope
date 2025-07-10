@@ -87,11 +87,14 @@
 //!
 //! - [Portable PDB v1.1](https://github.com/dotnet/corefx/blob/master/src/System.Reflection.Metadata/specs/PortablePdb-Metadata.md#customdebuginformation-table-0x37) - `CustomDebugInformation` table specification
 
+mod builder;
 mod loader;
 mod owned;
 mod raw;
 mod reader;
+mod writer;
 
+pub use builder::*;
 pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;

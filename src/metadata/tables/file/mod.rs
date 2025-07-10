@@ -54,7 +54,7 @@
 //! - **Security assurance**: Prevents malicious file substitution
 //!
 //! # Import Integration
-//! Files can participate in import resolution through [`ImportContainer`]:
+//! Files can participate in import resolution through [`crate::metadata::imports::UnifiedImportContainer`]:
 //! - Module files can export types and members
 //! - Import analysis traverses file dependencies
 //! - Cross-file reference resolution
@@ -69,11 +69,14 @@ use crate::metadata::{
 use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
 
+mod builder;
 mod loader;
 mod owned;
 mod raw;
 mod reader;
+mod writer;
 
+pub use builder::*;
 pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;

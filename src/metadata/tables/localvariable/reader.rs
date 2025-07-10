@@ -21,15 +21,6 @@ impl RowReadable for LocalVariableRaw {
             name: read_le_at_dyn(data, offset, sizes.is_large_str())?,
         })
     }
-
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            2 +  // attributes (always 2 bytes)
-            2 +  // index (always 2 bytes)
-            sizes.str_bytes()  // name (strings heap index)
-        )
-    }
 }
 
 #[cfg(test)]

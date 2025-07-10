@@ -180,6 +180,287 @@ pub enum ResourceType {
 }
 
 impl ResourceType {
+    /// Returns the .NET type name for this resource type.
+    ///
+    /// Provides the canonical .NET Framework type name that corresponds to this
+    /// resource type. This is used for .NET resource file format encoding and
+    /// type resolution during resource serialization.
+    ///
+    /// # Returns
+    ///
+    /// Returns the .NET type name as a string slice, or `None` for types that
+    /// don't have a corresponding .NET type name (like `Null` or unimplemented types).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::resources::ResourceType;
+    ///
+    /// let string_type = ResourceType::String("hello".to_string());
+    /// assert_eq!(string_type.as_str(), Some("System.String"));
+    ///
+    /// let int_type = ResourceType::Int32(42);
+    /// assert_eq!(int_type.as_str(), Some("System.Int32"));
+    ///
+    /// let null_type = ResourceType::Null;
+    /// assert_eq!(null_type.as_str(), None);
+    /// ```
+    #[must_use]
+    pub fn as_str(&self) -> Option<&'static str> {
+        match self {
+            ResourceType::String(_) => Some("System.String"),
+            ResourceType::Boolean(_) => Some("System.Boolean"),
+            ResourceType::Char(_) => Some("System.Char"),
+            ResourceType::Byte(_) => Some("System.Byte"),
+            ResourceType::SByte(_) => Some("System.SByte"),
+            ResourceType::Int16(_) => Some("System.Int16"),
+            ResourceType::UInt16(_) => Some("System.UInt16"),
+            ResourceType::Int32(_) => Some("System.Int32"),
+            ResourceType::UInt32(_) => Some("System.UInt32"),
+            ResourceType::Int64(_) => Some("System.Int64"),
+            ResourceType::UInt64(_) => Some("System.UInt64"),
+            ResourceType::Single(_) => Some("System.Single"),
+            ResourceType::Double(_) => Some("System.Double"),
+            ResourceType::ByteArray(_) => Some("System.Byte[]"),
+            // Types without .NET equivalents or not yet implemented
+            ResourceType::Null
+            | ResourceType::Decimal // TODO: Implement when Decimal support is added
+            | ResourceType::DateTime // TODO: Implement when DateTime support is added
+            | ResourceType::TimeSpan // TODO: Implement when TimeSpan support is added
+            | ResourceType::Stream  // TODO: Implement when Stream support is added
+            | ResourceType::StartOfUserTypes => None,
+        }
+    }
+
+    /// Returns the hard-coded type index for this resource type.
+    ///
+    /// Provides the index that this resource type should have in .NET resource file
+    /// type tables. This method returns constant indices that match the standard
+    /// .NET resource file type ordering, providing O(1) constant-time access without
+    /// needing HashMap lookups.
+    ///
+    /// The indices correspond to the standard ordering used in .NET resource files:
+    /// - Boolean: 0
+    /// - Byte: 1  
+    /// - SByte: 2
+    /// - Char: 3
+    /// - Int16: 4
+    /// - UInt16: 5
+    /// - Int32: 6
+    /// - UInt32: 7
+    /// - Int64: 8
+    /// - UInt64: 9
+    /// - Single: 10
+    /// - Double: 11
+    /// - String: 12
+    /// - ByteArray: 13
+    ///
+    /// # Returns
+    ///
+    /// Returns the type index as a `u32`, or `None` for types that don't have
+    /// a corresponding index in the standard .NET resource type table.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::resources::ResourceType;
+    ///
+    /// let string_type = ResourceType::String("hello".to_string());
+    /// assert_eq!(string_type.index(), Some(12));
+    ///
+    /// let int_type = ResourceType::Int32(42);
+    /// assert_eq!(int_type.index(), Some(6));
+    ///
+    /// let null_type = ResourceType::Null;
+    /// assert_eq!(null_type.index(), None);
+    /// ```
+    #[must_use]
+    pub fn index(&self) -> Option<u32> {
+        match self {
+            ResourceType::Boolean(_) => Some(0),
+            ResourceType::Byte(_) => Some(1),
+            ResourceType::SByte(_) => Some(2),
+            ResourceType::Char(_) => Some(3),
+            ResourceType::Int16(_) => Some(4),
+            ResourceType::UInt16(_) => Some(5),
+            ResourceType::Int32(_) => Some(6),
+            ResourceType::UInt32(_) => Some(7),
+            ResourceType::Int64(_) => Some(8),
+            ResourceType::UInt64(_) => Some(9),
+            ResourceType::Single(_) => Some(10),
+            ResourceType::Double(_) => Some(11),
+            ResourceType::String(_) => Some(12),
+            ResourceType::ByteArray(_) => Some(13),
+            // Types without .NET equivalents or not yet implemented
+            ResourceType::Null
+            | ResourceType::Decimal // TODO: Implement when Decimal support is added
+            | ResourceType::DateTime // TODO: Implement when DateTime support is added
+            | ResourceType::TimeSpan // TODO: Implement when TimeSpan support is added
+            | ResourceType::Stream  // TODO: Implement when Stream support is added
+            | ResourceType::StartOfUserTypes => None,
+        }
+    }
+
+    /// Returns the official .NET type code for this resource type for encoding.
+    ///
+    /// This method returns the official .NET type code that should be used when encoding
+    /// this resource type in .NET resource format files. These codes match the official
+    /// ResourceTypeCode enumeration from the .NET runtime.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(type_code)` for supported .NET resource types
+    /// - `None` for types that don't have direct .NET equivalents or are not yet implemented
+    ///
+    /// # Official .NET Type Code Mapping
+    ///
+    /// The returned codes map to the official .NET ResourceTypeCode enumeration:
+    /// - 0x01: String
+    /// - 0x02: Boolean
+    /// - 0x03: Char
+    /// - 0x04: Byte  
+    /// - 0x05: SByte
+    /// - 0x06: Int16
+    /// - 0x07: UInt16
+    /// - 0x08: Int32
+    /// - 0x09: UInt32
+    /// - 0x0A: Int64
+    /// - 0x0B: UInt64
+    /// - 0x0C: Single
+    /// - 0x0D: Double
+    /// - 0x0E: Decimal
+    /// - 0x0F: DateTime
+    /// - 0x10: TimeSpan
+    /// - 0x20: ByteArray
+    /// - 0x21: Stream
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::resources::types::ResourceType;
+    ///
+    /// let string_type = ResourceType::String("Hello".to_string());
+    /// assert_eq!(string_type.type_code(), Some(0x01));
+    ///
+    /// let int_type = ResourceType::Int32(42);
+    /// assert_eq!(int_type.type_code(), Some(0x08));
+    ///
+    /// let null_type = ResourceType::Null;
+    /// assert_eq!(null_type.type_code(), None); // No .NET equivalent
+    /// ```
+    #[must_use]
+    pub fn type_code(&self) -> Option<u32> {
+        match self {
+            ResourceType::String(_) => Some(0x01),
+            ResourceType::Boolean(_) => Some(0x02),
+            ResourceType::Char(_) => Some(0x03),
+            ResourceType::Byte(_) => Some(0x04),
+            ResourceType::SByte(_) => Some(0x05),
+            ResourceType::Int16(_) => Some(0x06),
+            ResourceType::UInt16(_) => Some(0x07),
+            ResourceType::Int32(_) => Some(0x08),
+            ResourceType::UInt32(_) => Some(0x09),
+            ResourceType::Int64(_) => Some(0x0A),
+            ResourceType::UInt64(_) => Some(0x0B),
+            ResourceType::Single(_) => Some(0x0C),
+            ResourceType::Double(_) => Some(0x0D),
+            ResourceType::Decimal => Some(0x0E),
+            ResourceType::DateTime => Some(0x0F),
+            ResourceType::TimeSpan => Some(0x10),
+            ResourceType::ByteArray(_) => Some(0x20),
+            ResourceType::Stream => Some(0x21),
+            // Types without .NET equivalents
+            ResourceType::Null | ResourceType::StartOfUserTypes => None,
+        }
+    }
+
+    /// Returns the size in bytes that this resource's data will occupy when encoded.
+    ///
+    /// Calculates the exact number of bytes this resource will take when written
+    /// in .NET resource file format, including length prefixes for variable-length
+    /// data but excluding the type index.
+    ///
+    /// # Returns
+    ///
+    /// Returns the data size in bytes, or `None` for types that are not yet
+    /// implemented or cannot be encoded.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::resources::ResourceType;
+    ///
+    /// let string_type = ResourceType::String("hello".to_string());
+    /// assert_eq!(string_type.data_size(), Some(6)); // 1 byte length + 5 bytes UTF-8
+    ///
+    /// let int_type = ResourceType::Int32(42);
+    /// assert_eq!(int_type.data_size(), Some(4)); // 4 bytes for i32
+    ///
+    /// let bool_type = ResourceType::Boolean(true);
+    /// assert_eq!(bool_type.data_size(), Some(1)); // 1 byte for boolean
+    ///
+    /// let bytes_type = ResourceType::ByteArray(vec![1, 2, 3]);
+    /// assert_eq!(bytes_type.data_size(), Some(4)); // 1 byte length + 3 bytes data
+    /// ```
+    #[must_use]
+    pub fn data_size(&self) -> Option<u32> {
+        match self {
+            ResourceType::String(s) => {
+                // UTF-8 byte length (7-bit encoded) + UTF-8 bytes
+                let utf8_byte_count = s.len();
+                Some(Self::compressed_uint_size(utf8_byte_count as u32) + utf8_byte_count as u32)
+            }
+            ResourceType::Boolean(_) | ResourceType::Byte(_) | ResourceType::SByte(_) => Some(1), // Single byte
+            ResourceType::Char(_) | ResourceType::Int16(_) | ResourceType::UInt16(_) => Some(2), // 2 bytes
+            ResourceType::Int32(_) | ResourceType::UInt32(_) | ResourceType::Single(_) => Some(4), // 4 bytes
+            ResourceType::Int64(_) | ResourceType::UInt64(_) | ResourceType::Double(_) => Some(8), // 8 bytes
+            ResourceType::ByteArray(data) => {
+                // Array length (7-bit encoded) + data bytes
+                Some(Self::compressed_uint_size(data.len() as u32) + data.len() as u32)
+            }
+            // Types without .NET equivalents or not yet implemented
+            ResourceType::Null
+            | ResourceType::Decimal // TODO: Implement when Decimal support is added
+            | ResourceType::DateTime // TODO: Implement when DateTime support is added
+            | ResourceType::TimeSpan // TODO: Implement when TimeSpan support is added
+            | ResourceType::Stream  // TODO: Implement when Stream support is added
+            | ResourceType::StartOfUserTypes => None,
+        }
+    }
+
+    /// Calculates the size a compressed unsigned integer will take when encoded.
+    ///
+    /// Uses the 7-bit encoding format logic to determine the number of bytes
+    /// needed to represent the value according to ECMA-335 specification.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - The unsigned integer value to calculate size for
+    ///
+    /// # Returns
+    ///
+    /// The number of bytes required to encode this value.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::resources::ResourceType;
+    ///
+    /// assert_eq!(ResourceType::compressed_uint_size(50), 1);    // 0-127: 1 byte
+    /// assert_eq!(ResourceType::compressed_uint_size(200), 2);   // 128-16383: 2 bytes  
+    /// assert_eq!(ResourceType::compressed_uint_size(20000), 4); // 16384+: 4 bytes
+    /// ```
+    #[must_use]
+    pub fn compressed_uint_size(value: u32) -> u32 {
+        if value < 0x80 {
+            1 // Single byte for values 0-127
+        } else if value < 0x4000 {
+            2 // Two bytes for values 128-16383
+        } else {
+            4 // Four bytes for larger values
+        }
+    }
+
     /// Parses a resource type from its binary type code.
     ///
     /// This method reads a resource value from the parser based on the provided type byte,
@@ -239,7 +520,15 @@ impl ResourceType {
     /// - Parser errors: If reading the underlying data fails (e.g., truncated data)
     pub fn from_type_byte(byte: u8, parser: &mut Parser) -> Result<Self> {
         match byte {
-            0x1 => Ok(ResourceType::String(parser.read_prefixed_string_utf8()?)),
+            0x0 => {
+                // ResourceTypeCode.Null - no data to read
+                Ok(ResourceType::Null)
+            }
+            0x1 => {
+                // .NET string resources use UTF-8 encoding with 7-bit encoded byte length prefix
+                // (Resource names use UTF-16, but string DATA values use UTF-8)
+                Ok(ResourceType::String(parser.read_prefixed_string_utf8()?))
+            }
             0x2 => Ok(ResourceType::Boolean(parser.read_le::<u8>()? > 0)),
             0x3 => Ok(ResourceType::Char(parser.read_le::<u8>()?.into())),
             0x4 => Ok(ResourceType::Byte(parser.read_le::<u8>()?)),
@@ -252,9 +541,71 @@ impl ResourceType {
             0xB => Ok(ResourceType::UInt64(parser.read_le::<u64>()?)),
             0xC => Ok(ResourceType::Single(parser.read_le::<f32>()?)),
             0xD => Ok(ResourceType::Double(parser.read_le::<f64>()?)),
+            0xE => {
+                // ResourceTypeCode.Decimal - 16 bytes (128-bit decimal)
+                // For now, return not supported as we don't have Decimal type
+                Err(TypeError(format!(
+                    "TypeByte - {byte:X} (Decimal) is not yet implemented"
+                )))
+            }
+            0xF => {
+                // ResourceTypeCode.DateTime - 8 bytes (64-bit binary format)
+                // For now, return not supported as we don't have DateTime type
+                Err(TypeError(format!(
+                    "TypeByte - {byte:X} (DateTime) is not yet implemented"
+                )))
+            }
+            0x10 => {
+                // ResourceTypeCode.TimeSpan - 8 bytes (64-bit ticks)
+                // For now, return not supported as we don't have TimeSpan type
+                Err(TypeError(format!(
+                    "TypeByte - {byte:X} (TimeSpan) is not yet implemented"
+                )))
+            }
+            0x20 => {
+                let length = parser.read_compressed_uint()?;
+                let start_pos = parser.pos();
+                let end_pos = start_pos + length as usize;
+
+                if end_pos > parser.data().len() {
+                    return Err(out_of_bounds_error!());
+                }
+
+                let data = parser.data()[start_pos..end_pos].to_vec();
+                // Seek to end position if it's not at the exact end of the data
+                if end_pos < parser.data().len() {
+                    parser.seek(end_pos)?;
+                }
+                Ok(ResourceType::ByteArray(data))
+            }
+            0x21 => {
+                // ResourceTypeCode.Stream - similar to ByteArray but different semantics
+                let length = parser.read_compressed_uint()?;
+                let start_pos = parser.pos();
+                let end_pos = start_pos + length as usize;
+
+                if end_pos > parser.data().len() {
+                    return Err(out_of_bounds_error!());
+                }
+
+                let data = parser.data()[start_pos..end_pos].to_vec();
+                // Seek to end position if it's not at the exact end of the data
+                if end_pos < parser.data().len() {
+                    parser.seek(end_pos)?;
+                }
+                // For now, treat Stream as ByteArray - we don't have separate Stream type
+                Ok(ResourceType::ByteArray(data))
+            }
+            0x40..=0xFF => {
+                // User types - these require a type table for resolution
+                // According to .NET ResourceReader, if we have user types but no type table,
+                // this is a BadImageFormat error
+                Err(TypeError(format!(
+                    "TypeByte - {byte:X} is a user type (>=0x40) but requires type table resolution which is not yet implemented"
+                )))
+            }
             _ => Err(TypeError(format!(
-                "TypeByte - {:X} is currently not supported",
-                byte
+                "TypeByte - {byte:X} is currently not supported"
             ))),
         }
     }
@@ -343,8 +694,7 @@ impl ResourceType {
             "System.Double" => ResourceType::from_type_byte(0xD, parser),
             "System.Byte[]" => ResourceType::from_type_byte(0x20, parser),
             _ => Err(TypeError(format!(
-                "TypeName - {} is currently not supported",
-                type_name
+                "TypeName - {type_name} is currently not supported"
             ))),
         }
     }
@@ -372,6 +722,7 @@ mod tests {
 
     #[test]
     fn test_from_type_byte_string() {
+        // UTF-8 encoding: length (5 bytes) + "hello" as UTF-8
         let data = b"\x05hello";
         let mut parser = Parser::new(data);
         let result = ResourceType::from_type_byte(0x1, &mut parser).unwrap();
@@ -562,7 +913,7 @@ mod tests {
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("FF is currently not supported"));
+            .contains("FF is a user type (>=0x40) but requires type table resolution which is not yet implemented"));
     }
 
     #[test]
@@ -571,12 +922,14 @@ mod tests {
         let mut parser = Parser::new(data);
         let result = ResourceType::from_type_name("System.Null", &mut parser);
 
-        // This should try to call from_type_byte(0, parser) but will fail since 0 is unsupported
-        assert!(result.is_err());
+        // This should successfully parse as ResourceType::Null (type code 0)
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), ResourceType::Null);
     }
 
     #[test]
     fn test_from_type_name_string() {
+        // UTF-8 encoding: length (5 bytes) + "hello" as UTF-8
         let data = b"\x05hello";
         let mut parser = Parser::new(data);
         let result = ResourceType::from_type_name("System.String", &mut parser).unwrap();
@@ -692,7 +1045,7 @@ mod tests {
     #[test]
     fn test_resource_type_debug() {
         let resource = ResourceType::String("test".to_string());
-        let debug_str = format!("{:?}", resource);
+        let debug_str = format!("{resource:?}");
         assert!(debug_str.contains("String"));
         assert!(debug_str.contains("test"));
     }
@@ -721,5 +1074,189 @@ mod tests {
         assert_eq!(res1, res2);
         assert_ne!(res1, res3);
         assert_ne!(res1, res4);
+    }
+
+    #[test]
+    fn test_resource_type_as_str() {
+        // Test implemented types
+        assert_eq!(
+            ResourceType::String("test".to_string()).as_str(),
+            Some("System.String")
+        );
+        assert_eq!(ResourceType::Boolean(true).as_str(), Some("System.Boolean"));
+        assert_eq!(ResourceType::Int32(42).as_str(), Some("System.Int32"));
+        assert_eq!(
+            ResourceType::ByteArray(vec![1, 2, 3]).as_str(),
+            Some("System.Byte[]")
+        );
+        assert_eq!(
+            ResourceType::Double(std::f64::consts::PI).as_str(),
+            Some("System.Double")
+        );
+
+        // Test unimplemented/special types
+        assert_eq!(ResourceType::Null.as_str(), None);
+        assert_eq!(ResourceType::Decimal.as_str(), None);
+        assert_eq!(ResourceType::DateTime.as_str(), None);
+        assert_eq!(ResourceType::StartOfUserTypes.as_str(), None);
+    }
+
+    #[test]
+    fn test_resource_type_index() {
+        // Test that all implemented types have correct indices
+        assert_eq!(ResourceType::Boolean(true).index(), Some(0));
+        assert_eq!(ResourceType::Byte(255).index(), Some(1));
+        assert_eq!(ResourceType::SByte(-1).index(), Some(2));
+        assert_eq!(ResourceType::Char('A').index(), Some(3));
+        assert_eq!(ResourceType::Int16(42).index(), Some(4));
+        assert_eq!(ResourceType::UInt16(65535).index(), Some(5));
+        assert_eq!(ResourceType::Int32(42).index(), Some(6));
+        assert_eq!(ResourceType::UInt32(42).index(), Some(7));
+        assert_eq!(ResourceType::Int64(42).index(), Some(8));
+        assert_eq!(ResourceType::UInt64(42).index(), Some(9));
+        assert_eq!(ResourceType::Single(std::f32::consts::PI).index(), Some(10));
+        assert_eq!(ResourceType::Double(std::f64::consts::PI).index(), Some(11));
+        assert_eq!(ResourceType::String("test".to_string()).index(), Some(12));
+        assert_eq!(ResourceType::ByteArray(vec![1, 2, 3]).index(), Some(13));
+
+        // Test unimplemented/special types
+        assert_eq!(ResourceType::Null.index(), None);
+        assert_eq!(ResourceType::Decimal.index(), None);
+        assert_eq!(ResourceType::DateTime.index(), None);
+        assert_eq!(ResourceType::TimeSpan.index(), None);
+        assert_eq!(ResourceType::Stream.index(), None);
+        assert_eq!(ResourceType::StartOfUserTypes.index(), None);
+    }
+
+    #[test]
+    fn test_resource_type_index_consistency() {
+        // Test that types with as_str() also have index() and vice versa
+        let test_types = [
+            ResourceType::Boolean(false),
+            ResourceType::Byte(0),
+            ResourceType::SByte(0),
+            ResourceType::Char('A'),
+            ResourceType::Int16(0),
+            ResourceType::UInt16(0),
+            ResourceType::Int32(0),
+            ResourceType::UInt32(0),
+            ResourceType::Int64(0),
+            ResourceType::UInt64(0),
+            ResourceType::Single(0.0),
+            ResourceType::Double(0.0),
+            ResourceType::String("".to_string()),
+            ResourceType::ByteArray(vec![]),
+        ];
+
+        for resource_type in &test_types {
+            // Types with as_str() should also have index()
+            if resource_type.as_str().is_some() {
+                assert!(
+                    resource_type.index().is_some(),
+                    "Type {resource_type:?} has as_str() but no index()"
+                );
+            }
+
+            // Types with index() should also have as_str()
+            if resource_type.index().is_some() {
+                assert!(
+                    resource_type.as_str().is_some(),
+                    "Type {resource_type:?} has index() but no as_str()"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_resource_type_data_size() {
+        // Test data size calculations for all implemented types
+        assert_eq!(ResourceType::Boolean(true).data_size(), Some(1));
+        assert_eq!(ResourceType::Byte(255).data_size(), Some(1));
+        assert_eq!(ResourceType::SByte(-1).data_size(), Some(1));
+        assert_eq!(ResourceType::Char('A').data_size(), Some(2)); // UTF-16
+        assert_eq!(ResourceType::Int16(42).data_size(), Some(2));
+        assert_eq!(ResourceType::UInt16(42).data_size(), Some(2));
+        assert_eq!(ResourceType::Int32(42).data_size(), Some(4));
+        assert_eq!(ResourceType::UInt32(42).data_size(), Some(4));
+        assert_eq!(ResourceType::Int64(42).data_size(), Some(8));
+        assert_eq!(ResourceType::UInt64(42).data_size(), Some(8));
+        assert_eq!(
+            ResourceType::Single(std::f32::consts::PI).data_size(),
+            Some(4)
+        );
+        assert_eq!(
+            ResourceType::Double(std::f64::consts::PI).data_size(),
+            Some(8)
+        );
+
+        // Test variable-length types
+        assert_eq!(
+            ResourceType::String("hello".to_string()).data_size(),
+            Some(6)
+        ); // 1 byte length prefix + 5 bytes UTF-8
+        assert_eq!(ResourceType::String("".to_string()).data_size(), Some(1)); // 1 byte length + 0 bytes
+        assert_eq!(ResourceType::ByteArray(vec![1, 2, 3]).data_size(), Some(4)); // 1 byte length + 3 bytes data
+        assert_eq!(ResourceType::ByteArray(vec![]).data_size(), Some(1)); // 1 byte length + 0 bytes
+
+        // Test unimplemented/special types
+        assert_eq!(ResourceType::Null.data_size(), None);
+        assert_eq!(ResourceType::Decimal.data_size(), None);
+        assert_eq!(ResourceType::DateTime.data_size(), None);
+        assert_eq!(ResourceType::TimeSpan.data_size(), None);
+        assert_eq!(ResourceType::Stream.data_size(), None);
+        assert_eq!(ResourceType::StartOfUserTypes.data_size(), None);
+    }
+
+    #[test]
+    fn test_compressed_uint_size() {
+        // Test 7-bit encoding size calculation
+        assert_eq!(ResourceType::compressed_uint_size(0), 1); // Single byte range
+        assert_eq!(ResourceType::compressed_uint_size(50), 1); // Single byte range
+        assert_eq!(ResourceType::compressed_uint_size(127), 1); // Single byte range max
+
+        assert_eq!(ResourceType::compressed_uint_size(128), 2); // Two byte range start
+        assert_eq!(ResourceType::compressed_uint_size(200), 2); // Two byte range
+        assert_eq!(ResourceType::compressed_uint_size(16383), 2); // Two byte range max
+
+        assert_eq!(ResourceType::compressed_uint_size(16384), 4); // Four byte range start
+        assert_eq!(ResourceType::compressed_uint_size(20000), 4); // Four byte range
+        assert_eq!(ResourceType::compressed_uint_size(0xFFFFFFFF), 4); // Four byte range max
+    }
+
+    #[test]
+    fn test_resource_type_full_consistency() {
+        // Test that types with data_size() also have as_str() and index()
+        let test_types = [
+            ResourceType::Boolean(false),
+            ResourceType::Byte(0),
+            ResourceType::SByte(0),
+            ResourceType::Char('A'),
+            ResourceType::Int16(0),
+            ResourceType::UInt16(0),
+            ResourceType::Int32(0),
+            ResourceType::UInt32(0),
+            ResourceType::Int64(0),
+            ResourceType::UInt64(0),
+            ResourceType::Single(0.0),
+            ResourceType::Double(0.0),
+            ResourceType::String("test".to_string()),
+            ResourceType::ByteArray(vec![1, 2, 3]),
+        ];
+
+        for resource_type in &test_types {
+            // All implemented types should have all three methods
+            assert!(
+                resource_type.as_str().is_some(),
+                "Type {resource_type:?} should have as_str()"
+            );
+            assert!(
+                resource_type.index().is_some(),
+                "Type {resource_type:?} should have index()"
+            );
+            assert!(
+                resource_type.data_size().is_some(),
+                "Type {resource_type:?} should have data_size()"
+            );
+        }
     }
 }

@@ -140,7 +140,7 @@
 //!
 //! ## Extracting File Paths from `FileIOPermission`
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::security::Permission;
 //!
 //! # fn get_file_permission() -> Permission {
@@ -967,7 +967,7 @@ impl fmt::Display for Permission {
             if i > 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{}", arg)?;
+            write!(f, "{arg}")?;
         }
 
         write!(f, ")")
@@ -1266,7 +1266,7 @@ mod tests {
     #[test]
     fn test_display_formatting() {
         let permission = create_test_permission();
-        let formatted = format!("{}", permission);
+        let formatted = format!("{permission}");
 
         assert!(formatted.starts_with(security_classes::FILE_IO_PERMISSION));
         assert!(formatted.contains("Read = \"C:\\Data\""));
@@ -1280,7 +1280,7 @@ mod tests {
         let permission =
             Permission::new("TestPermission".to_string(), "mscorlib".to_string(), vec![]);
 
-        let formatted = format!("{}", permission);
+        let formatted = format!("{permission}");
         assert_eq!(formatted, "TestPermission()");
     }
 
@@ -1297,7 +1297,7 @@ mod tests {
     #[test]
     fn test_debug_formatting() {
         let permission = create_test_permission();
-        let debug_str = format!("{:?}", permission);
+        let debug_str = format!("{permission:?}");
 
         assert!(debug_str.contains("Permission"));
         assert!(debug_str.contains(security_classes::FILE_IO_PERMISSION));

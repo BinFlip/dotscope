@@ -70,7 +70,10 @@ use std::sync::Arc;
 use crate::{
     metadata::{
         method::MethodMap,
-        tables::{CodedIndex, MethodSemantics, MethodSemanticsAttributes, MethodSemanticsRc},
+        tables::{
+            CodedIndex, CodedIndexType, MethodSemantics, MethodSemanticsAttributes,
+            MethodSemanticsRc, TableId, TableInfoRef, TableRow,
+        },
         token::Token,
         typesystem::CilTypeReference,
     },
@@ -343,5 +346,28 @@ impl MethodSemanticsRaw {
             method,
             association,
         }))
+    }
+}
+
+impl TableRow for MethodSemanticsRaw {
+    /// Calculates the byte size of a `MethodSemantics` table row.
+    ///
+    /// The row size depends on the metadata table sizes and is calculated as:
+    /// - `semantics`: 2 bytes (fixed)
+    /// - `method`: 2 or 4 bytes (depends on `MethodDef` table size)
+    /// - `association`: 2 or 4 bytes (depends on `HasSemantics` coded index size)
+    ///
+    /// ## Arguments
+    /// * `sizes` - Table size information for calculating index widths
+    ///
+    /// ## Returns
+    /// Total byte size of one table row
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* semantics */   2 +
+            /* method */      sizes.table_index_bytes(TableId::MethodDef) +
+            /* association */ sizes.coded_index_bytes(CodedIndexType::HasSemantics)
+        )
     }
 }

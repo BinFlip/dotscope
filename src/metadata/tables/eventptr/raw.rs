@@ -36,7 +36,7 @@ use std::sync::Arc;
 
 use crate::{
     metadata::{
-        tables::{EventPtr, EventPtrRc},
+        tables::{EventPtr, EventPtrRc, TableId, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -138,5 +138,25 @@ impl EventPtrRaw {
     /// This function never returns an error; it always returns `Ok(())`.
     pub fn apply(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl TableRow for EventPtrRaw {
+    /// Calculate the binary size of one `EventPtr` table row
+    ///
+    /// Computes the total byte size required for one `EventPtr` row based on the
+    /// current metadata table sizes. The row size depends on whether the Event
+    /// table uses 2-byte or 4-byte indices.
+    ///
+    /// # Arguments
+    /// * `sizes` - Table sizing information for calculating variable-width fields
+    ///
+    /// # Returns
+    /// Total byte size of one `EventPtr` table row
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* event */ sizes.table_index_bytes(TableId::Event)
+        )
     }
 }

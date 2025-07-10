@@ -8,30 +8,6 @@ use crate::{
 };
 
 impl RowReadable for EventPtrRaw {
-    /// Calculate the byte size of an `EventPtr` table row
-    ///
-    /// Computes the total size in bytes required to store one `EventPtr` table row
-    /// based on the table size information. The size depends on whether large
-    /// table indexes are required for the Event table.
-    ///
-    /// # Row Structure
-    ///
-    /// - **event**: 2 or 4 bytes (Event table index)
-    ///
-    /// # Arguments
-    ///
-    /// * `sizes` - Table size information determining index byte sizes
-    ///
-    /// # Returns
-    ///
-    /// Returns the total byte size required for one `EventPtr` table row.
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* event */ sizes.table_index_bytes(TableId::Event)
-        )
-    }
-
     /// Read an `EventPtr` row from the metadata tables stream
     ///
     /// Parses one `EventPtr` table row from the binary metadata stream, handling

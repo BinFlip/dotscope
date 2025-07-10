@@ -8,26 +8,6 @@ use crate::{
 };
 
 impl RowReadable for EncLogRaw {
-    /// Calculate the byte size of an `EncLog` table row
-    ///
-    /// Returns the fixed size since `EncLog` contains only primitive integer fields
-    /// with no variable-size heap indexes. Total size is always 8 bytes (2 × 4-byte integers).
-    ///
-    /// # Row Layout
-    /// - `token_value`: 4 bytes (metadata token)
-    /// - `func_code`: 4 bytes (operation code)
-    ///
-    /// # Arguments
-    /// * `_sizes` - Unused for `EncLog` since no heap indexes are present
-    ///
-    /// # Returns
-    /// Fixed size of 8 bytes for all `EncLog` rows
-    #[rustfmt::skip]
-    fn row_size(_sizes: &TableInfoRef) -> u32 {
-        /* token_value */ 4_u32 +
-        /* func_code */   4_u32
-    }
-
     /// Read and parse an `EncLog` table row from binary data
     ///
     /// Deserializes one `EncLog` table entry from the metadata tables stream.

@@ -8,32 +8,6 @@ use crate::{
 };
 
 impl RowReadable for EventMapRaw {
-    /// Calculate the byte size of an `EventMap` table row
-    ///
-    /// Computes the total size in bytes required to store one `EventMap` table row
-    /// based on the table size information. The size depends on whether large
-    /// table indexes are required for `TypeDef` and Event tables.
-    ///
-    /// # Row Structure
-    ///
-    /// - **parent**: 2 or 4 bytes (`TypeDef` table index)
-    /// - **`event_list`**: 2 or 4 bytes (Event table index)
-    ///
-    /// # Arguments
-    ///
-    /// * `sizes` - Table size information determining index byte sizes
-    ///
-    /// # Returns
-    ///
-    /// Returns the total byte size required for one `EventMap` table row.
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* parent */     sizes.table_index_bytes(TableId::TypeDef) +
-            /* event_list */ sizes.table_index_bytes(TableId::Event)
-        )
-    }
-
     /// Read an `EventMap` row from the metadata tables stream
     ///
     /// Parses one `EventMap` table row from the binary metadata stream, handling

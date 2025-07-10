@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::{
     metadata::{
-        tables::{ParamPtr, ParamPtrRc},
+        tables::{ParamPtr, ParamPtrRc, TableId, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -128,5 +128,26 @@ impl ParamPtrRaw {
     /// This function does not return an error under normal circumstances.
     pub fn apply(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl TableRow for ParamPtrRaw {
+    /// Calculates the byte size of a single `ParamPtr` table row.
+    ///
+    /// The size depends on the metadata table size configuration:
+    /// - **param**: Index size into `Param` table (2 or 4 bytes)
+    ///
+    /// ## Arguments
+    ///
+    /// * `sizes` - Table size configuration information
+    ///
+    /// ## Returns
+    ///
+    /// * `u32` - Total row size in bytes (2-4 bytes typically)
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* param */ sizes.table_index_bytes(TableId::Param)
+        )
     }
 }

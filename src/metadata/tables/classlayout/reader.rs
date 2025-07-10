@@ -8,15 +8,6 @@ use crate::{
 };
 
 impl RowReadable for ClassLayoutRaw {
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* packing_size */ 2 +
-            /* class_size */   4 +
-            /* parent */       sizes.table_index_bytes(TableId::TypeDef)
-        )
-    }
-
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         let offset_org = *offset;
 

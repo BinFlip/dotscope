@@ -19,7 +19,7 @@ use crate::{
     metadata::{
         signatures::parse_field_signature,
         streams::{Blob, Strings},
-        tables::{Field, FieldRc},
+        tables::{Field, FieldRc, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -142,5 +142,31 @@ impl FieldRaw {
     /// for consistency with other metadata table implementations.
     pub fn apply(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl TableRow for FieldRaw {
+    /// Calculate the byte size of a Field table row
+    ///
+    /// Computes the total size based on fixed-size fields plus variable-size heap indexes.
+    /// The size depends on whether the metadata uses 2-byte or 4-byte indexes.
+    ///
+    /// # Row Layout (ECMA-335 §II.22.15)
+    /// - `flags`: 2 bytes (fixed)
+    /// - `name`: 2 or 4 bytes (string heap index)
+    /// - `signature`: 2 or 4 bytes (blob heap index)
+    ///
+    /// # Arguments
+    /// * `sizes` - Table sizing information for heap index widths
+    ///
+    /// # Returns
+    /// Total byte size of one Field table row
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* flags */     2 +
+            /* name */      sizes.str_bytes() +
+            /* signature */ sizes.blob_bytes()
+        )
     }
 }

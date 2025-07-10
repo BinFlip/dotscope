@@ -21,7 +21,7 @@ use std::sync::Arc;
 use crate::{
     metadata::{
         streams::{Blob, Guid, Strings},
-        tables::{Document, DocumentRc},
+        tables::{Document, DocumentRc, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -167,5 +167,29 @@ impl DocumentRaw {
         };
 
         Ok(Arc::new(document))
+    }
+}
+
+impl TableRow for DocumentRaw {
+    /// Calculate the row size for `Document` table entries
+    ///
+    /// Returns the total byte size of a single `Document` table row based on the
+    /// table configuration. The size varies depending on the size of heap indexes in the metadata.
+    ///
+    /// # Size Breakdown
+    /// - `name`: 2 or 4 bytes (blob heap index for document name/path)
+    /// - `hash_algorithm`: 2 or 4 bytes (GUID heap index for hash algorithm)
+    /// - `hash`: 2 or 4 bytes (blob heap index for document content hash)
+    /// - `language`: 2 or 4 bytes (GUID heap index for source language)
+    ///
+    /// Total: 8-16 bytes depending on heap size configuration
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            sizes.blob_bytes() +  // name
+            sizes.guid_bytes() +  // hash_algorithm
+            sizes.blob_bytes() +  // hash
+            sizes.guid_bytes()    // language
+        )
     }
 }

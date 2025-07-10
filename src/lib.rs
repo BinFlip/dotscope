@@ -20,7 +20,6 @@
 #![allow(clippy::too_many_arguments)]
 //#![deny(unsafe_code)]
 // - 'userstring.rs' uses a transmute for converting a &[u8] to &[u16]
-// - 'tableheader.rs' uses a transmute for type conversion
 // - 'file/physical.rs' uses mmap to map a file into memory
 
 //! # dotscope
@@ -135,8 +134,8 @@
 //!     let imports = assembly.imports();
 //!     let exports = assembly.exports();
 //!     
-//!     println!("Imports: {} items", imports.len());
-//!     println!("Exports: {} items", exports.len());
+//!     println!("Imports: {} items", imports.total_count());
+//!     println!("Exports: {} items", exports.total_count());
 //!     
 //!     Ok(())
 //! }
@@ -181,11 +180,8 @@
 //!     let name = strings.get(1)?; // Indexed access
 //!     
 //!     // Iterate through all entries
-//!     for result in strings.iter() {
-//!         match result {
-//!             Ok((offset, string)) => println!("String at {}: '{}'", offset, string),
-//!             Err(e) => eprintln!("Error: {}", e),
-//!         }
+//!     for (offset, string) in strings.iter() {
+//!         println!("String at {}: '{}'", offset, string);
 //!     }
 //! }
 //! # Ok::<(), dotscope::Error>(())
@@ -431,6 +427,92 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// ```
 pub use error::Error;
 
+/// Raw assembly view for editing and modification operations.
+///
+/// `CilAssemblyView` provides direct access to .NET assembly metadata structures
+/// while maintaining a 1:1 mapping with the underlying file format. Unlike [`CilObject`]
+/// which provides processed and resolved metadata optimized for analysis, `CilAssemblyView`
+/// preserves the raw structure to enable future editing capabilities.
+///
+/// # Key Features
+///
+/// - **Raw Structure Access**: Direct access to metadata tables and streams as they appear in the file
+/// - **No Validation**: Pure parsing without format validation or compliance checks
+/// - **Memory Efficient**: Self-referencing pattern avoids data duplication
+/// - **Thread Safe**: Immutable design enables safe concurrent access
+///
+/// # Usage Examples
+///
+/// ```rust,no_run
+/// use dotscope::CilAssemblyView;
+/// use std::path::Path;
+///
+/// // Load assembly for raw metadata access
+/// let view = CilAssemblyView::from_file(Path::new("assembly.dll"))?;
+///
+/// // Access raw metadata tables
+/// if let Some(tables) = view.tables() {
+///     println!("Schema version: {}.{}", tables.major_version, tables.minor_version);
+/// }
+///
+/// // Access string heaps directly
+/// if let Some(strings) = view.strings() {
+///     if let Ok(name) = strings.get(0x123) {
+///         println!("Raw string: {}", name);
+///     }
+/// }
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+///
+/// # Converting to Mutable Assembly
+///
+/// `CilAssemblyView` can be converted to a mutable [`CilAssembly`] for editing operations:
+///
+/// ```rust,no_run
+/// use dotscope::{CilAssemblyView, CilAssembly};
+/// let view = CilAssemblyView::from_file(std::path::Path::new("assembly.dll"))?;
+/// let mut assembly = view.to_owned(); // Convert to mutable CilAssembly
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+pub use metadata::cilassemblyview::CilAssemblyView;
+
+/// Mutable assembly for editing and modification operations.
+///
+/// `CilAssembly` provides a mutable layer on top of [`CilAssemblyView`] that enables
+/// editing of .NET assembly metadata while tracking changes efficiently. It uses a
+/// copy-on-write strategy to minimize memory usage and provides high-level APIs
+/// for adding, modifying, and deleting metadata elements.
+///
+/// # Key Features
+///
+/// - **Change Tracking**: Efficiently tracks modifications without duplicating unchanged data
+/// - **High-level APIs**: Builder patterns for creating types, methods, fields, etc.
+/// - **Binary Generation**: Write modified assemblies back to disk
+/// - **Validation**: Optional validation of metadata consistency
+///
+/// # Usage Examples
+///
+/// ```rust,no_run
+/// use dotscope::{CilAssemblyView, CilAssembly};
+///
+/// // Load and convert to mutable assembly
+/// let view = CilAssemblyView::from_file(std::path::Path::new("assembly.dll"))?;
+/// let mut assembly = view.to_owned();
+///
+/// // Add a new string to the heap
+/// let string_index = assembly.add_string("Hello, World!")?;
+///
+/// // Write changes back to file
+/// assembly.write_to_file("modified_assembly.dll")?;
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+pub use cilassembly::{
+    BasicSchemaValidator, BuilderContext, CilAssembly, LastWriteWinsResolver,
+    ReferenceHandlingStrategy, ReferentialIntegrityValidator, RidConsistencyValidator,
+    ValidationPipeline,
+};
+mod cilassembly;
+
 /// Main entry point for working with .NET assemblies.
 ///
 /// See [`crate::metadata::cilobject::CilObject`] for high-level analysis and metadata access.
@@ -488,11 +570,8 @@ pub use metadata::validation::ValidationConfig;
 ///     let name = strings.get(1)?; // Indexed access
 ///     
 ///     // Iterate through all entries
-///     for result in strings.iter() {
-///         match result {
-///             Ok((offset, string)) => println!("String at {}: '{}'", offset, string),
-///             Err(e) => eprintln!("Error: {}", e),
-///         }
+///     for (offset, string) in strings.iter() {
+///         println!("String at {}: '{}'", offset, string);
 ///     }
 /// }
 /// # Ok::<(), dotscope::Error>(())

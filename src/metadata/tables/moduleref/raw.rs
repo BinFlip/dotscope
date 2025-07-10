@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::{
     metadata::{
         streams::Strings,
-        tables::{ModuleRef, ModuleRefRc},
+        tables::{ModuleRef, ModuleRefRc, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -125,5 +125,23 @@ impl ModuleRefRaw {
     /// This function does not return an error.
     pub fn apply(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl TableRow for ModuleRefRaw {
+    /// Calculate the row size for `ModuleRef` table entries
+    ///
+    /// Returns the total byte size of a single `ModuleRef` table row based on the
+    /// table configuration. The size varies depending on the size of heap indexes in the metadata.
+    ///
+    /// # Size Breakdown
+    /// - `name`: 2 or 4 bytes (string heap index for module name)
+    ///
+    /// Total: 2-4 bytes depending on heap size configuration
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* name */ sizes.str_bytes()
+        )
     }
 }

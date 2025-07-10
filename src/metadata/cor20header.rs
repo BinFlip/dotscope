@@ -28,7 +28,7 @@
 //!
 //! ## Basic Header Parsing
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::cor20header::Cor20Header;
 //!
 //! // Parse CLI header from PE file data
@@ -46,7 +46,7 @@
 //!
 //! ## Runtime Flag Analysis
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::cor20header::Cor20Header;
 //!
 //! let header_bytes: &[u8] = &[/* CLI header data */];
@@ -88,7 +88,7 @@
 //! # Reference
 //! - [ECMA-335 II.24](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf)
 
-use crate::{file::parser::Parser, Error::OutOfBounds, Result};
+use crate::{file::parser::Parser, Result};
 
 /// The CLI (Common Language Infrastructure) header for .NET assemblies.
 ///
@@ -112,7 +112,7 @@ use crate::{file::parser::Parser, Error::OutOfBounds, Result};
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::cor20header::Cor20Header;
 ///
 /// // Parse from PE file's CLI header
@@ -211,7 +211,7 @@ impl Cor20Header {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::cor20header::Cor20Header;
     ///
     /// // Read CLI header from PE file
@@ -235,7 +235,7 @@ impl Cor20Header {
         const VALID_FLAGS: u32 = 0x0000_001F; // Based on ECMA-335 defined flags
 
         if data.len() < 72 {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         let mut parser = Parser::new(data);

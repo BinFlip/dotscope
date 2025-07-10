@@ -206,12 +206,12 @@ fn print_instruction_analysis(assembly: &CilObject) {
                     total_instructions += block.instructions.len();
                 }
 
-                println!("        Basic blocks: {}", block_count);
+                println!("        Basic blocks: {block_count}");
                 if block_count > 3 {
                     println!("        ... ({} more blocks)", block_count - 3);
                 }
 
-                println!("        Total instructions: {}", total_instructions);
+                println!("        Total instructions: {total_instructions}");
 
                 instruction_stats.methods_analyzed += 1;
             }

@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use crate::{
     metadata::{
-        tables::{FieldMap, FieldRVARc, FieldRva},
+        tables::{FieldMap, FieldRVARc, FieldRva, TableId, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -73,10 +73,10 @@ pub struct FieldRvaRaw {
 
     /// The metadata token for this field RVA.
     ///
-    /// A [`Token`] that uniquely identifies this field RVA across the entire assembly.
+    /// A [`crate::metadata::token::Token`] that uniquely identifies this field RVA across the entire assembly.
     /// The token value is calculated as `0x1D000000 + rid`.
     ///
-    /// [`Token`]: crate::metadata::token::Token
+    /// [`crate::metadata::token::Token`]: crate::metadata::token::Token
     pub token: Token,
 
     /// The byte offset of this field RVA in the metadata tables stream.
@@ -144,5 +144,29 @@ impl FieldRvaRaw {
                 }
             },
         }))
+    }
+}
+
+impl TableRow for FieldRvaRaw {
+    /// Calculate the byte size of a FieldRva table row
+    ///
+    /// Computes the total size based on fixed-size fields and variable-size table indexes.
+    /// The size depends on whether the metadata uses 2-byte or 4-byte indexes.
+    ///
+    /// # Row Layout (ECMA-335 §II.22.19)
+    /// - `rva`: 4 bytes (fixed size Relative Virtual Address)
+    /// - `field`: 2 or 4 bytes (Field table index)
+    ///
+    /// # Arguments
+    /// * `sizes` - Table sizing information for index widths
+    ///
+    /// # Returns
+    /// Total byte size of one FieldRva table row
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* rva */   4 +
+            /* field */ sizes.table_index_bytes(TableId::Field)
+        )
     }
 }

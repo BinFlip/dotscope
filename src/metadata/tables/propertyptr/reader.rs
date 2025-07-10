@@ -1,3 +1,44 @@
+//! Implementation of `RowReadable` for `PropertyPtrRaw` metadata table entries.
+//!
+//! This module provides binary deserialization support for the `PropertyPtr` table (ID 0x16),
+//! enabling reading of property pointer information from .NET PE files. The PropertyPtr
+//! table provides an indirection mechanism for property definitions when the PropertyMap
+//! table uses pointer-based addressing instead of direct indexing.
+//!
+//! ## Table Structure (ECMA-335 §II.22.32)
+//!
+//! | Field | Type | Description |
+//! |-------|------|-------------|
+//! | `Property` | Property table index | Index into Property table |
+//!
+//! ## Usage Context
+//!
+//! PropertyPtr entries are used when:
+//! - **Property Indirection**: Property table requires indirect addressing
+//! - **Sparse Property Maps**: PropertyMap entries point to PropertyPtr instead of direct Property indexes
+//! - **Assembly Modification**: Property table reorganization during assembly editing
+//! - **Optimization**: Memory layout optimization for large property collections
+//!
+//! ## Indirection Architecture
+//!
+//! The PropertyPtr table enables:
+//! - **Flexible Addressing**: PropertyMap can reference non-contiguous Property entries
+//! - **Dynamic Reordering**: Property definitions can be reordered without affecting PropertyMap
+//! - **Incremental Updates**: Property additions without PropertyMap restructuring
+//! - **Memory Efficiency**: Sparse property collections with minimal memory overhead
+//!
+//! ## Thread Safety
+//!
+//! The `RowReadable` implementation is stateless and safe for concurrent use across
+//! multiple threads during metadata loading operations.
+//!
+//! ## Related Modules
+//!
+//! - [`crate::metadata::tables::propertyptr::writer`] - Binary serialization support
+//! - [`crate::metadata::tables::propertyptr`] - High-level PropertyPtr interface
+//! - [`crate::metadata::tables::propertyptr::raw`] - Raw structure definition
+//! - [`crate::metadata::tables::property`] - Target Property table definitions
+
 use crate::{
     file::io::read_le_at_dyn,
     metadata::{
@@ -8,26 +49,6 @@ use crate::{
 };
 
 impl RowReadable for PropertyPtrRaw {
-    /// Calculates the byte size of a `PropertyPtr` table row.
-    ///
-    /// The row size depends on the Property table size:
-    /// - 2 bytes if Property table has ≤ 65535 rows
-    /// - 4 bytes if Property table has > 65535 rows
-    ///
-    /// ## Arguments
-    ///
-    /// * `sizes` - Table size information for index size calculation
-    ///
-    /// ## Returns
-    ///
-    /// The size in bytes required for a single `PropertyPtr` table row
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* property */ sizes.table_index_bytes(TableId::Property)
-        )
-    }
-
     /// Reads a `PropertyPtr` table row from the metadata stream.
     ///
     /// Parses a single `PropertyPtr` entry from the raw metadata bytes,

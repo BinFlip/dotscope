@@ -8,15 +8,6 @@ use crate::{
 };
 
 impl RowReadable for EventRaw {
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* flags */      2 +
-            /* name */       sizes.str_bytes() +
-            /* event_type */ sizes.coded_index_bytes(CodedIndexType::TypeDefOrRef)
-        )
-    }
-
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         let offset_org = *offset;
 

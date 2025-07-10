@@ -17,14 +17,6 @@ impl RowReadable for LocalConstantRaw {
             signature: read_le_at_dyn(data, offset, sizes.is_large_blob())?,
         })
     }
-
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            sizes.str_bytes() +   // name (strings heap index)
-            sizes.blob_bytes()    // signature (blob heap index)
-        )
-    }
 }
 
 #[cfg(test)]

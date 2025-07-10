@@ -20,7 +20,10 @@ use crate::{
             parse_field_signature, parse_method_signature, SignatureMethod, TypeSignature,
         },
         streams::{Blob, Strings},
-        tables::{CodedIndex, MemberRef, MemberRefRc, MemberRefSignature, Param, ParamRc},
+        tables::{
+            CodedIndex, CodedIndexType, MemberRef, MemberRefRc, MemberRefSignature, Param, ParamRc,
+            TableInfoRef, TableRow,
+        },
         token::Token,
         typesystem::{CilTypeReference, TypeRegistry},
     },
@@ -319,5 +322,24 @@ impl MemberRefRaw {
         });
 
         Ok(member_ref)
+    }
+}
+
+impl TableRow for MemberRefRaw {
+    /// Calculate the byte size of a MemberRef table row
+    ///
+    /// Returns the total size of one row in the MemberRef table, including:
+    /// - class: 2 or 4 bytes (MemberRefParent coded index)
+    /// - name: 2 or 4 bytes (String heap index)
+    /// - signature: 2 or 4 bytes (Blob heap index)
+    ///
+    /// The index sizes depend on the metadata coded index and heap requirements.
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* class */     sizes.coded_index_bytes(CodedIndexType::MemberRefParent) +
+            /* name */      sizes.str_bytes() +
+            /* signature */ sizes.blob_bytes()
+        )
     }
 }

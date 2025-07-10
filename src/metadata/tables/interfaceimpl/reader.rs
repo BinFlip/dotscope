@@ -10,22 +10,6 @@ use crate::{
 };
 
 impl RowReadable for InterfaceImplRaw {
-    /// Calculates the byte size of an `InterfaceImpl` table row based on table sizing information.
-    ///
-    /// The row size depends on the size of table indexes and coded indexes,
-    /// which vary based on the total number of entries in referenced tables.
-    ///
-    /// # Row Layout
-    /// - class: Variable size `TypeDef` table index (2 or 4 bytes)
-    /// - interface: Variable size `TypeDefOrRef` coded index
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* class */        sizes.table_index_bytes(TableId::TypeDef) +
-            /* interface */    sizes.coded_index_bytes(CodedIndexType::TypeDefOrRef)
-        )
-    }
-
     /// Reads a single `InterfaceImpl` table row from binary metadata stream.
     ///
     /// Parses the binary representation of an `InterfaceImpl` entry, reading fields

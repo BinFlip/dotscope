@@ -105,7 +105,7 @@
 
 use thiserror::Error;
 
-use crate::metadata::token::Token;
+use crate::metadata::{tables::TableId, token::Token};
 
 /// Helper macro for creating malformed data errors with source location information.
 ///
@@ -135,10 +135,11 @@ use crate::metadata::token::Token;
 /// let actual = 2;
 /// let error = malformed_error!("Expected {} bytes, got {}", expected, actual);
 /// ```
+#[macro_export]
 macro_rules! malformed_error {
     // Single string version
     ($msg:expr) => {
-        crate::Error::Malformed {
+        $crate::Error::Malformed {
             message: $msg.to_string(),
             file: file!(),
             line: line!(),
@@ -147,8 +148,38 @@ macro_rules! malformed_error {
 
     // Format string with arguments version
     ($fmt:expr, $($arg:tt)*) => {
-        crate::Error::Malformed {
+        $crate::Error::Malformed {
             message: format!($fmt, $($arg)*),
+            file: file!(),
+            line: line!(),
+        }
+    };
+}
+
+/// Helper macro for creating out-of-bounds errors with source location information.
+///
+/// This macro simplifies the creation of [`crate::Error::OutOfBounds`] errors by automatically
+/// capturing the current file and line number where the out-of-bounds access was detected.
+///
+/// # Returns
+///
+/// Returns a [`crate::Error::OutOfBounds`] variant with automatically captured source
+/// location information for debugging purposes.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # use dotscope::out_of_bounds_error;
+/// // Replace: Err(Error::OutOfBounds)
+/// // With:    Err(out_of_bounds_error!())
+/// if index >= data.len() {
+///     return Err(out_of_bounds_error!());
+/// }
+/// ```
+#[macro_export]
+macro_rules! out_of_bounds_error {
+    () => {
+        $crate::Error::OutOfBounds {
             file: file!(),
             line: line!(),
         }
@@ -230,8 +261,20 @@ pub enum Error {
     ///
     /// This error occurs when trying to read data beyond the end of the file
     /// or stream. It's a safety check to prevent buffer overruns during parsing.
-    #[error("Out of Bound read would have occurred!")]
-    OutOfBounds,
+    /// The error includes the source location where the out-of-bounds access
+    /// was detected for debugging purposes.
+    ///
+    /// # Fields
+    ///
+    /// * `file` - Source file where the error was detected
+    /// * `line` - Source line where the error was detected
+    #[error("Out of Bounds - {file}:{line}")]
+    OutOfBounds {
+        /// The source file in which this error occurred
+        file: &'static str,
+        /// The source line in which this error occurred
+        line: u32,
+    },
 
     /// This file type is not supported.
     ///
@@ -348,4 +391,301 @@ pub enum Error {
     /// detected or when the dependency graph cannot be properly constructed.
     #[error("{0}")]
     GraphError(String),
+
+    // Assembly Modification Errors
+    /// RID already exists during table modification.
+    ///
+    /// This error occurs when attempting to insert a row with a RID that
+    /// already exists in the target metadata table.
+    #[error("Modification error: RID {rid} already exists in table {table:?}")]
+    ModificationRidAlreadyExists {
+        /// The table where the conflict occurred
+        table: TableId,
+        /// The conflicting RID
+        rid: u32,
+    },
+
+    /// RID not found during table modification.
+    ///
+    /// This error occurs when attempting to update or delete a row that
+    /// doesn't exist in the target metadata table.
+    #[error("Modification error: RID {rid} not found in table {table:?}")]
+    ModificationRidNotFound {
+        /// The table where the RID was not found
+        table: TableId,
+        /// The missing RID
+        rid: u32,
+    },
+
+    /// Cannot modify replaced table.
+    ///
+    /// This error occurs when attempting to apply sparse modifications
+    /// to a table that has been completely replaced.
+    #[error("Modification error: Cannot modify replaced table - convert to sparse first")]
+    ModificationCannotModifyReplacedTable,
+
+    /// Operation conflicts detected during modification.
+    ///
+    /// This error occurs when multiple conflicting operations target
+    /// the same RID and cannot be automatically resolved.
+    #[error("Modification error: Operation conflicts detected - {details}")]
+    ModificationConflictDetected {
+        /// Details about the conflict
+        details: String,
+    },
+
+    /// Invalid modification operation.
+    ///
+    /// This error occurs when attempting an operation that is not
+    /// valid for the current state or context.
+    #[error("Modification error: Invalid operation - {details}")]
+    ModificationInvalidOperation {
+        /// Details about why the operation is invalid
+        details: String,
+    },
+
+    /// Table schema validation failed.
+    ///
+    /// This error occurs when table row data doesn't conform to the
+    /// expected schema for the target table type.
+    #[error("Modification error: Table schema validation failed - {details}")]
+    ModificationSchemaValidationFailed {
+        /// Details about the schema validation failure
+        details: String,
+    },
+
+    // Assembly Validation Errors
+    /// Invalid RID for table during validation.
+    ///
+    /// This error occurs when a RID is invalid for the target table,
+    /// such as zero-valued RIDs or RIDs exceeding table bounds.
+    #[error("Validation error: Invalid RID {rid} for table {table:?}")]
+    ValidationInvalidRid {
+        /// The table with the invalid RID
+        table: TableId,
+        /// The invalid RID
+        rid: u32,
+    },
+
+    /// Cannot update non-existent row during validation.
+    ///
+    /// This error occurs when validation detects an attempt to update
+    /// a row that doesn't exist in the original table.
+    #[error("Validation error: Cannot update non-existent row {rid} in table {table:?}")]
+    ValidationUpdateNonExistentRow {
+        /// The table where the update was attempted
+        table: TableId,
+        /// The non-existent RID
+        rid: u32,
+    },
+
+    /// Cannot delete non-existent row during validation.
+    ///
+    /// This error occurs when validation detects an attempt to delete
+    /// a row that doesn't exist in the original table.
+    #[error("Validation error: Cannot delete non-existent row {rid} in table {table:?}")]
+    ValidationDeleteNonExistentRow {
+        /// The table where the deletion was attempted
+        table: TableId,
+        /// The non-existent RID
+        rid: u32,
+    },
+
+    /// Cannot delete referenced row during validation.
+    ///
+    /// This error occurs when attempting to delete a row that is
+    /// referenced by other metadata tables, which would break
+    /// referential integrity.
+    #[error("Validation error: Cannot delete referenced row {rid} in table {table:?} - {reason}")]
+    ValidationCannotDeleteReferencedRow {
+        /// The table containing the referenced row
+        table: TableId,
+        /// The RID of the referenced row
+        rid: u32,
+        /// The reason why deletion is not allowed
+        reason: String,
+    },
+
+    /// Row type mismatch during validation.
+    ///
+    /// This error occurs when the provided row data type doesn't
+    /// match the expected type for the target table.
+    #[error("Validation error: Row type mismatch for table {table:?} - expected table-specific type, got {actual_type}")]
+    ValidationRowTypeMismatch {
+        /// The target table
+        table: TableId,
+        /// The actual type that was provided
+        actual_type: String,
+    },
+
+    /// Table schema validation mismatch.
+    ///
+    /// This error occurs when table data doesn't conform to the expected
+    /// schema for the target table type.
+    #[error("Validation error: Table schema mismatch for table {table:?} - expected {expected}, got {actual}")]
+    ValidationTableSchemaMismatch {
+        /// The target table
+        table: TableId,
+        /// The expected schema type
+        expected: String,
+        /// The actual type that was provided
+        actual: String,
+    },
+
+    /// Cross-reference validation failed.
+    ///
+    /// This error occurs when validation detects broken cross-references
+    /// between metadata tables.
+    #[error("Validation error: Cross-reference validation failed - {message}")]
+    ValidationCrossReferenceError {
+        /// Details about the cross-reference failure
+        message: String,
+    },
+
+    /// Referential integrity validation failed.
+    ///
+    /// This error occurs when validation detects operations that would
+    /// violate referential integrity constraints.
+    #[error("Validation error: Referential integrity constraint violated - {message}")]
+    ValidationReferentialIntegrity {
+        /// Details about the referential integrity violation
+        message: String,
+    },
+
+    /// Heap bounds validation failed.
+    ///
+    /// This error occurs when metadata heap indices are out of bounds
+    /// for the target heap.
+    #[error(
+        "Validation error: Heap bounds validation failed - {heap_type} index {index} out of bounds"
+    )]
+    ValidationHeapBoundsError {
+        /// The type of heap (strings, blobs, etc.)
+        heap_type: String,
+        /// The out-of-bounds index
+        index: u32,
+    },
+
+    /// Conflict resolution failed.
+    ///
+    /// This error occurs when the conflict resolution system cannot
+    /// automatically resolve detected conflicts.
+    #[error("Conflict resolution error: {details}")]
+    ConflictResolutionError {
+        /// Details about why conflict resolution failed
+        details: String,
+    },
+
+    // Binary Writing Errors
+    /// Assembly validation failed before writing.
+    ///
+    /// This error occurs when pre-write validation detects issues that
+    /// would prevent successful binary generation.
+    #[error("Binary write validation failed: {message}")]
+    WriteValidationFailed {
+        /// Details about the validation failure
+        message: String,
+    },
+
+    /// Layout planning failed during binary generation.
+    ///
+    /// This error occurs when the write planner cannot determine a valid
+    /// layout for the output file, such as when the file would exceed
+    /// configured size limits.
+    #[error("Binary write layout planning failed: {message}")]
+    WriteLayoutFailed {
+        /// Details about the layout failure
+        message: String,
+    },
+
+    /// Memory mapping failed during binary writing.
+    ///
+    /// This error occurs when the memory-mapped file cannot be created
+    /// or accessed for writing the output assembly.
+    #[error("Binary write memory mapping failed: {message}")]
+    WriteMmapFailed {
+        /// Details about the memory mapping failure
+        message: String,
+    },
+
+    /// Heap writing failed during binary generation.
+    ///
+    /// This error occurs when writing metadata heaps (strings, blobs, etc.)
+    /// to the output file fails.
+    #[error("Binary write heap writing failed: {message}")]
+    WriteHeapFailed {
+        /// Details about the heap writing failure
+        message: String,
+    },
+
+    /// Table writing failed during binary generation.
+    ///
+    /// This error occurs when writing metadata tables to the output file fails.
+    #[error("Binary write table writing failed: {message}")]
+    WriteTableFailed {
+        /// Details about the table writing failure
+        message: String,
+    },
+
+    /// PE structure writing failed during binary generation.
+    ///
+    /// This error occurs when writing PE headers, sections, or other
+    /// PE-specific structures to the output file fails.
+    #[error("Binary write PE structure writing failed: {message}")]
+    WritePeFailed {
+        /// Details about the PE writing failure
+        message: String,
+    },
+
+    /// File finalization failed during binary writing.
+    ///
+    /// This error occurs when the final step of writing (such as flushing,
+    /// syncing, or closing the output file) fails.
+    #[error("Binary write finalization failed: {message}")]
+    WriteFinalizationFailed {
+        /// Details about the finalization failure
+        message: String,
+    },
+
+    /// Binary writing configuration is invalid.
+    ///
+    /// This error occurs when the provided writer configuration contains
+    /// invalid or conflicting settings.
+    #[error("Binary write configuration invalid: {message}")]
+    WriteInvalidConfig {
+        /// Details about the configuration error
+        message: String,
+    },
+
+    /// File size would exceed configured limits.
+    ///
+    /// This error occurs when the planned output file size exceeds the
+    /// maximum allowed size set in the writer configuration.
+    #[error("Binary write file size {actual} exceeds maximum allowed size {max}")]
+    WriteFileSizeExceeded {
+        /// The actual file size that would be generated
+        actual: u64,
+        /// The maximum allowed file size
+        max: u64,
+    },
+
+    /// Required metadata is missing or invalid for binary writing.
+    ///
+    /// This error occurs when the assembly is missing metadata required
+    /// for binary generation, or when the metadata is in an invalid state.
+    #[error("Binary write missing required metadata: {message}")]
+    WriteMissingMetadata {
+        /// Details about the missing metadata
+        message: String,
+    },
+
+    /// Internal error during binary writing.
+    ///
+    /// This error represents an internal inconsistency or bug in the
+    /// binary writing logic that should not occur under normal conditions.
+    #[error("Binary write internal error: {message}")]
+    WriteInternalError {
+        /// Details about the internal error
+        message: String,
+    },
 }

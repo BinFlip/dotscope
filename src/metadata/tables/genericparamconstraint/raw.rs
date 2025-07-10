@@ -23,7 +23,10 @@ use std::sync::Arc;
 
 use crate::{
     metadata::{
-        tables::{CodedIndex, GenericParamConstraint, GenericParamConstraintRc, GenericParamMap},
+        tables::{
+            CodedIndex, CodedIndexType, GenericParamConstraint, GenericParamConstraintRc,
+            GenericParamMap, TableId, TableInfoRef, TableRow,
+        },
         token::Token,
         typesystem::TypeRegistry,
         validation::ConstraintValidator,
@@ -80,10 +83,10 @@ pub struct GenericParamConstraintRaw {
 
     /// The metadata token for this generic parameter constraint.
     ///
-    /// A [`Token`] that uniquely identifies this constraint across the entire assembly.
+    /// A [`crate::metadata::token::Token`] that uniquely identifies this constraint across the entire assembly.
     /// The token value is calculated as `0x2C000000 + rid`.
     ///
-    /// [`Token`]: crate::metadata::token::Token
+    /// [`crate::metadata::token::Token`]: crate::metadata::token::Token
     pub token: Token,
 
     /// The byte offset of this constraint in the metadata tables stream.
@@ -219,5 +222,29 @@ impl GenericParamConstraintRaw {
             },
             custom_attributes: Arc::new(boxcar::Vec::new()),
         }))
+    }
+}
+
+impl TableRow for GenericParamConstraintRaw {
+    /// Calculate the byte size of a GenericParamConstraint table row
+    ///
+    /// Computes the total size based on variable-size table and coded indexes.
+    /// The size depends on whether the metadata uses 2-byte or 4-byte indexes.
+    ///
+    /// # Row Layout (ECMA-335 §II.22.21)
+    /// - `owner`: 2 or 4 bytes (GenericParam table index)
+    /// - `constraint`: 2 or 4 bytes (`TypeDefOrRef` coded index)
+    ///
+    /// # Arguments
+    /// * `sizes` - Table sizing information for index widths
+    ///
+    /// # Returns
+    /// Total byte size of one GenericParamConstraint table row
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* owner */      sizes.table_index_bytes(TableId::GenericParam) +
+            /* constraint */ sizes.coded_index_bytes(CodedIndexType::TypeDefOrRef)
+        )
     }
 }

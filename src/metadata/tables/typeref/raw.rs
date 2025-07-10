@@ -25,7 +25,7 @@ use std::sync::Arc;
 use crate::{
     metadata::{
         streams::Strings,
-        tables::CodedIndex,
+        tables::{CodedIndex, CodedIndexType, TableInfoRef, TableRow},
         token::Token,
         typesystem::{CilType, CilTypeRc, CilTypeReference},
     },
@@ -156,5 +156,27 @@ impl TypeRefRaw {
             Arc::new(boxcar::Vec::new()),
             None,
         )))
+    }
+}
+
+impl TableRow for TypeRefRaw {
+    /// Calculates the byte size of a `TypeRef` table row.
+    ///
+    /// The row size depends on the size configuration of heaps and tables:
+    /// - `ResolutionScope`: 2 or 4 bytes depending on `ResolutionScope` coded index size
+    /// - TypeName/TypeNamespace: 2 or 4 bytes depending on string heap size
+    ///
+    /// ## Arguments
+    /// * `sizes` - Table size information for calculating index widths
+    ///
+    /// ## Returns
+    /// The total byte size required for one `TypeRef` table row.
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* resolution_scope */  sizes.coded_index_bytes(CodedIndexType::ResolutionScope) +
+            /* type_namespace */    sizes.str_bytes() +
+            /* type_name */         sizes.str_bytes()
+        )
     }
 }

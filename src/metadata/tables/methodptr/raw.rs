@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use crate::{
     metadata::{
-        tables::{MethodPtr, MethodPtrRc},
+        tables::{MethodPtr, MethodPtrRc, TableId, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -128,5 +128,27 @@ impl MethodPtrRaw {
     /// This function is infallible and always returns `Ok(())`. Reserved for future error conditions.
     pub fn apply(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl TableRow for MethodPtrRaw {
+    /// Calculate the byte size of a `MethodPtr` table row
+    ///
+    /// Computes the total size based on variable-size table indexes.
+    /// The size depends on whether the MethodDef table uses 2-byte or 4-byte indexes.
+    ///
+    /// # Row Layout
+    /// - `method`: 2 or 4 bytes (MethodDef table index)
+    ///
+    /// # Arguments
+    /// * `sizes` - Table sizing information for table index widths
+    ///
+    /// # Returns
+    /// Total byte size of one `MethodPtr` table row
+    #[rustfmt::skip]
+    fn row_size(sizes: &TableInfoRef) -> u32 {
+        u32::from(
+            /* method */ sizes.table_index_bytes(TableId::MethodDef)
+        )
     }
 }

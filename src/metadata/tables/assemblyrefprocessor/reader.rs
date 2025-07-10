@@ -48,14 +48,6 @@ use crate::{
 };
 
 impl RowReadable for AssemblyRefProcessorRaw {
-    #[rustfmt::skip]
-    fn row_size(sizes: &TableInfoRef) -> u32 {
-        u32::from(
-            /* processor */    4 +
-            /* assembly_ref */ sizes.table_index_bytes(TableId::AssemblyRef)
-        )
-    }
-
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(AssemblyRefProcessorRaw {
             rid,

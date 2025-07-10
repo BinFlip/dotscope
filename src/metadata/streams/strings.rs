@@ -95,24 +95,14 @@
 //! let strings = Strings::from(&heap_data)?;
 //!
 //! // Iterate over all strings with their offsets
-//! for result in strings.iter() {
-//!     match result {
-//!         Ok((offset, string)) => {
-//!             println!("String at offset {}: '{}'", offset, string);
-//!         }
-//!         Err(e) => eprintln!("Error reading string: {}", e),
-//!     }
+//! for (offset, string) in strings.iter() {
+//!     println!("String at offset {}: '{}'", offset, string);
 //! }
 //!
 //! // Alternative: collect all valid strings
-//! let all_strings: Result<Vec<_>, _> = strings.iter().collect();
-//! match all_strings {
-//!     Ok(strings) => {
-//!         for (offset, string) in strings {
-//!             println!("Valid string at {}: '{}'", offset, string);
-//!         }
-//!     }
-//!     Err(e) => eprintln!("Error in strings heap: {}", e),
+//! let all_strings: Vec<_> = strings.iter().collect();
+//! for (offset, string) in all_strings {
+//!     println!("Valid string at {}: '{}'", offset, string);
 //! }
 //! # Ok(())
 //! # }
@@ -212,8 +202,7 @@
 
 use std::{ffi::CStr, str};
 
-use crate::error;
-use crate::{Error::OutOfBounds, Result};
+use crate::Result;
 
 /// ECMA-335 compliant `#Strings` heap providing UTF-8 identifier string access.
 ///
@@ -291,16 +280,14 @@ use crate::{Error::OutOfBounds, Result};
 /// let strings = Strings::from(&heap_data)?;
 ///
 /// // Iterate with offset information
-/// for result in strings.iter() {
-///     let (offset, string) = result?;
+/// for (offset, string) in strings.iter() {
 ///     println!("String at offset {}: '{}'", offset, string);
 /// }
 ///
 /// // Collect all strings for batch processing
-/// let all_strings: Result<Vec<_>, _> = strings.iter().collect();
-/// let strings_list = all_strings?;
+/// let strings_list: Vec<_> = strings.iter().collect();
 ///
-/// assert_eq!(strings_list.len(), 3); // Empty string + "Hello" + "World"
+/// assert_eq!(strings_list.len(), 2); // "Hello" + "World" (empty string at index 0 is skipped)
 /// assert_eq!(strings_list[0], (1, "Hello"));
 /// assert_eq!(strings_list[1], (7, "World"));
 /// # Ok(())
@@ -769,8 +756,8 @@ impl<'a> Strings<'a> {
     /// - [`crate::metadata::tables`]: Metadata tables containing string references
     /// - [ECMA-335 II.24.2.3](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Strings heap specification
     pub fn get(&self, index: usize) -> Result<&'a str> {
-        if index > self.data.len() {
-            return Err(OutOfBounds);
+        if index >= self.data.len() {
+            return Err(out_of_bounds_error!());
         }
 
         // ToDo: Potentially cache this? 'expensive' verifications performed on each lookup. If the same
@@ -795,18 +782,18 @@ impl<'a> Strings<'a> {
     /// - **Sequential access**: Strings are visited in storage order within the heap
     /// - **Zero-copy design**: String references borrow from original heap data
     /// - **UTF-8 validation**: Each string is validated during iteration
-    /// - **Error handling**: Invalid strings yield `Err` results instead of panicking
+    /// - **Error handling**: Iterator stops on invalid strings instead of panicking
     /// - **Empty string skipped**: The mandatory empty string at index 0 is not yielded
     ///
     /// ## Error Handling
     ///
     /// The iterator gracefully handles malformed heap data:
-    /// - Invalid UTF-8 sequences yield `Err` results
+    /// - Invalid UTF-8 sequences cause iterator termination
     /// - Missing null terminators cause iterator termination
     /// - Corrupted heap structure detected during iteration
     ///
     /// # Returns
-    /// [`crate::metadata::streams::strings::StringsIterator`] that yields `Result<(usize, &str), Error>` for each string
+    /// [`crate::metadata::streams::strings::StringsIterator`] that yields `(usize, &str)` for each string
     ///
     /// # Examples
     ///
@@ -826,16 +813,8 @@ impl<'a> Strings<'a> {
     /// let strings = Strings::from(&heap_data)?;
     ///
     /// // Iterate over all strings with their offsets
-    /// for result in strings.iter() {
-    ///     match result {
-    ///         Ok((offset, string)) => {
-    ///             println!("String at offset {}: '{}'", offset, string);
-    ///         }
-    ///         Err(e) => {
-    ///             eprintln!("Error reading string: {}", e);
-    ///             break;
-    ///         }
-    ///     }
+    /// for (offset, string) in strings.iter() {
+    ///     println!("String at offset {}: '{}'", offset, string);
     /// }
     ///
     /// // Expected output:
@@ -861,20 +840,15 @@ impl<'a> Strings<'a> {
     /// let strings = Strings::from(&heap_data)?;
     ///
     /// // Collect all strings, handling errors
-    /// let all_strings: Result<Vec<_>, _> = strings.iter().collect();
+    /// let all_strings: Vec<_> = strings.iter().collect();
     ///
-    /// match all_strings {
-    ///     Ok(string_list) => {
-    ///         assert_eq!(string_list.len(), 3);
-    ///         assert_eq!(string_list[0], (1, "System"));
-    ///         assert_eq!(string_list[1], (8, "Console"));
-    ///         assert_eq!(string_list[2], (16, "Object"));
-    ///         
-    ///         for (offset, string) in string_list {
-    ///             println!("Found identifier: '{}' at offset {}", string, offset);
-    ///         }
-    ///     }
-    ///     Err(e) => eprintln!("Error in strings heap: {}", e),
+    /// assert_eq!(all_strings.len(), 3);
+    /// assert_eq!(all_strings[0], (1, "System"));
+    /// assert_eq!(all_strings[1], (8, "Console"));
+    /// assert_eq!(all_strings[2], (16, "Object"));
+    ///
+    /// for (offset, string) in all_strings {
+    ///     println!("Found identifier: '{}' at offset {}", string, offset);
     /// }
     /// # Ok(())
     /// # }
@@ -895,7 +869,6 @@ impl<'a> Strings<'a> {
     /// # let strings = Strings::from(&heap_data)?;
     /// // Find all method names (strings containing common method patterns)
     /// let method_names: Vec<_> = strings.iter()
-    ///     .filter_map(|result| result.ok())
     ///     .filter(|(_, string)| {
     ///         string.chars().next().map_or(false, |c| c.is_uppercase()) &&
     ///         (string.contains("Get") || string.contains("Set") ||
@@ -905,7 +878,6 @@ impl<'a> Strings<'a> {
     ///
     /// // Find all namespace-like strings (containing dots)
     /// let namespaces: Vec<_> = strings.iter()
-    ///     .filter_map(|result| result.ok())
     ///     .filter(|(_, string)| string.contains('.'))
     ///     .map(|(offset, string)| (offset, string.to_string()))
     ///     .collect();
@@ -913,42 +885,6 @@ impl<'a> Strings<'a> {
     /// println!("Found {} method names", method_names.len());
     /// println!("Found {} namespace strings", namespaces.len());
     /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// ## Error Handling During Iteration
-    /// ```rust
-    /// use dotscope::metadata::streams::Strings;
-    ///
-    /// # fn example() {
-    /// // Simulate heap with some valid and some invalid UTF-8
-    /// let mixed_heap = [
-    ///     0x00,                              // Valid: empty string
-    ///     b'V', b'a', b'l', b'i', b'd', 0x00,     // Valid: "Valid"
-    ///     0xFF, 0xFF, 0xFF, 0x00,            // Invalid UTF-8 sequence
-    ///     b'A', b'f', b't', b'e', b'r', 0x00,     // Valid: "After"
-    /// ];
-    ///
-    /// if let Ok(strings) = Strings::from(&mixed_heap) {
-    ///     let mut valid_count = 0;
-    ///     let mut error_count = 0;
-    ///
-    ///     for result in strings.iter() {
-    ///         match result {
-    ///             Ok((offset, string)) => {
-    ///                 valid_count += 1;
-    ///                 println!("Valid string at {}: '{}'", offset, string);
-    ///             }
-    ///             Err(e) => {
-    ///                 error_count += 1;
-    ///                 eprintln!("Invalid string: {}", e);
-    ///                 // Continue iteration to find remaining valid strings
-    ///             }
-    ///         }
-    ///     }
-    ///
-    ///     println!("Found {} valid strings, {} errors", valid_count, error_count);
-    /// }
     /// # }
     /// ```
     ///
@@ -968,16 +904,14 @@ impl<'a> Strings<'a> {
     /// let mut max_length = 0;
     /// let mut string_count = 0;
     ///
-    /// for result in strings.iter() {
-    ///     if let Ok((_, string)) = result {
-    ///         total_length += string.len();
-    ///         max_length = max_length.max(string.len());
-    ///         string_count += 1;
+    /// for (_, string) in strings.iter() {
+    ///     total_length += string.len();
+    ///     max_length = max_length.max(string.len());
+    ///     string_count += 1;
     ///
-    ///         // Process string immediately without storing
-    ///         if string.len() > 50 {
-    ///             println!("Long identifier found: '{}'", string);
-    ///         }
+    ///     // Process string immediately without storing
+    ///     if string.len() > 50 {
+    ///         println!("Long identifier found: '{}'", string);
     ///     }
     /// }
     ///
@@ -996,16 +930,12 @@ impl<'a> Strings<'a> {
     /// # let heap_data = [0x00, b'T', b'e', b's', b't', 0x00];
     /// # let strings = Strings::from(&heap_data)?;
     /// // Can use with for loops directly via IntoIterator implementation
-    /// for result in &strings {
-    ///     match result {
-    ///         Ok((offset, string)) => println!("{}: {}", offset, string),
-    ///         Err(e) => eprintln!("Error: {}", e),
-    ///     }
+    /// for (offset, string) in &strings {
+    ///     println!("{}: {}", offset, string);
     /// }
     ///
     /// // Or with iterator methods
     /// let string_lengths: Vec<_> = (&strings).into_iter()
-    ///     .filter_map(|result| result.ok())
     ///     .map(|(_, string)| string.len())
     ///     .collect();
     /// # Ok(())
@@ -1039,7 +969,7 @@ impl<'a> Strings<'a> {
 }
 
 impl<'a> IntoIterator for &'a Strings<'a> {
-    type Item = std::result::Result<(usize, &'a str), error::Error>;
+    type Item = (usize, &'a str);
     type IntoIter = StringsIterator<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -1085,12 +1015,12 @@ impl<'a> IntoIterator for &'a Strings<'a> {
 /// let mut iter = strings.iter();
 ///
 /// // First string
-/// let (offset1, string1) = iter.next().unwrap()?;
+/// let (offset1, string1) = iter.next().unwrap();
 /// assert_eq!(offset1, 1);
 /// assert_eq!(string1, "Hello");
 ///
 /// // Second string  
-/// let (offset2, string2) = iter.next().unwrap()?;
+/// let (offset2, string2) = iter.next().unwrap();
 /// assert_eq!(offset2, 7);
 /// assert_eq!(string2, "World");
 ///
@@ -1119,12 +1049,8 @@ impl<'a> IntoIterator for &'a Strings<'a> {
 ///     // Process all strings, handling errors gracefully
 ///     loop {
 ///         match iter.next() {
-///             Some(Ok((offset, string))) => {
+///             Some((offset, string)) => {
 ///                 println!("Valid string at {}: '{}'", offset, string);
-///             }
-///             Some(Err(e)) => {
-///                 eprintln!("Error reading string: {}", e);
-///                 // Could continue or break depending on error handling strategy
 ///             }
 ///             None => {
 ///                 println!("End of iteration");
@@ -1153,12 +1079,11 @@ impl<'a> IntoIterator for &'a Strings<'a> {
 /// // Find first string longer than 4 characters
 /// let long_string = loop {
 ///     match iter.next() {
-///         Some(Ok((offset, string))) => {
+///         Some((offset, string)) => {
 ///             if string.len() > 4 {
 ///                 break Some((offset, string));
 ///             }
 ///         }
-///         Some(Err(_)) => continue, // Skip invalid strings
 ///         None => break None,       // No more strings
 ///     }
 /// };
@@ -1208,7 +1133,7 @@ impl<'a> StringsIterator<'a> {
 }
 
 impl<'a> Iterator for StringsIterator<'a> {
-    type Item = Result<(usize, &'a str)>;
+    type Item = (usize, &'a str);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.position >= self.strings.data.len() {
@@ -1220,9 +1145,9 @@ impl<'a> Iterator for StringsIterator<'a> {
             Ok(string) => {
                 // Move position past this string and its null terminator
                 self.position += string.len() + 1;
-                Some(Ok((start_position, string)))
+                Some((start_position, string))
             }
-            Err(e) => Some(Err(e)),
+            Err(_) => None,
         }
     }
 }
@@ -1274,17 +1199,17 @@ mod tests {
         let mut iter = strings.iter();
 
         // Test first string
-        let (offset1, string1) = iter.next().unwrap().unwrap();
+        let (offset1, string1) = iter.next().unwrap();
         assert_eq!(offset1, 1);
         assert_eq!(string1, "Hello");
 
         // Test second string
-        let (offset2, string2) = iter.next().unwrap().unwrap();
+        let (offset2, string2) = iter.next().unwrap();
         assert_eq!(offset2, 7);
         assert_eq!(string2, "World");
 
         // Test third string
-        let (offset3, string3) = iter.next().unwrap().unwrap();
+        let (offset3, string3) = iter.next().unwrap();
         assert_eq!(offset3, 13);
         assert_eq!(string3, "Test");
 
@@ -1306,16 +1231,40 @@ mod tests {
 
         assert_eq!(results.len(), 3);
 
-        let (offset1, string1) = results[0].as_ref().unwrap();
-        assert_eq!(*offset1, 1);
-        assert_eq!(*string1, "");
+        let (offset1, string1) = results[0];
+        assert_eq!(offset1, 1);
+        assert_eq!(string1, "");
 
-        let (offset2, string2) = results[1].as_ref().unwrap();
-        assert_eq!(*offset2, 2);
-        assert_eq!(*string2, "A");
+        let (offset2, string2) = results[1];
+        assert_eq!(offset2, 2);
+        assert_eq!(string2, "A");
 
-        let (offset3, string3) = results[2].as_ref().unwrap();
-        assert_eq!(*offset3, 4);
-        assert_eq!(*string3, "");
+        let (offset3, string3) = results[2];
+        assert_eq!(offset3, 4);
+        assert_eq!(string3, "");
+    }
+
+    #[test]
+    fn test_strings_iterator_invalid_utf8() {
+        let data = [
+            0x00, // Initial null byte
+            b'H', b'e', b'l', b'l', b'o', 0x00, // "Hello" at offset 1
+            0xFF, 0xFF, 0x00, // Invalid UTF-8 sequence at offset 7
+            b'W', b'o', b'r', b'l', b'd', 0x00, // "World" at offset 10
+        ];
+
+        let strings = Strings::from(&data).unwrap();
+        let mut iter = strings.iter();
+
+        // First valid string
+        let (offset1, string1) = iter.next().unwrap();
+        assert_eq!(offset1, 1);
+        assert_eq!(string1, "Hello");
+
+        // Second string is invalid, should return None
+        assert!(iter.next().is_none());
+
+        // Third string should not be reached due to invalid UTF-8
+        assert!(iter.next().is_none());
     }
 }
