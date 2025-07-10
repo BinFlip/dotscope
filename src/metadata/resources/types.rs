@@ -223,7 +223,7 @@ impl ResourceType {
             ResourceType::Double(_) => Some("System.Double"),
             ResourceType::ByteArray(_) => Some("System.Byte[]"),
             // Types without .NET equivalents or not yet implemented
-            ResourceType::Null 
+            ResourceType::Null
             | ResourceType::Decimal // TODO: Implement when Decimal support is added
             | ResourceType::DateTime // TODO: Implement when DateTime support is added
             | ResourceType::TimeSpan // TODO: Implement when TimeSpan support is added
@@ -292,7 +292,7 @@ impl ResourceType {
             ResourceType::String(_) => Some(12),
             ResourceType::ByteArray(_) => Some(13),
             // Types without .NET equivalents or not yet implemented
-            ResourceType::Null 
+            ResourceType::Null
             | ResourceType::Decimal // TODO: Implement when Decimal support is added
             | ResourceType::DateTime // TODO: Implement when DateTime support is added
             | ResourceType::TimeSpan // TODO: Implement when TimeSpan support is added
@@ -419,7 +419,7 @@ impl ResourceType {
                 Some(Self::compressed_uint_size(data.len() as u32) + data.len() as u32)
             }
             // Types without .NET equivalents or not yet implemented
-            ResourceType::Null 
+            ResourceType::Null
             | ResourceType::Decimal // TODO: Implement when Decimal support is added
             | ResourceType::DateTime // TODO: Implement when DateTime support is added
             | ResourceType::TimeSpan // TODO: Implement when TimeSpan support is added
