@@ -449,7 +449,7 @@ impl FileLayout {
             (next_virtual_address + section_alignment - 1) & !(section_alignment - 1);
 
         // Create the new .meta section with standard characteristics for metadata
-        let meta_characteristics = 0x40000040; // IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ
+        let meta_characteristics = 0x4000_0040; // IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ
 
         new_sections.push(SectionFileLayout {
             name: ".meta".to_string(),

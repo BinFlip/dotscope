@@ -211,6 +211,11 @@ impl DotNetResourceEncoder {
     /// * `name` - Unique name for the resource
     /// * `value` - String value to store
     ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`. Future versions may return errors
+    /// for invalid resource names or encoding issues.
+    ///
     /// # Examples
     ///
     /// ```rust,ignore
@@ -237,6 +242,11 @@ impl DotNetResourceEncoder {
     /// * `name` - Unique name for the resource
     /// * `value` - Integer value to store
     ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`. Future versions may return errors
+    /// for invalid resource names or encoding issues.
+    ///
     /// # Examples
     ///
     /// ```rust,ignore
@@ -262,6 +272,11 @@ impl DotNetResourceEncoder {
     ///
     /// * `name` - Unique name for the resource
     /// * `value` - Boolean value to store
+    ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`. Future versions may return errors
+    /// for invalid resource names or encoding issues.
     ///
     /// # Examples
     ///
@@ -303,6 +318,11 @@ impl DotNetResourceEncoder {
     /// encoder.add_byte_array("ApplicationIcon", &icon_data)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`. Future versions may return errors
+    /// for invalid resource names or encoding issues.
     pub fn add_byte_array(&mut self, name: &str, data: &[u8]) -> Result<()> {
         self.resources
             .push((name.to_string(), ResourceType::ByteArray(data.to_vec())));
@@ -327,6 +347,11 @@ impl DotNetResourceEncoder {
     /// encoder.add_byte("MaxRetries", 5)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`. Future versions may return errors
+    /// for invalid resource names or encoding issues.
     pub fn add_byte(&mut self, name: &str, value: u8) -> Result<()> {
         self.resources
             .push((name.to_string(), ResourceType::Byte(value)));
@@ -351,6 +376,11 @@ impl DotNetResourceEncoder {
     /// encoder.add_sbyte("TemperatureOffset", -10)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`. Future versions may return errors
+    /// for invalid resource names or encoding issues.
     pub fn add_sbyte(&mut self, name: &str, value: i8) -> Result<()> {
         self.resources
             .push((name.to_string(), ResourceType::SByte(value)));
@@ -376,6 +406,11 @@ impl DotNetResourceEncoder {
     /// encoder.add_char("Delimiter", '|')?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`. Future versions may return errors
+    /// for invalid resource names or encoding issues.
     pub fn add_char(&mut self, name: &str, value: char) -> Result<()> {
         self.resources
             .push((name.to_string(), ResourceType::Char(value)));
@@ -400,6 +435,11 @@ impl DotNetResourceEncoder {
     /// encoder.add_int16("PortNumber", 8080)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`. Future versions may return errors
+    /// for invalid resource names or encoding issues.
     pub fn add_int16(&mut self, name: &str, value: i16) -> Result<()> {
         self.resources
             .push((name.to_string(), ResourceType::Int16(value)));
@@ -424,6 +464,11 @@ impl DotNetResourceEncoder {
     /// encoder.add_uint16("MaxConnections", 65535)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`. Future versions may return errors
+    /// for invalid resource names or encoding issues.
     pub fn add_uint16(&mut self, name: &str, value: u16) -> Result<()> {
         self.resources
             .push((name.to_string(), ResourceType::UInt16(value)));
@@ -448,6 +493,11 @@ impl DotNetResourceEncoder {
     /// encoder.add_uint32("FileSize", 1024000)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`. Future versions may return errors
+    /// for invalid resource names or encoding issues.
     pub fn add_uint32(&mut self, name: &str, value: u32) -> Result<()> {
         self.resources
             .push((name.to_string(), ResourceType::UInt32(value)));
@@ -472,6 +522,11 @@ impl DotNetResourceEncoder {
     /// encoder.add_int64("TimestampTicks", 637500000000000000)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`. Future versions may return errors
+    /// for invalid resource names or encoding issues.
     pub fn add_int64(&mut self, name: &str, value: i64) -> Result<()> {
         self.resources
             .push((name.to_string(), ResourceType::Int64(value)));
@@ -496,6 +551,11 @@ impl DotNetResourceEncoder {
     /// encoder.add_uint64("MaxFileSize", 18446744073709551615)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`. Future versions may return errors
+    /// for invalid resource names or encoding issues.
     pub fn add_uint64(&mut self, name: &str, value: u64) -> Result<()> {
         self.resources
             .push((name.to_string(), ResourceType::UInt64(value)));
@@ -521,6 +581,11 @@ impl DotNetResourceEncoder {
     /// encoder.add_single("Pi", 3.14159)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`. Future versions may return errors
+    /// for invalid resource names or encoding issues.
     pub fn add_single(&mut self, name: &str, value: f32) -> Result<()> {
         self.resources
             .push((name.to_string(), ResourceType::Single(value)));
@@ -546,6 +611,11 @@ impl DotNetResourceEncoder {
     /// encoder.add_double("EulerNumber", 2.71828182845904523536)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`. Future versions may return errors
+    /// for invalid resource names or encoding issues.
     pub fn add_double(&mut self, name: &str, value: f64) -> Result<()> {
         self.resources
             .push((name.to_string(), ResourceType::Double(value)));
@@ -620,16 +690,23 @@ impl DotNetResourceEncoder {
 
         // Resource reader type name (exact Microsoft constant)
         let reader_type = "System.Resources.ResourceReader, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089";
-        write_compressed_uint(reader_type.len() as u32, &mut buffer);
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            write_compressed_uint(reader_type.len() as u32, &mut buffer);
+        }
         buffer.extend_from_slice(reader_type.as_bytes());
 
         // Resource set type name (exact Microsoft constant)
         let resource_set_type = "System.Resources.RuntimeResourceSet";
-        write_compressed_uint(resource_set_type.len() as u32, &mut buffer);
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            write_compressed_uint(resource_set_type.len() as u32, &mut buffer);
+        }
         buffer.extend_from_slice(resource_set_type.as_bytes());
 
         // Calculate header size and update placeholder
         let header_size = buffer.len() - header_size_pos - 4;
+        #[allow(clippy::cast_possible_truncation)]
         let header_size_bytes = (header_size as u32).to_le_bytes();
         buffer[header_size_pos..header_size_pos + 4].copy_from_slice(&header_size_bytes);
 
@@ -637,10 +714,13 @@ impl DotNetResourceEncoder {
         buffer.extend_from_slice(&self.version.to_le_bytes()); // RR version
 
         // Resource count
-        buffer.extend_from_slice(&(self.resources.len() as u32).to_le_bytes());
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            buffer.extend_from_slice(&(self.resources.len() as u32).to_le_bytes());
+        }
 
         // Write type table
-        self.write_type_table(&mut buffer)?;
+        Self::write_type_table(&mut buffer)?;
 
         // Add padding for 8-byte alignment
         while buffer.len() % 8 != 0 {
@@ -669,6 +749,7 @@ impl DotNetResourceEncoder {
             let (name, _) = &self.resources[*resource_index];
             let name_utf16: Vec<u16> = name.encode_utf16().collect();
             let byte_count = name_utf16.len() * 2;
+            #[allow(clippy::cast_possible_truncation)]
             let entry_size =
                 ResourceType::compressed_uint_size(byte_count as u32) + byte_count as u32 + 4;
 
@@ -713,7 +794,10 @@ impl DotNetResourceEncoder {
             let byte_count = name_utf16.len() * 2;
 
             // Write byte count, not character count
-            write_compressed_uint(byte_count as u32, &mut buffer);
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                write_compressed_uint(byte_count as u32, &mut buffer);
+            }
 
             for utf16_char in name_utf16 {
                 buffer.extend_from_slice(&utf16_char.to_le_bytes());
@@ -728,6 +812,7 @@ impl DotNetResourceEncoder {
         // For embedded resources, we need to be careful about the offset calculation
         // The offset should point to where the data actually starts in the file
         let actual_data_section_offset = buffer.len() - 4; // -4 to account for size prefix
+        #[allow(clippy::cast_possible_truncation)]
         let data_section_offset_value = (actual_data_section_offset as u32).to_le_bytes();
         buffer[data_section_offset_pos..data_section_offset_pos + 4]
             .copy_from_slice(&data_section_offset_value);
@@ -737,6 +822,7 @@ impl DotNetResourceEncoder {
 
         // Update the size field at the beginning
         let total_size = buffer.len() - 4; // Exclude the size field itself
+        #[allow(clippy::cast_possible_truncation)]
         let size_bytes = (total_size as u32).to_le_bytes();
         buffer[size_placeholder_pos..size_placeholder_pos + 4].copy_from_slice(&size_bytes);
 
@@ -771,7 +857,8 @@ impl DotNetResourceEncoder {
     /// Writes the type table section of the .NET resource format.
     /// Following Microsoft's ResourceWriter implementation, we write an empty type table
     /// for primitive types and use ResourceTypeCode enum values directly.
-    fn write_type_table(&self, buffer: &mut Vec<u8>) -> Result<()> {
+    #[allow(clippy::unnecessary_wraps)]
+    fn write_type_table(buffer: &mut Vec<u8>) -> Result<()> {
         // Microsoft's ResourceWriter.cs line 344: "write 0 for this writer implementation"
         // For primitive types, Microsoft uses an empty type table and ResourceTypeCode values
         buffer.extend_from_slice(&0u32.to_le_bytes()); // Type count = 0
@@ -823,11 +910,14 @@ impl DotNetResourceEncoder {
                 ResourceType::String(s) => {
                     // Microsoft uses BinaryWriter.Write(string) which writes UTF-8 with 7-bit length prefix
                     let utf8_bytes = s.as_bytes();
-                    write_compressed_uint(utf8_bytes.len() as u32, buffer);
+                    #[allow(clippy::cast_possible_truncation)]
+                    {
+                        write_compressed_uint(utf8_bytes.len() as u32, buffer);
+                    }
                     buffer.extend_from_slice(utf8_bytes);
                 }
                 ResourceType::Boolean(b) => {
-                    buffer.push(if *b { 1 } else { 0 });
+                    buffer.push(u8::from(*b));
                 }
                 ResourceType::Char(c) => {
                     // Microsoft writes char as ushort (UTF-16)
@@ -838,7 +928,10 @@ impl DotNetResourceEncoder {
                     buffer.push(*b);
                 }
                 ResourceType::SByte(sb) => {
-                    buffer.push(*sb as u8);
+                    #[allow(clippy::cast_sign_loss)]
+                    {
+                        buffer.push(*sb as u8);
+                    }
                 }
                 ResourceType::Int16(i) => {
                     buffer.extend_from_slice(&i.to_le_bytes());
@@ -866,7 +959,10 @@ impl DotNetResourceEncoder {
                 }
                 ResourceType::ByteArray(data) => {
                     // Microsoft writes byte array length then data
-                    write_compressed_uint(data.len() as u32, buffer);
+                    #[allow(clippy::cast_possible_truncation)]
+                    {
+                        write_compressed_uint(data.len() as u32, buffer);
+                    }
                     buffer.extend_from_slice(data);
                 }
                 _ => {

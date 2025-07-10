@@ -162,7 +162,7 @@ impl TypeDefBuilder {
     ///
     /// Self for method chaining.
     pub fn public_class(mut self) -> Self {
-        self.flags = Some(0x00100001); // Public | Class
+        self.flags = Some(0x0010_0001); // Public | Class
         self
     }
 
@@ -174,7 +174,7 @@ impl TypeDefBuilder {
     ///
     /// Self for method chaining.
     pub fn public_interface(mut self) -> Self {
-        self.flags = Some(0x00100161); // Public | Interface | Abstract
+        self.flags = Some(0x0010_0161); // Public | Interface | Abstract
         self
     }
 
@@ -186,7 +186,7 @@ impl TypeDefBuilder {
     ///
     /// Self for method chaining.
     pub fn public_value_type(mut self) -> Self {
-        self.flags = Some(0x00100101); // Public | Sealed
+        self.flags = Some(0x0010_0101); // Public | Sealed
         self
     }
 
@@ -237,7 +237,7 @@ impl TypeDefBuilder {
             rid,
             token: Token::new(rid | 0x0200_0000), // TypeDef table token prefix
             offset: 0,                            // Will be set during binary generation
-            flags: self.flags.unwrap_or(0x00100001), // Default to public class
+            flags: self.flags.unwrap_or(0x0010_0001), // Default to public class
             type_name: name_index,
             type_namespace: namespace_index,
             extends: self.extends.unwrap_or(CodedIndex::new(TableId::TypeRef, 0)), // No base type

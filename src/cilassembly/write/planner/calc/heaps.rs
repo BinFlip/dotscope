@@ -113,12 +113,11 @@ pub(crate) fn calculate_string_heap_size(
         };
 
         return Ok(total_size - existing_heap_size);
-    } else {
-        // Addition-only scenario - calculate size of additions only
-        for string in &heap_changes.appended_items {
-            // Each string is null-terminated in the heap
-            total_size += string.len() as u64 + 1; // +1 for null terminator
-        }
+    }
+    // Addition-only scenario - calculate size of additions only
+    for string in &heap_changes.appended_items {
+        // Each string is null-terminated in the heap
+        total_size += string.len() as u64 + 1; // +1 for null terminator
     }
 
     // Align to 4-byte boundary (ECMA-335 II.24.2.2)

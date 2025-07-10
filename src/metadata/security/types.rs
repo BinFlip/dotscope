@@ -1169,7 +1169,7 @@ pub mod security_classes {
 /// - **.NET Framework 1.0-3.5**: All formats supported
 /// - **.NET Framework 4.0+**: All formats supported but CAS deprecated
 /// - **.NET Core/.NET 5+**: Limited support, mainly for compatibility analysis
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PermissionSetFormat {
     /// XML format - permission sets serialized as XML.
     ///

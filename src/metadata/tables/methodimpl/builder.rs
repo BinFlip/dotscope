@@ -209,7 +209,7 @@ impl MethodImplBuilder {
     /// ```
     pub fn method_body_from_method_def(mut self, method_token: Token) -> Self {
         // Extract RID from MethodDef token (0x06xxxxxx)
-        let rid = method_token.value() & 0x00FFFFFF;
+        let rid = method_token.value() & 0x00FF_FFFF;
         self.method_body = Some(CodedIndex::new(TableId::MethodDef, rid));
         self
     }
@@ -258,7 +258,7 @@ impl MethodImplBuilder {
     /// ```
     pub fn method_body_from_member_ref(mut self, member_token: Token) -> Self {
         // Extract RID from MemberRef token (0x0Axxxxxx)
-        let rid = member_token.value() & 0x00FFFFFF;
+        let rid = member_token.value() & 0x00FF_FFFF;
         self.method_body = Some(CodedIndex::new(TableId::MemberRef, rid));
         self
     }
@@ -307,7 +307,7 @@ impl MethodImplBuilder {
     /// ```
     pub fn method_declaration_from_method_def(mut self, method_token: Token) -> Self {
         // Extract RID from MethodDef token (0x06xxxxxx)
-        let rid = method_token.value() & 0x00FFFFFF;
+        let rid = method_token.value() & 0x00FF_FFFF;
         self.method_declaration = Some(CodedIndex::new(TableId::MethodDef, rid));
         self
     }
@@ -356,7 +356,7 @@ impl MethodImplBuilder {
     /// ```
     pub fn method_declaration_from_member_ref(mut self, member_token: Token) -> Self {
         // Extract RID from MemberRef token (0x0Axxxxxx)
-        let rid = member_token.value() & 0x00FFFFFF;
+        let rid = member_token.value() & 0x00FF_FFFF;
         self.method_declaration = Some(CodedIndex::new(TableId::MemberRef, rid));
         self
     }
@@ -462,7 +462,7 @@ impl MethodImplBuilder {
                 })?;
 
         // Extract RID from class token (should be TypeDef: 0x02xxxxxx)
-        let class_rid = class.value() & 0x00FFFFFF;
+        let class_rid = class.value() & 0x00FF_FFFF;
 
         let next_rid = context.next_rid(TableId::MethodImpl);
         let token = Token::new(((TableId::MethodImpl as u32) << 24) | next_rid);

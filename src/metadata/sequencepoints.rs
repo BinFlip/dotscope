@@ -110,6 +110,7 @@ pub struct SequencePoints(pub Vec<SequencePoint>);
 
 impl SequencePoints {
     /// Returns the sequence point for a given IL offset, if any.
+    #[must_use]
     pub fn find_by_il_offset(&self, il_offset: u32) -> Option<&SequencePoint> {
         self.0.iter().find(|sp| sp.il_offset == il_offset)
     }
@@ -150,6 +151,7 @@ impl SequencePoints {
     /// let bytes = points.to_bytes();
     /// assert_eq!(bytes, vec![1, 10, 2, 0, 5]); // il_offset=1, start_line=10, start_col=2, end_line_delta=0, end_col_delta=5
     /// ```
+    #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buffer = Vec::new();
 
@@ -176,15 +178,16 @@ impl SequencePoints {
             if is_first {
                 write_compressed_uint(point.start_line, &mut buffer);
             } else {
+                #[allow(clippy::cast_possible_wrap)]
                 let delta = point.start_line as i32 - prev_start_line as i32;
                 write_compressed_int(delta, &mut buffer);
             }
 
             // Start Column (absolute for first, signed delta for subsequent)
             if is_first {
-                write_compressed_uint(point.start_col as u32, &mut buffer);
+                write_compressed_uint(u32::from(point.start_col), &mut buffer);
             } else {
-                let delta = point.start_col as i32 - prev_start_col as i32;
+                let delta = i32::from(point.start_col) - i32::from(prev_start_col);
                 write_compressed_int(delta, &mut buffer);
             }
 
@@ -194,7 +197,7 @@ impl SequencePoints {
 
             // End Column Delta (unsigned delta from start column)
             let end_col_delta = point.end_col - point.start_col;
-            write_compressed_uint(end_col_delta as u32, &mut buffer);
+            write_compressed_uint(u32::from(end_col_delta), &mut buffer);
 
             // Update previous values for next iteration
             prev_il_offset = point.il_offset;
@@ -213,6 +216,12 @@ impl SequencePoints {
 ///
 /// # Returns
 /// * `Ok(SequencePoints)` on success, or `Err(OutOfBounds)` on failure.
+///
+/// # Errors
+/// Returns an error if:
+/// - The blob is malformed or truncated
+/// - Compressed integer values cannot be decoded
+/// - IL offsets or line/column deltas are out of valid range
 pub fn parse_sequence_points(blob: &[u8]) -> Result<SequencePoints> {
     let mut parser = Parser::new(blob);
     let mut points = Vec::new();
@@ -233,7 +242,10 @@ pub fn parse_sequence_points(blob: &[u8]) -> Result<SequencePoints> {
         let start_line_delta = if first {
             parser.read_compressed_uint()? // Absolute
         } else {
-            parser.read_compressed_int()? as u32 // Delta
+            #[allow(clippy::cast_sign_loss)]
+            {
+                parser.read_compressed_int()? as u32 // Delta
+            }
         };
         start_line = if first {
             start_line_delta
@@ -242,9 +254,15 @@ pub fn parse_sequence_points(blob: &[u8]) -> Result<SequencePoints> {
         };
 
         let start_col_delta = if first {
-            parser.read_compressed_uint()? as u16 // Absolute
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                parser.read_compressed_uint()? as u16 // Absolute
+            }
         } else {
-            parser.read_compressed_int()? as u16 // Delta
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            {
+                parser.read_compressed_int()? as u16 // Delta
+            }
         };
         start_col = if first {
             start_col_delta
@@ -253,11 +271,12 @@ pub fn parse_sequence_points(blob: &[u8]) -> Result<SequencePoints> {
         };
 
         let end_line_delta = parser.read_compressed_uint()?;
+        #[allow(clippy::cast_possible_truncation)]
         let end_col_delta = parser.read_compressed_uint()? as u16;
         let end_line = start_line + end_line_delta;
         let end_col = start_col + end_col_delta;
 
-        let is_hidden = start_line == 0xFEEFEE;
+        let is_hidden = start_line == 0x00FE_EFEE;
         points.push(SequencePoint {
             il_offset,
             start_line,

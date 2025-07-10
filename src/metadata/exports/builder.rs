@@ -98,6 +98,7 @@ impl NativeExportsBuilder {
     ///     .add_function("MyFunction", 1, 0x1000)
     ///     .add_function("AnotherFunc", 2, 0x2000);
     /// ```
+    #[must_use]
     pub fn add_function(mut self, name: impl Into<String>, ordinal: u16, address: u32) -> Self {
         self.functions.push((name.into(), ordinal, address));
         if ordinal >= self.next_ordinal {
@@ -127,6 +128,7 @@ impl NativeExportsBuilder {
     ///     .add_function_auto("MyFunction", 0x1000)
     ///     .add_function_auto("AnotherFunc", 0x2000);
     /// ```
+    #[must_use]
     pub fn add_function_auto(mut self, name: impl Into<String>, address: u32) -> Self {
         let ordinal = self.next_ordinal;
         self.functions.push((name.into(), ordinal, address));
@@ -156,6 +158,7 @@ impl NativeExportsBuilder {
     ///     .add_function_by_ordinal(100, 0x1000)
     ///     .add_function_by_ordinal(101, 0x2000);
     /// ```
+    #[must_use]
     pub fn add_function_by_ordinal(mut self, ordinal: u16, address: u32) -> Self {
         self.ordinal_functions.push((ordinal, address));
         if ordinal >= self.next_ordinal {
@@ -184,6 +187,7 @@ impl NativeExportsBuilder {
     ///     .add_function_by_ordinal_auto(0x1000)
     ///     .add_function_by_ordinal_auto(0x2000);
     /// ```
+    #[must_use]
     pub fn add_function_by_ordinal_auto(mut self, address: u32) -> Self {
         let ordinal = self.next_ordinal;
         self.ordinal_functions.push((ordinal, address));
@@ -214,6 +218,7 @@ impl NativeExportsBuilder {
     ///     .add_forwarder("GetProcessId", 1, "kernel32.dll.GetCurrentProcessId")
     ///     .add_forwarder("MessageBox", 2, "user32.dll.#120");
     /// ```
+    #[must_use]
     pub fn add_forwarder(
         mut self,
         name: impl Into<String>,
@@ -248,6 +253,7 @@ impl NativeExportsBuilder {
     ///     .add_forwarder_auto("GetProcessId", "kernel32.dll.GetCurrentProcessId")
     ///     .add_forwarder_auto("MessageBox", "user32.dll.MessageBoxW");
     /// ```
+    #[must_use]
     pub fn add_forwarder_auto(
         mut self,
         name: impl Into<String>,
@@ -277,6 +283,7 @@ impl NativeExportsBuilder {
     /// let builder = NativeExportsBuilder::new("temp.dll")
     ///     .dll_name("MyLibrary.dll");
     /// ```
+    #[must_use]
     pub fn dll_name(mut self, dll_name: impl Into<String>) -> Self {
         self.dll_name = dll_name.into();
         self

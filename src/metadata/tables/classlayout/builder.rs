@@ -305,7 +305,7 @@ impl ClassLayoutBuilder {
             });
         }
 
-        const MAX_CLASS_SIZE: u32 = 0x10000000; // 256MB
+        const MAX_CLASS_SIZE: u32 = 0x1000_0000; // 256MB
         if class_size > MAX_CLASS_SIZE {
             return Err(Error::ModificationInvalidOperation {
                 details: format!(

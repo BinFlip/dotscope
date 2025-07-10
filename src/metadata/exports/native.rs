@@ -311,12 +311,13 @@ impl NativeExports {
     ///
     /// # Errors
     /// Returns error if the goblin export data is malformed or contains invalid data.
+    #[allow(clippy::cast_possible_truncation)]
     pub fn populate_from_goblin(
         &mut self,
         goblin_exports: &[goblin::pe::export::Export],
     ) -> Result<()> {
         for export in goblin_exports {
-            if let Some(ref name) = export.name {
+            if let Some(name) = export.name {
                 self.directory.dll_name = name.to_string();
             }
 
@@ -326,7 +327,7 @@ impl NativeExports {
                 continue; // Skip invalid exports
             }
 
-            if let Some(ref _reexport) = export.reexport {
+            if export.reexport.is_some() {
                 let name = export.name.unwrap_or("");
                 self.add_forwarder(name, ordinal, "forwarded_function")?;
             } else if let Some(name) = export.name {
@@ -371,6 +372,7 @@ impl NativeExports {
     /// - The ordinal is already in use
     /// - The function name is already exported
     /// - The ordinal is 0 (invalid)
+    #[allow(clippy::cast_possible_truncation)]
     pub fn add_function(&mut self, name: &str, ordinal: u16, address: u32) -> Result<()> {
         if name.is_empty() {
             return Err(Error::Error("Function name cannot be empty".to_string()));
@@ -443,6 +445,7 @@ impl NativeExports {
     /// Returns an error if:
     /// - The ordinal is already in use
     /// - The ordinal is 0 (invalid)
+    #[allow(clippy::cast_possible_truncation)]
     pub fn add_function_by_ordinal(&mut self, ordinal: u16, address: u32) -> Result<()> {
         if ordinal == 0 {
             return Err(Error::Error("Ordinal cannot be 0".to_string()));
@@ -545,8 +548,11 @@ impl NativeExports {
             self.name_to_ordinal.insert(name.to_owned(), ordinal);
         }
 
-        self.directory.function_count = (self.functions.len() + self.forwarders.len()) as u32;
-        self.directory.name_count = self.name_to_ordinal.len() as u32;
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            self.directory.function_count = (self.functions.len() + self.forwarders.len()) as u32;
+            self.directory.name_count = self.name_to_ordinal.len() as u32;
+        }
 
         if ordinal >= self.next_ordinal {
             self.next_ordinal = ordinal + 1;
@@ -567,6 +573,7 @@ impl NativeExports {
     /// let exports = NativeExports::new("MyLibrary.dll");
     /// assert_eq!(exports.dll_name(), "MyLibrary.dll");
     /// ```
+    #[must_use]
     pub fn dll_name(&self) -> &str {
         &self.directory.dll_name
     }
@@ -642,6 +649,7 @@ impl NativeExports {
     /// assert!(!exports.has_function("MissingFunction"));
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn has_function(&self, name: &str) -> bool {
         self.name_to_ordinal.contains_key(name)
     }
@@ -670,6 +678,7 @@ impl NativeExports {
     /// assert!(missing.is_none());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn get_function_by_ordinal(&self, ordinal: u16) -> Option<&ExportFunction> {
         self.functions.get(&ordinal)
     }
@@ -695,6 +704,7 @@ impl NativeExports {
     /// assert_eq!(forwarder.unwrap().target, "kernel32.dll.GetCurrentProcessId");
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn get_forwarder_by_ordinal(&self, ordinal: u16) -> Option<&ExportForwarder> {
         self.forwarders.get(&ordinal)
     }
@@ -722,6 +732,7 @@ impl NativeExports {
     /// assert_eq!(missing, None);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn get_ordinal_by_name(&self, name: &str) -> Option<u16> {
         self.name_to_ordinal.get(name).copied()
     }
@@ -790,6 +801,7 @@ impl NativeExports {
     /// assert!(names.contains(&"Function2".to_string()));
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn get_exported_function_names(&self) -> Vec<String> {
         self.name_to_ordinal.keys().cloned().collect()
     }
@@ -830,6 +842,11 @@ impl NativeExports {
     /// 5. DLL name string
     /// 6. Function name strings
     /// 7. Forwarder target strings
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the export table base RVA has not been set or if
+    /// data encoding fails during table generation.
     pub fn get_export_table_data(&self) -> Result<Vec<u8>> {
         if self.is_empty() {
             return Ok(Vec::new());
@@ -857,7 +874,7 @@ impl NativeExports {
 
         // EAT must cover from base_ordinal to highest ordinal
         let eat_entry_count = if max_ordinal >= self.directory.base_ordinal {
-            (max_ordinal - self.directory.base_ordinal + 1) as u32
+            u32::from(max_ordinal - self.directory.base_ordinal + 1)
         } else {
             0
         };
@@ -880,11 +897,12 @@ impl NativeExports {
             total_strings_size += forwarder.target.len() + 1; // target + null
         }
 
+        #[allow(clippy::cast_possible_truncation)]
         let total_size = export_dir_size
             + eat_size
             + name_table_size
             + ordinal_table_size
-            + total_strings_size as u32;
+            + (total_strings_size as u32);
         let mut data = vec![0u8; total_size as usize];
         let mut offset = 0;
 
@@ -894,7 +912,11 @@ impl NativeExports {
         write_le_at(&mut data, &mut offset, self.directory.major_version)?; // MajorVersion
         write_le_at(&mut data, &mut offset, self.directory.minor_version)?; // MinorVersion
         write_le_at(&mut data, &mut offset, strings_rva)?; // Name RVA (DLL name)
-        write_le_at(&mut data, &mut offset, self.directory.base_ordinal as u32)?; // Base ordinal
+        write_le_at(
+            &mut data,
+            &mut offset,
+            u32::from(self.directory.base_ordinal),
+        )?; // Base ordinal
         write_le_at(&mut data, &mut offset, eat_entry_count)?; // NumberOfFunctions
         write_le_at(&mut data, &mut offset, self.directory.name_count)?; // NumberOfNames
         write_le_at(&mut data, &mut offset, eat_rva)?; // AddressOfFunctions (EAT RVA)
@@ -930,7 +952,8 @@ impl NativeExports {
         // Go back and populate known entries
         let mut temp_offset = eat_start_offset;
         for ordinal_index in 0..eat_entry_count {
-            let ordinal = self.directory.base_ordinal + ordinal_index as u16;
+            #[allow(clippy::cast_possible_truncation)]
+            let ordinal = self.directory.base_ordinal + (ordinal_index as u16);
 
             if let Some(function) = self.functions.get(&ordinal) {
                 // Regular function - write address
@@ -938,7 +961,8 @@ impl NativeExports {
             } else if let Some(_forwarder) = self.forwarders.get(&ordinal) {
                 // Forwarder - write RVA to forwarder string
                 if let Some(&string_offset) = forwarder_string_offsets.get(&ordinal) {
-                    let forwarder_rva = strings_rva + string_offset as u32;
+                    #[allow(clippy::cast_possible_truncation)]
+                    let forwarder_rva = strings_rva + (string_offset as u32);
                     data[temp_offset..temp_offset + 4]
                         .copy_from_slice(&forwarder_rva.to_le_bytes());
                 }
@@ -951,7 +975,8 @@ impl NativeExports {
         // Write Export Name Table
         let mut name_string_offset = self.directory.dll_name.len() + 1; // After DLL name
         for (name, _) in &named_exports {
-            let name_rva = strings_rva + name_string_offset as u32;
+            #[allow(clippy::cast_possible_truncation)]
+            let name_rva = strings_rva + (name_string_offset as u32);
             write_le_at(&mut data, &mut offset, name_rva)?;
             name_string_offset += name.len() + 1; // +1 for null terminator
         }
@@ -1004,6 +1029,7 @@ impl NativeExports {
     /// assert_eq!(directory.dll_name, "MyLibrary.dll");
     /// assert_eq!(directory.base_ordinal, 1);
     /// ```
+    #[must_use]
     pub fn directory(&self) -> &ExportDirectory {
         &self.directory
     }

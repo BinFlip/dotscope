@@ -242,8 +242,11 @@ impl MarshallingEncoder {
                 // Always encode variant type if we have a user-defined name, even if EMPTY
                 // This helps with parsing disambiguation
                 if user_defined_name.is_some() || *variant_type != VARIANT_TYPE::EMPTY {
-                    self.buffer
-                        .push((*variant_type & VARIANT_TYPE::TYPEMASK) as u8);
+                    #[allow(clippy::cast_possible_truncation)]
+                    {
+                        self.buffer
+                            .push((*variant_type & VARIANT_TYPE::TYPEMASK) as u8);
+                    }
                 }
 
                 if let Some(user_defined_name) = user_defined_name {

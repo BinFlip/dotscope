@@ -252,17 +252,26 @@ mod tests {
         // Test offset + len overflow
         let result = memory.data_slice(usize::MAX, 1);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), crate::Error::OutOfBounds { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::Error::OutOfBounds { .. }
+        ));
 
         // Test offset exactly at length
         let result = memory.data_slice(100, 1);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), crate::Error::OutOfBounds { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::Error::OutOfBounds { .. }
+        ));
 
         // Test offset + len exceeds length by 1
         let result = memory.data_slice(99, 2);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), crate::Error::OutOfBounds { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::Error::OutOfBounds { .. }
+        ));
     }
 
     #[test]

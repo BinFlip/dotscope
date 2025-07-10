@@ -155,6 +155,7 @@ impl UnifiedImportContainer {
     ///
     /// Initializes both CIL and native import storage with empty state.
     /// Unified caches are created lazily on first access.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             cil: CilImports::new(),
@@ -407,6 +408,11 @@ impl UnifiedImportContainer {
     /// # Arguments
     /// * `is_pe32_plus` - Whether this is PE32+ format (64-bit) or PE32 (32-bit)
     ///
+    /// # Errors
+    ///
+    /// Returns an error if native import table generation fails due to
+    /// invalid import data or encoding issues.
+    ///
     /// # Examples
     ///
     /// ```rust,ignore
@@ -473,7 +479,7 @@ impl UnifiedImportContainer {
         self.unified_dll_cache.clear();
 
         // Populate from CIL imports
-        for import_entry in self.cil.iter() {
+        for import_entry in &self.cil {
             let import = import_entry.value();
             let token = *import_entry.key();
 
@@ -485,15 +491,14 @@ impl UnifiedImportContainer {
 
             // Add to DLL cache if it's a P/Invoke method import
             if matches!(import.import, super::ImportType::Method(_)) {
-                if let Some(dll_name) = self.extract_dll_from_pinvoke_import(import) {
+                if let Some(dll_name) = Self::extract_dll_from_pinvoke_import(import) {
                     match self.unified_dll_cache.entry(dll_name) {
                         Entry::Occupied(mut entry) => match entry.get_mut() {
-                            DllSource::Cil(tokens) => tokens.push(token),
+                            DllSource::Cil(tokens) | DllSource::Both(tokens) => tokens.push(token),
                             DllSource::Native => {
                                 let tokens = vec![token];
                                 *entry.get_mut() = DllSource::Both(tokens);
                             }
-                            DllSource::Both(tokens) => tokens.push(token),
                         },
                         Entry::Vacant(entry) => {
                             entry.insert(DllSource::Cil(vec![token]));
@@ -546,7 +551,7 @@ impl UnifiedImportContainer {
     ///
     /// This examines the import's source information to determine if it's
     /// a P/Invoke method import and extracts the target DLL name.
-    fn extract_dll_from_pinvoke_import(&self, _import: &super::Import) -> Option<String> {
+    fn extract_dll_from_pinvoke_import(_import: &super::Import) -> Option<String> {
         // TODO: Implement based on existing CIL P/Invoke representation
         // This depends on how the current CIL implementation stores P/Invoke information
         // Likely involves looking at the import source and module reference data
@@ -591,6 +596,6 @@ impl std::fmt::Debug for UnifiedImportContainer {
             .field("native_dll_count", &self.native.dll_count())
             .field("native_function_count", &self.native.total_function_count())
             .field("is_cache_dirty", &self.cache_dirty.load(Ordering::Relaxed))
-            .finish()
+            .finish_non_exhaustive()
     }
 }

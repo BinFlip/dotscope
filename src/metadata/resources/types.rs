@@ -223,12 +223,12 @@ impl ResourceType {
             ResourceType::Double(_) => Some("System.Double"),
             ResourceType::ByteArray(_) => Some("System.Byte[]"),
             // Types without .NET equivalents or not yet implemented
-            ResourceType::Null => None,
-            ResourceType::Decimal => None, // TODO: Implement when Decimal support is added
-            ResourceType::DateTime => None, // TODO: Implement when DateTime support is added
-            ResourceType::TimeSpan => None, // TODO: Implement when TimeSpan support is added
-            ResourceType::Stream => None,  // TODO: Implement when Stream support is added
-            ResourceType::StartOfUserTypes => None,
+            ResourceType::Null 
+            | ResourceType::Decimal // TODO: Implement when Decimal support is added
+            | ResourceType::DateTime // TODO: Implement when DateTime support is added
+            | ResourceType::TimeSpan // TODO: Implement when TimeSpan support is added
+            | ResourceType::Stream  // TODO: Implement when Stream support is added
+            | ResourceType::StartOfUserTypes => None,
         }
     }
 
@@ -292,12 +292,12 @@ impl ResourceType {
             ResourceType::String(_) => Some(12),
             ResourceType::ByteArray(_) => Some(13),
             // Types without .NET equivalents or not yet implemented
-            ResourceType::Null => None,
-            ResourceType::Decimal => None, // TODO: Implement when Decimal support is added
-            ResourceType::DateTime => None, // TODO: Implement when DateTime support is added
-            ResourceType::TimeSpan => None, // TODO: Implement when TimeSpan support is added
-            ResourceType::Stream => None,  // TODO: Implement when Stream support is added
-            ResourceType::StartOfUserTypes => None,
+            ResourceType::Null 
+            | ResourceType::Decimal // TODO: Implement when Decimal support is added
+            | ResourceType::DateTime // TODO: Implement when DateTime support is added
+            | ResourceType::TimeSpan // TODO: Implement when TimeSpan support is added
+            | ResourceType::Stream  // TODO: Implement when Stream support is added
+            | ResourceType::StartOfUserTypes => None,
         }
     }
 
@@ -370,8 +370,7 @@ impl ResourceType {
             ResourceType::ByteArray(_) => Some(0x20),
             ResourceType::Stream => Some(0x21),
             // Types without .NET equivalents
-            ResourceType::Null => None,
-            ResourceType::StartOfUserTypes => None,
+            ResourceType::Null | ResourceType::StartOfUserTypes => None,
         }
     }
 
@@ -411,29 +410,21 @@ impl ResourceType {
                 let utf8_byte_count = s.len();
                 Some(Self::compressed_uint_size(utf8_byte_count as u32) + utf8_byte_count as u32)
             }
-            ResourceType::Boolean(_) => Some(1), // Single byte
-            ResourceType::Char(_) => Some(2),    // UTF-16, 2 bytes
-            ResourceType::Byte(_) => Some(1),
-            ResourceType::SByte(_) => Some(1),
-            ResourceType::Int16(_) => Some(2),
-            ResourceType::UInt16(_) => Some(2),
-            ResourceType::Int32(_) => Some(4),
-            ResourceType::UInt32(_) => Some(4),
-            ResourceType::Int64(_) => Some(8),
-            ResourceType::UInt64(_) => Some(8),
-            ResourceType::Single(_) => Some(4),
-            ResourceType::Double(_) => Some(8),
+            ResourceType::Boolean(_) | ResourceType::Byte(_) | ResourceType::SByte(_) => Some(1), // Single byte
+            ResourceType::Char(_) | ResourceType::Int16(_) | ResourceType::UInt16(_) => Some(2), // 2 bytes
+            ResourceType::Int32(_) | ResourceType::UInt32(_) | ResourceType::Single(_) => Some(4), // 4 bytes
+            ResourceType::Int64(_) | ResourceType::UInt64(_) | ResourceType::Double(_) => Some(8), // 8 bytes
             ResourceType::ByteArray(data) => {
                 // Array length (7-bit encoded) + data bytes
                 Some(Self::compressed_uint_size(data.len() as u32) + data.len() as u32)
             }
             // Types without .NET equivalents or not yet implemented
-            ResourceType::Null => None,
-            ResourceType::Decimal => None, // TODO: Implement when Decimal support is added
-            ResourceType::DateTime => None, // TODO: Implement when DateTime support is added
-            ResourceType::TimeSpan => None, // TODO: Implement when TimeSpan support is added
-            ResourceType::Stream => None,  // TODO: Implement when Stream support is added
-            ResourceType::StartOfUserTypes => None,
+            ResourceType::Null 
+            | ResourceType::Decimal // TODO: Implement when Decimal support is added
+            | ResourceType::DateTime // TODO: Implement when DateTime support is added
+            | ResourceType::TimeSpan // TODO: Implement when TimeSpan support is added
+            | ResourceType::Stream  // TODO: Implement when Stream support is added
+            | ResourceType::StartOfUserTypes => None,
         }
     }
 

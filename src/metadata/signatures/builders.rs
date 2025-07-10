@@ -185,6 +185,7 @@ impl MethodSignatureBuilder {
     ///
     /// The default configuration creates a static, non-generic method with
     /// the default managed calling convention and void return type.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             signature: SignatureMethod {
@@ -213,6 +214,7 @@ impl MethodSignatureBuilder {
     ///
     /// This is the standard calling convention for .NET methods and is
     /// the default setting for new builders.
+    #[must_use]
     pub fn calling_convention_default(mut self) -> Self {
         self.clear_calling_conventions();
         self.signature.default = true;
@@ -223,6 +225,7 @@ impl MethodSignatureBuilder {
     ///
     /// Methods using this calling convention can accept additional arguments
     /// beyond their fixed parameter list through the [`vararg_param()`](Self::vararg_param) method.
+    #[must_use]
     pub fn calling_convention_vararg(mut self) -> Self {
         self.clear_calling_conventions();
         self.signature.vararg = true;
@@ -232,6 +235,7 @@ impl MethodSignatureBuilder {
     /// Sets the method to use the C declaration calling convention.
     ///
     /// This calling convention is used for interop with native C functions.
+    #[must_use]
     pub fn calling_convention_cdecl(mut self) -> Self {
         self.clear_calling_conventions();
         self.signature.cdecl = true;
@@ -241,6 +245,7 @@ impl MethodSignatureBuilder {
     /// Sets the method to use the standard call calling convention.
     ///
     /// This calling convention is commonly used for Windows API functions.
+    #[must_use]
     pub fn calling_convention_stdcall(mut self) -> Self {
         self.clear_calling_conventions();
         self.signature.stdcall = true;
@@ -250,6 +255,7 @@ impl MethodSignatureBuilder {
     /// Sets the method to use the this call calling convention.
     ///
     /// This calling convention is used for C++ member functions.
+    #[must_use]
     pub fn calling_convention_thiscall(mut self) -> Self {
         self.clear_calling_conventions();
         self.signature.thiscall = true;
@@ -259,6 +265,7 @@ impl MethodSignatureBuilder {
     /// Sets the method to use the fast call calling convention.
     ///
     /// This calling convention uses registers for parameter passing where possible.
+    #[must_use]
     pub fn calling_convention_fastcall(mut self) -> Self {
         self.clear_calling_conventions();
         self.signature.fastcall = true;

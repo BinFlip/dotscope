@@ -825,7 +825,7 @@ pub fn write_le_at<T: CilIO>(data: &mut [u8], offset: &mut usize, value: T) -> R
 
     let bytes = value.to_le_bytes();
     let bytes_ref: &[u8] =
-        unsafe { std::slice::from_raw_parts(&bytes as *const _ as *const u8, type_len) };
+        unsafe { std::slice::from_raw_parts((&raw const bytes).cast::<u8>(), type_len) };
 
     data[*offset..*offset + type_len].copy_from_slice(bytes_ref);
     *offset += type_len;
@@ -882,6 +882,7 @@ pub fn write_le_at_dyn(
     if is_large {
         write_le_at::<u32>(data, offset, value)?;
     } else {
+        #[allow(clippy::cast_possible_truncation)]
         write_le_at::<u16>(data, offset, value as u16)?;
     }
 
@@ -970,7 +971,7 @@ pub fn write_be_at<T: CilIO>(data: &mut [u8], offset: &mut usize, value: T) -> R
 
     let bytes = value.to_be_bytes();
     let bytes_ref: &[u8] =
-        unsafe { std::slice::from_raw_parts(&bytes as *const _ as *const u8, type_len) };
+        unsafe { std::slice::from_raw_parts((&raw const bytes).cast::<u8>(), type_len) };
 
     data[*offset..*offset + type_len].copy_from_slice(bytes_ref);
     *offset += type_len;
@@ -1028,6 +1029,7 @@ pub fn write_be_at_dyn(
     if is_large {
         write_be_at::<u32>(data, offset, value)?;
     } else {
+        #[allow(clippy::cast_possible_truncation)]
         write_be_at::<u16>(data, offset, value as u16)?;
     }
 
@@ -1067,6 +1069,7 @@ pub fn write_be_at_dyn(
 /// write_compressed_uint(128, &mut buffer);
 /// assert_eq!(buffer, vec![0x80, 0x80]);
 /// ```
+#[allow(clippy::cast_possible_truncation)]
 pub fn write_compressed_uint(value: u32, buffer: &mut Vec<u8>) {
     if value < 0x80 {
         buffer.push(value as u8);
@@ -1104,6 +1107,7 @@ pub fn write_compressed_uint(value: u32, buffer: &mut Vec<u8>) {
 /// write_compressed_int(-5, &mut buffer);
 /// assert_eq!(buffer, vec![9]); // (5-1) << 1 | 1
 /// ```
+#[allow(clippy::cast_sign_loss)]
 pub fn write_compressed_int(value: i32, buffer: &mut Vec<u8>) {
     let unsigned_value = if value >= 0 {
         (value as u32) << 1
@@ -1135,6 +1139,7 @@ pub fn write_compressed_int(value: i32, buffer: &mut Vec<u8>) {
 /// write_7bit_encoded_int(128, &mut buffer);
 /// assert_eq!(buffer, vec![0x80, 0x01]);
 /// ```
+#[allow(clippy::cast_possible_truncation)]
 pub fn write_7bit_encoded_int(mut value: u32, buffer: &mut Vec<u8>) {
     while value >= 0x80 {
         buffer.push((value as u8) | 0x80);
@@ -1183,6 +1188,7 @@ pub fn write_string_utf8(value: &str, buffer: &mut Vec<u8>) {
 /// write_prefixed_string_utf8("Hello", &mut buffer);
 /// assert_eq!(buffer, vec![5, b'H', b'e', b'l', b'l', b'o']);
 /// ```
+#[allow(clippy::cast_possible_truncation)]
 pub fn write_prefixed_string_utf8(value: &str, buffer: &mut Vec<u8>) {
     let bytes = value.as_bytes();
     write_7bit_encoded_int(bytes.len() as u32, buffer);
@@ -1208,6 +1214,7 @@ pub fn write_prefixed_string_utf8(value: &str, buffer: &mut Vec<u8>) {
 /// // Length 10 bytes (5 UTF-16 chars), followed by "Hello" in UTF-16 LE
 /// assert_eq!(buffer, vec![10, 0x48, 0x00, 0x65, 0x00, 0x6C, 0x00, 0x6C, 0x00, 0x6F, 0x00]);
 /// ```
+#[allow(clippy::cast_possible_truncation)]
 pub fn write_prefixed_string_utf16(value: &str, buffer: &mut Vec<u8>) {
     let utf16_chars: Vec<u16> = value.encode_utf16().collect();
     let byte_length = utf16_chars.len() * 2;

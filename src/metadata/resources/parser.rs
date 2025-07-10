@@ -611,6 +611,7 @@ impl Resource {
                 }
             } else {
                 // V2 format: type code (7-bit encoded) followed by data
+                #[allow(clippy::cast_possible_truncation)]
                 let type_code = parser.read_7bit_encoded_int()? as u8;
 
                 if self.type_names.is_empty() {
@@ -647,8 +648,7 @@ impl Resource {
     /// - System.Resources.Extensions.DeserializingResourceReader
     fn validate_reader_type(reader_type: &str) -> bool {
         match reader_type {
-            "System.Resources.ResourceReader" => true,
-            "System.Resources.Extensions.DeserializingResourceReader" => true,
+            "System.Resources.ResourceReader" | "System.Resources.Extensions.DeserializingResourceReader" => true,
             // Accept fully qualified names with mscorlib assembly info
             s if s.starts_with("System.Resources.ResourceReader,") => true,
             s if s.starts_with("System.Resources.Extensions.DeserializingResourceReader,") => true,

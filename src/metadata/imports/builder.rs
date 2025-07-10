@@ -50,6 +50,7 @@ impl NativeImportsBuilder {
     /// # Returns
     ///
     /// A new [`NativeImportsBuilder`] ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             dlls: Vec::new(),
@@ -78,6 +79,7 @@ impl NativeImportsBuilder {
     ///     .add_dll("kernel32.dll")
     ///     .add_dll("user32.dll");
     /// ```
+    #[must_use]
     pub fn add_dll(mut self, dll_name: impl Into<String>) -> Self {
         let dll_name = dll_name.into();
         if !self.dlls.contains(&dll_name) {
@@ -107,6 +109,7 @@ impl NativeImportsBuilder {
     ///     .add_function("kernel32.dll", "GetCurrentProcessId")
     ///     .add_function("kernel32.dll", "ExitProcess");
     /// ```
+    #[must_use]
     pub fn add_function(
         mut self,
         dll_name: impl Into<String>,
@@ -145,6 +148,7 @@ impl NativeImportsBuilder {
     /// let builder = NativeImportsBuilder::new()
     ///     .add_function_by_ordinal("user32.dll", 120); // MessageBoxW
     /// ```
+    #[must_use]
     pub fn add_function_by_ordinal(mut self, dll_name: impl Into<String>, ordinal: u16) -> Self {
         let dll_name = dll_name.into();
 

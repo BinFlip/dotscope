@@ -82,7 +82,7 @@
 //! - [`crate::cilassembly::validation`] - Validation of changes before writing
 //! - [`crate::metadata::cilassemblyview`] - Original assembly data and structure
 
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 use crate::{
     cilassembly::{
@@ -342,7 +342,7 @@ impl<'a> WriteContext<'a> {
             .header()
             .optional_header
             .as_ref()
-            .map(|oh| oh.windows_fields.image_base >= 0x100000000)
+            .map(|oh| oh.windows_fields.image_base >= 0x0001_0000_0000)
             .unwrap_or(false);
         let data_directory_offset = pe_signature_offset + 24 + if is_pe32_plus { 112 } else { 96 };
 
@@ -575,32 +575,26 @@ fn copy_sections_to_new_locations(
         } else if new_section_layout.name == ".meta" && new_section_layout.contains_metadata {
             // Special case: .meta section doesn't have a matching original section
             // Copy the original metadata from its original location
-            copy_original_metadata_to_meta_section(
-                context,
-                mmap_file,
-                layout_plan,
-                new_section_layout,
-            )?;
+            copy_original_metadata_to_meta_section(context, mmap_file, new_section_layout)?;
         }
     }
 
     Ok(())
 }
 
-/// Copies the original metadata content to the new .meta section.
+/// Systematically rebuilds the complete metadata content in the new .meta section.
 ///
-/// This function locates the original metadata in its original section and copies
-/// all the original stream data to the corresponding locations in the .meta section.
+/// This simplified function rebuilds all metadata streams systematically instead of
+/// trying to selectively copy some data while modifying other parts. This eliminates
+/// the complex conditional logic that was causing inconsistencies.
 ///
 /// # Arguments
 /// * `context` - Cached [`crate::cilassembly::write::WriteContext`] with pre-calculated metadata information
 /// * `mmap_file` - Target [`crate::cilassembly::write::output::Output`] file
-/// * `_layout_plan` - [`crate::cilassembly::write::planner::LayoutPlan`] with metadata layout
 /// * `meta_section_layout` - The .meta section layout information
 fn copy_original_metadata_to_meta_section(
     context: &WriteContext,
     mmap_file: &mut output::Output,
-    _layout_plan: &planner::LayoutPlan,
     meta_section_layout: &planner::SectionFileLayout,
 ) -> Result<()> {
     // Use cached RVA and offset calculations (all expensive calculations already done)
@@ -646,8 +640,6 @@ fn copy_original_metadata_to_meta_section(
     let stream_count_slice = mmap_file.get_mut_slice(stream_count_offset as usize, 2)?;
     stream_count_slice.copy_from_slice(&stream_count.to_le_bytes());
 
-    // Copy original stream data for streams that won't be rewritten by heap writers
-    // The #~ stream (tables) needs to be copied here since it's not handled by heap writers
     for stream_layout in &meta_section_layout.metadata_streams {
         let original_stream = context
             .view
@@ -656,148 +648,25 @@ fn copy_original_metadata_to_meta_section(
             .find(|s| s.name == stream_layout.name);
 
         if let Some(orig_stream) = original_stream {
-            // Only copy streams that are not handled by heap writers
-            let should_copy = match stream_layout.name.as_str() {
-                "#Strings" | "#Blob" | "#GUID" | "#US" => false, // These are handled by heap writers
-                _ => true, // Copy everything else (especially #~ tables stream)
-            };
+            let original_stream_file_offset =
+                original_metadata_file_offset + orig_stream.offset as u64;
+            let original_stream_size = orig_stream.size as usize;
 
-            if should_copy {
-                let original_stream_file_offset =
-                    original_metadata_file_offset + orig_stream.offset as u64;
-                let original_stream_size = orig_stream.size as usize;
+            // Ensure we don't read beyond the original file
+            if original_stream_file_offset + original_stream_size as u64
+                <= context.data.len() as u64
+            {
+                let new_stream_offset = stream_layout.file_region.offset as usize;
 
-                // Ensure we don't read beyond the original file
-                if original_stream_file_offset + original_stream_size as u64
-                    <= context.data.len() as u64
-                {
-                    let new_stream_offset = stream_layout.file_region.offset as usize;
-
-                    // Copy the original stream data to the new location
-                    copy_data_region(
-                        context,
-                        mmap_file,
-                        original_stream_file_offset as usize,
-                        new_stream_offset,
-                        original_stream_size,
-                    )?;
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Copies a metadata section including the original stream data to new locations.
-///
-/// This function handles the complex metadata section structure including
-/// the metadata root header and original stream data positioning.
-///
-/// # Arguments
-/// * `assembly` - Source [`crate::cilassembly::CilAssembly`] for metadata structure
-/// * `mmap_file` - Target [`crate::cilassembly::write::output::Output`] file
-/// * `original_data` - Original file data bytes
-/// * `original_offset` - Original section file offset
-/// * `original_size` - Original section size
-/// * `new_offset` - New section file offset
-/// * `section_layout` - [`crate::cilassembly::write::planner::SectionFileLayout`] with stream locations
-fn copy_metadata_section_without_streams(
-    context: &WriteContext,
-    mmap_file: &mut output::Output,
-    _original_data: &[u8],
-    original_offset: usize,
-    original_size: usize,
-    new_offset: usize,
-    section_layout: &planner::SectionFileLayout,
-    original_section: &goblin::pe::section_table::SectionTable,
-    original_metadata_rva: u32,
-) -> Result<()> {
-    let view = context.view;
-
-    // Get metadata root location within the section using cached value
-    let metadata_root_rva = original_metadata_rva as u64;
-    let original_section_rva = original_section.virtual_address as u64;
-    let metadata_offset_in_section = metadata_root_rva - original_section_rva;
-
-    // Copy everything before metadata root
-    if metadata_offset_in_section > 0 {
-        let pre_metadata_size = metadata_offset_in_section as usize;
-        copy_data_region(
-            context,
-            mmap_file,
-            original_offset,
-            new_offset,
-            pre_metadata_size,
-        )?;
-    }
-
-    // Copy the complete metadata root header including stream directory
-    let metadata_root_start = original_offset + metadata_offset_in_section as usize;
-
-    // Calculate the size of the complete metadata root (header + stream directory)
-    // This includes: signature(4) + major(2) + minor(2) + reserved(4) + length(4) + version_string(padded) + flags(2) + streams(2) + stream_directory_entries
-    let mut metadata_root_size = 16 + view.metadata_root().length as usize + 4; // Header + version + stream count/flags
-
-    // Add the size of all stream directory entries
-    for stream in view.streams().iter() {
-        metadata_root_size += 8; // offset(4) + size(4)
-        let name_size = (stream.name.len() + 1 + 3) & !3; // name + null + padding to 4 bytes
-        metadata_root_size += name_size;
-    }
-
-    if metadata_root_start + metadata_root_size <= original_offset + original_size {
-        let new_metadata_offset = new_offset + metadata_offset_in_section as usize;
-        copy_data_region(
-            context,
-            mmap_file,
-            metadata_root_start,
-            new_metadata_offset,
-            metadata_root_size,
-        )?;
-    }
-
-    // Copy the original stream data to their new locations
-    // Skip copying streams that will be completely rebuilt
-    for stream_layout in &section_layout.metadata_streams {
-        let original_stream = view.streams().iter().find(|s| s.name == stream_layout.name);
-
-        if let Some(original_stream) = original_stream {
-            let needs_rebuilding = match stream_layout.name.as_str() {
-                "#Strings" => {
-                    let changes = &context.assembly.changes().string_heap_changes;
-                    changes.has_additions() || changes.has_modifications() || changes.has_removals()
-                }
-                "#Blob" => context.assembly.changes().blob_heap_changes.has_changes(),
-                "#GUID" => {
-                    let changes = &context.assembly.changes().guid_heap_changes;
-                    changes.has_additions() || changes.has_modifications() || changes.has_removals()
-                }
-                "#US" => {
-                    let changes = &context.assembly.changes().userstring_heap_changes;
-                    changes.has_additions() || changes.has_modifications() || changes.has_removals()
-                }
-                _ => false,
-            };
-
-            // Only copy original stream data if we're not rebuilding the entire heap
-            if !needs_rebuilding {
-                let original_stream_start = original_offset
-                    + metadata_offset_in_section as usize
-                    + original_stream.offset as usize;
-                let original_stream_size = original_stream.size as usize;
-
-                // Make sure we don't read beyond the section
-                if original_stream_start + original_stream_size <= original_offset + original_size {
-                    let new_stream_offset = stream_layout.file_region.offset as usize;
-                    copy_data_region(
-                        context,
-                        mmap_file,
-                        original_stream_start,
-                        new_stream_offset,
-                        original_stream_size,
-                    )?;
-                }
+                // Always copy the complete original stream data to the new location
+                // This ensures that unmodified data is preserved correctly
+                copy_data_region(
+                    context,
+                    mmap_file,
+                    original_stream_file_offset as usize,
+                    new_stream_offset,
+                    original_stream_size,
+                )?;
             }
         }
     }
@@ -820,9 +689,7 @@ fn update_metadata_root(
     layout_plan: &planner::LayoutPlan,
     _original_metadata_rva: u32,
 ) -> Result<()> {
-    // TEMPORARY: Use the assembly reference to ensure compatibility
     let assembly = context.assembly;
-    // Find the .meta section
     let metadata_section = layout_plan
         .file_layout
         .sections
@@ -921,105 +788,6 @@ fn update_metadata_root(
     )?;
     stream_dir_slice.copy_from_slice(&stream_directory_data);
 
-    // Copy original stream data for unmodified streams
-    // TODO: This function is not currently called, so this call is commented out
-    // copy_original_stream_data(context, mmap_file, metadata_section)?;
-
-    Ok(())
-}
-
-/// Copies original stream data to new stream locations for unmodified streams.
-///
-/// This function copies the original stream content for streams that are not being
-/// reconstructed by heap writers (e.g., #~, #US, #GUID, #Blob streams).
-fn copy_original_stream_data(
-    context: &WriteContext,
-    mmap_file: &mut output::Output,
-    metadata_section: &planner::SectionFileLayout,
-) -> Result<()> {
-    let view = context.view;
-
-    // Use cached RVA and offset calculations (expensive calculations already done)
-    let original_metadata_file_offset = context.metadata_file_offset;
-
-    for stream_layout in &metadata_section.metadata_streams {
-        // Only copy streams that won't be written by heap writers
-        // The #Strings stream will be reconstructed by the string heap writer
-        if stream_layout.name != "#Strings" {
-            // Find the original stream
-            let original_stream = view.streams().iter().find(|s| s.name == stream_layout.name);
-            if let Some(original_stream) = original_stream {
-                let original_stream_file_offset =
-                    original_metadata_file_offset + original_stream.offset as u64;
-                let original_stream_size = original_stream.size as usize;
-
-                // Copy original stream data to new location
-                copy_data_region(
-                    context,
-                    mmap_file,
-                    original_stream_file_offset as usize,
-                    stream_layout.file_region.offset as usize,
-                    original_stream_size,
-                )?;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Copies original stream data to the .meta section.
-///
-/// The heap writers expect original stream data to be in place before they add modifications.
-/// This function copies the original heap content from the original metadata location
-/// to the new stream locations in the .meta section.
-///
-/// # Arguments
-/// * `assembly` - Source [`crate::cilassembly::CilAssembly`] with original stream data
-/// * `mmap_file` - Target [`crate::cilassembly::write::output::Output`] file
-/// * `layout_plan` - [`crate::cilassembly::write::planner::LayoutPlan`] with stream locations
-fn copy_original_streams_to_meta_section(
-    context: &WriteContext,
-    mmap_file: &mut output::Output,
-    _layout_plan: &planner::LayoutPlan,
-) -> Result<()> {
-    let view = context.view;
-
-    // Use cached .meta section (expensive search already done)
-    let meta_section =
-        context
-            .meta_section_layout
-            .ok_or_else(|| crate::Error::WriteLayoutFailed {
-                message: "No .meta section found for stream copying".to_string(),
-            })?;
-
-    // Use cached original metadata section and offset calculations (expensive calculations already done)
-    let original_metadata_offset = context.metadata_file_offset;
-
-    // Copy each original stream to its new location in the .meta section
-    for stream_layout in &meta_section.metadata_streams {
-        let original_stream = view.streams().iter().find(|s| s.name == stream_layout.name);
-
-        if let Some(orig_stream) = original_stream {
-            let original_stream_offset = original_metadata_offset + orig_stream.offset as u64;
-            let original_stream_size = orig_stream.size as usize;
-
-            // Ensure we don't read beyond the original file
-            if original_stream_offset + original_stream_size as u64 <= context.data.len() as u64 {
-                let new_stream_offset = stream_layout.file_region.offset;
-
-                // Copy the original stream data to the new location
-                copy_data_region(
-                    context,
-                    mmap_file,
-                    original_stream_offset as usize,
-                    new_stream_offset as usize,
-                    original_stream_size,
-                )?;
-            }
-        }
-    }
-
     Ok(())
 }
 
@@ -1051,15 +819,15 @@ fn write_streams_with_additions(
 /// * `heap_index_mappings` - Map of heap names to their index mappings (original -> final)
 fn apply_heap_index_remapping(
     assembly: &mut CilAssembly,
-    heap_index_mappings: &std::collections::HashMap<String, std::collections::HashMap<u32, u32>>,
+    heap_index_mappings: &HashMap<String, HashMap<u32, u32>>,
 ) -> Result<()> {
     // Create an IndexRemapper with the collected heap mappings
     let mut remapper = IndexRemapper {
-        string_map: std::collections::HashMap::new(),
-        blob_map: std::collections::HashMap::new(),
-        guid_map: std::collections::HashMap::new(),
-        userstring_map: std::collections::HashMap::new(),
-        table_maps: std::collections::HashMap::new(),
+        string_map: HashMap::new(),
+        blob_map: HashMap::new(),
+        guid_map: HashMap::new(),
+        userstring_map: HashMap::new(),
+        table_maps: HashMap::new(),
     };
 
     // Populate the appropriate heap mappings

@@ -139,7 +139,7 @@ use crate::metadata::{tables::TableId, token::Token};
 macro_rules! malformed_error {
     // Single string version
     ($msg:expr) => {
-        crate::Error::Malformed {
+        $crate::Error::Malformed {
             message: $msg.to_string(),
             file: file!(),
             line: line!(),
@@ -148,7 +148,7 @@ macro_rules! malformed_error {
 
     // Format string with arguments version
     ($fmt:expr, $($arg:tt)*) => {
-        crate::Error::Malformed {
+        $crate::Error::Malformed {
             message: format!($fmt, $($arg)*),
             file: file!(),
             line: line!(),
@@ -179,7 +179,7 @@ macro_rules! malformed_error {
 #[macro_export]
 macro_rules! out_of_bounds_error {
     () => {
-        crate::Error::OutOfBounds {
+        $crate::Error::OutOfBounds {
             file: file!(),
             line: line!(),
         }

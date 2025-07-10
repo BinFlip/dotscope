@@ -208,6 +208,7 @@ impl PermissionSetBuilder {
     /// let builder = PermissionSetBuilder::new()
     ///     .add_permission(custom_permission);
     /// ```
+    #[must_use]
     pub fn add_permission(mut self, permission: Permission) -> Self {
         self.permissions.push(permission);
         self
@@ -449,6 +450,7 @@ impl SecurityPermissionBuilder {
     ///         .flags("Execution")
     ///         .build();
     /// ```
+    #[must_use]
     pub fn unrestricted(mut self, value: bool) -> Self {
         self.named_arguments.push(NamedArgument {
             name: "Unrestricted".to_string(),
@@ -490,6 +492,7 @@ impl SecurityPermissionBuilder {
     ///         .flags("Execution, SkipVerification, ControlEvidence")
     ///         .build();
     /// ```
+    #[must_use]
     pub fn flags(mut self, flags: &str) -> Self {
         self.named_arguments.push(NamedArgument {
             name: "Flags".to_string(),
@@ -641,6 +644,7 @@ impl FileIOPermissionBuilder {
     ///         .read_paths(&["C:\\Data", "C:\\Config", "C:\\Logs"])
     ///         .build();
     /// ```
+    #[must_use]
     pub fn read_paths(mut self, paths: &[&str]) -> Self {
         let paths_str = paths.join(";");
         self.named_arguments.push(NamedArgument {
@@ -684,6 +688,7 @@ impl FileIOPermissionBuilder {
     ///         .write_paths(&["C:\\Logs"])
     ///         .build();
     /// ```
+    #[must_use]
     pub fn write_paths(mut self, paths: &[&str]) -> Self {
         let paths_str = paths.join(";");
         self.named_arguments.push(NamedArgument {
@@ -726,6 +731,7 @@ impl FileIOPermissionBuilder {
     ///         .read_paths(&["C:\\Data"])
     ///         .build();
     /// ```
+    #[must_use]
     pub fn unrestricted(mut self, value: bool) -> Self {
         self.named_arguments.push(NamedArgument {
             name: "Unrestricted".to_string(),

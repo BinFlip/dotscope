@@ -285,7 +285,7 @@ impl NativeImports {
         goblin_imports: &[goblin::pe::import::Import],
     ) -> Result<()> {
         for import in goblin_imports {
-            let dll_name = &import.dll;
+            let dll_name = import.dll;
 
             let function_identifier = if !import.name.is_empty() {
                 import.name.to_string()
@@ -300,6 +300,7 @@ impl NativeImports {
                 let descriptor = ImportDescriptor {
                     dll_name: dll_name_str.clone(),
                     original_first_thunk: 0, // Not available from goblin
+                    #[allow(clippy::cast_possible_truncation)]
                     first_thunk: import.rva as u32,
                     functions: Vec::new(),
                     timestamp: 0,
@@ -309,25 +310,28 @@ impl NativeImports {
             }
 
             let import_function = ImportFunction {
-                name: if !import.name.is_empty() {
-                    Some(import.name.to_string())
-                } else {
+                name: if import.name.is_empty() {
                     None
+                } else {
+                    Some(import.name.to_string())
                 },
                 ordinal: if import.ordinal != 0 {
                     Some(import.ordinal)
                 } else {
                     None
                 },
+                #[allow(clippy::cast_possible_truncation)]
                 iat_rva: import.rva as u32,
                 hint: 0, // Not available from goblin
                 ilt_value: import.offset as u64,
             };
 
+            #[allow(clippy::cast_possible_truncation)]
+            let rva_key = import.rva as u32;
             self.iat_entries.insert(
-                import.rva as u32,
+                rva_key,
                 ImportAddressEntry {
-                    rva: import.rva as u32,
+                    rva: rva_key,
                     dll_name: dll_name_str.clone(),
                     function_identifier,
                     original_value: import.offset as u64,
@@ -418,6 +422,11 @@ impl NativeImports {
     /// - The DLL has not been added to the import table
     /// - The function name is empty
     /// - The function is already imported from this DLL
+    ///
+    /// # Panics
+    ///
+    /// Panics if the DLL has not been added to the import table first.
+    /// Use [`add_dll`] before calling this method.
     pub fn add_function(&mut self, dll_name: &str, function_name: &str) -> Result<()> {
         if function_name.is_empty() {
             return Err(Error::Error("Function name cannot be empty".to_string()));
@@ -492,6 +501,11 @@ impl NativeImports {
     /// - The DLL has not been added to the import table
     /// - The ordinal is 0 (invalid)
     /// - A function with the same ordinal is already imported
+    ///
+    /// # Panics
+    ///
+    /// Panics if the DLL has not been added to the import table first.
+    /// Use [`add_dll`] before calling this method.
     pub fn add_function_by_ordinal(&mut self, dll_name: &str, ordinal: u16) -> Result<()> {
         if ordinal == 0 {
             return Err(Error::Error("Ordinal cannot be 0".to_string()));
@@ -561,6 +575,7 @@ impl NativeImports {
     /// assert!(missing.is_none());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn get_descriptor(&self, dll_name: &str) -> Option<&ImportDescriptor> {
         self.descriptors.get(dll_name)
     }
@@ -611,6 +626,7 @@ impl NativeImports {
     /// assert!(!imports.has_dll("missing.dll"));
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn has_dll(&self, dll_name: &str) -> bool {
         self.descriptors.contains_key(dll_name)
     }
@@ -640,6 +656,7 @@ impl NativeImports {
     /// let imports = NativeImports::new();
     /// println!("Total imported functions: {}", imports.total_function_count());
     /// ```
+    #[must_use]
     pub fn total_function_count(&self) -> usize {
         self.descriptors
             .values()
@@ -684,6 +701,7 @@ impl NativeImports {
     /// assert!(dll_names.contains(&"user32.dll".to_string()));
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn get_dll_names(&self) -> Vec<String> {
         self.descriptors.keys().cloned().collect()
     }
@@ -786,7 +804,10 @@ impl NativeImports {
 
         for descriptor in descriptors_sorted {
             let mut desc = descriptor.clone();
-            desc.original_first_thunk = self.import_table_base_rva + ilt_offset as u32;
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                desc.original_first_thunk = self.import_table_base_rva + (ilt_offset as u32);
+            }
             ilt_offset += (descriptor.functions.len() + 1) * entry_size; // +1 for null terminator
             descriptors_with_offsets.push(desc);
         }
@@ -796,7 +817,10 @@ impl NativeImports {
         let mut iat_offset = iat_start_offset;
 
         for descriptor in &mut descriptors_with_offsets {
-            descriptor.first_thunk = self.import_table_base_rva + iat_offset as u32;
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                descriptor.first_thunk = self.import_table_base_rva + (iat_offset as u32);
+            }
             iat_offset += (descriptor.functions.len() + 1) * entry_size; // +1 for null terminator
         }
 
@@ -809,7 +833,8 @@ impl NativeImports {
 
         // First pass: calculate DLL name RVAs
         for descriptor in &descriptors_with_offsets {
-            let dll_name_rva = self.import_table_base_rva + current_string_offset as u32;
+            #[allow(clippy::cast_possible_truncation)]
+            let dll_name_rva = self.import_table_base_rva + (current_string_offset as u32);
             dll_name_rvas.push(dll_name_rva);
             current_string_offset += descriptor.dll_name.len() + 1; // +1 for null terminator
         }
@@ -820,8 +845,9 @@ impl NativeImports {
 
             for function in &descriptor.functions {
                 if let Some(ref name) = function.name {
-                    let func_name_rva = self.import_table_base_rva + current_string_offset as u32;
-                    func_rvas.push(func_name_rva as u64);
+                    #[allow(clippy::cast_possible_truncation)]
+                    let func_name_rva = self.import_table_base_rva + (current_string_offset as u32);
+                    func_rvas.push(u64::from(func_name_rva));
                     current_string_offset += 2; // hint (2 bytes)
                     current_string_offset += name.len() + 1; // name + null terminator
                 }
@@ -835,7 +861,7 @@ impl NativeImports {
             let func_rvas = &function_name_rvas[i];
             let mut func_idx = 0;
 
-            for function in descriptor.functions.iter_mut() {
+            for function in &mut descriptor.functions {
                 if function.name.is_some() {
                     // Named import: use RVA pointing to hint/name table entry
                     if func_idx < func_rvas.len() {
@@ -876,7 +902,10 @@ impl NativeImports {
                 if is_pe32_plus {
                     write_le_at::<u64>(&mut data, &mut offset, function.ilt_value)?;
                 } else {
-                    write_le_at::<u32>(&mut data, &mut offset, function.ilt_value as u32)?;
+                    #[allow(clippy::cast_possible_truncation)]
+                    {
+                        write_le_at::<u32>(&mut data, &mut offset, function.ilt_value as u32)?;
+                    }
                 }
             }
             // Null terminator for this DLL's ILT
@@ -894,7 +923,10 @@ impl NativeImports {
                 if is_pe32_plus {
                     write_le_at::<u64>(&mut data, &mut offset, function.ilt_value)?;
                 } else {
-                    write_le_at::<u32>(&mut data, &mut offset, function.ilt_value as u32)?;
+                    #[allow(clippy::cast_possible_truncation)]
+                    {
+                        write_le_at::<u32>(&mut data, &mut offset, function.ilt_value as u32)?;
+                    }
                 }
             }
             // Null terminator for this DLL's IAT
@@ -959,6 +991,7 @@ impl NativeImports {
         let mut updated_entries = HashMap::new();
 
         for (old_rva, mut entry) in self.iat_entries.drain() {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let new_rva = if rva_delta >= 0 {
                 old_rva.checked_add(rva_delta as u32)
             } else {
@@ -980,6 +1013,7 @@ impl NativeImports {
 
         for descriptor in self.descriptors.values_mut() {
             for function in &mut descriptor.functions {
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 let new_rva = if rva_delta >= 0 {
                     function.iat_rva.checked_add(rva_delta as u32)
                 } else {
@@ -995,6 +1029,7 @@ impl NativeImports {
             }
         }
 
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let new_next_rva = if rva_delta >= 0 {
             self.next_iat_rva.checked_add(rva_delta as u32)
         } else {

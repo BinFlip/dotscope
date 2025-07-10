@@ -458,7 +458,7 @@ impl TypeSignatureEncoder {
     /// - Unsupported table type for TypeDefOrRef
     fn encode_typedefref_token(token: Token, buffer: &mut Vec<u8>) -> Result<()> {
         let table_id = (token.value() >> 24) & 0xFF;
-        let rid = token.value() & 0x00FFFFFF;
+        let rid = token.value() & 0x00FF_FFFF;
 
         let coded_index = match table_id {
             0x02 => rid << 2,       // TypeDef

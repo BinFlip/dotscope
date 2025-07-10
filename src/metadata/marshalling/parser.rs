@@ -596,7 +596,10 @@ mod tests {
         let input: Vec<u8> = vec![];
         let result = parse_marshalling_descriptor(&input);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), crate::Error::OutOfBounds { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::Error::OutOfBounds { .. }
+        ));
 
         // Test unknown native type
         let input = vec![0xFF];
@@ -607,7 +610,10 @@ mod tests {
         let input = vec![NATIVE_TYPE::LPSTR, 0xC0]; // 4-byte format but only one byte available
         let result = parse_marshalling_descriptor(&input);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), crate::Error::OutOfBounds { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::Error::OutOfBounds { .. }
+        ));
     }
 
     #[test]

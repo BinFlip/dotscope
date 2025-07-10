@@ -162,6 +162,7 @@ impl UnifiedExportContainer {
     ///
     /// Initializes both CIL and native export storage with empty state.
     /// Unified caches are created lazily on first access.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             cil: CilExports::new(),
@@ -176,6 +177,7 @@ impl UnifiedExportContainer {
     ///
     /// # Arguments
     /// * `dll_name` - Name of the DLL for native exports
+    #[must_use]
     pub fn with_dll_name(dll_name: &str) -> Self {
         Self {
             cil: CilExports::new(),
@@ -468,6 +470,11 @@ impl UnifiedExportContainer {
     /// export directory of a PE file. Returns None if no native
     /// exports exist.
     ///
+    /// # Errors
+    ///
+    /// Returns an error if native export table generation fails due to
+    /// invalid export data or encoding issues.
+    ///
     /// # Examples
     ///
     /// ```rust,ignore
@@ -524,7 +531,7 @@ impl UnifiedExportContainer {
         self.unified_function_cache.clear();
 
         // Populate from CIL exports
-        for export_entry in self.cil.iter() {
+        for export_entry in &self.cil {
             let export_type = export_entry.value();
             let token = *export_entry.key();
 
@@ -541,11 +548,8 @@ impl UnifiedExportContainer {
                         ExportSource::Native(ordinal) => {
                             *entry.get_mut() = ExportSource::Both(token, *ordinal);
                         }
-                        ExportSource::Cil(_) => {
-                            // Keep the existing CIL entry
-                        }
-                        ExportSource::Both(_, _) => {
-                            // Already both, no change needed
+                        ExportSource::Cil(_) | ExportSource::Both(_, _) => {
+                            // Keep the existing CIL entry or both entry
                         }
                     }
                 }
@@ -575,11 +579,8 @@ impl UnifiedExportContainer {
                             ExportSource::Cil(token) => {
                                 *entry.get_mut() = ExportSource::Both(*token, function.ordinal);
                             }
-                            ExportSource::Native(_) => {
-                                // Keep the existing native entry
-                            }
-                            ExportSource::Both(_, _) => {
-                                // Already both, no change needed
+                            ExportSource::Native(_) | ExportSource::Both(_, _) => {
+                                // Keep the existing native entry or both entry
                             }
                         }
                     }
@@ -626,6 +627,6 @@ impl std::fmt::Debug for UnifiedExportContainer {
             .field("native_function_count", &self.native.function_count())
             .field("native_forwarder_count", &self.native.forwarder_count())
             .field("is_cache_dirty", &self.cache_dirty.load(Ordering::Relaxed))
-            .finish()
+            .finish_non_exhaustive()
     }
 }

@@ -624,6 +624,10 @@ impl File {
     /// - `Some((rva, size))` if the directory exists with non-zero address and size
     /// - `None` if the directory doesn't exist or has zero address/size
     ///
+    /// # Panics
+    ///
+    /// Panics if the PE file has no optional header (which should not happen for valid PE files).
+    ///
     /// # Examples
     ///
     /// ```rust,no_run
@@ -988,20 +992,20 @@ impl File {
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn section_contains_metadata(&self, section_name: &str) -> bool {
         let (clr_rva, _clr_size) = match self.clr() {
+            #[allow(clippy::cast_possible_truncation)]
             (rva, size) if rva > 0 && size >= 72 => (rva as u32, size),
             _ => return false, // No CLR header means no .NET metadata
         };
 
-        let clr_offset = match self.rva_to_offset(clr_rva as usize) {
-            Ok(offset) => offset,
-            Err(_) => return false,
+        let Ok(clr_offset) = self.rva_to_offset(clr_rva as usize) else {
+            return false;
         };
 
-        let clr_data = match self.data_slice(clr_offset, 72) {
-            Ok(data) => data,
-            Err(_) => return false,
+        let Ok(clr_data) = self.data_slice(clr_offset, 72) else {
+            return false;
         };
 
         if clr_data.len() < 12 {
@@ -1135,7 +1139,7 @@ impl File {
                 .unwrap_or("<invalid>")
                 .trim_end_matches('\0');
             if section_name == ".text" || section_name.starts_with(".text") {
-                return Ok(section.pointer_to_raw_data as u64);
+                return Ok(u64::from(section.pointer_to_raw_data));
             }
         }
 
@@ -1176,8 +1180,9 @@ impl File {
     ///
     /// # Returns
     /// Returns the file size in bytes.
+    #[must_use]
     pub fn file_size(&self) -> u64 {
-        self.data().len() as u64
+        u64::try_from(self.data().len()).unwrap_or(u64::MAX)
     }
 
     /// Gets the PE signature offset from the DOS header.
@@ -1202,7 +1207,7 @@ impl File {
 
         // PE offset is at offset 0x3C in DOS header
         let pe_offset = u32::from_le_bytes([data[60], data[61], data[62], data[63]]);
-        Ok(pe_offset as u64)
+        Ok(u64::from(pe_offset))
     }
 
     /// Calculates the size of PE headers (including optional header).
@@ -1224,6 +1229,7 @@ impl File {
 
         let coff_header_offset = pe_sig_offset + 4; // Skip PE signature
 
+        #[allow(clippy::cast_possible_truncation)]
         if data.len() < (coff_header_offset + 20) as usize {
             return Err(crate::Error::WriteLayoutFailed {
                 message: "File too small to contain COFF header".to_string(),
@@ -1232,12 +1238,13 @@ impl File {
 
         // Optional header size is at offset 16 in COFF header
         let opt_header_size_offset = coff_header_offset + 16;
+        #[allow(clippy::cast_possible_truncation)]
         let opt_header_size = u16::from_le_bytes([
             data[opt_header_size_offset as usize],
             data[opt_header_size_offset as usize + 1],
         ]);
 
-        Ok(4 + 20 + opt_header_size as u64) // PE sig + COFF + Optional header
+        Ok(4 + 20 + u64::from(opt_header_size)) // PE sig + COFF + Optional header
     }
 
     /// Aligns an offset to this file's PE file alignment boundary.
@@ -1255,7 +1262,7 @@ impl File {
     /// # Errors
     /// Returns [`crate::Error::WriteLayoutFailed`] if the PE header cannot be accessed.
     pub fn align_to_file_alignment(&self, offset: u64) -> crate::Result<u64> {
-        let file_alignment = self.file_alignment()? as u64;
+        let file_alignment = u64::from(self.file_alignment()?);
         Ok(offset.div_ceil(file_alignment) * file_alignment)
     }
 }

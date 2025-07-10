@@ -186,6 +186,11 @@ impl<'a> CilAssemblyViewData<'a> {
     ///
     /// Returns the parsed `CilAssemblyViewData` structure or an error if
     /// essential structures cannot be located (e.g., missing CLR header).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::NotSupported`] if the file is not a .NET assembly (missing CLR header).
+    /// Returns [`crate::Error::OutOfBounds`] if the file data is truncated or corrupted.
     pub fn from_file(file: Arc<File>, data: &'a [u8]) -> Result<Self> {
         let (clr_rva, clr_size) = file.clr();
         if clr_rva == 0 || clr_size == 0 {
@@ -324,6 +329,12 @@ impl CilAssemblyView {
     /// Returns a `CilAssemblyView` providing raw access to assembly metadata
     /// or an error if the file cannot be loaded or essential structures are missing.
     ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::FileOpenFailed`] if the file cannot be read.
+    /// Returns [`crate::Error::NotSupported`] if the file is not a .NET assembly.
+    /// Returns [`crate::Error::OutOfBounds`] if the file data is corrupted.
+    ///
     /// # Examples
     ///
     /// ```rust,ignore
@@ -356,6 +367,13 @@ impl CilAssemblyView {
     /// Returns a `CilAssemblyView` providing raw access to assembly metadata
     /// or an error if the file cannot be loaded, essential structures are missing,
     /// or validation checks fail.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::FileOpenFailed`] if the file cannot be read.
+    /// Returns [`crate::Error::NotSupported`] if the file is not a .NET assembly.
+    /// Returns [`crate::Error::OutOfBounds`] if the file data is corrupted.
+    /// Returns validation errors if validation checks fail.
     ///
     /// # Examples
     ///
@@ -394,6 +412,11 @@ impl CilAssemblyView {
     ///
     /// * `data` - Raw bytes of the .NET assembly in PE format
     ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::NotSupported`] if the data is not a .NET assembly.
+    /// Returns [`crate::Error::OutOfBounds`] if the data is corrupted or truncated.
+    ///
     /// # Examples
     ///
     /// ```rust,ignore
@@ -421,6 +444,12 @@ impl CilAssemblyView {
     ///
     /// Returns a `CilAssemblyView` providing raw access to assembly metadata
     /// or an error if the data cannot be parsed or validation checks fail.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::NotSupported`] if the data is not a .NET assembly.
+    /// Returns [`crate::Error::OutOfBounds`] if the data is corrupted or truncated.
+    /// Returns validation errors if validation checks fail.
     ///
     /// # Examples
     ///
@@ -479,6 +508,7 @@ impl CilAssemblyView {
     /// # Returns
     ///
     /// Reference to the [`Cor20Header`] structure.
+    #[must_use]
     pub fn cor20header(&self) -> &Cor20Header {
         self.with_data(|data| &data.cor20header)
     }
@@ -491,6 +521,7 @@ impl CilAssemblyView {
     /// # Returns
     ///
     /// Reference to the [`Root`] structure.
+    #[must_use]
     pub fn metadata_root(&self) -> &Root {
         self.with_data(|data| &data.metadata_root)
     }
@@ -504,6 +535,7 @@ impl CilAssemblyView {
     ///
     /// - `Some(&TablesHeader)` if metadata tables are present
     /// - `None` if no tables stream exists
+    #[must_use]
     pub fn tables(&self) -> Option<&TablesHeader> {
         self.with_data(|data| data.metadata_tables.as_ref())
     }
@@ -514,6 +546,7 @@ impl CilAssemblyView {
     ///
     /// - `Some(&Strings)` if the strings heap is present
     /// - `None` if no #Strings stream exists
+    #[must_use]
     pub fn strings(&self) -> Option<&Strings> {
         self.with_data(|data| data.strings.as_ref())
     }
@@ -524,6 +557,7 @@ impl CilAssemblyView {
     ///
     /// - `Some(&UserStrings)` if the user strings heap is present
     /// - `None` if no #US stream exists
+    #[must_use]
     pub fn userstrings(&self) -> Option<&UserStrings> {
         self.with_data(|data| data.userstrings.as_ref())
     }
@@ -534,6 +568,7 @@ impl CilAssemblyView {
     ///
     /// - `Some(&Guid)` if the GUID heap is present
     /// - `None` if no #GUID stream exists
+    #[must_use]
     pub fn guids(&self) -> Option<&Guid> {
         self.with_data(|data| data.guids.as_ref())
     }
@@ -544,6 +579,7 @@ impl CilAssemblyView {
     ///
     /// - `Some(&Blob)` if the blob heap is present
     /// - `None` if no #Blob stream exists
+    #[must_use]
     pub fn blobs(&self) -> Option<&Blob> {
         self.with_data(|data| data.blobs.as_ref())
     }
@@ -556,6 +592,7 @@ impl CilAssemblyView {
     /// # Returns
     ///
     /// Reference to the vector of [`StreamHeader`] structures.
+    #[must_use]
     pub fn streams(&self) -> &[StreamHeader] {
         self.with_data(|data| &data.metadata_root.stream_headers)
     }
@@ -568,6 +605,7 @@ impl CilAssemblyView {
     /// # Returns
     ///
     /// Reference to the `Arc<File>` containing the PE file representation.
+    #[must_use]
     pub fn file(&self) -> &Arc<File> {
         self.borrow_file()
     }
@@ -577,6 +615,7 @@ impl CilAssemblyView {
     /// # Returns
     ///
     /// Reference to the complete file data.
+    #[must_use]
     pub fn data(&self) -> &[u8] {
         self.with_data(|data| data.data)
     }
@@ -597,6 +636,7 @@ impl CilAssemblyView {
     /// let mut assembly = view.to_owned();
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn to_owned(self) -> CilAssembly {
         CilAssembly::new(self)
     }
@@ -615,6 +655,11 @@ impl CilAssemblyView {
     ///
     /// Returns `Ok(())` if validation passes, or an error describing validation failures.
     ///
+    /// # Errors
+    ///
+    /// Returns validation errors if any validation checks fail, including schema violations,
+    /// RID consistency issues, or referential integrity problems.
+    ///
     /// # Examples
     ///
     /// ```rust,ignore
@@ -632,12 +677,9 @@ impl CilAssemblyView {
             ValidationPipeline::new().add_stage(BasicSchemaValidator)
         } else if config == ValidationConfig::production() {
             ValidationPipeline::default()
-        } else if config == ValidationConfig::comprehensive() {
-            ValidationPipeline::new()
-                .add_stage(BasicSchemaValidator)
-                .add_stage(RidConsistencyValidator)
-                .add_stage(ReferentialIntegrityValidator::default())
-        } else if config == ValidationConfig::strict() {
+        } else if config == ValidationConfig::comprehensive()
+            || config == ValidationConfig::strict()
+        {
             ValidationPipeline::new()
                 .add_stage(BasicSchemaValidator)
                 .add_stage(RidConsistencyValidator)

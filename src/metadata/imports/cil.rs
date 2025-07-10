@@ -1116,7 +1116,7 @@ impl Clone for Imports {
     fn clone(&self) -> Self {
         // Create a new Imports container and copy all entries
         let new_imports = Self::new();
-        for entry in self.data.iter() {
+        for entry in &self.data {
             let token = *entry.key();
             let import = entry.value().clone();
             new_imports.data.insert(token, import.clone());

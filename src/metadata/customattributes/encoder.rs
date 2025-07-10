@@ -122,6 +122,11 @@ use crate::{
 ///
 /// A vector of bytes representing the encoded custom attribute blob.
 ///
+/// # Errors
+///
+/// Returns [`crate::Error::EncodingFailed`] if the custom attribute contains
+/// unsupported data types or malformed structures.
+///
 /// # Examples
 ///
 /// ```rust,ignore
@@ -143,6 +148,7 @@ pub fn encode_custom_attribute_value(value: &CustomAttributeValue) -> Result<Vec
 
     encode_fixed_arguments(&value.fixed_args, &mut buffer)?;
 
+    #[allow(clippy::cast_possible_truncation)]
     buffer.extend_from_slice(&(value.named_args.len() as u16).to_le_bytes());
 
     encode_named_arguments(&value.named_args, &mut buffer)?;
@@ -244,6 +250,12 @@ fn encode_named_arguments(
 /// - **Strings**: Compressed length + UTF-8 data (or 0xFF for null)
 /// - **Arrays**: Compressed length + encoded elements
 /// - **Enums**: Underlying type value (type name encoded separately in named args)
+///
+/// # Errors
+///
+/// Returns [`crate::Error::EncodingFailed`] if the argument contains unsupported
+/// data types or if encoding operations fail.
+#[allow(clippy::cast_possible_truncation)]
 pub fn encode_custom_attribute_argument(
     arg: &CustomAttributeArgument,
     buffer: &mut Vec<u8>,
@@ -253,7 +265,7 @@ pub fn encode_custom_attribute_argument(
             // Void arguments are typically not used in custom attributes
         }
         CustomAttributeArgument::Bool(value) => {
-            buffer.push(if *value { 1 } else { 0 });
+            buffer.push(u8::from(*value));
         }
         CustomAttributeArgument::Char(value) => {
             // Encode as UTF-16 - if the character fits in 16 bits, use it directly
@@ -266,6 +278,7 @@ pub fn encode_custom_attribute_argument(
             buffer.extend_from_slice(&utf16_val.to_le_bytes());
         }
         CustomAttributeArgument::I1(value) => {
+            #[allow(clippy::cast_sign_loss)]
             buffer.push(*value as u8);
         }
         CustomAttributeArgument::U1(value) => {
@@ -313,10 +326,7 @@ pub fn encode_custom_attribute_argument(
                 buffer.extend_from_slice(&(*value as u64).to_le_bytes());
             }
         }
-        CustomAttributeArgument::String(value) => {
-            write_string(buffer, value);
-        }
-        CustomAttributeArgument::Type(value) => {
+        CustomAttributeArgument::String(value) | CustomAttributeArgument::Type(value) => {
             write_string(buffer, value);
         }
         CustomAttributeArgument::Array(elements) => {
@@ -399,6 +409,7 @@ fn get_serialization_type_tag(arg: &CustomAttributeArgument) -> Result<u8> {
 ///
 /// * `buffer` - The output buffer to write to
 /// * `value` - The string value to encode
+#[allow(clippy::cast_possible_truncation)]
 fn write_string(buffer: &mut Vec<u8>, value: &str) {
     if value.is_empty() {
         write_compressed_uint(0, buffer);

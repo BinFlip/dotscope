@@ -349,18 +349,27 @@ mod tests {
         // Test offset + len overflow
         let result = physical.data_slice(usize::MAX, 1);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), crate::Error::OutOfBounds { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::Error::OutOfBounds { .. }
+        ));
 
         // Test offset exactly at length
         let len = physical.len();
         let result = physical.data_slice(len, 1);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), crate::Error::OutOfBounds { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::Error::OutOfBounds { .. }
+        ));
 
         // Test offset + len exceeds length by 1
         let result = physical.data_slice(len - 1, 2);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), crate::Error::OutOfBounds { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::Error::OutOfBounds { .. }
+        ));
     }
 
     #[test]
