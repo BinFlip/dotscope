@@ -8,7 +8,7 @@
 use crate::{
     cilassembly::BuilderContext,
     metadata::{
-        tables::{CodedIndex, MethodSemanticsRaw, TableDataOwned, TableId},
+        tables::{CodedIndex, CodedIndexType, MethodSemanticsRaw, TableDataOwned, TableId},
         token::Token,
     },
     Error, Result,
@@ -223,7 +223,11 @@ impl MethodSemanticsBuilder {
     ///     .association_from_property(Token::new(0x17000001)); // Property token
     /// ```
     pub fn association_from_property(mut self, property: Token) -> Self {
-        self.association = Some(CodedIndex::new(TableId::Property, property.row()));
+        self.association = Some(CodedIndex::new(
+            TableId::Property,
+            property.row(),
+            CodedIndexType::HasSemantics,
+        ));
         self
     }
 
@@ -249,7 +253,11 @@ impl MethodSemanticsBuilder {
     ///     .association_from_event(Token::new(0x14000001)); // Event token
     /// ```
     pub fn association_from_event(mut self, event: Token) -> Self {
-        self.association = Some(CodedIndex::new(TableId::Event, event.row()));
+        self.association = Some(CodedIndex::new(
+            TableId::Event,
+            event.row(),
+            CodedIndexType::HasSemantics,
+        ));
         self
     }
 
@@ -273,7 +281,8 @@ impl MethodSemanticsBuilder {
     ///
     /// let coded_index = CodedIndex::new(
     ///     TableId::Property,
-    ///     1
+    ///     1,
+    ///     CodedIndexType::HasSemantics
     /// );
     ///
     /// let builder = MethodSemanticsBuilder::new()
@@ -516,7 +525,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let coded_index = CodedIndex::new(TableId::Property, 1);
+            let coded_index = CodedIndex::new(TableId::Property, 1, CodedIndexType::HasSemantics);
 
             let semantic_token = MethodSemanticsBuilder::new()
                 .semantics(MethodSemanticsAttributes::GETTER)

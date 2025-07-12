@@ -289,7 +289,7 @@ pub(crate) struct LoaderContext<'a> {
     /// Custom attribute definitions.
     pub custom_attribute: CustomAttributeMap,
     /// Declarative security attributes.
-    pub decl_security: DeclSecurityMap,
+    pub decl_security: &'a DeclSecurityMap,
     /// File definitions for multi-file assemblies.
     pub file: &'a FileMap,
     /// Exported type definitions.

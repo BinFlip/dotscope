@@ -55,7 +55,7 @@ use crate::{
 ///
 /// // Create a class implementing an interface
 /// let implementing_class = 1; // TypeDef RID for MyClass
-/// let target_interface = CodedIndex::new(TableId::TypeRef, 1); // IDisposable from mscorlib
+/// let target_interface = CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef); // IDisposable from mscorlib
 ///
 /// let impl_declaration = InterfaceImplBuilder::new()
 ///     .class(implementing_class)
@@ -64,7 +64,7 @@ use crate::{
 ///
 /// // Create an interface extending another interface  
 /// let derived_interface = 2; // TypeDef RID for IMyInterface
-/// let base_interface = CodedIndex::new(TableId::TypeRef, 2); // IComparable from mscorlib
+/// let base_interface = CodedIndex::new(TableId::TypeRef, 2, CodedIndexType::TypeDefOrRef); // IComparable from mscorlib
 ///
 /// let interface_extension = InterfaceImplBuilder::new()
 ///     .class(derived_interface)
@@ -73,7 +73,7 @@ use crate::{
 ///
 /// // Create a generic interface implementation
 /// let generic_class = 3; // TypeDef RID for MyGenericClass
-/// let generic_interface = CodedIndex::new(TableId::TypeSpec, 1); // IEnumerable<string>
+/// let generic_interface = CodedIndex::new(TableId::TypeSpec, 1, CodedIndexType::TypeDefOrRef); // IEnumerable<string>
 ///
 /// let generic_impl = InterfaceImplBuilder::new()
 ///     .class(generic_class)
@@ -246,7 +246,8 @@ mod tests {
 
             // Create a basic interface implementation
             let implementing_class = 1; // TypeDef RID
-            let target_interface = CodedIndex::new(TableId::TypeRef, 1); // External interface
+            let target_interface =
+                CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef); // External interface
 
             let token = InterfaceImplBuilder::new()
                 .class(implementing_class)
@@ -269,7 +270,7 @@ mod tests {
 
             // Create an interface extending another interface
             let derived_interface = 2; // TypeDef RID for derived interface
-            let base_interface = CodedIndex::new(TableId::TypeDef, 1); // Local base interface
+            let base_interface = CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeDefOrRef); // Local base interface
 
             let token = InterfaceImplBuilder::new()
                 .class(derived_interface)
@@ -291,7 +292,8 @@ mod tests {
 
             // Create a generic interface implementation
             let implementing_class = 3; // TypeDef RID
-            let generic_interface = CodedIndex::new(TableId::TypeSpec, 1); // Generic interface instantiation
+            let generic_interface =
+                CodedIndex::new(TableId::TypeSpec, 1, CodedIndexType::TypeDefOrRef); // Generic interface instantiation
 
             let token = InterfaceImplBuilder::new()
                 .class(implementing_class)
@@ -311,7 +313,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let target_interface = CodedIndex::new(TableId::TypeRef, 1);
+            let target_interface =
+                CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef);
 
             let result = InterfaceImplBuilder::new()
                 .interface(target_interface)
@@ -347,7 +350,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let target_interface = CodedIndex::new(TableId::TypeRef, 1);
+            let target_interface =
+                CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef);
 
             let result = InterfaceImplBuilder::new()
                 .class(0) // Invalid RID
@@ -368,7 +372,8 @@ mod tests {
 
             let implementing_class = 1; // TypeDef RID
                                         // Use a table type that's not valid for TypeDefOrRef
-            let invalid_interface = CodedIndex::new(TableId::Field, 1); // Field not in TypeDefOrRef
+            let invalid_interface =
+                CodedIndex::new(TableId::Field, 1, CodedIndexType::TypeDefOrRef); // Field not in TypeDefOrRef
 
             let result = InterfaceImplBuilder::new()
                 .class(implementing_class)
@@ -391,9 +396,9 @@ mod tests {
             let class2 = 2; // TypeDef RID
             let class3 = 3; // TypeDef RID
 
-            let interface1 = CodedIndex::new(TableId::TypeRef, 1); // IDisposable
-            let interface2 = CodedIndex::new(TableId::TypeRef, 2); // IComparable
-            let interface3 = CodedIndex::new(TableId::TypeSpec, 1); // Generic interface
+            let interface1 = CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef); // IDisposable
+            let interface2 = CodedIndex::new(TableId::TypeRef, 2, CodedIndexType::TypeDefOrRef); // IComparable
+            let interface3 = CodedIndex::new(TableId::TypeSpec, 1, CodedIndexType::TypeDefOrRef); // Generic interface
 
             // Create multiple interface implementations
             let impl1 = InterfaceImplBuilder::new()
@@ -446,8 +451,8 @@ mod tests {
             // Create a complex inheritance scenario
             let base_class = 1; // TypeDef RID for base class
             let derived_class = 2; // TypeDef RID for derived class
-            let interface1 = CodedIndex::new(TableId::TypeRef, 1); // Base interface
-            let interface2 = CodedIndex::new(TableId::TypeRef, 2); // Derived interface
+            let interface1 = CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef); // Base interface
+            let interface2 = CodedIndex::new(TableId::TypeRef, 2, CodedIndexType::TypeDefOrRef); // Derived interface
 
             // Base class implements interface1
             let base_impl = InterfaceImplBuilder::new()

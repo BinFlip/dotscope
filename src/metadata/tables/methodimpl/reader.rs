@@ -59,19 +59,11 @@ mod tests {
             assert_eq!(row.class, 0x0101);
             assert_eq!(
                 row.method_body,
-                CodedIndex {
-                    tag: TableId::MethodDef,
-                    row: 1,
-                    token: Token::new(1 | 0x06000000),
-                }
+                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef)
             );
             assert_eq!(
                 row.method_declaration,
-                CodedIndex {
-                    tag: TableId::MethodDef,
-                    row: 1,
-                    token: Token::new(1 | 0x06000000),
-                }
+                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef)
             );
         };
 
@@ -114,19 +106,11 @@ mod tests {
             assert_eq!(row.class, 0x01010101);
             assert_eq!(
                 row.method_body,
-                CodedIndex {
-                    tag: TableId::MethodDef,
-                    row: 1,
-                    token: Token::new(1 | 0x06000000),
-                }
+                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef)
             );
             assert_eq!(
                 row.method_declaration,
-                CodedIndex {
-                    tag: TableId::MethodDef,
-                    row: 1,
-                    token: Token::new(1 | 0x06000000),
-                }
+                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef)
             );
         };
 

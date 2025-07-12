@@ -54,7 +54,7 @@ use crate::{
 /// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create a method reference to external assembly
-/// let external_type = CodedIndex::new(TableId::TypeRef, 1); // System.String from mscorlib
+/// let external_type = CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::MemberRefParent); // System.String from mscorlib
 /// let method_signature = &[0x20, 0x01, 0x01, 0x0E]; // Default instance method, 1 param, void return, string param
 ///
 /// let string_concat_ref = MemberRefBuilder::new()
@@ -273,7 +273,8 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Create a MemberRefParent coded index (TypeRef)
-            let declaring_type = CodedIndex::new(TableId::TypeRef, 1);
+            let declaring_type =
+                CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::MemberRefParent);
 
             // Create a method signature for a simple method
             let method_signature = &[0x20, 0x00, 0x01]; // Default instance method, no params, void return
@@ -298,7 +299,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let declaring_type = CodedIndex::new(TableId::TypeDef, 1); // Local type
+            let declaring_type =
+                CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::MemberRefParent); // Local type
 
             // Create a field signature
             let field_signature = &[0x06, 0x08]; // Field signature, int32 type
@@ -322,7 +324,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let declaring_type = CodedIndex::new(TableId::TypeRef, 2);
+            let declaring_type =
+                CodedIndex::new(TableId::TypeRef, 2, CodedIndexType::MemberRefParent);
 
             // Create a constructor signature
             let ctor_signature = &[0x20, 0x01, 0x01, 0x1C]; // Default instance method, 1 param, void return, object param
@@ -346,7 +349,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let module_ref = CodedIndex::new(TableId::ModuleRef, 1); // External module
+            let module_ref =
+                CodedIndex::new(TableId::ModuleRef, 1, CodedIndexType::MemberRefParent); // External module
 
             // Create a method signature for global function
             let global_method_sig = &[0x00, 0x01, 0x08, 0x08]; // Static method, 1 param, int32 return, int32 param
@@ -370,7 +374,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let generic_type = CodedIndex::new(TableId::TypeSpec, 1); // Generic type instantiation
+            let generic_type =
+                CodedIndex::new(TableId::TypeSpec, 1, CodedIndexType::MemberRefParent); // Generic type instantiation
 
             // Create a method signature
             let method_signature = &[0x20, 0x01, 0x0E, 0x1C]; // Default instance method, 1 param, string return, object param
@@ -411,7 +416,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let declaring_type = CodedIndex::new(TableId::TypeRef, 1);
+            let declaring_type =
+                CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::MemberRefParent);
 
             let result = MemberRefBuilder::new()
                 .class(declaring_type)
@@ -430,7 +436,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let declaring_type = CodedIndex::new(TableId::TypeRef, 1);
+            let declaring_type =
+                CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::MemberRefParent);
 
             let result = MemberRefBuilder::new()
                 .class(declaring_type)
@@ -450,7 +457,7 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Use a table type that's not valid for MemberRefParent
-            let invalid_class = CodedIndex::new(TableId::Field, 1); // Field not in MemberRefParent
+            let invalid_class = CodedIndex::new(TableId::Field, 1, CodedIndexType::MemberRefParent); // Field not in MemberRefParent
 
             let result = MemberRefBuilder::new()
                 .class(invalid_class)
@@ -470,9 +477,9 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let type_ref1 = CodedIndex::new(TableId::TypeRef, 1);
-            let type_ref2 = CodedIndex::new(TableId::TypeRef, 2);
-            let type_def1 = CodedIndex::new(TableId::TypeDef, 1);
+            let type_ref1 = CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::MemberRefParent);
+            let type_ref2 = CodedIndex::new(TableId::TypeRef, 2, CodedIndexType::MemberRefParent);
+            let type_def1 = CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::MemberRefParent);
 
             let method_sig = &[0x20, 0x00, 0x01]; // Default instance method, no params, void return
             let field_sig = &[0x06, 0x08]; // Field signature, int32

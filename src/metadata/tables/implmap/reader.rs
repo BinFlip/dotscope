@@ -77,11 +77,7 @@ mod tests {
             assert_eq!(row.mapping_flags, 0x0101);
             assert_eq!(
                 row.member_forwarded,
-                CodedIndex {
-                    tag: TableId::Field,
-                    row: 1,
-                    token: Token::new(1 | 0x04000000),
-                }
+                CodedIndex::new(TableId::Field, 1, CodedIndexType::MemberForwarded)
             );
             assert_eq!(row.import_name, 0x0303);
             assert_eq!(row.import_scope, 0x0404);
@@ -127,11 +123,7 @@ mod tests {
             assert_eq!(row.mapping_flags, 0x0101);
             assert_eq!(
                 row.member_forwarded,
-                CodedIndex {
-                    tag: TableId::Field,
-                    row: 1,
-                    token: Token::new(1 | 0x04000000),
-                }
+                CodedIndex::new(TableId::Field, 1, CodedIndexType::MemberForwarded)
             );
             assert_eq!(row.import_name, 0x03030303);
             assert_eq!(row.import_scope, 0x04040404);

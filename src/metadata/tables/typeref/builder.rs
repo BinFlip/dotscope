@@ -33,7 +33,7 @@ use crate::{
 /// let system_object = TypeRefBuilder::new()
 ///     .name("Object")
 ///     .namespace("System")
-///     .resolution_scope(CodedIndex::new(TableId::AssemblyRef, 1)) // mscorlib
+///     .resolution_scope(CodedIndex::new(TableId::AssemblyRef, 1, CodedIndexType::ResolutionScope)) // mscorlib
 ///     .build(&mut context)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
@@ -168,6 +168,7 @@ mod tests {
     use crate::{
         cilassembly::{BuilderContext, CilAssembly},
         metadata::cilassemblyview::CilAssemblyView,
+        prelude::CodedIndexType,
     };
     use std::path::PathBuf;
 
@@ -178,7 +179,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let mscorlib_ref = CodedIndex::new(TableId::AssemblyRef, 1);
+            let mscorlib_ref =
+                CodedIndex::new(TableId::AssemblyRef, 1, CodedIndexType::ResolutionScope);
             let token = TypeRefBuilder::new()
                 .name("String")
                 .namespace("System")
@@ -200,7 +202,8 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Manually specify the core library reference
-            let mscorlib_ref = CodedIndex::new(TableId::AssemblyRef, 1);
+            let mscorlib_ref =
+                CodedIndex::new(TableId::AssemblyRef, 1, CodedIndexType::ResolutionScope);
             let token = TypeRefBuilder::new()
                 .name("Object")
                 .namespace("System")
@@ -221,7 +224,8 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Manually specify the core library reference
-            let mscorlib_ref = CodedIndex::new(TableId::AssemblyRef, 1);
+            let mscorlib_ref =
+                CodedIndex::new(TableId::AssemblyRef, 1, CodedIndexType::ResolutionScope);
             let token = TypeRefBuilder::new()
                 .name("ValueType")
                 .namespace("System")
@@ -242,7 +246,8 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Manually specify the core library reference
-            let mscorlib_ref = CodedIndex::new(TableId::AssemblyRef, 1);
+            let mscorlib_ref =
+                CodedIndex::new(TableId::AssemblyRef, 1, CodedIndexType::ResolutionScope);
             let token = TypeRefBuilder::new()
                 .name("Int32")
                 .namespace("System")
@@ -264,7 +269,11 @@ mod tests {
 
             let result = TypeRefBuilder::new()
                 .namespace("System")
-                .resolution_scope(CodedIndex::new(TableId::AssemblyRef, 1))
+                .resolution_scope(CodedIndex::new(
+                    TableId::AssemblyRef,
+                    1,
+                    CodedIndexType::ResolutionScope,
+                ))
                 .build(&mut context);
 
             // Should fail because name is required
@@ -299,7 +308,11 @@ mod tests {
             let token = TypeRefBuilder::new()
                 .name("GlobalType")
                 .namespace("") // Empty namespace = global
-                .resolution_scope(CodedIndex::new(TableId::AssemblyRef, 1))
+                .resolution_scope(CodedIndex::new(
+                    TableId::AssemblyRef,
+                    1,
+                    CodedIndexType::ResolutionScope,
+                ))
                 .build(&mut context)
                 .unwrap();
 

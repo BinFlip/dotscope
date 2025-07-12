@@ -106,12 +106,11 @@
 //! - [`crate::cilassembly::operation::TableOperation`] - Timestamped operations
 //! - [`crate::cilassembly::operation::Operation`] - Operation variants
 //!
-//! ## **Validation ([`crate::cilassembly::validation`])**
-//! Consolidated module containing all validation logic:
-//! - [`crate::cilassembly::validation::ValidationPipeline`] - Configurable validation stages
-//! - [`crate::cilassembly::validation::ValidationStage`] - Individual validation trait
-//! - [`crate::cilassembly::validation::ConflictResolver`] - Conflict resolution strategies
-//! - [`crate::cilassembly::validation::Conflict`] & [`crate::cilassembly::validation::Resolution`] - Conflict types and results
+//! ## **Conflict Resolution ([`crate::cilassembly::resolver`])**
+//! Conflict resolution for handling competing operations:
+//! - [`crate::cilassembly::resolver::ConflictResolver`] - Conflict resolution strategies
+//! - [`crate::cilassembly::resolver::LastWriteWinsResolver`] - Default timestamp-based resolver
+//! - [`crate::cilassembly::resolver::Conflict`] & [`crate::cilassembly::resolver::Resolution`] - Conflict types and results
 //!
 //! ## **Remapping ([`crate::cilassembly::remapping`])**
 //! - [`crate::cilassembly::remapping::IndexRemapper`] - Master index/RID remapping
@@ -142,6 +141,7 @@ use crate::{
         exports::UnifiedExportContainer,
         imports::UnifiedImportContainer,
         tables::{TableDataOwned, TableId},
+        validation::{ValidationConfig, ValidationEngine},
     },
     Result,
 };
@@ -150,24 +150,17 @@ mod builder;
 mod changes;
 mod modifications;
 mod operation;
-mod references;
 mod remapping;
-mod validation;
+mod resolver;
 mod write;
 
 pub use builder::*;
-pub use changes::ReferenceHandlingStrategy;
-pub use validation::{
-    BasicSchemaValidator, LastWriteWinsResolver, ReferentialIntegrityValidator,
-    RidConsistencyValidator, ValidationPipeline,
-};
+pub use changes::{AssemblyChanges, HeapChanges, ReferenceHandlingStrategy};
+pub use modifications::TableModifications;
+pub use operation::{Operation, TableOperation};
+pub use resolver::LastWriteWinsResolver;
 
-use self::{
-    changes::{AssemblyChanges, HeapChanges},
-    modifications::TableModifications,
-    operation::{Operation, TableOperation},
-    remapping::IndexRemapper,
-};
+use self::remapping::IndexRemapper;
 
 /// A mutable view of a .NET assembly that tracks changes for editing operations.
 ///
@@ -654,8 +647,8 @@ impl CilAssembly {
 
     /// Validates all pending changes and applies index remapping.
     ///
-    /// This method runs the complete validation pipeline and resolves any
-    /// conflicts found in the pending operations. It should be called before
+    /// This method runs the unified validation engine to validate all pending
+    /// modifications and resolves any conflicts found. It should be called before
     /// writing the assembly to ensure metadata consistency.
     ///
     /// # Returns
@@ -664,9 +657,10 @@ impl CilAssembly {
     /// or an error describing the first validation failure.
     pub fn validate_and_apply_changes(&mut self) -> Result<()> {
         let remapper = {
-            let pipeline = validation::ValidationPipeline::default();
-            pipeline.validate(Some(&self.changes), &self.view)?;
+            let engine = ValidationEngine::new(&self.view, ValidationConfig::production())?;
+            let result = engine.execute_stage1_validation(&self.view, Some(&self.changes))?;
 
+            result.into_result()?;
             IndexRemapper::build_from_changes(&self.changes, &self.view)
         };
 
@@ -675,15 +669,15 @@ impl CilAssembly {
         Ok(())
     }
 
-    /// Validates and applies changes using a custom validation pipeline.
+    /// Validates and applies changes using a custom validation configuration.
     ///
-    /// This method allows you to specify a custom validation pipeline with different
-    /// reference handling strategies and conflict resolution approaches. This is useful
-    /// when you need more aggressive handling of referential integrity violations.
+    /// This method allows you to specify custom validation settings for different
+    /// validation strategies. This is useful when you need different validation
+    /// levels (minimal, comprehensive, strict, etc.).
     ///
     /// # Arguments
     ///
-    /// * `pipeline` - The [`crate::cilassembly::validation::ValidationPipeline`] to use for validation
+    /// * `config` - The [`ValidationConfig`] to use for validation
     ///
     /// # Returns
     ///
@@ -693,28 +687,22 @@ impl CilAssembly {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use crate::cilassembly::validation::{ValidationPipeline, ReferentialIntegrityValidator};
-    /// use crate::cilassembly::ReferenceHandlingStrategy;
+    /// use crate::metadata::validation::ValidationConfig;
     ///
     /// # let mut assembly = CilAssembly::from_view(view);
-    /// // Use a more aggressive validation pipeline
-    /// let pipeline = ValidationPipeline::new()
-    ///     .add_stage(BasicSchemaValidator)
-    ///     .add_stage(RidConsistencyValidator)
-    ///     .add_stage(ReferentialIntegrityValidator::new(
-    ///         ReferenceHandlingStrategy::NullifyReferences
-    ///     ));
-    ///
-    /// assembly.validate_and_apply_changes_with_pipeline(&pipeline)?;
+    /// // Use comprehensive validation
+    /// assembly.validate_and_apply_changes_with_config(ValidationConfig::comprehensive())?;
     /// # Ok::<(), crate::Error>(())
     /// ```
-    pub fn validate_and_apply_changes_with_pipeline(
+    pub fn validate_and_apply_changes_with_config(
         &mut self,
-        pipeline: &ValidationPipeline,
+        config: ValidationConfig,
     ) -> Result<()> {
         let remapper = {
-            pipeline.validate(Some(&self.changes), &self.view)?;
+            let engine = ValidationEngine::new(&self.view, config)?;
+            let result = engine.execute_stage1_validation(&self.view, Some(&self.changes))?;
 
+            result.into_result()?;
             IndexRemapper::build_from_changes(&self.changes, &self.view)
         };
 
@@ -1108,7 +1096,7 @@ mod tests {
 
     use super::*;
     use crate::metadata::{
-        tables::{CodedIndex, TableDataOwned, TableId, TypeDefRaw},
+        tables::{CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeDefRaw},
         token::Token,
     };
 
@@ -1119,11 +1107,11 @@ mod tests {
             token: Token::new(0x02000000), // Will be updated by the system
             offset: 0,                     // Will be set during binary generation
             flags: 0,
-            type_name: 1,                                  // Placeholder string index
-            type_namespace: 0,                             // Empty namespace
-            extends: CodedIndex::new(TableId::TypeRef, 0), // No base type (0 = null reference)
-            field_list: 1,                                 // Placeholder field list
-            method_list: 1,                                // Placeholder method list
+            type_name: 1,      // Placeholder string index
+            type_namespace: 0, // Empty namespace
+            extends: CodedIndex::new(TableId::TypeRef, 0, CodedIndexType::TypeDefOrRef), // No base type (0 = null reference)
+            field_list: 1,  // Placeholder field list
+            method_list: 1, // Placeholder method list
         }))
     }
 
@@ -1262,8 +1250,11 @@ mod tests {
 
                     if let Err(e) = result {
                         // Verify it's the right kind of error
+                        let error_str = format!("{e:?}");
                         assert!(
-                            e.to_string().contains("Invalid RID"),
+                            error_str.contains("invalid RID 0")
+                                || error_str.contains("Invalid RID")
+                                || error_str.contains("RID 0 is reserved"),
                             "Should be RID validation error: {e}"
                         );
                     }

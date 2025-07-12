@@ -507,9 +507,7 @@ pub use metadata::cilassemblyview::CilAssemblyView;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub use cilassembly::{
-    BasicSchemaValidator, BuilderContext, CilAssembly, LastWriteWinsResolver,
-    ReferenceHandlingStrategy, ReferentialIntegrityValidator, RidConsistencyValidator,
-    ValidationPipeline,
+    BuilderContext, CilAssembly, LastWriteWinsResolver, ReferenceHandlingStrategy,
 };
 mod cilassembly;
 
@@ -544,7 +542,7 @@ pub use metadata::cilobject::CilObject;
 /// )?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
-pub use metadata::validation::ValidationConfig;
+pub use metadata::validation::{ValidationConfig, ValidationEngine};
 
 /// Metadata streams and heaps for direct access to ECMA-335 data structures.
 ///

@@ -96,13 +96,8 @@ fn extend_crafted_2() -> Result<()> {
     // Get the assembly back from context and write to file
     let mut assembly = context.finish();
 
-    // Use a basic validation pipeline without referential integrity validation for now
-    let pipeline = ValidationPipeline::new()
-        .add_stage(BasicSchemaValidator)
-        .add_stage(RidConsistencyValidator)
-        .with_resolver(LastWriteWinsResolver);
-
-    assembly.validate_and_apply_changes_with_pipeline(&pipeline)?;
+    // Use the new validation system
+    assembly.validate_and_apply_changes()?;
     assembly.write_to_file(temp_path)?;
 
     // Verify the file was actually created

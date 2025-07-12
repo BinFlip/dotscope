@@ -64,7 +64,7 @@ use crate::{
 /// let mut context = BuilderContext::new(assembly);
 ///
 /// // Marshal a parameter as a null-terminated Unicode string
-/// let param_ref = CodedIndex::new(TableId::Param, 1); // String parameter
+/// let param_ref = CodedIndex::new(TableId::Param, 1, CodedIndexType::HasFieldMarshal); // String parameter
 /// let unicode_string_descriptor = vec![NATIVE_TYPE::LPWSTR]; // Simple descriptor
 ///
 /// let string_marshal = FieldMarshalBuilder::new()
@@ -73,7 +73,7 @@ use crate::{
 ///     .build(&mut context)?;
 ///
 /// // Marshal a field as a fixed-size ANSI character array
-/// let field_ref = CodedIndex::new(TableId::Field, 1); // Character array field
+/// let field_ref = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasFieldMarshal); // Character array field
 /// let fixed_array_descriptor = vec![
 ///     NATIVE_TYPE::ARRAY,
 ///     0x04, // Array element type (I1 - signed byte)
@@ -86,7 +86,7 @@ use crate::{
 ///     .build(&mut context)?;
 ///
 /// // Marshal a parameter as a COM interface pointer
-/// let interface_param = CodedIndex::new(TableId::Param, 2); // Interface parameter
+/// let interface_param = CodedIndex::new(TableId::Param, 2, CodedIndexType::HasFieldMarshal); // Interface parameter
 /// let interface_descriptor = vec![NATIVE_TYPE::INTERFACE]; // COM interface
 ///
 /// let interface_marshal = FieldMarshalBuilder::new()
@@ -95,7 +95,7 @@ use crate::{
 ///     .build(&mut context)?;
 ///
 /// // Marshal a return value as a platform-dependent integer
-/// let return_param = CodedIndex::new(TableId::Param, 0); // Return value (sequence 0)
+/// let return_param = CodedIndex::new(TableId::Param, 0, CodedIndexType::HasFieldMarshal); // Return value (sequence 0)
 /// let platform_int_descriptor = vec![NATIVE_TYPE::INT]; // Platform IntPtr
 ///
 /// let return_marshal = FieldMarshalBuilder::new()
@@ -590,7 +590,7 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Create a basic field marshal entry
-            let param_ref = CodedIndex::new(TableId::Param, 1); // Parameter target
+            let param_ref = CodedIndex::new(TableId::Param, 1, CodedIndexType::HasFieldMarshal); // Parameter target
             let marshal_descriptor = vec![NATIVE_TYPE::I4]; // Simple integer marshaling
 
             let token = FieldMarshalBuilder::new()
@@ -615,7 +615,7 @@ mod tests {
             let marshal_descriptor = vec![NATIVE_TYPE::I4];
 
             // Test Field parent
-            let field_parent = CodedIndex::new(TableId::Field, 1);
+            let field_parent = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasFieldMarshal);
             let field_marshal = FieldMarshalBuilder::new()
                 .parent(field_parent)
                 .native_type(&marshal_descriptor)
@@ -623,7 +623,7 @@ mod tests {
                 .unwrap();
 
             // Test Param parent
-            let param_parent = CodedIndex::new(TableId::Param, 1);
+            let param_parent = CodedIndex::new(TableId::Param, 1, CodedIndexType::HasFieldMarshal);
             let param_marshal = FieldMarshalBuilder::new()
                 .parent(param_parent)
                 .native_type(&marshal_descriptor)
@@ -646,7 +646,7 @@ mod tests {
 
             // Test various native types
             let param_refs: Vec<_> = (1..=8)
-                .map(|i| CodedIndex::new(TableId::Param, i))
+                .map(|i| CodedIndex::new(TableId::Param, i, CodedIndexType::HasFieldMarshal))
                 .collect();
 
             // Simple integer types
@@ -717,7 +717,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let field_ref = CodedIndex::new(TableId::Field, 1);
+            let field_ref = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasFieldMarshal);
 
             // Complex array descriptor with multiple parameters
             let complex_array_descriptor = vec![
@@ -771,7 +771,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let param_ref = CodedIndex::new(TableId::Param, 1);
+            let param_ref = CodedIndex::new(TableId::Param, 1, CodedIndexType::HasFieldMarshal);
 
             let result = FieldMarshalBuilder::new()
                 .parent(param_ref)
@@ -790,7 +790,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let param_ref = CodedIndex::new(TableId::Param, 1);
+            let param_ref = CodedIndex::new(TableId::Param, 1, CodedIndexType::HasFieldMarshal);
             let empty_descriptor = vec![]; // Empty descriptor
 
             let result = FieldMarshalBuilder::new()
@@ -811,7 +811,8 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Use a table type that's not valid for HasFieldMarshal
-            let invalid_parent = CodedIndex::new(TableId::TypeDef, 1); // TypeDef not in HasFieldMarshal
+            let invalid_parent =
+                CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasFieldMarshal); // TypeDef not in HasFieldMarshal
             let marshal_descriptor = vec![NATIVE_TYPE::I4];
 
             let result = FieldMarshalBuilder::new()
@@ -849,7 +850,11 @@ mod tests {
             ];
 
             for (i, &native_type) in primitive_types.iter().enumerate() {
-                let param_ref = CodedIndex::new(TableId::Param, (i + 1) as u32);
+                let param_ref = CodedIndex::new(
+                    TableId::Param,
+                    (i + 1) as u32,
+                    CodedIndexType::HasFieldMarshal,
+                );
 
                 let token = FieldMarshalBuilder::new()
                     .parent(param_ref)
@@ -871,10 +876,10 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Test string marshaling types
-            let param1 = CodedIndex::new(TableId::Param, 1);
-            let param2 = CodedIndex::new(TableId::Param, 2);
-            let param3 = CodedIndex::new(TableId::Param, 3);
-            let param4 = CodedIndex::new(TableId::Param, 4);
+            let param1 = CodedIndex::new(TableId::Param, 1, CodedIndexType::HasFieldMarshal);
+            let param2 = CodedIndex::new(TableId::Param, 2, CodedIndexType::HasFieldMarshal);
+            let param3 = CodedIndex::new(TableId::Param, 3, CodedIndexType::HasFieldMarshal);
+            let param4 = CodedIndex::new(TableId::Param, 4, CodedIndexType::HasFieldMarshal);
 
             // LPSTR (ANSI string)
             let ansi_marshal = FieldMarshalBuilder::new()
@@ -923,7 +928,7 @@ mod tests {
             // BOOL CreateDirectory(LPCWSTR lpPathName, LPSECURITY_ATTRIBUTES lpSecurityAttributes);
 
             // Parameter 1: LPCWSTR (Unicode string path)
-            let path_param = CodedIndex::new(TableId::Param, 1);
+            let path_param = CodedIndex::new(TableId::Param, 1, CodedIndexType::HasFieldMarshal);
             let path_marshal = FieldMarshalBuilder::new()
                 .parent(path_param)
                 .unicode_string() // LPCWSTR
@@ -931,7 +936,8 @@ mod tests {
                 .unwrap();
 
             // Parameter 2: LPSECURITY_ATTRIBUTES (structure pointer)
-            let security_param = CodedIndex::new(TableId::Param, 2);
+            let security_param =
+                CodedIndex::new(TableId::Param, 2, CodedIndexType::HasFieldMarshal);
             let security_marshal = FieldMarshalBuilder::new()
                 .parent(security_param)
                 .simple_native_type(NATIVE_TYPE::PTR) // Pointer to struct
@@ -939,7 +945,7 @@ mod tests {
                 .unwrap();
 
             // Return value: BOOL (32-bit integer)
-            let return_param = CodedIndex::new(TableId::Param, 0); // Return value
+            let return_param = CodedIndex::new(TableId::Param, 0, CodedIndexType::HasFieldMarshal); // Return value
             let return_marshal = FieldMarshalBuilder::new()
                 .parent(return_param)
                 .simple_native_type(NATIVE_TYPE::I4) // 32-bit bool
@@ -977,8 +983,8 @@ mod tests {
             // Realistic struct marshaling: POINT structure
             // struct POINT { LONG x; LONG y; };
 
-            let x_field = CodedIndex::new(TableId::Field, 1);
-            let y_field = CodedIndex::new(TableId::Field, 2);
+            let x_field = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasFieldMarshal);
+            let y_field = CodedIndex::new(TableId::Field, 2, CodedIndexType::HasFieldMarshal);
 
             // X coordinate as 32-bit signed integer
             let x_marshal = FieldMarshalBuilder::new()
@@ -1008,7 +1014,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let param_ref = CodedIndex::new(TableId::Param, 1);
+            let param_ref = CodedIndex::new(TableId::Param, 1, CodedIndexType::HasFieldMarshal);
 
             // Test high-level NativeType specification
             let token = FieldMarshalBuilder::new()
@@ -1031,7 +1037,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let field_ref = CodedIndex::new(TableId::Field, 1);
+            let field_ref = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasFieldMarshal);
 
             // Test variable array marshaling
             let token = FieldMarshalBuilder::new()
@@ -1052,7 +1058,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let field_ref = CodedIndex::new(TableId::Field, 1);
+            let field_ref = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasFieldMarshal);
 
             // Test fixed array marshaling with type specification
             let token = FieldMarshalBuilder::new()
@@ -1073,7 +1079,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let field_ref = CodedIndex::new(TableId::Field, 1);
+            let field_ref = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasFieldMarshal);
 
             // Test native struct marshaling
             let token = FieldMarshalBuilder::new()
@@ -1094,7 +1100,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let param_ref = CodedIndex::new(TableId::Param, 1);
+            let param_ref = CodedIndex::new(TableId::Param, 1, CodedIndexType::HasFieldMarshal);
 
             // Test pointer marshaling
             let token = FieldMarshalBuilder::new()
@@ -1115,7 +1121,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let param_ref = CodedIndex::new(TableId::Param, 1);
+            let param_ref = CodedIndex::new(TableId::Param, 1, CodedIndexType::HasFieldMarshal);
 
             // Test custom marshaler
             let token = FieldMarshalBuilder::new()
@@ -1141,7 +1147,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let param_ref = CodedIndex::new(TableId::Param, 1);
+            let param_ref = CodedIndex::new(TableId::Param, 1, CodedIndexType::HasFieldMarshal);
 
             // Test safe array marshaling
             let token = FieldMarshalBuilder::new()
@@ -1162,7 +1168,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let param_ref = CodedIndex::new(TableId::Param, 1);
+            let param_ref = CodedIndex::new(TableId::Param, 1, CodedIndexType::HasFieldMarshal);
 
             // Test complex marshalling info
             let info = MarshallingInfo {

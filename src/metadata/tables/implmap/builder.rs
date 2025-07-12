@@ -67,14 +67,14 @@ use crate::{
 ///
 /// // Create a basic P/Invoke mapping with default settings
 /// let basic_pinvoke = ImplMapBuilder::new()
-///     .member_forwarded(CodedIndex::new(TableId::MethodDef, 1)) // Target managed method
+///     .member_forwarded(CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MemberForwarded)) // Target managed method
 ///     .import_name("MessageBoxW") // Native function name
 ///     .import_scope(1) // ModuleRef to user32.dll
 ///     .build(&mut context)?;
 ///
 /// // Create a P/Invoke mapping with specific calling convention and character set
 /// let advanced_pinvoke = ImplMapBuilder::new()
-///     .member_forwarded(CodedIndex::new(TableId::MethodDef, 2))
+///     .member_forwarded(CodedIndex::new(TableId::MethodDef, 2, CodedIndexType::MemberForwarded))
 ///     .import_name("GetModuleFileNameW")
 ///     .import_scope(2) // ModuleRef to kernel32.dll
 ///     .mapping_flags(
@@ -86,7 +86,7 @@ use crate::{
 ///
 /// // Create a P/Invoke mapping with exact name preservation
 /// let exact_name_pinvoke = ImplMapBuilder::new()
-///     .member_forwarded(CodedIndex::new(TableId::MethodDef, 3))
+///     .member_forwarded(CodedIndex::new(TableId::MethodDef, 3, CodedIndexType::MemberForwarded))
 ///     .import_name("my_custom_function") // Exact function name in native library
 ///     .import_scope(3) // ModuleRef to custom.dll
 ///     .mapping_flags(
@@ -97,7 +97,7 @@ use crate::{
 ///
 /// // Create a P/Invoke mapping with advanced character handling
 /// let string_handling_pinvoke = ImplMapBuilder::new()
-///     .member_forwarded(CodedIndex::new(TableId::MethodDef, 4))
+///     .member_forwarded(CodedIndex::new(TableId::MethodDef, 4, CodedIndexType::MemberForwarded))
 ///     .import_name("ProcessStringData")
 ///     .import_scope(4) // ModuleRef to stringlib.dll
 ///     .mapping_flags(
@@ -191,7 +191,7 @@ impl ImplMapBuilder {
     /// ```rust,ignore
     /// # use dotscope::metadata::tables::{CodedIndex, TableId, ImplMapBuilder};
     /// let builder = ImplMapBuilder::new()
-    ///     .member_forwarded(CodedIndex::new(TableId::MethodDef, 1));
+    ///     .member_forwarded(CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MemberForwarded));
     /// ```
     pub fn member_forwarded(mut self, member: CodedIndex) -> Self {
         self.member_forwarded = Some(member);
@@ -284,7 +284,7 @@ impl ImplMapBuilder {
     /// # let assembly = CilAssembly::new(view);
     /// # let mut context = BuilderContext::new(assembly);
     /// let token = ImplMapBuilder::new()
-    ///     .member_forwarded(CodedIndex::new(TableId::MethodDef, 1))
+    ///     .member_forwarded(CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MemberForwarded))
     ///     .import_name("MessageBoxW")
     ///     .import_scope(1)
     ///     .build(&mut context)?;
@@ -358,7 +358,11 @@ mod tests {
         let mut context = BuilderContext::new(assembly);
 
         let token = ImplMapBuilder::new()
-            .member_forwarded(CodedIndex::new(TableId::MethodDef, 1))
+            .member_forwarded(CodedIndex::new(
+                TableId::MethodDef,
+                1,
+                CodedIndexType::MemberForwarded,
+            ))
             .import_name("MessageBoxW")
             .import_scope(1)
             .build(&mut context)?;
@@ -374,7 +378,11 @@ mod tests {
         let mut context = BuilderContext::new(assembly);
 
         let token = ImplMapBuilder::new()
-            .member_forwarded(CodedIndex::new(TableId::MethodDef, 1))
+            .member_forwarded(CodedIndex::new(
+                TableId::MethodDef,
+                1,
+                CodedIndexType::MemberForwarded,
+            ))
             .import_name("GetModuleFileNameW")
             .import_scope(2)
             .mapping_flags(
@@ -395,7 +403,11 @@ mod tests {
         let mut context = BuilderContext::new(assembly);
 
         let token = ImplMapBuilder::new()
-            .member_forwarded(CodedIndex::new(TableId::MethodDef, 3))
+            .member_forwarded(CodedIndex::new(
+                TableId::MethodDef,
+                3,
+                CodedIndexType::MemberForwarded,
+            ))
             .import_name("my_custom_function")
             .import_scope(3)
             .mapping_flags(PInvokeAttributes::NO_MANGLE | PInvokeAttributes::CALL_CONV_CDECL)
@@ -412,7 +424,11 @@ mod tests {
         let mut context = BuilderContext::new(assembly);
 
         let token = ImplMapBuilder::new()
-            .member_forwarded(CodedIndex::new(TableId::Field, 1))
+            .member_forwarded(CodedIndex::new(
+                TableId::Field,
+                1,
+                CodedIndexType::MemberForwarded,
+            ))
             .import_name("global_variable")
             .import_scope(1)
             .build(&mut context)?;
@@ -442,7 +458,11 @@ mod tests {
         let mut context = BuilderContext::new(assembly);
 
         let result = ImplMapBuilder::new()
-            .member_forwarded(CodedIndex::new(TableId::MethodDef, 1))
+            .member_forwarded(CodedIndex::new(
+                TableId::MethodDef,
+                1,
+                CodedIndexType::MemberForwarded,
+            ))
             .import_scope(1)
             .build(&mut context);
 
@@ -456,7 +476,11 @@ mod tests {
         let mut context = BuilderContext::new(assembly);
 
         let result = ImplMapBuilder::new()
-            .member_forwarded(CodedIndex::new(TableId::MethodDef, 1))
+            .member_forwarded(CodedIndex::new(
+                TableId::MethodDef,
+                1,
+                CodedIndexType::MemberForwarded,
+            ))
             .import_name("MessageBoxW")
             .build(&mut context);
 
@@ -470,7 +494,11 @@ mod tests {
         let mut context = BuilderContext::new(assembly);
 
         let result = ImplMapBuilder::new()
-            .member_forwarded(CodedIndex::new(TableId::TypeDef, 1)) // Invalid table
+            .member_forwarded(CodedIndex::new(
+                TableId::TypeDef,
+                1,
+                CodedIndexType::MemberForwarded,
+            )) // Invalid table
             .import_name("MessageBoxW")
             .import_scope(1)
             .build(&mut context);
@@ -488,7 +516,11 @@ mod tests {
         let mut context = BuilderContext::new(assembly);
 
         let token = ImplMapBuilder::new()
-            .member_forwarded(CodedIndex::new(TableId::MethodDef, 4))
+            .member_forwarded(CodedIndex::new(
+                TableId::MethodDef,
+                4,
+                CodedIndexType::MemberForwarded,
+            ))
             .import_name("ProcessStringData")
             .import_scope(4)
             .mapping_flags(
@@ -510,7 +542,11 @@ mod tests {
 
         // Test Default trait implementation
         let token = ImplMapBuilder::default()
-            .member_forwarded(CodedIndex::new(TableId::MethodDef, 1))
+            .member_forwarded(CodedIndex::new(
+                TableId::MethodDef,
+                1,
+                CodedIndexType::MemberForwarded,
+            ))
             .import_name("TestFunction")
             .import_scope(1)
             .build(&mut context)?;

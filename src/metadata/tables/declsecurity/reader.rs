@@ -75,11 +75,7 @@ mod tests {
             assert_eq!(row.action, 0x0101);
             assert_eq!(
                 row.parent,
-                CodedIndex {
-                    tag: TableId::Assembly,
-                    row: 128,
-                    token: Token::new(128 | 0x20000000),
-                }
+                CodedIndex::new(TableId::Assembly, 128, CodedIndexType::HasDeclSecurity)
             );
             assert_eq!(row.permission_set, 0x303);
         };
@@ -123,11 +119,7 @@ mod tests {
             assert_eq!(row.action, 0x0101);
             assert_eq!(
                 row.parent,
-                CodedIndex {
-                    tag: TableId::Assembly,
-                    row: 0x808080,
-                    token: Token::new(0x808080 | 0x20000000)
-                }
+                CodedIndex::new(TableId::Assembly, 0x808080, CodedIndexType::HasDeclSecurity)
             );
             assert_eq!(row.permission_set, 0x3030303);
         };

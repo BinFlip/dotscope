@@ -88,7 +88,9 @@ mod tests {
 
     use crate::metadata::tables::{
         customattribute::CustomAttributeRaw,
-        types::{CodedIndex, RowReadable, RowWritable, TableId, TableInfo, TableRow},
+        types::{
+            CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+        },
     };
     use crate::metadata::token::Token;
 
@@ -136,8 +138,12 @@ mod tests {
             rid: 1,
             token: Token::new(0x0C000001),
             offset: 0,
-            parent: CodedIndex::new(TableId::TypeDef, 42), // TypeDef table, index 42
-            constructor: CodedIndex::new(TableId::MethodDef, 15), // MethodDef table, index 15
+            parent: CodedIndex::new(TableId::TypeDef, 42, CodedIndexType::HasCustomAttribute), // TypeDef table, index 42
+            constructor: CodedIndex::new(
+                TableId::MethodDef,
+                15,
+                CodedIndexType::CustomAttributeType,
+            ), // MethodDef table, index 15
             value: 0x1234,
         };
 
@@ -174,8 +180,12 @@ mod tests {
             rid: 1,
             token: Token::new(0x0C000001),
             offset: 0,
-            parent: CodedIndex::new(TableId::Assembly, 5), // Assembly table, index 5
-            constructor: CodedIndex::new(TableId::MemberRef, 25), // MemberRef table, index 25
+            parent: CodedIndex::new(TableId::Assembly, 5, CodedIndexType::HasCustomAttribute), // Assembly table, index 5
+            constructor: CodedIndex::new(
+                TableId::MemberRef,
+                25,
+                CodedIndexType::CustomAttributeType,
+            ), // MemberRef table, index 25
             value: 0x12345678,
         };
 
@@ -212,8 +222,12 @@ mod tests {
             rid: 42,
             token: Token::new(0x0C00002A),
             offset: 0,
-            parent: CodedIndex::new(TableId::Field, 10),
-            constructor: CodedIndex::new(TableId::MethodDef, 20),
+            parent: CodedIndex::new(TableId::Field, 10, CodedIndexType::HasCustomAttribute),
+            constructor: CodedIndex::new(
+                TableId::MethodDef,
+                20,
+                CodedIndexType::CustomAttributeType,
+            ),
             value: 0x5678,
         };
 
@@ -251,8 +265,12 @@ mod tests {
             rid: 1,
             token: Token::new(0x0C000001),
             offset: 0,
-            parent: CodedIndex::new(TableId::Assembly, 0),
-            constructor: CodedIndex::new(TableId::MethodDef, 0),
+            parent: CodedIndex::new(TableId::Assembly, 0, CodedIndexType::HasCustomAttribute),
+            constructor: CodedIndex::new(
+                TableId::MethodDef,
+                0,
+                CodedIndexType::CustomAttributeType,
+            ),
             value: 0,
         };
 
@@ -296,8 +314,12 @@ mod tests {
                 rid: 1,
                 token: Token::new(0x0C000001),
                 offset: 0,
-                parent: CodedIndex::new(table_id, row),
-                constructor: CodedIndex::new(TableId::MethodDef, 5),
+                parent: CodedIndex::new(table_id, row, CodedIndexType::HasCustomAttribute),
+                constructor: CodedIndex::new(
+                    TableId::MethodDef,
+                    5,
+                    CodedIndexType::CustomAttributeType,
+                ),
                 value: 0x1000,
             };
 
@@ -328,8 +350,12 @@ mod tests {
             rid: 1,
             token: Token::new(0x0C000001),
             offset: 0,
-            parent: CodedIndex::new(TableId::TypeRef, 16), // From test data: 0x0202 = 514 = (16 << 5) | 2
-            constructor: CodedIndex::new(TableId::MemberRef, 96), // From test data: 0x0303 = 771 = (96 << 3) | 3
+            parent: CodedIndex::new(TableId::TypeRef, 16, CodedIndexType::HasCustomAttribute), // From test data: 0x0202 = 514 = (16 << 5) | 2
+            constructor: CodedIndex::new(
+                TableId::MemberRef,
+                96,
+                CodedIndexType::CustomAttributeType,
+            ), // From test data: 0x0303 = 771 = (96 << 3) | 3
             value: 0x0404,
         };
 

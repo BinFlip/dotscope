@@ -66,11 +66,7 @@ mod tests {
             assert_eq!(row.token.value(), 0x0D000001);
             assert_eq!(
                 row.parent,
-                CodedIndex {
-                    tag: TableId::Field,
-                    row: 257,
-                    token: Token::new(257 | 0x04000000),
-                }
+                CodedIndex::new(TableId::Field, 257, CodedIndexType::HasFieldMarshal)
             );
             assert_eq!(row.native_type, 0x303);
         };
@@ -111,11 +107,7 @@ mod tests {
             assert_eq!(row.token.value(), 0x0D000001);
             assert_eq!(
                 row.parent,
-                CodedIndex {
-                    tag: TableId::Field,
-                    row: 0x1010101,
-                    token: Token::new(0x1010101 | 0x04000000),
-                }
+                CodedIndex::new(TableId::Field, 0x1010101, CodedIndexType::HasFieldMarshal)
             );
             assert_eq!(row.native_type, 0x3030303);
         };

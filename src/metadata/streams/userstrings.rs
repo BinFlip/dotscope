@@ -236,7 +236,7 @@ impl<'a> UserStrings<'a> {
     ///
     /// This provides access to the complete heap data including the null byte at offset 0
     /// and all userstring entries in their original binary format.
-    pub fn raw_data(&self) -> &[u8] {
+    pub fn data(&self) -> &[u8] {
         self.data
     }
 }

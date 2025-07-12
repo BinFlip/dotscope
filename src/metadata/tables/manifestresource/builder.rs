@@ -69,7 +69,8 @@ use crate::{
     metadata::{
         resources::DotNetResourceEncoder,
         tables::{
-            CodedIndex, ManifestResourceAttributes, ManifestResourceRaw, TableDataOwned, TableId,
+            CodedIndex, CodedIndexType, ManifestResourceAttributes, ManifestResourceRaw,
+            TableDataOwned, TableId,
         },
         token::Token,
     },
@@ -298,7 +299,11 @@ impl ManifestResourceBuilder {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn implementation_file(mut self, file_token: Token) -> Self {
-        self.implementation = Some(CodedIndex::new(TableId::File, file_token.row()));
+        self.implementation = Some(CodedIndex::new(
+            TableId::File,
+            file_token.row(),
+            CodedIndexType::Implementation,
+        ));
         self
     }
 
@@ -333,6 +338,7 @@ impl ManifestResourceBuilder {
         self.implementation = Some(CodedIndex::new(
             TableId::AssemblyRef,
             assembly_ref_token.row(),
+            CodedIndexType::Implementation,
         ));
         self
     }
@@ -648,7 +654,7 @@ impl ManifestResourceBuilder {
             }
         } else {
             // For embedded resources, create a null coded index (row 0)
-            CodedIndex::new(TableId::File, 0) // This will have row = 0, indicating embedded
+            CodedIndex::new(TableId::File, 0, CodedIndexType::Implementation) // This will have row = 0, indicating embedded
         };
 
         // Handle resource data if provided
@@ -923,7 +929,11 @@ mod tests {
         let mut builder = ManifestResourceBuilder::new().name("InvalidImplementation");
 
         // Manually set an invalid implementation (TypeDef is not valid for Implementation coded index)
-        builder.implementation = Some(CodedIndex::new(TableId::TypeDef, 1));
+        builder.implementation = Some(CodedIndex::new(
+            TableId::TypeDef,
+            1,
+            CodedIndexType::Implementation,
+        ));
 
         let result = builder.build(&mut context);
 
@@ -943,7 +953,11 @@ mod tests {
         let mut builder = ManifestResourceBuilder::new().name("ZeroRowImplementation");
 
         // Manually set an implementation with row 0 (invalid for non-embedded)
-        builder.implementation = Some(CodedIndex::new(TableId::File, 0));
+        builder.implementation = Some(CodedIndex::new(
+            TableId::File,
+            0,
+            CodedIndexType::Implementation,
+        ));
 
         let result = builder.build(&mut context);
 
@@ -963,7 +977,11 @@ mod tests {
         let mut builder = ManifestResourceBuilder::new().name("ExportedTypeResource");
 
         // Set a valid ExportedType implementation (row > 0)
-        builder.implementation = Some(CodedIndex::new(TableId::ExportedType, 1));
+        builder.implementation = Some(CodedIndex::new(
+            TableId::ExportedType,
+            1,
+            CodedIndexType::Implementation,
+        ));
 
         let result = builder.build(&mut context);
 

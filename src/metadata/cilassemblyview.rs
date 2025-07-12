@@ -117,9 +117,9 @@ use crate::{
         cor20header::Cor20Header,
         root::Root,
         streams::{Blob, Guid, StreamHeader, Strings, TablesHeader, UserStrings},
+        validation::ValidationEngine,
     },
-    BasicSchemaValidator, Error, ReferentialIntegrityValidator, Result, RidConsistencyValidator,
-    ValidationConfig, ValidationPipeline,
+    Error, Result, ValidationConfig,
 };
 
 /// Raw assembly view data holding references to file structures.
@@ -331,7 +331,7 @@ impl CilAssemblyView {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::FileOpenFailed`] if the file cannot be read.
+    /// Returns [`crate::Error::FileError`] if the file cannot be read.
     /// Returns [`crate::Error::NotSupported`] if the file is not a .NET assembly.
     /// Returns [`crate::Error::OutOfBounds`] if the file data is corrupted.
     ///
@@ -370,7 +370,7 @@ impl CilAssemblyView {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::FileOpenFailed`] if the file cannot be read.
+    /// Returns [`crate::Error::FileError`] if the file cannot be read.
     /// Returns [`crate::Error::NotSupported`] if the file is not a .NET assembly.
     /// Returns [`crate::Error::OutOfBounds`] if the file data is corrupted.
     /// Returns validation errors if validation checks fail.
@@ -494,7 +494,7 @@ impl CilAssemblyView {
         })?;
 
         if validation_config.should_validate_raw() {
-            view.validate_raw(validation_config)?;
+            view.validate(validation_config)?;
         }
 
         Ok(view)
@@ -643,7 +643,7 @@ impl CilAssemblyView {
 
     /// Performs raw validation (stage 1) on the loaded assembly view.
     ///
-    /// This method validates the raw assembly data using the validation pipeline
+    /// This method validates the raw assembly data using the unified validation engine
     /// without any modifications (changes = None). It performs basic structural
     /// validation and integrity checks on the raw metadata.
     ///
@@ -667,28 +667,17 @@ impl CilAssemblyView {
     /// use std::path::Path;
     ///
     /// let view = CilAssemblyView::from_file(Path::new("assembly.dll"))?;
-    /// view.validate_raw(ValidationConfig::production())?;
+    /// view.validate(ValidationConfig::production())?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn validate_raw(&self, config: ValidationConfig) -> Result<()> {
-        let pipeline = if config == ValidationConfig::disabled() {
+    pub fn validate(&self, config: ValidationConfig) -> Result<()> {
+        if config == ValidationConfig::disabled() {
             return Ok(());
-        } else if config == ValidationConfig::minimal() {
-            ValidationPipeline::new().add_stage(BasicSchemaValidator)
-        } else if config == ValidationConfig::production() {
-            ValidationPipeline::default()
-        } else if config == ValidationConfig::comprehensive()
-            || config == ValidationConfig::strict()
-        {
-            ValidationPipeline::new()
-                .add_stage(BasicSchemaValidator)
-                .add_stage(RidConsistencyValidator)
-                .add_stage(ReferentialIntegrityValidator::default())
-        } else {
-            ValidationPipeline::default()
-        };
+        }
 
-        pipeline.validate(None, self)
+        let engine = ValidationEngine::new(self, config)?;
+        let result = engine.execute_stage1_validation(self, None)?;
+        result.into_result()
     }
 }
 

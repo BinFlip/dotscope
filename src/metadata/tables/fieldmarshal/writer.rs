@@ -76,7 +76,9 @@ mod tests {
 
     use crate::metadata::tables::{
         fieldmarshal::FieldMarshalRaw,
-        types::{CodedIndex, RowReadable, RowWritable, TableId, TableInfo, TableRow},
+        types::{
+            CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+        },
     };
     use crate::metadata::token::Token;
 
@@ -124,7 +126,7 @@ mod tests {
             rid: 1,
             token: Token::new(0x0D000001),
             offset: 0,
-            parent: CodedIndex::new(TableId::Field, 257), // Field(257) = (257 << 1) | 0 = 514
+            parent: CodedIndex::new(TableId::Field, 257, CodedIndexType::HasFieldMarshal), // Field(257) = (257 << 1) | 0 = 514
             native_type: 0x0303,
         };
 
@@ -158,7 +160,7 @@ mod tests {
             rid: 1,
             token: Token::new(0x0D000001),
             offset: 0,
-            parent: CodedIndex::new(TableId::Field, 0x1010101), // Field(0x1010101) = (0x1010101 << 1) | 0 = 0x2020202
+            parent: CodedIndex::new(TableId::Field, 0x1010101, CodedIndexType::HasFieldMarshal), // Field(0x1010101) = (0x1010101 << 1) | 0 = 0x2020202
             native_type: 0x03030303,
         };
 
@@ -193,7 +195,7 @@ mod tests {
             rid: 42,
             token: Token::new(0x0D00002A),
             offset: 0,
-            parent: CodedIndex::new(TableId::Param, 25), // Param(25) = (25 << 1) | 1 = 51
+            parent: CodedIndex::new(TableId::Param, 25, CodedIndexType::HasFieldMarshal), // Param(25) = (25 << 1) | 1 = 51
             native_type: 128,
         };
 
@@ -237,7 +239,7 @@ mod tests {
                 rid: 1,
                 token: Token::new(0x0D000001),
                 offset: 0,
-                parent: CodedIndex::new(parent_tag, parent_row),
+                parent: CodedIndex::new(parent_tag, parent_row, CodedIndexType::HasFieldMarshal),
                 native_type,
             };
 
@@ -271,7 +273,7 @@ mod tests {
             rid: 1,
             token: Token::new(0x0D000001),
             offset: 0,
-            parent: CodedIndex::new(TableId::Field, 0), // Field(0) = (0 << 1) | 0 = 0
+            parent: CodedIndex::new(TableId::Field, 0, CodedIndexType::HasFieldMarshal), // Field(0) = (0 << 1) | 0 = 0
             native_type: 0,
         };
 
@@ -293,7 +295,7 @@ mod tests {
             rid: 1,
             token: Token::new(0x0D000001),
             offset: 0,
-            parent: CodedIndex::new(TableId::Param, 0x7FFF), // Max for 2-byte coded index
+            parent: CodedIndex::new(TableId::Param, 0x7FFF, CodedIndexType::HasFieldMarshal), // Max for 2-byte coded index
             native_type: 0xFFFF,
         };
 
@@ -330,7 +332,7 @@ mod tests {
                 rid: 1,
                 token: Token::new(0x0D000001),
                 offset: 0,
-                parent: CodedIndex::new(parent_tag, parent_row),
+                parent: CodedIndex::new(parent_tag, parent_row, CodedIndexType::HasFieldMarshal),
                 native_type: blob_index,
             };
 
@@ -360,7 +362,7 @@ mod tests {
             rid: 1,
             token: Token::new(0x0D000001),
             offset: 0,
-            parent: CodedIndex::new(TableId::Field, 257), // Field(257) = (257 << 1) | 0 = 514 = 0x0202
+            parent: CodedIndex::new(TableId::Field, 257, CodedIndexType::HasFieldMarshal), // Field(257) = (257 << 1) | 0 = 514 = 0x0202
             native_type: 0x0303,
         };
 

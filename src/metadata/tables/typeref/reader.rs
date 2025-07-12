@@ -113,11 +113,7 @@ mod tests {
             assert_eq!(row.token.value(), 0x01000001);
             assert_eq!(
                 row.resolution_scope,
-                CodedIndex {
-                    tag: TableId::ModuleRef,
-                    row: 64,
-                    token: Token::new(64 | 0x1A000000),
-                }
+                CodedIndex::new(TableId::ModuleRef, 64, CodedIndexType::ResolutionScope)
             );
             assert_eq!(row.type_name, 0x0202);
             assert_eq!(row.type_namespace, 0x0303);
@@ -159,11 +155,11 @@ mod tests {
             assert_eq!(row.token.value(), 0x01000001);
             assert_eq!(
                 row.resolution_scope,
-                CodedIndex {
-                    tag: TableId::ModuleRef,
-                    row: 0x404040,
-                    token: Token::new(0x404040 | 0x1A000000),
-                }
+                CodedIndex::new(
+                    TableId::ModuleRef,
+                    0x404040,
+                    CodedIndexType::ResolutionScope
+                )
             );
             assert_eq!(row.type_name, 0x02020202);
             assert_eq!(row.type_namespace, 0x03030303);

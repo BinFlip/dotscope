@@ -10,7 +10,6 @@ use crate::{
         tables::{MetadataTable, NestedClass, NestedClassRc, TableId, TableInfoRef, TableRow},
         token::Token,
         typesystem::TypeRegistry,
-        validation::NestedClassValidator,
     },
     Result,
 };
@@ -112,11 +111,6 @@ impl NestedClassRaw {
         let mut mapping: HashMap<u32, Vec<u32>> = HashMap::new();
 
         for row in classes {
-            let nested_token = Token::new(row.nested_class | 0x0200_0000);
-            let enclosing_token = Token::new(row.enclosing_class | 0x0200_0000);
-
-            NestedClassValidator::validate_nested_relationship(nested_token, enclosing_token)?;
-
             mapping
                 .entry(row.enclosing_class | 0x0200_0000)
                 .or_default()

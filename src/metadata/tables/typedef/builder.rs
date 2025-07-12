@@ -7,7 +7,7 @@
 use crate::{
     cilassembly::BuilderContext,
     metadata::{
-        tables::{CodedIndex, TableDataOwned, TableId, TypeDefRaw},
+        tables::{CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeDefRaw},
         token::Token,
     },
     Result,
@@ -240,7 +240,11 @@ impl TypeDefBuilder {
             flags: self.flags.unwrap_or(0x0010_0001), // Default to public class
             type_name: name_index,
             type_namespace: namespace_index,
-            extends: self.extends.unwrap_or(CodedIndex::new(TableId::TypeRef, 0)), // No base type
+            extends: self.extends.unwrap_or(CodedIndex::new(
+                TableId::TypeRef,
+                0,
+                CodedIndexType::TypeDefOrRef,
+            )), // No base type
             field_list: self.field_list.unwrap_or(1), // Default field list start
             method_list: self.method_list.unwrap_or(1), // Default method list start
         };
@@ -324,7 +328,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let base_type = CodedIndex::new(TableId::TypeRef, 1); // Assume System.Object
+            let base_type = CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef); // Assume System.Object
             let token = TypeDefBuilder::new()
                 .name("DerivedClass")
                 .namespace("TestNamespace")

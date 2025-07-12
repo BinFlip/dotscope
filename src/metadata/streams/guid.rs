@@ -643,6 +643,33 @@ impl<'a> Guid<'a> {
     pub fn iter(&self) -> GuidIterator<'_> {
         GuidIterator::new(self)
     }
+
+    /// Returns the raw underlying data of the GUID heap.
+    ///
+    /// This provides access to the complete heap data containing all 16-byte GUID entries
+    /// in their original binary format. This method is useful for heap size calculation,
+    /// bounds checking, and low-level metadata analysis.
+    ///
+    /// # Returns
+    /// A byte slice containing the complete GUID heap data.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::streams::Guid;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let heap_data = [0xAB; 32]; // Two GUIDs, 16 bytes each
+    /// let guid_heap = Guid::from(&heap_data)?;
+    ///
+    /// assert_eq!(guid_heap.data().len(), 32);
+    /// assert_eq!(guid_heap.data().len() / 16, 2); // Two GUIDs
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn data(&self) -> &[u8] {
+        self.data
+    }
 }
 
 impl<'a> IntoIterator for &'a Guid<'a> {

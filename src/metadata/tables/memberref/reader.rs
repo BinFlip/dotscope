@@ -49,11 +49,7 @@ mod tests {
             assert_eq!(row.token.value(), 0x0A000001);
             assert_eq!(
                 row.class,
-                CodedIndex {
-                    tag: TableId::TypeRef,
-                    row: 32,
-                    token: Token::new(32 | 0x01000000),
-                }
+                CodedIndex::new(TableId::TypeRef, 32, CodedIndexType::MemberRefParent)
             );
             assert_eq!(row.name, 0x202);
             assert_eq!(row.signature, 0x303);
@@ -92,11 +88,7 @@ mod tests {
             assert_eq!(row.token.value(), 0x0A000001);
             assert_eq!(
                 row.class,
-                CodedIndex {
-                    tag: TableId::TypeRef,
-                    row: 0x202020,
-                    token: Token::new(0x202020 | 0x01000000),
-                }
+                CodedIndex::new(TableId::TypeRef, 0x202020, CodedIndexType::MemberRefParent)
             );
             assert_eq!(row.name, 0x2020202);
             assert_eq!(row.signature, 0x3030303);

@@ -966,6 +966,33 @@ impl<'a> Strings<'a> {
     pub fn iter(&self) -> StringsIterator<'_> {
         StringsIterator::new(self)
     }
+
+    /// Returns the raw underlying data of the strings heap.
+    ///
+    /// This provides access to the complete heap data including the null byte at offset 0
+    /// and all string entries in their original binary format. This method is useful for
+    /// heap size calculation, bounds checking, and low-level metadata analysis.
+    ///
+    /// # Returns
+    /// A byte slice containing the complete strings heap data.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::streams::Strings;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let heap_data = [0x00, b'T', b'e', b's', b't', 0x00];
+    /// let strings = Strings::from(&heap_data)?;
+    ///
+    /// assert_eq!(strings.data().len(), 6);
+    /// assert_eq!(strings.data()[0], 0x00); // Mandatory null byte
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn data(&self) -> &[u8] {
+        self.data
+    }
 }
 
 impl<'a> IntoIterator for &'a Strings<'a> {

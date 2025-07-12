@@ -120,7 +120,7 @@ impl<'a> super::HeapWriter<'a> {
 
         // Get the original userstring heap data and copy it exactly
         if let Some(us_heap) = self.base.assembly.view().userstrings() {
-            let original_data = us_heap.raw_data();
+            let original_data = us_heap.data();
             let original_slice = self
                 .base
                 .output
@@ -184,7 +184,7 @@ impl<'a> super::HeapWriter<'a> {
 
         // Check if we have modifications to the ORIGINAL userstring heap (not appended ones)
         let original_data_len = if let Some(us_heap) = self.base.assembly.view().userstrings() {
-            us_heap.raw_data().len() as u32
+            us_heap.data().len() as u32
         } else {
             0
         };
@@ -215,7 +215,7 @@ impl<'a> super::HeapWriter<'a> {
                 )?;
             } else {
                 // No modifications to original heap, copy it exactly to preserve byte structure
-                let original_data = us_heap.raw_data();
+                let original_data = us_heap.data();
                 let output_slice = self
                     .base
                     .output

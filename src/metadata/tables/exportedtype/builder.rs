@@ -63,7 +63,9 @@
 use crate::{
     cilassembly::BuilderContext,
     metadata::{
-        tables::{CodedIndex, ExportedTypeRaw, TableDataOwned, TableId, TypeAttributes},
+        tables::{
+            CodedIndex, CodedIndexType, ExportedTypeRaw, TableDataOwned, TableId, TypeAttributes,
+        },
         token::Token,
     },
     Error, Result,
@@ -312,7 +314,11 @@ impl ExportedTypeBuilder {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn implementation_file(mut self, file_token: Token) -> Self {
-        self.implementation = Some(CodedIndex::new(TableId::File, file_token.row()));
+        self.implementation = Some(CodedIndex::new(
+            TableId::File,
+            file_token.row(),
+            CodedIndexType::Implementation,
+        ));
         self
     }
 
@@ -347,6 +353,7 @@ impl ExportedTypeBuilder {
         self.implementation = Some(CodedIndex::new(
             TableId::AssemblyRef,
             assembly_ref_token.row(),
+            CodedIndexType::Implementation,
         ));
         self
     }
@@ -381,6 +388,7 @@ impl ExportedTypeBuilder {
         self.implementation = Some(CodedIndex::new(
             TableId::ExportedType,
             exported_type_token.row(),
+            CodedIndexType::Implementation,
         ));
         self
     }
@@ -755,7 +763,11 @@ mod tests {
         let mut builder = ExportedTypeBuilder::new().name("InvalidType");
 
         // Manually set an invalid implementation (TypeDef is not valid for Implementation coded index)
-        builder.implementation = Some(CodedIndex::new(TableId::TypeDef, 1));
+        builder.implementation = Some(CodedIndex::new(
+            TableId::TypeDef,
+            1,
+            CodedIndexType::Implementation,
+        ));
 
         let result = builder.build(&mut context);
 
@@ -775,7 +787,11 @@ mod tests {
         let mut builder = ExportedTypeBuilder::new().name("ZeroRowType");
 
         // Manually set an implementation with row 0 (invalid)
-        builder.implementation = Some(CodedIndex::new(TableId::File, 0));
+        builder.implementation = Some(CodedIndex::new(
+            TableId::File,
+            0,
+            CodedIndexType::Implementation,
+        ));
 
         let result = builder.build(&mut context);
 

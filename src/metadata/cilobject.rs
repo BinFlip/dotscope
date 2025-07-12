@@ -179,11 +179,11 @@ use crate::{
         root::Root,
         streams::{Blob, Guid, Strings, TablesHeader, UserStrings},
         tables::{
-            AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, MemberRefMap,
-            MethodSpecMap, ModuleRc, ModuleRefMap,
+            AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, DeclSecurityMap,
+            MemberRefMap, MethodSpecMap, ModuleRc, ModuleRefMap,
         },
         typesystem::TypeRegistry,
-        validation::{Orchestrator, ValidationConfig},
+        validation::{ValidationConfig, ValidationEngine},
     },
     Result,
 };
@@ -336,14 +336,18 @@ impl CilObject {
     ) -> Result<Self> {
         let assembly_view = CilAssemblyView::from_file_with_validation(file, validation_config)?;
         let data = CilObjectData::from_assembly_view(&assembly_view)?;
-        if validation_config.should_validate_owned() {
-            Orchestrator::validate_loaded_data(&data, validation_config)?;
-        }
 
-        Ok(CilObject {
+        let object = CilObject {
             assembly_view,
             data,
-        })
+        };
+
+        // Perform validation on the constructed object if required
+        if validation_config.should_validate_owned() {
+            object.validate(validation_config)?;
+        }
+
+        Ok(object)
     }
 
     /// Creates a new `CilObject` by parsing a .NET assembly from a memory buffer.
@@ -430,14 +434,18 @@ impl CilObject {
     ) -> Result<Self> {
         let assembly_view = CilAssemblyView::from_mem_with_validation(data, validation_config)?;
         let object_data = CilObjectData::from_assembly_view(&assembly_view)?;
-        if validation_config.should_validate_owned() {
-            Orchestrator::validate_loaded_data(&object_data, validation_config)?;
-        }
 
-        Ok(CilObject {
+        let object = CilObject {
             assembly_view,
             data: object_data,
-        })
+        };
+
+        // Perform validation on the constructed object if required
+        if validation_config.should_validate_owned() {
+            object.validate(validation_config)?;
+        }
+
+        Ok(object)
     }
 
     /// Returns the COR20 header containing .NET-specific PE information.
@@ -749,6 +757,38 @@ impl CilObject {
     /// ```
     pub fn refs_members(&self) -> &MemberRefMap {
         &self.data.refs_member
+    }
+
+    /// Returns all security declarations and permission sets defined in this assembly.
+    ///
+    /// Security declarations include Code Access Security (CAS) permissions, security
+    /// transparency attributes, and other declarative security constraints. Each entry
+    /// maps a token to its corresponding security declaration containing permission sets,
+    /// security actions, and validation rules.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the [`DeclSecurityMap`] containing all security declarations.
+    /// The map uses tokens as keys and [`DeclSecurityRc`] (reference-counted security
+    /// declarations) as values for efficient memory management.
+    ///
+    /// # Usage
+    ///
+    /// ```ignore
+    /// # use dotscope::CilObject;
+    /// # fn security_example() -> dotscope::Result<()> {
+    /// let assembly = CilObject::from_file("example.dll")?;
+    /// let security_decls = assembly.security_declarations();
+    ///
+    /// for entry in security_decls.iter() {
+    ///     let (token, decl) = (entry.key(), entry.value());
+    ///     println!("Security declaration for token {}: {} action",
+    ///              token.value(), decl.action);
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn security_declarations(&self) -> &DeclSecurityMap {
+        &self.data.decl_security
     }
 
     /// Returns the primary module information for this assembly.
@@ -1114,15 +1154,16 @@ impl CilObject {
             return Ok(());
         }
 
-        if config.should_validate_raw() {
-            self.assembly_view.validate_raw(config)?;
-        }
+        // Use unified validation engine for two-stage validation
+        let engine = ValidationEngine::new(&self.assembly_view, config)?;
+        let result = engine.execute_two_stage_validation(
+            &self.assembly_view,
+            None,       // No modifications for validation
+            Some(self), // Pass CilObject for stage 2 validation
+        )?;
 
-        if config.should_validate_owned() {
-            Orchestrator::validate_loaded_data(&self.data, config)?;
-        }
-
-        Ok(())
+        // Convert result to standard Result
+        result.into_result()
     }
 }
 

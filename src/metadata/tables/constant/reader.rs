@@ -32,7 +32,6 @@ mod tests {
     use crate::metadata::tables::{MetadataTable, TableId, TableInfo};
 
     use super::*;
-    use crate::metadata::token::Token;
 
     #[test]
     fn crafted_short() {
@@ -57,11 +56,7 @@ mod tests {
             assert_eq!(row.base, 0x01);
             assert_eq!(
                 row.parent,
-                CodedIndex {
-                    tag: TableId::Property,
-                    row: 128,
-                    token: Token::new(128 | 0x17000000),
-                }
+                CodedIndex::new(TableId::Property, 128, CodedIndexType::HasConstant)
             );
             assert_eq!(row.value, 0x303);
         };
@@ -101,11 +96,7 @@ mod tests {
             assert_eq!(row.base, 0x1);
             assert_eq!(
                 row.parent,
-                CodedIndex {
-                    tag: TableId::Property,
-                    row: 0x808080,
-                    token: Token::new(0x808080 | 0x17000000),
-                }
+                CodedIndex::new(TableId::Property, 0x808080, CodedIndexType::HasConstant)
             );
             assert_eq!(row.value, 0x3030303);
         };

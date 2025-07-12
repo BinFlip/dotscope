@@ -65,11 +65,7 @@ mod tests {
             assert_eq!(row.class, 0x0101);
             assert_eq!(
                 row.interface,
-                CodedIndex {
-                    tag: TableId::TypeSpec,
-                    row: 0x80,
-                    token: Token::new(0x80 | 0x1B000000),
-                }
+                CodedIndex::new(TableId::TypeSpec, 0x80, CodedIndexType::TypeDefOrRef)
             );
         };
 
@@ -107,11 +103,7 @@ mod tests {
             assert_eq!(row.class, 0x01010101);
             assert_eq!(
                 row.interface,
-                CodedIndex {
-                    tag: TableId::TypeSpec,
-                    row: 0x808080,
-                    token: Token::new(0x808080 | 0x1B000000),
-                }
+                CodedIndex::new(TableId::TypeSpec, 0x808080, CodedIndexType::TypeDefOrRef)
             );
         };
 

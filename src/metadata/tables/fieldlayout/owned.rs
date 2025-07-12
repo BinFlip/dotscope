@@ -20,7 +20,7 @@
 //! See ECMA-335, Partition II, §22.16 for the `FieldLayout` table specification.
 
 use crate::{
-    metadata::{tables::FieldRc, token::Token, validation::FieldValidator},
+    metadata::{tables::FieldRc, token::Token},
     Result,
 };
 
@@ -103,8 +103,6 @@ impl FieldLayout {
     /// - **Duplicate Layout**: If the field already has a layout offset assigned
     /// - **Type Mismatch**: If the field's containing type doesn't support explicit layout
     pub fn apply(&self) -> Result<()> {
-        FieldValidator::validate_field_offset(self.field_offset, Some(&self.field))?;
-
         self.field
             .layout
             .set(self.field_offset)

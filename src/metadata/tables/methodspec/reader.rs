@@ -70,11 +70,7 @@ mod tests {
             assert_eq!(row.token.value(), 0x2B000001);
             assert_eq!(
                 row.method,
-                CodedIndex {
-                    tag: TableId::MemberRef,
-                    row: 0,
-                    token: Token::new(0x0A000000),
-                }
+                CodedIndex::new(TableId::MemberRef, 0, CodedIndexType::MethodDefOrRef)
             );
             assert_eq!(row.instantiation, 0x0202);
         };
@@ -115,11 +111,7 @@ mod tests {
             assert_eq!(row.token.value(), 0x2B000001);
             assert_eq!(
                 row.method,
-                CodedIndex {
-                    tag: TableId::MemberRef,
-                    row: 0,
-                    token: Token::new(0x0A000000),
-                }
+                CodedIndex::new(TableId::MemberRef, 0, CodedIndexType::MethodDefOrRef)
             );
             assert_eq!(row.instantiation, 0x02020202);
         };

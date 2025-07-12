@@ -132,11 +132,7 @@ mod tests {
             token: Token::new(0x09000001),
             offset: 0,
             class: 0x0101,
-            interface: CodedIndex {
-                tag: TableId::TypeSpec,
-                row: 0x80,
-                token: Token::new(0x80 | 0x1B000000),
-            },
+            interface: CodedIndex::new(TableId::TypeSpec, 0x80, CodedIndexType::TypeDefOrRef),
         };
 
         // Create minimal table info for testing
@@ -264,11 +260,7 @@ mod tests {
                 token: Token::new(0x09000001),
                 offset: 0,
                 class: 1,
-                interface: CodedIndex {
-                    tag: table_id,
-                    row: 1,
-                    token: Token::new(1 | ((table_id as u32) << 24)),
-                },
+                interface: CodedIndex::new(table_id, 1, CodedIndexType::TypeDefOrRef),
             };
 
             let row_size = <InterfaceImplRaw as TableRow>::row_size(&table_info) as usize;
@@ -300,11 +292,7 @@ mod tests {
             token: Token::new(0x09000001),
             offset: 0,
             class: 0x12345,
-            interface: CodedIndex {
-                tag: TableId::TypeRef,
-                row: 0x8000,
-                token: Token::new(0x8000 | 0x01000000),
-            },
+            interface: CodedIndex::new(TableId::TypeRef, 0x8000, CodedIndexType::TypeDefOrRef),
         };
 
         let table_info = Arc::new(TableInfo::new_test(
@@ -344,11 +332,7 @@ mod tests {
             token: Token::new(0x09000001),
             offset: 0,
             class: 1, // First type
-            interface: CodedIndex {
-                tag: TableId::TypeDef,
-                row: 1, // First interface
-                token: Token::new(1 | 0x02000000),
-            },
+            interface: CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeDefOrRef),
         };
 
         let table_info = Arc::new(TableInfo::new_test(
@@ -388,11 +372,7 @@ mod tests {
             token: Token::new(0x09000001),
             offset: 0,
             class: 0x8000,
-            interface: CodedIndex {
-                tag: TableId::TypeDef,
-                row: 0x4000,
-                token: Token::new(0x4000 | 0x02000000),
-            },
+            interface: CodedIndex::new(TableId::TypeDef, 0x4000, CodedIndexType::TypeDefOrRef),
         };
 
         // Test combinations: (large_typedef, large_other_tables, expected_size)

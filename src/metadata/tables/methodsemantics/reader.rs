@@ -78,11 +78,7 @@ mod tests {
             assert_eq!(row.method, 0x0202);
             assert_eq!(
                 row.association,
-                CodedIndex {
-                    tag: TableId::Event,
-                    row: 1,
-                    token: Token::new(1 | 0x14000000),
-                }
+                CodedIndex::new(TableId::Event, 1, CodedIndexType::HasSemantics)
             );
         };
 
@@ -126,11 +122,7 @@ mod tests {
             assert_eq!(row.method, 0x02020202);
             assert_eq!(
                 row.association,
-                CodedIndex {
-                    tag: TableId::Event,
-                    row: 1,
-                    token: Token::new(1 | 0x14000000),
-                }
+                CodedIndex::new(TableId::Event, 1, CodedIndexType::HasSemantics)
             );
         };
 

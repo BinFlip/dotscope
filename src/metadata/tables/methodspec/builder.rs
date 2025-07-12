@@ -62,7 +62,7 @@ use crate::{
 /// let mut context = BuilderContext::new(assembly);
 ///
 /// // Instantiate a generic method with a single type argument
-/// let generic_method = CodedIndex::new(TableId::MethodDef, 1); // Generic Add<T> method
+/// let generic_method = CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef); // Generic Add<T> method
 /// let int_instantiation = vec![
 ///     0x01, // Generic argument count (1)
 ///     0x08, // ELEMENT_TYPE_I4 (int32)
@@ -74,7 +74,7 @@ use crate::{
 ///     .build(&mut context)?;
 ///
 /// // Instantiate a generic method with multiple type arguments
-/// let dictionary_method = CodedIndex::new(TableId::MemberRef, 1); // Dictionary<TKey, TValue>.TryGetValue
+/// let dictionary_method = CodedIndex::new(TableId::MemberRef, 1, CodedIndexType::MethodDefOrRef); // Dictionary<TKey, TValue>.TryGetValue
 /// let string_int_instantiation = vec![
 ///     0x02, // Generic argument count (2)
 ///     0x0E, // ELEMENT_TYPE_STRING
@@ -87,7 +87,7 @@ use crate::{
 ///     .build(&mut context)?;
 ///
 /// // Instantiate a generic method with complex type arguments
-/// let complex_method = CodedIndex::new(TableId::MethodDef, 2); // Complex generic method
+/// let complex_method = CodedIndex::new(TableId::MethodDef, 2, CodedIndexType::MethodDefOrRef); // Complex generic method
 /// let complex_instantiation = vec![
 ///     0x01, // Generic argument count (1)
 ///     0x1D, // ELEMENT_TYPE_SZARRAY (single-dimensional array)
@@ -100,7 +100,7 @@ use crate::{
 ///     .build(&mut context)?;
 ///
 /// // Instantiate with a reference to another type
-/// let reference_method = CodedIndex::new(TableId::MemberRef, 2); // Generic method reference
+/// let reference_method = CodedIndex::new(TableId::MemberRef, 2, CodedIndexType::MethodDefOrRef); // Generic method reference
 /// let typeref_instantiation = vec![
 ///     0x01, // Generic argument count (1)
 ///     0x12, // ELEMENT_TYPE_CLASS
@@ -369,7 +369,7 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Create a basic method specification
-            let method_ref = CodedIndex::new(TableId::MethodDef, 1); // Generic method
+            let method_ref = CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef); // Generic method
             let instantiation_blob = vec![0x01, 0x08]; // Single int32 argument
 
             let token = MethodSpecBuilder::new()
@@ -394,7 +394,7 @@ mod tests {
             let instantiation_blob = vec![0x01, 0x08]; // Single int32 argument
 
             // Test MethodDef
-            let methoddef = CodedIndex::new(TableId::MethodDef, 1);
+            let methoddef = CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef);
             let methoddef_spec = MethodSpecBuilder::new()
                 .method(methoddef)
                 .instantiation(&instantiation_blob)
@@ -402,7 +402,7 @@ mod tests {
                 .unwrap();
 
             // Test MemberRef
-            let memberref = CodedIndex::new(TableId::MemberRef, 1);
+            let memberref = CodedIndex::new(TableId::MemberRef, 1, CodedIndexType::MethodDefOrRef);
             let memberref_spec = MethodSpecBuilder::new()
                 .method(memberref)
                 .instantiation(&instantiation_blob)
@@ -423,7 +423,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let method_ref = CodedIndex::new(TableId::MethodDef, 1);
+            let method_ref = CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef);
 
             // Test simple instantiation
             let simple_spec = MethodSpecBuilder::new()
@@ -460,7 +460,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let method_ref = CodedIndex::new(TableId::MemberRef, 1);
+            let method_ref = CodedIndex::new(TableId::MemberRef, 1, CodedIndexType::MethodDefOrRef);
 
             // Complex instantiation with multiple type arguments
             let complex_instantiation = vec![
@@ -507,7 +507,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let method_ref = CodedIndex::new(TableId::MethodDef, 1);
+            let method_ref = CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef);
 
             let result = MethodSpecBuilder::new()
                 .method(method_ref)
@@ -526,7 +526,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let method_ref = CodedIndex::new(TableId::MethodDef, 1);
+            let method_ref = CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef);
             let empty_blob = vec![]; // Empty instantiation
 
             let result = MethodSpecBuilder::new()
@@ -547,7 +547,7 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Use a table type that's not valid for MethodDefOrRef
-            let invalid_method = CodedIndex::new(TableId::Field, 1); // Field not in MethodDefOrRef
+            let invalid_method = CodedIndex::new(TableId::Field, 1, CodedIndexType::MethodDefOrRef); // Field not in MethodDefOrRef
             let instantiation_blob = vec![0x01, 0x08];
 
             let result = MethodSpecBuilder::new()
@@ -567,7 +567,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let method_ref = CodedIndex::new(TableId::MethodDef, 1);
+            let method_ref = CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef);
             let zero_args_blob = vec![0x00]; // Zero generic arguments
 
             let result = MethodSpecBuilder::new()
@@ -588,7 +588,7 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Scenario 1: List<T>.Add(T) instantiated with int
-            let list_add = CodedIndex::new(TableId::MethodDef, 1);
+            let list_add = CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef);
             let list_int_spec = MethodSpecBuilder::new()
                 .method(list_add)
                 .simple_instantiation(0x08) // int32
@@ -596,7 +596,8 @@ mod tests {
                 .unwrap();
 
             // Scenario 2: Dictionary<TKey, TValue>.TryGetValue instantiated with string, int
-            let dict_tryget = CodedIndex::new(TableId::MemberRef, 1);
+            let dict_tryget =
+                CodedIndex::new(TableId::MemberRef, 1, CodedIndexType::MethodDefOrRef);
             let dict_string_int_spec = MethodSpecBuilder::new()
                 .method(dict_tryget)
                 .multiple_primitives(&[0x0E, 0x08]) // string, int32
@@ -604,7 +605,8 @@ mod tests {
                 .unwrap();
 
             // Scenario 3: Generic method with array type
-            let array_method = CodedIndex::new(TableId::MethodDef, 2);
+            let array_method =
+                CodedIndex::new(TableId::MethodDef, 2, CodedIndexType::MethodDefOrRef);
             let array_string_spec = MethodSpecBuilder::new()
                 .method(array_method)
                 .array_instantiation(0x0E) // string[]

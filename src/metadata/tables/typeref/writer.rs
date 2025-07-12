@@ -126,7 +126,11 @@ mod tests {
             rid: 1,
             token: Token::new(0x01000001),
             offset: 0,
-            resolution_scope: CodedIndex::new(TableId::AssemblyRef, 1),
+            resolution_scope: CodedIndex::new(
+                TableId::AssemblyRef,
+                1,
+                CodedIndexType::ResolutionScope,
+            ),
             type_name: 0x0202,
             type_namespace: 0x0303,
         };
@@ -227,7 +231,11 @@ mod tests {
             rid: 1,
             token: Token::new(0x01000001),
             offset: 0,
-            resolution_scope: CodedIndex::new(TableId::AssemblyRef, 0x4000), // Large row index
+            resolution_scope: CodedIndex::new(
+                TableId::AssemblyRef,
+                0x4000,
+                CodedIndexType::ResolutionScope,
+            ), // Large row index
             type_name: 0x12345,
             type_namespace: 0x67890,
         };
@@ -273,7 +281,7 @@ mod tests {
             rid: 1,
             token: Token::new(0x01000001),
             offset: 0,
-            resolution_scope: CodedIndex::new(TableId::Module, 0), // Null scope
+            resolution_scope: CodedIndex::new(TableId::Module, 0, CodedIndexType::ResolutionScope), // Null scope
             type_name: 0,
             type_namespace: 0,
         };

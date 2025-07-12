@@ -76,8 +76,8 @@ use crate::{
         method::MethodMap,
         resources::Resources,
         tables::{
-            AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, FileMap, MemberRefMap,
-            MethodSpecMap, ModuleRc, ModuleRefMap,
+            AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, DeclSecurityMap,
+            FileMap, MemberRefMap, MethodSpecMap, ModuleRc, ModuleRefMap,
         },
         typesystem::TypeRegistry,
     },
@@ -137,6 +137,8 @@ pub(crate) struct CilObjectData {
     pub refs_member: MemberRefMap,
     /// File references for multi-file assemblies.
     pub refs_file: FileMap,
+    /// Security declarations for permissions and security attributes.
+    pub decl_security: DeclSecurityMap,
 
     /// Primary module definition for this assembly.
     pub module: Arc<OnceLock<ModuleRc>>,
@@ -219,6 +221,7 @@ impl CilObjectData {
             refs_module: SkipMap::default(),
             refs_member: SkipMap::default(),
             refs_file: SkipMap::default(),
+            decl_security: SkipMap::default(),
             module: Arc::new(OnceLock::new()),
             assembly: Arc::new(OnceLock::new()),
             assembly_os: Arc::new(OnceLock::new()),
@@ -289,7 +292,7 @@ impl CilObjectData {
                 interface_impl: SkipMap::default(),
                 constant: SkipMap::default(),
                 custom_attribute: SkipMap::default(),
-                decl_security: SkipMap::default(),
+                decl_security: &cil_object.decl_security,
                 file: &cil_object.refs_file,
                 exported_type: cil_object.export_container.cil(),
                 standalone_sig: SkipMap::default(),

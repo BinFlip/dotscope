@@ -776,7 +776,7 @@ impl IndexRemapper {
             if let Some(remapper) = self.table_maps.get(&coded_index.tag) {
                 if let Some(new_rid) = remapper.map_rid(coded_index.row) {
                     // Create a new CodedIndex with the updated RID
-                    *coded_index = CodedIndex::new(coded_index.tag, new_rid);
+                    *coded_index = CodedIndex::new(coded_index.tag, new_rid, coded_index.ci_type);
                 }
             }
         }
@@ -855,7 +855,7 @@ mod tests {
         },
         metadata::{
             cilassemblyview::CilAssemblyView,
-            tables::{CodedIndex, TableDataOwned, TableId, TypeDefRaw},
+            tables::{CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeDefRaw},
             token::Token,
         },
     };
@@ -868,7 +868,7 @@ mod tests {
             flags: 0,
             type_name: 1,
             type_namespace: 0,
-            extends: CodedIndex::new(TableId::TypeRef, 0),
+            extends: CodedIndex::new(TableId::TypeRef, 0, CodedIndexType::TypeDefOrRef),
             field_list: 1,
             method_list: 1,
         })
@@ -1108,7 +1108,9 @@ mod tests {
                 typedef_data.type_namespace = 100; // String index
                 typedef_data.field_list = 25; // Field table RID
                 typedef_data.method_list = 75; // MethodDef table RID
-                typedef_data.extends = CodedIndex::new(TableId::TypeRef, 10); // CodedIndex
+                typedef_data.extends =
+                    CodedIndex::new(TableId::TypeRef, 10, CodedIndexType::TypeDefOrRef);
+                // CodedIndex
             }
 
             // Add table operation with the test row
@@ -1296,9 +1298,17 @@ mod tests {
                     rid: 1,
                     token: Token::new(0x0C000001),
                     offset: 0,
-                    parent: CodedIndex::new(TableId::TypeDef, 15), // CodedIndex reference
-                    constructor: CodedIndex::new(TableId::MethodDef, 25), // CodedIndex reference
-                    value: 150,                                    // Blob heap index
+                    parent: CodedIndex::new(
+                        TableId::TypeDef,
+                        15,
+                        CodedIndexType::HasCustomAttribute,
+                    ), // CodedIndex reference
+                    constructor: CodedIndex::new(
+                        TableId::MethodDef,
+                        25,
+                        CodedIndexType::CustomAttributeType,
+                    ), // CodedIndex reference
+                    value: 150, // Blob heap index
                 });
 
             // Add table operation

@@ -126,11 +126,7 @@ mod tests {
             assert_eq!(row.type_namespace, 0x43);
             assert_eq!(
                 row.extends,
-                CodedIndex {
-                    tag: TableId::TypeDef,
-                    row: 0x80,
-                    token: Token::new(0x80 | 0x02000000),
-                }
+                CodedIndex::new(TableId::TypeDef, 0x80, CodedIndexType::TypeDefOrRef)
             );
             assert_eq!(row.field_list, 0x0300);
             assert_eq!(row.method_list, 0x0400);
@@ -181,11 +177,7 @@ mod tests {
             assert_eq!(row.type_namespace, 0x03000000);
             assert_eq!(
                 row.extends,
-                CodedIndex {
-                    tag: TableId::TypeDef,
-                    row: 0x1000000,
-                    token: Token::new(0x1000000 | 0x02000000),
-                }
+                CodedIndex::new(TableId::TypeDef, 0x1000000, CodedIndexType::TypeDefOrRef)
             );
             assert_eq!(row.field_list, 0x05000000);
             assert_eq!(row.method_list, 0x06000000);

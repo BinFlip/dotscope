@@ -60,7 +60,7 @@ use crate::{
 /// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create an integer constant for a field
-/// let field_ref = CodedIndex::new(TableId::Field, 1); // Target field
+/// let field_ref = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasConstant); // Target field
 /// let int_value = 42i32.to_le_bytes(); // Little-endian integer bytes
 ///
 /// let field_constant = ConstantBuilder::new()
@@ -70,7 +70,7 @@ use crate::{
 ///     .build(&mut context)?;
 ///
 /// // Create a string constant for a parameter default
-/// let param_ref = CodedIndex::new(TableId::Param, 2); // Target parameter
+/// let param_ref = CodedIndex::new(TableId::Param, 2, CodedIndexType::HasConstant); // Target parameter
 /// let string_value = "Hello, World!"; // String will be encoded as UTF-16
 ///
 /// let param_constant = ConstantBuilder::new()
@@ -80,7 +80,7 @@ use crate::{
 ///     .build(&mut context)?;
 ///
 /// // Create a boolean constant for a property
-/// let property_ref = CodedIndex::new(TableId::Property, 1); // Target property
+/// let property_ref = CodedIndex::new(TableId::Property, 1, CodedIndexType::HasConstant); // Target property
 /// let bool_value = [1u8]; // true = 1, false = 0
 ///
 /// let property_constant = ConstantBuilder::new()
@@ -90,7 +90,7 @@ use crate::{
 ///     .build(&mut context)?;
 ///
 /// // Create a null reference constant
-/// let null_field = CodedIndex::new(TableId::Field, 3); // Target field
+/// let null_field = CodedIndex::new(TableId::Field, 3, CodedIndexType::HasConstant); // Target field
 /// let null_value = [0u8, 0u8, 0u8, 0u8]; // 4-byte zero for null reference
 ///
 /// let null_constant = ConstantBuilder::new()
@@ -427,7 +427,7 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Create an integer constant for a field
-            let field_ref = CodedIndex::new(TableId::Field, 1);
+            let field_ref = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasConstant);
             let int_value = 42i32.to_le_bytes();
 
             let token = ConstantBuilder::new()
@@ -450,7 +450,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let field_ref = CodedIndex::new(TableId::Field, 1);
+            let field_ref = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasConstant);
 
             let token = ConstantBuilder::new()
                 .parent(field_ref)
@@ -470,7 +470,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let param_ref = CodedIndex::new(TableId::Param, 1);
+            let param_ref = CodedIndex::new(TableId::Param, 1, CodedIndexType::HasConstant);
 
             let token = ConstantBuilder::new()
                 .parent(param_ref)
@@ -490,7 +490,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let property_ref = CodedIndex::new(TableId::Property, 1);
+            let property_ref = CodedIndex::new(TableId::Property, 1, CodedIndexType::HasConstant);
 
             let token = ConstantBuilder::new()
                 .parent(property_ref)
@@ -510,7 +510,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let field_ref = CodedIndex::new(TableId::Field, 2);
+            let field_ref = CodedIndex::new(TableId::Field, 2, CodedIndexType::HasConstant);
             let null_value = [0u8, 0u8, 0u8, 0u8]; // 4-byte zero for null reference
 
             let token = ConstantBuilder::new()
@@ -532,7 +532,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let field_ref = CodedIndex::new(TableId::Field, 1);
+            let field_ref = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasConstant);
             let int_value = 42i32.to_le_bytes();
 
             let result = ConstantBuilder::new()
@@ -571,7 +571,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let field_ref = CodedIndex::new(TableId::Field, 1);
+            let field_ref = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasConstant);
 
             let result = ConstantBuilder::new()
                 .element_type(ELEMENT_TYPE::I4)
@@ -591,7 +591,7 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Use a table type that's not valid for HasConstant
-            let invalid_parent = CodedIndex::new(TableId::TypeDef, 1); // TypeDef not in HasConstant
+            let invalid_parent = CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasConstant); // TypeDef not in HasConstant
             let int_value = 42i32.to_le_bytes();
 
             let result = ConstantBuilder::new()
@@ -612,7 +612,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let field_ref = CodedIndex::new(TableId::Field, 1);
+            let field_ref = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasConstant);
             let int_value = 42i32.to_le_bytes();
 
             let result = ConstantBuilder::new()
@@ -633,10 +633,10 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let field1 = CodedIndex::new(TableId::Field, 1);
-            let field2 = CodedIndex::new(TableId::Field, 2);
-            let param1 = CodedIndex::new(TableId::Param, 1);
-            let property1 = CodedIndex::new(TableId::Property, 1);
+            let field1 = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasConstant);
+            let field2 = CodedIndex::new(TableId::Field, 2, CodedIndexType::HasConstant);
+            let param1 = CodedIndex::new(TableId::Param, 1, CodedIndexType::HasConstant);
+            let property1 = CodedIndex::new(TableId::Property, 1, CodedIndexType::HasConstant);
 
             // Create multiple constants with different types
             let const1 = ConstantBuilder::new()
@@ -689,7 +689,7 @@ mod tests {
 
             // Test various primitive types
             let field_refs: Vec<_> = (1..=12)
-                .map(|i| CodedIndex::new(TableId::Field, i))
+                .map(|i| CodedIndex::new(TableId::Field, i, CodedIndexType::HasConstant))
                 .collect();
 
             // Boolean

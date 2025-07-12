@@ -29,7 +29,7 @@ use crate::{
             encode_property_signature, encode_typespec_signature, SignatureField,
             SignatureLocalVariables, SignatureMethod, SignatureProperty, SignatureTypeSpec,
         },
-        tables::{AssemblyRefRaw, CodedIndex, TableDataOwned, TableId},
+        tables::{AssemblyRefRaw, CodedIndex, CodedIndexType, TableDataOwned, TableId},
         token::Token,
     },
     Result,
@@ -312,7 +312,11 @@ impl BuilderContext {
                 if let Ok(assembly_name) = strings.get(assemblyref.name as usize) {
                     if assembly_name == name {
                         // Convert 0-based index to 1-based RID
-                        return Some(CodedIndex::new(TableId::AssemblyRef, (index + 1) as u32));
+                        return Some(CodedIndex::new(
+                            TableId::AssemblyRef,
+                            (index + 1) as u32,
+                            CodedIndexType::Implementation,
+                        ));
                     }
                 }
             }

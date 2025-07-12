@@ -82,7 +82,9 @@ mod tests {
 
     use crate::metadata::tables::{
         memberref::MemberRefRaw,
-        types::{CodedIndex, RowReadable, RowWritable, TableId, TableInfo, TableRow},
+        types::{
+            CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+        },
     };
     use crate::metadata::token::Token;
 
@@ -139,7 +141,7 @@ mod tests {
             rid: 1,
             token: Token::new(0x0A000001),
             offset: 0,
-            class: CodedIndex::new(TableId::TypeRef, 42), // TypeRef table, index 42
+            class: CodedIndex::new(TableId::TypeRef, 42, CodedIndexType::MemberRefParent), // TypeRef table, index 42
             name: 0x1234,
             signature: 0x5678,
         };
@@ -180,7 +182,7 @@ mod tests {
             rid: 1,
             token: Token::new(0x0A000001),
             offset: 0,
-            class: CodedIndex::new(TableId::TypeRef, 1000), // TypeRef table, large index
+            class: CodedIndex::new(TableId::TypeRef, 1000, CodedIndexType::MemberRefParent), // TypeRef table, large index
             name: 0x12345678,
             signature: 0xABCDEF01,
         };
@@ -221,7 +223,7 @@ mod tests {
             rid: 42,
             token: Token::new(0x0A00002A),
             offset: 0,
-            class: CodedIndex::new(TableId::TypeDef, 15),
+            class: CodedIndex::new(TableId::TypeDef, 15, CodedIndexType::MemberRefParent),
             name: 0x00AA,
             signature: 0x00BB,
         };
@@ -263,7 +265,7 @@ mod tests {
             rid: 1,
             token: Token::new(0x0A000001),
             offset: 0,
-            class: CodedIndex::new(TableId::TypeDef, 0),
+            class: CodedIndex::new(TableId::TypeDef, 0, CodedIndexType::MemberRefParent),
             name: 0,
             signature: 0,
         };
@@ -282,7 +284,7 @@ mod tests {
             rid: 1,
             token: Token::new(0x0A000001),
             offset: 0,
-            class: CodedIndex::new(TableId::TypeDef, 0x1FFF), // Max for MemberRefParent
+            class: CodedIndex::new(TableId::TypeDef, 0x1FFF, CodedIndexType::MemberRefParent), // Max for MemberRefParent
             name: 0xFFFF,
             signature: 0xFFFF,
         };
@@ -314,7 +316,7 @@ mod tests {
             rid: 1,
             token: Token::new(0x0A000001),
             offset: 0,
-            class: CodedIndex::new(TableId::TypeDef, 10),
+            class: CodedIndex::new(TableId::TypeDef, 10, CodedIndexType::MemberRefParent),
             name: 0x1000,
             signature: 0x2000,
         };
@@ -334,7 +336,7 @@ mod tests {
             rid: 2,
             token: Token::new(0x0A000002),
             offset: 0,
-            class: CodedIndex::new(TableId::TypeRef, 10),
+            class: CodedIndex::new(TableId::TypeRef, 10, CodedIndexType::MemberRefParent),
             name: 0x1000,
             signature: 0x2000,
         };
@@ -364,7 +366,11 @@ mod tests {
             rid: 1,
             token: Token::new(0x0A000001),
             offset: 0,
-            class: CodedIndex::new(TableId::TypeRef, 0x0101 >> 3), // From test data
+            class: CodedIndex::new(
+                TableId::TypeRef,
+                0x0101 >> 3,
+                CodedIndexType::MemberRefParent,
+            ), // From test data
             name: 0x0202,
             signature: 0x0303,
         };

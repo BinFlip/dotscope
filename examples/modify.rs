@@ -22,7 +22,7 @@
 
 use dotscope::{
     metadata::{
-        tables::{CodedIndex, TableDataOwned, TableId, TypeDefRaw},
+        tables::{CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeDefRaw},
         token::Token,
     },
     prelude::*,
@@ -180,11 +180,7 @@ fn main() -> Result<()> {
         flags: 0x00100001,      // Class, Public
         type_name: debug_index, // Reference to our added string
         type_namespace: 0,      // No namespace (root)
-        extends: CodedIndex {
-            tag: TableId::TypeRef,
-            row: 1, // Typically System.Object
-            token: Token::new(0x01000001),
-        },
+        extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
         field_list: 1,  // Start of field list
         method_list: 1, // Start of method list
     };

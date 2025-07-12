@@ -338,7 +338,9 @@ impl RidRemapper {
 mod tests {
     use super::*;
     use crate::cilassembly::{Operation, TableOperation};
-    use crate::metadata::tables::{CodedIndex, TableDataOwned, TableId, TypeDefRaw};
+    use crate::metadata::tables::{
+        CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeDefRaw,
+    };
     use crate::metadata::token::Token;
 
     fn create_test_row() -> TableDataOwned {
@@ -349,7 +351,7 @@ mod tests {
             flags: 0,
             type_name: 1,
             type_namespace: 0,
-            extends: CodedIndex::new(TableId::TypeRef, 0),
+            extends: CodedIndex::new(TableId::TypeRef, 0, CodedIndexType::TypeDefOrRef),
             field_list: 1,
             method_list: 1,
         })

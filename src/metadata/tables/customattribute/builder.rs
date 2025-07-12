@@ -46,8 +46,8 @@ use crate::{
 /// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create coded indices for the custom attribute
-/// let target_type = CodedIndex::new(TableId::TypeDef, 1); // Target class
-/// let constructor = CodedIndex::new(TableId::MethodDef, 5); // Attribute constructor
+/// let target_type = CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasCustomAttribute); // Target class
+/// let constructor = CodedIndex::new(TableId::MethodDef, 5, CodedIndexType::CustomAttributeType); // Attribute constructor
 ///
 /// // Create an empty custom attribute blob (no arguments)
 /// let empty_blob = &[];
@@ -61,7 +61,7 @@ use crate::{
 ///
 /// // Create a custom attribute with values  
 /// let attribute_blob = &[0x01, 0x00, 0x00, 0x00]; // Prolog + no arguments
-/// let target_method = CodedIndex::new(TableId::MethodDef, 3); // Another target
+/// let target_method = CodedIndex::new(TableId::MethodDef, 3, CodedIndexType::HasCustomAttribute); // Another target
 /// let complex_attribute = CustomAttributeBuilder::new()
 ///     .parent(target_method)
 ///     .constructor(constructor)
@@ -287,8 +287,10 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Create coded indices for HasCustomAttribute and CustomAttributeType
-            let target_type = CodedIndex::new(TableId::TypeDef, 1); // HasCustomAttribute
-            let constructor = CodedIndex::new(TableId::MethodDef, 1); // CustomAttributeType
+            let target_type =
+                CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasCustomAttribute); // HasCustomAttribute
+            let constructor =
+                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::CustomAttributeType); // CustomAttributeType
 
             let token = CustomAttributeBuilder::new()
                 .parent(target_type)
@@ -310,8 +312,10 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let target_field = CodedIndex::new(TableId::Field, 1); // HasCustomAttribute
-            let constructor = CodedIndex::new(TableId::MemberRef, 1); // CustomAttributeType
+            let target_field =
+                CodedIndex::new(TableId::Field, 1, CodedIndexType::HasCustomAttribute); // HasCustomAttribute
+            let constructor =
+                CodedIndex::new(TableId::MemberRef, 1, CodedIndexType::CustomAttributeType); // CustomAttributeType
 
             // Create a custom attribute with a simple value blob
             let attribute_blob = &[0x01, 0x00, 0x00, 0x00]; // Prolog + no named args
@@ -335,8 +339,10 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let target_method = CodedIndex::new(TableId::MethodDef, 2); // HasCustomAttribute
-            let constructor = CodedIndex::new(TableId::MethodDef, 3); // CustomAttributeType
+            let target_method =
+                CodedIndex::new(TableId::MethodDef, 2, CodedIndexType::HasCustomAttribute); // HasCustomAttribute
+            let constructor =
+                CodedIndex::new(TableId::MethodDef, 3, CodedIndexType::CustomAttributeType); // CustomAttributeType
 
             // Create a custom attribute with no value (will use 0 blob index)
             let token = CustomAttributeBuilder::new()
@@ -357,7 +363,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let constructor = CodedIndex::new(TableId::MethodDef, 1);
+            let constructor =
+                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::CustomAttributeType);
 
             let result = CustomAttributeBuilder::new()
                 .constructor(constructor)
@@ -375,7 +382,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let target_type = CodedIndex::new(TableId::TypeDef, 1);
+            let target_type =
+                CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasCustomAttribute);
 
             let result = CustomAttributeBuilder::new()
                 .parent(target_type)
@@ -394,8 +402,10 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Use a table type that's not valid for HasCustomAttribute
-            let invalid_parent = CodedIndex::new(TableId::Constant, 1); // Constant not in HasCustomAttribute
-            let constructor = CodedIndex::new(TableId::MethodDef, 1);
+            let invalid_parent =
+                CodedIndex::new(TableId::Constant, 1, CodedIndexType::HasCustomAttribute); // Constant not in HasCustomAttribute
+            let constructor =
+                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::CustomAttributeType);
 
             let result = CustomAttributeBuilder::new()
                 .parent(invalid_parent)
@@ -414,9 +424,11 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let target_type = CodedIndex::new(TableId::TypeDef, 1);
+            let target_type =
+                CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasCustomAttribute);
             // Use a table type that's not valid for CustomAttributeType
-            let invalid_constructor = CodedIndex::new(TableId::Field, 1); // Field not in CustomAttributeType
+            let invalid_constructor =
+                CodedIndex::new(TableId::Field, 1, CodedIndexType::CustomAttributeType); // Field not in CustomAttributeType
 
             let result = CustomAttributeBuilder::new()
                 .parent(target_type)
@@ -435,12 +447,15 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let target1 = CodedIndex::new(TableId::TypeDef, 1);
-            let target2 = CodedIndex::new(TableId::MethodDef, 1);
-            let target3 = CodedIndex::new(TableId::Field, 1);
+            let target1 = CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasCustomAttribute);
+            let target2 =
+                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasCustomAttribute);
+            let target3 = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasCustomAttribute);
 
-            let constructor1 = CodedIndex::new(TableId::MethodDef, 1);
-            let constructor2 = CodedIndex::new(TableId::MemberRef, 1);
+            let constructor1 =
+                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::CustomAttributeType);
+            let constructor2 =
+                CodedIndex::new(TableId::MemberRef, 1, CodedIndexType::CustomAttributeType);
 
             // Create multiple custom attributes
             let attr1 = CustomAttributeBuilder::new()

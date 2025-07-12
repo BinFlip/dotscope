@@ -95,7 +95,9 @@ mod tests {
 
     use crate::metadata::tables::{
         genericparam::GenericParamRaw,
-        types::{CodedIndex, RowReadable, RowWritable, TableId, TableInfo, TableRow},
+        types::{
+            CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+        },
     };
     use crate::metadata::token::Token;
 
@@ -145,7 +147,7 @@ mod tests {
             offset: 0,
             number: 0x0101,
             flags: 0x0202,
-            owner: CodedIndex::new(TableId::TypeDef, 1), // TypeDef(1) = (1 << 1) | 0 = 2
+            owner: CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef), // TypeDef(1) = (1 << 1) | 0 = 2
             name: 0x0404,
         };
 
@@ -183,7 +185,7 @@ mod tests {
             offset: 0,
             number: 0x0101,
             flags: 0x0202,
-            owner: CodedIndex::new(TableId::TypeDef, 1), // TypeDef(1) = (1 << 1) | 0 = 2
+            owner: CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef), // TypeDef(1) = (1 << 1) | 0 = 2
             name: 0x04040404,
         };
 
@@ -219,10 +221,10 @@ mod tests {
             rid: 42,
             token: Token::new(0x2A00002A),
             offset: 0,
-            number: 1,                                      // Second parameter (0-based)
-            flags: 0x0004,                                  // ReferenceTypeConstraint
-            owner: CodedIndex::new(TableId::MethodDef, 25), // MethodDef(25) = (25 << 1) | 1 = 51
-            name: 128,                                      // String index 128
+            number: 1,     // Second parameter (0-based)
+            flags: 0x0004, // ReferenceTypeConstraint
+            owner: CodedIndex::new(TableId::MethodDef, 25, CodedIndexType::TypeOrMethodDef), // MethodDef(25) = (25 << 1) | 1 = 51
+            name: 128, // String index 128
         };
 
         // Write to buffer
@@ -270,7 +272,7 @@ mod tests {
                 offset: 0,
                 number: param_number,
                 flags: param_flags,
-                owner: CodedIndex::new(owner_tag, owner_row),
+                owner: CodedIndex::new(owner_tag, owner_row, CodedIndexType::TypeOrMethodDef),
                 name: name_index,
             };
 
@@ -327,7 +329,7 @@ mod tests {
                 offset: 0,
                 number: 0,
                 flags,
-                owner: CodedIndex::new(TableId::TypeDef, 1),
+                owner: CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef),
                 name: 100,
             };
 
@@ -370,7 +372,7 @@ mod tests {
                 offset: 0,
                 number: position,
                 flags: 0,
-                owner: CodedIndex::new(TableId::TypeDef, 1),
+                owner: CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef),
                 name: 100,
             };
 
@@ -402,7 +404,7 @@ mod tests {
             offset: 0,
             number: 0,
             flags: 0,
-            owner: CodedIndex::new(TableId::TypeDef, 0), // TypeDef(0) = (0 << 1) | 0 = 0
+            owner: CodedIndex::new(TableId::TypeDef, 0, CodedIndexType::TypeOrMethodDef), // TypeDef(0) = (0 << 1) | 0 = 0
             name: 0,
         };
 
@@ -428,7 +430,7 @@ mod tests {
             offset: 0,
             number: 0xFFFF,
             flags: 0xFFFF,
-            owner: CodedIndex::new(TableId::MethodDef, 0x7FFF), // Max for 2-byte coded index
+            owner: CodedIndex::new(TableId::MethodDef, 0x7FFF, CodedIndexType::TypeOrMethodDef), // Max for 2-byte coded index
             name: 0xFFFF,
         };
 
@@ -510,7 +512,7 @@ mod tests {
                 offset: 0,
                 number: param_pos,
                 flags,
-                owner: CodedIndex::new(owner_tag, owner_row),
+                owner: CodedIndex::new(owner_tag, owner_row, CodedIndexType::TypeOrMethodDef),
                 name: name_idx,
             };
 
@@ -549,7 +551,7 @@ mod tests {
             offset: 0,
             number: 0x0101,
             flags: 0x0202,
-            owner: CodedIndex::new(TableId::TypeDef, 1), // TypeDef(1) = (1 << 1) | 0 = 2
+            owner: CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef), // TypeDef(1) = (1 << 1) | 0 = 2
             name: 0x0404,
         };
 

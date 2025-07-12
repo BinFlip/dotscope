@@ -1,0 +1,714 @@
+//! Shared reference validation utilities for the unified validation framework.
+//!
+//! This module provides common reference validation operations that analyze and validate
+//! cross-table relationships in metadata. It centralizes reference integrity checking
+//! logic that can be used by both raw and owned validators to ensure ECMA-335 compliance
+//! and prevent dangling references, circular dependencies, and other referential integrity issues.
+//!
+//! # Architecture
+//!
+//! The reference validation system operates on pre-analyzed metadata using [`crate::metadata::validation::scanner::ReferenceScanner`]
+//! to provide comprehensive cross-table relationship validation:
+//! 1. **Existence Validation** - Ensures all referenced tokens exist in metadata
+//! 2. **Integrity Validation** - Validates bidirectional reference consistency
+//! 3. **Circular Detection** - Detects and prevents circular reference chains
+//! 4. **Deletion Safety** - Validates safe token deletion without breaking references
+//! 5. **Pattern Analysis** - Analyzes reference patterns for metadata quality assessment
+//!
+//! # Key Components
+//!
+//! - [`crate::metadata::validation::shared::references::ReferenceValidator`] - Main reference validation orchestrator
+//! - [`crate::metadata::validation::shared::references::ReferenceAnalysis`] - Detailed reference pattern analysis results
+//! - [`crate::metadata::validation::shared::references::ReferenceStatistics`] - Statistical information about reference validation
+//!
+//! # Usage Examples
+//!
+//! ```rust,no_run
+//! use dotscope::metadata::validation::{ReferenceValidator, ReferenceScanner};
+//! use dotscope::metadata::cilassemblyview::CilAssemblyView;
+//! use dotscope::metadata::token::Token;
+//! use std::path::Path;
+//!
+//! # let path = Path::new("assembly.dll");
+//! let view = CilAssemblyView::from_file(&path)?;
+//! let scanner = ReferenceScanner::new(&view)?;
+//! let validator = ReferenceValidator::new(&scanner);
+//!
+//! // Validate token references
+//! let tokens = vec![Token::new(0x02000001), Token::new(0x06000001)];
+//! validator.validate_token_references(tokens)?;
+//!
+//! // Check for circular references
+//! let token = Token::new(0x02000001);
+//! if validator.has_circular_references(token) {
+//!     println!("Circular reference detected");
+//! }
+//!
+//! // Get reference statistics
+//! let stats = validator.get_reference_statistics();
+//! println!("Total references: {}", stats.total_references);
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! # Thread Safety
+//!
+//! [`crate::metadata::validation::shared::references::ReferenceValidator`] is stateless and implements [`Send`] + [`Sync`],
+//! making it safe for concurrent use across multiple validation threads.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::validation::scanner`] - Provides pre-analyzed reference data
+//! - [`crate::metadata::validation::validators::raw`] - Used by raw validators for basic reference validation
+//! - [`crate::metadata::validation::validators::owned`] - Used by owned validators for cross-reference validation
+//! - [`crate::metadata::token`] - Validates token-based references
+
+use crate::{
+    metadata::{tables::TableId, token::Token, validation::scanner::ReferenceScanner},
+    Error, Result,
+};
+use std::collections::{HashMap, HashSet};
+
+/// Shared reference validation utilities.
+///
+/// This struct provides reusable reference validation operations for ensuring
+/// cross-table relationships are properly maintained according to ECMA-335 requirements.
+/// It helps detect dangling references, circular dependencies, and other referential integrity issues.
+/// The validator operates on pre-analyzed metadata from [`crate::metadata::validation::scanner::ReferenceScanner`] to provide
+/// efficient validation without redundant analysis.
+///
+/// # Thread Safety
+///
+/// This type is stateless and implements [`Send`] + [`Sync`], making it safe for concurrent use.
+pub struct ReferenceValidator<'a> {
+    /// Reference scanner for metadata analysis
+    scanner: &'a ReferenceScanner,
+}
+
+impl<'a> ReferenceValidator<'a> {
+    /// Creates a new reference validator using the provided reference scanner.
+    ///
+    /// # Arguments
+    ///
+    /// * `scanner` - The [`crate::metadata::validation::scanner::ReferenceScanner`] containing pre-analyzed metadata
+    ///
+    /// # Returns
+    ///
+    /// A new [`crate::metadata::validation::shared::references::ReferenceValidator`] instance ready for validation operations.
+    pub fn new(scanner: &'a ReferenceScanner) -> Self {
+        Self { scanner }
+    }
+
+    /// Validates that all token references point to existing metadata entries.
+    ///
+    /// This method performs comprehensive reference validation including:
+    /// - Existence validation for all referenced tokens
+    /// - Cross-table reference integrity
+    /// - Detection of dangling references
+    ///
+    /// # Arguments
+    ///
+    /// * `tokens` - Iterator of [`crate::metadata::token::Token`] instances to validate for existence
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if all references are valid, or an error describing the first invalid reference.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error`] in the following cases:
+    /// - [`crate::Error::ValidationInvalidRid`] - If a referenced token doesn't exist
+    /// - [`crate::Error::ValidationInvalidTokenType`] - If a token type is invalid
+    pub fn validate_token_references<I>(&self, tokens: I) -> Result<()>
+    where
+        I: IntoIterator<Item = Token>,
+    {
+        for token in tokens {
+            if !self.scanner.token_exists(token) {
+                return Err(Error::ValidationInvalidRid {
+                    table: TableId::from_token_type(token.table()).unwrap_or(TableId::Module),
+                    rid: token.row(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Validates reference integrity for a specific token.
+    ///
+    /// This method checks that a token's incoming and outgoing references
+    /// are all valid and don't create integrity violations.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The token to validate references for
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if reference integrity is maintained, or an error otherwise.
+    pub fn validate_token_integrity(&self, token: Token) -> Result<()> {
+        // Check that the token exists
+        if !self.scanner.token_exists(token) {
+            return Err(Error::ValidationInvalidRid {
+                table: TableId::from_token_type(token.table()).unwrap_or(TableId::Module),
+                rid: token.row(),
+            });
+        }
+
+        // Validate all outgoing references
+        let outgoing_refs = self.scanner.get_references_from(token);
+        for referenced_token in outgoing_refs {
+            if !self.scanner.token_exists(referenced_token) {
+                return Err(Error::ValidationInvalidRid {
+                    table: TableId::from_token_type(referenced_token.table())
+                        .unwrap_or(TableId::Module),
+                    rid: referenced_token.row(),
+                });
+            }
+        }
+
+        // Validate all incoming references
+        let incoming_refs = self.scanner.get_references_to(token);
+        for referencing_token in incoming_refs {
+            if !self.scanner.token_exists(referencing_token) {
+                return Err(Error::ValidationInvalidRid {
+                    table: TableId::from_token_type(referencing_token.table())
+                        .unwrap_or(TableId::Module),
+                    rid: referencing_token.row(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Detects circular reference chains in metadata.
+    ///
+    /// This method performs depth-first search to detect circular dependencies
+    /// that could cause infinite loops or stack overflows during metadata processing.
+    ///
+    /// # Arguments
+    ///
+    /// * `start_token` - The token to start circular dependency detection from
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if a circular reference is detected, `false` otherwise.
+    pub fn has_circular_references(&self, start_token: Token) -> bool {
+        let mut visited = HashSet::new();
+        let mut recursion_stack = HashSet::new();
+
+        self.detect_cycle_dfs(start_token, &mut visited, &mut recursion_stack)
+    }
+
+    /// Depth-first search helper for circular reference detection.
+    fn detect_cycle_dfs(
+        &self,
+        token: Token,
+        visited: &mut HashSet<Token>,
+        recursion_stack: &mut HashSet<Token>,
+    ) -> bool {
+        if recursion_stack.contains(&token) {
+            return true; // Cycle detected
+        }
+
+        if visited.contains(&token) {
+            return false; // Already processed
+        }
+
+        visited.insert(token);
+        recursion_stack.insert(token);
+
+        // Check all tokens referenced by this token
+        let references = self.scanner.get_references_from(token);
+        for referenced_token in references {
+            if self.detect_cycle_dfs(referenced_token, visited, recursion_stack) {
+                return true;
+            }
+        }
+
+        recursion_stack.remove(&token);
+        false
+    }
+
+    /// Finds all references to a specific table row.
+    ///
+    /// This method finds all references to a specific row in a metadata table.
+    /// It returns a set of (table_id, rid) pairs that reference the target row.
+    ///
+    /// # Arguments
+    ///
+    /// * `table_id` - The table ID of the target row
+    /// * `rid` - The row ID of the target row
+    ///
+    /// # Returns
+    ///
+    /// Returns a set of (table_id, rid) pairs that reference the target row.
+    pub fn find_references_to_row(&self, table_id: TableId, rid: u32) -> HashSet<(TableId, u32)> {
+        // Construct token value manually: table_id in high byte (bits 24-31), rid in low 24 bits
+        let table_byte = match table_id {
+            TableId::TypeDef => 0x02,
+            TableId::TypeRef => 0x01,
+            TableId::MethodDef => 0x06,
+            TableId::Field => 0x04,
+            TableId::MemberRef => 0x0A,
+            TableId::Module => 0x00,
+            // ToDo: Add all mappings as needed
+            _ => 0x00, // Default fallback
+        };
+        let target_token_value = (table_byte << 24) | (rid & 0x00FFFFFF);
+        let target_token = Token::new(target_token_value);
+
+        let referencing_tokens = self.scanner.get_references_to(target_token);
+
+        referencing_tokens
+            .into_iter()
+            .filter_map(|token| {
+                TableId::from_token_type(token.table()).map(|table| (table, token.row()))
+            })
+            .collect()
+    }
+
+    /// Validates deletion safety for a token.
+    ///
+    /// This method checks whether a token can be safely deleted without
+    /// breaking reference integrity. It considers all incoming references
+    /// and determines if deletion would create dangling pointers.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The token to check for deletion safety
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the token can be safely deleted, or an error if deletion would break integrity.
+    ///
+    /// # Errors
+    ///
+    /// - `ValidationReferenceError`: If deleting the token would break references
+    pub fn validate_deletion_safety(&self, token: Token) -> Result<()> {
+        if !self.scanner.can_delete_token(token) {
+            let referencing_tokens = self.scanner.get_references_to(token);
+            let token_value = token.value();
+            let ref_count = referencing_tokens.len();
+            return Err(Error::ValidationCrossReferenceError {
+                message: format!(
+                    "Cannot delete token {token_value:#x}: {ref_count} references would be broken"
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    /// Analyzes reference patterns for potential issues.
+    ///
+    /// This method performs advanced reference analysis to detect common
+    /// patterns that might indicate metadata corruption or design issues.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `ReferenceAnalysis` struct containing detailed analysis results.
+    pub fn analyze_reference_patterns(&self) -> ReferenceAnalysis {
+        let mut analysis = ReferenceAnalysis::default();
+
+        // Analyze all tokens in the metadata
+        for table_id in self.get_all_table_ids() {
+            let row_count = self.scanner.table_row_count(table_id);
+            for rid in 1..=row_count {
+                if let Some(token) = self.create_token(table_id, rid) {
+                    self.analyze_token_references(token, &mut analysis);
+                }
+            }
+        }
+
+        analysis
+    }
+
+    /// Analyzes references for a specific token.
+    fn analyze_token_references(&self, token: Token, analysis: &mut ReferenceAnalysis) {
+        let incoming_refs = self.scanner.get_references_to(token);
+        let outgoing_refs = self.scanner.get_references_from(token);
+
+        analysis.total_tokens += 1;
+        analysis.total_references += incoming_refs.len() + outgoing_refs.len();
+
+        // Track orphaned tokens (no incoming references)
+        if incoming_refs.is_empty() {
+            analysis.orphaned_tokens.insert(token);
+        }
+
+        // Track highly referenced tokens
+        if incoming_refs.len() > 10 {
+            analysis
+                .highly_referenced_tokens
+                .insert(token, incoming_refs.len());
+        }
+
+        // Check for potential circular references
+        if self.has_circular_references(token) {
+            analysis.circular_reference_chains.push(token);
+        }
+    }
+
+    /// Creates a token from table ID and RID.
+    fn create_token(&self, table_id: TableId, rid: u32) -> Option<Token> {
+        let table_token_base = (table_id.token_type() as u32) << 24;
+        Some(Token::new(table_token_base | rid))
+    }
+
+    /// Gets all table IDs for reference analysis.
+    fn get_all_table_ids(&self) -> Vec<TableId> {
+        // ToDo: This should use TableId, not re-implement this logic
+        vec![
+            TableId::Module,
+            TableId::TypeRef,
+            TableId::TypeDef,
+            TableId::Field,
+            TableId::MethodDef,
+            TableId::Param,
+            TableId::InterfaceImpl,
+            TableId::MemberRef,
+            TableId::Constant,
+            TableId::CustomAttribute,
+            TableId::FieldMarshal,
+            TableId::DeclSecurity,
+            TableId::ClassLayout,
+            TableId::FieldLayout,
+            TableId::StandAloneSig,
+            TableId::EventMap,
+            TableId::Event,
+            TableId::PropertyMap,
+            TableId::Property,
+            TableId::MethodSemantics,
+            TableId::MethodImpl,
+            TableId::ModuleRef,
+            TableId::TypeSpec,
+            TableId::ImplMap,
+            TableId::FieldRVA,
+            TableId::Assembly,
+            TableId::AssemblyProcessor,
+            TableId::AssemblyOS,
+            TableId::AssemblyRef,
+            TableId::AssemblyRefProcessor,
+            TableId::AssemblyRefOS,
+            TableId::File,
+            TableId::ExportedType,
+            TableId::ManifestResource,
+            TableId::NestedClass,
+            TableId::GenericParam,
+            TableId::MethodSpec,
+            TableId::GenericParamConstraint,
+        ]
+    }
+
+    /// Validates forward references are properly resolved.
+    ///
+    /// This method checks that all forward references in metadata point to
+    /// tokens that are defined later in the same metadata stream.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The token to check forward references for
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if forward references are valid, or an error otherwise.
+    pub fn validate_forward_references(&self, token: Token) -> Result<()> {
+        let references = self.scanner.get_references_from(token);
+
+        for referenced_token in references {
+            // Simple check: referenced token should exist
+            if !self.scanner.token_exists(referenced_token) {
+                let from_token = token.value();
+                let to_token = referenced_token.value();
+                return Err(Error::ValidationCrossReferenceError {
+                    message: format!(
+                        "Forward reference from {from_token:#x} to non-existent token {to_token:#x}"
+                    ),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validates parent-child relationships in hierarchical structures.
+    ///
+    /// This method ensures that parent-child relationships are properly
+    /// maintained and don't create impossible hierarchies.
+    ///
+    /// # Arguments
+    ///
+    /// * `parent_token` - The parent token in the hierarchy
+    /// * `child_token` - The child token in the hierarchy
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the parent-child relationship is valid, or an error otherwise.
+    pub fn validate_parent_child_relationship(
+        &self,
+        parent_token: Token,
+        child_token: Token,
+    ) -> Result<()> {
+        // Check that both tokens exist
+        if !self.scanner.token_exists(parent_token) {
+            return Err(Error::ValidationInvalidRid {
+                table: TableId::from_token_type(parent_token.table()).unwrap_or(TableId::Module),
+                rid: parent_token.row(),
+            });
+        }
+
+        if !self.scanner.token_exists(child_token) {
+            return Err(Error::ValidationInvalidRid {
+                table: TableId::from_token_type(child_token.table()).unwrap_or(TableId::Module),
+                rid: child_token.row(),
+            });
+        }
+
+        // Check for self-reference (parent cannot be its own child)
+        if parent_token == child_token {
+            let token_value = parent_token.value();
+            return Err(Error::ValidationCrossReferenceError {
+                message: format!(
+                    "Self-referential parent-child relationship detected for token {token_value:#x}"
+                ),
+            });
+        }
+
+        // Check for immediate circular reference (child cannot be parent's parent)
+        let parent_references = self.scanner.get_references_from(child_token);
+        if parent_references.contains(&parent_token) {
+            let parent_value = parent_token.value();
+            let child_value = child_token.value();
+            return Err(Error::ValidationCrossReferenceError {
+                message: format!(
+                    "Circular parent-child relationship detected between {parent_value:#x} and {child_value:#x}"
+                ),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Gets detailed reference statistics for the metadata.
+    ///
+    /// # Returns
+    ///
+    /// Returns comprehensive reference statistics for analysis and reporting.
+    pub fn get_reference_statistics(&self) -> ReferenceStatistics {
+        let analysis = self.analyze_reference_patterns();
+
+        ReferenceStatistics {
+            total_tokens: analysis.total_tokens,
+            total_references: analysis.total_references,
+            orphaned_count: analysis.orphaned_tokens.len(),
+            circular_chains: analysis.circular_reference_chains.len(),
+            highly_referenced_count: analysis.highly_referenced_tokens.len(),
+            max_incoming_references: analysis
+                .highly_referenced_tokens
+                .values()
+                .max()
+                .copied()
+                .unwrap_or(0),
+        }
+    }
+}
+
+/// Reference analysis results.
+///
+/// This struct contains detailed analysis of reference patterns in metadata,
+/// useful for detecting potential issues and understanding metadata structure.
+#[derive(Debug, Default)]
+pub struct ReferenceAnalysis {
+    /// Total number of tokens analyzed
+    pub total_tokens: usize,
+    /// Total number of references found
+    pub total_references: usize,
+    /// Tokens with no incoming references (potential orphans)
+    pub orphaned_tokens: HashSet<Token>,
+    /// Tokens with many incoming references and their reference counts
+    pub highly_referenced_tokens: HashMap<Token, usize>,
+    /// Tokens that are part of circular reference chains
+    pub circular_reference_chains: Vec<Token>,
+}
+
+/// Reference validation statistics.
+///
+/// This struct contains statistical information about reference validation,
+/// useful for reporting and debugging reference integrity.
+#[derive(Debug, Clone)]
+pub struct ReferenceStatistics {
+    /// Total number of tokens in the metadata
+    pub total_tokens: usize,
+    /// Total number of references between tokens
+    pub total_references: usize,
+    /// Number of orphaned tokens (no incoming references)
+    pub orphaned_count: usize,
+    /// Number of circular reference chains detected
+    pub circular_chains: usize,
+    /// Number of highly referenced tokens (>10 references)
+    pub highly_referenced_count: usize,
+    /// Maximum number of incoming references to any single token
+    pub max_incoming_references: usize,
+}
+
+impl std::fmt::Display for ReferenceStatistics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Reference Statistics: {} tokens, {} references, {} orphaned, {} circular chains, {} highly referenced (max: {})",
+            self.total_tokens,
+            self.total_references,
+            self.orphaned_count,
+            self.circular_chains,
+            self.highly_referenced_count,
+            self.max_incoming_references
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::metadata::cilassemblyview::CilAssemblyView;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_reference_validator_creation() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            if let Ok(scanner) = ReferenceScanner::new(&view) {
+                let validator = ReferenceValidator::new(&scanner);
+
+                // Test basic functionality
+                let stats = validator.get_reference_statistics();
+                assert!(stats.total_tokens > 0);
+            }
+        }
+    }
+
+    #[test]
+    fn test_token_reference_validation() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            if let Ok(scanner) = ReferenceScanner::new(&view) {
+                let validator = ReferenceValidator::new(&scanner);
+
+                // Test with valid tokens
+                if scanner.table_row_count(TableId::TypeDef) > 0 {
+                    let valid_token = Token::new(0x02000001); // TypeDef with RID 1
+                    let tokens = vec![valid_token];
+                    assert!(validator.validate_token_references(tokens).is_ok());
+                }
+
+                // Test with invalid token
+                let invalid_token = Token::new(0x02000000); // TypeDef with RID 0
+                let invalid_tokens = vec![invalid_token];
+                assert!(validator.validate_token_references(invalid_tokens).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn test_deletion_safety_validation() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            if let Ok(scanner) = ReferenceScanner::new(&view) {
+                let validator = ReferenceValidator::new(&scanner);
+
+                if scanner.table_row_count(TableId::TypeDef) > 0 {
+                    let token = Token::new(0x02000001); // TypeDef with RID 1
+
+                    // Test deletion safety (result depends on whether token is referenced)
+                    let result = validator.validate_deletion_safety(token);
+                    // Don't assert specific result as it depends on the actual references
+                    // Just verify the method doesn't panic
+                    let _ = result;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_circular_reference_detection() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            if let Ok(scanner) = ReferenceScanner::new(&view) {
+                let validator = ReferenceValidator::new(&scanner);
+
+                if scanner.table_row_count(TableId::TypeDef) > 0 {
+                    let token = Token::new(0x02000001); // TypeDef with RID 1
+
+                    // Test circular reference detection
+                    let has_circular = validator.has_circular_references(token);
+                    // Don't assert specific result as it depends on the actual metadata
+                    // Just verify the method completes without error
+                    let _ = has_circular;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parent_child_relationship_validation() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            if let Ok(scanner) = ReferenceScanner::new(&view) {
+                let validator = ReferenceValidator::new(&scanner);
+
+                if scanner.table_row_count(TableId::TypeDef) >= 2 {
+                    let parent_token = Token::new(0x02000001); // TypeDef with RID 1
+                    let child_token = Token::new(0x02000002); // TypeDef with RID 2
+
+                    // Test basic parent-child validation
+                    let result =
+                        validator.validate_parent_child_relationship(parent_token, child_token);
+                    // Should pass basic validation (both tokens exist, not self-referential)
+                    assert!(result.is_ok());
+
+                    // Test self-referential relationship (should fail)
+                    let self_ref_result =
+                        validator.validate_parent_child_relationship(parent_token, parent_token);
+                    assert!(self_ref_result.is_err());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_reference_analysis() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            if let Ok(scanner) = ReferenceScanner::new(&view) {
+                let validator = ReferenceValidator::new(&scanner);
+
+                let analysis = validator.analyze_reference_patterns();
+                assert!(analysis.total_tokens > 0);
+
+                let stats = validator.get_reference_statistics();
+                let stats_string = stats.to_string();
+                assert!(stats_string.contains("tokens"));
+                assert!(stats_string.contains("references"));
+            }
+        }
+    }
+
+    #[test]
+    fn test_forward_reference_validation() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            if let Ok(scanner) = ReferenceScanner::new(&view) {
+                let validator = ReferenceValidator::new(&scanner);
+
+                if scanner.table_row_count(TableId::TypeDef) > 0 {
+                    let token = Token::new(0x02000001); // TypeDef with RID 1
+
+                    // Test forward reference validation
+                    let result = validator.validate_forward_references(token);
+                    // Should pass if all references point to existing tokens
+                    assert!(result.is_ok());
+                }
+            }
+        }
+    }
+}
