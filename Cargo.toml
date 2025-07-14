@@ -21,7 +21,7 @@ thiserror = "2.0.12"
 uguid = "2.2.1"
 widestring = "1.2.0"
 strum = { version = "0.27.1", features = ["derive"]}
-memmap2 = "0.9.5"
+memmap2 = "0.9.7"
 tempfile = "3.13.0"
 #goblin = "0.10.0"
 # Currently a fork of mine, that includes crash fixes which have not yet been merged into master
