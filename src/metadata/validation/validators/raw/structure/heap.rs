@@ -44,7 +44,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationStructuralError`] for:
+//! This validator returns [`crate::Error::ValidationRawValidatorFailed`] for:
 //! - Invalid UTF-8 encoding in string heaps (#Strings stream violations)
 //! - Malformed blob size encoding or data corruption (#Blob stream violations)
 //! - Incorrect GUID alignment or invalid format (#GUID stream violations)
@@ -62,7 +62,7 @@
 //! # Integration
 //!
 //! This validator integrates with:
-//! - [`crate::metadata::validation::validators::raw::structure`] - Part of the foundational structural validation stage
+//! - raw structure validators - Part of the foundational structural validation stage
 //! - [`crate::metadata::validation::engine::ValidationEngine`] - Orchestrates validator execution with fail-fast behavior
 //! - [`crate::metadata::validation::traits::RawValidator`] - Implements the raw validation interface
 //! - [`crate::metadata::cilassemblyview::CilAssemblyView`] - Source of metadata heaps and stream information
@@ -113,7 +113,7 @@ impl RawHeapValidator {
     ///
     /// # Returns
     ///
-    /// A new [`crate::metadata::validation::validators::raw::structure::heap::RawHeapValidator`] instance ready for validation operations.
+    /// A new [`RawHeapValidator`] instance ready for validation operations.
     ///
     /// # Thread Safety
     ///
@@ -135,22 +135,20 @@ impl RawHeapValidator {
     /// # Returns
     ///
     /// * `Ok(())` - String heap is valid and properly formatted
-    /// * `Err(`[`crate::Error::ValidationStructuralError`]`)` - String heap violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - String heap violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationStructuralError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - String heap size exceeds maximum allowed value (0x7FFFFFFF)
     /// - String heap size is not 4-byte aligned as required by ECMA-335
     /// - String heap offset exceeds maximum allowed value
     fn validate_string_heap(&self, assembly_view: &CilAssemblyView) -> Result<()> {
         let streams = assembly_view.streams();
 
-        // Find and validate the #Strings stream
         let strings_stream = streams.iter().find(|s| s.name == "#Strings");
 
         if let Some(stream) = strings_stream {
-            // Validate stream size is reasonable and aligned
             if stream.size > 0x7FFFFFFF {
                 return Err(malformed_error!(
                     "String heap (#Strings) size {} exceeds maximum allowed size",
@@ -158,7 +156,6 @@ impl RawHeapValidator {
                 ));
             }
 
-            // Validate stream size is 4-byte aligned per ECMA-335
             if stream.size % 4 != 0 {
                 return Err(malformed_error!(
                     "String heap (#Strings) size {} is not 4-byte aligned as required by ECMA-335",
@@ -166,7 +163,6 @@ impl RawHeapValidator {
                 ));
             }
 
-            // Validate offset is reasonable
             if stream.offset > 0x7FFFFFFF {
                 return Err(malformed_error!(
                     "String heap (#Strings) offset {} exceeds maximum allowed offset",
@@ -191,22 +187,20 @@ impl RawHeapValidator {
     /// # Returns
     ///
     /// * `Ok(())` - Blob heap is valid and properly formatted
-    /// * `Err(`[`crate::Error::ValidationStructuralError`]`)` - Blob heap violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Blob heap violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationStructuralError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - Blob heap size exceeds maximum allowed value (0x7FFFFFFF)
     /// - Blob heap size is not 4-byte aligned as required by ECMA-335
     /// - Blob heap offset exceeds maximum allowed value
     fn validate_blob_heap(&self, assembly_view: &CilAssemblyView) -> Result<()> {
         let streams = assembly_view.streams();
 
-        // Find and validate the #Blob stream
         let blob_stream = streams.iter().find(|s| s.name == "#Blob");
 
         if let Some(stream) = blob_stream {
-            // Validate stream size is reasonable and aligned
             if stream.size > 0x7FFFFFFF {
                 return Err(malformed_error!(
                     "Blob heap (#Blob) size {} exceeds maximum allowed size",
@@ -214,7 +208,6 @@ impl RawHeapValidator {
                 ));
             }
 
-            // Validate stream size is 4-byte aligned per ECMA-335
             if stream.size % 4 != 0 {
                 return Err(malformed_error!(
                     "Blob heap (#Blob) size {} is not 4-byte aligned as required by ECMA-335",
@@ -222,7 +215,6 @@ impl RawHeapValidator {
                 ));
             }
 
-            // Validate offset is reasonable
             if stream.offset > 0x7FFFFFFF {
                 return Err(malformed_error!(
                     "Blob heap (#Blob) offset {} exceeds maximum allowed offset",
@@ -247,11 +239,11 @@ impl RawHeapValidator {
     /// # Returns
     ///
     /// * `Ok(())` - GUID heap is valid and properly formatted
-    /// * `Err(`[`crate::Error::ValidationStructuralError`]`)` - GUID heap violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - GUID heap violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationStructuralError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - GUID heap size exceeds maximum allowed value (0x7FFFFFFF)
     /// - GUID heap size is not a multiple of 16 bytes (GUID entry size)
     /// - GUID heap size is not 4-byte aligned as required by ECMA-335
@@ -268,7 +260,6 @@ impl RawHeapValidator {
                 ));
             }
 
-            // GUID heap must be a multiple of 16 bytes (each GUID is 16 bytes)
             if stream.size % 16 != 0 {
                 return Err(malformed_error!(
                     "GUID heap (#GUID) size {} is not a multiple of 16 bytes (GUID size)",
@@ -276,7 +267,6 @@ impl RawHeapValidator {
                 ));
             }
 
-            // Validate stream size is 4-byte aligned per ECMA-335
             if stream.size % 4 != 0 {
                 return Err(malformed_error!(
                     "GUID heap (#GUID) size {} is not 4-byte aligned as required by ECMA-335",
@@ -284,7 +274,6 @@ impl RawHeapValidator {
                 ));
             }
 
-            // Validate offset is reasonable
             if stream.offset > 0x7FFFFFFF {
                 return Err(malformed_error!(
                     "GUID heap (#GUID) offset {} exceeds maximum allowed offset",
@@ -309,18 +298,17 @@ impl RawHeapValidator {
     /// # Returns
     ///
     /// * `Ok(())` - UserString heap is valid and properly formatted
-    /// * `Err(`[`crate::Error::ValidationStructuralError`]`)` - UserString heap violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - UserString heap violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationStructuralError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - UserString heap size exceeds maximum allowed value (0x7FFFFFFF)
     /// - UserString heap size is not 4-byte aligned as required by ECMA-335
     /// - UserString heap offset exceeds maximum allowed value
     fn validate_userstring_heap(&self, assembly_view: &CilAssemblyView) -> Result<()> {
         let streams = assembly_view.streams();
 
-        // Find and validate the #US stream
         let us_stream = streams.iter().find(|s| s.name == "#US");
 
         if let Some(stream) = us_stream {
@@ -369,11 +357,11 @@ impl RawValidator for RawHeapValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All heap structures are valid and meet ECMA-335 requirements
-    /// * `Err(`[`crate::Error::ValidationStructuralError`]`)` - Heap structure violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Heap structure violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationStructuralError`] for:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] for:
     /// - Invalid UTF-8 encoding in string heaps
     /// - Malformed blob size encoding or corrupted data
     /// - Incorrect GUID alignment or invalid format
@@ -399,11 +387,10 @@ impl RawValidator for RawHeapValidator {
     }
 
     fn priority(&self) -> u32 {
-        180 // High priority - foundation validator
+        180
     }
 
     fn should_run(&self, context: &RawValidationContext) -> bool {
-        // Run if structural validation is enabled
         context.config().enable_structural_validation
     }
 }
@@ -417,47 +404,55 @@ impl Default for RawHeapValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
-        cilassemblyview::CilAssemblyView,
-        validation::{config::ValidationConfig, context::factory, scanner::ReferenceScanner},
+    use crate::{
+        metadata::validation::ValidationConfig,
+        test::{get_clean_testfile, validator_test, TestAssembly},
     };
-    use std::path::PathBuf;
+
+    fn raw_heap_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+        let mut assemblies = Vec::new();
+
+        if let Some(clean_path) = get_clean_testfile() {
+            assemblies.push(TestAssembly::new(clean_path, true));
+        }
+
+        // Note: Unlike table structure validation, heap validation might be more testable
+        // since it validates basic properties like stream sizes, alignments, and limits.
+        // However, creating assemblies with corrupted heap sizes/alignments through the
+        // builder APIs is still challenging because the builder system enforces constraints.
+        //
+        // The validation catches issues like:
+        // - Stream sizes > 0x7FFFFFFF
+        // - Non-4-byte-aligned stream sizes
+        // - GUID heap sizes not multiple of 16
+        // - Stream offsets > 0x7FFFFFFF
+        //
+        // These would typically occur from:
+        // 1. Corrupted files from external sources
+        // 2. Manual binary manipulation
+        // 3. Malformed assemblies from other tools
+        //
+        // For comprehensive testing, we would need direct stream manipulation
+        // or pre-corrupted test assemblies. For now, we test with clean assemblies
+        // to ensure the validator passes on well-formed input.
+
+        Ok(assemblies)
+    }
 
     #[test]
-    fn test_raw_heap_validator_creation() {
+    fn test_raw_heap_validator() -> crate::Result<()> {
         let validator = RawHeapValidator::new();
-        assert_eq!(validator.name(), "RawHeapValidator");
-        assert_eq!(validator.priority(), 180);
-    }
+        let config = ValidationConfig {
+            enable_structural_validation: true,
+            ..Default::default()
+        };
 
-    #[test]
-    fn test_raw_heap_validator_should_run() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let scanner = ReferenceScanner::new(&view).unwrap();
-            let mut config = ValidationConfig::minimal();
-
-            config.enable_structural_validation = true;
-            let context = factory::raw_loading_context(&view, &scanner, &config);
-            let validator = RawHeapValidator::new();
-            assert!(validator.should_run(&context));
-
-            config.enable_structural_validation = false;
-            let context = factory::raw_loading_context(&view, &scanner, &config);
-            assert!(!validator.should_run(&context));
-        }
-    }
-
-    #[test]
-    fn test_raw_heap_validator_validate_empty_implementation() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let scanner = ReferenceScanner::new(&view).unwrap();
-            let config = ValidationConfig::minimal();
-            let context = factory::raw_loading_context(&view, &scanner, &config);
-
-            let validator = RawHeapValidator::new();
-            assert!(validator.validate_raw(&context).is_ok());
-        }
+        validator_test(
+            raw_heap_validator_file_factory,
+            "RawHeapValidator",
+            "ValidationStructuralError",
+            config,
+            |context| validator.validate_raw(context),
+        )
     }
 }

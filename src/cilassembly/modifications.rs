@@ -55,7 +55,7 @@
 //! This module integrates with:
 //! - [`crate::cilassembly::changes::AssemblyChanges`] - Overall change tracking
 //! - [`crate::cilassembly::operation`] - Operation definitions and management
-//! - [`crate::cilassembly::validation`] - Validation and conflict resolution
+//! - Assembly validation - Validation and conflict resolution
 
 use std::collections::HashSet;
 

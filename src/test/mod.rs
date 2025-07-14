@@ -77,17 +77,14 @@
 //! - Custom attribute scenarios
 //! - Generic type definitions
 
-mod windowsbase;
-
-// Sub-modules
 pub mod builders;
 mod helpers;
-pub mod scenarios;
+mod scenarios;
+mod validator;
+mod windowsbase;
 
-// Re-export the windowsbase module
-pub use windowsbase::*;
-
-// Re-export builder modules for convenience
 pub use builders::*;
 pub use helpers::*;
+pub use validator::*;
+pub use windowsbase::*;
 //pub use scenarios::*;

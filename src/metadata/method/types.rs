@@ -433,7 +433,7 @@ impl MethodImplOptions {
 
 // Method attributes split into logical groups
 bitflags! {
-    #[derive(PartialEq)]
+    #[derive(PartialEq, Eq, Debug)]
     /// Method accessibility flags as defined in ECMA-335 II.23.1.10.
     ///
     /// These flags control the visibility and accessibility of methods, determining
@@ -479,13 +479,13 @@ bitflags! {
         ///
         /// The method can be accessed by derived types, but only when those
         /// types are in the same assembly. This combines family and assembly access.
-        const FAM_AND_ASSEM = 0x0002;
+        const FAMILY_AND_ASSEMBLY = 0x0002;
 
         /// Accessible by anyone in the Assembly.
         ///
         /// The method can be called by any code within the same assembly,
         /// regardless of type relationships. This corresponds to `internal` in C#.
-        const ASSEM = 0x0003;
+        const ASSEMBLY = 0x0003;
 
         /// Accessible only by type and sub-types.
         ///
@@ -497,7 +497,7 @@ bitflags! {
         ///
         /// The method can be accessed by derived types in any assembly, or by
         /// any code within the same assembly. This corresponds to `protected internal` in C#.
-        const FAM_OR_ASSEM = 0x0005;
+        const FAMILY_OR_ASSEMBLY = 0x0005;
 
         /// Accessible by anyone who has visibility to this scope.
         ///
@@ -542,6 +542,45 @@ impl MethodAccessFlags {
     pub fn from_method_flags(flags: u32) -> Self {
         let access = flags & METHOD_ACCESS_MASK;
         Self::from_bits_truncate(access)
+    }
+}
+
+impl PartialOrd for MethodAccessFlags {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for MethodAccessFlags {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Compare by accessibility level: higher values = more accessible
+        // COMPILER_CONTROLLED(0) < PRIVATE(1) < FAMILY_AND_ASSEMBLY(2) < ASSEMBLY(3) < FAMILY(4) < FAMILY_OR_ASSEMBLY(5) < PUBLIC(6)
+        self.bits().cmp(&other.bits())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_method_access_flags_ordering() {
+        // Test the accessibility hierarchy ordering
+        assert!(MethodAccessFlags::COMPILER_CONTROLLED < MethodAccessFlags::PRIVATE);
+        assert!(MethodAccessFlags::PRIVATE < MethodAccessFlags::FAMILY_AND_ASSEMBLY);
+        assert!(MethodAccessFlags::FAMILY_AND_ASSEMBLY < MethodAccessFlags::ASSEMBLY);
+        assert!(MethodAccessFlags::ASSEMBLY < MethodAccessFlags::FAMILY);
+        assert!(MethodAccessFlags::FAMILY < MethodAccessFlags::FAMILY_OR_ASSEMBLY);
+        assert!(MethodAccessFlags::FAMILY_OR_ASSEMBLY < MethodAccessFlags::PUBLIC);
+
+        // Test some specific comparisons useful for method override validation
+        assert!(MethodAccessFlags::PUBLIC >= MethodAccessFlags::PRIVATE);
+        assert!(MethodAccessFlags::FAMILY >= MethodAccessFlags::PRIVATE);
+        assert!(MethodAccessFlags::PRIVATE < MethodAccessFlags::PUBLIC);
+
+        // Test equality
+        assert_eq!(MethodAccessFlags::PUBLIC, MethodAccessFlags::PUBLIC);
+        assert!(MethodAccessFlags::PUBLIC >= MethodAccessFlags::PUBLIC);
     }
 }
 

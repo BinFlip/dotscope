@@ -148,7 +148,6 @@ impl OwnedFieldValidator {
 
         for type_entry in types.all_types() {
             for (_, field) in type_entry.fields.iter() {
-                // Validate field name is not empty
                 if field.name.is_empty() {
                     let token_value = field.token.value();
                     return Err(crate::Error::ValidationOwnedValidatorFailed {
@@ -158,7 +157,6 @@ impl OwnedFieldValidator {
                     });
                 }
 
-                // Validate field signature type is resolved
                 if let crate::metadata::signatures::TypeSignature::Unknown = &field.signature.base {
                     let field_name = &field.name;
                     return Err(crate::Error::ValidationOwnedValidatorFailed {
@@ -168,7 +166,6 @@ impl OwnedFieldValidator {
                     });
                 }
 
-                // Validate field modifiers if present
                 for (index, modifier) in field.signature.modifiers.iter().enumerate() {
                     if modifier.modifier_type.value() == 0 {
                         let field_name = &field.name;
@@ -212,10 +209,8 @@ impl OwnedFieldValidator {
 
         for type_entry in types.all_types() {
             for (_, field) in type_entry.fields.iter() {
-                // Extract access level from field flags
                 let access_level = field.flags & FieldAttributes::FIELD_ACCESS_MASK;
 
-                // Validate access level is a known value
                 match access_level {
                     FieldAttributes::COMPILER_CONTROLLED
                     | FieldAttributes::PRIVATE
@@ -238,7 +233,6 @@ impl OwnedFieldValidator {
                     }
                 }
 
-                // Validate static fields cannot be literal and instance at the same time
                 if field.flags & FieldAttributes::STATIC != 0
                     && field.flags & FieldAttributes::INIT_ONLY != 0
                 {
@@ -246,17 +240,13 @@ impl OwnedFieldValidator {
                     // No error here
                 }
 
-                // Validate literal fields must also be static
-                if field.flags & 0x0040 != 0 {
-                    // LITERAL flag (not defined in current constants)
-                    if field.flags & FieldAttributes::STATIC == 0 {
-                        let field_name = &field.name;
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
-                            validator: self.name().to_string(),
-                            message: format!("Literal field '{field_name}' must also be static"),
-                            source: None,
-                        });
-                    }
+                if field.flags & 0x0040 != 0 && field.flags & FieldAttributes::STATIC == 0 {
+                    let field_name = &field.name;
+                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        validator: self.name().to_string(),
+                        message: format!("Literal field '{field_name}' must also be static"),
+                        source: None,
+                    });
                 }
             }
         }
@@ -363,9 +353,7 @@ impl OwnedFieldValidator {
 
         for type_entry in types.all_types() {
             for (_, field) in type_entry.fields.iter() {
-                // Check for backing fields (typically for properties)
                 if field.name.starts_with('<') && field.name.ends_with(">k__BackingField") {
-                    // Compiler-generated backing field - should be private
                     let access_level = field.flags & FieldAttributes::FIELD_ACCESS_MASK;
                     if access_level != FieldAttributes::PRIVATE {
                         let field_name = &field.name;
@@ -377,19 +365,14 @@ impl OwnedFieldValidator {
                     }
                 }
 
-                // Check for event fields (typically for events)
-                if field.name.starts_with('<') && field.name.contains("Event") {
-                    // Likely compiler-generated event field
-                    if field.flags & FieldAttributes::STATIC == 0 {
-                        // Instance event fields should typically be private
-                        let access_level = field.flags & FieldAttributes::FIELD_ACCESS_MASK;
-                        if access_level == FieldAttributes::PUBLIC {
-                            // This might be intentional, so just continue
-                        }
-                    }
+                if field.name.starts_with('<')
+                    && field.name.contains("Event")
+                    && field.flags & FieldAttributes::STATIC == 0
+                {
+                    let access_level = field.flags & FieldAttributes::FIELD_ACCESS_MASK;
+                    if access_level == FieldAttributes::PUBLIC {}
                 }
 
-                // Validate field names don't contain invalid characters
                 if field.name.contains('\0') {
                     let field_name = &field.name;
                     return Err(crate::Error::ValidationOwnedValidatorFailed {

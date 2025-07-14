@@ -56,7 +56,7 @@
 //! # Integration
 //!
 //! This validator integrates with:
-//! - [`crate::metadata::validation::validators::owned::metadata`] - Part of the owned metadata validation stage
+//! - owned metadata validators - Part of the owned metadata validation stage
 //! - [`crate::metadata::validation::engine::ValidationEngine`] - Orchestrates validator execution
 //! - [`crate::metadata::validation::traits::OwnedValidator`] - Implements the owned validation interface
 //! - [`crate::metadata::cilobject::CilObject`] - Source of resolved method signature structures
@@ -105,7 +105,7 @@ impl OwnedSignatureValidator {
     ///
     /// # Returns
     ///
-    /// A new [`crate::metadata::validation::validators::owned::metadata::signature::OwnedSignatureValidator`] instance ready for validation operations.
+    /// A new [`OwnedSignatureValidator`] instance ready for validation operations.
     ///
     /// # Thread Safety
     ///

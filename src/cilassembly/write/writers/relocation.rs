@@ -79,7 +79,7 @@
 //! # Integration
 //!
 //! This module integrates with:
-//! - [`crate::cilassembly::write::writers::pe`] - PE structure updates and section management
+//! - PE structure updates and section management
 //! - [`crate::cilassembly::write::output`] - Binary output buffer management
 //! - [`crate::cilassembly::write::planner`] - Layout planning and section movement detection
 //! - [`crate::file`] - PE file structure parsing and RVA conversion

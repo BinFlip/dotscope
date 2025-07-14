@@ -42,7 +42,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationConstraintError`] for:
+//! This validator returns [`crate::Error::ValidationRawValidatorFailed`] for:
 //! - Invalid generic parameter definitions (parameter numbers exceeding 0xFFFF, invalid flags)
 //! - Missing constraints (null owner or constraint references)
 //! - Inconsistent constraint inheritance relationships (non-existent GenericParam references)
@@ -134,11 +134,11 @@ impl RawGenericConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All generic parameters are valid
-    /// * `Err(`[`crate::Error::ValidationConstraintError`]`)` - Parameter violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Parameter violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationConstraintError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - Generic parameter numbers exceed maximum value (0xFFFF)
     /// - Parameter flags exceed maximum value (0xFFFF)
     /// - Owner coded index references are null (row = 0)
@@ -158,7 +158,6 @@ impl RawGenericConstraintValidator {
                     ));
                 }
 
-                // Validate flags are within reasonable bounds
                 if generic_param.flags > 0xFFFF {
                     return Err(malformed_error!(
                         "GenericParam RID {} has invalid flags value {} exceeding maximum",
@@ -167,7 +166,6 @@ impl RawGenericConstraintValidator {
                     ));
                 }
 
-                // Validate owner coded index is not null
                 if generic_param.owner.row == 0 {
                     return Err(malformed_error!(
                         "GenericParam RID {} has null owner reference",
@@ -175,7 +173,6 @@ impl RawGenericConstraintValidator {
                     ));
                 }
 
-                // Validate name reference is not null
                 if generic_param.name == 0 {
                     return Err(malformed_error!(
                         "GenericParam RID {} has null name reference",
@@ -201,11 +198,11 @@ impl RawGenericConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All parameter constraints are valid
-    /// * `Err(`[`crate::Error::ValidationConstraintError`]`)` - Constraint violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Constraint violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationConstraintError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - Owner references are null (owner = 0)
     /// - Constraint coded index references are null (constraint.row = 0)
     /// - Owner references exceed GenericParam table row count
@@ -261,11 +258,11 @@ impl RawGenericConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All constraint inheritance is consistent
-    /// * `Err(`[`crate::Error::ValidationConstraintError`]`)` - Inheritance violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Inheritance violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationConstraintError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - Constraint owners reference non-existent GenericParam RIDs
     /// - Cross-table references are inconsistent between GenericParamConstraint and GenericParam tables
     fn validate_constraint_inheritance(&self, assembly_view: &CilAssemblyView) -> Result<()> {
@@ -277,7 +274,6 @@ impl RawGenericConstraintValidator {
             tables.table::<GenericParamRaw>(),
             tables.table::<GenericParamConstraintRaw>(),
         ) {
-            // Validate that all constraint owners reference valid generic parameters
             for constraint in constraint_table.iter() {
                 let param_found = generic_param_table
                     .iter()
@@ -309,11 +305,11 @@ impl RawGenericConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All constraint types are valid
-    /// * `Err(`[`crate::Error::ValidationConstraintError`]`)` - Type violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Type violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationConstraintError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - Constraint coded index references invalid table entries
     /// - TypeDef constraint references exceed TypeDef table bounds
     /// - TypeRef constraint references exceed TypeRef table bounds
@@ -325,14 +321,11 @@ impl RawGenericConstraintValidator {
 
         if let Some(constraint_table) = tables.table::<GenericParamConstraintRaw>() {
             for constraint in constraint_table.iter() {
-                // Validate constraint coded index based on its type
                 let constraint_tables = constraint.constraint.ci_type.tables();
                 let constraint_table_type = if constraint_tables.len() == 1 {
                     constraint_tables[0]
                 } else {
-                    // For multi-table coded indices, we need to decode the actual table
-                    // This is a simplified approach - in a full implementation we'd decode the coded index
-                    continue; // Skip validation for complex coded indices for now
+                    continue;
                 };
                 let constraint_row = constraint.constraint.row;
 
@@ -414,11 +407,11 @@ impl RawGenericConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All parameter flags are valid
-    /// * `Err(`[`crate::Error::ValidationConstraintError`]`)` - Flag violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Flag violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationConstraintError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - Invalid flag combinations (e.g., both covariant and contravariant)
     /// - Reserved flag bits are set
     /// - Variance flags used inappropriately (method vs type parameters)
@@ -431,7 +424,6 @@ impl RawGenericConstraintValidator {
             for generic_param in generic_param_table.iter() {
                 let flags = generic_param.flags;
 
-                // Validate that covariant and contravariant flags are not both set
                 const COVARIANT: u32 = 0x0001;
                 const CONTRAVARIANT: u32 = 0x0002;
                 const REFERENCE_TYPE_CONSTRAINT: u32 = 0x0004;
@@ -445,7 +437,6 @@ impl RawGenericConstraintValidator {
                     ));
                 }
 
-                // Validate that reserved bits are not set (bits 5-15 are reserved)
                 const RESERVED_MASK: u32 = 0xFFE0;
                 if (flags & RESERVED_MASK) != 0 {
                     return Err(malformed_error!(
@@ -455,7 +446,6 @@ impl RawGenericConstraintValidator {
                     ));
                 }
 
-                // Validate constraint flag combinations
                 if (flags & REFERENCE_TYPE_CONSTRAINT) != 0
                     && (flags & NOT_NULLABLE_VALUE_TYPE_CONSTRAINT) != 0
                 {
@@ -483,11 +473,11 @@ impl RawGenericConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - No circular dependencies found
-    /// * `Err(`[`crate::Error::ValidationConstraintError`]`)` - Circular dependencies detected
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Circular dependencies detected
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationConstraintError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - Circular constraint dependencies are detected
     /// - Constraint chains exceed reasonable depth limits
     fn validate_constraint_circularity(&self, assembly_view: &CilAssemblyView) -> Result<()> {
@@ -499,7 +489,6 @@ impl RawGenericConstraintValidator {
             tables.table::<GenericParamRaw>(),
             tables.table::<GenericParamConstraintRaw>(),
         ) {
-            // Build constraint dependency map
             let mut param_constraints: HashMap<u32, Vec<u32>> = HashMap::new();
 
             for constraint in constraint_table.iter() {
@@ -509,7 +498,6 @@ impl RawGenericConstraintValidator {
                     .push(constraint.rid);
             }
 
-            // Check each parameter for circular dependencies
             for param in generic_param_table.iter() {
                 let mut visited = HashSet::new();
                 let mut visiting = HashSet::new();
@@ -557,16 +545,13 @@ impl RawGenericConstraintValidator {
         }
 
         if visiting.contains(&param_id) {
-            return Ok(true); // Cycle detected
+            return Ok(true);
         }
 
         visiting.insert(param_id);
 
         if let Some(constraints) = param_constraints.get(&param_id) {
             for &constraint_id in constraints {
-                // For this basic implementation, we check if the constraint
-                // somehow refers back to parameters we're already visiting
-                // In a full implementation, this would analyze the actual constraint types
                 if visiting.contains(&constraint_id) {
                     return Ok(true);
                 }
@@ -598,11 +583,11 @@ impl RawValidator for RawGenericConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All generic constraints are valid and meet ECMA-335 requirements
-    /// * `Err(`[`crate::Error::ValidationConstraintError`]`)` - Constraint violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Constraint violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationConstraintError`] for:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] for:
     /// - Invalid generic parameter definitions or missing constraints
     /// - Inconsistent constraint inheritance relationships
     /// - Invalid type parameter bounds or interface constraints
@@ -615,12 +600,10 @@ impl RawValidator for RawGenericConstraintValidator {
     fn validate_raw(&self, context: &RawValidationContext) -> Result<()> {
         let assembly_view = context.assembly_view();
 
-        // Basic structural validation
         self.validate_generic_parameters(assembly_view)?;
         self.validate_parameter_constraints(assembly_view)?;
         self.validate_constraint_inheritance(assembly_view)?;
 
-        // Advanced constraint validation
         self.validate_constraint_types(assembly_view)?;
         self.validate_parameter_flags(assembly_view)?;
         self.validate_constraint_circularity(assembly_view)?;
@@ -650,47 +633,153 @@ impl Default for RawGenericConstraintValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
-        cilassemblyview::CilAssemblyView,
-        validation::{config::ValidationConfig, context::factory, scanner::ReferenceScanner},
+    use crate::{
+        metadata::validation::ValidationConfig,
+        prelude::*,
+        test::{get_clean_testfile, validator_test, TestAssembly},
     };
-    use std::path::PathBuf;
+    use tempfile::NamedTempFile;
+
+    fn raw_generic_constraint_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+        let mut assemblies = Vec::new();
+
+        if let Some(clean_path) = get_clean_testfile() {
+            assemblies.push(TestAssembly::new(clean_path, true));
+        }
+
+        // 2. Test generic parameter with invalid parameter number (> 0xFFFF)
+        // Note: This test may need refinement as builder enforces 65535 limit
+        // Comment out for now until we can create truly invalid constraints
+        // match create_assembly_with_invalid_parameter_number() {
+        //     Ok(temp_file) => {
+        //         assemblies.push(TestAssembly::from_temp_file_with_error(
+        //             temp_file,
+        //             "invalid parameter number",
+        //         ));
+        //     }
+        //     Err(e) => {
+        //         return Err(crate::Error::Error(format!(
+        //             "Failed to create test assembly with invalid parameter number: {}",
+        //             e
+        //         )));
+        //     }
+        // }
+
+        match create_assembly_with_invalid_parameter_flags() {
+            Ok(temp_file) => {
+                assemblies.push(TestAssembly::from_temp_file_with_error(
+                    temp_file,
+                    "both covariant and contravariant flags",
+                ));
+            }
+            Err(e) => {
+                return Err(crate::Error::Error(format!(
+                    "Failed to create test assembly with invalid parameter flags: {e}"
+                )));
+            }
+        }
+
+        // Note: Test cases for null constraint owner and bounds violations are commented out
+        // because the builder APIs prevent creating such invalid metadata. These would require
+        // direct binary manipulation to create the corrupted constraints this validator detects.
+
+        // 4. Test constraint with null owner reference - Not possible with current builder API
+        // 5. Test constraint with owner exceeding GenericParam table bounds - Not possible with current builder API
+
+        Ok(assemblies)
+    }
+
+    /// Creates an assembly with a generic parameter that has an invalid parameter number > 0xFFFF.
+    /// Note: The builder actually enforces the 65535 limit, so this test may need to be
+    /// implemented differently or may show that the validator and builder are consistent.
+    fn create_assembly_with_invalid_parameter_number() -> crate::Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        let typedef_builder = TypeDefBuilder::new()
+            .name("GenericType")
+            .namespace("Test")
+            .flags(0x00100000);
+
+        let typedef_token = typedef_builder.build(&mut context)?;
+
+        let owner = CodedIndex::new(
+            TableId::TypeDef,
+            typedef_token.row(),
+            CodedIndexType::TypeOrMethodDef,
+        );
+
+        GenericParamBuilder::new()
+            .number(65535)
+            .flags(0x0000)
+            .owner(owner)
+            .name("T")
+            .build(&mut context)?;
+
+        let mut assembly = context.finish();
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+
+        Ok(temp_file)
+    }
+
+    /// Creates an assembly with generic parameter having conflicting variance flags.
+    /// This tests whether the validator catches flag combinations the builder allows.
+    fn create_assembly_with_invalid_parameter_flags() -> crate::Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        let typedef_builder = TypeDefBuilder::new()
+            .name("GenericType")
+            .namespace("Test")
+            .flags(0x00100000);
+
+        let typedef_token = typedef_builder.build(&mut context)?;
+
+        let owner = CodedIndex::new(
+            TableId::TypeDef,
+            typedef_token.row(),
+            CodedIndexType::TypeOrMethodDef,
+        );
+
+        GenericParamBuilder::new()
+            .number(0)
+            .flags(0x0003)
+            .owner(owner)
+            .name("T")
+            .build(&mut context)?;
+
+        let mut assembly = context.finish();
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+
+        Ok(temp_file)
+    }
 
     #[test]
-    fn test_raw_generic_constraint_validator_creation() {
+    fn test_raw_generic_constraint_validator() -> crate::Result<()> {
         let validator = RawGenericConstraintValidator::new();
-        assert_eq!(validator.name(), "RawGenericConstraintValidator");
-        assert_eq!(validator.priority(), 130);
-    }
+        let config = ValidationConfig {
+            enable_constraint_validation: true,
+            ..Default::default()
+        };
 
-    #[test]
-    fn test_raw_generic_constraint_validator_should_run() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let scanner = ReferenceScanner::new(&view).unwrap();
-            let mut config = ValidationConfig::minimal();
-
-            config.enable_constraint_validation = true;
-            let context = factory::raw_loading_context(&view, &scanner, &config);
-            let validator = RawGenericConstraintValidator::new();
-            assert!(validator.should_run(&context));
-
-            config.enable_constraint_validation = false;
-            let context = factory::raw_loading_context(&view, &scanner, &config);
-            assert!(!validator.should_run(&context));
-        }
-    }
-
-    #[test]
-    fn test_raw_generic_constraint_validator_validate() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let scanner = ReferenceScanner::new(&view).unwrap();
-            let config = ValidationConfig::minimal();
-            let context = factory::raw_loading_context(&view, &scanner, &config);
-
-            let validator = RawGenericConstraintValidator::new();
-            assert!(validator.validate_raw(&context).is_ok());
-        }
+        validator_test(
+            raw_generic_constraint_validator_file_factory,
+            "RawGenericConstraintValidator",
+            "Malformed",
+            config,
+            |context| validator.validate_raw(context),
+        )
     }
 }

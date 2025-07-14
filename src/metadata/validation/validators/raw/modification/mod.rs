@@ -8,16 +8,16 @@
 //! # Architecture
 //!
 //! The modification validation system provides two key areas of modification validation:
-//! 1. **Operation Validation** ([`crate::metadata::validation::validators::raw::modification::operation`]) - Individual change operation validation (insert, update, delete)
-//! 2. **Integrity Validation** ([`crate::metadata::validation::validators::raw::modification::integrity`]) - Post-change integrity and consistency validation
+//! 1. **Operation Validation** ([`operation`]) - Individual change operation validation (insert, update, delete)
+//! 2. **Integrity Validation** ([`integrity`]) - Post-change integrity and consistency validation
 //!
 //! These validators ensure that assembly modifications preserve structural integrity and
 //! ECMA-335 compliance while allowing safe runtime updates and transformations.
 //!
 //! # Key Components
 //!
-//! - [`crate::metadata::validation::validators::raw::modification::RawOperationValidator`] - Validates individual change operations for structural correctness, constraint preservation, and operation safety
-//! - [`crate::metadata::validation::validators::raw::modification::RawChangeIntegrityValidator`] - Validates post-change integrity, cross-table consistency, and overall metadata coherence
+//! - [`crate::metadata::validation::validators::RawOperationValidator`] - Validates individual change operations for structural correctness, constraint preservation, and operation safety
+//! - [`crate::metadata::validation::validators::RawChangeIntegrityValidator`] - Validates post-change integrity, cross-table consistency, and overall metadata coherence
 //!
 //! # Usage Examples
 //!
@@ -47,7 +47,7 @@
 //! # Integration
 //!
 //! This module integrates with:
-//! - [`crate::metadata::validation::validators::raw`] - Part of the raw validation stage for modification scenarios
+//! - Raw validation stage - Part of the raw validation stage for modification scenarios
 //! - [`crate::metadata::validation::engine`] - Coordinated by the validation engine with fail-fast behavior
 //! - [`crate::metadata::validation::traits`] - Implements [`crate::metadata::validation::traits::RawValidator`] trait
 //! - [`crate::cilassembly`] - Validates [`crate::cilassembly::AssemblyChanges`] structures

@@ -13,10 +13,10 @@
 //!
 //! # Key Components
 //!
-//! - [`crate::metadata::validation::engine::ValidationEngine`] - Main validation orchestrator
-//! - [`crate::metadata::validation::engine::ValidationStatistics`] - Runtime validation statistics
-//! - [`crate::metadata::validation::result::TwoStageValidationResult`] - Results from both validation stages
-//! - [`crate::metadata::validation::scanner::ReferenceScanner`] - Shared reference scanning infrastructure
+//! - [`crate::metadata::validation::ValidationEngine`] - Main validation orchestrator
+//! - [`crate::metadata::validation::ValidationStatistics`] - Runtime validation statistics
+//! - [`crate::metadata::validation::TwoStageValidationResult`] - Results from both validation stages
+//! - [`crate::metadata::validation::ReferenceScanner`] - Shared reference scanning infrastructure
 //!
 //! # Usage Examples
 //!
@@ -76,7 +76,63 @@ use crate::{
     Error, Result,
 };
 use rayon::prelude::*;
-use std::time::Instant;
+use std::{sync::OnceLock, time::Instant};
+
+/// Static registry of raw validators.
+///
+/// Contains pre-built validator instances created once and reused for all validation operations.
+/// Validators are ordered by priority (highest first) and initialized on first access.
+static RAW_VALIDATORS: OnceLock<Vec<Box<dyn RawValidator>>> = OnceLock::new();
+
+/// Static registry of owned validators.
+///
+/// Contains pre-built validator instances created once and reused for all validation operations.
+/// Validators are ordered by priority (highest first) and initialized on first access.
+static OWNED_VALIDATORS: OnceLock<Vec<Box<dyn OwnedValidator>>> = OnceLock::new();
+
+/// Initialize the raw validators array with all validators in priority order.
+fn init_raw_validators() -> Vec<Box<dyn RawValidator>> {
+    vec![
+        // Structure validators (priority 175-200)
+        Box::new(RawTokenValidator::new()),     // priority 200
+        Box::new(RawTableValidator::new()),     // priority 190
+        Box::new(RawHeapValidator::new()),      // priority 180
+        Box::new(RawSignatureValidator::new()), // priority 175
+        // Constraint validators (priority 120-130)
+        Box::new(RawGenericConstraintValidator::new()), // priority 130
+        Box::new(RawLayoutConstraintValidator::new()),  // priority 120
+        // Modification validators (priority 100-110)
+        Box::new(RawOperationValidator::new()), // priority 110
+        Box::new(RawChangeIntegrityValidator::new()), // priority 100
+    ]
+}
+
+/// Initialize the owned validators array with all validators in priority order.
+fn init_owned_validators() -> Vec<Box<dyn OwnedValidator>> {
+    vec![
+        // Type validators (priority 180-190)
+        Box::new(OwnedTypeDefinitionValidator::new()), // priority 190
+        Box::new(OwnedTypeConstraintValidator::new()), // priority 185
+        Box::new(OwnedInheritanceValidator::new()),    // priority 180
+        Box::new(OwnedTypeCircularityValidator::new()), // priority 175
+        Box::new(OwnedTypeDependencyValidator::new()), // priority 170
+        Box::new(OwnedTypeOwnershipValidator::new()),  // priority 165
+        // Member validators (priority 150-160)
+        Box::new(OwnedMethodValidator::new()), // priority 160
+        Box::new(OwnedFieldValidator::new()),  // priority 155
+        Box::new(OwnedAccessibilityValidator::new()), // priority 150
+        // Metadata validators (priority 130-140)
+        Box::new(OwnedSignatureValidator::new()), // priority 140
+        Box::new(OwnedAttributeValidator::new()), // priority 130
+        // Relationship validators (priority 125-135)
+        Box::new(OwnedCircularityValidator::new()), // priority 135
+        Box::new(OwnedDependencyValidator::new()),  // priority 130
+        Box::new(OwnedOwnershipValidator::new()),   // priority 125
+        // System validators (priority 110-120)
+        Box::new(OwnedSecurityValidator::new()), // priority 120
+        Box::new(OwnedAssemblyValidator::new()), // priority 110
+    ]
+}
 
 /// Unified validation engine for coordinating all validation operations.
 ///
@@ -131,7 +187,7 @@ impl ValidationEngine {
     /// Returns an error if the reference scanner cannot be initialized.
     pub fn new(view: &CilAssemblyView, config: ValidationConfig) -> Result<Self> {
         let scanner =
-            ReferenceScanner::new(view).map_err(|e| Error::ValidationEngineInitFailed {
+            ReferenceScanner::from_view(view).map_err(|e| Error::ValidationEngineInitFailed {
                 message: format!("Failed to initialize reference scanner: {e}"),
             })?;
 
@@ -206,7 +262,7 @@ impl ValidationEngine {
         view: &CilAssemblyView,
         changes: Option<&AssemblyChanges>,
     ) -> Result<ValidationResult> {
-        let validators = self.create_raw_validators();
+        let validators = self.get_raw_validators();
         self.validate_raw_stage(view, changes, validators)
     }
 
@@ -223,7 +279,7 @@ impl ValidationEngine {
     ///
     /// Returns validation results from all owned validators.
     pub fn execute_stage2_validation(&self, object: &CilObject) -> Result<ValidationResult> {
-        let validators = self.create_owned_validators();
+        let validators = self.get_owned_validators();
         self.validate_owned_stage(object, validators)
     }
 
@@ -242,7 +298,7 @@ impl ValidationEngine {
         &self,
         view: &CilAssemblyView,
         changes: Option<&AssemblyChanges>,
-        validators: Vec<Box<dyn RawValidator>>,
+        validators: &Vec<Box<dyn RawValidator>>,
     ) -> Result<ValidationResult> {
         let start_time = Instant::now();
 
@@ -253,9 +309,8 @@ impl ValidationEngine {
             context_factory::raw_loading_context(view, &self.scanner, &self.config)
         };
 
-        // Filter validators that should run for this context
         let active_validators: Vec<_> = validators
-            .into_iter()
+            .iter()
             .filter(|v| v.should_run(&context))
             .collect();
 
@@ -302,16 +357,15 @@ impl ValidationEngine {
     pub fn validate_owned_stage(
         &self,
         object: &CilObject,
-        validators: Vec<Box<dyn OwnedValidator>>,
+        validators: &Vec<Box<dyn OwnedValidator>>,
     ) -> Result<ValidationResult> {
         let start_time = Instant::now();
 
         // Create validation context
         let context = context_factory::owned_context(object, &self.scanner, &self.config);
 
-        // Filter validators that should run for this context
         let active_validators: Vec<_> = validators
-            .into_iter()
+            .iter()
             .filter(|v| v.should_run(&context))
             .collect();
 
@@ -345,58 +399,22 @@ impl ValidationEngine {
         ))
     }
 
-    /// Creates ALL raw validators regardless of configuration.
+    /// Gets direct access to ALL raw validators from static registry.
     ///
     /// Configuration controls execution through each validator's should_run() method.
     /// This ensures consistent validator registration and makes the system more predictable.
-    /// Validators are in compile-time sorted order by priority (highest first).
-    fn create_raw_validators(&self) -> Vec<Box<dyn RawValidator>> {
-        // ToDo: Have these in a static const list
-        vec![
-            // Structure validators (priority 175-200)
-            Box::new(RawTokenValidator::new()),     // priority 200
-            Box::new(RawTableValidator::new()),     // priority 190
-            Box::new(RawHeapValidator::new()),      // priority 180
-            Box::new(RawSignatureValidator::new()), // priority 175
-            // Constraint validators (priority 120-130)
-            Box::new(RawLayoutConstraintValidator::new()), // priority 120
-            Box::new(RawGenericConstraintValidator::new()), // priority 130
-            // Modification validators (priority 100-110)
-            Box::new(RawOperationValidator::new()), // priority 110
-            Box::new(RawChangeIntegrityValidator::new()), // priority 100
-        ]
+    /// Validators are initialized once and reused for all validation operations.
+    fn get_raw_validators(&self) -> &Vec<Box<dyn RawValidator>> {
+        RAW_VALIDATORS.get_or_init(init_raw_validators)
     }
 
-    /// Creates ALL owned validators regardless of configuration.
+    /// Gets direct access to ALL owned validators from static registry.
     ///
     /// Configuration controls execution through each validator's should_run() method.
     /// This ensures consistent validator registration and makes the system more predictable.
-    /// Validators are in compile-time sorted order by priority (highest first).
-    fn create_owned_validators(&self) -> Vec<Box<dyn OwnedValidator>> {
-        // ToDo: Have these in a static const list
-        vec![
-            // Type validators (priority 180-190)
-            Box::new(OwnedTypeDefinitionValidator::new()), // priority 190
-            Box::new(OwnedTypeConstraintValidator::new()), // priority 185
-            Box::new(OwnedInheritanceValidator::new()),    // priority 180
-            Box::new(OwnedTypeCircularityValidator::new()), // priority 175
-            Box::new(OwnedTypeDependencyValidator::new()), // priority 170
-            Box::new(OwnedTypeOwnershipValidator::new()),  // priority 165
-            // Member validators (priority 150-160)
-            Box::new(OwnedMethodValidator::new()), // priority 160
-            Box::new(OwnedFieldValidator::new()),  // priority 155
-            Box::new(OwnedAccessibilityValidator::new()), // priority 150
-            // Metadata validators (priority 130-140)
-            Box::new(OwnedSignatureValidator::new()), // priority 140
-            Box::new(OwnedAttributeValidator::new()), // priority 130
-            // Relationship validators (priority 125-135)
-            Box::new(OwnedCircularityValidator::new()), // priority 135
-            Box::new(OwnedDependencyValidator::new()),  // priority 130
-            Box::new(OwnedOwnershipValidator::new()),   // priority 125
-            // System validators (priority 110-120)
-            Box::new(OwnedSecurityValidator::new()), // priority 120
-            Box::new(OwnedAssemblyValidator::new()), // priority 110
-        ]
+    /// Validators are initialized once and reused for all validation operations.
+    fn get_owned_validators(&self) -> &Vec<Box<dyn OwnedValidator>> {
+        OWNED_VALIDATORS.get_or_init(init_owned_validators)
     }
 
     /// Returns the validation configuration.
@@ -413,8 +431,8 @@ impl ValidationEngine {
     pub fn statistics(&self) -> EngineStatistics {
         EngineStatistics {
             scanner_stats: self.scanner.statistics(),
-            raw_validator_count: self.create_raw_validators().len(),
-            owned_validator_count: self.create_owned_validators().len(),
+            raw_validator_count: self.get_raw_validators().len(),
+            owned_validator_count: self.get_owned_validators().len(),
         }
     }
 }

@@ -9,18 +9,18 @@
 //! # Architecture
 //!
 //! The shared validation system provides three main categories of utilities:
-//! 1. **Token Validation** ([`crate::metadata::validation::shared::tokens`]) - Token format and integrity validation
-//! 2. **Schema Validation** ([`crate::metadata::validation::shared::schema`]) - ECMA-335 schema compliance validation  
-//! 3. **Reference Validation** ([`crate::metadata::validation::shared::references`]) - Cross-table reference integrity validation
+//! 1. **Token Validation** ([`tokens`]) - Token format and integrity validation
+//! 2. **Schema Validation** ([`schema`]) - ECMA-335 schema compliance validation  
+//! 3. **Reference Validation** ([`references`]) - Cross-table reference integrity validation
 //!
 //! These utilities are designed to be composed into higher-level validators without
 //! duplicating validation logic across the raw and owned validation stages.
 //!
 //! # Key Components
 //!
-//! - [`crate::metadata::validation::shared::tokens`] - Token format validation and consistency checks
-//! - [`crate::metadata::validation::shared::schema`] - ECMA-335 specification compliance validation
-//! - [`crate::metadata::validation::shared::references`] - Cross-table reference integrity validation
+//! - [`tokens`] - Token format validation and consistency checks
+//! - [`schema`] - ECMA-335 specification compliance validation
+//! - [`references`] - Cross-table reference integrity validation
 //!
 //! # Usage Examples
 //!
@@ -32,7 +32,7 @@
 //!
 //! # let path = Path::new("assembly.dll");
 //! let view = CilAssemblyView::from_file(&path)?;
-//! let scanner = ReferenceScanner::new(&view)?;
+//! let scanner = ReferenceScanner::from_view(&view)?;
 //!
 //! // Token validation example
 //! let token_validator = TokenValidator::new(&scanner);
@@ -54,8 +54,8 @@
 //! # Integration
 //!
 //! This module integrates with:
-//! - [`crate::metadata::validation::validators::raw`] - Used by raw validators for basic validation
-//! - [`crate::metadata::validation::validators::owned`] - Used by owned validators for consistency checks
+//! - Raw validators - Used by raw validators for basic validation
+//! - Owned validators - Used by owned validators for consistency checks
 //! - [`crate::metadata::validation::scanner`] - Provides reference scanning infrastructure
 //! - [`crate::metadata::validation::engine`] - Coordinates shared utility usage
 

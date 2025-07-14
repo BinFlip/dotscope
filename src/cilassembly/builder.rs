@@ -5,11 +5,11 @@
 //!
 //! # Key Components
 //!
-//! - [`crate::cilassembly::builder::BuilderContext`] - Central coordination context for all builder operations
+//! - [`crate::cilassembly::BuilderContext`] - Central coordination context for all builder operations
 //!
 //! # Architecture
 //!
-//! The builder system centers around [`crate::cilassembly::builder::BuilderContext`], which coordinates
+//! The builder system centers around [`crate::cilassembly::BuilderContext`], which coordinates
 //! all builder operations and provides:
 //! - RID management for all tables
 //! - Cross-reference validation
@@ -87,7 +87,7 @@ impl BuilderContext {
     ///
     /// # Returns
     ///
-    /// A new [`crate::cilassembly::builder::BuilderContext`] ready for builder operations.
+    /// A new [`crate::cilassembly::BuilderContext`] ready for builder operations.
     pub fn new(assembly: CilAssembly) -> Self {
         let mut next_rids = HashMap::new();
         if let Some(tables) = assembly.view().tables() {
@@ -105,7 +105,7 @@ impl BuilderContext {
 
     /// Finishes the building process and returns ownership of the assembly.
     ///
-    /// This consumes the [`crate::cilassembly::builder::BuilderContext`] and returns the owned [`crate::cilassembly::CilAssembly`]
+    /// This consumes the [`crate::cilassembly::BuilderContext`] and returns the owned [`crate::cilassembly::CilAssembly`]
     /// with all modifications applied. After calling this method, the context
     /// can no longer be used, and the assembly can be written to disk or
     /// used for other operations.
@@ -333,7 +333,7 @@ impl BuilderContext {
     /// - "System.Runtime" (.NET Core/.NET 5+)
     /// - "System.Private.CoreLib" (some .NET implementations)
     ///
-    /// This is a convenience method that uses [`crate::cilassembly::builder::BuilderContext::find_assembly_ref_by_name`] internally.
+    /// This is a convenience method that uses [`crate::cilassembly::BuilderContext::find_assembly_ref_by_name`] internally.
     ///
     /// # Returns
     ///

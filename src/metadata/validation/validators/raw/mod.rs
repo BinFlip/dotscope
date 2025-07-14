@@ -18,17 +18,17 @@
 //! # Key Components
 //!
 //! ## Structure Validators
-//! - [`crate::metadata::validation::validators::raw::structure::RawTokenValidator`] - Token format, RID bounds, coded index validation
-//! - [`crate::metadata::validation::validators::raw::structure::RawTableValidator`] - Table structure, row counts, column validation
-//! - [`crate::metadata::validation::validators::raw::structure::RawHeapValidator`] - Heap bounds, string validation, data integrity
+//! - [`RawTokenValidator`] - Token format, RID bounds, coded index validation
+//! - [`RawTableValidator`] - Table structure, row counts, column validation
+//! - [`RawHeapValidator`] - Heap bounds, string validation, data integrity
 //!
 //! ## Constraint Validators
-//! - [`crate::metadata::validation::validators::raw::constraints::RawGenericConstraintValidator`] - Generic parameter constraints and bounds
-//! - [`crate::metadata::validation::validators::raw::constraints::RawLayoutConstraintValidator`] - Field and class layout constraints
+//! - [`RawGenericConstraintValidator`] - Generic parameter constraints and bounds
+//! - [`RawLayoutConstraintValidator`] - Field and class layout constraints
 //!
 //! ## Modification Validators
-//! - [`crate::metadata::validation::validators::raw::modification::RawOperationValidator`] - Change operation validation (insert, update, delete)
-//! - [`crate::metadata::validation::validators::raw::modification::RawChangeIntegrityValidator`] - Post-change integrity and consistency validation
+//! - [`RawOperationValidator`] - Change operation validation (insert, update, delete)
+//! - [`RawChangeIntegrityValidator`] - Post-change integrity and consistency validation
 //!
 //! # Usage Examples
 //!

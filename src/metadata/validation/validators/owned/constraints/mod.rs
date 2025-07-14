@@ -16,7 +16,7 @@
 //!
 //! # Key Components
 //!
-//! - [`crate::metadata::validation::validators::owned::constraints::type::OwnedTypeConstraintValidator`] - Generic type constraint validation
+//! - [`crate::metadata::validation::validators::owned::constraints::types::OwnedTypeConstraintValidator`] - Generic type constraint validation
 //!
 //! # Usage
 //!
@@ -37,7 +37,7 @@
 //! # Integration
 //!
 //! This module integrates with:
-//! - [`crate::metadata::validation::validators::owned`] - Parent module for owned validation
+//! - Owned validation stage - Parent module for owned validation
 //! - [`crate::metadata::validation::engine::ValidationEngine`] - Orchestrates validator execution
 //! - [`crate::metadata::validation::traits::OwnedValidator`] - Common validation interface
 //! - [`crate::metadata::cilobject::CilObject`] - Source of resolved metadata structures

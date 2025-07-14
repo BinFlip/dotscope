@@ -24,8 +24,13 @@
 //! # Reference
 //! - [ECMA-335 II.22.14](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `ExportedType` table specification
 
-use crate::metadata::{
-    customattributes::CustomAttributeValueList, token::Token, typesystem::CilTypeReference,
+use std::sync::OnceLock;
+
+use crate::{
+    metadata::{
+        customattributes::CustomAttributeValueList, token::Token, typesystem::CilTypeReference,
+    },
+    Result,
 };
 
 /// Resolved `ExportedType` entry with owned data and resolved cross-references
@@ -89,11 +94,38 @@ pub struct ExportedType {
     /// - **File**: Another file within this assembly (multi-module scenario)
     /// - **`AssemblyRef`**: Different assembly entirely (type forwarding scenario)
     /// - **`ExportedType`**: Nested export reference (rare but possible)
-    pub implementation: CilTypeReference,
+    pub implementation: OnceLock<CilTypeReference>,
 
     /// Thread-safe collection of custom attributes applied to this export
     ///
     /// Contains all custom attribute values that have been applied to this
     /// `ExportedType` entry, providing additional metadata and annotations.
     pub custom_attributes: CustomAttributeValueList,
+}
+
+impl ExportedType {
+    /// Sets the implementation reference for this exported type.
+    ///
+    /// This method is used during the second pass of two-phase loading to resolve
+    /// intra-table ExportedType references that were deferred during initial loading.
+    ///
+    /// ## Arguments
+    /// * `implementation` - The resolved implementation reference
+    ///
+    /// ## Returns
+    /// * `Ok(())` - Implementation reference set successfully
+    /// * `Err(_)` - Implementation was already set or other error occurred
+    pub fn set_implementation(&self, implementation: CilTypeReference) -> Result<()> {
+        self.implementation
+            .set(implementation)
+            .map_err(|_| malformed_error!("Implementation reference was already set"))
+    }
+
+    /// Gets the implementation reference for this exported type.
+    ///
+    /// ## Returns
+    /// Returns the implementation reference if it has been set, or `None` if it's still pending resolution.
+    pub fn get_implementation(&self) -> Option<&CilTypeReference> {
+        self.implementation.get()
+    }
 }

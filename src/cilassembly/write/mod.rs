@@ -37,7 +37,7 @@
 //!
 //! ## Phase 4: PE Header Updates
 //! Update PE headers with new section offsets and sizes using
-//! [`crate::cilassembly::write::writers::pe`] module.
+//! PE structure writing.
 //!
 //! ## Phase 5: Metadata Root Updates
 //! Update metadata root with new stream offsets to maintain consistency
@@ -45,7 +45,7 @@
 //!
 //! ## Phase 6: Stream Writing
 //! Write streams with additional data to their new locations using
-//! [`crate::cilassembly::write::writers::heap`] module.
+//! heap structure writing.
 //!
 //! ## Phase 7: Finalization
 //! Ensure data integrity and complete the operation with proper file closure.
@@ -79,7 +79,7 @@
 //! This module integrates with:
 //! - [`crate::cilassembly::changes`] - Source of modification data to persist
 //! - [`crate::cilassembly::remapping`] - Index and RID remapping for cross-references
-//! - [`crate::cilassembly::validation`] - Validation of changes before writing
+//! - Assembly validation - Validation of changes before writing
 //! - [`crate::metadata::cilassemblyview`] - Original assembly data and structure
 
 use std::{collections::HashMap, path::Path};
@@ -860,7 +860,7 @@ fn apply_heap_index_remapping(
 
 /// Writes table modifications.
 ///
-/// Uses the [`crate::cilassembly::write::writers::table`] module to write
+/// Uses the table writing module to write
 /// modified metadata tables with their changes applied.
 ///
 /// # Arguments
@@ -881,7 +881,7 @@ fn write_table_modifications(
 
 /// Writes native PE import/export tables.
 ///
-/// Uses the [`crate::cilassembly::write::writers::native`] module to write
+/// Uses the native table writing module to write
 /// native PE import and export tables from the unified containers.
 ///
 /// # Arguments

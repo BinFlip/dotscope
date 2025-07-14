@@ -42,7 +42,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationConstraintError`] for:
+//! This validator returns [`crate::Error::ValidationRawValidatorFailed`] for:
 //! - Invalid field layout positioning or overlapping field definitions (multiple fields at same offset)
 //! - Inconsistent class packing size or total size constraints (non-power-of-2 packing, excessive sizes)
 //! - Field offsets exceeding class size boundaries (unreasonably large offsets)
@@ -133,11 +133,11 @@ impl RawLayoutConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All field layouts are valid
-    /// * `Err(`[`crate::Error::ValidationConstraintError`]`)` - Field layout violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Field layout violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationConstraintError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - Field offsets are invalid or out of bounds (exceeding 0x7FFFFFFF)
     /// - Field layouts overlap in explicit layout scenarios (multiple fields at same offset)
     /// - Field references are invalid or null (zero field reference)
@@ -151,7 +151,6 @@ impl RawLayoutConstraintValidator {
             let mut field_offsets: HashMap<usize, Vec<(u32, u32)>> = HashMap::new();
 
             for field_layout in field_layout_table.iter() {
-                // Validate field reference is not null
                 if field_layout.field == 0 {
                     return Err(malformed_error!(
                         "FieldLayout RID {} has null field reference",
@@ -159,7 +158,6 @@ impl RawLayoutConstraintValidator {
                     ));
                 }
 
-                // Validate offset is reasonable (not exceeding 2GB)
                 if field_layout.offset > 0x7FFFFFFF {
                     return Err(malformed_error!(
                         "FieldLayout RID {} has invalid offset {} exceeding maximum",
@@ -168,7 +166,6 @@ impl RawLayoutConstraintValidator {
                     ));
                 }
 
-                // Validate field reference points to valid Field if table exists
                 if let Some(field_tbl) = tables.table::<FieldRaw>() {
                     if field_layout.field > field_tbl.row_count {
                         return Err(malformed_error!(
@@ -180,15 +177,12 @@ impl RawLayoutConstraintValidator {
                     }
                 }
 
-                // Group field layouts by their parent type for overlap detection
-                // For now, we'll collect offsets and detect obvious overlaps within the same offset
                 field_offsets
                     .entry(field_layout.offset)
                     .or_default()
                     .push((field_layout.rid, field_layout.field));
             }
 
-            // Check for multiple fields at the same offset (potential overlap)
             for (offset, fields) in field_offsets {
                 if fields.len() > 1 {
                     return Err(malformed_error!(
@@ -216,11 +210,11 @@ impl RawLayoutConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All class layouts are valid
-    /// * `Err(`[`crate::Error::ValidationConstraintError`]`)` - Class layout violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Class layout violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationConstraintError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - Class packing sizes are invalid (not 0 or power of 2) or exceed 128 bytes
     /// - Class sizes exceed reasonable bounds (exceeding 0x7FFFFFFF)
     /// - Parent type references are invalid (null or exceed TypeDef table row count)
@@ -234,7 +228,6 @@ impl RawLayoutConstraintValidator {
             let typedef_table = tables.table::<TypeDefRaw>();
 
             for class_layout in class_layout_table.iter() {
-                // Validate packing size is a power of 2 (0, 1, 2, 4, 8, 16, 32, 64, 128)
                 let packing_size = class_layout.packing_size;
                 if packing_size != 0 && !packing_size.is_power_of_two() {
                     return Err(malformed_error!(
@@ -244,7 +237,6 @@ impl RawLayoutConstraintValidator {
                     ));
                 }
 
-                // Validate packing size doesn't exceed reasonable bounds (128 bytes)
                 if packing_size > 128 {
                     return Err(malformed_error!(
                         "ClassLayout RID {} has excessive packing size {} exceeding maximum of 128",
@@ -253,7 +245,6 @@ impl RawLayoutConstraintValidator {
                     ));
                 }
 
-                // Validate class size is reasonable (not exceeding 2GB)
                 if class_layout.class_size > 0x7FFFFFFF {
                     return Err(malformed_error!(
                         "ClassLayout RID {} has invalid class size {} exceeding maximum",
@@ -262,7 +253,6 @@ impl RawLayoutConstraintValidator {
                     ));
                 }
 
-                // Validate parent reference is not null
                 if class_layout.parent == 0 {
                     return Err(malformed_error!(
                         "ClassLayout RID {} has null parent reference",
@@ -270,7 +260,6 @@ impl RawLayoutConstraintValidator {
                     ));
                 }
 
-                // Validate parent reference points to valid TypeDef if table exists
                 if let Some(typedef_tbl) = typedef_table {
                     if class_layout.parent > typedef_tbl.row_count {
                         return Err(malformed_error!(
@@ -300,11 +289,11 @@ impl RawLayoutConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All layout constraints are consistent
-    /// * `Err(`[`crate::Error::ValidationConstraintError`]`)` - Layout consistency violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Layout consistency violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationConstraintError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - Field offsets are at maximum boundary indicating potential overflow
     /// - Parent type references are invalid or missing (non-existent TypeDef RIDs)
     /// - Field layouts exceed reasonable offset bounds (>1MB suggesting corruption)
@@ -314,22 +303,17 @@ impl RawLayoutConstraintValidator {
             .tables()
             .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
 
-        // Validate consistency between ClassLayout and FieldLayout tables
         if let (Some(class_layout_table), Some(field_layout_table), Some(typedef_table)) = (
             tables.table::<ClassLayoutRaw>(),
             tables.table::<FieldLayoutRaw>(),
             tables.table::<TypeDefRaw>(),
         ) {
-            // Build a map of TypeDef to ClassLayout RID for efficient lookup
             let mut class_layouts: HashMap<u32, u32> = HashMap::new();
             for class_layout in class_layout_table.iter() {
                 class_layouts.insert(class_layout.parent, class_layout.rid);
             }
 
-            // For each field layout, check if it's consistent with its type's class layout
             for field_layout in field_layout_table.iter() {
-                // Validate field offset is not at the exact boundary of maximum class size
-                // (this would indicate potential overflow)
                 if field_layout.offset == 0x7FFFFFFF {
                     return Err(malformed_error!(
                         "FieldLayout RID {} has field offset at maximum boundary - potential overflow",
@@ -337,13 +321,11 @@ impl RawLayoutConstraintValidator {
                     ));
                 }
 
-                // Find the field's parent type by resolving through TypeDef field ownership ranges
                 if let Some(field_table) = tables.table::<FieldRaw>() {
                     if field_layout.field > field_table.row_count {
-                        continue; // Skip if field reference is invalid (already validated earlier)
+                        continue;
                     }
 
-                    // Find which TypeDef owns this field using range-based ownership
                     let typedef_rows: Vec<_> = typedef_table.iter().collect();
                     let mut parent_typedef_rid = None;
 
@@ -352,10 +334,9 @@ impl RawLayoutConstraintValidator {
                         let end_field = if index + 1 < typedef_rows.len() {
                             typedef_rows[index + 1].field_list
                         } else {
-                            u32::MAX // Last TypeDef owns all remaining fields
+                            u32::MAX
                         };
 
-                        // Check if field falls within this TypeDef's ownership range
                         if field_layout.field >= start_field && field_layout.field < end_field {
                             parent_typedef_rid = Some(typedef_entry.rid);
                             break;
@@ -376,7 +357,6 @@ impl RawLayoutConstraintValidator {
                                 // Only flag truly unreasonable offsets that suggest corruption
                                 if parent_class_layout.class_size > 0
                                     && field_layout.offset > 1048576
-                                // 1MB - reasonable upper bound
                                 {
                                     return Err(malformed_error!(
                                         "FieldLayout RID {} has unreasonably large offset {} (possible corruption)",
@@ -390,7 +370,6 @@ impl RawLayoutConstraintValidator {
                 }
             }
 
-            // Validate that all ClassLayout parent references point to valid TypeDef entries
             for class_layout in class_layout_table.iter() {
                 let typedef_found = typedef_table
                     .iter()
@@ -422,11 +401,11 @@ impl RawLayoutConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All field alignments are valid
-    /// * `Err(`[`crate::Error::ValidationConstraintError`]`)` - Alignment violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Alignment violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationConstraintError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - Field offsets are not properly aligned for their type
     /// - Field layouts violate natural alignment requirements
     /// - Explicit layout fields have unreasonable spacing
@@ -439,26 +418,17 @@ impl RawLayoutConstraintValidator {
             (tables.table::<FieldLayoutRaw>(), tables.table::<FieldRaw>())
         {
             for field_layout in field_layout_table.iter() {
-                // Validate field offset alignment for common cases
                 let offset = field_layout.offset;
 
-                // Basic alignment validation - ensure offsets are not on odd boundaries
-                // for what appear to be larger data types based on common patterns
-                if offset % 4 == 1 || offset % 4 == 3 {
-                    // Allow this but validate it's not excessive
-                    if offset > 65536 {
-                        return Err(malformed_error!(
+                if (offset % 4 == 1 || offset % 4 == 3) && offset > 65536 {
+                    return Err(malformed_error!(
                             "FieldLayout RID {} has unusual alignment at offset {} - potential layout issue",
                             field_layout.rid,
                             offset
                         ));
-                    }
                 }
 
-                // Validate against extremely large gaps that suggest corruption
-                // (while allowing legitimate large offsets for interop scenarios)
                 if offset > 16777216 {
-                    // 16MB - very generous upper bound
                     return Err(malformed_error!(
                         "FieldLayout RID {} has extremely large offset {} - possible corruption",
                         field_layout.rid,
@@ -466,7 +436,6 @@ impl RawLayoutConstraintValidator {
                     ));
                 }
 
-                // Basic sanity check: ensure offset is not at problematic boundaries
                 if offset == usize::MAX - 1 || offset == usize::MAX - 3 {
                     return Err(malformed_error!(
                         "FieldLayout RID {} has offset {} near maximum boundary - overflow risk",
@@ -493,11 +462,11 @@ impl RawLayoutConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All value type layouts are valid
-    /// * `Err(`[`crate::Error::ValidationConstraintError`]`)` - Value type violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Value type violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationConstraintError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - Value type class sizes exceed reasonable stack limits
     /// - Value type packing constraints are inappropriate
     /// - Value type field layouts create alignment issues
@@ -511,23 +480,17 @@ impl RawLayoutConstraintValidator {
             tables.table::<TypeDefRaw>(),
         ) {
             for class_layout in class_layout_table.iter() {
-                // Find the corresponding TypeDef to check if it's a value type
                 if let Some(typedef_entry) = typedef_table
                     .iter()
                     .find(|td| td.rid == class_layout.parent)
                 {
-                    // Check for value type characteristics in flags
-                    // This is a heuristic check - in a full implementation we'd resolve inheritance
                     const SEALED_FLAG: u32 = 0x0100;
                     const SERIALIZABLE_FLAG: u32 = 0x2000;
 
                     let is_likely_value_type = (typedef_entry.flags & SEALED_FLAG) != 0;
 
                     if is_likely_value_type {
-                        // Validate value type class size is reasonable for stack allocation
-                        // .NET has practical limits on value type sizes for performance
                         if class_layout.class_size > 1048576 {
-                            // 1MB is very generous
                             return Err(malformed_error!(
                                 "ClassLayout RID {} for potential value type has excessive size {} - may cause stack issues",
                                 class_layout.rid,
@@ -535,13 +498,6 @@ impl RawLayoutConstraintValidator {
                             ));
                         }
 
-                        // Validate packing size is appropriate for value types
-                        if class_layout.packing_size > 64 {
-                            // Allow larger packing sizes but warn about potential issues
-                            // In practice, most value types use smaller packing sizes
-                        }
-
-                        // Validate class size and packing size relationship
                         if class_layout.packing_size > 0
                             && class_layout.class_size > 0
                             && u32::from(class_layout.packing_size) > class_layout.class_size
@@ -573,21 +529,17 @@ impl RawLayoutConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All sequential layouts are valid
-    /// * `Err(`[`crate::Error::ValidationConstraintError`]`)` - Sequential layout violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Sequential layout violations found
     fn validate_sequential_layout(&self, assembly_view: &CilAssemblyView) -> Result<()> {
         let tables = assembly_view
             .tables()
             .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
 
         if let Some(field_layout_table) = tables.table::<FieldLayoutRaw>() {
-            // Collect field layouts into owned vectors for grouping
             let field_layouts: Vec<_> = field_layout_table.iter().collect();
             let mut type_field_layouts: HashMap<u32, Vec<FieldLayoutRaw>> = HashMap::new();
 
-            // This is a simplified approach - in a full implementation we'd resolve
-            // the actual parent types through TypeDef field ownership
             for field_layout in field_layouts {
-                // Use field RID as a proxy for grouping (simplified)
                 let estimated_parent = field_layout.field / 10; // Very rough grouping
                 type_field_layouts
                     .entry(estimated_parent)
@@ -595,21 +547,16 @@ impl RawLayoutConstraintValidator {
                     .push(field_layout.clone());
             }
 
-            // Validate field layout ordering within each type
             for (_parent_id, mut fields) in type_field_layouts {
                 if fields.len() > 1 {
-                    // Sort by offset to check for reasonable sequential ordering
                     fields.sort_by_key(|f| f.offset);
 
-                    // Check for reasonable spacing between sequential fields
                     for window in fields.windows(2) {
                         let field1 = &window[0];
                         let field2 = &window[1];
                         let gap = field2.offset.saturating_sub(field1.offset);
 
-                        // Flag extremely large gaps as potential issues
                         if gap > 1048576 {
-                            // 1MB gap
                             return Err(malformed_error!(
                                 "Large gap {} between FieldLayout RID {} and {} - possible layout issue",
                                 gap,
@@ -618,17 +565,13 @@ impl RawLayoutConstraintValidator {
                             ));
                         }
 
-                        // Flag zero gaps (overlapping) unless it's intentional (union-style)
-                        if gap == 0 && field1.offset > 0 {
-                            // This might be intentional for union types, so just validate it's reasonable
-                            if field1.offset > 65536 {
-                                return Err(malformed_error!(
+                        if gap == 0 && field1.offset > 0 && field1.offset > 65536 {
+                            return Err(malformed_error!(
                                     "FieldLayout RID {} and {} overlap at large offset {} - verify union layout",
                                     field1.rid,
                                     field2.rid,
                                     field1.offset
                                 ));
-                            }
                         }
                     }
                 }
@@ -658,11 +601,11 @@ impl RawValidator for RawLayoutConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All layout constraints are valid and meet ECMA-335 requirements
-    /// * `Err(`[`crate::Error::ValidationConstraintError`]`)` - Layout constraint violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Layout constraint violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationConstraintError`] for:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] for:
     /// - Invalid field layout positioning or overlapping field definitions
     /// - Inconsistent class packing size or total size constraints
     /// - Field offsets exceeding class size boundaries
@@ -675,12 +618,10 @@ impl RawValidator for RawLayoutConstraintValidator {
     fn validate_raw(&self, context: &RawValidationContext) -> Result<()> {
         let assembly_view = context.assembly_view();
 
-        // Core layout validation
         self.validate_field_layouts(assembly_view)?;
         self.validate_class_layouts(assembly_view)?;
         self.validate_layout_consistency(assembly_view)?;
 
-        // Enhanced layout validation
         self.validate_field_alignment(assembly_view)?;
         self.validate_value_type_layouts(assembly_view)?;
         self.validate_sequential_layout(assembly_view)?;
@@ -710,47 +651,55 @@ impl Default for RawLayoutConstraintValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
-        cilassemblyview::CilAssemblyView,
-        validation::{config::ValidationConfig, context::factory, scanner::ReferenceScanner},
+    use crate::{
+        metadata::validation::ValidationConfig,
+        test::{get_clean_testfile, validator_test, TestAssembly},
     };
-    use std::path::PathBuf;
+
+    fn raw_layout_constraint_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+        let mut assemblies = Vec::new();
+
+        if let Some(clean_path) = get_clean_testfile() {
+            assemblies.push(TestAssembly::new(clean_path, true));
+        }
+
+        // Note: Test cases for layout constraint violations are difficult to create
+        // through builder APIs because they enforce constraint validity by design.
+        // The validator catches issues like:
+        // - Invalid packing sizes (not power of 2, >128)
+        // - Excessive class sizes (>2GB)
+        // - Null field/parent references
+        // - Field offset overlaps
+        // - Field offsets exceeding bounds
+        // - Invalid alignment specifications
+        //
+        // These would typically occur from:
+        // 1. Corrupted files from external sources
+        // 2. Manual binary manipulation
+        // 3. Malformed assemblies from other tools
+        // 4. Direct table corruption
+        //
+        // For comprehensive testing, we would need direct table manipulation
+        // tools or pre-corrupted test assemblies. For now, we test with clean assemblies
+        // to ensure the validator passes on well-formed input.
+
+        Ok(assemblies)
+    }
 
     #[test]
-    fn test_raw_layout_constraint_validator_creation() {
+    fn test_raw_layout_constraint_validator() -> crate::Result<()> {
         let validator = RawLayoutConstraintValidator::new();
-        assert_eq!(validator.name(), "RawLayoutConstraintValidator");
-        assert_eq!(validator.priority(), 120);
-    }
+        let config = ValidationConfig {
+            enable_constraint_validation: true,
+            ..Default::default()
+        };
 
-    #[test]
-    fn test_raw_layout_constraint_validator_should_run() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let scanner = ReferenceScanner::new(&view).unwrap();
-            let mut config = ValidationConfig::minimal();
-
-            config.enable_constraint_validation = true;
-            let context = factory::raw_loading_context(&view, &scanner, &config);
-            let validator = RawLayoutConstraintValidator::new();
-            assert!(validator.should_run(&context));
-
-            config.enable_constraint_validation = false;
-            let context = factory::raw_loading_context(&view, &scanner, &config);
-            assert!(!validator.should_run(&context));
-        }
-    }
-
-    #[test]
-    fn test_raw_layout_constraint_validator_validate() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let scanner = ReferenceScanner::new(&view).unwrap();
-            let config = ValidationConfig::minimal();
-            let context = factory::raw_loading_context(&view, &scanner, &config);
-
-            let validator = RawLayoutConstraintValidator::new();
-            assert!(validator.validate_raw(&context).is_ok());
-        }
+        validator_test(
+            raw_layout_constraint_validator_file_factory,
+            "RawLayoutConstraintValidator",
+            "Malformed",
+            config,
+            |context| validator.validate_raw(context),
+        )
     }
 }

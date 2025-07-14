@@ -634,7 +634,7 @@ impl Imports {
     ///
     /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn add_type(&self, cil_type: &CilTypeRc) -> Result<()> {
-        if let Some(external) = &cil_type.external {
+        if let Some(external) = cil_type.get_external() {
             // Create the source ID from the external reference
             let source_id = match external {
                 CilTypeReference::Module(module) => ImportSourceId::Module(module.token),

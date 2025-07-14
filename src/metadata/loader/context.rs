@@ -8,7 +8,7 @@
 //! # Loading Architecture
 //!
 //! The context follows a specific lifecycle:
-//! 1. **Creation**: Built in [`crate::metadata::loader::data::CilObjectData::from_file`]
+//! 1. **Creation**: Built in internal data structures from file
 //! 2. **Population**: Passed to parallel loaders via `execute_loaders_in_parallel`
 //! 3. **Resolution**: Provides coded index resolution and cross-table lookups
 //! 4. **Cleanup**: Automatically dropped after loading completes
@@ -61,7 +61,7 @@
 //! # Thread Safety
 //!
 //! All components in this module are designed for safe concurrent access during parallel loading.
-//! The [`crate::metadata::loader::context::LoaderContext`] contains thread-safe data structures and
+//! The internal loader context contains thread-safe data structures and
 //! is [`std::marker::Send`] and [`std::marker::Sync`], enabling efficient parallel processing
 //! of metadata tables across multiple threads.
 //!

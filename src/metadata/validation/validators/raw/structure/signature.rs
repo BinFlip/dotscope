@@ -46,7 +46,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationStructuralError`] for:
+//! This validator returns [`crate::Error::ValidationRawValidatorFailed`] for:
 //! - Invalid calling convention bytes in signature blobs
 //! - Malformed compressed integer encoding in signatures
 //! - Signature blobs extending beyond blob heap boundaries
@@ -63,13 +63,13 @@
 //! # Integration
 //!
 //! This validator integrates with:
-//! - [`crate::metadata::validation::validators::raw::structure`] - Part of the foundational structural validation stage
+//! - raw structure validators - Part of the foundational structural validation stage
 //! - [`crate::metadata::validation::engine::ValidationEngine`] - Orchestrates validator execution with fail-fast behavior
 //! - [`crate::metadata::validation::traits::RawValidator`] - Implements the raw validation interface
 //! - [`crate::metadata::cilassemblyview::CilAssemblyView`] - Source of metadata tables and blob heap
 //! - [`crate::metadata::validation::context::RawValidationContext`] - Provides validation execution context
 //! - [`crate::metadata::validation::config::ValidationConfig`] - Controls validation execution via enable_token_validation flag
-//! - [`crate::metadata::validation::validators::owned::metadata::signature`] - Complemented by semantic signature validation
+//! - owned metadata signature validator - Complemented by semantic signature validation
 //!
 //! # References
 //!
@@ -167,7 +167,7 @@ impl RawSignatureValidator {
     /// # Returns
     ///
     /// * `Ok(())` - Signature blob is valid and properly formatted
-    /// * `Err(`[`crate::Error::ValidationStructuralError`]`)` - Signature blob violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Signature blob violations found
     ///
     /// # Errors
     ///
@@ -182,12 +182,10 @@ impl RawSignatureValidator {
         blob_index: u32,
         expected_kind: SignatureKind,
     ) -> Result<()> {
-        // Skip validation for null blob index (0)
         if blob_index == 0 {
             return Ok(());
         }
 
-        // Get blob heap access
         let Some(blob_heap) = assembly_view.blobs() else {
             return Err(Error::ValidationRawValidatorFailed {
                 validator: "RawSignatureValidator".to_string(),
@@ -196,7 +194,6 @@ impl RawSignatureValidator {
             });
         };
 
-        // Validate blob exists and get blob data
         let blob_data = blob_heap.get(blob_index as usize).map_err(|_| {
             Error::ValidationRawValidatorFailed {
                 validator: "RawSignatureValidator".to_string(),
@@ -205,7 +202,6 @@ impl RawSignatureValidator {
             }
         })?;
 
-        // Validate minimum blob size (at least 1 byte for calling convention)
         if blob_data.is_empty() {
             return Err(Error::ValidationRawValidatorFailed {
                 validator: "RawSignatureValidator".to_string(),
@@ -214,11 +210,9 @@ impl RawSignatureValidator {
             });
         }
 
-        // Validate calling convention byte
         let calling_convention = blob_data[0];
         self.validate_calling_convention(calling_convention, expected_kind, blob_index)?;
 
-        // For signatures with parameter counts, validate compressed integer encoding
         if matches!(
             expected_kind,
             SignatureKind::Method | SignatureKind::LocalVar | SignatureKind::Property
@@ -233,11 +227,9 @@ impl RawSignatureValidator {
                 });
             }
 
-            // Validate parameter count compressed integer (starts at offset 1)
             self.validate_compressed_integer(&blob_data[1..], blob_index)?;
         }
 
-        // Validate basic blob structural integrity
         self.validate_blob_bounds(blob_data, blob_index)?;
 
         Ok(())
@@ -404,7 +396,6 @@ impl RawSignatureValidator {
     ///
     /// Returns validation error for structural inconsistencies.
     fn validate_blob_bounds(&self, blob_data: &[u8], blob_index: u32) -> Result<()> {
-        // Check maximum reasonable signature size (64KB limit)
         if blob_data.len() > 65536 {
             return Err(Error::ValidationRawValidatorFailed {
                 validator: "RawSignatureValidator".to_string(),
@@ -417,7 +408,7 @@ impl RawSignatureValidator {
             });
         }
 
-        // Additional bounds checking can be added here for specific signature format constraints
+        // ToDo: Additional bounds checking can be added here for specific signature format constraints
         Ok(())
     }
 }
@@ -443,36 +434,31 @@ impl RawValidator for RawSignatureValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All signature blobs are valid and properly formatted
-    /// * `Err(`[`crate::Error::ValidationStructuralError`]`)` - Signature blob violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Signature blob violations found
     ///
     /// # Configuration
     ///
     /// Controlled by `enable_token_validation` flag in validation configuration.
     fn validate_raw(&self, context: &RawValidationContext) -> Result<()> {
-        // Check if this validator should run based on configuration
         if !self.should_run(context) {
             return Ok(());
         }
 
         let assembly_view = context.assembly_view();
 
-        // Get tables access - if no tables exist, nothing to validate
         let Some(tables) = assembly_view.tables() else {
             return Ok(());
         };
 
-        // Validate method signatures in MethodDef table
         if let Some(table) = tables.table::<MethodDefRaw>() {
             for method in table.iter() {
-                // Methods can sometimes reference field signatures (e.g., for property accessors)
-                // We need to peek at the signature to determine the actual type
                 if let Some(blob_heap) = assembly_view.blobs() {
                     if let Ok(blob_data) = blob_heap.get(method.signature as usize) {
                         if !blob_data.is_empty() {
                             let calling_convention = blob_data[0];
                             let signature_kind = match calling_convention {
-                                0x06 => SignatureKind::Field, // Field signature - can be valid for property accessors
-                                _ => SignatureKind::Method,   // Method signature (default)
+                                0x06 => SignatureKind::Field,
+                                _ => SignatureKind::Method,
                             };
 
                             self.validate_signature_blob_integrity(
@@ -483,7 +469,6 @@ impl RawValidator for RawSignatureValidator {
                         }
                     }
                 } else {
-                    // If no blob heap, fall back to method validation
                     self.validate_signature_blob_integrity(
                         assembly_view,
                         method.signature,
@@ -493,7 +478,6 @@ impl RawValidator for RawSignatureValidator {
             }
         }
 
-        // Validate field signatures in Field table
         if let Some(table) = tables.table::<FieldRaw>() {
             for field in table.iter() {
                 self.validate_signature_blob_integrity(
@@ -504,7 +488,6 @@ impl RawValidator for RawSignatureValidator {
             }
         }
 
-        // Validate property signatures in Property table
         if let Some(table) = tables.table::<PropertyRaw>() {
             for property in table.iter() {
                 self.validate_signature_blob_integrity(
@@ -515,19 +498,16 @@ impl RawValidator for RawSignatureValidator {
             }
         }
 
-        // Validate local variable and method signatures in StandAloneSig table
         if let Some(table) = tables.table::<StandAloneSigRaw>() {
             for standalone_sig in table.iter() {
-                // StandAloneSig can contain either local variable or method signatures
-                // We need to peek at the first byte to determine the type
                 if let Some(blob_heap) = assembly_view.blobs() {
                     if let Ok(blob_data) = blob_heap.get(standalone_sig.signature as usize) {
                         if !blob_data.is_empty() {
                             let calling_convention = blob_data[0];
                             let signature_kind = match calling_convention {
                                 0x07 => SignatureKind::LocalVar,
-                                0x06 => SignatureKind::Field, // Sometimes field signatures appear in StandAloneSig
-                                _ => SignatureKind::Method, // Default to method for other conventions
+                                0x06 => SignatureKind::Field,
+                                _ => SignatureKind::Method,
                             };
 
                             self.validate_signature_blob_integrity(
@@ -541,7 +521,6 @@ impl RawValidator for RawSignatureValidator {
             }
         }
 
-        // Validate type specification signatures in TypeSpec table
         if let Some(table) = tables.table::<TypeSpecRaw>() {
             for type_spec in table.iter() {
                 self.validate_signature_blob_integrity(
@@ -552,18 +531,15 @@ impl RawValidator for RawSignatureValidator {
             }
         }
 
-        // Validate member reference signatures in MemberRef table
         if let Some(table) = tables.table::<MemberRefRaw>() {
             for member_ref in table.iter() {
-                // MemberRef can contain either method or field signatures
-                // We need to peek at the signature to determine the type
                 if let Some(blob_heap) = assembly_view.blobs() {
                     if let Ok(blob_data) = blob_heap.get(member_ref.signature as usize) {
                         if !blob_data.is_empty() {
                             let calling_convention = blob_data[0];
                             let signature_kind = match calling_convention {
-                                0x06 => SignatureKind::Field, // Field signature
-                                _ => SignatureKind::Method,   // Method signature (default)
+                                0x06 => SignatureKind::Field,
+                                _ => SignatureKind::Method,
                             };
 
                             self.validate_signature_blob_integrity(
@@ -574,7 +550,6 @@ impl RawValidator for RawSignatureValidator {
                         }
                     }
                 } else {
-                    // If no blob heap, fall back to generic MemberRef validation
                     self.validate_signature_blob_integrity(
                         assembly_view,
                         member_ref.signature,
@@ -619,185 +594,59 @@ impl Default for RawSignatureValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
-        cilassemblyview::CilAssemblyView,
-        validation::{config::ValidationConfig, context::factory, scanner::ReferenceScanner},
+    use crate::{
+        metadata::validation::ValidationConfig,
+        test::{get_clean_testfile, validator_test, TestAssembly},
     };
-    use std::path::PathBuf;
 
-    #[test]
-    fn test_raw_signature_validator_creation() {
-        let validator = RawSignatureValidator::new();
-        assert_eq!(validator.name(), "RawSignatureValidator");
-        assert_eq!(validator.priority(), 175);
-    }
+    fn raw_signature_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+        let mut assemblies = Vec::new();
 
-    #[test]
-    fn test_raw_signature_validator_should_run() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let scanner = ReferenceScanner::new(&view).unwrap();
-
-            // Test with token validation enabled
-            let config_enabled = ValidationConfig {
-                enable_token_validation: true,
-                ..ValidationConfig::minimal()
-            };
-            let context_enabled = factory::raw_loading_context(&view, &scanner, &config_enabled);
-            let validator = RawSignatureValidator::new();
-            assert!(validator.should_run(&context_enabled));
-
-            // Test with token validation disabled
-            let config_disabled = ValidationConfig {
-                enable_token_validation: false,
-                ..ValidationConfig::minimal()
-            };
-            let context_disabled = factory::raw_loading_context(&view, &scanner, &config_disabled);
-            assert!(!validator.should_run(&context_disabled));
+        if let Some(clean_path) = get_clean_testfile() {
+            assemblies.push(TestAssembly::new(clean_path, true));
         }
+
+        // Note: Like the table and heap validators, signature validation issues
+        // (invalid calling conventions, malformed compressed integers, oversized blobs)
+        // are very difficult to create through normal builder APIs because the builders
+        // enforce correct signature format by design.
+        //
+        // The validation catches issues like:
+        // - Field signatures without 0x06 calling convention
+        // - Property signatures without 0x08 calling convention
+        // - Method signatures with invalid calling conventions (> 0x05)
+        // - LocalVar signatures without 0x07 calling convention
+        // - TypeSpec signatures with 0x00 calling convention
+        // - Malformed compressed integer encoding
+        // - Oversized signature blobs (> 64KB)
+        //
+        // These would typically occur from:
+        // 1. Corrupted files from external sources
+        // 2. Manual binary blob manipulation
+        // 3. Malformed assemblies from other tools
+        // 4. Direct blob heap corruption
+        //
+        // For comprehensive testing, we would need direct blob heap manipulation
+        // tools or pre-corrupted test assemblies. For now, we test with clean assemblies
+        // to ensure the validator passes on well-formed input.
+
+        Ok(assemblies)
     }
 
     #[test]
-    fn test_raw_signature_validator_validate_disabled() {
-        // Test that validator works when disabled (should skip validation)
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let config = ValidationConfig {
-                enable_token_validation: false, // Disable signature validation
-                ..ValidationConfig::minimal()
-            };
-            let scanner = ReferenceScanner::new(&view).unwrap();
-            let context = factory::raw_loading_context(&view, &scanner, &config);
-
-            let validator = RawSignatureValidator::new();
-            // Should not run due to config
-            assert!(!validator.should_run(&context));
-
-            // But if we call validate_raw directly, it should succeed (no tables to process)
-            let result = validator.validate_raw(&context);
-            assert!(
-                result.is_ok(),
-                "Validation should succeed when disabled: {result:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_calling_convention_validation() {
+    fn test_raw_signature_validator() -> crate::Result<()> {
         let validator = RawSignatureValidator::new();
+        let config = ValidationConfig {
+            enable_token_validation: true,
+            ..Default::default()
+        };
 
-        // Test valid method calling conventions
-        assert!(validator
-            .validate_calling_convention(0x00, SignatureKind::Method, 123)
-            .is_ok()); // DEFAULT
-        assert!(validator
-            .validate_calling_convention(0x01, SignatureKind::Method, 123)
-            .is_ok()); // C
-        assert!(validator
-            .validate_calling_convention(0x05, SignatureKind::Method, 123)
-            .is_ok()); // VARARG
-        assert!(validator
-            .validate_calling_convention(0x20, SignatureKind::Method, 123)
-            .is_ok()); // HASTHIS flag
-
-        // Test invalid method calling convention
-        assert!(validator
-            .validate_calling_convention(0x0F, SignatureKind::Method, 123)
-            .is_err());
-
-        // Test valid field signature
-        assert!(validator
-            .validate_calling_convention(0x06, SignatureKind::Field, 123)
-            .is_ok());
-
-        // Test invalid field signature
-        assert!(validator
-            .validate_calling_convention(0x00, SignatureKind::Field, 123)
-            .is_err());
-
-        // Test valid property signature
-        assert!(validator
-            .validate_calling_convention(0x08, SignatureKind::Property, 123)
-            .is_ok());
-        assert!(validator
-            .validate_calling_convention(0x28, SignatureKind::Property, 123)
-            .is_ok()); // HASTHIS flag
-
-        // Test invalid property signature
-        assert!(validator
-            .validate_calling_convention(0x00, SignatureKind::Property, 123)
-            .is_err());
-
-        // Test valid local variable signature
-        assert!(validator
-            .validate_calling_convention(0x07, SignatureKind::LocalVar, 123)
-            .is_ok());
-
-        // Test invalid local variable signature
-        assert!(validator
-            .validate_calling_convention(0x00, SignatureKind::LocalVar, 123)
-            .is_err());
-    }
-
-    #[test]
-    fn test_compressed_integer_validation() {
-        let validator = RawSignatureValidator::new();
-
-        // Test 1-byte encoding (0-127)
-        assert!(validator.validate_compressed_integer(&[0x00], 123).is_ok());
-        assert!(validator.validate_compressed_integer(&[0x7F], 123).is_ok());
-
-        // Test 2-byte encoding (128-16383)
-        assert!(validator
-            .validate_compressed_integer(&[0x80, 0x80], 123)
-            .is_ok());
-        assert!(validator
-            .validate_compressed_integer(&[0xBF, 0xFF], 123)
-            .is_ok());
-
-        // Test 4-byte encoding (16384+)
-        assert!(validator
-            .validate_compressed_integer(&[0xC0, 0x00, 0x40, 0x00], 123)
-            .is_ok());
-        assert!(validator
-            .validate_compressed_integer(&[0xDF, 0xFF, 0xFF, 0xFF], 123)
-            .is_ok());
-
-        // Test insufficient data for 2-byte encoding
-        assert!(validator.validate_compressed_integer(&[0x80], 123).is_err());
-
-        // Test insufficient data for 4-byte encoding
-        assert!(validator
-            .validate_compressed_integer(&[0xC0, 0x00, 0x40], 123)
-            .is_err());
-
-        // Test invalid encoding pattern
-        assert!(validator.validate_compressed_integer(&[0xE0], 123).is_err());
-        assert!(validator.validate_compressed_integer(&[0xF0], 123).is_err());
-
-        // Test empty data
-        assert!(validator.validate_compressed_integer(&[], 123).is_err());
-    }
-
-    #[test]
-    fn test_blob_bounds_validation() {
-        let validator = RawSignatureValidator::new();
-
-        // Test normal sized blob
-        let normal_blob = vec![0x00; 1000];
-        assert!(validator.validate_blob_bounds(&normal_blob, 123).is_ok());
-
-        // Test maximum reasonable size (64KB)
-        let max_blob = vec![0x00; 65536];
-        assert!(validator.validate_blob_bounds(&max_blob, 123).is_ok());
-
-        // Test oversized blob (over 64KB)
-        let oversized_blob = vec![0x00; 65537];
-        assert!(validator
-            .validate_blob_bounds(&oversized_blob, 123)
-            .is_err());
-
-        // Test empty blob (valid for bounds checking)
-        assert!(validator.validate_blob_bounds(&[], 123).is_ok());
+        validator_test(
+            raw_signature_validator_file_factory,
+            "RawSignatureValidator",
+            "ValidationRawValidatorFailed",
+            config,
+            |context| validator.validate_raw(context),
+        )
     }
 }

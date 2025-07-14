@@ -1,7 +1,7 @@
 //! Dependency graph management for parallel metadata table loading.
 //!
 //! This module provides sophisticated dependency tracking and execution planning for .NET metadata
-//! table loaders. The [`crate::metadata::loader::graph::LoaderGraph`] enables efficient parallel
+//! table loaders. The internal dependency graph enables efficient parallel
 //! loading by analyzing inter-table dependencies, detecting cycles, and generating optimal
 //! execution plans that maximize concurrency while respecting load order constraints.
 //!
@@ -25,7 +25,7 @@
 //!
 //! # Key Components
 //!
-//! - [`crate::metadata::loader::graph::LoaderGraph`] - Main dependency graph implementation
+//! - Internal dependency graph - Main dependency graph implementation
 //! - Bidirectional dependency relationship management
 //! - Kahn's algorithm-based topological sorting for execution planning
 //! - Comprehensive cycle detection with detailed error reporting
@@ -140,7 +140,7 @@
 //!
 //! # Thread Safety
 //!
-//! The [`crate::metadata::loader::graph::LoaderGraph`] has specific thread safety characteristics:
+//! The internal dependency graph has specific thread safety characteristics:
 //! - **Construction Phase**: Not thread-safe, must be built from single thread
 //! - **Execution Phase**: Generated plans are thread-safe for coordination
 //! - **Read-Only Operations**: Safe concurrent access after relationship building
@@ -151,7 +151,7 @@
 //! This module integrates with:
 //! - [`crate::metadata::loader`] - MetadataLoader trait and parallel execution coordination
 //! - [`crate::metadata::tables::TableId`] - Table identification for dependency relationships
-//! - [`crate::metadata::loader::context::LoaderContext`] - Execution context for parallel loading
+//! - Internal loader context - Execution context for parallel loading
 //! - [`crate::Error`] - Comprehensive error handling for graph validation failures
 //!
 //! # Standards Compliance
@@ -181,10 +181,10 @@ use crate::{
 ///
 /// # Lifecycle
 ///
-/// 1. **Construction**: Create empty graph with [`crate::metadata::loader::graph::LoaderGraph::new`]
-/// 2. **Population**: Add loaders with [`crate::metadata::loader::graph::LoaderGraph::add_loader`]
-/// 3. **Validation**: Build relationships and detect cycles with [`crate::metadata::loader::graph::LoaderGraph::build_relationships`]
-/// 4. **Execution**: Generate execution plan with [`crate::metadata::loader::graph::LoaderGraph::topological_levels`]
+/// 1. **Construction**: Create empty graph with `LoaderGraph::new()`
+/// 2. **Population**: Add loaders with `LoaderGraph::add_loader()`
+/// 3. **Validation**: Build relationships and detect cycles with `LoaderGraph::build_relationships()`
+/// 4. **Execution**: Generate execution plan with `LoaderGraph::topological_levels()`
 ///
 /// # Thread Safety
 ///
@@ -275,7 +275,7 @@ impl<'a> LoaderGraph<'a> {
     ///
     /// # Returns
     ///
-    /// A new [`crate::metadata::loader::graph::LoaderGraph`] with empty dependency mappings, ready for loader registration.
+    /// A new `LoaderGraph` with empty dependency mappings, ready for loader registration.
     ///
     /// # Examples
     ///
@@ -320,7 +320,7 @@ impl<'a> LoaderGraph<'a> {
     ///
     /// - The loader must remain valid for the lifetime of the graph
     /// - Adding the same loader multiple times will overwrite the previous entry
-    /// - Dependencies are not resolved until [`crate::metadata::loader::graph::LoaderGraph::build_relationships`] is called
+    /// - Dependencies are not resolved until `LoaderGraph::build_relationships()` is called
     ///
     /// # Thread Safety
     ///
@@ -634,7 +634,7 @@ impl<'a> LoaderGraph<'a> {
     ///
     /// # Panics
     ///
-    /// This method panics if [`crate::metadata::loader::graph::LoaderGraph::topological_levels`] returns an error,
+    /// This method panics if `LoaderGraph::topological_levels()` returns an error,
     /// which should only occur if the graph is in an invalid state. In production
     /// code, this should not happen as the graph is validated during construction.
     ///

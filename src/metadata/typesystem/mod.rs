@@ -56,14 +56,17 @@ pub use primitives::{CilPrimitive, CilPrimitiveData, CilPrimitiveKind};
 pub use registry::{TypeRegistry, TypeSource};
 pub use resolver::TypeResolver;
 
-use crate::metadata::{
-    customattributes::CustomAttributeValueList,
-    method::MethodRefList,
-    security::Security,
-    tables::{
-        EventList, FieldList, GenericParamList, MethodSpecList, PropertyList, TypeAttributes,
+use crate::{
+    metadata::{
+        customattributes::CustomAttributeValueList,
+        method::MethodRefList,
+        security::Security,
+        tables::{
+            EventList, FieldList, GenericParamList, MethodSpecList, PropertyList, TypeAttributes,
+        },
+        token::Token,
     },
-    token::Token,
+    Error, Result,
 };
 
 /// A vector that holds a list of `CilType` references.
@@ -110,7 +113,7 @@ pub struct CilType {
     /// Type name (class name, interface name, etc.)
     pub name: String,
     /// External type reference for imported types (from `AssemblyRef`, `File`, `ModuleRef`)
-    pub external: Option<CilTypeReference>,
+    external: OnceLock<CilTypeReference>,
     /// Base type reference - the type this type inherits from (for classes) or extends (for interfaces)
     base: OnceLock<CilTypeRef>,
     /// Type attributes flags - 4-byte bitmask from `TypeAttributes` (ECMA-335 §II.23.1.15)
@@ -215,6 +218,11 @@ impl CilType {
             base_lock.set(base_value).ok();
         }
 
+        let external_lock = OnceLock::new();
+        if let Some(external_value) = external {
+            external_lock.set(external_value).ok();
+        }
+
         let flavor_lock = OnceLock::new();
         if let Some(explicit_flavor) = flavor {
             flavor_lock.set(explicit_flavor).ok();
@@ -224,7 +232,7 @@ impl CilType {
             token,
             namespace,
             name,
-            external,
+            external: external_lock,
             base: base_lock,
             flags,
             flavor: flavor_lock,
@@ -283,8 +291,10 @@ impl CilType {
     /// }
     /// # }
     /// ```
-    pub fn set_base(&self, base_type: CilTypeRef) -> Result<(), CilTypeRef> {
-        self.base.set(base_type)
+    pub fn set_base(&self, base_type: CilTypeRef) -> Result<()> {
+        self.base
+            .set(base_type)
+            .map_err(|_| Error::Error("External reference was already set".to_string()))
     }
 
     /// Access the base type of this type, if it exists.
@@ -319,6 +329,40 @@ impl CilType {
         } else {
             None
         }
+    }
+
+    /// Sets the external type reference for this type.
+    ///
+    /// This method sets the external reference that indicates where this type is defined
+    /// (e.g., which assembly, module, or file). This is primarily used for TypeRef entries
+    /// that reference types defined outside the current assembly.
+    ///
+    /// ## Arguments
+    /// * `external_ref` - The external type reference indicating where this type is defined
+    ///
+    /// ## Returns
+    /// * `Ok(())` - External reference set successfully
+    /// * `Err(_)` - External reference was already set or other error occurred
+    ///
+    /// ## Thread Safety
+    /// This method is thread-safe and can be called concurrently. Only the first
+    /// call will succeed in setting the external reference.
+    pub fn set_external(&self, external_ref: CilTypeReference) -> Result<()> {
+        self.external
+            .set(external_ref)
+            .map_err(|_| malformed_error!("External reference was already set"))
+    }
+
+    /// Gets the external type reference for this type, if it exists.
+    ///
+    /// Returns the external reference that indicates where this type is defined,
+    /// or `None` if this is a type defined in the current assembly or if no
+    /// external reference has been set.
+    ///
+    /// ## Returns
+    /// Returns the external reference if it has been set, or `None` if it's still pending resolution.
+    pub fn get_external(&self) -> Option<&CilTypeReference> {
+        self.external.get()
     }
 
     /// Get the computed type flavor - determined lazily from context.

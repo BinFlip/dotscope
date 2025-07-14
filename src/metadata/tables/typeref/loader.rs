@@ -44,13 +44,25 @@ impl MetadataLoader for TypeRefLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
             if let Some(table) = header.table::<TypeRefRaw>() {
-                for row in table {
+                table.par_iter().try_for_each(|row| {
                     let new_entry =
-                        row.to_owned(|coded_index| context.get_ref(coded_index), strings)?;
+                        row.to_owned(|coded_index| context.get_ref(coded_index), strings, true)?;
 
-                    context.imports.add_type(&new_entry)?;
                     context.types.insert(new_entry);
-                }
+                    Ok(())
+                })?;
+
+                table.par_iter().try_for_each(|row| -> Result<()> {
+                    if let Some(type_ref) = context.types.get(&row.token) {
+                        if let Some(resolution_scope) =
+                            row.resolve_resolution_scope(|coded_index| context.get_ref(coded_index))
+                        {
+                            type_ref.set_external(resolution_scope)?;
+                            context.imports.add_type(&type_ref)?;
+                        }
+                    }
+                    Ok(())
+                })?;
             }
         }
 

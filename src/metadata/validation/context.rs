@@ -30,7 +30,7 @@
 //!
 //! # let path = Path::new("assembly.dll");
 //! let view = CilAssemblyView::from_file(&path)?;
-//! let scanner = ReferenceScanner::new(&view)?;
+//! let scanner = ReferenceScanner::from_view(&view)?;
 //! let config = ValidationConfig::production();
 //!
 //! // Create raw validation context for loading
@@ -149,7 +149,7 @@ pub trait ValidationContext {
 ///
 /// # let path = Path::new("assembly.dll");
 /// let view = CilAssemblyView::from_file(&path)?;
-/// let scanner = ReferenceScanner::new(&view)?;
+/// let scanner = ReferenceScanner::from_view(&view)?;
 /// let config = ValidationConfig::minimal();
 ///
 /// // Create context for loading validation
@@ -197,7 +197,7 @@ impl<'a> RawValidationContext<'a> {
     ///
     /// # let path = Path::new("assembly.dll");
     /// let view = CilAssemblyView::from_file(&path)?;
-    /// let scanner = ReferenceScanner::new(&view)?;
+    /// let scanner = ReferenceScanner::from_view(&view)?;
     /// let config = ValidationConfig::production();
     ///
     /// let context = RawValidationContext::new_for_loading(&view, &scanner, &config);
@@ -399,7 +399,7 @@ mod tests {
     fn test_raw_loading_context() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let scanner = ReferenceScanner::new(&view).unwrap();
+            let scanner = ReferenceScanner::from_view(&view).unwrap();
             let config = ValidationConfig::minimal();
 
             let context = RawValidationContext::new_for_loading(&view, &scanner, &config);
@@ -415,7 +415,7 @@ mod tests {
     fn test_raw_modification_context() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let scanner = ReferenceScanner::new(&view).unwrap();
+            let scanner = ReferenceScanner::from_view(&view).unwrap();
             let config = ValidationConfig::minimal();
             let changes = AssemblyChanges::new(&view);
 
@@ -433,7 +433,7 @@ mod tests {
     fn test_factory_functions() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let scanner = ReferenceScanner::new(&view).unwrap();
+            let scanner = ReferenceScanner::from_view(&view).unwrap();
             let config = ValidationConfig::minimal();
             let changes = AssemblyChanges::new(&view);
 

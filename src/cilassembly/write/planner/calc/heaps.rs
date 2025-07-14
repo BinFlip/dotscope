@@ -60,7 +60,7 @@
 //!
 //! This module integrates with:
 //! - [`crate::cilassembly::write::planner`] - Uses calculations for layout planning
-//! - [`crate::cilassembly::write::writers::heap`] - Validates size calculations against actual writing
+//! - Validates size calculations against actual heap writing
 //! - [`crate::cilassembly::write::utils`] - Uses utility functions for alignment and compression
 
 use crate::{

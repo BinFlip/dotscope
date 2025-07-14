@@ -33,8 +33,8 @@
 //! This module integrates with:
 //! - [`crate::cilassembly::write::planner`] - Layout planning for PE table space allocation
 //! - [`crate::cilassembly::write::output`] - Binary output buffer management
-//! - [`crate::metadata::imports::container`] - Unified import container source data
-//! - [`crate::metadata::exports::container`] - Unified export container source data
+//! - [`crate::metadata::imports::UnifiedImportContainer`] - Unified import container source data
+//! - [`crate::metadata::exports::UnifiedExportContainer`] - Unified export container source data
 
 use crate::{
     cilassembly::{

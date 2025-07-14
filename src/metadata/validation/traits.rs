@@ -370,7 +370,6 @@ mod tests {
     };
     use std::path::PathBuf;
 
-    // Test validator implementations
     struct TestRawValidator {
         name: &'static str,
         priority: u32,
@@ -413,7 +412,7 @@ mod tests {
     fn test_raw_validator_trait() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let scanner = ReferenceScanner::new(&view).unwrap();
+            let scanner = ReferenceScanner::from_view(&view).unwrap();
             let config = ValidationConfig::minimal();
             let context = factory::raw_loading_context(&view, &scanner, &config);
 
@@ -446,7 +445,6 @@ mod tests {
             },
         ];
 
-        // Should be sorted by priority (highest first)
         assert_eq!(validators[0].name(), "High");
         assert_eq!(validators[1].name(), "Medium");
         assert_eq!(validators[2].name(), "Low");

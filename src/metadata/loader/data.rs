@@ -52,7 +52,7 @@
 //! # Thread Safety
 //!
 //! All components in this module are designed for safe concurrent access during parallel loading.
-//! The [`crate::metadata::loader::data::CilObjectData`] structure is [`std::marker::Send`] and [`std::marker::Sync`],
+//! The internal data structures are [`std::marker::Send`] and [`std::marker::Sync`],
 //! enabling parallel metadata processing across multiple threads with lock-free data structures.
 //!
 //! # Integration
@@ -102,8 +102,8 @@ use crate::{
 /// # Loading Process
 ///
 /// 1. **Initialization**: Parse PE headers and locate metadata
-/// 2. **Stream Loading**: Extract and parse metadata streams via [`load_streams`](Self::load_streams)
-/// 3. **Context Creation**: Build [`crate::metadata::loader::context::LoaderContext`] for parallel loading
+/// 2. **Stream Loading**: Extract and parse metadata streams via `load_streams`
+/// 3. **Context Creation**: Build internal loader context for parallel loading
 /// 4. **Parallel Execution**: Run specialized loaders for different table categories
 /// 5. **Finalization**: Complete cross-references and semantic relationships
 ///
@@ -175,7 +175,7 @@ impl CilObjectData {
     ///
     /// 1. **Initialize Concurrent Containers**: Create all SkipMap containers for parallel loading
     /// 2. **Native Table Loading**: Load PE import/export tables via CilAssemblyView
-    /// 3. **Context Creation**: Build [`crate::metadata::loader::context::LoaderContext`] using CilAssemblyView
+    /// 3. **Context Creation**: Build internal loader context using CilAssemblyView
     /// 4. **Parallel Loading**: Execute the same complex parallel loaders as before
     /// 5. **Cross-Reference Resolution**: Build semantic relationships between tables
     ///

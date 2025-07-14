@@ -69,7 +69,7 @@
 //! - [`crate::cilassembly::write::planner::FileLayout`] - File layout structures
 //! - [`crate::cilassembly::write::planner::NativeTableRequirements`] - Native table requirements
 //! - [`crate::cilassembly::write::planner::PeUpdates`] - PE update tracking
-//! - [`crate::cilassembly::write::writers::pe`] - PE header writing
+//! - PE header writing
 
 use crate::{
     cilassembly::{

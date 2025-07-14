@@ -8,8 +8,8 @@
 //! # Architecture
 //!
 //! The validator system is organized into two main validation stages:
-//! 1. **Raw Validators** ([`crate::metadata::validation::validators::raw`]) - Validate raw assembly data during Stage 1
-//! 2. **Owned Validators** ([`crate::metadata::validation::validators::owned`]) - Validate resolved object data during Stage 2
+//! 1. **Raw Validators** (raw validation stage) - Validate raw assembly data during Stage 1
+//! 2. **Owned Validators** (owned validation stage) - Validate resolved object data during Stage 2
 //!
 //! Each validator category is further subdivided by functional area:
 //! - **Structure Validators**: Token format, table integrity, heap validation
@@ -22,17 +22,17 @@
 //!
 //! ## Raw Validators (Stage 1)
 //!
-//! - [`crate::metadata::validation::validators::raw::structure`] - Basic structural validation
-//! - [`crate::metadata::validation::validators::raw::constraints`] - Layout and generic constraints
-//! - [`crate::metadata::validation::validators::raw::modification`] - Assembly change validation
+//! - raw structure validators - Basic structural validation
+//! - raw constraint validators - Layout and generic constraints
+//! - raw modification validators - Assembly change validation
 //!
 //! ## Owned Validators (Stage 2)
 //!
-//! - [`crate::metadata::validation::validators::owned::types`] - Type system validation
-//! - [`crate::metadata::validation::validators::owned::members`] - Method and field validation
-//! - [`crate::metadata::validation::validators::owned::metadata`] - Signature and attribute validation
-//! - [`crate::metadata::validation::validators::owned::relationships`] - Cross-reference validation
-//! - [`crate::metadata::validation::validators::owned::system`] - Assembly-level validation
+//! - owned type validators - Type system validation
+//! - owned member validators - Method and field validation
+//! - owned metadata validators - Signature and attribute validation
+//! - owned relationship validators - Cross-reference validation
+//! - owned system validators - Assembly-level validation
 //!
 //! # Usage Examples
 //!

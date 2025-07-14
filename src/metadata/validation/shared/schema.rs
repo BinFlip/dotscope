@@ -29,7 +29,7 @@
 //!
 //! # let path = Path::new("assembly.dll");
 //! let view = CilAssemblyView::from_file(&path)?;
-//! let scanner = ReferenceScanner::new(&view)?;
+//! let scanner = ReferenceScanner::from_view(&view)?;
 //! let validator = SchemaValidator::new(&scanner);
 //!
 //! // Validate basic schema structure
@@ -52,19 +52,25 @@
 //!
 //! # Thread Safety
 //!
-//! [`crate::metadata::validation::shared::schema::SchemaValidator`] is stateless and implements [`Send`] + [`Sync`],
+//! [`crate::metadata::validation::SchemaValidator`] is stateless and implements [`Send`] + [`Sync`],
 //! making it safe for concurrent use across multiple validation threads.
 //!
 //! # Integration
 //!
 //! This module integrates with:
 //! - [`crate::metadata::validation::scanner`] - Provides metadata analysis infrastructure
-//! - [`crate::metadata::validation::validators::raw`] - Used by raw validators for schema validation
-//! - [`crate::metadata::validation::validators::owned`] - Used by owned validators for consistency checks
+//! - Raw validators - Used by raw validators for schema validation
+//! - Owned validators - Used by owned validators for consistency checks
 //! - [`crate::metadata::tables`] - Validates table structure and relationships
 
 use crate::{
-    metadata::{tables::TableId, validation::scanner::ReferenceScanner},
+    metadata::{
+        tables::TableId,
+        validation::{
+            scanner::{HeapSizes, ReferenceScanner},
+            ScannerStatistics,
+        },
+    },
     Error, Result,
 };
 
@@ -92,7 +98,7 @@ impl<'a> SchemaValidator<'a> {
     ///
     /// # Returns
     ///
-    /// A new [`crate::metadata::validation::shared::schema::SchemaValidator`] instance ready for validation operations.
+    /// A new [`SchemaValidator`] instance ready for validation operations.
     pub fn new(scanner: &'a ReferenceScanner) -> Self {
         Self { scanner }
     }
@@ -429,111 +435,11 @@ impl<'a> SchemaValidator<'a> {
     /// Returns a `SchemaValidationStatistics` struct containing detailed information.
     pub fn get_validation_statistics(&self) -> SchemaValidationStatistics {
         SchemaValidationStatistics {
-            total_tables: self.count_non_empty_tables(),
-            total_rows: self.count_total_rows(),
+            total_tables: self.scanner.count_non_empty_tables(),
+            total_rows: self.scanner.count_total_rows(),
             heap_sizes: self.scanner.heap_sizes().clone(),
             scanner_stats: self.scanner.statistics(),
         }
-    }
-
-    /// Counts the number of non-empty metadata tables.
-    fn count_non_empty_tables(&self) -> usize {
-        // ToDo: We do have a list of all existing tables in the file, we should rely on that information
-        let all_tables = [
-            TableId::Module,
-            TableId::TypeRef,
-            TableId::TypeDef,
-            TableId::Field,
-            TableId::MethodDef,
-            TableId::Param,
-            TableId::InterfaceImpl,
-            TableId::MemberRef,
-            TableId::Constant,
-            TableId::CustomAttribute,
-            TableId::FieldMarshal,
-            TableId::DeclSecurity,
-            TableId::ClassLayout,
-            TableId::FieldLayout,
-            TableId::StandAloneSig,
-            TableId::EventMap,
-            TableId::Event,
-            TableId::PropertyMap,
-            TableId::Property,
-            TableId::MethodSemantics,
-            TableId::MethodImpl,
-            TableId::ModuleRef,
-            TableId::TypeSpec,
-            TableId::ImplMap,
-            TableId::FieldRVA,
-            TableId::Assembly,
-            TableId::AssemblyProcessor,
-            TableId::AssemblyOS,
-            TableId::AssemblyRef,
-            TableId::AssemblyRefProcessor,
-            TableId::AssemblyRefOS,
-            TableId::File,
-            TableId::ExportedType,
-            TableId::ManifestResource,
-            TableId::NestedClass,
-            TableId::GenericParam,
-            TableId::MethodSpec,
-            TableId::GenericParamConstraint,
-        ];
-
-        all_tables
-            .iter()
-            .filter(|&&table| self.scanner.table_row_count(table) > 0)
-            .count()
-    }
-
-    /// Counts the total number of rows across all metadata tables.
-    fn count_total_rows(&self) -> u32 {
-        // ToDo: We do have a list of all existing tables in the file, we should rely on that information
-        let all_tables = [
-            TableId::Module,
-            TableId::TypeRef,
-            TableId::TypeDef,
-            TableId::Field,
-            TableId::MethodDef,
-            TableId::Param,
-            TableId::InterfaceImpl,
-            TableId::MemberRef,
-            TableId::Constant,
-            TableId::CustomAttribute,
-            TableId::FieldMarshal,
-            TableId::DeclSecurity,
-            TableId::ClassLayout,
-            TableId::FieldLayout,
-            TableId::StandAloneSig,
-            TableId::EventMap,
-            TableId::Event,
-            TableId::PropertyMap,
-            TableId::Property,
-            TableId::MethodSemantics,
-            TableId::MethodImpl,
-            TableId::ModuleRef,
-            TableId::TypeSpec,
-            TableId::ImplMap,
-            TableId::FieldRVA,
-            TableId::Assembly,
-            TableId::AssemblyProcessor,
-            TableId::AssemblyOS,
-            TableId::AssemblyRef,
-            TableId::AssemblyRefProcessor,
-            TableId::AssemblyRefOS,
-            TableId::File,
-            TableId::ExportedType,
-            TableId::ManifestResource,
-            TableId::NestedClass,
-            TableId::GenericParam,
-            TableId::MethodSpec,
-            TableId::GenericParamConstraint,
-        ];
-
-        all_tables
-            .iter()
-            .map(|&table| self.scanner.table_row_count(table))
-            .sum()
     }
 }
 
@@ -548,9 +454,9 @@ pub struct SchemaValidationStatistics {
     /// Total number of rows across all tables
     pub total_rows: u32,
     /// Metadata heap sizes
-    pub heap_sizes: crate::metadata::validation::scanner::HeapSizes,
+    pub heap_sizes: HeapSizes,
     /// Reference scanner statistics
-    pub scanner_stats: crate::metadata::validation::scanner::ScannerStatistics,
+    pub scanner_stats: ScannerStatistics,
 }
 
 impl std::fmt::Display for SchemaValidationStatistics {
@@ -578,7 +484,7 @@ mod tests {
     fn test_schema_validator_creation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            if let Ok(scanner) = ReferenceScanner::new(&view) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = SchemaValidator::new(&scanner);
 
                 // Test basic functionality
@@ -593,7 +499,7 @@ mod tests {
     fn test_basic_structure_validation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = crate::metadata::cilassemblyview::CilAssemblyView::from_file(&path) {
-            if let Ok(scanner) = ReferenceScanner::new(&view) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = SchemaValidator::new(&scanner);
 
                 // Should pass for valid assembly
@@ -608,7 +514,7 @@ mod tests {
     fn test_rid_validation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            if let Ok(scanner) = ReferenceScanner::new(&view) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = SchemaValidator::new(&scanner);
 
                 // Test invalid RID (0)
@@ -634,7 +540,7 @@ mod tests {
     fn test_heap_reference_validation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            if let Ok(scanner) = ReferenceScanner::new(&view) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = SchemaValidator::new(&scanner);
 
                 // Test string heap validation
@@ -656,7 +562,7 @@ mod tests {
     fn test_validation_statistics() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            if let Ok(scanner) = ReferenceScanner::new(&view) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = SchemaValidator::new(&scanner);
 
                 let stats = validator.get_validation_statistics();
@@ -673,7 +579,7 @@ mod tests {
     fn test_coded_index_validation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            if let Ok(scanner) = ReferenceScanner::new(&view) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = SchemaValidator::new(&scanner);
 
                 // Test null coded index (should be valid)

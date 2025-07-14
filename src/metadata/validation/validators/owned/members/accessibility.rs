@@ -150,7 +150,6 @@ impl OwnedAccessibilityValidator {
         for type_entry in types.all_types() {
             let visibility = type_entry.flags & TypeAttributes::VISIBILITY_MASK;
 
-            // Validate visibility is a known value
             match visibility {
                 TypeAttributes::NOT_PUBLIC
                 | TypeAttributes::PUBLIC
@@ -174,20 +173,11 @@ impl OwnedAccessibilityValidator {
                 }
             }
 
-            // Validate nested type visibility rules
             if visibility >= TypeAttributes::NESTED_PUBLIC {
-                // This is a nested type - it should be contained within another type
-                // For a complete implementation, we would check that this type
-                // appears in another type's nested_types collection
             } else if !type_entry.nested_types.is_empty() {
-                // This is a top-level type with nested types
-                // Validate that nested types have appropriate accessibility
                 for (_, nested_type_ref) in type_entry.nested_types.iter() {
                     if let Some(nested_type) = nested_type_ref.upgrade() {
                         let nested_visibility = nested_type.flags & TypeAttributes::VISIBILITY_MASK;
-                        // In legitimate .NET assemblies, nested types sometimes have non-nested visibility flags
-                        // due to compiler patterns, especially for enums and compiler-generated types.
-                        // We'll be more permissive and only flag truly invalid combinations.
                         if nested_visibility > TypeAttributes::NESTED_FAM_OR_ASSEM {
                             return Err(crate::Error::ValidationOwnedValidatorFailed {
                                 validator: self.name().to_string(),
@@ -202,7 +192,6 @@ impl OwnedAccessibilityValidator {
                 }
             }
 
-            // Validate interface types cannot be sealed
             if type_entry.flags & TypeAttributes::INTERFACE != 0
                 && type_entry.flags & 0x0000_0100 != 0
             {
@@ -244,26 +233,24 @@ impl OwnedAccessibilityValidator {
         for type_entry in types.all_types() {
             let type_visibility = type_entry.flags & TypeAttributes::VISIBILITY_MASK;
 
-            // Validate method accessibility
             for (_, method_ref) in type_entry.methods.iter() {
-                // For full validation, we would need to resolve the method reference
-                // to get its actual accessibility flags. Here we're working with references.
+                if let Some(method) = method_ref.upgrade() {
+                    // ToDo: For full validation, we would need to resolve the method reference
+                    // to get its actual accessibility flags. Here we're working with references.
 
-                // Basic validation that can be done with available data
-                if method_ref.name().is_none_or(|n| n.is_empty()) {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
-                        validator: self.name().to_string(),
-                        message: format!("Method in type '{}' has empty name", type_entry.name),
-                        source: None,
-                    });
+                    if method.name.is_empty() {
+                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                            validator: self.name().to_string(),
+                            message: format!("Method in type '{}' has empty name", type_entry.name),
+                            source: None,
+                        });
+                    }
                 }
             }
 
-            // Validate field accessibility
             for (_, field) in type_entry.fields.iter() {
                 let field_access = field.flags & FieldAttributes::FIELD_ACCESS_MASK;
 
-                // Check that public fields are not in non-public types unless justified
                 if field_access == FieldAttributes::PUBLIC
                     && type_visibility == TypeAttributes::NOT_PUBLIC
                 {
@@ -271,7 +258,6 @@ impl OwnedAccessibilityValidator {
                     // but worth noting for consistency
                 }
 
-                // Check that literal fields are static
                 if field.flags & 0x0040 != 0 && field.flags & FieldAttributes::STATIC == 0 {
                     // LITERAL flag but not static
                     let field_name = &field.name;
@@ -315,24 +301,18 @@ impl OwnedAccessibilityValidator {
         let types = context.object().types();
 
         for type_entry in types.all_types() {
-            // Check interface implementations
             for (_, interface_ref) in type_entry.interfaces.iter() {
-                // Validate that implementing type has sufficient accessibility
-                // to access the interface being implemented
-
                 let type_visibility = type_entry.flags & TypeAttributes::VISIBILITY_MASK;
                 if let Some(interface_type) = interface_ref.upgrade() {
                     let interface_visibility =
                         interface_type.flags & TypeAttributes::VISIBILITY_MASK;
 
-                    // Basic accessibility validation
                     if interface_visibility == TypeAttributes::PUBLIC
                         && type_visibility == TypeAttributes::NOT_PUBLIC
                     {
                         // Internal type implementing public interface - this is valid
                     }
 
-                    // Validate interface name is resolved
                     if interface_type.name.is_empty() {
                         return Err(crate::Error::ValidationOwnedValidatorFailed {
                             validator: self.name().to_string(),
@@ -346,10 +326,8 @@ impl OwnedAccessibilityValidator {
                 }
             }
 
-            // Check that interfaces don't contain fields (except for constants)
             if type_entry.flags & TypeAttributes::INTERFACE != 0 {
                 for (_, field) in type_entry.fields.iter() {
-                    // Interfaces can only have static literal fields (constants)
                     if field.flags & FieldAttributes::STATIC == 0 {
                         return Err(crate::Error::ValidationOwnedValidatorFailed {
                             validator: self.name().to_string(),
@@ -402,7 +380,7 @@ impl OwnedAccessibilityValidator {
         let types = context.object().types();
 
         for type_entry in types.all_types() {
-            // For complete inheritance validation, we would need to resolve
+            // ToDo: For complete inheritance validation, we need to resolve
             // base type references and check accessibility consistency
 
             // Basic validation: sealed types cannot be abstract (except for static classes)

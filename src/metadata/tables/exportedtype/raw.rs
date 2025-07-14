@@ -41,7 +41,7 @@
 //! # Reference
 //! - [ECMA-335 II.22.14](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `ExportedType` table specification
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::{
     metadata::{
@@ -149,6 +149,7 @@ impl ExportedTypeRaw {
     ///
     /// * `get_ref` - Closure for resolving Implementation coded index to type references
     /// * `string` - The String heap for resolving type name and namespace
+    /// * `skip_intra_table_resolution` - Skip resolution of intra-table references for two-pass loading
     ///
     /// # Returns
     ///
@@ -157,23 +158,32 @@ impl ExportedTypeRaw {
     ///
     /// # Errors
     ///
-    /// - The Implementation coded index cannot be resolved to a valid reference
+    /// - The Implementation coded index cannot be resolved to a valid reference (when not skipped)
     /// - The String heap lookup fails for the type name
     /// - The String heap lookup fails for the namespace (when non-zero)
     /// - The resolved Implementation reference is invalid or None
-    pub fn to_owned<F>(&self, get_ref: F, string: &Strings) -> Result<ExportedTypeRc>
+    pub fn to_owned<F>(
+        &self,
+        get_ref: F,
+        string: &Strings,
+        skip_intra_table_resolution: bool,
+    ) -> Result<ExportedTypeRc>
     where
         F: Fn(&CodedIndex) -> CilTypeReference,
     {
-        let implementation = match get_ref(&self.implementation) {
-            CilTypeReference::None => {
-                return Err(malformed_error!(
-                    "Failed to resolve implementation token - {}",
-                    self.implementation.token.value()
-                ))
-            }
-            resolved => resolved,
-        };
+        let implementation_lock = OnceLock::new();
+        if !skip_intra_table_resolution {
+            let implementation = match get_ref(&self.implementation) {
+                CilTypeReference::None => {
+                    return Err(malformed_error!(
+                        "Failed to resolve implementation token - {}",
+                        self.implementation.token.value()
+                    ))
+                }
+                resolved => resolved,
+            };
+            implementation_lock.set(implementation).ok();
+        }
 
         Ok(Arc::new(ExportedType {
             rid: self.rid,
@@ -187,9 +197,29 @@ impl ExportedTypeRaw {
             } else {
                 Some(string.get(self.namespace as usize)?.to_string())
             },
-            implementation,
+            implementation: implementation_lock,
             custom_attributes: Arc::new(boxcar::Vec::new()),
         }))
+    }
+
+    /// Resolves the implementation reference for this ExportedType in a second pass.
+    ///
+    /// This method resolves intra-table ExportedType references that were skipped during
+    /// the initial loading pass to handle forward references correctly.
+    ///
+    /// ## Arguments
+    /// * `get_ref` - Closure to resolve coded indexes to implementation references
+    ///
+    /// ## Returns
+    /// Returns the resolved `CilTypeReference` for the implementation, or `None` if resolution fails.
+    pub fn resolve_implementation<F>(&self, get_ref: F) -> Option<CilTypeReference>
+    where
+        F: Fn(&CodedIndex) -> CilTypeReference,
+    {
+        match get_ref(&self.implementation) {
+            CilTypeReference::None => None,
+            resolved => Some(resolved),
+        }
     }
 
     /// Apply this `ExportedType` entry during metadata loading

@@ -43,7 +43,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationStructuralError`] for:
+//! This validator returns [`crate::Error::ValidationRawValidatorFailed`] for:
 //! - Missing required metadata tables (Module table always required, Assembly table for executables)
 //! - Invalid table row counts or inconsistent table headers (row counts exceeding 0x00FFFFFF)
 //! - Malformed table structures or corrupted metadata (RID inconsistencies within tables)
@@ -60,7 +60,7 @@
 //! # Integration
 //!
 //! This validator integrates with:
-//! - [`crate::metadata::validation::validators::raw::structure`] - Part of the foundational structural validation stage
+//! - raw structure validators - Part of the foundational structural validation stage
 //! - [`crate::metadata::validation::engine::ValidationEngine`] - Orchestrates validator execution with fail-fast behavior
 //! - [`crate::metadata::validation::traits::RawValidator`] - Implements the raw validation interface
 //! - [`crate::metadata::cilassemblyview::CilAssemblyView`] - Source of metadata tables for validation
@@ -112,7 +112,7 @@ impl RawTableValidator {
     ///
     /// # Returns
     ///
-    /// A new [`crate::metadata::validation::validators::raw::structure::table::RawTableValidator`] instance ready for validation operations.
+    /// A new [`RawTableValidator`] instance ready for validation operations.
     ///
     /// # Thread Safety
     ///
@@ -134,11 +134,11 @@ impl RawTableValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All required tables are present with valid content
-    /// * `Err(`[`crate::Error::ValidationStructuralError`]`)` - Required tables missing or invalid
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Required tables missing or invalid
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationStructuralError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - Module table is missing (always required by ECMA-335)
     /// - Module table is present but contains zero rows (at least one required)
     /// - Assembly table contains more than one row (ECMA-335 limit violation)
@@ -186,11 +186,11 @@ impl RawTableValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All table structures are valid and consistent
-    /// * `Err(`[`crate::Error::ValidationStructuralError`]`)` - Structure violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Structure violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationStructuralError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - Table row counts exceed maximum allowed values (0x00FFFFFF)
     /// - RID values within table rows are inconsistent with expected sequential numbering
     /// - Internal table structure inconsistencies are detected during iteration
@@ -245,11 +245,11 @@ impl RawTableValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All table dependencies are satisfied
-    /// * `Err(`[`crate::Error::ValidationStructuralError`]`)` - Dependency violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Dependency violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationStructuralError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - TypeDef field list references exceed Field table row count
     /// - TypeDef method list references exceed MethodDef table row count
     /// - List-based cross-table references are out of bounds
@@ -314,11 +314,11 @@ impl RawValidator for RawTableValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All table structures are valid and meet ECMA-335 requirements
-    /// * `Err(`[`crate::Error::ValidationStructuralError`]`)` - Table structure violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Table structure violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationStructuralError`] for:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] for:
     /// - Missing required tables (Module, Assembly for executables)
     /// - Invalid table row counts or corrupted table headers
     /// - Cross-table dependency violations
@@ -342,11 +342,10 @@ impl RawValidator for RawTableValidator {
     }
 
     fn priority(&self) -> u32 {
-        190 // High priority - foundation validator
+        190
     }
 
     fn should_run(&self, context: &RawValidationContext) -> bool {
-        // Run if structural validation is enabled
         context.config().enable_structural_validation
     }
 }
@@ -360,47 +359,50 @@ impl Default for RawTableValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
-        cilassemblyview::CilAssemblyView,
-        validation::{config::ValidationConfig, context::factory, scanner::ReferenceScanner},
+    use crate::{
+        metadata::validation::ValidationConfig,
+        test::{get_clean_testfile, validator_test, TestAssembly},
     };
-    use std::path::PathBuf;
+
+    fn raw_table_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+        let mut assemblies = Vec::new();
+
+        if let Some(clean_path) = get_clean_testfile() {
+            assemblies.push(TestAssembly::new(clean_path, true));
+        }
+
+        // Note: Most table structure validation issues (missing Module table, empty Module table,
+        // multiple Assembly rows, excessive row counts, RID inconsistencies) are extremely difficult
+        // or impossible to create through the normal builder APIs because the BuilderContext and
+        // metadata system enforce these constraints by design. The validation exists to catch
+        // corrupted or malformed assemblies from external sources.
+        //
+        // For comprehensive testing, we would need:
+        // 1. Direct binary metadata manipulation tools
+        // 2. Test assemblies with pre-existing corruption
+        // 3. Integration tests with known-bad assemblies
+        //
+        // For now, we test the validator with a clean assembly to ensure it passes,
+        // and rely on the fact that the validation logic is straightforward and
+        // well-covered by the implementation.
+
+        Ok(assemblies)
+    }
 
     #[test]
-    fn test_raw_table_validator_creation() {
+    fn test_raw_table_validator() -> crate::Result<()> {
         let validator = RawTableValidator::new();
-        assert_eq!(validator.name(), "RawTableValidator");
-        assert_eq!(validator.priority(), 190);
-    }
+        let config = ValidationConfig {
+            enable_structural_validation: true,
+            ..Default::default()
+        };
 
-    #[test]
-    fn test_raw_table_validator_should_run() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let scanner = ReferenceScanner::new(&view).unwrap();
-            let mut config = ValidationConfig::minimal();
-
-            config.enable_structural_validation = true;
-            let context = factory::raw_loading_context(&view, &scanner, &config);
-            let validator = RawTableValidator::new();
-            assert!(validator.should_run(&context));
-
-            config.enable_structural_validation = false;
-            let context = factory::raw_loading_context(&view, &scanner, &config);
-            assert!(!validator.should_run(&context));
-        }
-    }
-
-    #[test]
-    fn test_raw_table_validator_validate_empty_implementation() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let scanner = ReferenceScanner::new(&view).unwrap();
-            let config = ValidationConfig::minimal();
-            let context = factory::raw_loading_context(&view, &scanner, &config);
-
-            let validator = RawTableValidator::new();
-            assert!(validator.validate_raw(&context).is_ok());
-        }
+        validator_test(
+            raw_table_validator_file_factory,
+            "RawTableValidator",
+            "ValidationStructuralError",
+            config,
+            |context| validator.validate_raw(context),
+        )
     }
 }

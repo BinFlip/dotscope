@@ -71,7 +71,7 @@
 //! - [`crate::cilassembly::write::planner::validation`] - Space allocation validation
 //! - [`crate::cilassembly::write::planner::FileLayout`] - File layout planning
 //! - [`crate::cilassembly::write::planner::NativeTableRequirements`] - Native table space requirements
-//! - [`crate::cilassembly::file`] - PE file structure analysis
+//! - [`crate::file::File`] - PE file structure analysis
 
 use crate::{
     cilassembly::{

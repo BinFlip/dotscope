@@ -16,7 +16,7 @@
 //! ## Range Resolution Architecture
 //!
 //! PropertyMap entries define property ranges implicitly through the following mechanism:
-//! - Properties from `PropertyList[i]` to `PropertyList[i+1]`-1 belong to Parent[i]
+//! - Properties from `PropertyList\[i\]` to `PropertyList\[i+1\]`-1 belong to Parent\[i\]
 //! - The final entry's range extends to the end of the Property table
 //! - Empty ranges are valid and indicate types with no properties
 //! - PropertyPtr indirection may be used for non-contiguous property layouts

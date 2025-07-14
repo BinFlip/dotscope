@@ -30,7 +30,7 @@
 //!
 //! # let path = Path::new("assembly.dll");
 //! let view = CilAssemblyView::from_file(&path)?;
-//! let scanner = ReferenceScanner::new(&view)?;
+//! let scanner = ReferenceScanner::from_view(&view)?;
 //! let validator = TokenValidator::new(&scanner);
 //!
 //! // Validate token bounds
@@ -53,15 +53,15 @@
 //!
 //! # Thread Safety
 //!
-//! [`crate::metadata::validation::shared::tokens::TokenValidator`] is stateless and implements [`Send`] + [`Sync`],
+//! [`crate::metadata::validation::TokenValidator`] is stateless and implements [`Send`] + [`Sync`],
 //! making it safe for concurrent use across multiple validation threads.
 //!
 //! # Integration
 //!
 //! This module integrates with:
 //! - [`crate::metadata::validation::scanner`] - Provides token existence and reference data
-//! - [`crate::metadata::validation::validators::raw`] - Used by raw validators for token validation
-//! - [`crate::metadata::validation::validators::owned`] - Used by owned validators for token consistency
+//! - Raw validators - Used by raw validators for token validation
+//! - Owned validators - Used by owned validators for token consistency
 //! - [`crate::metadata::token`] - Validates token format and encoding
 
 use crate::{
@@ -93,7 +93,7 @@ impl<'a> TokenValidator<'a> {
     ///
     /// # Returns
     ///
-    /// A new [`crate::metadata::validation::shared::tokens::TokenValidator`] instance ready for validation operations.
+    /// A new [`TokenValidator`] instance ready for validation operations.
     pub fn new(scanner: &'a ReferenceScanner) -> Self {
         Self { scanner }
     }
@@ -481,7 +481,7 @@ mod tests {
     fn test_token_validator_creation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            if let Ok(scanner) = ReferenceScanner::new(&view) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = TokenValidator::new(&scanner);
 
                 // Test basic functionality - just ensure method works
@@ -494,7 +494,7 @@ mod tests {
     fn test_token_bounds_validation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            if let Ok(scanner) = ReferenceScanner::new(&view) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = TokenValidator::new(&scanner);
 
                 // Test invalid RID (0)
@@ -514,7 +514,7 @@ mod tests {
     fn test_token_table_type_validation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            if let Ok(scanner) = ReferenceScanner::new(&view) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = TokenValidator::new(&scanner);
 
                 if validator.table_row_count(TableId::TypeDef) > 0 {
@@ -560,7 +560,7 @@ mod tests {
     fn test_null_token_validation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            if let Ok(scanner) = ReferenceScanner::new(&view) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = TokenValidator::new(&scanner);
 
                 let null_token = Token::new(0);
@@ -578,7 +578,7 @@ mod tests {
     fn test_typed_token_validation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            if let Ok(scanner) = ReferenceScanner::new(&view) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = TokenValidator::new(&scanner);
 
                 if validator.table_row_count(TableId::TypeDef) > 0 {

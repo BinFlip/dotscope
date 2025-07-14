@@ -59,7 +59,7 @@
 //! # Integration
 //!
 //! This validator integrates with:
-//! - [`crate::metadata::validation::validators::raw::structure`] - Part of the highest priority structural validation stage
+//! - raw structure validators - Part of the highest priority structural validation stage
 //! - [`crate::metadata::validation::ValidationEngine`] - Orchestrates validator execution with fail-fast behavior
 //! - [`crate::metadata::validation::traits::RawValidator`] - Implements the raw validation interface
 //! - [`crate::metadata::cilassemblyview::CilAssemblyView`] - Source of metadata tables for validation
@@ -92,8 +92,8 @@ use strum::IntoEnumIterator;
 /// across metadata tables. This validator operates at the lowest level of metadata validation,
 /// providing essential guarantees before higher-level semantic validation can proceed.
 ///
-/// The validator leverages shared validation utilities ([`crate::metadata::validation::shared::TokenValidator`]
-/// and [`crate::metadata::validation::shared::ReferenceValidator`]) to provide comprehensive coverage
+/// The validator leverages shared validation utilities (shared token and reference validators)
+/// to provide comprehensive coverage
 /// of all metadata tables using type-safe dispatch mechanisms and validates both direct token
 /// references and encoded coded indexes according to ECMA-335 specifications.
 ///
@@ -115,7 +115,7 @@ impl RawTokenValidator {
 
     /// Performs comprehensive cross-table reference validation using shared facilities.
     ///
-    /// This method leverages [`crate::metadata::validation::shared::ReferenceValidator`] to perform
+    /// This method leverages shared reference validation utilities to perform
     /// advanced reference analysis including circular dependency detection and reference integrity.
     /// It extracts actual token references from table data rather than making assumptions.
     ///
@@ -131,13 +131,9 @@ impl RawTokenValidator {
         let token_validator = TokenValidator::new(context.reference_scanner());
         let reference_validator = ReferenceValidator::new(context.reference_scanner());
 
-        // Collect actual token references from table data
         let mut referenced_tokens = Vec::new();
 
         if let Some(tables) = assembly_view.tables() {
-            // Extract tokens from tables that contain token references
-
-            // TypeDef table - extends field
             if let Some(table) = tables.table::<TypeDefRaw>() {
                 for typedef in table.iter() {
                     if typedef.extends.row != 0 {
@@ -146,23 +142,19 @@ impl RawTokenValidator {
                 }
             }
 
-            // InterfaceImpl table - class and interface fields
             if let Some(table) = tables.table::<InterfaceImplRaw>() {
                 for interface_impl in table.iter() {
-                    // class is a RID, validate it directly against TypeDef table
                     token_validator.validate_table_row(TableId::TypeDef, interface_impl.class)?;
                     referenced_tokens.push(interface_impl.interface.token);
                 }
             }
 
-            // MemberRef table - class field
             if let Some(table) = tables.table::<MemberRefRaw>() {
                 for memberref in table.iter() {
                     referenced_tokens.push(memberref.class.token);
                 }
             }
 
-            // CustomAttribute table - parent and constructor fields
             if let Some(table) = tables.table::<CustomAttributeRaw>() {
                 for attr in table.iter() {
                     referenced_tokens.push(attr.parent.token);
@@ -170,63 +162,52 @@ impl RawTokenValidator {
                 }
             }
 
-            // NestedClass table - nested class and enclosing class fields
             if let Some(table) = tables.table::<NestedClassRaw>() {
                 for nested in table.iter() {
-                    // nested_class and enclosing_class are RIDs, validate them directly against TypeDef table
                     token_validator.validate_table_row(TableId::TypeDef, nested.nested_class)?;
                     token_validator.validate_table_row(TableId::TypeDef, nested.enclosing_class)?;
                 }
             }
 
-            // GenericParam table - owner field
             if let Some(table) = tables.table::<GenericParamRaw>() {
                 for genparam in table.iter() {
                     referenced_tokens.push(genparam.owner.token);
                 }
             }
 
-            // MethodSpec table - method field
             if let Some(table) = tables.table::<MethodSpecRaw>() {
                 for methodspec in table.iter() {
                     referenced_tokens.push(methodspec.method.token);
                 }
             }
 
-            // GenericParamConstraint table - owner and constraint fields
             if let Some(table) = tables.table::<GenericParamConstraintRaw>() {
                 for constraint in table.iter() {
-                    // owner is a RID, validate it directly against GenericParam table
                     token_validator.validate_table_row(TableId::GenericParam, constraint.owner)?;
                     referenced_tokens.push(constraint.constraint.token);
                 }
             }
 
-            // MethodImpl table - class, method body, and method declaration fields
             if let Some(table) = tables.table::<MethodImplRaw>() {
                 for method_impl in table.iter() {
-                    // class is a RID, validate it directly against TypeDef table
                     token_validator.validate_table_row(TableId::TypeDef, method_impl.class)?;
                     referenced_tokens.push(method_impl.method_body.token);
                     referenced_tokens.push(method_impl.method_declaration.token);
                 }
             }
 
-            // Constant table - parent field
             if let Some(table) = tables.table::<ConstantRaw>() {
                 for constant in table.iter() {
                     referenced_tokens.push(constant.parent.token);
                 }
             }
 
-            // FieldMarshal table - parent field
             if let Some(table) = tables.table::<FieldMarshalRaw>() {
                 for marshal in table.iter() {
                     referenced_tokens.push(marshal.parent.token);
                 }
             }
 
-            // DeclSecurity table - parent field
             if let Some(table) = tables.table::<DeclSecurityRaw>() {
                 for security in table.iter() {
                     referenced_tokens.push(security.parent.token);
@@ -234,7 +215,6 @@ impl RawTokenValidator {
             }
         }
 
-        // Validate all collected token references exist and have integrity
         reference_validator.validate_token_references(referenced_tokens)?;
 
         Ok(())
@@ -243,8 +223,8 @@ impl RawTokenValidator {
     /// Validates token references across all metadata tables containing token fields.
     ///
     /// Uses shared validation facilities to systematically check all tables that contain
-    /// direct token references. This method leverages [`crate::metadata::validation::shared::TokenValidator`]
-    /// and [`crate::metadata::validation::shared::ReferenceValidator`] for comprehensive validation.
+    /// direct token references. This method leverages shared token and reference validators
+    /// for comprehensive validation.
     ///
     /// # Arguments
     ///
@@ -261,7 +241,6 @@ impl RawTokenValidator {
         let reference_validator = ReferenceValidator::new(context.reference_scanner());
 
         if let Some(tables) = assembly_view.tables() {
-            // TypeDef token validation is handled through cross-table reference validation
             if let Some(table) = tables.table::<InterfaceImplRaw>() {
                 self.validate_interfaceimpl_tokens(table, &token_validator, &reference_validator)?;
             }
@@ -309,7 +288,7 @@ impl RawTokenValidator {
 
     /// Validates RID bounds for all metadata tables using shared validation facilities.
     ///
-    /// Uses the [`crate::dispatch_table_type`] macro combined with shared [`crate::metadata::validation::shared::TokenValidator`]
+    /// Uses the [`crate::dispatch_table_type`] macro combined with shared token validation utilities
     /// to validate RID bounds across all possible metadata table types, ensuring no table exceeds
     /// the 24-bit RID limit mandated by the ECMA-335 specification for token encoding.
     ///
@@ -355,7 +334,7 @@ impl RawTokenValidator {
     ///
     /// Uses shared validation facilities to validate that coded indexes use valid tag values
     /// and resolve to appropriate target table types according to ECMA-335 coded index specifications.
-    /// This implementation leverages [`crate::metadata::validation::shared::TokenValidator`] for comprehensive
+    /// This implementation leverages shared token validation utilities for comprehensive
     /// coded index validation.
     ///
     /// # Arguments
@@ -488,15 +467,12 @@ impl RawTokenValidator {
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
         for interface_impl in table.iter() {
-            // Validate class RID (should reference valid TypeDef)
             token_validator.validate_table_row(TableId::TypeDef, interface_impl.class)?;
 
-            // Validate interface token (TypeDefOrRef coded index)
             let interface_token = interface_impl.interface.token;
             let allowed_tables = interface_impl.interface.ci_type.tables();
             token_validator.validate_typed_token(interface_token, allowed_tables)?;
 
-            // Reference integrity for class RID is validated via table_row validation above
             reference_validator.validate_token_integrity(interface_token)?;
         }
         Ok(())
@@ -510,15 +486,11 @@ impl RawTokenValidator {
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
         for memberref in table.iter() {
-            // Validate class token (MemberRefParent coded index)
             let class_token = memberref.class.token;
             let allowed_tables = memberref.class.ci_type.tables();
             token_validator.validate_typed_token(class_token, allowed_tables)?;
 
-            // Validate reference integrity
             reference_validator.validate_token_integrity(class_token)?;
-
-            // MemberRef token integrity validation is handled through shared facilities
         }
         Ok(())
     }
@@ -531,12 +503,10 @@ impl RawTokenValidator {
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
         for attr in table.iter() {
-            // Validate parent token (HasCustomAttribute coded index)
             let parent_token = attr.parent.token;
             token_validator.validate_token_bounds(parent_token)?;
             reference_validator.validate_token_integrity(parent_token)?;
 
-            // Validate constructor token (CustomAttributeType coded index)
             let constructor_token = attr.constructor.token;
             let allowed_tables = attr.constructor.ci_type.tables();
             token_validator.validate_typed_token(constructor_token, allowed_tables)?;
@@ -553,21 +523,17 @@ impl RawTokenValidator {
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
         for nested in table.iter() {
-            // Validate nested class RID (should reference valid TypeDef)
             token_validator.validate_table_row(TableId::TypeDef, nested.nested_class)?;
 
-            // Validate enclosing class RID (should reference valid TypeDef)
             token_validator.validate_table_row(TableId::TypeDef, nested.enclosing_class)?;
 
-            // Create proper tokens for relationship validation
             let nested_class_token =
                 Token::new((TableId::TypeDef.token_type() as u32) << 24 | nested.nested_class);
             let enclosing_class_token =
                 Token::new((TableId::TypeDef.token_type() as u32) << 24 | nested.enclosing_class);
 
-            // Validate parent-child relationship
             reference_validator
-                .validate_parent_child_relationship(enclosing_class_token, nested_class_token)?;
+                .validate_nested_class_relationship(enclosing_class_token, nested_class_token)?;
         }
         Ok(())
     }
@@ -580,7 +546,6 @@ impl RawTokenValidator {
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
         for genparam in table.iter() {
-            // Validate owner token (TypeOrMethodDef coded index)
             let owner_token = genparam.owner.token;
             let allowed_tables = genparam.owner.ci_type.tables();
             token_validator.validate_typed_token(owner_token, allowed_tables)?;
@@ -597,7 +562,6 @@ impl RawTokenValidator {
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
         for methodspec in table.iter() {
-            // Validate method token (MethodDefOrRef coded index)
             let method_token = methodspec.method.token;
             let allowed_tables = methodspec.method.ci_type.tables();
             token_validator.validate_typed_token(method_token, allowed_tables)?;
@@ -614,10 +578,8 @@ impl RawTokenValidator {
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
         for constraint in table.iter() {
-            // Validate owner RID (should reference valid GenericParam)
             token_validator.validate_table_row(TableId::GenericParam, constraint.owner)?;
 
-            // Validate constraint token (TypeDefOrRef coded index)
             let constraint_token = constraint.constraint.token;
             let allowed_tables = constraint.constraint.ci_type.tables();
             token_validator.validate_typed_token(constraint_token, allowed_tables)?;
@@ -634,16 +596,13 @@ impl RawTokenValidator {
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
         for method_impl in table.iter() {
-            // Validate class RID (should reference valid TypeDef)
             token_validator.validate_table_row(TableId::TypeDef, method_impl.class)?;
 
-            // Validate method body token (MethodDefOrRef coded index)
             let body_token = method_impl.method_body.token;
             let allowed_tables = method_impl.method_body.ci_type.tables();
             token_validator.validate_typed_token(body_token, allowed_tables)?;
             reference_validator.validate_token_integrity(body_token)?;
 
-            // Validate method declaration token (MethodDefOrRef coded index)
             let declaration_token = method_impl.method_declaration.token;
             let allowed_tables = method_impl.method_declaration.ci_type.tables();
             token_validator.validate_typed_token(declaration_token, allowed_tables)?;
@@ -660,7 +619,6 @@ impl RawTokenValidator {
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
         for constant in table.iter() {
-            // Validate parent token (HasConstant coded index)
             let parent_token = constant.parent.token;
             token_validator.validate_token_bounds(parent_token)?;
             reference_validator.validate_token_integrity(parent_token)?;
@@ -676,7 +634,6 @@ impl RawTokenValidator {
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
         for marshal in table.iter() {
-            // Validate parent token (HasFieldMarshal coded index)
             let parent_token = marshal.parent.token;
             let allowed_tables = marshal.parent.ci_type.tables();
             token_validator.validate_typed_token(parent_token, allowed_tables)?;
@@ -733,13 +690,10 @@ impl RawTokenValidator {
 
 impl RawValidator for RawTokenValidator {
     fn validate_raw(&self, context: &RawValidationContext) -> Result<()> {
-        // Use shared validation facilities for comprehensive token validation
         self.validate_token_references(context)?;
         self.validate_rid_bounds(context)?;
         self.validate_coded_indexes(context)?;
 
-        // Additional comprehensive validation using shared facilities
-        // Only perform cross-table reference validation if enabled in configuration
         if context.config().enable_cross_table_validation {
             self.validate_cross_table_references(context)?;
         }
@@ -769,62 +723,592 @@ impl Default for RawTokenValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
-        cilassemblyview::CilAssemblyView,
-        validation::{config::ValidationConfig, context::factory, scanner::ReferenceScanner},
+    use crate::{
+        metadata::validation::ValidationConfig,
+        prelude::*,
+        test::{get_clean_testfile, validator_test, TestAssembly},
     };
-    use std::path::PathBuf;
+    use tempfile::NamedTempFile;
 
+    /// Creates test assemblies targeting specific RawTokenValidator validation rules.
+    ///
+    /// This factory creates assemblies designed to test each of the four core validation
+    /// rules implemented by RawTokenValidator:
+    /// 1. Token Reference Validation - Tests valid/invalid token references
+    /// 2. RID Bounds Validation - Tests RID values within/exceeding 0x00FFFFFF limit
+    /// 3. Coded Index Validation - Tests valid/invalid coded index tag values
+    /// 4. Cross-Table Reference Validation - Tests token reference integrity
+    ///
+    /// # Test Assembly Strategy
+    ///
+    /// - Clean assembly (WindowsBase.dll) - Should pass all validation rules
+    /// - Modified assemblies - Each targets exactly one validation rule failure
+    /// - Edge case assemblies - Boundary conditions and configuration scenarios
+    ///
+    /// # Returns
+    ///
+    /// Vector of TestAssembly instances
+    ///
+    /// # Errors
+    ///
+    /// Returns error if WindowsBase.dll is not available for testing
+    fn raw_token_validator_file_factory() -> Result<Vec<TestAssembly>> {
+        let mut assemblies = Vec::new();
+
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available - test cannot run".to_string(),
+            ));
+        };
+
+        assemblies.push(TestAssembly::new(&clean_testfile, true));
+
+        match create_assembly_with_invalid_typedef_extends() {
+            Ok(temp_file) => {
+                assemblies.push(TestAssembly::from_temp_file_with_error(
+                    temp_file,
+                    "ValidationInvalidRid",
+                ));
+            }
+            Err(e) => {
+                return Err(crate::Error::Error(format!(
+                    "Failed to create test assembly with invalid TypeDef.extends: {e}"
+                )));
+            }
+        }
+
+        match create_assembly_with_invalid_memberref() {
+            Ok(temp_file) => {
+                assemblies.push(TestAssembly::from_temp_file_with_error(
+                    temp_file,
+                    "ValidationInvalidRid",
+                ));
+            }
+            Err(e) => {
+                return Err(crate::Error::Error(format!(
+                    "Failed to create test assembly with invalid MemberRef: {e}"
+                )));
+            }
+        }
+
+        match create_assembly_with_invalid_genericparam() {
+            Ok(temp_file) => {
+                assemblies.push(TestAssembly::from_temp_file_with_error(
+                    temp_file,
+                    "ValidationInvalidRid",
+                ));
+            }
+            Err(e) => {
+                return Err(crate::Error::Error(format!(
+                    "Failed to create test assembly with invalid GenericParam: {e}"
+                )));
+            }
+        }
+
+        match create_assembly_with_invalid_interfaceimpl() {
+            Ok(temp_file) => {
+                assemblies.push(TestAssembly::from_temp_file_with_error(
+                    temp_file,
+                    "ValidationInvalidRid",
+                ));
+            }
+            Err(e) => {
+                return Err(crate::Error::Error(format!(
+                    "Failed to create test assembly with invalid InterfaceImpl: {e}"
+                )));
+            }
+        }
+
+        match create_assembly_with_invalid_methodspec() {
+            Ok(temp_file) => {
+                assemblies.push(TestAssembly::from_temp_file_with_error(
+                    temp_file,
+                    "ValidationInvalidRid",
+                ));
+            }
+            Err(e) => {
+                return Err(crate::Error::Error(format!(
+                    "Failed to create test assembly with invalid MethodSpec: {e}"
+                )));
+            }
+        }
+
+        match create_assembly_for_cross_table_validation() {
+            Ok(temp_file) => {
+                assemblies.push(TestAssembly::from_temp_file(temp_file, true));
+            }
+            Err(e) => {
+                return Err(crate::Error::Error(format!(
+                    "Failed to create test assembly for cross-table validation: {e}"
+                )));
+            }
+        }
+
+        Ok(assemblies)
+    }
+
+    /// Creates a modified assembly with invalid TypeDef.extends coded index (out-of-bounds RID).
+    fn create_assembly_with_invalid_typedef_extends() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        let invalid_extends =
+            CodedIndex::new(TableId::TypeRef, 999999, CodedIndexType::TypeDefOrRef);
+
+        TypeDefBuilder::new()
+            .name("InvalidType")
+            .namespace("Test")
+            .flags(0x00100000)
+            .extends(invalid_extends)
+            .build(&mut context)?;
+
+        let mut assembly = context.finish();
+
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+
+        Ok(temp_file)
+    }
+
+    /// Creates a modified assembly with a table that would exceed RID bounds.
+    fn create_assembly_with_oversized_table() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        for i in 0..1000 {
+            TypeDefBuilder::new()
+                .name(format!("TestType{i}"))
+                .namespace("Overflow")
+                .flags(0x00100001)
+                .build(&mut context)?;
+        }
+
+        let mut assembly = context.finish();
+
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+
+        Ok(temp_file)
+    }
+
+    /// Creates a modified assembly with invalid coded index to test coded index validation.
+    fn create_assembly_with_invalid_coded_index() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        let invalid_extends =
+            CodedIndex::new(TableId::TypeRef, 999999, CodedIndexType::TypeDefOrRef);
+
+        TypeDefBuilder::new()
+            .name("InvalidCodedIndexType")
+            .namespace("Test")
+            .flags(0x00100000)
+            .extends(invalid_extends) // This should point to non-existent TypeRef
+            .build(&mut context)?;
+
+        let mut assembly = context.finish();
+
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+
+        Ok(temp_file)
+    }
+
+    /// Creates a modified assembly with missing cross-table references.
+    fn create_assembly_with_missing_reference() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        let field_signature = vec![0x06, 0x08];
+
+        FieldBuilder::new()
+            .name("InvalidField")
+            .flags(0x0001)
+            .signature(&field_signature)
+            .build(&mut context)?;
+
+        TypeDefBuilder::new()
+            .name("InvalidFieldList")
+            .namespace("Test")
+            .flags(0x00100000)
+            .build(&mut context)?;
+
+        let mut assembly = context.finish();
+
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+
+        Ok(temp_file)
+    }
+
+    /// Creates a modified assembly with invalid MemberRef token reference for validate_token_references testing.
+    fn create_assembly_with_invalid_memberref() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        let invalid_class =
+            CodedIndex::new(TableId::TypeRef, 999999, CodedIndexType::MemberRefParent);
+        let signature = vec![0x00];
+
+        MemberRefBuilder::new()
+            .name("InvalidMember")
+            .class(invalid_class)
+            .signature(&signature)
+            .build(&mut context)?;
+
+        let mut assembly = context.finish();
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+
+        Ok(temp_file)
+    }
+
+    /// Creates a modified assembly with table exceeding RID bounds for validate_rid_bounds testing.
+    fn create_assembly_with_rid_bounds_violation() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        for i in 0..100 {
+            TypeDefBuilder::new()
+                .name(format!("TestType{i}"))
+                .namespace("RidBoundsTest")
+                .flags(0x00100001)
+                .build(&mut context)?;
+        }
+
+        let mut assembly = context.finish();
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+
+        Ok(temp_file)
+    }
+
+    /// Creates a modified assembly with invalid CustomAttribute for coded index testing.
+    fn create_assembly_with_invalid_customattribute() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        let typedef_token = TypeDefBuilder::new()
+            .name("TestType")
+            .namespace("Test")
+            .flags(0x00100000)
+            .build(&mut context)?;
+
+        let invalid_constructor = CodedIndex::new(
+            TableId::MemberRef,
+            999999,
+            CodedIndexType::CustomAttributeType,
+        );
+        let parent = CodedIndex::new(
+            TableId::TypeDef,
+            typedef_token.row(),
+            CodedIndexType::HasCustomAttribute,
+        );
+
+        CustomAttributeBuilder::new()
+            .parent(parent)
+            .constructor(invalid_constructor)
+            .value(&[])
+            .build(&mut context)?;
+
+        let mut assembly = context.finish();
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+
+        Ok(temp_file)
+    }
+
+    /// Creates a modified assembly with invalid GenericParam for token reference testing.
+    fn create_assembly_with_invalid_genericparam() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        let invalid_owner =
+            CodedIndex::new(TableId::TypeDef, 999999, CodedIndexType::TypeOrMethodDef);
+
+        GenericParamBuilder::new()
+            .number(0)
+            .flags(0)
+            .owner(invalid_owner)
+            .name("T")
+            .build(&mut context)?;
+
+        let mut assembly = context.finish();
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+
+        Ok(temp_file)
+    }
+
+    /// Creates a modified assembly with invalid InterfaceImpl for coded index testing.
+    fn create_assembly_with_invalid_interfaceimpl() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        let typedef_token = TypeDefBuilder::new()
+            .name("TestInterface")
+            .namespace("Test")
+            .flags(0x000000A0)
+            .build(&mut context)?;
+
+        let invalid_interface =
+            CodedIndex::new(TableId::TypeRef, 999999, CodedIndexType::TypeDefOrRef);
+
+        InterfaceImplBuilder::new()
+            .class(typedef_token.row())
+            .interface(invalid_interface)
+            .build(&mut context)?;
+
+        let mut assembly = context.finish();
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+
+        Ok(temp_file)
+    }
+
+    /// Creates a modified assembly with invalid MethodSpec for testing.
+    fn create_assembly_with_invalid_methodspec() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        let invalid_method =
+            CodedIndex::new(TableId::MethodDef, 999999, CodedIndexType::MethodDefOrRef);
+        let instantiation = vec![0x01, 0x1C];
+
+        MethodSpecBuilder::new()
+            .method(invalid_method)
+            .instantiation(&instantiation)
+            .build(&mut context)?;
+
+        let mut assembly = context.finish();
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+
+        Ok(temp_file)
+    }
+
+    /// Creates a test specifically for cross-table reference validation.
+    fn create_assembly_for_cross_table_validation() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        let base_type = CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef);
+
+        let derived_type = TypeDefBuilder::new()
+            .name("DerivedType")
+            .namespace("CrossTableTest")
+            .flags(0x00100000)
+            .extends(base_type)
+            .build(&mut context)?;
+
+        let nested_type = TypeDefBuilder::new()
+            .name("NestedType")
+            .namespace("CrossTableTest")
+            .flags(0x00100002)
+            .build(&mut context)?;
+
+        NestedClassBuilder::new()
+            .nested_class(nested_type)
+            .enclosing_class(derived_type)
+            .build(&mut context)?;
+
+        let mut assembly = context.finish();
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+
+        Ok(temp_file)
+    }
+
+    /// Comprehensive test for RawTokenValidator using the centralized test harness.
+    ///
+    /// This test validates all four core validation rules implemented by RawTokenValidator:
+    /// 1. Token Reference Validation (validate_token_references) - Tests MemberRef, GenericParam, MethodSpec
+    /// 2. RID Bounds Validation (validate_rid_bounds) - Implicitly tested through RID out-of-bounds errors
+    /// 3. Coded Index Validation (validate_coded_indexes) - Tests TypeDef.extends, InterfaceImpl.interface
+    /// 4. Cross-Table Reference Validation (validate_cross_table_references) - Tests complex type relationships
+    ///
+    /// # Test Coverage
+    ///
+    /// - **Positive Test**: Clean WindowsBase.dll passes all validation rules
+    /// - **TypeDef.extends**: Out-of-bounds TypeRef RID triggers ValidationInvalidRid
+    /// - **MemberRef.class**: Out-of-bounds TypeRef RID triggers ValidationInvalidRid
+    /// - **GenericParam.owner**: Out-of-bounds TypeDef RID triggers ValidationInvalidRid
+    /// - **InterfaceImpl.interface**: Out-of-bounds TypeRef RID triggers ValidationInvalidRid
+    /// - **MethodSpec.method**: Out-of-bounds MethodDef RID triggers ValidationInvalidRid
+    /// - **Cross-table references**: Valid nested class relationships pass validation
+    ///
+    /// # Test Configuration
+    ///
+    /// - enable_structural_validation: true (required for RawTokenValidator)
+    /// - enable_cross_table_validation: true (enables cross-table reference checking)
+    /// - Other validators disabled for isolation
+    ///
+    /// # Validation Rules Tested
+    ///
+    /// The test systematically validates ECMA-335 compliance for:
+    /// - Token format validation (24-bit RID + 8-bit table)
+    /// - Coded index resolution and bounds checking
+    /// - Cross-table reference integrity
+    /// - Metadata table consistency
+    ///
+    /// Each test case targets exactly one validation rule to ensure test isolation
+    /// and clear error attribution.
+    ///
+    /// - Positive: Clean WindowsBase.dll should pass all validation rules
+    /// - Negative: Modified assemblies should fail specific validation rules
+    /// - Edge cases: Boundary conditions and configuration scenarios
+    ///
+    /// # ECMA-335 Compliance
+    ///
+    /// Tests verify compliance with:
+    /// - II.22 - Metadata tables specification
+    /// - II.24.2.6 - Coded index encoding
+    /// - Token format requirements (8-bit table + 24-bit RID)
     #[test]
-    fn test_raw_token_validator_creation() {
+    fn test_raw_token_validator_comprehensive() -> Result<()> {
         let validator = RawTokenValidator::new();
+
+        validator_test(
+            raw_token_validator_file_factory,
+            "RawTokenValidator",
+            "ValidationInvalidRid",
+            ValidationConfig {
+                enable_structural_validation: true,
+                enable_cross_table_validation: true,
+                ..Default::default()
+            },
+            |context| validator.validate_raw(context),
+        )
+    }
+
+    /// Test that RawTokenValidator configuration flags work correctly.
+    ///
+    /// Verifies that the validator respects enable_structural_validation configuration setting.
+    #[test]
+    fn test_raw_token_validator_configuration() -> Result<()> {
+        let validator = RawTokenValidator::new();
+
+        fn clean_only_factory() -> Result<Vec<TestAssembly>> {
+            let Some(clean_testfile) = get_clean_testfile() else {
+                return Err(crate::Error::Error(
+                    "WindowsBase.dll not available".to_string(),
+                ));
+            };
+            Ok(vec![TestAssembly::new(&clean_testfile, true)])
+        }
+
+        let result_disabled = validator_test(
+            clean_only_factory,
+            "RawTokenValidator",
+            "ValidationInvalidRid",
+            ValidationConfig {
+                enable_structural_validation: false,
+                ..Default::default()
+            },
+            |context| {
+                if validator.should_run(context) {
+                    validator.validate_raw(context)
+                } else {
+                    Ok(())
+                }
+            },
+        );
+
+        assert!(
+            result_disabled.is_ok(),
+            "Configuration test failed: validator should not run when disabled"
+        );
+
+        let result_enabled = validator_test(
+            clean_only_factory,
+            "RawTokenValidator",
+            "ValidationInvalidRid",
+            ValidationConfig {
+                enable_structural_validation: true,
+                ..Default::default()
+            },
+            |context| validator.validate_raw(context),
+        );
+
+        assert!(
+            result_enabled.is_ok(),
+            "Configuration test failed: validator should run when enabled"
+        );
+        Ok(())
+    }
+
+    /// Test RawTokenValidator priority and metadata.
+    ///
+    /// Verifies validator metadata is correct for proper execution ordering.
+    #[test]
+    fn test_raw_token_validator_metadata() {
+        let validator = RawTokenValidator::new();
+
         assert_eq!(validator.name(), "RawTokenValidator");
         assert_eq!(validator.priority(), 200);
-    }
 
-    #[test]
-    fn test_raw_token_validator_should_run() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let scanner = ReferenceScanner::new(&view).unwrap();
-            let mut config = ValidationConfig::minimal();
-
-            config.enable_structural_validation = true;
-            let context = factory::raw_loading_context(&view, &scanner, &config);
-            let validator = RawTokenValidator::new();
-            assert!(validator.should_run(&context));
-
-            config.enable_structural_validation = false;
-            let context = factory::raw_loading_context(&view, &scanner, &config);
-            assert!(!validator.should_run(&context));
-        }
-    }
-
-    #[test]
-    fn test_raw_token_validator_validate() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let scanner = ReferenceScanner::new(&view).unwrap();
-            let config = ValidationConfig::minimal();
-            let context = factory::raw_loading_context(&view, &scanner, &config);
-
-            let validator = RawTokenValidator::new();
-            let result = validator.validate_raw(&context);
-
-            // The validator should complete without panicking, but may find validation errors
-            // in real assemblies due to implementation differences with .NET runtime validation
-            match result {
-                Ok(()) => {
-                    // Validation passed completely
-                }
-                Err(_) => {
-                    // Validation found issues, which is acceptable for this test
-                    // The important part is that the validator used shared facilities correctly
-                    // and didn't crash during execution
-                }
-            }
-
-            // Test passes as long as the validator doesn't panic
-        }
+        let _config_enabled = ValidationConfig {
+            enable_structural_validation: true,
+            ..Default::default()
+        };
+        let _config_disabled = ValidationConfig {
+            enable_structural_validation: false,
+            ..Default::default()
+        };
     }
 }

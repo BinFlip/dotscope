@@ -30,19 +30,17 @@
 //!
 //! # Key Components
 //!
-//! - [`crate::metadata::resources::encoder::ResourceDataEncoder`] - Main encoder for resource data creation
-//! - [`crate::metadata::resources::encoder::DotNetResourceEncoder`] - Specialized encoder for .NET resource file format
-//! - [`crate::metadata::resources::encoder::ResourceAlignment`] - Alignment configuration and management
+//! - [`crate::metadata::resources::DotNetResourceEncoder`] - Main encoder for resource data creation
+//! - [`crate::metadata::resources::DotNetResourceEncoder`] - Specialized encoder for .NET resource file format
 //!
 //! # Usage Examples
 //!
 //! ## Basic Resource Data Encoding
 //!
 //! ```rust,ignore
-//! use dotscope::metadata::resources::encoder::{ResourceDataEncoder, ResourceAlignment};
+//! use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
 //!
-//! let mut encoder = ResourceDataEncoder::new();
-//! encoder.set_alignment(ResourceAlignment::Standard);
+//! let mut encoder = DotNetResourceEncoder::new();
 //!
 //! // Add various resource types
 //! encoder.add_string_resource("AppName", "My Application")?;
@@ -83,7 +81,7 @@
 //!
 //! # Thread Safety
 //!
-//! The [`crate::metadata::resources::encoder::ResourceDataEncoder`] is not [`Send`] or [`Sync`] due to internal
+//! The [`crate::metadata::resources::encoder::DotNetResourceEncoder`] is not [`Send`] or [`Sync`] due to internal
 //! mutable state. For concurrent encoding, create separate encoder instances per thread
 //! or use the stateless encoding functions for simple scenarios.
 //!

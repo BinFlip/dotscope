@@ -152,7 +152,7 @@
 //! - **[`crate::metadata::tables::memberref`]**: Handles external method references in implementation mappings
 //! - **[`crate::metadata::tables::typedef`]**: Links implementation mappings to their containing types
 //! - **[`crate::metadata::typesystem`]**: Provides type resolution and inheritance hierarchy analysis
-//! - **[`crate::metadata::loader::context::LoaderContext`]**: Coordinates dependency resolution during parallel loading
+//! - **Internal loader context**: Coordinates dependency resolution during parallel loading
 //! - **[`crate::metadata::streams`]**: Accesses metadata streams for signature and name resolution
 //!
 //! The implementation mapping system serves as a critical component in method resolution, enabling proper

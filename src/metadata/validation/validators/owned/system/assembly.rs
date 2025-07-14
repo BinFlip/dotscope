@@ -61,7 +61,7 @@
 //! # Integration
 //!
 //! This validator integrates with:
-//! - [`crate::metadata::validation::validators::owned::system`] - Part of the owned system validation stage
+//! - owned system validators - Part of the owned system validation stage
 //! - [`crate::metadata::validation::engine::ValidationEngine`] - Orchestrates validator execution
 //! - [`crate::metadata::validation::traits::OwnedValidator`] - Implements the owned validation interface
 //! - [`crate::metadata::cilobject::CilObject`] - Source of resolved assembly structures
@@ -110,7 +110,7 @@ impl OwnedAssemblyValidator {
     ///
     /// # Returns
     ///
-    /// A new [`crate::metadata::validation::validators::owned::system::assembly::OwnedAssemblyValidator`] instance ready for validation operations.
+    /// A new [`OwnedAssemblyValidator`] instance ready for validation operations.
     ///
     /// # Thread Safety
     ///
@@ -478,7 +478,7 @@ impl OwnedAssemblyValidator {
         for type_entry in types.all_types() {
             let type_ref = &*type_entry;
             // Only validate external type references
-            if let Some(_external) = &type_ref.external {
+            if let Some(_external) = type_ref.get_external() {
                 // Validate type reference has valid name
                 if type_ref.name.is_empty() {
                     return Err(crate::Error::ValidationOwnedValidatorFailed {

@@ -56,7 +56,7 @@
 //!
 //! This module integrates with:
 //! - [`crate::cilassembly::modifications::TableModifications`] - Operation storage and application
-//! - [`crate::cilassembly::validation`] - Operation validation and conflict detection
+//! - Assembly validation - Operation validation and conflict detection
 //! - [`crate::metadata::tables`] - Table data structures and row types
 
 use crate::metadata::tables::TableDataOwned;

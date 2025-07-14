@@ -98,7 +98,7 @@
 //! # Integration
 //!
 //! This module integrates with:
-//! - [`crate::metadata::imports::container`] - Unified import container combining CIL and native
+//! - [`crate::metadata::imports::UnifiedImportContainer`] - Unified import container combining CIL and native
 //! - [`crate::cilassembly::CilAssembly`] - PE writing pipeline for import table generation
 //! - [`goblin`] - PE parsing library for import directory analysis
 

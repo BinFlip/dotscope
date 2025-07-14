@@ -8,8 +8,8 @@
 //! # Architecture
 //!
 //! The constraint validation system provides two key areas of constraint validation:
-//! 1. **Generic Constraint Validation** ([`crate::metadata::validation::validators::raw::constraints::generic`]) - Generic parameter constraints, bounds, and variance rules
-//! 2. **Layout Constraint Validation** ([`crate::metadata::validation::validators::raw::constraints::layout`]) - Field layout, class layout, and memory alignment constraints
+//! 1. **Generic Constraint Validation** ([`generic`]) - Generic parameter constraints, bounds, and variance rules
+//! 2. **Layout Constraint Validation** ([`layout`]) - Field layout, class layout, and memory alignment constraints
 //!
 //! These validators ensure that constraint specifications in raw metadata conform to ECMA-335
 //! requirements and can be safely processed by the .NET runtime without violating type system
@@ -17,8 +17,8 @@
 //!
 //! # Key Components
 //!
-//! - [`crate::metadata::validation::validators::raw::constraints::RawGenericConstraintValidator`] - Validates generic parameter constraints, type bounds, variance specifications, and constraint compatibility
-//! - [`crate::metadata::validation::validators::raw::constraints::RawLayoutConstraintValidator`] - Validates field layout constraints, class layout specifications, packing alignment, and memory layout rules
+//! - [`crate::metadata::validation::validators::RawGenericConstraintValidator`] - Validates generic parameter constraints, type bounds, variance specifications, and constraint compatibility
+//! - [`crate::metadata::validation::validators::RawLayoutConstraintValidator`] - Validates field layout constraints, class layout specifications, packing alignment, and memory layout rules
 //!
 //! # Usage Examples
 //!
@@ -48,10 +48,10 @@
 //! # Integration
 //!
 //! This module integrates with:
-//! - [`crate::metadata::validation::validators::raw`] - Part of the raw validation stage after structure validation
+//! - Raw validation stage - Part of the raw validation stage after structure validation
 //! - [`crate::metadata::validation::engine`] - Coordinated by the validation engine with fail-fast behavior
 //! - [`crate::metadata::validation::traits`] - Implements [`crate::metadata::validation::traits::RawValidator`] trait
-//! - [`crate::metadata::validation::shared::schema`] - Uses shared schema validation utilities
+//! - shared schema validation utilities - Uses shared schema validation utilities
 mod generic;
 mod layout;
 

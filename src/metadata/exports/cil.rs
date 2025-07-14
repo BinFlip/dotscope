@@ -377,23 +377,25 @@ impl Exports {
             let borrowed = exported_type.value();
 
             // Compare implementation references
-            match (&borrowed.implementation, reference) {
-                (CilTypeReference::File(a), CilTypeReference::File(b)) => {
-                    if a.token == b.token {
-                        result.push(borrowed.clone());
+            if let Some(implementation) = borrowed.get_implementation() {
+                match (implementation, reference) {
+                    (CilTypeReference::File(a), CilTypeReference::File(b)) => {
+                        if a.token == b.token {
+                            result.push(borrowed.clone());
+                        }
                     }
-                }
-                (CilTypeReference::AssemblyRef(a), CilTypeReference::AssemblyRef(b)) => {
-                    if a.token == b.token {
-                        result.push(borrowed.clone());
+                    (CilTypeReference::AssemblyRef(a), CilTypeReference::AssemblyRef(b)) => {
+                        if a.token == b.token {
+                            result.push(borrowed.clone());
+                        }
                     }
-                }
-                (CilTypeReference::ExportedType(a), CilTypeReference::ExportedType(b)) => {
-                    if a.token == b.token {
-                        result.push(borrowed.clone());
+                    (CilTypeReference::ExportedType(a), CilTypeReference::ExportedType(b)) => {
+                        if a.token == b.token {
+                            result.push(borrowed.clone());
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
         }
 

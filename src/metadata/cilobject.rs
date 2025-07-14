@@ -440,7 +440,6 @@ impl CilObject {
             data: object_data,
         };
 
-        // Perform validation on the constructed object if required
         if validation_config.should_validate_owned() {
             object.validate(validation_config)?;
         }
@@ -768,13 +767,13 @@ impl CilObject {
     ///
     /// # Returns
     ///
-    /// A reference to the [`DeclSecurityMap`] containing all security declarations.
-    /// The map uses tokens as keys and [`DeclSecurityRc`] (reference-counted security
+    /// A reference to the [`crate::metadata::tables::DeclSecurityMap`] containing all security declarations.
+    /// The map uses tokens as keys and [`crate::metadata::tables::DeclSecurityRc`] (reference-counted security
     /// declarations) as values for efficient memory management.
     ///
     /// # Usage
     ///
-    /// ```ignore
+    /// ```rust,ignore
     /// # use dotscope::CilObject;
     /// # fn security_example() -> dotscope::Result<()> {
     /// let assembly = CilObject::from_file("example.dll")?;
@@ -782,10 +781,11 @@ impl CilObject {
     ///
     /// for entry in security_decls.iter() {
     ///     let (token, decl) = (entry.key(), entry.value());
-    ///     println!("Security declaration for token {}: {} action",
+    ///     println!("Security declaration for token {}: {:?}",
     ///              token.value(), decl.action);
     /// }
-    /// # Ok::<(), dotscope::Error>(())
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn security_declarations(&self) -> &DeclSecurityMap {
         &self.data.decl_security

@@ -111,7 +111,7 @@
 //! # Integration
 //!
 //! This module integrates with:
-//! - [`crate::metadata::exports::container`] - Unified export container combining CIL and native
+//! - [`crate::metadata::exports::UnifiedExportContainer`] - Unified export container combining CIL and native
 //! - [`crate::cilassembly::CilAssembly`] - PE writing pipeline for export table generation
 //! - [`goblin`] - PE parsing library for export directory analysis
 

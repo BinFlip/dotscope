@@ -9,20 +9,20 @@
 //! # Architecture
 //!
 //! The structure validation system provides four key areas of structural validation:
-//! 1. **Token Validation** ([`crate::metadata::validation::validators::raw::structure::token`]) - Token format, RID bounds, and coded index validation
-//! 2. **Signature Validation** ([`crate::metadata::validation::validators::raw::structure::signature`]) - Signature blob format, calling convention, and ECMA-335 compliance
-//! 3. **Table Validation** ([`crate::metadata::validation::validators::raw::structure::table`]) - Table structure, row counts, and column validation
-//! 4. **Heap Validation** ([`crate::metadata::validation::validators::raw::structure::heap`]) - Heap bounds, string validation, and data integrity
+//! 1. **Token Validation** ([`token`]) - Token format, RID bounds, and coded index validation
+//! 2. **Signature Validation** ([`signature`]) - Signature blob format, calling convention, and ECMA-335 compliance
+//! 3. **Table Validation** ([`table`]) - Table structure, row counts, and column validation
+//! 4. **Heap Validation** ([`heap`]) - Heap bounds, string validation, and data integrity
 //!
 //! These validators ensure that raw metadata structures conform to ECMA-335 format requirements
 //! and can be safely processed by higher-level validators and the .NET runtime.
 //!
 //! # Key Components
 //!
-//! - [`crate::metadata::validation::validators::raw::structure::RawTokenValidator`] - Validates token format, RID bounds, coded indices, and token type constraints
-//! - [`crate::metadata::validation::validators::raw::structure::RawSignatureValidator`] - Validates signature blob format, calling convention compliance, and ECMA-335 structural integrity
-//! - [`crate::metadata::validation::validators::raw::structure::RawTableValidator`] - Validates table structure, row counts, column integrity, and table relationships
-//! - [`crate::metadata::validation::validators::raw::structure::RawHeapValidator`] - Validates heap bounds, string integrity, blob format, and GUID structure
+//! - [`RawTokenValidator`] - Validates token format, RID bounds, coded indices, and token type constraints
+//! - [`RawSignatureValidator`] - Validates signature blob format, calling convention compliance, and ECMA-335 structural integrity
+//! - [`RawTableValidator`] - Validates table structure, row counts, column integrity, and table relationships
+//! - [`RawHeapValidator`] - Validates heap bounds, string integrity, blob format, and GUID structure
 //!
 //! # Usage Examples
 //!
@@ -52,7 +52,7 @@
 //! # Integration
 //!
 //! This module integrates with:
-//! - [`crate::metadata::validation::validators::raw`] - Part of the raw validation stage with highest priority
+//! - Raw validation stage - Part of the raw validation stage with highest priority
 //! - [`crate::metadata::validation::engine`] - Coordinated by the validation engine with fail-fast behavior
 //! - [`crate::metadata::validation::traits`] - Implements [`crate::metadata::validation::traits::RawValidator`] trait
 //! - [`crate::metadata::validation::shared`] - Uses shared validation utilities for consistency

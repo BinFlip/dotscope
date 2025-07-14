@@ -150,7 +150,6 @@ impl OwnedMethodValidator {
         for entry in methods.iter() {
             let method = entry.value();
 
-            // Validate method name is not empty
             if method.name.is_empty() {
                 return Err(crate::Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
@@ -162,7 +161,6 @@ impl OwnedMethodValidator {
                 });
             }
 
-            // Validate parameter types are resolved
             for (index, (_, param)) in method.params.iter().enumerate() {
                 if let Some(base_type_ref) = param.base.get() {
                     if let Some(base_type) = base_type_ref.upgrade() {
@@ -198,7 +196,6 @@ impl OwnedMethodValidator {
                 }
             }
 
-            // Validate return type is resolved
             if let crate::metadata::signatures::TypeSignature::Unknown =
                 &method.signature.return_type.base
             {
@@ -210,7 +207,6 @@ impl OwnedMethodValidator {
                 });
             }
 
-            // Validate local variables if present
             for (index, (_, local)) in method.local_vars.iter().enumerate() {
                 if let Some(local_type) = local.base.upgrade() {
                     if local_type.name.is_empty() {
@@ -267,7 +263,6 @@ impl OwnedMethodValidator {
         for entry in methods.iter() {
             let method = entry.value();
 
-            // Validate abstract methods are also virtual
             if method.flags_modifiers.contains(MethodModifiers::ABSTRACT)
                 && !method.flags_modifiers.contains(MethodModifiers::VIRTUAL)
             {
@@ -278,7 +273,6 @@ impl OwnedMethodValidator {
                 });
             }
 
-            // Validate static methods are not virtual or abstract
             if method.flags_modifiers.contains(MethodModifiers::STATIC) {
                 if method.flags_modifiers.contains(MethodModifiers::VIRTUAL) {
                     return Err(crate::Error::ValidationOwnedValidatorFailed {
@@ -305,7 +299,6 @@ impl OwnedMethodValidator {
                 }
             }
 
-            // Validate final methods are also virtual
             if method.flags_modifiers.contains(MethodModifiers::FINAL)
                 && !method.flags_modifiers.contains(MethodModifiers::VIRTUAL)
             {
@@ -316,24 +309,20 @@ impl OwnedMethodValidator {
                 });
             }
 
-            // Validate NEW_SLOT usage with virtual methods
             if method.flags_vtable.contains(MethodVtableFlags::NEW_SLOT)
                 && !method.flags_modifiers.contains(MethodModifiers::VIRTUAL)
-            {
-                // NEW_SLOT without VIRTUAL is only valid for special runtime methods
-                if !method
+                && !method
                     .flags_modifiers
                     .contains(MethodModifiers::RTSPECIAL_NAME)
-                {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
-                        validator: self.name().to_string(),
-                        message: format!(
-                            "Method '{}' uses NEW_SLOT but is not virtual or runtime special",
-                            method.name
-                        ),
-                        source: None,
-                    });
-                }
+            {
+                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    validator: self.name().to_string(),
+                    message: format!(
+                        "Method '{}' uses NEW_SLOT but is not virtual or runtime special",
+                        method.name
+                    ),
+                    source: None,
+                });
             }
         }
 
@@ -401,7 +390,6 @@ impl OwnedMethodValidator {
                     });
                 }
 
-                // Instance constructors cannot be static
                 if method.flags_modifiers.contains(MethodModifiers::STATIC) {
                     return Err(crate::Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
@@ -410,7 +398,6 @@ impl OwnedMethodValidator {
                     });
                 }
 
-                // Instance constructors cannot be virtual
                 if method.flags_modifiers.contains(MethodModifiers::VIRTUAL) {
                     return Err(crate::Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
@@ -462,7 +449,6 @@ impl OwnedMethodValidator {
                     });
                 }
 
-                // Static constructors should be private
                 if !method.flags_access.contains(MethodAccessFlags::PRIVATE) {
                     return Err(crate::Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
@@ -472,7 +458,6 @@ impl OwnedMethodValidator {
                 }
             }
 
-            // Methods with special names should have SPECIAL_NAME flag
             if (method.name.starts_with("get_")
                 || method.name.starts_with("set_")
                 || method.name.starts_with("add_")
@@ -524,7 +509,6 @@ impl OwnedMethodValidator {
         for entry in methods.iter() {
             let method = entry.value();
 
-            // Abstract methods should not have RVA (implementation)
             if method.flags_modifiers.contains(MethodModifiers::ABSTRACT) && method.rva.is_some() {
                 return Err(crate::Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
@@ -536,7 +520,6 @@ impl OwnedMethodValidator {
                 });
             }
 
-            // P/Invoke methods should not have RVA
             if method
                 .flags_modifiers
                 .contains(MethodModifiers::PINVOKE_IMPL)
@@ -552,7 +535,6 @@ impl OwnedMethodValidator {
                 });
             }
 
-            // Runtime methods should not have RVA
             if method
                 .impl_code_type
                 .intersects(MethodImplCodeType::RUNTIME)
@@ -568,7 +550,6 @@ impl OwnedMethodValidator {
                 });
             }
 
-            // Non-abstract, non-P/Invoke, non-runtime methods should have RVA
             if !method.flags_modifiers.contains(MethodModifiers::ABSTRACT)
                 && !method
                     .flags_modifiers

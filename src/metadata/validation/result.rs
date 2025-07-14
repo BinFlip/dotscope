@@ -573,7 +573,6 @@ impl TwoStageValidationResult {
     pub fn into_result(self) -> Result<()> {
         if let Some(stage1) = &self.stage1_result {
             if stage1.is_failure() {
-                // Stage 1 failed - return appropriate error
                 if let Some(first_error) = stage1.first_error() {
                     return Err(Error::ValidationStage1Failed {
                         source: Box::new((*first_error).clone()),
@@ -588,7 +587,6 @@ impl TwoStageValidationResult {
 
         if let Some(stage2) = &self.stage2_result {
             if stage2.is_failure() {
-                // Stage 2 failed - convert to appropriate error
                 return stage2.clone().into_result();
             }
         }

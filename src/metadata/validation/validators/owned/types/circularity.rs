@@ -148,13 +148,17 @@ impl OwnedTypeCircularityValidator {
         let mut visited = HashSet::new();
         let mut visiting = HashSet::new();
 
-        // Check each type's inheritance chain for cycles
         for entry in type_registry.iter() {
             let token = *entry.key();
             let type_rc = entry.value();
             if !visited.contains(&token) {
                 self.check_inheritance_cycle(type_rc, &mut visited, &mut visiting, context, 0)?;
             }
+        }
+
+        for entry in type_registry.iter() {
+            let type_rc = entry.value();
+            self.check_inheritance_depth(type_rc, context, 0)?;
         }
 
         Ok(())
@@ -188,26 +192,12 @@ impl OwnedTypeCircularityValidator {
         context: &OwnedValidationContext,
         depth: usize,
     ) -> Result<()> {
-        // Check recursion depth limit to prevent stack overflow
-        if depth > context.config().max_nesting_depth {
-            return Err(Error::ValidationOwnedValidatorFailed {
-                validator: self.name().to_string(),
-                message: format!(
-                    "Inheritance chain depth exceeds maximum nesting depth limit of {} for type '{}' (token 0x{:08X})",
-                    context.config().max_nesting_depth, type_rc.name, type_rc.token.value()
-                ),
-                source: None,
-            });
-        }
-
         let current_token = type_rc.token;
 
-        // If already completely processed, skip
         if visited.contains(&current_token) {
             return Ok(());
         }
 
-        // If currently being processed, we found a cycle
         if visiting.contains(&current_token) {
             return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
@@ -219,17 +209,64 @@ impl OwnedTypeCircularityValidator {
             });
         }
 
-        // Mark as currently being processed
+        if depth > context.config().max_nesting_depth {
+            return Err(Error::ValidationOwnedValidatorFailed {
+                validator: self.name().to_string(),
+                message: format!(
+                    "Inheritance chain depth exceeds maximum nesting depth limit of {} for type '{}' (token 0x{:08X})",
+                    context.config().max_nesting_depth, type_rc.name, type_rc.token.value()
+                ),
+                source: None,
+            });
+        }
+
         visiting.insert(current_token);
 
-        // Check base type if it exists
         if let Some(base_type) = type_rc.base() {
             self.check_inheritance_cycle(&base_type, visited, visiting, context, depth + 1)?;
         }
 
-        // Mark as completely processed and remove from currently processing
         visiting.remove(&current_token);
         visited.insert(current_token);
+
+        Ok(())
+    }
+
+    /// Checks inheritance chain depth for a specific type without cycle detection optimization.
+    ///
+    /// This method performs a simple depth check by following the inheritance chain
+    /// from the given type to ensure it doesn't exceed the configured maximum depth.
+    /// Unlike cycle detection, this doesn't use visited sets to allow proper depth counting.
+    ///
+    /// # Arguments
+    ///
+    /// * `type_rc` - Type to check inheritance depth for
+    /// * `context` - Validation context containing configuration
+    /// * `depth` - Current depth in the inheritance chain
+    ///
+    /// # Returns
+    ///
+    /// Returns error if the inheritance chain depth exceeds the maximum allowed.
+    fn check_inheritance_depth(
+        &self,
+        type_rc: &CilTypeRc,
+        context: &OwnedValidationContext,
+        depth: usize,
+    ) -> Result<()> {
+        if depth > context.config().max_nesting_depth {
+            return Err(Error::ValidationOwnedValidatorFailed {
+                validator: self.name().to_string(),
+                message: format!(
+                    "Inheritance chain depth exceeds maximum nesting depth limit of {} for type '{}' (token 0x{:08X})",
+                    context.config().max_nesting_depth, type_rc.name, type_rc.token.value()
+                ),
+                source: None,
+            });
+        }
+
+        if let Some(base_type) = type_rc.base() {
+            self.check_inheritance_depth(&base_type, context, depth + 1)?;
+        }
 
         Ok(())
     }
@@ -253,7 +290,6 @@ impl OwnedTypeCircularityValidator {
         let mut visited = HashSet::new();
         let mut visiting = HashSet::new();
 
-        // Build nested type relationships map
         let mut nested_relationships = HashMap::new();
         for entry in type_registry.iter() {
             let token = *entry.key();
@@ -267,7 +303,6 @@ impl OwnedTypeCircularityValidator {
             nested_relationships.insert(token, nested_tokens);
         }
 
-        // Check each type for nested type cycles
         for entry in type_registry.iter() {
             let token = *entry.key();
             if !visited.contains(&token) {
@@ -302,12 +337,10 @@ impl OwnedTypeCircularityValidator {
         visited: &mut HashSet<Token>,
         visiting: &mut HashSet<Token>,
     ) -> Result<()> {
-        // If already completely processed, skip
         if visited.contains(&token) {
             return Ok(());
         }
 
-        // If currently being processed, we found a cycle
         if visiting.contains(&token) {
             return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
@@ -319,10 +352,8 @@ impl OwnedTypeCircularityValidator {
             });
         }
 
-        // Mark as currently being processed
         visiting.insert(token);
 
-        // Check all nested types
         if let Some(nested_tokens) = nested_relationships.get(&token) {
             for &nested_token in nested_tokens {
                 self.check_nested_type_cycle(
@@ -334,7 +365,6 @@ impl OwnedTypeCircularityValidator {
             }
         }
 
-        // Mark as completely processed and remove from currently processing
         visiting.remove(&token);
         visited.insert(token);
 
@@ -364,12 +394,10 @@ impl OwnedTypeCircularityValidator {
         let mut visited = HashSet::new();
         let mut visiting = HashSet::new();
 
-        // Build interface implementation relationships map (only for interfaces)
         let mut interface_relationships = HashMap::new();
         for entry in type_registry.iter() {
             let token = *entry.key();
             let type_rc = entry.value();
-            // Only check interfaces for circular interface implementations
             if type_rc.flavor() == &CilFlavor::Interface {
                 let mut implemented_interfaces = Vec::new();
                 for (_, interface_ref) in type_rc.interfaces.iter() {
@@ -381,7 +409,6 @@ impl OwnedTypeCircularityValidator {
             }
         }
 
-        // Check each interface for circular interface implementation
         for (token, _) in interface_relationships.iter() {
             if !visited.contains(token) {
                 self.check_interface_implementation_cycle(
@@ -415,12 +442,10 @@ impl OwnedTypeCircularityValidator {
         visited: &mut HashSet<Token>,
         visiting: &mut HashSet<Token>,
     ) -> Result<()> {
-        // If already completely processed, skip
         if visited.contains(&token) {
             return Ok(());
         }
 
-        // If currently being processed, we found a cycle
         if visiting.contains(&token) {
             return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
@@ -432,10 +457,8 @@ impl OwnedTypeCircularityValidator {
             });
         }
 
-        // Mark as currently being processed
         visiting.insert(token);
 
-        // Check all implemented interfaces
         if let Some(implemented_tokens) = interface_relationships.get(&token) {
             for &implemented_token in implemented_tokens {
                 self.check_interface_implementation_cycle(
@@ -447,7 +470,6 @@ impl OwnedTypeCircularityValidator {
             }
         }
 
-        // Mark as completely processed and remove from currently processing
         visiting.remove(&token);
         visited.insert(token);
 
@@ -457,7 +479,6 @@ impl OwnedTypeCircularityValidator {
 
 impl OwnedValidator for OwnedTypeCircularityValidator {
     fn validate_owned(&self, context: &OwnedValidationContext) -> Result<()> {
-        // Validate different types of circular dependencies in sequence
         self.validate_inheritance_circularity(context)?;
         self.validate_nested_type_circularity(context)?;
         self.validate_interface_implementation_circularity(context)?;
@@ -487,96 +508,339 @@ impl Default for OwnedTypeCircularityValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
-        cilassemblyview::CilAssemblyView,
-        cilobject::CilObject,
-        validation::{config::ValidationConfig, context::factory, scanner::ReferenceScanner},
+    use crate::{
+        cilassembly::CilAssembly,
+        metadata::{
+            cilassemblyview::CilAssemblyView,
+            tables::{CodedIndex, CodedIndexType, TableId, TypeAttributes},
+            validation::{scanner::ReferenceScanner, ValidationConfig},
+        },
+        prelude::*,
+        test::{get_clean_testfile, owned_validator_test, TestAssembly},
+        Result,
     };
-    use std::path::PathBuf;
+    use tempfile::NamedTempFile;
+
+    /// File factory function for OwnedTypeCircularityValidator testing.
+    ///
+    /// Creates test assemblies with different types of circular dependencies.
+    /// Each assembly tests a specific circularity detection scenario.
+    fn owned_type_circularity_validator_file_factory() -> Result<Vec<TestAssembly>> {
+        let mut assemblies = Vec::new();
+
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
+        };
+        assemblies.push(TestAssembly::new(&clean_testfile, true));
+
+        match create_assembly_with_inheritance_circularity() {
+            Ok(temp_file) => {
+                assemblies.push(TestAssembly::from_temp_file_with_error(
+                    temp_file,
+                    "Circular inheritance",
+                ));
+            }
+            Err(e) => eprintln!("Warning: Could not create inheritance test assembly: {e}"),
+        }
+
+        match create_assembly_with_nested_type_circularity() {
+            Ok(temp_file) => {
+                assemblies.push(TestAssembly::from_temp_file_with_error(
+                    temp_file,
+                    "Circular nested type relationship detected",
+                ));
+            }
+            Err(e) => eprintln!("Warning: Could not create nested type test assembly: {e}"),
+        }
+
+        match create_assembly_with_interface_circularity() {
+            Ok(temp_file) => {
+                assemblies.push(TestAssembly::from_temp_file_with_error(
+                    temp_file,
+                    "Circular inheritance detected",
+                ));
+            }
+            Err(e) => eprintln!("Warning: Could not create interface test assembly: {e}"),
+        }
+
+        match create_assembly_with_depth_limit_violation() {
+            Ok(temp_file) => {
+                assemblies.push(TestAssembly::from_temp_file_with_error(
+                    temp_file,
+                    "Inheritance chain depth exceeds maximum nesting depth limit",
+                ));
+            }
+            Err(e) => eprintln!("Warning: Could not create depth limit violation test: {e}"),
+        }
+
+        Ok(assemblies)
+    }
+
+    /// Creates an assembly with inheritance circularity.
+    ///
+    /// Creates types that inherit from each other in a circular pattern:
+    /// ClassA -> ClassB -> ClassA
+    ///
+    /// The approach is to create the circular inheritance directly in the TypeDef table
+    /// in a way that will be detected by the validator when the assembly is reloaded.
+    fn create_assembly_with_inheritance_circularity() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        let class_a_name_index = context.add_string("CircularClassA")?;
+        let class_b_name_index = context.add_string("CircularClassB")?;
+        let test_namespace_index = context.add_string("Test")?;
+
+        let mut assembly = context.finish();
+        let current_typedef_count = assembly.original_table_row_count(TableId::TypeDef);
+
+        let class_a_row = current_typedef_count + 1;
+        let class_b_row = current_typedef_count + 2;
+        let class_a_token = Token::new(0x02000000 | class_a_row);
+        let class_b_token = Token::new(0x02000000 | class_b_row);
+
+        let class_a_raw = TypeDefRaw {
+            rid: class_a_token.row(),
+            token: class_a_token,
+            offset: 0,
+            flags: TypeAttributes::PUBLIC | TypeAttributes::CLASS,
+            type_name: class_a_name_index,
+            type_namespace: test_namespace_index,
+            extends: CodedIndex::new(
+                TableId::TypeDef,
+                class_b_token.row(),
+                CodedIndexType::TypeDefOrRef,
+            ),
+            field_list: 1,
+            method_list: 1,
+        };
+
+        let class_b_raw = TypeDefRaw {
+            rid: class_b_token.row(),
+            token: class_b_token,
+            offset: 0,
+            flags: TypeAttributes::PUBLIC | TypeAttributes::CLASS,
+            type_name: class_b_name_index,
+            type_namespace: test_namespace_index,
+            extends: CodedIndex::new(
+                TableId::TypeDef,
+                class_a_token.row(),
+                CodedIndexType::TypeDefOrRef,
+            ),
+            field_list: 1,
+            method_list: 1,
+        };
+
+        use crate::metadata::tables::TableDataOwned;
+        let _actual_class_a_row =
+            assembly.add_table_row(TableId::TypeDef, TableDataOwned::TypeDef(class_a_raw))?;
+        let _actual_class_b_row =
+            assembly.add_table_row(TableId::TypeDef, TableDataOwned::TypeDef(class_b_raw))?;
+
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        assembly.write_to_file(temp_file.path())?;
+
+        Ok(temp_file)
+    }
+
+    /// Creates an assembly with nested type circularity.
+    ///
+    /// Creates types that contain each other as nested types through the NestedClass table.
+    fn create_assembly_with_nested_type_circularity() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        let outer_token = TypeDefBuilder::new()
+            .name("CircularOuter")
+            .namespace("Test")
+            .flags(TypeAttributes::PUBLIC | TypeAttributes::CLASS)
+            .build(&mut context)?;
+
+        let inner_token = TypeDefBuilder::new()
+            .name("CircularInner")
+            .namespace("Test")
+            .flags(TypeAttributes::NESTED_PUBLIC | TypeAttributes::CLASS)
+            .build(&mut context)?;
+
+        NestedClassBuilder::new()
+            .nested_class(inner_token)
+            .enclosing_class(outer_token)
+            .build(&mut context)?;
+
+        NestedClassBuilder::new()
+            .nested_class(outer_token)
+            .enclosing_class(inner_token)
+            .build(&mut context)?;
+
+        let mut assembly = context.finish();
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        assembly.write_to_file(temp_file.path())?;
+
+        Ok(temp_file)
+    }
+
+    /// Creates an assembly with interface implementation circularity.
+    ///
+    /// Creates interfaces that implement each other through InterfaceImpl entries.
+    fn create_assembly_with_interface_circularity() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        let interface_a_token = TypeDefBuilder::new()
+            .name("ICircularA")
+            .namespace("Test")
+            .flags(TypeAttributes::PUBLIC | TypeAttributes::INTERFACE | TypeAttributes::ABSTRACT)
+            .build(&mut context)?;
+
+        let interface_b_token = TypeDefBuilder::new()
+            .name("ICircularB")
+            .namespace("Test")
+            .flags(TypeAttributes::PUBLIC | TypeAttributes::INTERFACE | TypeAttributes::ABSTRACT)
+            .build(&mut context)?;
+
+        InterfaceImplBuilder::new()
+            .class(interface_a_token.0)
+            .interface(CodedIndex::new(
+                TableId::TypeDef,
+                interface_b_token.row(),
+                CodedIndexType::TypeDefOrRef,
+            ))
+            .build(&mut context)?;
+
+        InterfaceImplBuilder::new()
+            .class(interface_b_token.0)
+            .interface(CodedIndex::new(
+                TableId::TypeDef,
+                interface_a_token.row(),
+                CodedIndexType::TypeDefOrRef,
+            ))
+            .build(&mut context)?;
+
+        let mut assembly = context.finish();
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        assembly.write_to_file(temp_file.path())?;
+
+        Ok(temp_file)
+    }
+
+    /// Creates an assembly with inheritance chain that exceeds max depth.
+    ///
+    /// Creates a long inheritance chain that should trigger depth limit validation.
+    fn create_assembly_with_depth_limit_violation() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        let mut previous_token: Option<Token> = None;
+        let chain_length = 120; // Should exceed max depth limit of 100
+
+        for i in 0..chain_length {
+            let mut builder = TypeDefBuilder::new()
+                .name(format!("DeepClass{i}"))
+                .namespace("Test")
+                .flags(TypeAttributes::PUBLIC | TypeAttributes::CLASS);
+
+            if let Some(parent_token) = previous_token {
+                builder = builder.extends(CodedIndex::new(
+                    TableId::TypeDef,
+                    parent_token.row(),
+                    CodedIndexType::TypeDefOrRef,
+                ));
+            }
+
+            let current_token = builder.build(&mut context)?;
+            previous_token = Some(current_token);
+        }
+
+        let mut assembly = context.finish();
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        assembly.write_to_file(temp_file.path())?;
+
+        Ok(temp_file)
+    }
 
     #[test]
-    fn test_owned_type_circularity_validator_creation() {
+    fn test_owned_type_circularity_validator() -> Result<()> {
         let validator = OwnedTypeCircularityValidator::new();
-        assert_eq!(validator.name(), "OwnedTypeCircularityValidator");
-        assert_eq!(validator.priority(), 175);
+
+        owned_validator_test(
+            owned_type_circularity_validator_file_factory,
+            "OwnedTypeCircularityValidator",
+            "ValidationOwnedValidatorFailed",
+            ValidationConfig {
+                enable_semantic_validation: true,
+                max_nesting_depth: 100,
+                ..Default::default()
+            },
+            |context| validator.validate_owned(context),
+        )
     }
 
+    /// Test if the validator actually detects circular inheritance.
     #[test]
-    fn test_owned_type_circularity_validator_should_run() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            if let Ok(object) = CilObject::from_file(&path) {
-                let scanner = ReferenceScanner::new(&view).unwrap();
+    fn test_validator_detects_circular_inheritance() -> Result<()> {
+        let temp_file = create_assembly_with_inheritance_circularity()?;
 
-                // Test with semantic validation enabled
-                let config_enabled = ValidationConfig {
-                    enable_semantic_validation: true,
-                    ..ValidationConfig::minimal()
-                };
-                let context_enabled = factory::owned_context(&object, &scanner, &config_enabled);
-                let validator = OwnedTypeCircularityValidator::new();
-                assert!(validator.should_run(&context_enabled));
+        let assembly_view = CilAssemblyView::from_file(temp_file.path())?;
+        let object = CilObject::from_file(temp_file.path())?;
+        let scanner = ReferenceScanner::from_view(&assembly_view)?;
+        let config = ValidationConfig {
+            enable_semantic_validation: true,
+            max_nesting_depth: 100,
+            ..Default::default()
+        };
 
-                // Test with semantic validation disabled
-                let config_disabled = ValidationConfig {
-                    enable_semantic_validation: false,
-                    ..ValidationConfig::minimal()
-                };
-                let context_disabled = factory::owned_context(&object, &scanner, &config_disabled);
-                assert!(!validator.should_run(&context_disabled));
-            }
-        }
-    }
+        use crate::metadata::validation::context::OwnedValidationContext;
+        let context = OwnedValidationContext::new(&object, &scanner, &config);
 
-    #[test]
-    fn test_owned_type_circularity_validator_validate_on_real_assembly() {
-        // Test that validator works on a real assembly (should not find circular dependencies)
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            if let Ok(object) = CilObject::from_file(&path) {
-                let config = ValidationConfig {
-                    enable_semantic_validation: true,
-                    ..ValidationConfig::minimal()
-                };
-                let scanner = ReferenceScanner::new(&view).unwrap();
-                let context = factory::owned_context(&object, &scanner, &config);
+        let validator = OwnedTypeCircularityValidator::new();
 
-                let validator = OwnedTypeCircularityValidator::new();
-
-                // WindowsBase.dll should not have circular dependencies
-                let result = validator.validate_owned(&context);
-                assert!(
-                    result.is_ok(),
-                    "WindowsBase.dll should not have circular dependencies: {result:?}"
+        match validator.validate_owned(&context) {
+            Ok(()) => {
+                panic!(
+                    "Expected validation failure for circular inheritance but validation passed"
                 );
             }
+            Err(error) => match error {
+                Error::ValidationOwnedValidatorFailed {
+                    validator: val_name,
+                    message,
+                    ..
+                } => {
+                    assert_eq!(val_name, "OwnedTypeCircularityValidator");
+                    assert!(
+                        message.contains("circular")
+                            || message.contains("inheritance")
+                            || message.contains("cycle")
+                    );
+                }
+                _ => panic!("Wrong error type returned: {error}"),
+            },
         }
-    }
 
-    #[test]
-    fn test_owned_type_circularity_validator_validate_disabled() {
-        // Test that validator works when disabled (should skip validation)
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            if let Ok(object) = CilObject::from_file(&path) {
-                let config = ValidationConfig {
-                    enable_semantic_validation: false, // Disable semantic validation
-                    ..ValidationConfig::minimal()
-                };
-                let scanner = ReferenceScanner::new(&view).unwrap();
-                let context = factory::owned_context(&object, &scanner, &config);
-
-                let validator = OwnedTypeCircularityValidator::new();
-                // Should not run due to config
-                assert!(!validator.should_run(&context));
-
-                // But if we call validate_owned directly, it should succeed (no validation performed)
-                let result = validator.validate_owned(&context);
-                assert!(
-                    result.is_ok(),
-                    "Validation should succeed when disabled: {result:?}"
-                );
-            }
-        }
+        Ok(())
     }
 }

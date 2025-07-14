@@ -7,13 +7,13 @@
 //!
 //! # Key Components
 //!
-//! - [`crate::metadata::validation::config::ValidationConfig`] - Configuration for validation behavior
-//! - [`crate::metadata::validation::engine::ValidationEngine`] - Main validation orchestrator
-//! - [`crate::metadata::validation::context`] - Validation context abstractions
-//! - [`crate::metadata::validation::traits`] - Validator trait definitions
-//! - [`crate::metadata::validation::validators`] - Collection of all validator implementations
-//! - [`crate::metadata::validation::result`] - Validation result types
-//! - [`crate::metadata::validation::scanner`] - Reference scanning infrastructure
+//! - `ValidationConfig` - Configuration for validation behavior
+//! - `ValidationEngine` - Main validation orchestrator
+//! - `ValidationContext` - Validation context abstractions
+//! - `RawValidator` and `OwnedValidator` traits - Validator trait definitions
+//! - validator implementations - Collection of all validator implementations
+//! - `ValidationResult` and `ValidationOutcome` - Validation result types
+//! - `ReferenceScanner` - Reference scanning infrastructure
 //!
 //! ## Architecture Overview
 //!

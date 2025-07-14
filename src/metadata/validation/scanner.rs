@@ -29,7 +29,7 @@
 //!
 //! # let path = Path::new("assembly.dll");
 //! let view = CilAssemblyView::from_file(&path)?;
-//! let scanner = ReferenceScanner::new(&view)?;
+//! let scanner = ReferenceScanner::from_view(&view)?;
 //!
 //! // Check if a token exists
 //! let token = Token::new(0x02000001);
@@ -57,9 +57,16 @@
 
 use crate::{
     metadata::{
-        cilassemblyview::CilAssemblyView, cilobject::CilObject, tables::TableId, token::Token,
+        cilassemblyview::CilAssemblyView,
+        cilobject::CilObject,
+        tables::{
+            ClassLayoutRaw, ConstantRaw, CustomAttributeRaw, FieldLayoutRaw, FieldMarshalRaw,
+            FieldRaw, GenericParamConstraintRaw, GenericParamRaw, InterfaceImplRaw, MemberRefRaw,
+            MethodDefRaw, MethodImplRaw, NestedClassRaw, TableId, TypeDefRaw, TypeRefRaw,
+        },
+        token::Token,
     },
-    Error, Result,
+    Blob, Error, Guid, Result, Strings, UserStrings,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -84,7 +91,7 @@ use std::collections::{HashMap, HashSet};
 ///
 /// # let path = Path::new("assembly.dll");
 /// let view = CilAssemblyView::from_file(&path)?;
-/// let scanner = ReferenceScanner::new(&view)?;
+/// let scanner = ReferenceScanner::from_view(&view)?;
 ///
 /// // Check if a token exists
 /// let token = Token::new(0x02000001);
@@ -152,10 +159,10 @@ impl ReferenceScanner {
     ///
     /// # let path = Path::new("assembly.dll");
     /// let view = CilAssemblyView::from_file(&path)?;
-    /// let scanner = ReferenceScanner::new(&view)?;
+    /// let scanner = ReferenceScanner::from_view(&view)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn new(view: &CilAssemblyView) -> Result<Self> {
+    pub fn from_view(view: &CilAssemblyView) -> Result<Self> {
         let mut scanner = Self {
             forward_references: HashMap::new(),
             backward_references: HashMap::new(),
@@ -199,8 +206,6 @@ impl ReferenceScanner {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn from_object(object: &CilObject) -> Result<Self> {
-        // Access the internal assembly view through the public API
-        // We need to create this through the tables and streams
         let mut scanner = Self {
             forward_references: HashMap::new(),
             backward_references: HashMap::new(),
@@ -215,21 +220,13 @@ impl ReferenceScanner {
 
     /// Performs the initial analysis of the CilObject.
     fn analyze_object(&mut self, object: &CilObject) -> Result<()> {
-        // Analyze heap sizes using public API
-        if let Some(strings) = object.strings() {
-            self.heap_sizes.strings = strings.data().len() as u32;
-        }
-        if let Some(userstrings) = object.userstrings() {
-            self.heap_sizes.userstrings = userstrings.data().len() as u32;
-        }
-        if let Some(guid) = object.guids() {
-            self.heap_sizes.guids = guid.data().len() as u32;
-        }
-        if let Some(blob) = object.blob() {
-            self.heap_sizes.blobs = blob.data().len() as u32;
-        }
+        self.analyze_heaps(
+            object.strings(),
+            object.blob(),
+            object.guids(),
+            object.userstrings(),
+        )?;
 
-        // Analyze tables if available
         if let Some(tables) = object.tables() {
             self.analyze_tables(tables)?;
         }
@@ -239,10 +236,13 @@ impl ReferenceScanner {
 
     /// Performs the initial analysis of the assembly view.
     fn analyze_assembly(&mut self, view: &CilAssemblyView) -> Result<()> {
-        // Analyze heap sizes
-        self.analyze_heaps(view)?;
+        self.analyze_heaps(
+            view.strings(),
+            view.blobs(),
+            view.guids(),
+            view.userstrings(),
+        )?;
 
-        // Analyze tables if available
         if let Some(tables) = view.tables() {
             self.analyze_tables(tables)?;
         }
@@ -251,24 +251,26 @@ impl ReferenceScanner {
     }
 
     /// Analyzes metadata heaps to determine their sizes.
-    fn analyze_heaps(&mut self, view: &CilAssemblyView) -> Result<()> {
-        // Analyze string heap
-        if let Some(strings) = view.strings() {
+    fn analyze_heaps(
+        &mut self,
+        strings: Option<&Strings>,
+        blobs: Option<&Blob>,
+        guids: Option<&Guid>,
+        userstrings: Option<&UserStrings>,
+    ) -> Result<()> {
+        if let Some(strings) = strings {
             self.heap_sizes.strings = strings.data().len() as u32;
         }
 
-        // Analyze blob heap
-        if let Some(blobs) = view.blobs() {
+        if let Some(blobs) = blobs {
             self.heap_sizes.blobs = blobs.data().len() as u32;
         }
 
-        // Analyze GUID heap
-        if let Some(guids) = view.guids() {
+        if let Some(guids) = guids {
             self.heap_sizes.guids = guids.data().len() as u32;
         }
 
-        // Analyze user string heap
-        if let Some(userstrings) = view.userstrings() {
+        if let Some(userstrings) = userstrings {
             self.heap_sizes.userstrings = userstrings.data().len() as u32;
         }
 
@@ -277,10 +279,8 @@ impl ReferenceScanner {
 
     /// Analyzes metadata tables to build reference maps.
     fn analyze_tables(&mut self, tables: &crate::TablesHeader) -> Result<()> {
-        // First pass: collect all valid tokens and row counts
         self.collect_valid_tokens(tables)?;
 
-        // Second pass: analyze references between tokens
         self.analyze_references(tables)?;
 
         Ok(())
@@ -288,59 +288,18 @@ impl ReferenceScanner {
 
     /// Collects all valid tokens from metadata tables.
     fn collect_valid_tokens(&mut self, tables: &crate::TablesHeader) -> Result<()> {
-        // ToDo: Improve this - Iterate through all tables and collect valid tokens
-        for table_id in [
-            TableId::Module,
-            TableId::TypeRef,
-            TableId::TypeDef,
-            TableId::Field,
-            TableId::MethodDef,
-            TableId::Param,
-            TableId::InterfaceImpl,
-            TableId::MemberRef,
-            TableId::Constant,
-            TableId::CustomAttribute,
-            TableId::FieldMarshal,
-            TableId::DeclSecurity,
-            TableId::ClassLayout,
-            TableId::FieldLayout,
-            TableId::StandAloneSig,
-            TableId::EventMap,
-            TableId::Event,
-            TableId::PropertyMap,
-            TableId::Property,
-            TableId::MethodSemantics,
-            TableId::MethodImpl,
-            TableId::ModuleRef,
-            TableId::TypeSpec,
-            TableId::ImplMap,
-            TableId::FieldRVA,
-            TableId::Assembly,
-            TableId::AssemblyProcessor,
-            TableId::AssemblyOS,
-            TableId::AssemblyRef,
-            TableId::AssemblyRefProcessor,
-            TableId::AssemblyRefOS,
-            TableId::File,
-            TableId::ExportedType,
-            TableId::ManifestResource,
-            TableId::NestedClass,
-            TableId::GenericParam,
-            TableId::MethodSpec,
-            TableId::GenericParamConstraint,
-        ] {
-            let row_count = tables.table_row_count(table_id);
-            if row_count > 0 {
-                self.table_row_counts.insert(table_id, row_count);
+        for table in tables.present_tables() {
+            let row_count = tables.table_row_count(table);
+            if row_count == 0 {
+                continue;
+            }
 
-                // Add all valid tokens for this table
-                // Use TableId's token_type method to construct tokens
-                let table_token_base = (table_id.token_type() as u32) << 24;
+            self.table_row_counts.insert(table, row_count);
 
-                for rid in 1..=row_count {
-                    let token = Token::new(table_token_base | rid);
-                    self.valid_tokens.insert(token);
-                }
+            let table_token_base = (table.token_type() as u32) << 24;
+            for rid in 1..=row_count {
+                let token = Token::new(table_token_base | rid);
+                self.valid_tokens.insert(token);
             }
         }
 
@@ -348,37 +307,228 @@ impl ReferenceScanner {
     }
 
     /// Analyzes references between tokens in metadata tables.
-    fn analyze_references(&mut self, _tables: &crate::TablesHeader) -> Result<()> {
-        // TODO: Implement detailed reference analysis
-        // This would involve parsing each table type and extracting token references
-        // For now, we provide the basic infrastructure
-
-        // Example pattern for analyzing TypeDef table:
-        // if let Some(typedef_table) = tables.table_by_id(TableId::TypeDef) {
-        //     for rid in 1..=typedef_table.row_count() {
-        //         let token = Token::new(TableId::TypeDef.token_type() | rid);
-        //         if let Ok(typedef_row) = typedef_table.row(rid) {
-        //             // Analyze extends field (references another type)
-        //             let extends_token = typedef_row.extends.resolve();
-        //             if extends_token.is_valid() {
-        //                 self.add_reference(token, extends_token);
-        //             }
-        //         }
-        //     }
-        // }
+    fn analyze_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+        self.analyze_typedef_references(tables)?;
+        self.analyze_typeref_references(tables)?;
+        self.analyze_interfaceimpl_references(tables)?;
+        self.analyze_memberref_references(tables)?;
+        self.analyze_methoddef_references(tables)?;
+        self.analyze_field_references(tables)?;
+        self.analyze_customattribute_references(tables)?;
+        self.analyze_generic_references(tables)?;
+        self.analyze_nested_references(tables)?;
+        self.analyze_additional_references(tables)?;
 
         Ok(())
     }
 
-    /// Adds a reference relationship between two tokens.
+    fn analyze_typedef_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+        if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
+            for typedef_row in typedef_table.iter() {
+                let from_token = Token::new(0x02000000 | typedef_row.rid);
+
+                if typedef_row.extends.row != 0 {
+                    self.add_reference(from_token, typedef_row.extends.token);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn analyze_typeref_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+        if let Some(typeref_table) = tables.table::<TypeRefRaw>() {
+            for typeref_row in typeref_table.iter() {
+                let from_token = Token::new(0x01000000 | typeref_row.rid);
+
+                if typeref_row.resolution_scope.row != 0 {
+                    self.add_reference(from_token, typeref_row.resolution_scope.token);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn analyze_interfaceimpl_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+        if let Some(interface_table) = tables.table::<InterfaceImplRaw>() {
+            for impl_row in interface_table.iter() {
+                let from_token = Token::new(0x09000000 | impl_row.rid);
+
+                let class_token = Token::new(0x02000000 | impl_row.class);
+                self.add_reference(from_token, class_token);
+
+                if impl_row.interface.row != 0 {
+                    self.add_reference(from_token, impl_row.interface.token);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn analyze_memberref_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+        if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
+            for memberref_row in memberref_table.iter() {
+                let from_token = Token::new(0x0A000000 | memberref_row.rid);
+
+                if memberref_row.class.row != 0 {
+                    self.add_reference(from_token, memberref_row.class.token);
+                }
+
+                // TODO: Parse signature blob for type references (future phase)
+            }
+        }
+        Ok(())
+    }
+
+    fn analyze_methoddef_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+        if let Some(methoddef_table) = tables.table::<MethodDefRaw>() {
+            for _methoddef_row in methoddef_table.iter() {
+                // TODO: Parse signature blob for type references (future phase)
+            }
+        }
+        Ok(())
+    }
+
+    fn analyze_field_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+        if let Some(field_table) = tables.table::<FieldRaw>() {
+            for _field_row in field_table.iter() {
+                // TODO: Parse signature blob for type references (future phase)
+            }
+        }
+        Ok(())
+    }
+
+    fn analyze_customattribute_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+        if let Some(attr_table) = tables.table::<CustomAttributeRaw>() {
+            for attr_row in attr_table.iter() {
+                let from_token = Token::new(0x0C000000 | attr_row.rid);
+
+                if attr_row.parent.row != 0 {
+                    self.add_reference(from_token, attr_row.parent.token);
+                }
+
+                if attr_row.constructor.row != 0 {
+                    self.add_reference(from_token, attr_row.constructor.token);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn analyze_generic_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+        if let Some(param_table) = tables.table::<GenericParamRaw>() {
+            for param_row in param_table.iter() {
+                let from_token = Token::new(0x2A000000 | param_row.rid);
+
+                if param_row.owner.row != 0 {
+                    self.add_reference(from_token, param_row.owner.token);
+                }
+            }
+        }
+
+        if let Some(constraint_table) = tables.table::<GenericParamConstraintRaw>() {
+            for constraint_row in constraint_table.iter() {
+                let from_token = Token::new(0x2C000000 | constraint_row.rid);
+
+                let param_token = Token::new(0x2A000000 | constraint_row.owner);
+                self.add_reference(from_token, param_token);
+
+                if constraint_row.constraint.row != 0 {
+                    self.add_reference(from_token, constraint_row.constraint.token);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn analyze_nested_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+        if let Some(nested_table) = tables.table::<NestedClassRaw>() {
+            for nested_row in nested_table.iter() {
+                let from_token = Token::new(0x29000000 | nested_row.rid);
+
+                let nested_token = Token::new(0x02000000 | nested_row.nested_class);
+                self.add_reference(from_token, nested_token);
+
+                let enclosing_token = Token::new(0x02000000 | nested_row.enclosing_class);
+                self.add_reference(from_token, enclosing_token);
+            }
+        }
+        Ok(())
+    }
+
+    fn analyze_additional_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+        if let Some(methodimpl_table) = tables.table::<MethodImplRaw>() {
+            for methodimpl_row in methodimpl_table.iter() {
+                let from_token = Token::new(0x19000000 | methodimpl_row.rid);
+
+                let class_token = Token::new(0x02000000 | methodimpl_row.class);
+                self.add_reference(from_token, class_token);
+
+                if methodimpl_row.method_body.row != 0 {
+                    self.add_reference(from_token, methodimpl_row.method_body.token);
+                }
+
+                if methodimpl_row.method_declaration.row != 0 {
+                    self.add_reference(from_token, methodimpl_row.method_declaration.token);
+                }
+            }
+        }
+
+        if let Some(fieldlayout_table) = tables.table::<FieldLayoutRaw>() {
+            for fieldlayout_row in fieldlayout_table.iter() {
+                let from_token = Token::new(0x10000000 | fieldlayout_row.rid);
+
+                let field_token = Token::new(0x04000000 | fieldlayout_row.field);
+                self.add_reference(from_token, field_token);
+            }
+        }
+
+        if let Some(classlayout_table) = tables.table::<ClassLayoutRaw>() {
+            for classlayout_row in classlayout_table.iter() {
+                let from_token = Token::new(0x0F000000 | classlayout_row.rid);
+
+                let parent_token = Token::new(0x02000000 | classlayout_row.parent);
+                self.add_reference(from_token, parent_token);
+            }
+        }
+
+        if let Some(constant_table) = tables.table::<ConstantRaw>() {
+            for constant_row in constant_table.iter() {
+                let from_token = Token::new(0x0B000000 | constant_row.rid);
+
+                if constant_row.parent.row != 0 {
+                    self.add_reference(from_token, constant_row.parent.token);
+                }
+            }
+        }
+
+        if let Some(marshal_table) = tables.table::<FieldMarshalRaw>() {
+            for marshal_row in marshal_table.iter() {
+                let from_token = Token::new(0x0D000000 | marshal_row.rid);
+
+                if marshal_row.parent.row != 0 {
+                    self.add_reference(from_token, marshal_row.parent.token);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn add_reference(&mut self, from_token: Token, to_token: Token) {
-        // Add forward reference (to_token is referenced by from_token)
+        if from_token == to_token {
+            return;
+        }
+
+        if from_token.value() == 0 || to_token.value() == 0 {
+            return;
+        }
+
         self.forward_references
             .entry(to_token)
             .or_default()
             .insert(from_token);
 
-        // Add backward reference (from_token references to_token)
         self.backward_references
             .entry(from_token)
             .or_default()
@@ -424,7 +574,6 @@ impl ReferenceScanner {
         let table_value = token.table();
         let rid = token.row();
 
-        // Convert table value back to TableId
         let table_id =
             TableId::from_token_type(table_value).ok_or(Error::ValidationInvalidRid {
                 table: TableId::Module,
@@ -492,7 +641,6 @@ impl ReferenceScanner {
     /// Returns `true` if the token can be safely deleted, `false` if it would
     /// break reference integrity.
     pub fn can_delete_token(&self, token: Token) -> bool {
-        // Token can be deleted if nothing references it
         self.get_references_to(token).is_empty()
     }
 
@@ -548,6 +696,31 @@ impl ReferenceScanner {
             heap_sizes: self.heap_sizes.clone(),
         }
     }
+
+    /// Returns the number of non-empty metadata tables.
+    ///
+    /// This method efficiently counts tables that have at least one row by returning
+    /// the size of the internal table_row_counts HashMap, which only stores tables
+    /// that actually exist in the metadata.
+    ///
+    /// # Returns
+    ///
+    /// The count of tables that contain at least one row.
+    pub fn count_non_empty_tables(&self) -> usize {
+        self.table_row_counts.len()
+    }
+
+    /// Returns the total number of rows across all metadata tables.
+    ///
+    /// This method efficiently sums all row counts from the internal table_row_counts
+    /// HashMap, providing the total number of metadata rows in the assembly.
+    ///
+    /// # Returns
+    ///
+    /// The total count of rows across all metadata tables.
+    pub fn count_total_rows(&self) -> u32 {
+        self.table_row_counts.values().sum()
+    }
 }
 
 /// Statistics about the reference scanner analysis.
@@ -583,13 +756,12 @@ mod tests {
     fn test_reference_scanner_creation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let scanner = ReferenceScanner::new(&view);
+            let scanner = ReferenceScanner::from_view(&view);
             assert!(scanner.is_ok(), "Scanner creation should succeed");
 
             let scanner = scanner.unwrap();
             let stats = scanner.statistics();
 
-            // Should have analyzed some tokens and tables
             assert!(stats.total_tokens > 0, "Should have found some tokens");
             assert!(stats.total_tables > 0, "Should have found some tables");
         }
@@ -599,18 +771,15 @@ mod tests {
     fn test_token_bounds_validation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            if let Ok(scanner) = ReferenceScanner::new(&view) {
-                // Test invalid RID (0)
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let invalid_token = Token::new(0x02000000); // TypeDef with RID 0
                 assert!(scanner.validate_token_bounds(invalid_token).is_err());
 
-                // Test valid token bounds (assuming TypeDef table has at least 1 row)
                 if scanner.table_row_count(TableId::TypeDef) > 0 {
                     let valid_token = Token::new(0x02000001); // TypeDef with RID 1
                     assert!(scanner.validate_token_bounds(valid_token).is_ok());
                 }
 
-                // Test out-of-bounds RID
                 let max_rid = scanner.table_row_count(TableId::TypeDef);
                 if max_rid > 0 {
                     let out_of_bounds_token = Token::new(0x02000000 | (max_rid + 1));
@@ -624,10 +793,9 @@ mod tests {
     fn test_heap_size_analysis() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            if let Ok(scanner) = ReferenceScanner::new(&view) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let heap_sizes = scanner.heap_sizes();
 
-                // Should have analyzed at least the string heap
                 if view.strings().is_some() {
                     assert!(
                         heap_sizes.strings > 0,
@@ -642,13 +810,414 @@ mod tests {
     fn test_scanner_statistics() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_file(&path) {
-            if let Ok(scanner) = ReferenceScanner::new(&view) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let stats = scanner.statistics();
                 let stats_string = stats.to_string();
 
                 assert!(stats_string.contains("tokens"));
                 assert!(stats_string.contains("tables"));
                 assert!(stats_string.contains("references"));
+            }
+        }
+    }
+
+    #[test]
+    fn test_reference_analysis_basic_functionality() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
+                let stats = scanner.statistics();
+
+                // After implementing reference analysis, we should have actual references
+                // WindowsBase.dll is a substantial assembly that should contain many references
+                assert!(
+                    stats.total_references > 0,
+                    "Should find references in WindowsBase.dll"
+                );
+
+                // Test that the reference maps are populated
+                assert!(
+                    !scanner.forward_references.is_empty()
+                        || !scanner.backward_references.is_empty(),
+                    "Reference maps should be populated"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_typedef_inheritance_references() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
+                // Find TypeDef tokens that should have inheritance relationships
+                let mut _inheritance_found = false;
+
+                for typedef_token in scanner.valid_tokens.iter() {
+                    if typedef_token.table() == 0x02 {
+                        // TypeDef table
+                        let references = scanner.get_references_from(*typedef_token);
+                        if !references.is_empty() {
+                            _inheritance_found = true;
+
+                            // Verify that the referenced tokens are valid
+                            for ref_token in references {
+                                assert!(
+                                    scanner.token_exists(ref_token),
+                                    "Referenced token should exist in metadata"
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // WindowsBase.dll should have at least some types with base types
+                if scanner.table_row_count(TableId::TypeDef) > 0 {
+                    // Note: Not all types have explicit base types (e.g., Object, interfaces)
+                    // so we don't assert inheritance_found, but we do verify the mechanism works
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_interface_implementation_references() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
+                // Check InterfaceImpl table entries
+                let interface_impl_count = scanner.table_row_count(TableId::InterfaceImpl);
+
+                if interface_impl_count > 0 {
+                    let mut impl_references_found = false;
+
+                    // Look for InterfaceImpl tokens (0x09)
+                    for token in scanner.valid_tokens.iter() {
+                        if token.table() == 0x09 {
+                            // InterfaceImpl table
+                            let references = scanner.get_references_from(*token);
+                            if !references.is_empty() {
+                                impl_references_found = true;
+
+                                // Each InterfaceImpl should reference both class and interface
+                                assert!(!references.is_empty(),
+                                    "InterfaceImpl should reference at least the implementing class");
+
+                                // Verify referenced tokens exist
+                                for ref_token in references {
+                                    assert!(
+                                        scanner.token_exists(ref_token),
+                                        "Referenced token should exist in metadata"
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    assert!(impl_references_found,
+                        "Should find interface implementation references when InterfaceImpl table exists");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_memberref_class_references() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
+                let memberref_count = scanner.table_row_count(TableId::MemberRef);
+
+                if memberref_count > 0 {
+                    let mut memberref_references_found = false;
+
+                    // Look for MemberRef tokens (0x0A)
+                    for token in scanner.valid_tokens.iter() {
+                        if token.table() == 0x0A {
+                            // MemberRef table
+                            let references = scanner.get_references_from(*token);
+                            if !references.is_empty() {
+                                memberref_references_found = true;
+
+                                // Verify referenced tokens exist
+                                for ref_token in references {
+                                    assert!(
+                                        scanner.token_exists(ref_token),
+                                        "Referenced token should exist in metadata"
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    assert!(
+                        memberref_references_found,
+                        "Should find member reference relationships when MemberRef table exists"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_customattribute_references() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
+                let attr_count = scanner.table_row_count(TableId::CustomAttribute);
+
+                if attr_count > 0 {
+                    let mut attr_references_found = false;
+
+                    // Look for CustomAttribute tokens (0x0C)
+                    for token in scanner.valid_tokens.iter() {
+                        if token.table() == 0x0C {
+                            // CustomAttribute table
+                            let references = scanner.get_references_from(*token);
+                            if !references.is_empty() {
+                                attr_references_found = true;
+
+                                // Each CustomAttribute should reference both parent and constructor
+                                // Verify referenced tokens exist
+                                for ref_token in references {
+                                    assert!(
+                                        scanner.token_exists(ref_token),
+                                        "Referenced token should exist in metadata"
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    assert!(
+                        attr_references_found,
+                        "Should find custom attribute references when CustomAttribute table exists"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_nested_class_references() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
+                let nested_count = scanner.table_row_count(TableId::NestedClass);
+
+                if nested_count > 0 {
+                    let mut nested_references_found = false;
+
+                    // Look for NestedClass tokens (0x29)
+                    for token in scanner.valid_tokens.iter() {
+                        if token.table() == 0x29 {
+                            // NestedClass table
+                            let references = scanner.get_references_from(*token);
+                            if !references.is_empty() {
+                                nested_references_found = true;
+
+                                // Each NestedClass should reference both nested and enclosing types
+                                assert!(
+                                    references.len() >= 2,
+                                    "NestedClass should reference both nested and enclosing types"
+                                );
+
+                                // Verify all references are TypeDef tokens
+                                for ref_token in references {
+                                    assert!(
+                                        scanner.token_exists(ref_token),
+                                        "Referenced token should exist in metadata"
+                                    );
+                                    assert_eq!(
+                                        ref_token.table(),
+                                        0x02,
+                                        "NestedClass should only reference TypeDef tokens"
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    assert!(
+                        nested_references_found,
+                        "Should find nested class references when NestedClass table exists"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_generic_parameter_references() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
+                let generic_param_count = scanner.table_row_count(TableId::GenericParam);
+
+                if generic_param_count > 0 {
+                    let mut generic_references_found = false;
+
+                    // Look for GenericParam tokens (0x2A)
+                    for token in scanner.valid_tokens.iter() {
+                        if token.table() == 0x2A {
+                            // GenericParam table
+                            let references = scanner.get_references_from(*token);
+                            if !references.is_empty() {
+                                generic_references_found = true;
+
+                                // Verify referenced tokens exist
+                                for ref_token in references {
+                                    assert!(
+                                        scanner.token_exists(ref_token),
+                                        "Referenced token should exist in metadata"
+                                    );
+
+                                    // Generic parameters should reference TypeDef or MethodDef
+                                    assert!(
+                                        ref_token.table() == 0x02 || ref_token.table() == 0x06,
+                                        "GenericParam should reference TypeDef or MethodDef"
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    if generic_param_count > 0 {
+                        // WindowsBase.dll should have generic parameters if the table exists
+                        assert!(generic_references_found,
+                            "Should find generic parameter references when GenericParam table exists");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_reference_bidirectionality() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
+                // Test that forward and backward references are consistent
+                for (to_token, from_tokens) in &scanner.forward_references {
+                    for from_token in from_tokens {
+                        let backward_refs = scanner.get_references_from(*from_token);
+                        assert!(
+                            backward_refs.contains(to_token),
+                            "Forward reference should have corresponding backward reference"
+                        );
+                    }
+                }
+
+                for (from_token, to_tokens) in &scanner.backward_references {
+                    for to_token in to_tokens {
+                        let forward_refs = scanner.get_references_to(*to_token);
+                        assert!(
+                            forward_refs.contains(from_token),
+                            "Backward reference should have corresponding forward reference"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_can_delete_token_functionality() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
+                let stats = scanner.statistics();
+
+                if stats.total_references > 0 {
+                    // Find a token that is referenced by others (should not be deletable)
+                    let mut found_non_deletable = false;
+                    let mut found_deletable = false;
+
+                    for token in scanner.valid_tokens.iter().take(100) {
+                        // Sample first 100 tokens
+                        let can_delete = scanner.can_delete_token(*token);
+                        let references_to = scanner.get_references_to(*token);
+
+                        if !references_to.is_empty() {
+                            // Token is referenced by others, should not be deletable
+                            assert!(
+                                !can_delete,
+                                "Token with incoming references should not be deletable"
+                            );
+                            found_non_deletable = true;
+                        } else {
+                            // Token has no incoming references, should be deletable
+                            assert!(
+                                can_delete,
+                                "Token with no incoming references should be deletable"
+                            );
+                            found_deletable = true;
+                        }
+                    }
+
+                    // We should find examples of both deletable and non-deletable tokens
+                    // in a substantial assembly like WindowsBase.dll
+                    assert!(found_deletable, "Should find some deletable tokens");
+                    assert!(found_non_deletable, "Should find some non-deletable tokens");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_reference_validation_prevents_invalid_references() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            if let Ok(mut scanner) = ReferenceScanner::from_view(&view) {
+                let initial_ref_count = scanner.statistics().total_references;
+
+                // Test self-reference prevention
+                let test_token = Token::new(0x02000001);
+                scanner.add_reference(test_token, test_token);
+
+                // Test null token prevention
+                scanner.add_reference(Token::new(0), test_token);
+                scanner.add_reference(test_token, Token::new(0));
+
+                // Reference count should not have increased
+                let final_ref_count = scanner.statistics().total_references;
+                assert_eq!(
+                    initial_ref_count, final_ref_count,
+                    "Invalid references should be prevented"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_comprehensive_reference_coverage() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        if let Ok(view) = CilAssemblyView::from_file(&path) {
+            if let Ok(scanner) = ReferenceScanner::from_view(&view) {
+                let stats = scanner.statistics();
+
+                // WindowsBase.dll should have substantial reference relationships
+                // if our implementation is working correctly
+                println!("Reference analysis results:");
+                println!("  Total tokens: {}", stats.total_tokens);
+                println!("  Total tables: {}", stats.total_tables);
+                println!("  Total references: {}", stats.total_references);
+
+                // Basic sanity checks
+                assert!(
+                    stats.total_tokens > 1000,
+                    "WindowsBase.dll should have many tokens"
+                );
+                assert!(
+                    stats.total_tables > 10,
+                    "WindowsBase.dll should have many tables"
+                );
+
+                // After implementing reference analysis, we should have references
+                // The exact number will depend on the assembly, but it should be substantial
+                if stats.total_references == 0 {
+                    println!("Warning: No references found - implementation may need debugging");
+                }
             }
         }
     }

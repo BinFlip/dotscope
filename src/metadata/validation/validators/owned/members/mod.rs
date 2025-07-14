@@ -49,7 +49,7 @@
 //! # Integration
 //!
 //! This module integrates with:
-//! - [`crate::metadata::validation::validators::owned`] - Part of the owned validation stage
+//! - Owned validation stage - Part of the owned validation stage
 //! - [`crate::metadata::validation::engine`] - Coordinated by the validation engine
 //! - [`crate::metadata::validation::traits`] - Implements [`crate::metadata::validation::traits::OwnedValidator`] trait
 //! - [`crate::metadata::cilobject`] - Validates resolved member structures

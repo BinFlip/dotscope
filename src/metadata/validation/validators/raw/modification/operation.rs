@@ -44,7 +44,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationStructuralError`] for:
+//! This validator returns [`crate::Error::ValidationRawValidatorFailed`] for:
 //! - Invalid RID values in operations (out of bounds, conflicts, reserved values)
 //! - Malformed operation data or incorrect table data types
 //! - Update operations targeting non-existent rows or deleted rows
@@ -62,7 +62,7 @@
 //! # Integration
 //!
 //! This validator integrates with:
-//! - [`crate::metadata::validation::validators::raw::modification`] - Part of the modification validation stage
+//! - raw modification validators - Part of the modification validation stage
 //! - [`crate::metadata::validation::engine::ValidationEngine`] - Orchestrates validator execution
 //! - [`crate::metadata::validation::traits::RawValidator`] - Implements the raw validation interface
 //! - [`crate::cilassembly::AssemblyChanges`] - Source of modification operations
@@ -113,7 +113,7 @@ impl RawOperationValidator {
     ///
     /// # Returns
     ///
-    /// A new [`crate::metadata::validation::validators::raw::modification::operation::RawOperationValidator`] instance ready for validation operations.
+    /// A new [`RawOperationValidator`] instance ready for validation operations.
     ///
     /// # Thread Safety
     ///
@@ -135,11 +135,11 @@ impl RawOperationValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All insert operations are valid
-    /// * `Err(`[`crate::Error::ValidationStructuralError`]`)` - Insert operation violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Insert operation violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationStructuralError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - Insert RIDs are invalid (zero/reserved) or out of bounds (exceeding 0xFFFFFF)
     /// - Insert operations conflict with existing rows in original table
     /// - Multiple inserts target the same RID within the same table
@@ -235,11 +235,11 @@ impl RawOperationValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All update operations are valid
-    /// * `Err(`[`crate::Error::ValidationStructuralError`]`)` - Update operation violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Update operation violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationStructuralError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - Update operations target non-existent rows (beyond original count and not inserted)
     /// - Update RIDs are invalid (zero/reserved) or target deleted rows
     /// - Table data types are incompatible with target tables
@@ -332,11 +332,11 @@ impl RawOperationValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All delete operations are valid
-    /// * `Err(`[`crate::Error::ValidationStructuralError`]`)` - Delete operation violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Delete operation violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationStructuralError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - Delete operations target non-existent rows (beyond original count and not inserted)
     /// - Delete RIDs are invalid (zero/reserved)
     /// - Multiple deletes target the same RID within the same table
@@ -415,11 +415,11 @@ impl RawOperationValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All operation sequences are valid
-    /// * `Err(`[`crate::Error::ValidationStructuralError`]`)` - Sequence violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Sequence violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationStructuralError`] if:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - Operations have invalid timestamps or non-chronological ordering
     /// - Operation sequences create impossible state transitions (insert after delete)
     /// - Multiple insert or delete operations target the same RID
@@ -560,11 +560,11 @@ impl RawValidator for RawOperationValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All modification operations are valid and meet structural requirements
-    /// * `Err(`[`crate::Error::ValidationStructuralError`]`)` - Operation violations found
+    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Operation violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationStructuralError`] for:
+    /// Returns [`crate::Error::ValidationRawValidatorFailed`] for:
     /// - Invalid RID values in operations (out of bounds, conflicts)
     /// - Malformed operation data or incorrect table data types
     /// - Update operations targeting non-existent rows
@@ -610,94 +610,626 @@ impl Default for RawOperationValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{
-        cilassemblyview::CilAssemblyView,
-        validation::{config::ValidationConfig, context::factory, scanner::ReferenceScanner},
+    use crate::{
+        cilassembly::{
+            AssemblyChanges, CilAssembly, Operation, TableModifications, TableOperation,
+        },
+        metadata::validation::ValidationConfig,
+        metadata::{
+            cilassemblyview::CilAssemblyView,
+            tables::{TableDataOwned, TableId, TypeDefRaw},
+        },
+        test::{get_clean_testfile, validator_test, TestAssembly},
     };
-    use std::path::PathBuf;
 
-    #[test]
-    fn test_raw_operation_validator_creation() {
-        let validator = RawOperationValidator::new();
-        assert_eq!(validator.name(), "RawOperationValidator");
-        assert_eq!(validator.priority(), 110);
+    fn raw_operation_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+        let mut assemblies = Vec::new();
+
+        // 1. Clean test assembly (should pass all operation validation when no modifications)
+        if let Some(clean_path) = get_clean_testfile() {
+            assemblies.push(TestAssembly::new(clean_path, true));
+        }
+
+        // Note: File-based corruption testing is complex for modification validators
+        // since they only run during modification validation contexts. Instead,
+        // we use the direct corruption test (test_raw_operation_validator_direct_corruption)
+        // which creates corrupted modifications in memory and tests them directly.
+
+        Ok(assemblies)
     }
 
     #[test]
-    fn test_raw_operation_validator_should_run() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let scanner = ReferenceScanner::new(&view).unwrap();
-            let changes = crate::cilassembly::AssemblyChanges::new(&view);
-            let mut config = ValidationConfig::minimal();
+    fn test_raw_operation_validator() -> crate::Result<()> {
+        let validator = RawOperationValidator::new();
+        let config = ValidationConfig {
+            enable_structural_validation: true,
+            ..Default::default()
+        };
 
-            config.enable_structural_validation = true;
-            let context = factory::raw_modification_context(&view, &changes, &scanner, &config);
-            let validator = RawOperationValidator::new();
-            assert!(validator.should_run(&context));
+        validator_test(
+            raw_operation_validator_file_factory,
+            "RawOperationValidator",
+            "Malformed",
+            config,
+            |context| validator.validate_raw(context),
+        )
+    }
 
-            config.enable_structural_validation = false;
-            let context = factory::raw_modification_context(&view, &changes, &scanner, &config);
-            assert!(!validator.should_run(&context));
+    #[test]
+    fn test_raw_operation_validator_direct_corruption() -> crate::Result<()> {
+        let validator = RawOperationValidator::new();
 
-            // Test loading context (should not run)
-            let loading_context = factory::raw_loading_context(&view, &scanner, &config);
-            assert!(!validator.should_run(&loading_context));
+        {
+            let corrupted_changes = create_corrupted_changes_with_invalid_rid_zero();
+            let result = test_validator_with_corrupted_changes(&validator, corrupted_changes);
+            assert!(result.is_err(), "Validator should reject RID 0 operation");
+            let error_msg = format!("{:?}", result.unwrap_err());
+            assert!(
+                error_msg.contains("RID 0 is reserved"),
+                "Error should mention RID 0 is reserved. Got: {error_msg}"
+            );
+        }
+
+        {
+            let corrupted_changes = create_corrupted_changes_with_excessive_rid();
+            let result = test_validator_with_corrupted_changes(&validator, corrupted_changes);
+            assert!(result.is_err(), "Validator should reject excessive RID");
+            let error_msg = format!("{:?}", result.unwrap_err());
+            assert!(
+                error_msg.contains("exceeding maximum metadata token limit"),
+                "Error should mention token limit. Got: {error_msg}"
+            );
+        }
+
+        {
+            let corrupted_changes = create_corrupted_changes_with_nonexistent_target();
+            let result = test_validator_with_corrupted_changes(&validator, corrupted_changes);
+            assert!(
+                result.is_err(),
+                "Validator should reject update to non-existent row"
+            );
+            let error_msg = format!("{:?}", result.unwrap_err());
+            assert!(
+                error_msg.contains("targets non-existent RID"),
+                "Error should mention non-existent RID. Got: {error_msg}"
+            );
+        }
+
+        {
+            let corrupted_changes = create_corrupted_changes_with_update_after_delete();
+            let result = test_validator_with_corrupted_changes(&validator, corrupted_changes);
+            assert!(
+                result.is_err(),
+                "Validator should reject update after delete"
+            );
+            let error_msg = format!("{:?}", result.unwrap_err());
+            assert!(
+                error_msg.contains("Update operation") && error_msg.contains("deleted RID"),
+                "Error should mention update operation on deleted RID. Got: {error_msg}"
+            );
+        }
+
+        {
+            let corrupted_changes = create_corrupted_changes_with_excessive_updates();
+            let result = test_validator_with_corrupted_changes(&validator, corrupted_changes);
+            assert!(result.is_err(), "Validator should reject excessive updates");
+            let error_msg = format!("{:?}", result.unwrap_err());
+            assert!(
+                error_msg.contains("Excessive update operations"),
+                "Error should mention excessive updates. Got: {error_msg}"
+            );
+        }
+
+        {
+            let corrupted_changes = create_corrupted_changes_with_unordered_operations();
+            let result = test_validator_with_corrupted_changes(&validator, corrupted_changes);
+            assert!(
+                result.is_err(),
+                "Validator should reject unordered operations"
+            );
+            let error_msg = format!("{:?}", result.unwrap_err());
+            assert!(
+                error_msg.contains("not chronologically ordered"),
+                "Error should mention chronological order. Got: {error_msg}"
+            );
+        }
+
+        {
+            let corrupted_changes = create_corrupted_changes_with_conflicting_inserts();
+            let result = test_validator_with_corrupted_changes(&validator, corrupted_changes);
+            assert!(
+                result.is_err(),
+                "Validator should reject conflicting inserts"
+            );
+            let error_msg = format!("{:?}", result.unwrap_err());
+            assert!(
+                error_msg.contains("Multiple insert operations"),
+                "Error should mention multiple inserts. Got: {error_msg}"
+            );
+        }
+
+        Ok(())
+    }
+
+    fn test_validator_with_corrupted_changes(
+        validator: &RawOperationValidator,
+        corrupted_changes: AssemblyChanges,
+    ) -> crate::Result<()> {
+        use crate::metadata::validation::{
+            context::RawValidationContext, scanner::ReferenceScanner,
+        };
+
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available".to_string(),
+            ));
+        };
+
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let config = ValidationConfig {
+            enable_structural_validation: true,
+            ..Default::default()
+        };
+
+        let scanner = ReferenceScanner::from_view(&view)?;
+
+        let context = RawValidationContext::new_for_modification(
+            &view,
+            &corrupted_changes,
+            &scanner,
+            &config,
+        );
+
+        validator.validate_raw(&context)
+    }
+
+    /// Helper function to create a dummy TypeDef for testing purposes
+    fn create_dummy_typedef(rid: u32, flags: u32) -> TypeDefRaw {
+        use crate::metadata::{
+            tables::{CodedIndex, CodedIndexType, TypeDefRaw},
+            token::Token,
+        };
+        TypeDefRaw {
+            rid,
+            token: Token::new(0x02000000 | rid),
+            offset: 0,
+            flags,
+            type_name: 1,
+            type_namespace: 0,
+            extends: CodedIndex {
+                tag: TableId::TypeDef,
+                row: 0,
+                token: Token::new(0),
+                ci_type: CodedIndexType::TypeDefOrRef,
+            },
+            field_list: 1,
+            method_list: 1,
         }
     }
 
-    #[test]
-    fn test_raw_operation_validator_validate_empty_context() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let scanner = ReferenceScanner::new(&view).unwrap();
-            let config = ValidationConfig::minimal();
-            let context = factory::raw_loading_context(&view, &scanner, &config);
+    fn create_corrupted_changes_with_invalid_rid_zero() -> AssemblyChanges {
+        let mut corrupted_changes = AssemblyChanges::empty();
+        let mut table_mods = TableModifications::new_sparse(1);
 
-            let validator = RawOperationValidator::new();
-            assert!(validator.validate_raw(&context).is_ok());
+        let invalid_typedef = create_dummy_typedef(1, 0);
+        let table_data = TableDataOwned::TypeDef(invalid_typedef);
+
+        // Create operation with invalid RID 0
+        let invalid_op = TableOperation::new(Operation::Insert(0, table_data));
+
+        if let TableModifications::Sparse { operations, .. } = &mut table_mods {
+            operations.push(invalid_op);
         }
+
+        corrupted_changes
+            .table_changes
+            .insert(TableId::TypeDef, table_mods);
+        corrupted_changes
     }
 
-    #[test]
-    fn test_table_data_compatibility() {
-        let validator = RawOperationValidator::new();
+    fn create_corrupted_changes_with_excessive_rid() -> AssemblyChanges {
+        let mut corrupted_changes = AssemblyChanges::empty();
+        let mut table_mods = TableModifications::new_sparse(1);
 
-        // Create test table data using just the fields that work
-        use crate::metadata::{tables::*, token::Token};
+        let invalid_typedef = create_dummy_typedef(1, 0);
+        let table_data = TableDataOwned::TypeDef(invalid_typedef);
 
-        let module_data = TableDataOwned::Module(ModuleRaw {
-            rid: 1,
-            token: Token::new(0x00000001), // Table 0x00, RID 1
-            offset: 0,
-            generation: 0,
-            name: 0,
-            mvid: 0,
-            encid: 0,
-            encbaseid: 0,
-        });
+        // Create operation with RID exceeding 0xFFFFFF (24-bit limit)
+        let invalid_op = TableOperation::new(Operation::Insert(0x1000000, table_data));
 
-        let field_data = TableDataOwned::Field(FieldRaw {
-            rid: 1,
-            token: Token::new(0x04000001), // Table 0x04, RID 1
-            offset: 0,
-            flags: 0,
-            name: 0,
-            signature: 0,
-        });
+        if let TableModifications::Sparse { operations, .. } = &mut table_mods {
+            operations.push(invalid_op);
+        }
 
-        // Test exact matches (compatible cases)
-        assert!(validator.validate_table_data_compatibility(TableId::Module, &module_data));
-        assert!(validator.validate_table_data_compatibility(TableId::Field, &field_data));
+        corrupted_changes
+            .table_changes
+            .insert(TableId::TypeDef, table_mods);
+        corrupted_changes
+    }
 
-        // Test mismatches (incompatible cases)
-        assert!(!validator.validate_table_data_compatibility(TableId::Field, &module_data));
-        assert!(!validator.validate_table_data_compatibility(TableId::Module, &field_data));
-        assert!(!validator.validate_table_data_compatibility(TableId::Assembly, &module_data));
-        assert!(!validator.validate_table_data_compatibility(TableId::GenericParam, &field_data));
+    fn create_corrupted_changes_with_nonexistent_target() -> AssemblyChanges {
+        let mut corrupted_changes = AssemblyChanges::empty();
+        let mut table_mods = TableModifications::new_sparse(1); // original_row_count = 0
 
-        // Test that the method correctly delegates to table_id()
-        assert_eq!(module_data.table_id(), TableId::Module);
-        assert_eq!(field_data.table_id(), TableId::Field);
+        let invalid_typedef = create_dummy_typedef(1, 0);
+        let table_data = TableDataOwned::TypeDef(invalid_typedef);
+
+        // Create update operation targeting RID 999 that doesn't exist
+        let invalid_op = TableOperation::new(Operation::Update(999, table_data));
+
+        if let TableModifications::Sparse { operations, .. } = &mut table_mods {
+            operations.push(invalid_op);
+        }
+
+        corrupted_changes
+            .table_changes
+            .insert(TableId::TypeDef, table_mods);
+        corrupted_changes
+    }
+
+    fn create_corrupted_changes_with_update_after_delete() -> AssemblyChanges {
+        let mut corrupted_changes = AssemblyChanges::empty();
+        let mut table_mods = TableModifications::new_sparse(2); // original_row_count = 1
+
+        let typedef_data = create_dummy_typedef(1, 0);
+        let table_data = TableDataOwned::TypeDef(typedef_data);
+
+        // Create delete operation followed by update operation (invalid sequence)
+        let delete_op = TableOperation::new_with_timestamp(Operation::Delete(1), 1000);
+        let update_op = TableOperation::new_with_timestamp(Operation::Update(1, table_data), 2000);
+
+        if let TableModifications::Sparse {
+            operations,
+            deleted_rows,
+            ..
+        } = &mut table_mods
+        {
+            operations.push(delete_op);
+            operations.push(update_op);
+            deleted_rows.insert(1); // Mark as deleted
+        }
+
+        corrupted_changes
+            .table_changes
+            .insert(TableId::TypeDef, table_mods);
+        corrupted_changes
+    }
+
+    fn create_corrupted_changes_with_excessive_updates() -> AssemblyChanges {
+        let mut corrupted_changes = AssemblyChanges::empty();
+        let mut table_mods = TableModifications::new_sparse(2); // original_row_count = 1
+
+        let typedef_data = create_dummy_typedef(1, 0);
+
+        if let TableModifications::Sparse { operations, .. } = &mut table_mods {
+            // Add more than 10 update operations on same RID (limit is 10)
+            for i in 0..12 {
+                let table_data = TableDataOwned::TypeDef(typedef_data.clone());
+                let update_op = TableOperation::new_with_timestamp(
+                    Operation::Update(1, table_data),
+                    1000 + i as u64,
+                );
+                operations.push(update_op);
+            }
+        }
+
+        corrupted_changes
+            .table_changes
+            .insert(TableId::TypeDef, table_mods);
+        corrupted_changes
+    }
+
+    fn create_corrupted_changes_with_unordered_operations() -> AssemblyChanges {
+        let mut corrupted_changes = AssemblyChanges::empty();
+        let mut table_mods = TableModifications::new_sparse(1);
+
+        let typedef_data1 = create_dummy_typedef(1, 0);
+        let typedef_data2 = create_dummy_typedef(2, 1);
+
+        // Create operations with non-chronological timestamps
+        let op1 = TableOperation::new_with_timestamp(
+            Operation::Insert(1, TableDataOwned::TypeDef(typedef_data1)),
+            2000, // Later timestamp
+        );
+        let op2 = TableOperation::new_with_timestamp(
+            Operation::Insert(2, TableDataOwned::TypeDef(typedef_data2)),
+            1000, // Earlier timestamp
+        );
+
+        if let TableModifications::Sparse { operations, .. } = &mut table_mods {
+            // Add in wrong order (later timestamp first)
+            operations.push(op1);
+            operations.push(op2);
+        }
+
+        corrupted_changes
+            .table_changes
+            .insert(TableId::TypeDef, table_mods);
+        corrupted_changes
+    }
+
+    fn create_corrupted_changes_with_conflicting_inserts() -> AssemblyChanges {
+        let mut corrupted_changes = AssemblyChanges::empty();
+        let mut table_mods = TableModifications::new_sparse(1);
+
+        let typedef_data1 = create_dummy_typedef(1, 0);
+        let typedef_data2 = create_dummy_typedef(2, 1);
+
+        // Create multiple insert operations targeting the same RID
+        let op1 = TableOperation::new_with_timestamp(
+            Operation::Insert(1, TableDataOwned::TypeDef(typedef_data1)),
+            1000,
+        );
+        let op2 = TableOperation::new_with_timestamp(
+            Operation::Insert(1, TableDataOwned::TypeDef(typedef_data2)),
+            2000,
+        );
+
+        if let TableModifications::Sparse { operations, .. } = &mut table_mods {
+            operations.push(op1);
+            operations.push(op2);
+        }
+
+        corrupted_changes
+            .table_changes
+            .insert(TableId::TypeDef, table_mods);
+        corrupted_changes
+    }
+
+    fn create_assembly_with_invalid_rid_zero() -> crate::Result<tempfile::NamedTempFile> {
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available".to_string(),
+            ));
+        };
+
+        // Load clean assembly and create CilAssembly
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+
+        // Create corrupted modification directly by manipulating the changes structure
+        let mut corrupted_changes = AssemblyChanges::empty();
+
+        // Create table modifications with invalid RID 0 operation
+        let mut table_mods = TableModifications::new_sparse(1);
+
+        // Create a fake TypeDef data to use in the invalid operation
+        let invalid_typedef = create_dummy_typedef(1, 0);
+        let table_data = TableDataOwned::TypeDef(invalid_typedef);
+
+        // Create operation with invalid RID 0
+        let invalid_op = TableOperation::new(Operation::Insert(0, table_data));
+
+        // Force the invalid operation into the table modifications
+        // This bypasses the normal validation that would prevent RID 0
+        if let TableModifications::Sparse { operations, .. } = &mut table_mods {
+            operations.push(invalid_op);
+        }
+
+        corrupted_changes
+            .table_changes
+            .insert(TableId::TypeDef, table_mods);
+
+        // Write to temporary file with the corrupted changes
+        create_temp_assembly_with_changes(assembly, corrupted_changes)
+    }
+
+    fn create_assembly_with_excessive_rid() -> crate::Result<tempfile::NamedTempFile> {
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available".to_string(),
+            ));
+        };
+
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+
+        let mut corrupted_changes = AssemblyChanges::empty();
+        let mut table_mods = TableModifications::new_sparse(1);
+
+        let invalid_typedef = create_dummy_typedef(1, 0);
+        let table_data = TableDataOwned::TypeDef(invalid_typedef);
+
+        // Create operation with RID exceeding 0xFFFFFF (24-bit limit)
+        let invalid_op = TableOperation::new(Operation::Insert(0x1000000, table_data));
+
+        if let TableModifications::Sparse { operations, .. } = &mut table_mods {
+            operations.push(invalid_op);
+        }
+
+        corrupted_changes
+            .table_changes
+            .insert(TableId::TypeDef, table_mods);
+        create_temp_assembly_with_changes(assembly, corrupted_changes)
+    }
+
+    fn create_assembly_with_nonexistent_target() -> crate::Result<tempfile::NamedTempFile> {
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available".to_string(),
+            ));
+        };
+
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+
+        let mut corrupted_changes = AssemblyChanges::empty();
+        let mut table_mods = TableModifications::new_sparse(1); // original_row_count = 0
+
+        let invalid_typedef = create_dummy_typedef(1, 0);
+        let table_data = TableDataOwned::TypeDef(invalid_typedef);
+
+        // Create update operation targeting RID 999 that doesn't exist
+        let invalid_op = TableOperation::new(Operation::Update(999, table_data));
+
+        if let TableModifications::Sparse { operations, .. } = &mut table_mods {
+            operations.push(invalid_op);
+        }
+
+        corrupted_changes
+            .table_changes
+            .insert(TableId::TypeDef, table_mods);
+        create_temp_assembly_with_changes(assembly, corrupted_changes)
+    }
+
+    fn create_assembly_with_update_after_delete() -> crate::Result<tempfile::NamedTempFile> {
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available".to_string(),
+            ));
+        };
+
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+
+        let mut corrupted_changes = AssemblyChanges::empty();
+        let mut table_mods = TableModifications::new_sparse(2); // original_row_count = 1
+
+        let typedef_data = create_dummy_typedef(1, 0);
+        let table_data = TableDataOwned::TypeDef(typedef_data);
+
+        // Create delete operation followed by update operation (invalid sequence)
+        let delete_op = TableOperation::new_with_timestamp(Operation::Delete(1), 1000);
+        let update_op = TableOperation::new_with_timestamp(Operation::Update(1, table_data), 2000);
+
+        if let TableModifications::Sparse {
+            operations,
+            deleted_rows,
+            ..
+        } = &mut table_mods
+        {
+            operations.push(delete_op);
+            operations.push(update_op);
+            deleted_rows.insert(1); // Mark as deleted
+        }
+
+        corrupted_changes
+            .table_changes
+            .insert(TableId::TypeDef, table_mods);
+        create_temp_assembly_with_changes(assembly, corrupted_changes)
+    }
+
+    fn create_assembly_with_excessive_updates() -> crate::Result<tempfile::NamedTempFile> {
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available".to_string(),
+            ));
+        };
+
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+
+        let mut corrupted_changes = AssemblyChanges::empty();
+        let mut table_mods = TableModifications::new_sparse(2); // original_row_count = 1
+
+        let typedef_data = create_dummy_typedef(1, 0);
+
+        if let TableModifications::Sparse { operations, .. } = &mut table_mods {
+            // Add more than 10 update operations on same RID (limit is 10)
+            for i in 0..12 {
+                let table_data = TableDataOwned::TypeDef(typedef_data.clone());
+                let update_op = TableOperation::new_with_timestamp(
+                    Operation::Update(1, table_data),
+                    1000 + i as u64,
+                );
+                operations.push(update_op);
+            }
+        }
+
+        corrupted_changes
+            .table_changes
+            .insert(TableId::TypeDef, table_mods);
+        create_temp_assembly_with_changes(assembly, corrupted_changes)
+    }
+
+    fn create_assembly_with_unordered_operations() -> crate::Result<tempfile::NamedTempFile> {
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available".to_string(),
+            ));
+        };
+
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+
+        let mut corrupted_changes = AssemblyChanges::empty();
+        let mut table_mods = TableModifications::new_sparse(1);
+
+        let typedef_data1 = create_dummy_typedef(1, 0);
+        let typedef_data2 = create_dummy_typedef(2, 1);
+
+        // Create operations with non-chronological timestamps
+        let op1 = TableOperation::new_with_timestamp(
+            Operation::Insert(1, TableDataOwned::TypeDef(typedef_data1)),
+            2000, // Later timestamp
+        );
+        let op2 = TableOperation::new_with_timestamp(
+            Operation::Insert(2, TableDataOwned::TypeDef(typedef_data2)),
+            1000, // Earlier timestamp
+        );
+
+        if let TableModifications::Sparse { operations, .. } = &mut table_mods {
+            // Add in wrong order (later timestamp first)
+            operations.push(op1);
+            operations.push(op2);
+        }
+
+        corrupted_changes
+            .table_changes
+            .insert(TableId::TypeDef, table_mods);
+        create_temp_assembly_with_changes(assembly, corrupted_changes)
+    }
+
+    fn create_assembly_with_conflicting_inserts() -> crate::Result<tempfile::NamedTempFile> {
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available".to_string(),
+            ));
+        };
+
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+
+        let mut corrupted_changes = AssemblyChanges::empty();
+        let mut table_mods = TableModifications::new_sparse(1);
+
+        let typedef_data1 = create_dummy_typedef(1, 0);
+        let typedef_data2 = create_dummy_typedef(2, 1);
+
+        // Create multiple insert operations targeting the same RID
+        let op1 = TableOperation::new_with_timestamp(
+            Operation::Insert(1, TableDataOwned::TypeDef(typedef_data1)),
+            1000,
+        );
+        let op2 = TableOperation::new_with_timestamp(
+            Operation::Insert(1, TableDataOwned::TypeDef(typedef_data2)),
+            2000,
+        );
+
+        if let TableModifications::Sparse { operations, .. } = &mut table_mods {
+            operations.push(op1);
+            operations.push(op2);
+        }
+
+        corrupted_changes
+            .table_changes
+            .insert(TableId::TypeDef, table_mods);
+        create_temp_assembly_with_changes(assembly, corrupted_changes)
+    }
+
+    fn create_temp_assembly_with_changes(
+        _assembly: CilAssembly,
+        _corrupted_changes: AssemblyChanges,
+    ) -> crate::Result<tempfile::NamedTempFile> {
+        let temp_file = tempfile::NamedTempFile::new()?;
+        let temp_path = temp_file.path();
+
+        use std::fs;
+
+        if let Some(clean_testfile) = get_clean_testfile() {
+            fs::copy(clean_testfile, temp_path)?;
+        }
+
+        Ok(temp_file)
     }
 }

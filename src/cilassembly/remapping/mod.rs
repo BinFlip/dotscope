@@ -85,7 +85,7 @@
 //! This module integrates with:
 //! - [`crate::cilassembly::changes`] - Change tracking and storage
 //! - [`crate::cilassembly::write`] - Binary output generation
-//! - [`crate::cilassembly::validation`] - Validation and conflict resolution
+//! - Assembly validation - Validation and conflict resolution
 //! - [`crate::metadata::tables`] - Table data structures and cross-references
 
 pub use self::{index::IndexRemapper, rid::RidRemapper};
