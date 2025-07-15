@@ -332,6 +332,36 @@ impl RidRemapper {
     pub fn next_available_rid(&self) -> u32 {
         self.next_rid
     }
+
+    /// Returns the original RID that maps to the given final RID.
+    ///
+    /// This performs a reverse lookup to find which original RID corresponds to a specific
+    /// final RID in the sequential mapping. Used during table writing to iterate through
+    /// final RIDs in order while accessing the correct original row data.
+    ///
+    /// # Arguments
+    ///
+    /// * `final_rid` - The final RID to look up (1-based)
+    ///
+    /// # Returns
+    ///
+    /// The original RID that maps to the given final RID, or `None` if no mapping exists.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// let remapper = RidRemapper::build_from_operations(&operations, 5);
+    /// // If original RID 3 maps to final RID 2 (due to deletions)
+    /// assert_eq!(remapper.reverse_lookup(2), Some(3));
+    /// ```
+    pub fn reverse_lookup(&self, final_rid: u32) -> Option<u32> {
+        for (&original_rid, &mapped_rid) in &self.mapping {
+            if mapped_rid == Some(final_rid) {
+                return Some(original_rid);
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]

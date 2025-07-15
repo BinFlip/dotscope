@@ -158,11 +158,11 @@ impl RawLayoutConstraintValidator {
                     ));
                 }
 
-                if field_layout.offset > 0x7FFFFFFF {
+                if field_layout.field_offset > 0x7FFFFFFF {
                     return Err(malformed_error!(
-                        "FieldLayout RID {} has invalid offset {} exceeding maximum",
+                        "FieldLayout RID {} has invalid field offset {} exceeding maximum",
                         field_layout.rid,
-                        field_layout.offset
+                        field_layout.field_offset
                     ));
                 }
 
@@ -178,15 +178,19 @@ impl RawLayoutConstraintValidator {
                 }
 
                 field_offsets
-                    .entry(field_layout.offset)
+                    .entry(field_layout.field_offset as usize)
                     .or_default()
                     .push((field_layout.rid, field_layout.field));
             }
 
+            // Based on .NET runtime analysis: Field overlaps are legal in explicit layout types
+            // The runtime validates overlaps based on field types (OREF, BYREF, non-OREF) not counts
+            // Field layout overlap validation is handled by the type system, not metadata validation
+            // Only validate for obviously corrupt metadata patterns
             for (offset, fields) in field_offsets {
-                if fields.len() > 1 {
+                if fields.len() > 1000 {
                     return Err(malformed_error!(
-                        "Multiple fields found at offset {}: {} field layouts share the same position",
+                        "Suspiciously large field overlap at offset {}: {} field layouts share the same position (possible corruption)",
                         offset,
                         fields.len()
                     ));
@@ -314,7 +318,7 @@ impl RawLayoutConstraintValidator {
             }
 
             for field_layout in field_layout_table.iter() {
-                if field_layout.offset == 0x7FFFFFFF {
+                if field_layout.field_offset == 0x7FFFFFFF {
                     return Err(malformed_error!(
                         "FieldLayout RID {} has field offset at maximum boundary - potential overflow",
                         field_layout.rid
@@ -356,12 +360,12 @@ impl RawLayoutConstraintValidator {
                                 // due to explicit layout, union types, interop scenarios, inheritance, etc.
                                 // Only flag truly unreasonable offsets that suggest corruption
                                 if parent_class_layout.class_size > 0
-                                    && field_layout.offset > 1048576
+                                    && field_layout.field_offset > 1048576
                                 {
                                     return Err(malformed_error!(
-                                        "FieldLayout RID {} has unreasonably large offset {} (possible corruption)",
+                                        "FieldLayout RID {} has unreasonably large field offset {} (possible corruption)",
                                         field_layout.rid,
-                                        field_layout.offset
+                                        field_layout.field_offset
                                     ));
                                 }
                             }
@@ -418,29 +422,29 @@ impl RawLayoutConstraintValidator {
             (tables.table::<FieldLayoutRaw>(), tables.table::<FieldRaw>())
         {
             for field_layout in field_layout_table.iter() {
-                let offset = field_layout.offset;
+                let field_offset = field_layout.field_offset;
 
-                if (offset % 4 == 1 || offset % 4 == 3) && offset > 65536 {
+                if (field_offset % 4 == 1 || field_offset % 4 == 3) && field_offset > 65536 {
                     return Err(malformed_error!(
-                            "FieldLayout RID {} has unusual alignment at offset {} - potential layout issue",
+                            "FieldLayout RID {} has unusual alignment at field offset {} - potential layout issue",
                             field_layout.rid,
-                            offset
+                            field_offset
                         ));
                 }
 
-                if offset > 16777216 {
+                if field_offset > 16777216 {
                     return Err(malformed_error!(
-                        "FieldLayout RID {} has extremely large offset {} - possible corruption",
+                        "FieldLayout RID {} has extremely large field offset {} - possible corruption",
                         field_layout.rid,
-                        offset
+                        field_offset
                     ));
                 }
 
-                if offset == usize::MAX - 1 || offset == usize::MAX - 3 {
+                if field_offset == u32::MAX - 1 || field_offset == u32::MAX - 3 {
                     return Err(malformed_error!(
-                        "FieldLayout RID {} has offset {} near maximum boundary - overflow risk",
+                        "FieldLayout RID {} has field offset {} near maximum boundary - overflow risk",
                         field_layout.rid,
-                        offset
+                        field_offset
                     ));
                 }
             }
@@ -549,12 +553,12 @@ impl RawLayoutConstraintValidator {
 
             for (_parent_id, mut fields) in type_field_layouts {
                 if fields.len() > 1 {
-                    fields.sort_by_key(|f| f.offset);
+                    fields.sort_by_key(|f| f.field_offset);
 
                     for window in fields.windows(2) {
                         let field1 = &window[0];
                         let field2 = &window[1];
-                        let gap = field2.offset.saturating_sub(field1.offset);
+                        let gap = field2.field_offset.saturating_sub(field1.field_offset);
 
                         if gap > 1048576 {
                             return Err(malformed_error!(
@@ -565,12 +569,12 @@ impl RawLayoutConstraintValidator {
                             ));
                         }
 
-                        if gap == 0 && field1.offset > 0 && field1.offset > 65536 {
+                        if gap == 0 && field1.field_offset > 0 && field1.field_offset > 65536 {
                             return Err(malformed_error!(
-                                    "FieldLayout RID {} and {} overlap at large offset {} - verify union layout",
+                                    "FieldLayout RID {} and {} overlap at large field offset {} - verify union layout",
                                     field1.rid,
                                     field2.rid,
-                                    field1.offset
+                                    field1.field_offset
                                 ));
                         }
                     }
@@ -652,38 +656,336 @@ impl Default for RawLayoutConstraintValidator {
 mod tests {
     use super::*;
     use crate::{
-        metadata::validation::ValidationConfig,
+        metadata::{
+            tables::{TableDataOwned, TableId},
+            token::Token,
+            validation::ValidationConfig,
+        },
+        prelude::*,
         test::{get_clean_testfile, validator_test, TestAssembly},
     };
+    use tempfile::NamedTempFile;
 
     fn raw_layout_constraint_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
         let mut assemblies = Vec::new();
 
-        if let Some(clean_path) = get_clean_testfile() {
-            assemblies.push(TestAssembly::new(clean_path, true));
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available - test cannot run".to_string(),
+            ));
+        };
+
+        // 1. REQUIRED: Clean assembly - should pass all validation
+        assemblies.push(TestAssembly::new(&clean_testfile, true));
+
+        // 2. Null field reference in FieldLayout - should definitely fail
+        match create_assembly_with_null_field_reference() {
+            Ok(temp_file) => {
+                assemblies.push(TestAssembly::from_temp_file_with_error(
+                    temp_file,
+                    "Malformed",
+                ));
+            }
+            Err(e) => {
+                return Err(crate::Error::Error(format!(
+                    "Failed to create assembly with null field reference: {e}"
+                )));
+            }
         }
 
-        // Note: Test cases for layout constraint violations are difficult to create
-        // through builder APIs because they enforce constraint validity by design.
-        // The validator catches issues like:
-        // - Invalid packing sizes (not power of 2, >128)
-        // - Excessive class sizes (>2GB)
-        // - Null field/parent references
-        // - Field offset overlaps
-        // - Field offsets exceeding bounds
-        // - Invalid alignment specifications
-        //
-        // These would typically occur from:
-        // 1. Corrupted files from external sources
-        // 2. Manual binary manipulation
-        // 3. Malformed assemblies from other tools
-        // 4. Direct table corruption
-        //
-        // For comprehensive testing, we would need direct table manipulation
-        // tools or pre-corrupted test assemblies. For now, we test with clean assemblies
-        // to ensure the validator passes on well-formed input.
+        // 3. Invalid field offset - exceeding 0x7FFFFFFF
+        match create_assembly_with_invalid_field_offset() {
+            Ok(temp_file) => {
+                assemblies.push(TestAssembly::from_temp_file_with_error(
+                    temp_file,
+                    "Malformed",
+                ));
+            }
+            Err(e) => {
+                return Err(crate::Error::Error(format!(
+                    "Failed to create assembly with invalid field offset: {e}"
+                )));
+            }
+        }
+
+        // 4. Invalid packing size - not power of 2
+        match create_assembly_with_invalid_packing_size() {
+            Ok(temp_file) => {
+                assemblies.push(TestAssembly::from_temp_file_with_error(
+                    temp_file,
+                    "Malformed",
+                ));
+            }
+            Err(e) => {
+                return Err(crate::Error::Error(format!(
+                    "Failed to create assembly with invalid packing size: {e}"
+                )));
+            }
+        }
+
+        // 5. Excessive class size - exceeding 0x7FFFFFFF
+        match create_assembly_with_excessive_class_size() {
+            Ok(temp_file) => {
+                assemblies.push(TestAssembly::from_temp_file_with_error(
+                    temp_file,
+                    "Malformed",
+                ));
+            }
+            Err(e) => {
+                return Err(crate::Error::Error(format!(
+                    "Failed to create assembly with excessive class size: {e}"
+                )));
+            }
+        }
 
         Ok(assemblies)
+    }
+
+    /// Creates an assembly with overlapping fields at the same offset to test field layout validation.
+    fn create_assembly_with_overlapping_fields() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        // Create a basic type first
+        let _typedef_token = TypeDefBuilder::new()
+            .name("OverlappingFieldsType")
+            .namespace("Test")
+            .flags(0x00100108) // Explicit layout
+            .build(&mut context)?;
+
+        // Create a single field
+        let field_token = FieldBuilder::new()
+            .name("TestField")
+            .flags(0x0001)
+            .signature(&[0x06, 0x08])
+            .build(&mut context)?;
+
+        let mut assembly = context.finish();
+
+        // Create suspiciously large number of field layouts at same offset (>1000 to trigger corruption detection)
+        for i in 1..=1001 {
+            let field_layout = FieldLayoutRaw {
+                field_offset: 4, // All fields at same position
+                field: field_token.row(),
+                rid: i,
+                token: Token::new(0x10000000 + i),
+                offset: ((i - 1) * 8) as usize, // Different metadata stream offsets
+            };
+
+            assembly.update_table_row(
+                TableId::FieldLayout,
+                i,
+                TableDataOwned::FieldLayout(field_layout),
+            )?;
+        }
+
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+        Ok(temp_file)
+    }
+
+    /// Creates an assembly with invalid packing size (not power of 2) to test class layout validation.
+    fn create_assembly_with_invalid_packing_size() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        let typedef_token = TypeDefBuilder::new()
+            .name("InvalidPackingType")
+            .namespace("Test")
+            .flags(0x00100000)
+            .build(&mut context)?;
+
+        let mut assembly = context.finish();
+
+        // Create class layout with invalid packing size directly
+        let class_layout = ClassLayoutRaw {
+            packing_size: 3, // Invalid - not power of 2
+            class_size: 16,
+            parent: typedef_token.row(),
+            rid: 1,
+            token: Token::new(0x0F000001), // ClassLayout table token
+            offset: 0,
+        };
+
+        assembly.update_table_row(
+            TableId::ClassLayout,
+            1,
+            TableDataOwned::ClassLayout(class_layout),
+        )?;
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+        Ok(temp_file)
+    }
+
+    /// Creates an assembly with excessive class size to test class layout validation.
+    fn create_assembly_with_excessive_class_size() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        let typedef_token = TypeDefBuilder::new()
+            .name("ExcessiveSizeType")
+            .namespace("Test")
+            .flags(0x00100000)
+            .build(&mut context)?;
+
+        let mut assembly = context.finish();
+
+        // Create class layout with excessive size directly
+        let class_layout = ClassLayoutRaw {
+            packing_size: 1,
+            class_size: 0x80000000, // Exceeds maximum allowed (0x7FFFFFFF)
+            parent: typedef_token.row(),
+            rid: 1,
+            token: Token::new(0x0F000001), // ClassLayout table token
+            offset: 0,
+        };
+
+        assembly.update_table_row(
+            TableId::ClassLayout,
+            1,
+            TableDataOwned::ClassLayout(class_layout),
+        )?;
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+        Ok(temp_file)
+    }
+
+    /// Creates an assembly with invalid field offset to test field layout validation.
+    fn create_assembly_with_invalid_field_offset() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        let _typedef_token = TypeDefBuilder::new()
+            .name("InvalidOffsetType")
+            .namespace("Test")
+            .flags(0x00100108) // Explicit layout
+            .build(&mut context)?;
+
+        let field_token = FieldBuilder::new()
+            .name("InvalidField")
+            .flags(0x0001)
+            .signature(&[0x06, 0x08])
+            .build(&mut context)?;
+
+        let mut assembly = context.finish();
+
+        // Create field layout with invalid field offset directly
+        let field_layout = FieldLayoutRaw {
+            field_offset: 0x80000000, // Exceeds maximum allowed (0x7FFFFFFF)
+            field: field_token.row(),
+            rid: 1,
+            token: Token::new(0x10000001), // FieldLayout table token
+            offset: 0,                     // Metadata stream offset
+        };
+
+        assembly.update_table_row(
+            TableId::FieldLayout,
+            1,
+            TableDataOwned::FieldLayout(field_layout),
+        )?;
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+        Ok(temp_file)
+    }
+
+    /// Creates an assembly with null field reference to test field layout validation.
+    fn create_assembly_with_null_field_reference() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        let _typedef_token = TypeDefBuilder::new()
+            .name("NullFieldRefType")
+            .namespace("Test")
+            .flags(0x00100108) // Explicit layout
+            .build(&mut context)?;
+
+        let mut assembly = context.finish();
+
+        // Create field layout with null field reference directly
+        let field_layout = FieldLayoutRaw {
+            field_offset: 0,
+            field: 0, // Null field reference - should cause error
+            rid: 1,
+            token: Token::new(0x10000001), // FieldLayout table token
+            offset: 0,
+        };
+
+        assembly.update_table_row(
+            TableId::FieldLayout,
+            1,
+            TableDataOwned::FieldLayout(field_layout),
+        )?;
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+        Ok(temp_file)
+    }
+
+    /// Creates an assembly with field offset at maximum boundary to test overflow detection.
+    fn create_assembly_with_boundary_field_offset() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        let _typedef_token = TypeDefBuilder::new()
+            .name("BoundaryOffsetType")
+            .namespace("Test")
+            .flags(0x00100108) // Explicit layout
+            .build(&mut context)?;
+
+        let field_token = FieldBuilder::new()
+            .name("BoundaryField")
+            .flags(0x0001)
+            .signature(&[0x06, 0x08])
+            .build(&mut context)?;
+
+        let mut assembly = context.finish();
+
+        // Create field layout with field offset at maximum boundary directly
+        let field_layout = FieldLayoutRaw {
+            field_offset: 0x7FFFFFFF, // At maximum boundary - should trigger overflow warning
+            field: field_token.row(),
+            rid: 1,
+            token: Token::new(0x10000001), // FieldLayout table token
+            offset: 0,                     // Metadata stream offset
+        };
+
+        assembly.update_table_row(
+            TableId::FieldLayout,
+            1,
+            TableDataOwned::FieldLayout(field_layout),
+        )?;
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+        Ok(temp_file)
     }
 
     #[test]
