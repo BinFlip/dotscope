@@ -601,3 +601,53 @@ impl Default for OwnedAttributeValidator {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        metadata::validation::ValidationConfig,
+        test::{get_clean_testfile, owned_validator_test, TestAssembly},
+    };
+
+    fn owned_attribute_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+        let mut assemblies = Vec::new();
+
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available - test cannot run".to_string(),
+            ));
+        };
+
+        // 1. REQUIRED: Clean assembly - should pass all attribute validation
+        assemblies.push(TestAssembly::new(&clean_testfile, true));
+
+        // TODO: Add negative test cases when builder constraints are resolved
+        // These would test:
+        // - Custom attributes with excessive fixed arguments (>20)
+        // - Custom attributes with excessive named arguments (>50)
+        // - Custom attributes with duplicate named argument names
+        // - Custom attributes with suspicious patterns (long strings >10000 chars)
+        // - Custom attributes with deep array nesting (>10 levels)
+        // - Custom attributes with similar names indicating typosquatting
+
+        Ok(assemblies)
+    }
+
+    #[test]
+    fn test_owned_attribute_validator() -> crate::Result<()> {
+        let validator = OwnedAttributeValidator::new();
+        let config = ValidationConfig {
+            enable_semantic_validation: true,
+            ..Default::default()
+        };
+
+        owned_validator_test(
+            owned_attribute_validator_file_factory,
+            "OwnedAttributeValidator",
+            "ValidationOwnedValidatorFailed",
+            config,
+            |context| validator.validate_owned(context),
+        )
+    }
+}

@@ -416,3 +416,54 @@ impl Default for OwnedFieldValidator {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        metadata::validation::ValidationConfig,
+        test::{get_clean_testfile, owned_validator_test, TestAssembly},
+    };
+
+    fn owned_field_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+        let mut assemblies = Vec::new();
+
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available - test cannot run".to_string(),
+            ));
+        };
+
+        // 1. REQUIRED: Clean assembly - should pass all field validation
+        assemblies.push(TestAssembly::new(&clean_testfile, true));
+
+        // TODO: Add negative test cases when builder constraints are resolved
+        // These would test:
+        // - Fields with empty names
+        // - Fields with unresolved type signatures
+        // - Invalid field accessibility combinations
+        // - Literal fields that are not static
+        // - Fields with HasDefault without Literal flag
+        // - Static fields with HasFieldRVA flag
+        // - Special field names without SPECIAL_NAME flag
+
+        Ok(assemblies)
+    }
+
+    #[test]
+    fn test_owned_field_validator() -> crate::Result<()> {
+        let validator = OwnedFieldValidator::new();
+        let config = ValidationConfig {
+            enable_semantic_validation: true,
+            ..Default::default()
+        };
+
+        owned_validator_test(
+            owned_field_validator_file_factory,
+            "OwnedFieldValidator",
+            "ValidationOwnedValidatorFailed",
+            config,
+            |context| validator.validate_owned(context),
+        )
+    }
+}

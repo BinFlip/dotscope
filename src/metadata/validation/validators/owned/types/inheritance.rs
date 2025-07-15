@@ -86,6 +86,7 @@ use crate::{
     metadata::{
         method::{Method, MethodMap, MethodModifiers},
         tables::TypeAttributes,
+        token::Token,
         typesystem::{CilFlavor, CilType, CilTypeRefList},
         validation::{
             context::{OwnedValidationContext, ValidationContext},
@@ -94,7 +95,7 @@ use crate::{
     },
     Result,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Foundation validator for inheritance hierarchies, circular dependencies, interface implementation, and method inheritance.
 ///
@@ -134,6 +135,56 @@ use std::collections::HashSet;
 /// and operate on immutable resolved metadata structures. Method inheritance validation
 /// operates on thread-safe [`crate::metadata::method::MethodMap`] and [`crate::metadata::typesystem::CilType`] references.
 pub struct OwnedInheritanceValidator;
+
+/// Fast method-to-type mapping for efficient method ownership lookup
+struct MethodTypeMapping {
+    /// Maps method token to the type token that owns it
+    method_to_type: HashMap<Token, Token>,
+    /// Maps type token to all methods it owns
+    type_to_methods: HashMap<Token, Vec<Token>>,
+}
+
+impl MethodTypeMapping {
+    /// Builds the method-to-type mapping for fast lookups
+    fn new(types: &crate::metadata::typesystem::TypeRegistry) -> Self {
+        let mut method_to_type = HashMap::new();
+        let mut type_to_methods: HashMap<Token, Vec<Token>> = HashMap::new();
+
+        for type_entry in types.all_types() {
+            let type_token = type_entry.token;
+            let mut type_methods = Vec::new();
+
+            for (_, method_ref) in type_entry.methods.iter() {
+                if let Some(method_token) = method_ref.token() {
+                    method_to_type.insert(method_token, type_token);
+                    type_methods.push(method_token);
+                }
+            }
+
+            if !type_methods.is_empty() {
+                type_to_methods.insert(type_token, type_methods);
+            }
+        }
+
+        Self {
+            method_to_type,
+            type_to_methods,
+        }
+    }
+
+    /// Fast check if a method belongs to a specific type (O(1) lookup)
+    fn method_belongs_to_type(&self, method_token: Token, type_token: Token) -> bool {
+        self.method_to_type.get(&method_token) == Some(&type_token)
+    }
+
+    /// Get all methods for a specific type (O(1) lookup)
+    fn get_type_methods(&self, type_token: Token) -> &[Token] {
+        self.type_to_methods
+            .get(&type_token)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+}
 
 impl OwnedInheritanceValidator {
     /// Creates a new inheritance validator instance.
@@ -594,10 +645,16 @@ impl OwnedInheritanceValidator {
     fn validate_method_inheritance(&self, context: &OwnedValidationContext) -> Result<()> {
         let types = context.object().types();
         let methods = context.object().methods();
+        let method_mapping = MethodTypeMapping::new(types);
 
         for type_entry in types.all_types() {
             if let Some(base_type) = type_entry.base() {
-                self.validate_basic_method_overrides(&type_entry, &base_type, methods)?;
+                self.validate_basic_method_overrides(
+                    &type_entry,
+                    &base_type,
+                    methods,
+                    &method_mapping,
+                )?;
             }
         }
 
@@ -617,6 +674,7 @@ impl OwnedInheritanceValidator {
     /// * `derived_type` - The derived type containing methods to validate via [`crate::metadata::typesystem::CilType`]
     /// * `base_type` - The base type containing methods being overridden via [`crate::metadata::typesystem::CilType`]
     /// * `methods` - Method map containing all method definitions via [`crate::metadata::method::MethodMap`]
+    /// * `method_mapping` - Pre-built method-to-type mapping for efficient lookups
     ///
     /// # Returns
     ///
@@ -637,17 +695,24 @@ impl OwnedInheritanceValidator {
         derived_type: &CilType,
         base_type: &CilType,
         methods: &MethodMap,
+        method_mapping: &MethodTypeMapping,
     ) -> Result<()> {
         if base_type.flags & TypeAttributes::INTERFACE != 0 {
             return Ok(());
         }
 
-        for method_entry in methods.iter() {
-            let method = method_entry.value();
+        let type_methods = method_mapping.get_type_methods(derived_type.token);
+        for &method_token in type_methods {
+            if let Some(method_entry) = methods.get(&method_token) {
+                let method = method_entry.value();
 
-            if self.method_belongs_to_type(method, derived_type) {
                 if method.flags_modifiers.contains(MethodModifiers::VIRTUAL) {
-                    self.validate_virtual_method_override(method, base_type, methods)?;
+                    self.validate_virtual_method_override(
+                        method,
+                        base_type,
+                        methods,
+                        method_mapping,
+                    )?;
                 }
 
                 if method.flags_modifiers.contains(MethodModifiers::ABSTRACT)
@@ -667,34 +732,6 @@ impl OwnedInheritanceValidator {
         Ok(())
     }
 
-    /// Determines if a method belongs to a specific type by comparing tokens.
-    ///
-    /// Checks whether a given method is defined within a specific type by comparing
-    /// method tokens against the type's method collection. This is used to associate
-    /// methods with their declaring types during inheritance validation.
-    ///
-    /// # Arguments
-    ///
-    /// * `method` - The method to check ownership for via [`crate::metadata::method::Method`]
-    /// * `type_entry` - The type to check method ownership against via [`crate::metadata::typesystem::CilType`]
-    ///
-    /// # Returns
-    ///
-    /// * `true` - The method belongs to the specified type
-    /// * `false` - The method does not belong to the specified type
-    ///
-    /// # Thread Safety
-    ///
-    /// This method is thread-safe and operates on immutable metadata structures.
-    fn method_belongs_to_type(&self, method: &Method, type_entry: &CilType) -> bool {
-        for (_, method_ref) in type_entry.methods.iter() {
-            if method_ref.token() == Some(method.token) {
-                return true;
-            }
-        }
-        false
-    }
-
     /// Validates virtual method override rules against base type methods.
     ///
     /// Performs detailed validation of virtual method overrides according to ECMA-335
@@ -707,6 +744,7 @@ impl OwnedInheritanceValidator {
     /// * `derived_method` - The derived virtual method being validated via [`crate::metadata::method::Method`]
     /// * `base_type` - The base type containing potential overridden methods via [`crate::metadata::typesystem::CilType`]
     /// * `methods` - Method map containing all method definitions via [`crate::metadata::method::MethodMap`]
+    /// * `method_mapping` - Pre-built method-to-type mapping for efficient lookups
     ///
     /// # Returns
     ///
@@ -727,6 +765,7 @@ impl OwnedInheritanceValidator {
         derived_method: &Method,
         base_type: &CilType,
         methods: &MethodMap,
+        method_mapping: &MethodTypeMapping,
     ) -> Result<()> {
         if base_type.flags & TypeAttributes::INTERFACE != 0 {
             return Ok(());
@@ -739,16 +778,18 @@ impl OwnedInheritanceValidator {
             return Ok(());
         }
 
-        for base_method_entry in methods.iter() {
-            let base_method = base_method_entry.value();
+        let base_methods = method_mapping.get_type_methods(base_type.token);
+        for &base_method_token in base_methods {
+            if let Some(base_method_entry) = methods.get(&base_method_token) {
+                let base_method = base_method_entry.value();
 
-            if self.method_belongs_to_type(base_method, base_type)
-                && base_method
+                if base_method
                     .flags_modifiers
                     .contains(MethodModifiers::VIRTUAL)
-                && self.is_potential_method_override(derived_method, base_method)?
-            {
-                self.validate_method_override_rules(derived_method, base_method)?;
+                    && self.is_potential_method_override(derived_method, base_method)?
+                {
+                    self.validate_method_override_rules(derived_method, base_method)?;
+                }
             }
         }
         Ok(())

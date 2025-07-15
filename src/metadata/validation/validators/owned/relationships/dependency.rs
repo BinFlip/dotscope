@@ -416,3 +416,52 @@ impl Default for OwnedDependencyValidator {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        metadata::validation::ValidationConfig,
+        test::{get_clean_testfile, owned_validator_test, TestAssembly},
+    };
+
+    fn owned_dependency_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+        let mut assemblies = Vec::new();
+
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available - test cannot run".to_string(),
+            ));
+        };
+
+        // 1. REQUIRED: Clean assembly - should pass all dependency validation
+        assemblies.push(TestAssembly::new(&clean_testfile, true));
+
+        // TODO: Add negative test cases when builder constraints are resolved
+        // These would test:
+        // - Broken dependency chains in type hierarchies
+        // - Unsatisfied transitive dependencies across assemblies
+        // - Invalid dependency ordering for inheritance and composition
+        // - Self-referential dependencies in inheritance, interfaces, and nested types
+        // - Broken parameter and local variable type dependencies
+
+        Ok(assemblies)
+    }
+
+    #[test]
+    fn test_owned_dependency_validator() -> crate::Result<()> {
+        let validator = OwnedDependencyValidator::new();
+        let config = ValidationConfig {
+            enable_cross_table_validation: true,
+            ..Default::default()
+        };
+
+        owned_validator_test(
+            owned_dependency_validator_file_factory,
+            "OwnedDependencyValidator",
+            "ValidationOwnedValidatorFailed",
+            config,
+            |context| validator.validate_owned(context),
+        )
+    }
+}

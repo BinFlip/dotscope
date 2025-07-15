@@ -334,3 +334,56 @@ impl Default for OwnedSignatureValidator {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        metadata::validation::ValidationConfig,
+        test::{get_clean_testfile, owned_validator_test, TestAssembly},
+    };
+
+    fn owned_signature_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+        let mut assemblies = Vec::new();
+
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available - test cannot run".to_string(),
+            ));
+        };
+
+        // 1. REQUIRED: Clean assembly - should pass all signature validation
+        assemblies.push(TestAssembly::new(&clean_testfile, true));
+
+        // TODO: Add negative test cases when builder constraints are resolved
+        // These would test:
+        // - Methods with empty names
+        // - Methods with unresolved return types
+        // - Parameters with excessively long names (>255 characters)
+        // - Parameters with unresolved types
+        // - Parameters with excessive custom attributes (>10)
+        // - Generic parameters with empty names
+        // - Generic parameters with excessive name lengths
+        // - Generic parameters with invalid flags
+        // - Methods with excessive overloads (>1024)
+
+        Ok(assemblies)
+    }
+
+    #[test]
+    fn test_owned_signature_validator() -> crate::Result<()> {
+        let validator = OwnedSignatureValidator::new();
+        let config = ValidationConfig {
+            enable_method_validation: true,
+            ..Default::default()
+        };
+
+        owned_validator_test(
+            owned_signature_validator_file_factory,
+            "OwnedSignatureValidator",
+            "ValidationOwnedValidatorFailed",
+            config,
+            |context| validator.validate_owned(context),
+        )
+    }
+}

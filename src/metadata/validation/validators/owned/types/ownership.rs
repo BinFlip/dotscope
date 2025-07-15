@@ -314,3 +314,52 @@ impl Default for OwnedTypeOwnershipValidator {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        metadata::validation::ValidationConfig,
+        test::{get_clean_testfile, owned_validator_test, TestAssembly},
+    };
+
+    fn owned_type_ownership_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+        let mut assemblies = Vec::new();
+
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available - test cannot run".to_string(),
+            ));
+        };
+
+        // 1. REQUIRED: Clean assembly - should pass all type ownership validation
+        assemblies.push(TestAssembly::new(&clean_testfile, true));
+
+        // TODO: Add negative test cases when builder constraints are resolved
+        // These would test:
+        // - Broken nested type references
+        // - Method references to non-existent tokens
+        // - Fields with empty names
+        // - Generic parameters with empty names
+        // - Broken constraint references in generic parameters
+
+        Ok(assemblies)
+    }
+
+    #[test]
+    fn test_owned_type_ownership_validator() -> crate::Result<()> {
+        let validator = OwnedTypeOwnershipValidator::new();
+        let config = ValidationConfig {
+            enable_semantic_validation: true,
+            ..Default::default()
+        };
+
+        owned_validator_test(
+            owned_type_ownership_validator_file_factory,
+            "OwnedTypeOwnershipValidator",
+            "ValidationOwnedValidatorFailed",
+            config,
+            |context| validator.validate_owned(context),
+        )
+    }
+}

@@ -434,3 +434,53 @@ impl Default for OwnedAccessibilityValidator {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        metadata::validation::ValidationConfig,
+        test::{get_clean_testfile, owned_validator_test, TestAssembly},
+    };
+
+    fn owned_accessibility_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+        let mut assemblies = Vec::new();
+
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available - test cannot run".to_string(),
+            ));
+        };
+
+        // 1. REQUIRED: Clean assembly - should pass all accessibility validation
+        assemblies.push(TestAssembly::new(&clean_testfile, true));
+
+        // TODO: Add negative test cases when builder constraints are resolved
+        // These would test:
+        // - Invalid accessibility flag combinations
+        // - Nested types with invalid accessibility (public nested in private)
+        // - Methods with invalid accessibility for virtual/override scenarios
+        // - Fields with invalid accessibility in interfaces (non-static/non-literal)
+        // - Interface implementations with accessibility violations
+        // - Inheritance patterns with accessibility violations
+
+        Ok(assemblies)
+    }
+
+    #[test]
+    fn test_owned_accessibility_validator() -> crate::Result<()> {
+        let validator = OwnedAccessibilityValidator::new();
+        let config = ValidationConfig {
+            enable_semantic_validation: true,
+            ..Default::default()
+        };
+
+        owned_validator_test(
+            owned_accessibility_validator_file_factory,
+            "OwnedAccessibilityValidator",
+            "ValidationOwnedValidatorFailed",
+            config,
+            |context| validator.validate_owned(context),
+        )
+    }
+}

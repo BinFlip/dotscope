@@ -590,3 +590,52 @@ impl Default for OwnedSecurityValidator {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        metadata::validation::ValidationConfig,
+        test::{get_clean_testfile, owned_validator_test, TestAssembly},
+    };
+
+    fn owned_security_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+        let mut assemblies = Vec::new();
+
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available - test cannot run".to_string(),
+            ));
+        };
+
+        // 1. REQUIRED: Clean assembly - should pass all security validation
+        assemblies.push(TestAssembly::new(&clean_testfile, true));
+
+        // TODO: Add negative test cases when builder constraints are resolved
+        // These would test:
+        // - Security permission declaration violations (excessive permissions)
+        // - Code access security attribute violations (dangerous content)
+        // - Security transparency violations (critical/transparent conflicts)
+        // - Invalid security attribute usage patterns
+        // - Conflicting security critical and transparent attributes
+
+        Ok(assemblies)
+    }
+
+    #[test]
+    fn test_owned_security_validator() -> crate::Result<()> {
+        let validator = OwnedSecurityValidator::new();
+        let config = ValidationConfig {
+            enable_semantic_validation: true,
+            ..Default::default()
+        };
+
+        owned_validator_test(
+            owned_security_validator_file_factory,
+            "OwnedSecurityValidator",
+            "ValidationOwnedValidatorFailed",
+            config,
+            |context| validator.validate_owned(context),
+        )
+    }
+}

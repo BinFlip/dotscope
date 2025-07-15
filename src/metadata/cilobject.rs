@@ -334,7 +334,7 @@ impl CilObject {
         file: &Path,
         validation_config: ValidationConfig,
     ) -> Result<Self> {
-        let assembly_view = CilAssemblyView::from_file_with_validation(file, validation_config)?;
+        let assembly_view = CilAssemblyView::from_file(file)?;
         let data = CilObjectData::from_assembly_view(&assembly_view)?;
 
         let object = CilObject {
@@ -342,11 +342,7 @@ impl CilObject {
             data,
         };
 
-        // Perform validation on the constructed object if required
-        if validation_config.should_validate_owned() {
-            object.validate(validation_config)?;
-        }
-
+        object.validate(validation_config)?;
         Ok(object)
     }
 
@@ -432,7 +428,7 @@ impl CilObject {
         data: Vec<u8>,
         validation_config: ValidationConfig,
     ) -> Result<Self> {
-        let assembly_view = CilAssemblyView::from_mem_with_validation(data, validation_config)?;
+        let assembly_view = CilAssemblyView::from_mem(data)?;
         let object_data = CilObjectData::from_assembly_view(&assembly_view)?;
 
         let object = CilObject {
@@ -440,10 +436,7 @@ impl CilObject {
             data: object_data,
         };
 
-        if validation_config.should_validate_owned() {
-            object.validate(validation_config)?;
-        }
-
+        object.validate(validation_config)?;
         Ok(object)
     }
 
@@ -1154,15 +1147,9 @@ impl CilObject {
             return Ok(());
         }
 
-        // Use unified validation engine for two-stage validation
         let engine = ValidationEngine::new(&self.assembly_view, config)?;
-        let result = engine.execute_two_stage_validation(
-            &self.assembly_view,
-            None,       // No modifications for validation
-            Some(self), // Pass CilObject for stage 2 validation
-        )?;
+        let result = engine.execute_two_stage_validation(&self.assembly_view, None, Some(self))?;
 
-        // Convert result to standard Result
         result.into_result()
     }
 }

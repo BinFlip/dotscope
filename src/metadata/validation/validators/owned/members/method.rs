@@ -602,3 +602,56 @@ impl Default for OwnedMethodValidator {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        metadata::validation::ValidationConfig,
+        test::{get_clean_testfile, owned_validator_test, TestAssembly},
+    };
+
+    fn owned_method_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+        let mut assemblies = Vec::new();
+
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available - test cannot run".to_string(),
+            ));
+        };
+
+        // 1. REQUIRED: Clean assembly - should pass all method validation
+        assemblies.push(TestAssembly::new(&clean_testfile, true));
+
+        // TODO: Add negative test cases when builder constraints are resolved
+        // These would test:
+        // - Methods with empty names
+        // - Abstract methods not marked as virtual
+        // - Static methods marked as virtual, abstract, or final
+        // - Final methods not marked as virtual
+        // - Instance constructors without RTSPECIAL_NAME or SPECIAL_NAME flags
+        // - Static constructors that are not private
+        // - Abstract methods with RVA present
+        // - Concrete methods without RVA
+        // - Special method names without SPECIAL_NAME flag
+
+        Ok(assemblies)
+    }
+
+    #[test]
+    fn test_owned_method_validator() -> crate::Result<()> {
+        let validator = OwnedMethodValidator::new();
+        let config = ValidationConfig {
+            enable_method_validation: true,
+            ..Default::default()
+        };
+
+        owned_validator_test(
+            owned_method_validator_file_factory,
+            "OwnedMethodValidator",
+            "ValidationOwnedValidatorFailed",
+            config,
+            |context| validator.validate_owned(context),
+        )
+    }
+}

@@ -844,3 +844,52 @@ impl Default for OwnedAssemblyValidator {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        metadata::validation::ValidationConfig,
+        test::{get_clean_testfile, owned_validator_test, TestAssembly},
+    };
+
+    fn owned_assembly_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+        let mut assemblies = Vec::new();
+
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available - test cannot run".to_string(),
+            ));
+        };
+
+        // 1. REQUIRED: Clean assembly - should pass all assembly validation
+        assemblies.push(TestAssembly::new(&clean_testfile, true));
+
+        // TODO: Add negative test cases when builder constraints are resolved
+        // These would test:
+        // - Assembly metadata consistency violations (malformed metadata tables)
+        // - Cross-assembly reference violations (broken external references)
+        // - Assembly version compatibility issues (version conflicts)
+        // - Module file consistency violations (corrupted PE structure)
+        // - Invalid assembly names, cultures, or strong names
+
+        Ok(assemblies)
+    }
+
+    #[test]
+    fn test_owned_assembly_validator() -> crate::Result<()> {
+        let validator = OwnedAssemblyValidator::new();
+        let config = ValidationConfig {
+            enable_semantic_validation: true,
+            ..Default::default()
+        };
+
+        owned_validator_test(
+            owned_assembly_validator_file_factory,
+            "OwnedAssemblyValidator",
+            "ValidationOwnedValidatorFailed",
+            config,
+            |context| validator.validate_owned(context),
+        )
+    }
+}

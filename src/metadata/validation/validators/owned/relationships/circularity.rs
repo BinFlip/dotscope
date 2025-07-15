@@ -471,3 +471,52 @@ impl Default for OwnedCircularityValidator {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        metadata::validation::ValidationConfig,
+        test::{get_clean_testfile, owned_validator_test, TestAssembly},
+    };
+
+    fn owned_circularity_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+        let mut assemblies = Vec::new();
+
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available - test cannot run".to_string(),
+            ));
+        };
+
+        // 1. REQUIRED: Clean assembly - should pass all circularity validation
+        assemblies.push(TestAssembly::new(&clean_testfile, true));
+
+        // TODO: Add negative test cases when builder constraints are resolved
+        // These would test:
+        // - Circular inheritance chains (A->B->C->A)
+        // - Circular interface implementation chains
+        // - Circular cross-reference relationships
+        // - Self-referential type definitions
+        // - Complex circular dependency patterns
+
+        Ok(assemblies)
+    }
+
+    #[test]
+    fn test_owned_circularity_validator() -> crate::Result<()> {
+        let validator = OwnedCircularityValidator::new();
+        let config = ValidationConfig {
+            enable_cross_table_validation: true,
+            ..Default::default()
+        };
+
+        owned_validator_test(
+            owned_circularity_validator_file_factory,
+            "OwnedCircularityValidator",
+            "ValidationOwnedValidatorFailed",
+            config,
+            |context| validator.validate_owned(context),
+        )
+    }
+}
