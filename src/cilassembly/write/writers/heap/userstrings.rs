@@ -24,10 +24,7 @@ impl<'a> super::HeapWriter<'a> {
     /// * `stream_mod` - The [`crate::cilassembly::write::planner::StreamModification`] for the #US heap
     pub(super) fn write_userstring_heap(&mut self, stream_mod: &StreamModification) -> Result<()> {
         let userstring_changes = &self.base.assembly.changes().userstring_heap_changes;
-        if userstring_changes.has_additions()
-            || userstring_changes.has_modifications()
-            || userstring_changes.has_removals()
-        {
+        if userstring_changes.has_changes() {
             return self.write_userstring_heap_with_changes(stream_mod);
         }
 
@@ -181,6 +178,51 @@ impl<'a> super::HeapWriter<'a> {
 
         let userstring_changes = &self.base.assembly.changes().userstring_heap_changes;
         let stream_end = stream_layout.file_region.end_offset() as usize;
+
+        // Check if heap is being completely replaced
+        if let Some(replacement_heap) = userstring_changes.replacement_heap() {
+            // Use replacement heap directly
+            self.base
+                .output
+                .write_and_advance(&mut write_pos, replacement_heap)?;
+
+            // Process appended items (additions after replacement)
+            for user_string in userstring_changes.appended_items.iter() {
+                let utf16_bytes: Vec<u8> = user_string
+                    .encode_utf16()
+                    .flat_map(|c| c.to_le_bytes())
+                    .collect();
+
+                let total_length = utf16_bytes.len() + 1; // +1 for terminator byte
+                let has_high_chars = user_string.chars().any(|c| c as u32 >= 0x80);
+                let terminator_byte = if has_high_chars { 1u8 } else { 0u8 };
+
+                write_pos = self
+                    .base
+                    .output
+                    .write_compressed_uint_at(write_pos as u64, total_length as u32)?
+                    as usize;
+
+                if write_pos + utf16_bytes.len() + 1 > stream_end {
+                    return Err(Error::Error(format!(
+                        "UserString heap overflow: write would exceed allocated space"
+                    )));
+                }
+
+                let string_slice = self
+                    .base
+                    .output
+                    .get_mut_slice(write_pos, utf16_bytes.len())?;
+                string_slice.copy_from_slice(&utf16_bytes);
+                write_pos += utf16_bytes.len();
+
+                let terminator_slice = self.base.output.get_mut_slice(write_pos, 1)?;
+                terminator_slice[0] = terminator_byte;
+                write_pos += 1;
+            }
+
+            return Ok(());
+        }
 
         // Check if we have modifications to the ORIGINAL userstring heap (not appended ones)
         let original_data_len = if let Some(us_heap) = self.base.assembly.view().userstrings() {

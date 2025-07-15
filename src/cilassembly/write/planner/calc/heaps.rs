@@ -144,6 +144,16 @@ pub(crate) fn calculate_string_heap_total_size(
     heap_changes: &HeapChanges<String>,
     assembly: &CilAssembly,
 ) -> Result<u64> {
+    // If there's a heap replacement, use its size plus any appended items
+    if let Some(replacement_heap) = heap_changes.replacement_heap() {
+        let replacement_size = replacement_heap.len() as u64;
+        let appended_size = heap_changes.binary_string_heap_size() as u64;
+        // Add padding to align to 4-byte boundary
+        let total_size = replacement_size + appended_size;
+        let aligned_size = (total_size + 3) & !3; // Round up to next 4-byte boundary
+        return Ok(aligned_size);
+    }
+
     // This function must match EXACTLY what reconstruct_string_heap_in_memory does
     // to ensure stream directory size matches actual written heap size
 
@@ -262,6 +272,16 @@ pub(crate) fn calculate_blob_heap_size(
     heap_changes: &HeapChanges<Vec<u8>>,
     assembly: &CilAssembly,
 ) -> Result<u64> {
+    // If there's a heap replacement, use its size plus any appended items
+    if let Some(replacement_heap) = heap_changes.replacement_heap() {
+        let replacement_size = replacement_heap.len() as u64;
+        let appended_size = heap_changes.binary_blob_heap_size() as u64;
+        // Add padding to align to 4-byte boundary
+        let total_size = replacement_size + appended_size;
+        let aligned_size = (total_size + 3) & !3; // Round up to next 4-byte boundary
+        return Ok(aligned_size);
+    }
+
     let mut total_size = 0u64;
 
     if heap_changes.has_changes() {
@@ -379,6 +399,14 @@ pub(crate) fn calculate_guid_heap_size(
     heap_changes: &HeapChanges<[u8; 16]>,
     assembly: &CilAssembly,
 ) -> Result<u64> {
+    // If there's a heap replacement, use its size plus any appended items
+    if let Some(replacement_heap) = heap_changes.replacement_heap() {
+        let replacement_size = replacement_heap.len() as u64;
+        let appended_size = heap_changes.appended_items.len() as u64 * 16;
+        // GUIDs are naturally aligned to 4-byte boundary (16 bytes each)
+        return Ok(replacement_size + appended_size);
+    }
+
     let mut total_size = 0u64;
 
     if heap_changes.has_modifications() || heap_changes.has_removals() {
@@ -468,6 +496,16 @@ pub(crate) fn calculate_userstring_heap_size(
     heap_changes: &HeapChanges<String>,
     assembly: &CilAssembly,
 ) -> Result<u64> {
+    // If there's a heap replacement, use its size plus any appended items
+    if let Some(replacement_heap) = heap_changes.replacement_heap() {
+        let replacement_size = replacement_heap.len() as u64;
+        let appended_size = heap_changes.binary_userstring_heap_size() as u64;
+        // Add padding to align to 4-byte boundary
+        let total_size = replacement_size + appended_size;
+        let aligned_size = (total_size + 3) & !3; // Round up to next 4-byte boundary
+        return Ok(aligned_size);
+    }
+
     let mut total_size = 0u64;
 
     if heap_changes.has_modifications() || heap_changes.has_removals() {

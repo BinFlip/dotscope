@@ -135,6 +135,13 @@ pub struct HeapChanges<T> {
     /// This offset is incremented by the actual byte size of each new item added
     /// to ensure proper heap indexing following .NET runtime conventions.
     pub next_index: u32,
+
+    /// Complete heap replacement data
+    ///
+    /// When set, this raw data completely replaces the entire heap, ignoring
+    /// the original heap content. All append/modify/remove operations are
+    /// applied to this replacement heap instead of the original.
+    pub replacement_heap: Option<Vec<u8>>,
 }
 
 impl<T> HeapChanges<T> {
@@ -159,6 +166,7 @@ impl<T> HeapChanges<T> {
             removed_indices: HashSet::new(),
             removal_strategies: HashMap::new(),
             next_index: original_byte_size,
+            replacement_heap: None,
         }
     }
 
@@ -194,7 +202,47 @@ impl<T> HeapChanges<T> {
 
     /// Returns true if any changes (additions, modifications, or removals) have been made.
     pub fn has_changes(&self) -> bool {
-        self.has_additions() || self.has_modifications() || self.has_removals()
+        self.has_additions()
+            || self.has_modifications()
+            || self.has_removals()
+            || self.has_replacement()
+    }
+
+    /// Returns true if the heap has been completely replaced.
+    pub fn has_replacement(&self) -> bool {
+        self.replacement_heap.is_some()
+    }
+
+    /// Replaces the entire heap with the provided raw data.
+    ///
+    /// This completely replaces the heap content, ignoring the original heap.
+    /// All subsequent append/modify/remove operations will be applied to this
+    /// replacement heap instead of the original.
+    ///
+    /// # Arguments
+    ///
+    /// * `heap_data` - The raw bytes that will form the new heap
+    ///
+    /// # Note
+    ///
+    /// This resets the next_index to the size of the replacement heap, as
+    /// new additions will be appended after the replacement data.
+    pub fn replace_heap(&mut self, heap_data: Vec<u8>) {
+        self.next_index = heap_data.len() as u32;
+        self.replacement_heap = Some(heap_data);
+
+        // Clear existing changes since they would apply to the original heap
+        // which is now being replaced. Any future operations will apply to
+        // the replacement heap.
+        self.appended_items.clear();
+        self.modified_items.clear();
+        self.removed_indices.clear();
+        self.removal_strategies.clear();
+    }
+
+    /// Gets a reference to the replacement heap data, if any.
+    pub fn replacement_heap(&self) -> Option<&Vec<u8>> {
+        self.replacement_heap.as_ref()
     }
 
     /// Adds a modification to the heap at the specified index.

@@ -33,6 +33,64 @@ impl<'a> super::HeapWriter<'a> {
         let mut index_mapping = HashMap::new();
         let mut final_index_position = 1u32; // Start at 1, index 0 is always null
 
+        if let Some(replacement_heap) = string_changes.replacement_heap() {
+            final_heap = replacement_heap.clone();
+
+            // Create basic index mapping for the replacement heap
+            // Note: This is a simplified mapping that assumes the replacement heap
+            // is well-formed. In a more sophisticated implementation, we would
+            // parse the replacement heap to create proper mappings.
+            let mut current_position = 1u32; // Skip null byte at index 0
+            let heap_data = &final_heap[1..]; // Skip the null byte at start
+            let mut start = 0;
+
+            while start < heap_data.len() {
+                if let Some(null_pos) = heap_data[start..].iter().position(|&b| b == 0) {
+                    index_mapping.insert(current_position, Some(current_position));
+                    current_position += (null_pos + 1) as u32;
+                    start += null_pos + 1;
+                } else {
+                    break;
+                }
+            }
+
+            for original_string in string_changes.appended_items.iter() {
+                let original_heap_index = {
+                    let mut calculated_index = string_changes.next_index;
+                    for item in string_changes.appended_items.iter().rev() {
+                        calculated_index -= (item.len() + 1) as u32;
+                        if std::ptr::eq(item, original_string) {
+                            break;
+                        }
+                    }
+                    calculated_index
+                };
+
+                if !string_changes.is_removed(original_heap_index) {
+                    let final_string = string_changes
+                        .get_modification(original_heap_index)
+                        .cloned()
+                        .unwrap_or_else(|| original_string.clone());
+
+                    index_mapping.insert(original_heap_index, Some(final_index_position));
+                    final_heap.extend_from_slice(final_string.as_bytes());
+                    final_heap.push(0);
+                    final_index_position += final_string.len() as u32 + 1;
+                }
+            }
+
+            while final_heap.len() % 4 != 0 {
+                final_heap.push(0xFF);
+            }
+
+            let final_size = final_heap.len();
+            return Ok(StringHeapReconstruction {
+                heap_data: final_heap,
+                index_mapping,
+                final_size,
+            });
+        }
+
         // Always start with null byte at position 0
         final_heap.push(0);
 
@@ -161,6 +219,7 @@ impl<'a> super::HeapWriter<'a> {
         if !string_changes.has_additions()
             && !string_changes.has_modifications()
             && !string_changes.has_removals()
+            && !string_changes.has_replacement()
         {
             return Ok(None);
         }

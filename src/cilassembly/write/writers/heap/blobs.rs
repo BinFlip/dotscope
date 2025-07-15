@@ -157,6 +157,52 @@ impl<'a> super::HeapWriter<'a> {
         let blob_changes = &self.base.assembly.changes().blob_heap_changes;
         let stream_end = stream_layout.file_region.end_offset() as usize;
 
+        if let Some(replacement_heap) = blob_changes.replacement_heap() {
+            self.base
+                .output
+                .write_and_advance(&mut write_pos, replacement_heap)?;
+
+            for original_blob in blob_changes.appended_items.iter() {
+                let original_heap_index = {
+                    let mut calculated_index = blob_changes.next_index;
+                    for item in blob_changes.appended_items.iter().rev() {
+                        let item_size = item.len();
+                        let prefix_size = if item_size < 128 {
+                            1
+                        } else if item_size < 16384 {
+                            2
+                        } else {
+                            4
+                        };
+                        calculated_index -= (prefix_size + item_size) as u32;
+                        if std::ptr::eq(item, original_blob) {
+                            break;
+                        }
+                    }
+                    calculated_index
+                };
+
+                if !blob_changes.is_removed(original_heap_index) {
+                    let final_blob = blob_changes
+                        .get_modification(original_heap_index)
+                        .cloned()
+                        .unwrap_or_else(|| original_blob.clone());
+
+                    self.write_single_blob(&final_blob, &mut write_pos)?;
+                }
+            }
+
+            if write_pos > stream_end {
+                return Err(Error::Error(format!(
+                    "Blob heap data ({} bytes) exceeds allocated stream space ({} bytes)",
+                    write_pos - write_start,
+                    stream_end - write_start
+                )));
+            }
+
+            return Ok(());
+        }
+
         // Step 1: Rebuild blob heap entry by entry, applying modifications
         let mut rebuilt_original_count = 0;
         if let Some(blob_heap) = self.base.assembly.view().blobs() {

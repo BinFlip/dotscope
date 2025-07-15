@@ -22,10 +22,7 @@ impl<'a> super::HeapWriter<'a> {
     pub(super) fn write_guid_heap(&mut self, stream_mod: &StreamModification) -> Result<()> {
         let guid_changes = &self.base.assembly.changes().guid_heap_changes;
 
-        if guid_changes.has_additions()
-            || guid_changes.has_modifications()
-            || guid_changes.has_removals()
-        {
+        if guid_changes.has_changes() {
             return self.write_guid_heap_with_changes(stream_mod);
         }
 
@@ -89,6 +86,29 @@ impl<'a> super::HeapWriter<'a> {
 
         let guid_changes = &self.base.assembly.changes().guid_heap_changes;
         let stream_end = stream_layout.file_region.end_offset() as usize;
+
+        if let Some(replacement_heap) = guid_changes.replacement_heap() {
+            self.base
+                .output
+                .write_and_advance(&mut write_pos, replacement_heap)?;
+
+            for appended_guid in guid_changes.appended_items.iter() {
+                if write_pos + 16 > stream_end {
+                    return Err(crate::Error::WriteLayoutFailed {
+                        message: format!(
+                            "GUID heap overflow: write would exceed allocated space by {} bytes",
+                            (write_pos + 16) - stream_end
+                        ),
+                    });
+                }
+
+                let guid_slice = self.base.output.get_mut_slice(write_pos, 16)?;
+                guid_slice.copy_from_slice(appended_guid);
+                write_pos += 16;
+            }
+
+            return Ok(());
+        }
 
         // Step 1: Start with original GUIDs that aren't removed
         let mut guids_to_write: Vec<[u8; 16]> = Vec::new();

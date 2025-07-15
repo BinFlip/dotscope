@@ -295,31 +295,19 @@ pub fn identify_metadata_modifications(assembly: &CilAssembly) -> Result<Metadat
 
     // Identify which streams need modifications
     let mut stream_modifications = Vec::new();
-    if changes.string_heap_changes.has_additions()
-        || changes.string_heap_changes.has_modifications()
-        || changes.string_heap_changes.has_removals()
-    {
+    if changes.string_heap_changes.has_changes() {
         stream_modifications.push(create_string_stream_modification(assembly)?);
     }
 
-    if changes.blob_heap_changes.has_additions()
-        || changes.blob_heap_changes.has_modifications()
-        || changes.blob_heap_changes.has_removals()
-    {
+    if changes.blob_heap_changes.has_changes() {
         stream_modifications.push(create_blob_stream_modification(assembly)?);
     }
 
-    if changes.guid_heap_changes.has_additions()
-        || changes.guid_heap_changes.has_modifications()
-        || changes.guid_heap_changes.has_removals()
-    {
+    if changes.guid_heap_changes.has_changes() {
         stream_modifications.push(create_guid_stream_modification(assembly)?);
     }
 
-    if changes.userstring_heap_changes.has_additions()
-        || changes.userstring_heap_changes.has_modifications()
-        || changes.userstring_heap_changes.has_removals()
-    {
+    if changes.userstring_heap_changes.has_changes() {
         stream_modifications.push(create_userstring_stream_modification(assembly)?);
     }
 
@@ -357,11 +345,8 @@ fn create_string_stream_modification(assembly: &CilAssembly) -> Result<StreamMod
     let (write_offset, size_field_offset) = calculate_stream_offsets(assembly, "#Strings")?;
 
     let string_changes = &assembly.changes().string_heap_changes;
-    let has_modifications = string_changes.has_modifications();
-    let has_removals = string_changes.has_removals();
-    let has_additions = string_changes.has_additions();
 
-    let (new_size, additional_data_size) = if has_additions || has_modifications || has_removals {
+    let (new_size, additional_data_size) = if string_changes.has_changes() {
         // Heap writer always does reconstruction for ANY changes, so use total reconstructed heap size
         let total_heap_size = calculate_string_heap_total_size(string_changes, assembly)?;
         let additional = total_heap_size.saturating_sub(stream.size as u64);
@@ -448,13 +433,12 @@ fn create_guid_stream_modification(assembly: &CilAssembly) -> Result<StreamModif
     let (write_offset, size_field_offset) = calculate_stream_offsets(assembly, "#GUID")?;
 
     let guid_changes = &assembly.changes().guid_heap_changes;
-    let (new_size, additional_data_size) =
-        if guid_changes.has_modifications() || guid_changes.has_removals() {
-            let additional = rebuilt_heap_size.saturating_sub(stream.size as u64);
-            (rebuilt_heap_size, additional)
-        } else {
-            (stream.size as u64 + rebuilt_heap_size, rebuilt_heap_size)
-        };
+    let (new_size, additional_data_size) = if guid_changes.has_changes() {
+        let additional = rebuilt_heap_size.saturating_sub(stream.size as u64);
+        (rebuilt_heap_size, additional)
+    } else {
+        (stream.size as u64 + rebuilt_heap_size, rebuilt_heap_size)
+    };
 
     Ok(StreamModification {
         name: "#GUID".to_string(),
@@ -491,13 +475,12 @@ fn create_userstring_stream_modification(assembly: &CilAssembly) -> Result<Strea
     let (write_offset, size_field_offset) = calculate_stream_offsets(assembly, "#US")?;
 
     let userstring_changes = &assembly.changes().userstring_heap_changes;
-    let (new_size, additional_data_size) =
-        if userstring_changes.has_modifications() || userstring_changes.has_removals() {
-            let additional = rebuilt_heap_size.saturating_sub(stream.size as u64);
-            (rebuilt_heap_size, additional)
-        } else {
-            (stream.size as u64 + rebuilt_heap_size, rebuilt_heap_size)
-        };
+    let (new_size, additional_data_size) = if userstring_changes.has_changes() {
+        let additional = rebuilt_heap_size.saturating_sub(stream.size as u64);
+        (rebuilt_heap_size, additional)
+    } else {
+        (stream.size as u64 + rebuilt_heap_size, rebuilt_heap_size)
+    };
 
     Ok(StreamModification {
         name: "#US".to_string(),

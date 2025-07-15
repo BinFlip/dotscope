@@ -236,6 +236,135 @@ impl BuilderContext {
         self.assembly.userstring_add(value)
     }
 
+    /// Replaces the entire string heap (#Strings) with the provided raw data.
+    ///
+    /// This completely replaces the string heap content, ignoring the original heap.
+    /// If there is no existing string heap, a new one will be created. All subsequent
+    /// append/modify/remove operations will be applied to this replacement heap
+    /// instead of the original.
+    ///
+    /// This is a convenience method that delegates to the underlying
+    /// [`crate::cilassembly::CilAssembly::string_add_heap`] method.
+    ///
+    /// # Arguments
+    ///
+    /// * `heap_data` - The raw bytes that will form the new string heap
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
+    ///
+    /// // Replace with custom string heap containing "Hello\0World\0"
+    /// let custom_heap = b"Hello\0World\0".to_vec();
+    /// context.string_add_heap(custom_heap)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn string_add_heap(&mut self, heap_data: Vec<u8>) -> Result<()> {
+        self.assembly.string_add_heap(heap_data)
+    }
+
+    /// Replaces the entire blob heap (#Blob) with the provided raw data.
+    ///
+    /// This completely replaces the blob heap content, ignoring the original heap.
+    /// If there is no existing blob heap, a new one will be created. All subsequent
+    /// append/modify/remove operations will be applied to this replacement heap
+    /// instead of the original.
+    ///
+    /// This is a convenience method that delegates to the underlying
+    /// [`crate::cilassembly::CilAssembly::blob_add_heap`] method.
+    ///
+    /// # Arguments
+    ///
+    /// * `heap_data` - The raw bytes that will form the new blob heap
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
+    ///
+    /// // Replace with custom blob heap containing length-prefixed blobs
+    /// let custom_heap = vec![0x03, 0x01, 0x02, 0x03, 0x02, 0xFF, 0xFE];
+    /// context.blob_add_heap(custom_heap)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn blob_add_heap(&mut self, heap_data: Vec<u8>) -> Result<()> {
+        self.assembly.blob_add_heap(heap_data)
+    }
+
+    /// Replaces the entire GUID heap (#GUID) with the provided raw data.
+    ///
+    /// This completely replaces the GUID heap content, ignoring the original heap.
+    /// If there is no existing GUID heap, a new one will be created. All subsequent
+    /// append/modify/remove operations will be applied to this replacement heap
+    /// instead of the original.
+    ///
+    /// This is a convenience method that delegates to the underlying
+    /// [`crate::cilassembly::CilAssembly::guid_add_heap`] method.
+    ///
+    /// # Arguments
+    ///
+    /// * `heap_data` - The raw bytes that will form the new GUID heap (must be 16-byte aligned)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
+    ///
+    /// // Replace with custom GUID heap containing one GUID
+    /// let guid = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0,
+    ///             0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+    /// context.guid_add_heap(guid.to_vec())?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn guid_add_heap(&mut self, heap_data: Vec<u8>) -> Result<()> {
+        self.assembly.guid_add_heap(heap_data)
+    }
+
+    /// Replaces the entire user string heap (#US) with the provided raw data.
+    ///
+    /// This completely replaces the user string heap content, ignoring the original heap.
+    /// If there is no existing user string heap, a new one will be created. All subsequent
+    /// append/modify/remove operations will be applied to this replacement heap
+    /// instead of the original.
+    ///
+    /// This is a convenience method that delegates to the underlying
+    /// [`crate::cilassembly::CilAssembly::userstring_add_heap`] method.
+    ///
+    /// # Arguments
+    ///
+    /// * `heap_data` - The raw bytes that will form the new user string heap
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
+    ///
+    /// // Replace with custom user string heap containing UTF-16 strings with length prefixes
+    /// let custom_heap = vec![0x07, 0x48, 0x00, 0x65, 0x00, 0x6C, 0x00, 0x01]; // "Hel" + terminator
+    /// context.userstring_add_heap(custom_heap)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn userstring_add_heap(&mut self, heap_data: Vec<u8>) -> Result<()> {
+        self.assembly.userstring_add_heap(heap_data)
+    }
+
     /// Allocates the next available RID for a table and adds the row.
     ///
     /// This method coordinates RID allocation with the underlying assembly

@@ -281,3 +281,227 @@ fn test_heap_data_persistence() -> Result<()> {
         },
     )
 }
+
+#[test]
+fn test_string_heap_replacement() -> Result<()> {
+    // Create a custom string heap with null byte at index 0 followed by two null-terminated strings
+    let mut custom_heap = vec![0]; // Index 0 must always be null
+    custom_heap.extend_from_slice(b"CustomString1\0AnotherString\0");
+
+    perform_round_trip_test(
+        |context| {
+            context.string_add_heap(custom_heap.clone())?;
+            Ok(())
+        },
+        |written_view| {
+            let strings = written_view
+                .strings()
+                .ok_or_else(|| Error::Error("No strings heap found".to_string()))?;
+
+            // Verify the custom strings are present
+            let found_custom1 = strings.iter().any(|(_, s)| s == "CustomString1");
+            let found_custom2 = strings.iter().any(|(_, s)| s == "AnotherString");
+
+            assert!(
+                found_custom1,
+                "Custom string 'CustomString1' should be present in replaced heap"
+            );
+            assert!(
+                found_custom2,
+                "Custom string 'AnotherString' should be present in replaced heap"
+            );
+
+            // Verify that original strings are no longer present (heap was replaced)
+            let found_original = strings.iter().any(|(_, s)| s == "Task`1");
+            assert!(
+                !found_original,
+                "Original strings should not be present after heap replacement"
+            );
+
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn test_blob_heap_replacement() -> Result<()> {
+    // Create a custom blob heap with null byte at index 0 followed by length-prefixed blobs
+    // Index 0: null byte (required)
+    // First blob: length=3, data=[0x01, 0x02, 0x03]
+    // Second blob: length=2, data=[0xFF, 0xFE]
+    let mut custom_heap = vec![0]; // Index 0 must always be null
+    custom_heap.extend_from_slice(&[0x03, 0x01, 0x02, 0x03, 0x02, 0xFF, 0xFE]);
+
+    perform_round_trip_test(
+        |context| {
+            context.blob_add_heap(custom_heap.clone())?;
+            Ok(())
+        },
+        |written_view| {
+            let blobs = written_view
+                .blobs()
+                .ok_or_else(|| Error::Error("No blobs heap found".to_string()))?;
+
+            // Verify the custom blobs are present
+            let found_blob1 = blobs
+                .iter()
+                .any(|(_, blob)| blob == &vec![0x01, 0x02, 0x03]);
+            let found_blob2 = blobs.iter().any(|(_, blob)| blob == &vec![0xFF, 0xFE]);
+
+            assert!(
+                found_blob1,
+                "Custom blob [0x01, 0x02, 0x03] should be present in replaced heap"
+            );
+            assert!(
+                found_blob2,
+                "Custom blob [0xFF, 0xFE] should be present in replaced heap"
+            );
+
+            // Since we replaced the entire heap, original blobs should not be present
+            let blob_count = blobs.iter().count();
+            assert!(
+                blob_count <= 3, // Empty blob at index 0 + our 2 blobs
+                "Replaced heap should only contain our custom blobs (found {} blobs)",
+                blob_count
+            );
+
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn test_guid_heap_replacement() -> Result<()> {
+    // Create a custom GUID heap with two GUIDs (32 bytes total)
+    let guid1 = [
+        0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+        0x88,
+    ];
+    let guid2 = [
+        0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x99,
+    ];
+
+    let mut custom_heap = Vec::new();
+    custom_heap.extend_from_slice(&guid1);
+    custom_heap.extend_from_slice(&guid2);
+
+    perform_round_trip_test(
+        |context| {
+            context.guid_add_heap(custom_heap.clone())?;
+            Ok(())
+        },
+        |written_view| {
+            let guids = written_view
+                .guids()
+                .ok_or_else(|| Error::Error("No GUIDs heap found".to_string()))?;
+
+            // Verify the custom GUIDs are present
+            let found_guid1 = guids.iter().any(|(_, guid)| guid.to_bytes() == guid1);
+            let found_guid2 = guids.iter().any(|(_, guid)| guid.to_bytes() == guid2);
+
+            assert!(
+                found_guid1,
+                "Custom GUID 1 should be present in replaced heap"
+            );
+            assert!(
+                found_guid2,
+                "Custom GUID 2 should be present in replaced heap"
+            );
+
+            // Since we replaced the entire heap, only our GUIDs should be present
+            let guid_count = guids.iter().count();
+            assert_eq!(
+                guid_count, 2,
+                "Replaced heap should only contain our 2 custom GUIDs (found {} GUIDs)",
+                guid_count
+            );
+
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn test_userstring_heap_replacement() -> Result<()> {
+    // Create a custom user string heap with null byte at index 0 followed by length-prefixed UTF-16 strings
+    // Index 0: null byte (required)
+    // String "Hi": length=5 (4 bytes UTF-16 + 1 terminator), UTF-16 data: 0x48,0x00,0x69,0x00, terminator: 0x01
+    let mut custom_heap = vec![0]; // Index 0 must always be null
+    custom_heap.extend_from_slice(&[0x05, 0x48, 0x00, 0x69, 0x00, 0x01]);
+
+    perform_round_trip_test(
+        |context| {
+            context.userstring_add_heap(custom_heap.clone())?;
+            Ok(())
+        },
+        |written_view| {
+            let userstrings = written_view
+                .userstrings()
+                .ok_or_else(|| Error::Error("No userstrings heap found".to_string()))?;
+
+            // Verify the custom user string is present
+            let found_custom = userstrings
+                .iter()
+                .any(|(_, us)| us.to_string().unwrap_or_default() == "Hi");
+
+            assert!(
+                found_custom,
+                "Custom user string 'Hi' should be present in replaced heap"
+            );
+
+            // Since we replaced the entire heap, original user strings should not be present
+            let userstring_count = userstrings.iter().count();
+            assert!(
+                userstring_count <= 2, // Empty userstring at index 0 + our 1 userstring
+                "Replaced heap should only contain our custom user string (found {} userstrings)",
+                userstring_count
+            );
+
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn test_heap_replacement_with_subsequent_additions() -> Result<()> {
+    // Test that subsequent additions work with replaced heaps
+    let mut custom_string_heap = vec![0]; // Index 0 must always be null
+    custom_string_heap.extend_from_slice(b"ReplacedString\0");
+
+    perform_round_trip_test(
+        |context| {
+            // Replace string heap
+            context.string_add_heap(custom_string_heap.clone())?;
+
+            // Add a new string after replacement
+            let _new_index = context.string_add("AddedAfterReplacement")?;
+
+            Ok(())
+        },
+        |written_view| {
+            let strings = written_view
+                .strings()
+                .ok_or_else(|| Error::Error("No strings heap found".to_string()))?;
+
+            // Verify both the replaced string and the newly added string are present
+            let found_replaced = strings.iter().any(|(_, s)| s == "ReplacedString");
+            let found_added = strings.iter().any(|(_, s)| s == "AddedAfterReplacement");
+
+            assert!(found_replaced, "Replaced string should be present");
+            assert!(
+                found_added,
+                "String added after replacement should be present"
+            );
+
+            // Verify original strings are not present
+            let found_original = strings.iter().any(|(_, s)| s == "Task`1");
+            assert!(
+                !found_original,
+                "Original strings should not be present after heap replacement"
+            );
+
+            Ok(())
+        },
+    )
+}
