@@ -38,7 +38,7 @@ fn extend_crafted_2() -> Result<()> {
     let test_userstring = "TestAddedUserString";
 
     // Add user string directly (not used by builders)
-    let userstring_index = context.add_userstring(test_userstring)?;
+    let userstring_index = context.userstring_add(test_userstring)?;
     assert!(userstring_index > 0, "UserString index should be positive");
 
     // Step 3: Add new table rows that reference the new heap entries

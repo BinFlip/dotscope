@@ -163,7 +163,7 @@ impl EventPtrBuilder {
             event,
         };
 
-        context.add_table_row(TableId::EventPtr, TableDataOwned::EventPtr(event_ptr))?;
+        context.table_row_add(TableId::EventPtr, TableDataOwned::EventPtr(event_ptr))?;
         Ok(token)
     }
 }

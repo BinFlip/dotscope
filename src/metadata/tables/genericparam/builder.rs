@@ -287,7 +287,7 @@ impl GenericParamBuilder {
             });
         }
 
-        let name_index = context.get_or_add_string(&name)?;
+        let name_index = context.string_get_or_add(&name)?;
         let rid = context.next_rid(TableId::GenericParam);
 
         let token_value = ((TableId::GenericParam as u32) << 24) | rid;
@@ -303,7 +303,7 @@ impl GenericParamBuilder {
             name: name_index,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::GenericParam,
             TableDataOwned::GenericParam(generic_param_raw),
         )

@@ -171,7 +171,7 @@ impl ParamBuilder {
             })?;
 
         let name_index = if let Some(name) = self.name {
-            context.get_or_add_string(&name)?
+            context.string_get_or_add(&name)?
         } else {
             0 // No name (common for return type parameters)
         };
@@ -190,7 +190,7 @@ impl ParamBuilder {
             name: name_index,
         };
 
-        context.add_table_row(TableId::Param, TableDataOwned::Param(param_raw))
+        context.table_row_add(TableId::Param, TableDataOwned::Param(param_raw))
     }
 }
 

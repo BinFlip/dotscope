@@ -53,17 +53,17 @@ where
 fn test_string_heap_modifications_round_trip() -> Result<()> {
     let written_view = perform_round_trip_test("string_heap_modifications", |assembly| {
         // Add strings, then modify them
-        let idx1 = assembly.add_string("OriginalString1")?;
-        let idx2 = assembly.add_string("OriginalString2")?;
-        let _idx3 = assembly.add_string("StringToKeep")?;
+        let idx1 = assembly.string_add("OriginalString1")?;
+        let idx2 = assembly.string_add("OriginalString2")?;
+        let _idx3 = assembly.string_add("StringToKeep")?;
 
         // Update strings
-        assembly.update_string(idx1, "ModifiedString1")?;
-        assembly.update_string(idx2, "ModifiedString2")?;
+        assembly.string_update(idx1, "ModifiedString1")?;
+        assembly.string_update(idx2, "ModifiedString2")?;
 
         // Remove a string (this will test reference handling)
-        let idx_to_remove = assembly.add_string("StringToRemove")?;
-        assembly.remove_string(idx_to_remove, ReferenceHandlingStrategy::FailIfReferenced)?;
+        let idx_to_remove = assembly.string_add("StringToRemove")?;
+        assembly.string_remove(idx_to_remove, ReferenceHandlingStrategy::FailIfReferenced)?;
 
         Ok(())
     })?;
@@ -100,17 +100,17 @@ fn test_string_heap_modifications_round_trip() -> Result<()> {
 fn test_blob_heap_modifications_round_trip() -> Result<()> {
     let written_view = perform_round_trip_test("blob_heap_modifications", |assembly| {
         // Add blobs, then modify them
-        let idx1 = assembly.add_blob(&[1, 2, 3])?;
-        let idx2 = assembly.add_blob(&[4, 5, 6])?;
-        let _idx3 = assembly.add_blob(&[7, 8, 9])?; // Keep unchanged
+        let idx1 = assembly.blob_add(&[1, 2, 3])?;
+        let idx2 = assembly.blob_add(&[4, 5, 6])?;
+        let _idx3 = assembly.blob_add(&[7, 8, 9])?; // Keep unchanged
 
         // Update blobs
-        assembly.update_blob(idx1, &[10, 20, 30, 40])?;
-        assembly.update_blob(idx2, &[50, 60])?;
+        assembly.blob_update(idx1, &[10, 20, 30, 40])?;
+        assembly.blob_update(idx2, &[50, 60])?;
 
         // Remove a blob
-        let idx_to_remove = assembly.add_blob(&[99, 98, 97])?;
-        assembly.remove_blob(idx_to_remove, ReferenceHandlingStrategy::FailIfReferenced)?;
+        let idx_to_remove = assembly.blob_add(&[99, 98, 97])?;
+        assembly.blob_remove(idx_to_remove, ReferenceHandlingStrategy::FailIfReferenced)?;
 
         Ok(())
     })?;
@@ -162,10 +162,10 @@ fn test_guid_heap_additions_round_trip() -> Result<()> {
 
     let written_view = perform_round_trip_test("guid_heap_additions", |assembly| {
         // Add multiple GUIDs to test heap expansion
-        assembly.add_guid(&test_guid1)?;
-        assembly.add_guid(&test_guid2)?;
-        assembly.add_guid(&[0x42; 16])?;
-        assembly.add_guid(&[0x00; 16])?;
+        assembly.guid_add(&test_guid1)?;
+        assembly.guid_add(&test_guid2)?;
+        assembly.guid_add(&[0x42; 16])?;
+        assembly.guid_add(&[0x00; 16])?;
 
         Ok(())
     })?;
@@ -223,20 +223,20 @@ fn test_guid_heap_modifications_round_trip() -> Result<()> {
         }
 
         // Add GUIDs, then modify them
-        let idx1 = assembly.add_guid(&test_guid1)?;
-        let idx2 = assembly.add_guid(&test_guid2)?;
-        let _idx3 = assembly.add_guid(&[0x42; 16])?; // Keep unchanged
+        let idx1 = assembly.guid_add(&test_guid1)?;
+        let idx2 = assembly.guid_add(&test_guid2)?;
+        let _idx3 = assembly.guid_add(&[0x42; 16])?; // Keep unchanged
 
         println!("Added GUID indices: idx1={idx1}, idx2={idx2}");
 
         // Update GUIDs
-        assembly.update_guid(idx1, &modified_guid1)?;
-        assembly.update_guid(idx2, &modified_guid2)?;
+        assembly.guid_update(idx1, &modified_guid1)?;
+        assembly.guid_update(idx2, &modified_guid2)?;
 
         // Remove a GUID
-        let idx_to_remove = assembly.add_guid(&[0x99; 16])?;
+        let idx_to_remove = assembly.guid_add(&[0x99; 16])?;
         println!("GUID to remove index: {idx_to_remove}");
-        assembly.remove_guid(idx_to_remove, ReferenceHandlingStrategy::FailIfReferenced)?;
+        assembly.guid_remove(idx_to_remove, ReferenceHandlingStrategy::FailIfReferenced)?;
 
         Ok(())
     })?;
@@ -289,20 +289,20 @@ fn test_userstring_heap_modifications_round_trip() -> Result<()> {
         }
 
         // Add user strings, then modify them
-        let idx1 = assembly.add_userstring("OriginalUserString1")?;
-        let idx2 = assembly.add_userstring("OriginalUserString2")?;
-        let _idx3 = assembly.add_userstring("UserStringToKeep")?; // Keep unchanged
+        let idx1 = assembly.userstring_add("OriginalUserString1")?;
+        let idx2 = assembly.userstring_add("OriginalUserString2")?;
+        let _idx3 = assembly.userstring_add("UserStringToKeep")?; // Keep unchanged
 
         println!("Added UserString indices: idx1={idx1}, idx2={idx2}");
 
         // Update user strings
-        assembly.update_userstring(idx1, "ModifiedUserString1")?;
-        assembly.update_userstring(idx2, "ModifiedUserString2")?;
+        assembly.userstring_update(idx1, "ModifiedUserString1")?;
+        assembly.userstring_update(idx2, "ModifiedUserString2")?;
 
         // Remove a user string
-        let idx_to_remove = assembly.add_userstring("UserStringToRemove")?;
+        let idx_to_remove = assembly.userstring_add("UserStringToRemove")?;
         println!("UserString to remove index: {idx_to_remove}");
-        assembly.remove_userstring(idx_to_remove, ReferenceHandlingStrategy::FailIfReferenced)?;
+        assembly.userstring_remove(idx_to_remove, ReferenceHandlingStrategy::FailIfReferenced)?;
 
         Ok(())
     })?;
@@ -352,10 +352,10 @@ fn test_userstring_heap_additions_round_trip() -> Result<()> {
     // Test user string additions only (modifications might not be fully implemented)
     let written_view = perform_round_trip_test("userstring_heap_additions", |assembly| {
         // Add multiple user strings to test heap expansion
-        assembly.add_userstring("TestUserString1")?;
-        assembly.add_userstring("TestUserString2")?;
-        assembly.add_userstring("Unicode🦀UserString")?;
-        assembly.add_userstring("")?; // Empty user string
+        assembly.userstring_add("TestUserString1")?;
+        assembly.userstring_add("TestUserString2")?;
+        assembly.userstring_add("Unicode🦀UserString")?;
+        assembly.userstring_add("")?; // Empty user string
 
         Ok(())
     })?;
@@ -391,17 +391,17 @@ fn test_mixed_heap_additions_round_trip() -> Result<()> {
     // Test additions across all heap types (focus on what works)
     let written_view = perform_round_trip_test("mixed_heap_additions", |assembly| {
         // Add entries to all heaps
-        assembly.add_string("MixedTestString")?;
-        assembly.add_blob(&[1, 2, 3, 4])?;
-        assembly.add_guid(&[0x11; 16])?;
-        assembly.add_userstring("MixedTestUserString")?;
+        assembly.string_add("MixedTestString")?;
+        assembly.blob_add(&[1, 2, 3, 4])?;
+        assembly.guid_add(&[0x11; 16])?;
+        assembly.userstring_add("MixedTestUserString")?;
 
         // Test string and blob modifications which seem to work
-        let string_idx = assembly.add_string("StringToModify")?;
-        let blob_idx = assembly.add_blob(&[10, 20])?;
+        let string_idx = assembly.string_add("StringToModify")?;
+        let blob_idx = assembly.blob_add(&[10, 20])?;
 
-        assembly.update_string(string_idx, "ModifiedString")?;
-        assembly.update_blob(blob_idx, &[30, 40, 50])?;
+        assembly.string_update(string_idx, "ModifiedString")?;
+        assembly.blob_update(blob_idx, &[30, 40, 50])?;
 
         Ok(())
     })?;
@@ -469,15 +469,15 @@ fn test_builder_context_round_trip() -> Result<()> {
     let original_assembly = create_test_assembly()?;
     let mut context = BuilderContext::new(original_assembly);
 
-    let str1 = context.add_string("BuilderString1")?;
-    let _str2 = context.get_or_add_string("BuilderString2")?;
-    let str3 = context.get_or_add_string("BuilderString1")?; // Should deduplicate
+    let str1 = context.string_add("BuilderString1")?;
+    let _str2 = context.string_get_or_add("BuilderString2")?;
+    let str3 = context.string_get_or_add("BuilderString1")?; // Should deduplicate
 
     assert_eq!(str1, str3, "Builder should deduplicate identical strings");
 
-    let _blob_idx = context.add_blob(&[1, 2, 3, 4])?;
-    let _guid_idx = context.add_guid(&[0x99; 16])?;
-    let _userstring_idx = context.add_userstring("BuilderUserString")?;
+    let _blob_idx = context.blob_add(&[1, 2, 3, 4])?;
+    let _guid_idx = context.guid_add(&[0x99; 16])?;
+    let _userstring_idx = context.userstring_add("BuilderUserString")?;
 
     // Finish the context and write to file
     let mut assembly = context.finish();
@@ -545,24 +545,24 @@ fn test_large_scale_operations_round_trip() -> Result<()> {
 
         // Test with many operations to ensure scalability
         for i in 0..50 {
-            assembly.add_string(&format!("ScaleTestString{i}"))?;
+            assembly.string_add(&format!("ScaleTestString{i}"))?;
         }
 
         // Use fewer blob additions to avoid triggering full heap rebuild
         // which exposes pre-existing corruption in the test assembly file
         for i in 0..5 {
-            assembly.add_blob(&[i as u8, (i * 2) as u8, (i * 3) as u8])?;
+            assembly.blob_add(&[i as u8, (i * 2) as u8, (i * 3) as u8])?;
         }
 
         for i in 0..10 {
             let mut guid = [0u8; 16];
             guid[0] = i as u8;
             guid[15] = (255 - i) as u8;
-            assembly.add_guid(&guid)?;
+            assembly.guid_add(&guid)?;
         }
 
         for i in 0..15 {
-            assembly.add_userstring(&format!("UserString{i}"))?;
+            assembly.userstring_add(&format!("UserString{i}"))?;
         }
 
         Ok(())
@@ -611,7 +611,7 @@ fn test_large_scale_operations_round_trip() -> Result<()> {
 fn test_empty_operations_round_trip() -> Result<()> {
     let written_view = perform_round_trip_test("empty_operations", |assembly| {
         // Test round-trip with minimal modification to ensure write path works
-        assembly.add_string("MinimalModification")?;
+        assembly.string_add("MinimalModification")?;
         Ok(())
     })?;
 
@@ -644,7 +644,7 @@ fn test_modify_existing_string_round_trip() -> Result<()> {
 
         if let Some((index, original_string)) = target_data {
             let modified_content = format!("MODIFIED_{original_string}");
-            assembly.update_string(index, &modified_content)?;
+            assembly.string_update(index, &modified_content)?;
             println!("Modified existing string at index {index}: '{original_string}' -> '{modified_content}'");
         }
         Ok(())
@@ -687,7 +687,7 @@ fn test_remove_existing_string_round_trip() -> Result<()> {
         if let Some((index, original_string)) = target_data {
             target_string = original_string.clone();
             target_index = index;
-            assembly.remove_string(index, ReferenceHandlingStrategy::NullifyReferences)?;
+            assembly.string_remove(index, ReferenceHandlingStrategy::NullifyReferences)?;
             println!("Removed existing string at index {index}: '{original_string}'");
         }
         Ok(())
@@ -733,7 +733,7 @@ fn test_modify_existing_blob_round_trip() -> Result<()> {
             modified_blob.insert(0, 0xFF); // Add a marker byte
             modified_blob.push(0xEE); // Add a marker byte at the end
 
-            assembly.update_blob(index, &modified_blob)?;
+            assembly.blob_update(index, &modified_blob)?;
             println!(
                 "Modified existing blob at index {index}: {} bytes -> {} bytes",
                 original_blob.len(),
@@ -775,7 +775,7 @@ fn test_metadata_preservation_round_trip() -> Result<()> {
 
     let written_view = perform_round_trip_test("metadata_preservation", |assembly| {
         // Add minimal modifications
-        assembly.add_string("PreservationTest")?;
+        assembly.string_add("PreservationTest")?;
         Ok(())
     })?;
 

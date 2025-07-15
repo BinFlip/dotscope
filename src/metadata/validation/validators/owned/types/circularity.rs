@@ -590,9 +590,9 @@ mod tests {
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
 
-        let class_a_name_index = context.add_string("CircularClassA")?;
-        let class_b_name_index = context.add_string("CircularClassB")?;
-        let test_namespace_index = context.add_string("Test")?;
+        let class_a_name_index = context.string_add("CircularClassA")?;
+        let class_b_name_index = context.string_add("CircularClassB")?;
+        let test_namespace_index = context.string_add("Test")?;
 
         let mut assembly = context.finish();
         let current_typedef_count = assembly.original_table_row_count(TableId::TypeDef);
@@ -636,9 +636,9 @@ mod tests {
 
         use crate::metadata::tables::TableDataOwned;
         let _actual_class_a_row =
-            assembly.add_table_row(TableId::TypeDef, TableDataOwned::TypeDef(class_a_raw))?;
+            assembly.table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(class_a_raw))?;
         let _actual_class_b_row =
-            assembly.add_table_row(TableId::TypeDef, TableDataOwned::TypeDef(class_b_raw))?;
+            assembly.table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(class_b_raw))?;
 
         assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 

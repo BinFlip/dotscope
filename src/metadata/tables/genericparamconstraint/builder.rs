@@ -253,7 +253,7 @@ impl GenericParamConstraintBuilder {
             constraint,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::GenericParamConstraint,
             TableDataOwned::GenericParamConstraint(constraint_raw),
         )

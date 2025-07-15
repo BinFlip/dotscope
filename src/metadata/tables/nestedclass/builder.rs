@@ -314,7 +314,7 @@ impl NestedClassBuilder {
         };
 
         let table_data = TableDataOwned::NestedClass(nested_class);
-        context.add_table_row(TableId::NestedClass, table_data)?;
+        context.table_row_add(TableId::NestedClass, table_data)?;
 
         Ok(token)
     }

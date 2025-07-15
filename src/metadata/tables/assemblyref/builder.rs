@@ -386,13 +386,13 @@ impl AssemblyRefBuilder {
             });
         }
 
-        let name_index = context.get_or_add_string(&name)?;
+        let name_index = context.string_get_or_add(&name)?;
 
         let culture_index = if let Some(culture) = self.culture {
             if culture.is_empty() {
                 0 // Empty culture string means culture-neutral
             } else {
-                context.get_or_add_string(&culture)?
+                context.string_get_or_add(&culture)?
             }
         } else {
             0 // No culture means culture-neutral
@@ -407,7 +407,7 @@ impl AssemblyRefBuilder {
                         details: "Public key token must be exactly 8 bytes".to_string(),
                     });
                 }
-                context.add_blob(&data)?
+                context.blob_add(&data)?
             }
         } else {
             0
@@ -417,7 +417,7 @@ impl AssemblyRefBuilder {
             if hash.is_empty() {
                 0
             } else {
-                context.add_blob(&hash)?
+                context.blob_add(&hash)?
             }
         } else {
             0
@@ -442,7 +442,7 @@ impl AssemblyRefBuilder {
         };
 
         let table_data = TableDataOwned::AssemblyRef(assembly_ref);
-        context.add_table_row(TableId::AssemblyRef, table_data)?;
+        context.table_row_add(TableId::AssemblyRef, table_data)?;
 
         Ok(token)
     }

@@ -384,7 +384,7 @@ impl ConstantBuilder {
         let value_index = if value.is_empty() {
             0 // Empty blob for null references
         } else {
-            context.add_blob(&value)?
+            context.blob_add(&value)?
         };
 
         let rid = context.next_rid(TableId::Constant);
@@ -401,7 +401,7 @@ impl ConstantBuilder {
             value: value_index,
         };
 
-        context.add_table_row(TableId::Constant, TableDataOwned::Constant(constant_raw))
+        context.table_row_add(TableId::Constant, TableDataOwned::Constant(constant_raw))
     }
 }
 

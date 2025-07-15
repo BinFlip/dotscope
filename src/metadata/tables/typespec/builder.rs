@@ -548,7 +548,7 @@ impl TypeSpecBuilder {
         let typespec_signature = SignatureTypeSpec { base: signature };
 
         let signature_blob = TypeSignatureEncoder::encode(&typespec_signature.base)?;
-        let signature_index = context.add_blob(&signature_blob)?;
+        let signature_index = context.blob_add(&signature_blob)?;
 
         let next_rid = context.next_rid(TableId::TypeSpec);
         let token = Token::new(((TableId::TypeSpec as u32) << 24) | next_rid);
@@ -560,7 +560,7 @@ impl TypeSpecBuilder {
             signature: signature_index,
         };
 
-        context.add_table_row(TableId::TypeSpec, TableDataOwned::TypeSpec(typespec_raw))
+        context.table_row_add(TableId::TypeSpec, TableDataOwned::TypeSpec(typespec_raw))
     }
 }
 

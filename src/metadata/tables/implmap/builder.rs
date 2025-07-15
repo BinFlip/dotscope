@@ -315,7 +315,7 @@ impl ImplMapBuilder {
             });
         }
 
-        let import_name_index = context.add_string(&import_name)?;
+        let import_name_index = context.string_add(&import_name)?;
         let rid = context.next_rid(TableId::ImplMap);
         let token = Token::new((TableId::ImplMap as u32) << 24 | rid);
 
@@ -330,7 +330,7 @@ impl ImplMapBuilder {
         };
 
         let table_data = TableDataOwned::ImplMap(implmap_raw);
-        context.add_table_row(TableId::ImplMap, table_data)?;
+        context.table_row_add(TableId::ImplMap, table_data)?;
 
         Ok(token)
     }

@@ -270,8 +270,8 @@ impl MethodDefBuilder {
 
         let rva = self.rva.unwrap_or(0); // Default to 0 (abstract/interface method)
         let param_list = self.param_list.unwrap_or(0); // Default to 0 (no parameters)
-        let name_index = context.get_or_add_string(&name)?;
-        let signature_index = context.add_blob(&signature)?;
+        let name_index = context.string_get_or_add(&name)?;
+        let signature_index = context.blob_add(&signature)?;
         let rid = context.next_rid(TableId::MethodDef);
 
         let token_value = ((TableId::MethodDef as u32) << 24) | rid;
@@ -290,7 +290,7 @@ impl MethodDefBuilder {
         };
 
         // Add the method to the table
-        context.add_table_row(TableId::MethodDef, TableDataOwned::MethodDef(method_raw))
+        context.table_row_add(TableId::MethodDef, TableDataOwned::MethodDef(method_raw))
     }
 }
 

@@ -182,7 +182,7 @@ impl ModuleRefBuilder {
             });
         }
 
-        let name_index = context.get_or_add_string(&name)?;
+        let name_index = context.string_get_or_add(&name)?;
         let rid = context.next_rid(TableId::ModuleRef);
         let token = Token::new(((TableId::ModuleRef as u32) << 24) | rid);
 
@@ -193,7 +193,7 @@ impl ModuleRefBuilder {
             name: name_index,
         };
 
-        context.add_table_row(TableId::ModuleRef, TableDataOwned::ModuleRef(module_ref))?;
+        context.table_row_add(TableId::ModuleRef, TableDataOwned::ModuleRef(module_ref))?;
 
         Ok(token)
     }

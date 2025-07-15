@@ -199,13 +199,13 @@ impl LocalConstantBuilder {
         let name_index = if name.is_empty() {
             0
         } else {
-            context.add_string(&name)?
+            context.string_add(&name)?
         };
 
         let signature_index = if signature.is_empty() {
             0
         } else {
-            context.add_blob(&signature)?
+            context.blob_add(&signature)?
         };
 
         let local_constant = LocalConstantRaw {
@@ -216,7 +216,7 @@ impl LocalConstantBuilder {
             signature: signature_index,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::LocalConstant,
             TableDataOwned::LocalConstant(local_constant),
         )?;

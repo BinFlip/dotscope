@@ -270,7 +270,7 @@ impl CustomDebugInformationBuilder {
         let value_index = if value.is_empty() {
             0
         } else {
-            context.add_blob(&value)?
+            context.blob_add(&value)?
         };
 
         let custom_debug_info = CustomDebugInformationRaw {
@@ -282,7 +282,7 @@ impl CustomDebugInformationBuilder {
             value: value_index,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::CustomDebugInformation,
             TableDataOwned::CustomDebugInformation(custom_debug_info),
         )?;

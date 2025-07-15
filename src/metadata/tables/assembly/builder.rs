@@ -182,20 +182,20 @@ impl AssemblyBuilder {
             .ok_or_else(|| malformed_error!("Assembly name is required"))?;
 
         // Add strings to heaps and get indices
-        let name_index = context.add_string(&name)?;
+        let name_index = context.string_add(&name)?;
 
         let culture_index = if let Some(culture) = &self.culture {
             if culture == "neutral" || culture.is_empty() {
                 0 // Culture-neutral assembly
             } else {
-                context.add_string(culture)?
+                context.string_add(culture)?
             }
         } else {
             0 // Default to culture-neutral
         };
 
         let public_key_index = if let Some(public_key) = &self.public_key {
-            context.add_blob(public_key)?
+            context.blob_add(public_key)?
         } else {
             0 // No public key (unsigned assembly)
         };
@@ -220,7 +220,7 @@ impl AssemblyBuilder {
         };
 
         // Add the row to the assembly and return the token
-        context.add_table_row(TableId::Assembly, TableDataOwned::Assembly(assembly_raw))
+        context.table_row_add(TableId::Assembly, TableDataOwned::Assembly(assembly_raw))
     }
 }
 

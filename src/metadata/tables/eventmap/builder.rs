@@ -296,7 +296,7 @@ impl EventMapBuilder {
         };
 
         let table_data = TableDataOwned::EventMap(event_map);
-        context.add_table_row(TableId::EventMap, table_data)?;
+        context.table_row_add(TableId::EventMap, table_data)?;
 
         Ok(token)
     }

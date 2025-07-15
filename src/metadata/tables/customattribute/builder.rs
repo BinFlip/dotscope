@@ -238,7 +238,7 @@ impl CustomAttributeBuilder {
             if value.is_empty() {
                 0 // Empty blob
             } else {
-                context.add_blob(&value)?
+                context.blob_add(&value)?
             }
         } else {
             0 // No value provided
@@ -258,7 +258,7 @@ impl CustomAttributeBuilder {
             value: value_index,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::CustomAttribute,
             TableDataOwned::CustomAttribute(custom_attribute_raw),
         )

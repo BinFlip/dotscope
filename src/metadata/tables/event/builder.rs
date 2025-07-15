@@ -208,7 +208,7 @@ impl EventBuilder {
             });
         }
 
-        let name_index = context.get_or_add_string(&name)?;
+        let name_index = context.string_get_or_add(&name)?;
         let rid = context.next_rid(TableId::Event);
         let token_value = ((TableId::Event as u32) << 24) | rid;
         let token = Token::new(token_value);
@@ -222,7 +222,7 @@ impl EventBuilder {
             event_type,
         };
 
-        context.add_table_row(TableId::Event, TableDataOwned::Event(event_raw))
+        context.table_row_add(TableId::Event, TableDataOwned::Event(event_raw))
     }
 }
 

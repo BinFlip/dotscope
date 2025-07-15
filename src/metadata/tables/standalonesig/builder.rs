@@ -216,7 +216,7 @@ impl StandAloneSigBuilder {
             });
         }
 
-        let signature_index = context.add_blob(&signature_data)?;
+        let signature_index = context.blob_add(&signature_data)?;
         let rid = context.next_rid(TableId::StandAloneSig);
         let token = Token::new((TableId::StandAloneSig as u32) << 24 | rid);
 
@@ -228,7 +228,7 @@ impl StandAloneSigBuilder {
         };
 
         let table_data = TableDataOwned::StandAloneSig(standalonesig_raw);
-        context.add_table_row(TableId::StandAloneSig, table_data)?;
+        context.table_row_add(TableId::StandAloneSig, table_data)?;
 
         Ok(token)
     }

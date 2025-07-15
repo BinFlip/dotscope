@@ -44,7 +44,7 @@ fn test_string_heap_add_and_verify() -> Result<()> {
 
     perform_round_trip_test(
         |context| {
-            let _index = context.add_string(test_string)?;
+            let _index = context.string_add(test_string)?;
             Ok(())
         },
         |written_view| {
@@ -69,7 +69,7 @@ fn test_blob_heap_add_and_verify() -> Result<()> {
 
     perform_round_trip_test(
         |context| {
-            let _index = context.add_blob(&test_blob)?;
+            let _index = context.blob_add(&test_blob)?;
             Ok(())
         },
         |written_view| {
@@ -97,7 +97,7 @@ fn test_guid_heap_add_and_verify() -> Result<()> {
 
     perform_round_trip_test(
         |context| {
-            let _index = context.add_guid(&test_guid)?;
+            let _index = context.guid_add(&test_guid)?;
             Ok(())
         },
         |written_view| {
@@ -122,7 +122,7 @@ fn test_userstring_heap_add_and_verify() -> Result<()> {
 
     perform_round_trip_test(
         |context| {
-            let _index = context.add_userstring(test_userstring)?;
+            let _index = context.userstring_add(test_userstring)?;
             Ok(())
         },
         |written_view| {
@@ -152,10 +152,10 @@ fn test_mixed_heap_additions() -> Result<()> {
 
     perform_round_trip_test(
         |context| {
-            let _str_idx = context.add_string(test_string)?;
-            let _blob_idx = context.add_blob(&test_blob)?;
-            let _guid_idx = context.add_guid(&test_guid)?;
-            let _us_idx = context.add_userstring(test_userstring)?;
+            let _str_idx = context.string_add(test_string)?;
+            let _blob_idx = context.blob_add(&test_blob)?;
+            let _guid_idx = context.guid_add(&test_guid)?;
+            let _us_idx = context.userstring_add(test_userstring)?;
             Ok(())
         },
         |written_view| {
@@ -218,7 +218,7 @@ fn test_string_modification_and_verify() -> Result<()> {
                 .map(|(i, _)| i) // Use the actual index from the iterator
                 .ok_or_else(|| Error::Error(format!("String '{original_string}' not found")))?;
 
-            context.update_string(original_index as u32, modified_string)?;
+            context.string_update(original_index as u32, modified_string)?;
             Ok(())
         },
         |written_view| {
@@ -252,7 +252,7 @@ fn test_heap_data_persistence() -> Result<()> {
 
     perform_round_trip_test(
         |context| {
-            let _index = context.add_string(test_string)?;
+            let _index = context.string_add(test_string)?;
             Ok(())
         },
         |written_view| {

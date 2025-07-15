@@ -237,7 +237,7 @@ impl CilAssembly {
     /// assert!(world_index > hello_index);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn add_string(&mut self, value: &str) -> Result<u32> {
+    pub fn string_add(&mut self, value: &str) -> Result<u32> {
         let string_changes = &mut self.changes.string_heap_changes;
         let index = string_changes.next_index;
         string_changes.appended_items.push(value.to_string());
@@ -261,7 +261,7 @@ impl CilAssembly {
     ///
     /// Returns the heap index that can be used to reference this blob.
     /// Indices are 1-based following ECMA-335 conventions.
-    pub fn add_blob(&mut self, data: &[u8]) -> Result<u32> {
+    pub fn blob_add(&mut self, data: &[u8]) -> Result<u32> {
         let blob_changes = &mut self.changes.blob_heap_changes;
         let index = blob_changes.next_index;
         blob_changes.appended_items.push(data.to_vec());
@@ -308,7 +308,7 @@ impl CilAssembly {
     /// let guid_index = assembly.add_guid(&guid)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn add_guid(&mut self, guid: &[u8; 16]) -> Result<u32> {
+    pub fn guid_add(&mut self, guid: &[u8; 16]) -> Result<u32> {
         let guid_changes = &mut self.changes.guid_heap_changes;
 
         // GUID heap indices are sequential (1-based), not byte-based
@@ -358,7 +358,7 @@ impl CilAssembly {
     /// let userstring_index = assembly.add_userstring("Hello, World!")?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn add_userstring(&mut self, value: &str) -> Result<u32> {
+    pub fn userstring_add(&mut self, value: &str) -> Result<u32> {
         let userstring_changes = &mut self.changes.userstring_heap_changes;
         let index = userstring_changes.next_index;
         userstring_changes.appended_items.push(value.to_string());
@@ -407,7 +407,7 @@ impl CilAssembly {
     /// assembly.update_string(42, "Updated String")?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn update_string(&mut self, index: u32, new_value: &str) -> Result<()> {
+    pub fn string_update(&mut self, index: u32, new_value: &str) -> Result<()> {
         self.changes
             .string_heap_changes
             .add_modification(index, new_value.to_string());
@@ -444,7 +444,7 @@ impl CilAssembly {
     /// assembly.remove_string(43, ReferenceHandlingStrategy::NullifyReferences)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn remove_string(&mut self, index: u32, strategy: ReferenceHandlingStrategy) -> Result<()> {
+    pub fn string_remove(&mut self, index: u32, strategy: ReferenceHandlingStrategy) -> Result<()> {
         let original_heap_size = self
             .view()
             .streams()
@@ -471,7 +471,7 @@ impl CilAssembly {
     ///
     /// * `index` - The heap index to modify (1-based, following ECMA-335 conventions)
     /// * `new_data` - The new blob data to store at that index
-    pub fn update_blob(&mut self, index: u32, new_data: &[u8]) -> Result<()> {
+    pub fn blob_update(&mut self, index: u32, new_data: &[u8]) -> Result<()> {
         self.changes
             .blob_heap_changes
             .add_modification(index, new_data.to_vec());
@@ -484,7 +484,7 @@ impl CilAssembly {
     ///
     /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
     /// * `strategy` - How to handle existing references to this blob
-    pub fn remove_blob(&mut self, index: u32, strategy: ReferenceHandlingStrategy) -> Result<()> {
+    pub fn blob_remove(&mut self, index: u32, strategy: ReferenceHandlingStrategy) -> Result<()> {
         self.changes.blob_heap_changes.add_removal(index, strategy);
         Ok(())
     }
@@ -495,7 +495,7 @@ impl CilAssembly {
     ///
     /// * `index` - The heap index to modify (1-based, following ECMA-335 conventions)
     /// * `new_guid` - The new 16-byte GUID to store at that index
-    pub fn update_guid(&mut self, index: u32, new_guid: &[u8; 16]) -> Result<()> {
+    pub fn guid_update(&mut self, index: u32, new_guid: &[u8; 16]) -> Result<()> {
         self.changes
             .guid_heap_changes
             .add_modification(index, *new_guid);
@@ -508,7 +508,7 @@ impl CilAssembly {
     ///
     /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
     /// * `strategy` - How to handle existing references to this GUID
-    pub fn remove_guid(&mut self, index: u32, strategy: ReferenceHandlingStrategy) -> Result<()> {
+    pub fn guid_remove(&mut self, index: u32, strategy: ReferenceHandlingStrategy) -> Result<()> {
         self.changes.guid_heap_changes.add_removal(index, strategy);
         Ok(())
     }
@@ -519,7 +519,7 @@ impl CilAssembly {
     ///
     /// * `index` - The heap index to modify (1-based, following ECMA-335 conventions)
     /// * `new_value` - The new string value to store at that index
-    pub fn update_userstring(&mut self, index: u32, new_value: &str) -> Result<()> {
+    pub fn userstring_update(&mut self, index: u32, new_value: &str) -> Result<()> {
         self.changes
             .userstring_heap_changes
             .add_modification(index, new_value.to_string());
@@ -532,7 +532,7 @@ impl CilAssembly {
     ///
     /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
     /// * `strategy` - How to handle existing references to this user string
-    pub fn remove_userstring(
+    pub fn userstring_remove(
         &mut self,
         index: u32,
         strategy: ReferenceHandlingStrategy,
@@ -556,7 +556,7 @@ impl CilAssembly {
     /// # Returns
     ///
     /// Returns `Ok(())` if the modification was successful.
-    pub fn update_table_row(
+    pub fn table_row_update(
         &mut self,
         table_id: TableId,
         rid: u32,
@@ -589,7 +589,7 @@ impl CilAssembly {
     /// # Returns
     ///
     /// Returns `Ok(())` if the removal was successful.
-    pub fn delete_table_row(
+    pub fn table_row_remove(
         &mut self,
         table_id: TableId,
         rid: u32,
@@ -621,7 +621,7 @@ impl CilAssembly {
     /// # Returns
     ///
     /// Returns the RID (Row ID) of the newly added row. RIDs are 1-based.
-    pub fn add_table_row(&mut self, table_id: TableId, row: TableDataOwned) -> Result<u32> {
+    pub fn table_row_add(&mut self, table_id: TableId, row: TableDataOwned) -> Result<u32> {
         let original_count = self.original_table_row_count(table_id);
         let table_changes = self
             .changes
@@ -1130,8 +1130,8 @@ mod tests {
         if let Ok(view) = CilAssemblyView::from_file(&path) {
             let mut assembly = CilAssembly::new(view);
 
-            let index1 = assembly.add_string("Hello").unwrap();
-            let index2 = assembly.add_string("World").unwrap();
+            let index1 = assembly.string_add("Hello").unwrap();
+            let index2 = assembly.string_add("World").unwrap();
 
             assert_ne!(index1, index2);
             assert!(index2 > index1);
@@ -1144,8 +1144,8 @@ mod tests {
         if let Ok(view) = CilAssemblyView::from_file(&path) {
             let mut assembly = CilAssembly::new(view);
 
-            let index1 = assembly.add_blob(&[1, 2, 3]).unwrap();
-            let index2 = assembly.add_blob(&[4, 5, 6]).unwrap();
+            let index1 = assembly.blob_add(&[1, 2, 3]).unwrap();
+            let index2 = assembly.blob_add(&[4, 5, 6]).unwrap();
 
             assert_ne!(index1, index2);
             assert!(index2 > index1);
@@ -1167,8 +1167,8 @@ mod tests {
                 0x88, 0x99,
             ];
 
-            let index1 = assembly.add_guid(&guid1).unwrap();
-            let index2 = assembly.add_guid(&guid2).unwrap();
+            let index1 = assembly.guid_add(&guid1).unwrap();
+            let index2 = assembly.guid_add(&guid2).unwrap();
 
             assert_ne!(index1, index2);
             assert!(index2 > index1);
@@ -1181,8 +1181,8 @@ mod tests {
         if let Ok(view) = CilAssemblyView::from_file(&path) {
             let mut assembly = CilAssembly::new(view);
 
-            let index1 = assembly.add_userstring("Hello").unwrap();
-            let index2 = assembly.add_userstring("World").unwrap();
+            let index1 = assembly.userstring_add("Hello").unwrap();
+            let index2 = assembly.userstring_add("World").unwrap();
 
             assert_ne!(index1, index2);
             assert!(index2 > index1);
@@ -1201,7 +1201,7 @@ mod tests {
             // Create a minimal TypeDef row for testing
             if let Ok(typedef_row) = create_test_typedef_row() {
                 // Add table row should assign RID = original_count + 1
-                if let Ok(rid) = assembly.add_table_row(TableId::TypeDef, typedef_row) {
+                if let Ok(rid) = assembly.table_row_add(TableId::TypeDef, typedef_row) {
                     assert_eq!(
                         rid,
                         original_typedef_count + 1,
@@ -1210,7 +1210,7 @@ mod tests {
 
                     // Add another row should get sequential RID
                     if let Ok(typedef_row2) = create_test_typedef_row() {
-                        if let Ok(rid2) = assembly.add_table_row(TableId::TypeDef, typedef_row2) {
+                        if let Ok(rid2) = assembly.table_row_add(TableId::TypeDef, typedef_row2) {
                             assert_eq!(
                                 rid2,
                                 original_typedef_count + 2,

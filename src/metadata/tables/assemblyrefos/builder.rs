@@ -298,7 +298,7 @@ impl AssemblyRefOSBuilder {
             assembly_ref,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::AssemblyRefOS,
             TableDataOwned::AssemblyRefOS(assembly_ref_os),
         )?;

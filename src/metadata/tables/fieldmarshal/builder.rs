@@ -546,7 +546,7 @@ impl FieldMarshalBuilder {
         }
 
         // Add native type descriptor to blob heap
-        let native_type_index = context.add_blob(&native_type)?;
+        let native_type_index = context.blob_add(&native_type)?;
 
         let rid = context.next_rid(TableId::FieldMarshal);
 
@@ -561,7 +561,7 @@ impl FieldMarshalBuilder {
             native_type: native_type_index,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::FieldMarshal,
             TableDataOwned::FieldMarshal(field_marshal_raw),
         )

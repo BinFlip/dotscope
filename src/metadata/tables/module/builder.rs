@@ -317,23 +317,23 @@ impl ModuleBuilder {
             });
         }
 
-        let name_index = context.add_string(&name)?;
+        let name_index = context.string_add(&name)?;
 
         let mvid_index = if let Some(mvid) = self.mvid {
-            context.add_guid(&mvid)?
+            context.guid_add(&mvid)?
         } else {
             let new_mvid = generate_random_guid();
-            context.add_guid(&new_mvid)?
+            context.guid_add(&new_mvid)?
         };
 
         let encid_index = if let Some(encid) = self.encid {
-            context.add_guid(&encid)?
+            context.guid_add(&encid)?
         } else {
             0 // 0 indicates no EncId
         };
 
         let encbaseid_index = if let Some(encbaseid) = self.encbaseid {
-            context.add_guid(&encbaseid)?
+            context.guid_add(&encbaseid)?
         } else {
             0 // 0 indicates no EncBaseId
         };
@@ -353,7 +353,7 @@ impl ModuleBuilder {
         };
 
         let table_data = TableDataOwned::Module(module_raw);
-        context.add_table_row(TableId::Module, table_data)?;
+        context.table_row_add(TableId::Module, table_data)?;
 
         Ok(token)
     }

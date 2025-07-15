@@ -323,7 +323,7 @@ impl DeclSecurityBuilder {
             });
         }
 
-        let permission_set_index = context.add_blob(&permission_set)?;
+        let permission_set_index = context.blob_add(&permission_set)?;
 
         let rid = context.next_rid(TableId::DeclSecurity);
 
@@ -339,7 +339,7 @@ impl DeclSecurityBuilder {
             permission_set: permission_set_index,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::DeclSecurity,
             TableDataOwned::DeclSecurity(decl_security_raw),
         )

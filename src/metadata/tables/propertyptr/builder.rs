@@ -163,7 +163,7 @@ impl PropertyPtrBuilder {
             property,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::PropertyPtr,
             TableDataOwned::PropertyPtr(property_ptr),
         )?;

@@ -620,7 +620,7 @@ impl ManifestResourceBuilder {
             });
         }
 
-        let name_index = context.get_or_add_string(&name)?;
+        let name_index = context.string_get_or_add(&name)?;
 
         let implementation = if let Some(impl_ref) = self.implementation {
             match impl_ref.tag {
@@ -661,10 +661,10 @@ impl ManifestResourceBuilder {
         let mut final_offset = self.offset;
         if let Some(encoder) = self.resource_encoder {
             let encoded_data = encoder.encode_dotnet_format()?;
-            let blob_index = context.add_blob(&encoded_data)?;
+            let blob_index = context.blob_add(&encoded_data)?;
             final_offset = blob_index;
         } else if let Some(data) = self.resource_data {
-            let blob_index = context.add_blob(&data)?;
+            let blob_index = context.blob_add(&data)?;
             final_offset = blob_index;
         }
 
@@ -682,7 +682,7 @@ impl ManifestResourceBuilder {
         };
 
         let table_data = TableDataOwned::ManifestResource(manifest_resource);
-        context.add_table_row(TableId::ManifestResource, table_data)?;
+        context.table_row_add(TableId::ManifestResource, table_data)?;
 
         Ok(token)
     }

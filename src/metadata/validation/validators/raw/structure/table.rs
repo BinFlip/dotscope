@@ -472,7 +472,7 @@ mod tests {
 
         // Delete the Module table row entirely - this will reduce row_count to 0
         // Use remove_references=true to force removal even if referenced
-        match context.remove_table_row(TableId::Module, 1, true) {
+        match context.table_row_remove(TableId::Module, 1, true) {
             Ok(()) => {
                 // Module row deletion succeeded
             }
@@ -524,7 +524,7 @@ mod tests {
         };
 
         // Add the duplicate Assembly row - this will increase Assembly table row_count to 2
-        context.add_table_row(
+        context.table_row_add(
             TableId::Assembly,
             TableDataOwned::Assembly(duplicate_assembly),
         )?;
@@ -565,7 +565,7 @@ mod tests {
             method_list: 0,
         };
 
-        assembly.update_table_row(
+        assembly.table_row_update(
             TableId::TypeDef,
             1,
             TableDataOwned::TypeDef(invalid_typedef),
@@ -605,7 +605,7 @@ mod tests {
             method_list: 999999, // Way beyond any reasonable MethodDef table size
         };
 
-        assembly.update_table_row(
+        assembly.table_row_update(
             TableId::TypeDef,
             1,
             TableDataOwned::TypeDef(invalid_typedef),

@@ -295,7 +295,7 @@ impl PropertyMapBuilder {
         };
 
         let table_data = TableDataOwned::PropertyMap(property_map);
-        context.add_table_row(TableId::PropertyMap, table_data)?;
+        context.table_row_add(TableId::PropertyMap, table_data)?;
 
         Ok(token)
     }

@@ -269,7 +269,7 @@ impl FieldLayoutBuilder {
             field: field.row(),
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::FieldLayout,
             TableDataOwned::FieldLayout(field_layout_raw),
         )

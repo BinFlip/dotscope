@@ -328,7 +328,7 @@ impl ClassLayoutBuilder {
             parent: parent.row(),
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::ClassLayout,
             TableDataOwned::ClassLayout(class_layout_raw),
         )

@@ -364,7 +364,7 @@ impl MethodSemanticsBuilder {
         };
 
         // Add to the MethodSemantics table
-        context.add_table_row(
+        context.table_row_add(
             TableId::MethodSemantics,
             TableDataOwned::MethodSemantics(method_semantics_raw),
         )?;

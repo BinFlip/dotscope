@@ -210,7 +210,7 @@ impl AssemblyRefProcessorBuilder {
             assembly_ref,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::AssemblyRefProcessor,
             TableDataOwned::AssemblyRefProcessor(assembly_ref_processor),
         )?;

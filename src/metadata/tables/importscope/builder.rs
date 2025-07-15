@@ -197,7 +197,7 @@ impl ImportScopeBuilder {
         let imports_index = if imports.is_empty() {
             0
         } else {
-            context.add_blob(&imports)?
+            context.blob_add(&imports)?
         };
 
         let import_scope = ImportScopeRaw {
@@ -208,7 +208,7 @@ impl ImportScopeBuilder {
             imports: imports_index,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::ImportScope,
             TableDataOwned::ImportScope(import_scope),
         )?;

@@ -163,7 +163,7 @@ impl ParamPtrBuilder {
             param,
         };
 
-        context.add_table_row(TableId::ParamPtr, TableDataOwned::ParamPtr(param_ptr))?;
+        context.table_row_add(TableId::ParamPtr, TableDataOwned::ParamPtr(param_ptr))?;
         Ok(token)
     }
 }

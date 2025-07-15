@@ -216,7 +216,7 @@ impl InterfaceImplBuilder {
             interface,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::InterfaceImpl,
             TableDataOwned::InterfaceImpl(interface_impl_raw),
         )

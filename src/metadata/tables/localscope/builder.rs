@@ -327,7 +327,7 @@ impl LocalScopeBuilder {
             length,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::LocalScope,
             TableDataOwned::LocalScope(local_scope_raw),
         )

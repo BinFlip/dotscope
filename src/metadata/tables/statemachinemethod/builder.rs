@@ -193,7 +193,7 @@ impl StateMachineMethodBuilder {
             kickoff_method,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::StateMachineMethod,
             TableDataOwned::StateMachineMethod(state_machine_method),
         )?;

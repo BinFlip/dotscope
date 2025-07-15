@@ -146,8 +146,8 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The heap index that can be used to reference this string.
-    pub fn add_string(&mut self, value: &str) -> Result<u32> {
-        self.assembly.add_string(value)
+    pub fn string_add(&mut self, value: &str) -> Result<u32> {
+        self.assembly.string_add(value)
     }
 
     /// Gets or adds a string to the assembly's string heap, reusing existing strings when possible.
@@ -163,19 +163,19 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The heap index that can be used to reference this string.
-    pub fn get_or_add_string(&mut self, value: &str) -> Result<u32> {
-        if let Some(existing_index) = self.find_existing_string(value) {
+    pub fn string_get_or_add(&mut self, value: &str) -> Result<u32> {
+        if let Some(existing_index) = self.string_find(value) {
             return Ok(existing_index);
         }
 
-        self.add_string(value)
+        self.string_add(value)
     }
 
     /// Helper method to find an existing string in the current heap changes.
     ///
     /// This searches through the strings added in the current builder session
     /// to avoid duplicates within the same session.
-    fn find_existing_string(&self, value: &str) -> Option<u32> {
+    fn string_find(&self, value: &str) -> Option<u32> {
         let heap_changes = &self.assembly.changes().string_heap_changes;
 
         // Use the proper string_items_with_indices iterator to get correct byte offsets
@@ -200,8 +200,8 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The heap index that can be used to reference this blob.
-    pub fn add_blob(&mut self, data: &[u8]) -> Result<u32> {
-        self.assembly.add_blob(data)
+    pub fn blob_add(&mut self, data: &[u8]) -> Result<u32> {
+        self.assembly.blob_add(data)
     }
 
     /// Adds a GUID to the assembly's GUID heap and returns its index.
@@ -216,8 +216,8 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The heap index that can be used to reference this GUID.
-    pub fn add_guid(&mut self, guid: &[u8; 16]) -> Result<u32> {
-        self.assembly.add_guid(guid)
+    pub fn guid_add(&mut self, guid: &[u8; 16]) -> Result<u32> {
+        self.assembly.guid_add(guid)
     }
 
     /// Adds a user string to the assembly's user string heap and returns its index.
@@ -232,8 +232,8 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The heap index that can be used to reference this user string.
-    pub fn add_userstring(&mut self, value: &str) -> Result<u32> {
-        self.assembly.add_userstring(value)
+    pub fn userstring_add(&mut self, value: &str) -> Result<u32> {
+        self.assembly.userstring_add(value)
     }
 
     /// Allocates the next available RID for a table and adds the row.
@@ -249,8 +249,8 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The RID (Row ID) assigned to the newly created row as a [`crate::metadata::token::Token`].
-    pub fn add_table_row(&mut self, table_id: TableId, row: TableDataOwned) -> Result<Token> {
-        let rid = self.assembly.add_table_row(table_id, row)?;
+    pub fn table_row_add(&mut self, table_id: TableId, row: TableDataOwned) -> Result<Token> {
+        let rid = self.assembly.table_row_add(table_id, row)?;
 
         self.next_rids.insert(table_id, rid + 1);
 
@@ -375,7 +375,7 @@ impl BuilderContext {
     /// ```
     pub fn add_method_signature(&mut self, signature: &SignatureMethod) -> Result<u32> {
         let encoded_data = encode_method_signature(signature)?;
-        self.add_blob(&encoded_data)
+        self.blob_add(&encoded_data)
     }
 
     /// Adds a field signature to the blob heap and returns its index.
@@ -393,7 +393,7 @@ impl BuilderContext {
     /// The blob heap index that can be used to reference this signature.
     pub fn add_field_signature(&mut self, signature: &SignatureField) -> Result<u32> {
         let encoded_data = encode_field_signature(signature)?;
-        self.add_blob(&encoded_data)
+        self.blob_add(&encoded_data)
     }
 
     /// Adds a property signature to the blob heap and returns its index.
@@ -411,7 +411,7 @@ impl BuilderContext {
     /// The blob heap index that can be used to reference this signature.
     pub fn add_property_signature(&mut self, signature: &SignatureProperty) -> Result<u32> {
         let encoded_data = encode_property_signature(signature)?;
-        self.add_blob(&encoded_data)
+        self.blob_add(&encoded_data)
     }
 
     /// Adds a local variable signature to the blob heap and returns its index.
@@ -429,7 +429,7 @@ impl BuilderContext {
     /// The blob heap index that can be used to reference this signature.
     pub fn add_local_var_signature(&mut self, signature: &SignatureLocalVariables) -> Result<u32> {
         let encoded_data = encode_local_var_signature(signature)?;
-        self.add_blob(&encoded_data)
+        self.blob_add(&encoded_data)
     }
 
     /// Adds a type specification signature to the blob heap and returns its index.
@@ -447,7 +447,7 @@ impl BuilderContext {
     /// The blob heap index that can be used to reference this signature.
     pub fn add_typespec_signature(&mut self, signature: &SignatureTypeSpec) -> Result<u32> {
         let encoded_data = encode_typespec_signature(signature)?;
-        self.add_blob(&encoded_data)
+        self.blob_add(&encoded_data)
     }
 
     /// Adds a DLL to the native import table.
@@ -730,8 +730,8 @@ impl BuilderContext {
     /// # Returns
     ///
     /// Returns `Ok(())` if the modification was successful.
-    pub fn update_string(&mut self, index: u32, new_value: &str) -> Result<()> {
-        self.assembly.update_string(index, new_value)
+    pub fn string_update(&mut self, index: u32, new_value: &str) -> Result<()> {
+        self.assembly.string_update(index, new_value)
     }
 
     /// Removes a string from the string heap with configurable reference handling.
@@ -760,13 +760,13 @@ impl BuilderContext {
     /// context.remove_string(43, true)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn remove_string(&mut self, index: u32, remove_references: bool) -> Result<()> {
+    pub fn string_remove(&mut self, index: u32, remove_references: bool) -> Result<()> {
         let strategy = if remove_references {
             ReferenceHandlingStrategy::RemoveReferences
         } else {
             ReferenceHandlingStrategy::FailIfReferenced
         };
-        self.assembly.remove_string(index, strategy)
+        self.assembly.string_remove(index, strategy)
     }
 
     /// Updates an existing blob in the blob heap at the specified index.
@@ -775,8 +775,8 @@ impl BuilderContext {
     ///
     /// * `index` - The heap index to modify (1-based, following ECMA-335 conventions)
     /// * `new_data` - The new blob data to store at that index
-    pub fn update_blob(&mut self, index: u32, new_data: &[u8]) -> Result<()> {
-        self.assembly.update_blob(index, new_data)
+    pub fn blob_update(&mut self, index: u32, new_data: &[u8]) -> Result<()> {
+        self.assembly.blob_update(index, new_data)
     }
 
     /// Removes a blob from the blob heap with configurable reference handling.
@@ -785,13 +785,13 @@ impl BuilderContext {
     ///
     /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
     /// * `remove_references` - If true, automatically removes all references; if false, fails if references exist
-    pub fn remove_blob(&mut self, index: u32, remove_references: bool) -> Result<()> {
+    pub fn blob_remove(&mut self, index: u32, remove_references: bool) -> Result<()> {
         let strategy = if remove_references {
             ReferenceHandlingStrategy::RemoveReferences
         } else {
             ReferenceHandlingStrategy::FailIfReferenced
         };
-        self.assembly.remove_blob(index, strategy)
+        self.assembly.blob_remove(index, strategy)
     }
 
     /// Updates an existing GUID in the GUID heap at the specified index.
@@ -800,8 +800,8 @@ impl BuilderContext {
     ///
     /// * `index` - The heap index to modify (1-based, following ECMA-335 conventions)
     /// * `new_guid` - The new 16-byte GUID to store at that index
-    pub fn update_guid(&mut self, index: u32, new_guid: &[u8; 16]) -> Result<()> {
-        self.assembly.update_guid(index, new_guid)
+    pub fn guid_update(&mut self, index: u32, new_guid: &[u8; 16]) -> Result<()> {
+        self.assembly.guid_update(index, new_guid)
     }
 
     /// Removes a GUID from the GUID heap with configurable reference handling.
@@ -810,13 +810,13 @@ impl BuilderContext {
     ///
     /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
     /// * `remove_references` - If true, automatically removes all references; if false, fails if references exist
-    pub fn remove_guid(&mut self, index: u32, remove_references: bool) -> Result<()> {
+    pub fn guid_remove(&mut self, index: u32, remove_references: bool) -> Result<()> {
         let strategy = if remove_references {
             ReferenceHandlingStrategy::RemoveReferences
         } else {
             ReferenceHandlingStrategy::FailIfReferenced
         };
-        self.assembly.remove_guid(index, strategy)
+        self.assembly.guid_remove(index, strategy)
     }
 
     /// Updates an existing user string in the user string heap at the specified index.
@@ -825,8 +825,8 @@ impl BuilderContext {
     ///
     /// * `index` - The heap index to modify (1-based, following ECMA-335 conventions)
     /// * `new_value` - The new string value to store at that index
-    pub fn update_userstring(&mut self, index: u32, new_value: &str) -> Result<()> {
-        self.assembly.update_userstring(index, new_value)
+    pub fn userstring_update(&mut self, index: u32, new_value: &str) -> Result<()> {
+        self.assembly.userstring_update(index, new_value)
     }
 
     /// Removes a user string from the user string heap with configurable reference handling.
@@ -835,13 +835,13 @@ impl BuilderContext {
     ///
     /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
     /// * `remove_references` - If true, automatically removes all references; if false, fails if references exist
-    pub fn remove_userstring(&mut self, index: u32, remove_references: bool) -> Result<()> {
+    pub fn userstring_remove(&mut self, index: u32, remove_references: bool) -> Result<()> {
         let strategy = if remove_references {
             ReferenceHandlingStrategy::RemoveReferences
         } else {
             ReferenceHandlingStrategy::FailIfReferenced
         };
-        self.assembly.remove_userstring(index, strategy)
+        self.assembly.userstring_remove(index, strategy)
     }
 
     /// Updates an existing table row at the specified RID.
@@ -858,13 +858,13 @@ impl BuilderContext {
     /// # Returns
     ///
     /// Returns `Ok(())` if the modification was successful.
-    pub fn update_table_row(
+    pub fn table_row_update(
         &mut self,
         table_id: TableId,
         rid: u32,
         new_row: TableDataOwned,
     ) -> Result<()> {
-        self.assembly.update_table_row(table_id, rid, new_row)
+        self.assembly.table_row_update(table_id, rid, new_row)
     }
 
     /// Removes a table row with configurable reference handling.
@@ -895,7 +895,7 @@ impl BuilderContext {
     /// context.remove_table_row(TableId::MethodDef, 42, true)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn remove_table_row(
+    pub fn table_row_remove(
         &mut self,
         table_id: TableId,
         rid: u32,
@@ -906,7 +906,7 @@ impl BuilderContext {
         } else {
             ReferenceHandlingStrategy::FailIfReferenced
         };
-        self.assembly.delete_table_row(table_id, rid, strategy)
+        self.assembly.table_row_remove(table_id, rid, strategy)
     }
 }
 
@@ -944,11 +944,11 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Test string heap operations
-            let string_idx = context.add_string("TestString").unwrap();
+            let string_idx = context.string_add("TestString").unwrap();
             assert!(string_idx > 0);
 
             // Test blob heap operations
-            let blob_idx = context.add_blob(&[1, 2, 3, 4]).unwrap();
+            let blob_idx = context.blob_add(&[1, 2, 3, 4]).unwrap();
             assert!(blob_idx > 0);
 
             // Test GUID heap operations
@@ -956,11 +956,11 @@ mod tests {
                 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
                 0x77, 0x88,
             ];
-            let guid_idx = context.add_guid(&guid).unwrap();
+            let guid_idx = context.guid_add(&guid).unwrap();
             assert!(guid_idx > 0);
 
             // Test user string heap operations
-            let userstring_idx = context.add_userstring("User String").unwrap();
+            let userstring_idx = context.userstring_add("User String").unwrap();
             assert!(userstring_idx > 0);
         }
     }
@@ -973,25 +973,25 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Add the same namespace string multiple times
-            let namespace1 = context.get_or_add_string("MyNamespace").unwrap();
-            let namespace2 = context.get_or_add_string("MyNamespace").unwrap();
-            let namespace3 = context.get_or_add_string("MyNamespace").unwrap();
+            let namespace1 = context.string_get_or_add("MyNamespace").unwrap();
+            let namespace2 = context.string_get_or_add("MyNamespace").unwrap();
+            let namespace3 = context.string_get_or_add("MyNamespace").unwrap();
 
             // All should return the same index (deduplication working)
             assert_eq!(namespace1, namespace2);
             assert_eq!(namespace2, namespace3);
 
             // Different strings should get different indices
-            let different_namespace = context.get_or_add_string("DifferentNamespace").unwrap();
+            let different_namespace = context.string_get_or_add("DifferentNamespace").unwrap();
             assert_ne!(namespace1, different_namespace);
 
             // Verify the regular add_string method still creates duplicates
-            let duplicate1 = context.add_string("DuplicateTest").unwrap();
-            let duplicate2 = context.add_string("DuplicateTest").unwrap();
+            let duplicate1 = context.string_add("DuplicateTest").unwrap();
+            let duplicate2 = context.string_add("DuplicateTest").unwrap();
             assert_ne!(duplicate1, duplicate2); // Should be different indices
 
             // But get_or_add_string should reuse existing ones
-            let reused = context.get_or_add_string("DuplicateTest").unwrap();
+            let reused = context.string_get_or_add("DuplicateTest").unwrap();
             assert_eq!(reused, duplicate1); // Should match the first one added
         }
     }

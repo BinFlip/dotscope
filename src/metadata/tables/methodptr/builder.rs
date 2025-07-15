@@ -163,7 +163,7 @@ impl MethodPtrBuilder {
             method,
         };
 
-        context.add_table_row(TableId::MethodPtr, TableDataOwned::MethodPtr(method_ptr))?;
+        context.table_row_add(TableId::MethodPtr, TableDataOwned::MethodPtr(method_ptr))?;
         Ok(token)
     }
 }

@@ -398,22 +398,22 @@ impl DocumentBuilder {
 
         let rid = context.next_rid(TableId::Document);
         let token = Token::new(((TableId::Document as u32) << 24) | rid);
-        let name_index = context.add_blob(document_name.as_bytes())?;
+        let name_index = context.blob_add(document_name.as_bytes())?;
 
         let hash_algorithm_index = if let Some(guid) = self.hash_algorithm {
-            context.add_guid(&guid)?
+            context.guid_add(&guid)?
         } else {
             0
         };
 
         let hash_index = if let Some(hash_bytes) = self.hash {
-            context.add_blob(&hash_bytes)?
+            context.blob_add(&hash_bytes)?
         } else {
             0
         };
 
         let language_index = if let Some(guid) = self.language {
-            context.add_guid(&guid)?
+            context.guid_add(&guid)?
         } else {
             0
         };
@@ -429,7 +429,7 @@ impl DocumentBuilder {
         };
 
         let table_data = TableDataOwned::Document(document);
-        context.add_table_row(TableId::Document, table_data)?;
+        context.table_row_add(TableId::Document, table_data)?;
 
         Ok(token)
     }

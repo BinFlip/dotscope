@@ -775,7 +775,7 @@ mod tests {
                 offset: ((i - 1) * 8) as usize, // Different metadata stream offsets
             };
 
-            assembly.update_table_row(
+            assembly.table_row_update(
                 TableId::FieldLayout,
                 i,
                 TableDataOwned::FieldLayout(field_layout),
@@ -815,7 +815,7 @@ mod tests {
             offset: 0,
         };
 
-        assembly.update_table_row(
+        assembly.table_row_update(
             TableId::ClassLayout,
             1,
             TableDataOwned::ClassLayout(class_layout),
@@ -853,7 +853,7 @@ mod tests {
             offset: 0,
         };
 
-        assembly.update_table_row(
+        assembly.table_row_update(
             TableId::ClassLayout,
             1,
             TableDataOwned::ClassLayout(class_layout),
@@ -896,7 +896,7 @@ mod tests {
             offset: 0,                     // Metadata stream offset
         };
 
-        assembly.update_table_row(
+        assembly.table_row_update(
             TableId::FieldLayout,
             1,
             TableDataOwned::FieldLayout(field_layout),
@@ -933,7 +933,7 @@ mod tests {
             offset: 0,
         };
 
-        assembly.update_table_row(
+        assembly.table_row_update(
             TableId::FieldLayout,
             1,
             TableDataOwned::FieldLayout(field_layout),
@@ -976,7 +976,7 @@ mod tests {
             offset: 0,                     // Metadata stream offset
         };
 
-        assembly.update_table_row(
+        assembly.table_row_update(
             TableId::FieldLayout,
             1,
             TableDataOwned::FieldLayout(field_layout),

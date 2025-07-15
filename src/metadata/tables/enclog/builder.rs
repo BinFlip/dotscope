@@ -280,7 +280,7 @@ impl EncLogBuilder {
             func_code,
         };
 
-        context.add_table_row(TableId::EncLog, TableDataOwned::EncLog(enc_log))?;
+        context.table_row_add(TableId::EncLog, TableDataOwned::EncLog(enc_log))?;
         Ok(token)
     }
 }

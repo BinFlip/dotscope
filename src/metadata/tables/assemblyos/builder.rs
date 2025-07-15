@@ -260,7 +260,7 @@ impl AssemblyOSBuilder {
             os_minor_version,
         };
 
-        context.add_table_row(TableId::AssemblyOS, TableDataOwned::AssemblyOS(assembly_os))?;
+        context.table_row_add(TableId::AssemblyOS, TableDataOwned::AssemblyOS(assembly_os))?;
         Ok(token)
     }
 }

@@ -240,7 +240,7 @@ impl MethodDebugInformationBuilder {
             if data.is_empty() {
                 0
             } else {
-                context.add_blob(&data)?
+                context.blob_add(&data)?
             }
         } else {
             0
@@ -255,7 +255,7 @@ impl MethodDebugInformationBuilder {
         };
 
         let table_data = TableDataOwned::MethodDebugInformation(method_debug_info);
-        context.add_table_row(TableId::MethodDebugInformation, table_data)?;
+        context.table_row_add(TableId::MethodDebugInformation, table_data)?;
 
         Ok(token)
     }

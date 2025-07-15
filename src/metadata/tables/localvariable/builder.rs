@@ -220,7 +220,7 @@ impl LocalVariableBuilder {
         let name_index = if name.is_empty() {
             0
         } else {
-            context.add_string(&name)?
+            context.string_add(&name)?
         };
 
         let local_variable = LocalVariableRaw {
@@ -232,7 +232,7 @@ impl LocalVariableBuilder {
             name: name_index,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::LocalVariable,
             TableDataOwned::LocalVariable(local_variable),
         )?;

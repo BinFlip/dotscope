@@ -189,7 +189,7 @@ impl EncMapBuilder {
             original_token,
         };
 
-        context.add_table_row(TableId::EncMap, TableDataOwned::EncMap(enc_map))?;
+        context.table_row_add(TableId::EncMap, TableDataOwned::EncMap(enc_map))?;
         Ok(token)
     }
 }

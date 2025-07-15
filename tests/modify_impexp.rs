@@ -15,7 +15,7 @@ fn test_native_imports_with_minimal_changes() -> Result<()> {
     let mut context = BuilderContext::new(assembly);
 
     // Add a minimal string to ensure we have some changes
-    let _test_string_index = context.add_string("TestString")?;
+    let _test_string_index = context.string_add("TestString")?;
 
     // Add native imports
     let import_result = NativeImportsBuilder::new()
@@ -69,7 +69,7 @@ fn add_native_imports_to_crafted_2() -> Result<()> {
     let mut context = BuilderContext::new(assembly);
 
     // Add a minimal metadata change to ensure write pipeline works properly
-    let _test_string_index = context.add_string("NativeImportTest")?;
+    let _test_string_index = context.string_add("NativeImportTest")?;
 
     // Step 2: Add native imports using NativeImportsBuilder
     let import_result = NativeImportsBuilder::new()
@@ -204,7 +204,7 @@ fn add_native_exports_to_crafted_2() -> Result<()> {
     let mut context = BuilderContext::new(assembly);
 
     // Add a minimal metadata change to ensure write pipeline works properly
-    let _test_string_index = context.add_string("NativeExportTest")?;
+    let _test_string_index = context.string_add("NativeExportTest")?;
 
     // Step 2: Add native exports using NativeExportsBuilder
     let export_result = NativeExportsBuilder::new("TestLibrary.dll")
@@ -379,7 +379,7 @@ fn add_both_imports_and_exports_to_crafted_2() -> Result<()> {
     let mut context = BuilderContext::new(assembly);
 
     // Add a minimal metadata change to ensure write pipeline works properly
-    let _test_string_index = context.add_string("MixedNativeTest")?;
+    let _test_string_index = context.string_add("MixedNativeTest")?;
 
     // Step 2: Add both native imports and exports
 
@@ -571,7 +571,7 @@ fn round_trip_preserve_existing_data() -> Result<()> {
     let mut context = BuilderContext::new(assembly);
 
     // Add a minimal metadata change to ensure write pipeline works properly
-    let _test_string_index = context.add_string("PreserveDataTest")?;
+    let _test_string_index = context.string_add("PreserveDataTest")?;
 
     // Step 2: Add native functionality
     let import_result = NativeImportsBuilder::new()
@@ -699,7 +699,7 @@ fn test_import_table_format_validation() -> Result<()> {
     let mut context = BuilderContext::new(assembly);
 
     // Add imports that should generate a valid import table
-    let _test_string_index = context.add_string("ImportFormatTest")?;
+    let _test_string_index = context.string_add("ImportFormatTest")?;
 
     let import_result = NativeImportsBuilder::new()
         .add_dll("kernel32.dll")

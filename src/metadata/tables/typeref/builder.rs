@@ -132,13 +132,13 @@ impl TypeRefBuilder {
             .ok_or_else(|| malformed_error!("TypeRef resolution_scope is required"))?;
 
         // Add strings to heaps and get indices
-        let name_index = context.add_string(&name)?;
+        let name_index = context.string_add(&name)?;
 
         let namespace_index = if let Some(namespace) = &self.namespace {
             if namespace.is_empty() {
                 0 // Global namespace
             } else {
-                context.get_or_add_string(namespace)?
+                context.string_get_or_add(namespace)?
             }
         } else {
             0 // Default to global namespace
@@ -158,7 +158,7 @@ impl TypeRefBuilder {
         };
 
         // Add the row to the assembly and return the token
-        context.add_table_row(TableId::TypeRef, TableDataOwned::TypeRef(typeref_raw))
+        context.table_row_add(TableId::TypeRef, TableDataOwned::TypeRef(typeref_raw))
     }
 }
 

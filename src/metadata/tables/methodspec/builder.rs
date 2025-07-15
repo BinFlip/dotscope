@@ -325,7 +325,7 @@ impl MethodSpecBuilder {
             });
         }
 
-        let instantiation_index = context.add_blob(&instantiation)?;
+        let instantiation_index = context.blob_add(&instantiation)?;
 
         let rid = context.next_rid(TableId::MethodSpec);
 
@@ -340,7 +340,7 @@ impl MethodSpecBuilder {
             instantiation: instantiation_index,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::MethodSpec,
             TableDataOwned::MethodSpec(method_spec_raw),
         )

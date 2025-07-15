@@ -287,13 +287,13 @@ impl FileBuilder {
             });
         }
 
-        let name_index = context.get_or_add_string(&name)?;
+        let name_index = context.string_get_or_add(&name)?;
 
         let hash_value_index = if let Some(hash) = self.hash_value {
             if hash.is_empty() {
                 0
             } else {
-                context.add_blob(&hash)?
+                context.blob_add(&hash)?
             }
         } else {
             0
@@ -312,7 +312,7 @@ impl FileBuilder {
         };
 
         let table_data = TableDataOwned::File(file);
-        context.add_table_row(TableId::File, table_data)?;
+        context.table_row_add(TableId::File, table_data)?;
 
         Ok(token)
     }

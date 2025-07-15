@@ -162,7 +162,7 @@ impl FieldPtrBuilder {
             field,
         };
 
-        context.add_table_row(TableId::FieldPtr, TableDataOwned::FieldPtr(field_ptr))?;
+        context.table_row_add(TableId::FieldPtr, TableDataOwned::FieldPtr(field_ptr))?;
         Ok(token)
     }
 }

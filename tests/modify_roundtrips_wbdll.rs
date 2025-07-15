@@ -63,7 +63,7 @@ fn test_string_addition_round_trip() -> Result<()> {
     let mut added_indices = Vec::new();
 
     for test_string in &test_strings {
-        let index = assembly.add_string(test_string)?;
+        let index = assembly.string_add(test_string)?;
         added_indices.push(index);
     }
 
@@ -110,10 +110,10 @@ fn test_string_modification_round_trip() -> Result<()> {
     let original_string = "OriginalString";
     let modified_string = "ModifiedString";
 
-    let string_index = assembly.add_string(original_string)?;
+    let string_index = assembly.string_add(original_string)?;
 
     // Step 2: Modify the string
-    assembly.update_string(string_index, modified_string)?;
+    assembly.string_update(string_index, modified_string)?;
 
     // Step 3: Validate and apply changes
     assembly.validate_and_apply_changes()?;
@@ -158,11 +158,11 @@ fn test_string_removal_round_trip() -> Result<()> {
     let string_to_keep = "StringToKeep";
     let string_to_remove = "StringToRemove";
 
-    let keep_index = assembly.add_string(string_to_keep)?;
-    let remove_index = assembly.add_string(string_to_remove)?;
+    let keep_index = assembly.string_add(string_to_keep)?;
+    let remove_index = assembly.string_add(string_to_remove)?;
 
     // Step 2: Remove one string
-    assembly.remove_string(remove_index, ReferenceHandlingStrategy::FailIfReferenced)?;
+    assembly.string_remove(remove_index, ReferenceHandlingStrategy::FailIfReferenced)?;
 
     // Step 3: Validate and apply changes
     assembly.validate_and_apply_changes()?;
@@ -226,11 +226,11 @@ fn test_blob_operations_round_trip() -> Result<()> {
     let blob2_data = vec![10, 20, 30];
     let modified_blob_data = vec![99, 88, 77, 66];
 
-    let blob1_index = assembly.add_blob(&blob1_data)?;
-    let _blob2_index = assembly.add_blob(&blob2_data)?;
+    let blob1_index = assembly.blob_add(&blob1_data)?;
+    let _blob2_index = assembly.blob_add(&blob2_data)?;
 
     // Modify the first blob
-    assembly.update_blob(blob1_index, &modified_blob_data)?;
+    assembly.blob_update(blob1_index, &modified_blob_data)?;
 
     // Step 3: Validate and apply changes
     assembly.validate_and_apply_changes()?;
@@ -298,11 +298,11 @@ fn test_guid_operations_round_trip() -> Result<()> {
     let guid2 = [2u8; 16];
     let modified_guid = [99u8; 16];
 
-    let guid1_index = assembly.add_guid(&guid1)?;
-    let guid2_index = assembly.add_guid(&guid2)?;
+    let guid1_index = assembly.guid_add(&guid1)?;
+    let guid2_index = assembly.guid_add(&guid2)?;
 
     // Modify the first GUID
-    assembly.update_guid(guid1_index, &modified_guid)?;
+    assembly.guid_update(guid1_index, &modified_guid)?;
 
     // Step 3: Validate and apply changes
     assembly.validate_and_apply_changes()?;
@@ -361,11 +361,11 @@ fn test_userstring_operations_round_trip() -> Result<()> {
     let userstring2 = "UserString2";
     let modified_userstring = "ModifiedUserString";
 
-    let us1_index = assembly.add_userstring(userstring1)?;
-    let _us2_index = assembly.add_userstring(userstring2)?;
+    let us1_index = assembly.userstring_add(userstring1)?;
+    let _us2_index = assembly.userstring_add(userstring2)?;
 
     // Modify the first user string
-    assembly.update_userstring(us1_index, modified_userstring)?;
+    assembly.userstring_update(us1_index, modified_userstring)?;
 
     // Step 3: Validate and apply changes
     assembly.validate_and_apply_changes()?;
@@ -431,17 +431,17 @@ fn test_mixed_operations_round_trip() -> Result<()> {
     let test_guid = [42u8; 16];
     let test_userstring = "MixedTestUserString";
 
-    let string_index = assembly.add_string(test_string)?;
-    let blob_index = assembly.add_blob(&test_blob)?;
-    let guid_index = assembly.add_guid(&test_guid)?;
-    let userstring_index = assembly.add_userstring(test_userstring)?;
+    let string_index = assembly.string_add(test_string)?;
+    let blob_index = assembly.blob_add(&test_blob)?;
+    let guid_index = assembly.guid_add(&test_guid)?;
+    let userstring_index = assembly.userstring_add(test_userstring)?;
 
     // Modify some entries
     let modified_string = "ModifiedMixedString";
     let modified_blob = vec![99, 88, 77];
 
-    assembly.update_string(string_index, modified_string)?;
-    assembly.update_blob(blob_index, &modified_blob)?;
+    assembly.string_update(string_index, modified_string)?;
+    assembly.blob_update(blob_index, &modified_blob)?;
 
     // Step 3: Validate and apply changes
     assembly.validate_and_apply_changes()?;
@@ -526,19 +526,19 @@ fn test_builder_context_round_trip() -> Result<()> {
     let mut context = BuilderContext::new(assembly);
 
     // Step 2: Use builder context APIs
-    let str1 = context.add_string("BuilderString1")?;
-    let str2 = context.get_or_add_string("BuilderString2")?;
-    let str3 = context.get_or_add_string("BuilderString1")?; // Should deduplicate
+    let str1 = context.string_add("BuilderString1")?;
+    let str2 = context.string_get_or_add("BuilderString2")?;
+    let str3 = context.string_get_or_add("BuilderString1")?; // Should deduplicate
 
     assert_eq!(str1, str3, "Builder should deduplicate identical strings");
 
-    let blob_index = context.add_blob(&[1, 2, 3])?;
-    let _guid_index = context.add_guid(&[99u8; 16])?;
-    let _userstring_index = context.add_userstring("BuilderUserString")?;
+    let blob_index = context.blob_add(&[1, 2, 3])?;
+    let _guid_index = context.guid_add(&[99u8; 16])?;
+    let _userstring_index = context.userstring_add("BuilderUserString")?;
 
     // Modify through builder context
-    context.update_string(str2, "UpdatedBuilderString")?;
-    context.update_blob(blob_index, &[4, 5, 6])?;
+    context.string_update(str2, "UpdatedBuilderString")?;
+    context.blob_update(blob_index, &[4, 5, 6])?;
 
     // Step 3: Finish and write
     let mut assembly = context.finish();

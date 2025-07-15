@@ -199,8 +199,8 @@ impl PropertyBuilder {
                 details: "Property signature is required".to_string(),
             })?;
 
-        let name_index = context.get_or_add_string(&name)?;
-        let signature_index = context.add_blob(&signature)?;
+        let name_index = context.string_get_or_add(&name)?;
+        let signature_index = context.blob_add(&signature)?;
         let rid = context.next_rid(TableId::Property);
 
         let token_value = ((TableId::Property as u32) << 24) | rid;
@@ -215,7 +215,7 @@ impl PropertyBuilder {
             signature: signature_index,
         };
 
-        context.add_table_row(TableId::Property, TableDataOwned::Property(property_raw))
+        context.table_row_add(TableId::Property, TableDataOwned::Property(property_raw))
     }
 }
 

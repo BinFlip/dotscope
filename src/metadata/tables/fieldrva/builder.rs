@@ -281,7 +281,7 @@ impl FieldRVABuilder {
         };
 
         let table_data = TableDataOwned::FieldRVA(field_rva);
-        context.add_table_row(TableId::FieldRVA, table_data)?;
+        context.table_row_add(TableId::FieldRVA, table_data)?;
 
         Ok(token)
     }

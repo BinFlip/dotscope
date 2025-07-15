@@ -473,12 +473,12 @@ impl ExportedTypeBuilder {
             }
         }
 
-        let name_index = context.get_or_add_string(&name)?;
+        let name_index = context.string_get_or_add(&name)?;
         let namespace_index = if let Some(namespace) = self.namespace {
             if namespace.is_empty() {
                 0
             } else {
-                context.get_or_add_string(&namespace)?
+                context.string_get_or_add(&namespace)?
             }
         } else {
             0
@@ -499,7 +499,7 @@ impl ExportedTypeBuilder {
         };
 
         let table_data = TableDataOwned::ExportedType(exported_type);
-        context.add_table_row(TableId::ExportedType, table_data)?;
+        context.table_row_add(TableId::ExportedType, table_data)?;
 
         Ok(token)
     }

@@ -231,8 +231,8 @@ impl MemberRefBuilder {
             });
         }
 
-        let name_index = context.get_or_add_string(&name)?;
-        let signature_index = context.add_blob(&signature)?;
+        let name_index = context.string_get_or_add(&name)?;
+        let signature_index = context.blob_add(&signature)?;
         let rid = context.next_rid(TableId::MemberRef);
 
         let token_value = ((TableId::MemberRef as u32) << 24) | rid;
@@ -247,7 +247,7 @@ impl MemberRefBuilder {
             signature: signature_index,
         };
 
-        context.add_table_row(TableId::MemberRef, TableDataOwned::MemberRef(memberref_raw))
+        context.table_row_add(TableId::MemberRef, TableDataOwned::MemberRef(memberref_raw))
     }
 }
 

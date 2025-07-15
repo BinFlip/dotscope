@@ -167,7 +167,7 @@ impl AssemblyProcessorBuilder {
             processor,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::AssemblyProcessor,
             TableDataOwned::AssemblyProcessor(assembly_processor),
         )?;
