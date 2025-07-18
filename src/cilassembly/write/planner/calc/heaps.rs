@@ -334,14 +334,8 @@ pub(crate) fn calculate_blob_heap_size(
 
             // Calculate the index for the next blob (prefix + data)
             let length = blob.len();
-            let prefix_size = if length < 128 {
-                1
-            } else if length < 16384 {
-                2
-            } else {
-                4
-            };
-            current_index += prefix_size + length as u32;
+            let prefix_size = compressed_uint_size(length);
+            current_index += prefix_size as u32 + length as u32;
         }
     } else {
         // Addition-only scenario - calculate size of additions only
@@ -447,8 +441,12 @@ pub(crate) fn calculate_guid_heap_size(
         let appended_count = heap_changes.appended_items.len();
         total_size += appended_count as u64 * 16;
     } else {
-        // Addition-only scenario - calculate size of additions only
-        total_size = heap_changes.appended_items.len() as u64 * 16;
+        // Addition-only scenario - calculate total size (original + additions)
+
+        if let Some(guid_heap) = assembly.view().guids() {
+            total_size += guid_heap.iter().count() as u64 * 16;
+        }
+        total_size += heap_changes.appended_items.len() as u64 * 16;
     }
 
     // GUIDs are always 16 bytes each, so already aligned to 4-byte boundary
@@ -533,15 +531,9 @@ pub(crate) fn calculate_userstring_heap_size(
                         let total_entry_length = utf16_length + 1; // UTF-16 data + terminator byte
 
                         // Length prefix (compressed integer)
-                        let length_prefix_size = if total_entry_length < 128 {
-                            1
-                        } else if total_entry_length < 16384 {
-                            2
-                        } else {
-                            4
-                        };
+                        let length_prefix_size = compressed_uint_size(total_entry_length);
 
-                        total_size += length_prefix_size as u64 + total_entry_length as u64;
+                        total_size += length_prefix_size + total_entry_length as u64;
                     }
                 }
             }
@@ -598,14 +590,8 @@ pub(crate) fn calculate_userstring_heap_size(
             // Advance API index by original string size (maintains API index stability)
             let orig_utf16_len = original_appended_string.encode_utf16().count() * 2;
             let orig_total_len = orig_utf16_len + 1;
-            let orig_compressed_len_size = if orig_total_len < 128 {
-                1
-            } else if orig_total_len < 16384 {
-                2
-            } else {
-                4
-            };
-            current_api_index += (orig_compressed_len_size + orig_total_len) as u32;
+            let orig_compressed_len_size = compressed_uint_size(orig_total_len);
+            current_api_index += (orig_compressed_len_size as usize + orig_total_len) as u32;
         }
 
         // Sort by API index (same as writer)
@@ -615,14 +601,8 @@ pub(crate) fn calculate_userstring_heap_size(
         for (_, final_string) in &all_userstrings {
             let utf16_length = final_string.encode_utf16().count() * 2;
             let total_entry_length = utf16_length + 1;
-            let length_prefix_size = if total_entry_length < 128 {
-                1
-            } else if total_entry_length < 16384 {
-                2
-            } else {
-                4
-            };
-            total_size += length_prefix_size as u64 + total_entry_length as u64;
+            let length_prefix_size = compressed_uint_size(total_entry_length);
+            total_size += length_prefix_size + total_entry_length as u64;
         }
     } else {
         // Addition-only scenario - calculate size of additions only
@@ -632,15 +612,130 @@ pub(crate) fn calculate_userstring_heap_size(
             let total_entry_length = utf16_length + 1; // UTF-16 data + terminator byte
 
             // Length prefix (compressed integer)
-            let length_prefix_size = if total_entry_length < 128 {
-                1
-            } else if total_entry_length < 16384 {
-                2
-            } else {
-                4
-            };
+            let length_prefix_size = compressed_uint_size(total_entry_length);
 
-            total_size += length_prefix_size as u64 + total_entry_length as u64;
+            total_size += length_prefix_size + total_entry_length as u64;
+        }
+    }
+
+    // Stream size must be 4-byte aligned for ECMA-335 compliance
+    let aligned_size = align_to(total_size, 4);
+    Ok(aligned_size)
+}
+
+/// Calculates the complete reconstructed userstring heap size.
+///
+/// This function calculates the total size of the reconstructed userstring heap,
+/// including all original userstrings (excluding removed ones), modified userstrings,
+/// and new userstrings. This is used for metadata layout planning when heap
+/// reconstruction is required.
+///
+/// # Arguments
+/// * `heap_changes` - The [`crate::cilassembly::HeapChanges<String>`] containing userstring changes
+/// * `assembly` - The [`crate::cilassembly::CilAssembly`] for accessing original heap data
+///
+/// # Returns
+/// Returns the total aligned byte size of the complete reconstructed heap.
+pub(crate) fn calculate_userstring_heap_total_size(
+    heap_changes: &HeapChanges<String>,
+    assembly: &CilAssembly,
+) -> Result<u64> {
+    // If there's a heap replacement, use its size plus any appended items
+    if let Some(replacement_heap) = heap_changes.replacement_heap() {
+        let replacement_size = replacement_heap.len() as u64;
+        let appended_size = heap_changes.binary_userstring_heap_size() as u64;
+        // Add padding to align to 4-byte boundary
+        let total_size = replacement_size + appended_size;
+        let aligned_size = (total_size + 3) & !3; // Round up to next 4-byte boundary
+        return Ok(aligned_size);
+    }
+
+    let mut total_size = 1u64; // Start with mandatory null byte at index 0
+
+    if heap_changes.has_modifications() || heap_changes.has_removals() {
+        // Build sets for efficient lookup of removed and modified indices
+        let removed_indices = &heap_changes.removed_indices;
+        let modified_indices: std::collections::HashSet<u32> =
+            heap_changes.modified_items.keys().cloned().collect();
+
+        // Calculate size of original user strings that are neither removed nor modified
+        if let Some(userstring_heap) = assembly.view().userstrings() {
+            for (offset, original_userstring) in userstring_heap.iter() {
+                if offset == 0 {
+                    continue;
+                } // Skip the mandatory null byte at offset 0
+
+                // The heap changes system uses byte offsets as indices
+                let offset_u32 = offset as u32;
+                if !removed_indices.contains(&offset_u32) && !modified_indices.contains(&offset_u32)
+                {
+                    // Convert to string and calculate UTF-16 length
+                    if let Ok(string_value) = original_userstring.to_string() {
+                        let utf16_length = string_value.encode_utf16().count() * 2; // 2 bytes per UTF-16 code unit
+                        let total_entry_length = utf16_length + 1; // UTF-16 data + terminator byte
+
+                        // Length prefix (compressed integer)
+                        let length_prefix_size = compressed_uint_size(total_entry_length);
+
+                        total_size += length_prefix_size + total_entry_length as u64;
+                    }
+                }
+            }
+        }
+
+        // Add size of modified userstrings (use the new values)
+        for new_userstring in heap_changes.modified_items.values() {
+            let utf16_length = new_userstring.encode_utf16().count() * 2;
+            let total_entry_length = utf16_length + 1;
+            let length_prefix_size = compressed_uint_size(total_entry_length);
+            total_size += length_prefix_size + total_entry_length as u64;
+        }
+
+        // Add size of appended userstrings that haven't been modified
+        let original_heap_size = if let Some(userstring_heap) = assembly.view().userstrings() {
+            userstring_heap.data().len() as u32
+        } else {
+            0
+        };
+
+        let mut current_index = original_heap_size;
+        for userstring in &heap_changes.appended_items {
+            // Only count this appended userstring if it hasn't been modified
+            if !heap_changes.modified_items.contains_key(&current_index) {
+                let utf16_length = userstring.encode_utf16().count() * 2;
+                let total_entry_length = utf16_length + 1;
+                let length_prefix_size = compressed_uint_size(total_entry_length);
+                total_size += length_prefix_size + total_entry_length as u64;
+            }
+
+            // Calculate the index for the next userstring (prefix + data)
+            let length = userstring.encode_utf16().count() * 2;
+            let total_length = length + 1;
+            let prefix_size = compressed_uint_size(total_length);
+            current_index += prefix_size as u32 + total_length as u32;
+        }
+    } else {
+        // Addition-only scenario - calculate total size including original heap
+        if let Some(userstring_heap) = assembly.view().userstrings() {
+            // Calculate actual end of original content
+            let mut actual_end = 1u64; // Start after mandatory null byte at index 0
+            for (offset, userstring) in userstring_heap.iter() {
+                let string_val = userstring.to_string_lossy();
+                let utf16_bytes = string_val.encode_utf16().count() * 2;
+                let total_length = utf16_bytes + 1; // +1 for terminator
+                let compressed_length_size = compressed_uint_size(total_length);
+                let entry_end = offset as u64 + compressed_length_size + total_length as u64;
+                actual_end = actual_end.max(entry_end);
+            }
+            total_size = actual_end;
+        }
+
+        // Add size of new userstrings
+        for string in &heap_changes.appended_items {
+            let utf16_length = string.encode_utf16().count() * 2;
+            let total_entry_length = utf16_length + 1;
+            let length_prefix_size = compressed_uint_size(total_entry_length);
+            total_size += length_prefix_size + total_entry_length as u64;
         }
     }
 

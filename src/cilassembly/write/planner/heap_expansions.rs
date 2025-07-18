@@ -78,6 +78,7 @@ use crate::{
         write::planner::calc::{
             calculate_blob_heap_size, calculate_guid_heap_size, calculate_string_heap_size,
             calculate_string_heap_total_size, calculate_userstring_heap_size,
+            calculate_userstring_heap_total_size,
         },
         CilAssembly,
     },
@@ -259,7 +260,8 @@ impl HeapExpansions {
             || changes.userstring_heap_changes.has_modifications()
             || changes.userstring_heap_changes.has_removals()
         {
-            let total_userstring_heap_size = Self::calculate_userstring_heap_size(assembly)?;
+            let total_userstring_heap_size =
+                calculate_userstring_heap_total_size(&changes.userstring_heap_changes, assembly)?;
             let original_userstring_size = assembly
                 .view()
                 .streams()

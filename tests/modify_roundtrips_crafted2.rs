@@ -367,7 +367,7 @@ fn test_userstring_heap_additions_round_trip() -> Result<()> {
 
     let mut found_test_userstrings = 0;
 
-    for (_, userstring) in userstrings_heap.iter() {
+    for (_index, userstring) in userstrings_heap.iter() {
         let content = userstring.to_string_lossy();
         if content == "TestUserString1"
             || content == "TestUserString2"

@@ -82,7 +82,7 @@ use crate::{
         write::{
             planner::calc::{
                 self, calculate_string_heap_total_size, calculate_table_stream_expansion,
-                HeapExpansions,
+                calculate_userstring_heap_total_size, HeapExpansions,
             },
             utils::align_to_4_bytes,
         },
@@ -200,7 +200,7 @@ pub struct StreamModification {
 /// Returns [`crate::Error`] if metadata structure analysis fails or stream calculations are invalid.
 pub fn extract_metadata_layout(
     assembly: &CilAssembly,
-    heap_expansions: &HeapExpansions,
+    _heap_expansions: &HeapExpansions,
 ) -> Result<MetadataLayout> {
     let view = assembly.view();
     let streams = view.streams();
@@ -249,9 +249,52 @@ pub fn extract_metadata_layout(
                     size = total_heap_size as u32;
                 }
             }
-            "#Blob" => size += heap_expansions.blob_heap_addition as u32,
-            "#GUID" => size += heap_expansions.guid_heap_addition as u32,
-            "#US" => size += heap_expansions.userstring_heap_addition as u32,
+            "#Blob" => {
+                // Check if we need heap reconstruction
+                let blob_changes = &assembly.changes().blob_heap_changes;
+                if blob_changes.has_additions()
+                    || blob_changes.has_modifications()
+                    || blob_changes.has_removals()
+                {
+                    // Use total reconstructed heap size for any changes
+                    let total_heap_size = HeapExpansions::calculate_blob_heap_size(assembly)?;
+                    size = total_heap_size as u32;
+                } else {
+                    // No changes, keep original size
+                    size = stream.size;
+                }
+            }
+            "#GUID" => {
+                // Check if we need heap reconstruction
+                let guid_changes = &assembly.changes().guid_heap_changes;
+                if guid_changes.has_additions()
+                    || guid_changes.has_modifications()
+                    || guid_changes.has_removals()
+                {
+                    // Use total reconstructed heap size for any changes
+                    let total_heap_size = HeapExpansions::calculate_guid_heap_size(assembly)?;
+                    size = total_heap_size as u32;
+                } else {
+                    // No changes, keep original size
+                    size = stream.size;
+                }
+            }
+            "#US" => {
+                // Check if we need heap reconstruction
+                let userstring_changes = &assembly.changes().userstring_heap_changes;
+                if userstring_changes.has_additions()
+                    || userstring_changes.has_modifications()
+                    || userstring_changes.has_removals()
+                {
+                    // Use total reconstructed heap size for any changes
+                    let total_heap_size =
+                        calculate_userstring_heap_total_size(userstring_changes, assembly)?;
+                    size = total_heap_size as u32;
+                } else {
+                    // No changes, keep original size
+                    size = stream.size;
+                }
+            }
             "#~" | "#-" => {
                 // Add space for additional table rows
                 let table_expansion = calculate_table_stream_expansion(assembly)?;
@@ -387,13 +430,14 @@ fn create_blob_stream_modification(assembly: &CilAssembly) -> Result<StreamModif
             message: "Stream #Blob not found in original file".to_string(),
         })?;
 
-    let rebuilt_heap_size = HeapExpansions::calculate_blob_heap_size(assembly)?;
     let (write_offset, size_field_offset) = calculate_stream_offsets(assembly, "#Blob")?;
 
     let blob_changes = &assembly.changes().blob_heap_changes;
     let (new_size, additional_data_size) = if blob_changes.has_changes() {
-        let additional = rebuilt_heap_size.saturating_sub(stream.size as u64);
-        (rebuilt_heap_size, additional)
+        // Calculate the total size needed for the blob heap
+        let total_blob_heap_size = HeapExpansions::calculate_blob_heap_size(assembly)?;
+        let additional = total_blob_heap_size.saturating_sub(stream.size as u64);
+        (total_blob_heap_size, additional)
     } else {
         (stream.size as u64, 0)
     };
@@ -429,15 +473,16 @@ fn create_guid_stream_modification(assembly: &CilAssembly) -> Result<StreamModif
             message: "Stream #GUID not found in original file".to_string(),
         })?;
 
-    let rebuilt_heap_size = HeapExpansions::calculate_guid_heap_size(assembly)?;
     let (write_offset, size_field_offset) = calculate_stream_offsets(assembly, "#GUID")?;
 
     let guid_changes = &assembly.changes().guid_heap_changes;
     let (new_size, additional_data_size) = if guid_changes.has_changes() {
-        let additional = rebuilt_heap_size.saturating_sub(stream.size as u64);
-        (rebuilt_heap_size, additional)
+        // Calculate the total size needed for the GUID heap
+        let total_guid_heap_size = HeapExpansions::calculate_guid_heap_size(assembly)?;
+        let additional = total_guid_heap_size.saturating_sub(stream.size as u64);
+        (total_guid_heap_size, additional)
     } else {
-        (stream.size as u64 + rebuilt_heap_size, rebuilt_heap_size)
+        (stream.size as u64, 0)
     };
 
     Ok(StreamModification {
@@ -471,15 +516,16 @@ fn create_userstring_stream_modification(assembly: &CilAssembly) -> Result<Strea
             message: "Stream #US not found in original file".to_string(),
         })?;
 
-    let rebuilt_heap_size = HeapExpansions::calculate_userstring_heap_size(assembly)?;
     let (write_offset, size_field_offset) = calculate_stream_offsets(assembly, "#US")?;
 
     let userstring_changes = &assembly.changes().userstring_heap_changes;
     let (new_size, additional_data_size) = if userstring_changes.has_changes() {
-        let additional = rebuilt_heap_size.saturating_sub(stream.size as u64);
-        (rebuilt_heap_size, additional)
+        // Use the same function as metadata layout planning for consistency
+        let total_heap_size = calculate_userstring_heap_total_size(userstring_changes, assembly)?;
+        let additional = total_heap_size.saturating_sub(stream.size as u64);
+        (total_heap_size, additional)
     } else {
-        (stream.size as u64 + rebuilt_heap_size, rebuilt_heap_size)
+        (stream.size as u64, 0)
     };
 
     Ok(StreamModification {

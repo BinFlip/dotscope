@@ -574,26 +574,34 @@ impl Default for RawHeapValidator {
 mod tests {
     use super::*;
     use crate::{
+        cilassembly::{BuilderContext, CilAssembly},
         metadata::validation::ValidationConfig,
         test::{get_clean_testfile, validator_test, TestAssembly},
     };
+    use tempfile::NamedTempFile;
 
     /// Creates test assemblies targeting specific RawHeapValidator validation rules.
     ///
-    /// This factory creates assemblies designed to test each of the core validation
-    /// rules implemented by RawHeapValidator:
-    /// 1. String Heap Content Validation - Tests invalid UTF-8 sequences and null termination
-    /// 2. Blob Heap Content Validation - Tests oversized blobs and data corruption
-    /// 3. GUID Heap Content Validation - Tests GUID accessibility and format
-    /// 4. UserString Heap Content Validation - Tests invalid UTF-16 sequences
-    /// 5. Heap Size and Alignment Validation - Tests size limits and alignment requirements
+    /// This factory creates assemblies designed to test the RawHeapValidator:
+    /// 1. Positive test - Clean assembly that should pass validation
+    /// 2. UserString heap with invalid UTF-16 - Tests UTF-16 validation
     ///
     /// # Test Assembly Strategy
     ///
     /// - Clean assembly (WindowsBase.dll) - Should pass all validation rules
-    /// - Modified assemblies - Each targets exactly one validation rule failure
-    /// - Builder API manipulation - Uses HeapChanges for targeted heap corruption
-    /// - Content corruption - Creates specific encoding and format violations
+    /// - UserString heap with invalid UTF-16 - Uses heap replacement to create
+    ///   unpaired surrogates that trigger UTF-16 validation failures
+    ///
+    /// # Implementation Approach
+    ///
+    /// The UserString heap test successfully demonstrates the "parseable but invalid"
+    /// approach to negative testing:
+    /// - Uses heap replacement to create well-structured heap
+    /// - Contains unpaired UTF-16 surrogates that trigger validation failures
+    /// - Produces clear error: "UserString heap contains invalid UTF-16 sequence at offset X"
+    ///
+    /// This validates the heap replacement technique for creating effective negative
+    /// test cases that exercise content validation logic.
     ///
     /// # Returns
     ///
@@ -614,54 +622,7 @@ mod tests {
         // 1. REQUIRED: Clean assembly - should pass all validation
         assemblies.push(TestAssembly::new(&clean_testfile, true));
 
-        // TODO: Implement negative test cases with post-build binary manipulation
-        // Current issue: The post-build corruption approach may not be working as expected.
-        // Possible causes:
-        // 1. The string/blob/userstring might be stored in different heap sections
-        // 2. The heap parsing might be more resilient to corruption
-        // 3. The corruption might not be affecting the iteration order we validate
-        //
-        // For now, we'll skip the negative tests and document the approach.
-        // This still demonstrates the enhanced content validation and test infrastructure.
-        //
-        // Future work could involve:
-        // - More sophisticated heap layout analysis
-        // - Direct stream offset manipulation
-        // - Using memory-mapped file access for precise corruption
-        // - External corrupted test assembly collection
-
-        /*
-        // 2. String heap with invalid UTF-8 - create string with invalid UTF-8 bytes
-        match create_assembly_with_invalid_utf8_string() {
-            Ok(temp_file) => {
-                assemblies.push(TestAssembly::from_temp_file_with_error(
-                    temp_file,
-                    "Malformed",
-                ));
-            }
-            Err(e) => {
-                return Err(crate::Error::Error(format!(
-                    "Failed to create test assembly with invalid UTF-8 string: {e}"
-                )));
-            }
-        }
-
-        // 3. Blob heap with oversized blob - create blob exceeding size limits
-        match create_assembly_with_oversized_blob() {
-            Ok(temp_file) => {
-                assemblies.push(TestAssembly::from_temp_file_with_error(
-                    temp_file,
-                    "Malformed",
-                ));
-            }
-            Err(e) => {
-                return Err(crate::Error::Error(format!(
-                    "Failed to create test assembly with oversized blob: {e}"
-                )));
-            }
-        }
-
-        // 4. UserString heap with invalid UTF-16 - create user string with invalid UTF-16
+        // 2. UserString heap with invalid UTF-16
         match create_assembly_with_invalid_utf16_userstring() {
             Ok(temp_file) => {
                 assemblies.push(TestAssembly::from_temp_file_with_error(
@@ -675,40 +636,42 @@ mod tests {
                 )));
             }
         }
-        */
 
         Ok(assemblies)
     }
 
-    /// Comprehensive test for RawHeapValidator using the centralized test harness.
+    /// Creates a test assembly with invalid UTF-16 in the userstring heap.
     ///
-    /// This test validates the RawHeapValidator functionality including:
-    /// 1. String Heap Validation - Structure and encoding compliance
-    /// 2. Blob Heap Validation - Size limits and data integrity
-    /// 3. GUID Heap Validation - Format and alignment requirements  
-    /// 4. UserString Heap Validation - UTF-16 encoding and length prefixes
-    /// 5. Heap Size and Alignment Validation - ECMA-335 structural requirements
-    ///
-    /// # Test Coverage
-    ///
-    /// - **Positive Test**: Clean WindowsBase.dll passes all validation rules
-    /// - **Validator Integration**: Ensures proper integration with validation framework
-    /// - **Configuration Compliance**: Tests should_run() behavior with different configs
-    ///
-    /// # Implementation Notes
-    ///
-    /// This implementation focuses on positive testing due to challenges with negative
-    /// testing using heap replacement APIs. When heaps contain invalid data that makes
-    /// them unparseable, the content validation never gets executed, making negative
-    /// tests ineffective with this approach.
-    ///
-    /// The validator implementation itself includes comprehensive validation logic for:
-    /// - Heap size limits (0x7FFFFFFF maximum)
-    /// - Heap alignment requirements (4-byte alignment)
-    /// - GUID heap specific alignment (16-byte multiples)
-    /// - String heap UTF-8 encoding and null termination
-    /// - Blob heap data integrity and size encoding
-    /// - UserString heap UTF-16 encoding and length prefixes
+    /// Creates a userstring heap with invalid UTF-16 sequences using heap replacement.
+    fn create_assembly_with_invalid_utf16_userstring() -> crate::Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = crate::metadata::cilassemblyview::CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        // Create a userstring heap with invalid UTF-16 sequences
+        // Structure: null byte + length prefix + invalid UTF-16 data + terminator
+        let mut userstring_heap = vec![0]; // Required null byte at index 0
+
+        // Create a userstring entry with unpaired surrogate
+        // Length: 5 bytes (2 bytes high surrogate + 2 bytes regular char + 1 terminator)
+        userstring_heap.push(0x05); // Length prefix
+        userstring_heap.extend_from_slice(&[0x00, 0xD8]); // Unpaired high surrogate (invalid UTF-16)
+        userstring_heap.extend_from_slice(&[0x41, 0x00]); // Valid 'A' character
+        userstring_heap.push(0x01); // Terminator byte
+
+        context.userstring_add_heap(userstring_heap)?;
+
+        let mut assembly = context.finish();
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+
+        Ok(temp_file)
+    }
+
     #[test]
     fn test_raw_heap_validator() -> crate::Result<()> {
         let validator = RawHeapValidator::new();
@@ -726,9 +689,6 @@ mod tests {
         )
     }
 
-    /// Test that RawHeapValidator configuration flags work correctly.
-    ///
-    /// Verifies that the validator respects enable_structural_validation configuration setting.
     #[test]
     fn test_raw_heap_validator_configuration() -> crate::Result<()> {
         let validator = RawHeapValidator::new();
@@ -784,9 +744,6 @@ mod tests {
         Ok(())
     }
 
-    /// Test RawHeapValidator priority and metadata.
-    ///
-    /// Verifies validator metadata is correct for proper execution ordering.
     #[test]
     fn test_raw_heap_validator_metadata() {
         let validator = RawHeapValidator::new();

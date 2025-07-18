@@ -46,6 +46,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::cilassembly::write::utils::compressed_uint_size;
+
 /// Reference handling strategy for heap item removal operations.
 ///
 /// Defines how the system should handle existing references when a heap item
@@ -431,15 +433,9 @@ impl HeapChanges<String> {
                 // Total length includes UTF-16 data + terminal byte (1 byte)
                 let total_length = utf16_bytes + 1;
 
-                let compressed_length_size = if total_length < 0x80 {
-                    1 // Single byte for lengths < 128
-                } else if total_length < 0x4000 {
-                    2 // Two bytes for lengths < 16384
-                } else {
-                    4 // Four bytes for larger lengths
-                };
+                let compressed_length_size = compressed_uint_size(total_length);
 
-                (compressed_length_size + total_length) as u32
+                (compressed_length_size as usize + total_length) as u32
             })
             .sum();
         current_index -= total_size;
@@ -451,14 +447,8 @@ impl HeapChanges<String> {
                 // Calculate the size of this userstring entry
                 let utf16_bytes: usize = item.encode_utf16().map(|_| 2).sum();
                 let total_length = utf16_bytes + 1;
-                let compressed_length_size = if total_length < 0x80 {
-                    1
-                } else if total_length < 0x4000 {
-                    2
-                } else {
-                    4
-                };
-                *index += (compressed_length_size + total_length) as u32;
+                let compressed_length_size = compressed_uint_size(total_length);
+                *index += (compressed_length_size as usize + total_length) as u32;
                 Some((current, item))
             })
     }
@@ -477,15 +467,9 @@ impl HeapChanges<String> {
                 // Total length includes UTF-16 data + terminal byte (1 byte)
                 let total_length = utf16_bytes + 1;
 
-                let compressed_length_size = if total_length < 0x80 {
-                    1 // Single byte for lengths < 128
-                } else if total_length < 0x4000 {
-                    2 // Two bytes for lengths < 16384
-                } else {
-                    4 // Four bytes for larger lengths
-                };
+                let compressed_length_size = compressed_uint_size(total_length);
 
-                compressed_length_size + total_length
+                compressed_length_size as usize + total_length
             })
             .sum()
     }
@@ -502,14 +486,8 @@ impl HeapChanges<Vec<u8>> {
             .iter()
             .map(|blob| {
                 let length = blob.len();
-                let compressed_length_size = if length < 0x80 {
-                    1 // Single byte for lengths < 128
-                } else if length < 0x4000 {
-                    2 // Two bytes for lengths < 16384
-                } else {
-                    4 // Four bytes for larger lengths
-                };
-                compressed_length_size + length
+                let compressed_length_size = compressed_uint_size(length);
+                compressed_length_size as usize + length
             })
             .sum()
     }

@@ -26,27 +26,6 @@ impl<'a> super::HeapWriter<'a> {
             return self.write_guid_heap_with_changes(stream_mod);
         }
 
-        let (stream_layout, write_start) = self.base.get_stream_write_position(stream_mod)?;
-        let mut write_pos = write_start;
-
-        let stream_end = stream_layout.file_region.end_offset() as usize;
-
-        for guid in guid_changes.appended_items.iter() {
-            // Ensure we won't exceed stream boundary
-            if write_pos + 16 > stream_end {
-                return Err(crate::Error::WriteLayoutFailed {
-                    message: format!(
-                        "GUID heap overflow: write would exceed allocated space by {} bytes",
-                        (write_pos + 16) - stream_end
-                    ),
-                });
-            }
-
-            let guid_slice = self.base.output.get_mut_slice(write_pos, 16)?;
-            guid_slice.copy_from_slice(guid);
-            write_pos += 16;
-        }
-
         Ok(())
     }
 
@@ -128,21 +107,24 @@ impl<'a> super::HeapWriter<'a> {
         }
 
         // Step 2: Add appended GUIDs that aren't removed
+
+        // Calculate the starting index for appended GUIDs (after original GUIDs)
         let original_guid_count = if let Some(guid_heap) = self.base.assembly.view().guids() {
-            guid_heap.iter().count() as u32
+            guid_heap.iter().count()
         } else {
             0
         };
 
         for (i, appended_guid) in guid_changes.appended_items.iter().enumerate() {
-            let sequential_index = original_guid_count + (i + 1) as u32;
+            let appended_index = (original_guid_count + i + 1) as u32; // Appended indices start after original GUIDs
 
-            if !guid_changes.is_removed(sequential_index) {
+            if !guid_changes.is_removed(appended_index) {
                 // Apply modification if present, otherwise use original appended GUID
                 let final_guid = guid_changes
-                    .get_modification(sequential_index)
+                    .get_modification(appended_index)
                     .copied()
                     .unwrap_or(*appended_guid);
+
                 guids_to_write.push(final_guid);
             }
         }

@@ -500,7 +500,7 @@ pub use metadata::cilassemblyview::CilAssemblyView;
 /// let mut assembly = view.to_owned();
 ///
 /// // Add a new string to the heap
-/// let string_index = assembly.add_string("Hello, World!")?;
+/// let string_index = assembly.string_add("Hello, World!")?;
 ///
 /// // Write changes back to file
 /// assembly.write_to_file("modified_assembly.dll")?;

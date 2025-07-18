@@ -343,10 +343,8 @@ fn test_blob_heap_replacement() -> Result<()> {
                 .ok_or_else(|| Error::Error("No blobs heap found".to_string()))?;
 
             // Verify the custom blobs are present
-            let found_blob1 = blobs
-                .iter()
-                .any(|(_, blob)| blob == &vec![0x01, 0x02, 0x03]);
-            let found_blob2 = blobs.iter().any(|(_, blob)| blob == &vec![0xFF, 0xFE]);
+            let found_blob1 = blobs.iter().any(|(_, blob)| blob == [0x01, 0x02, 0x03]);
+            let found_blob2 = blobs.iter().any(|(_, blob)| blob == [0xFF, 0xFE]);
 
             assert!(
                 found_blob1,
@@ -361,8 +359,7 @@ fn test_blob_heap_replacement() -> Result<()> {
             let blob_count = blobs.iter().count();
             assert!(
                 blob_count <= 3, // Empty blob at index 0 + our 2 blobs
-                "Replaced heap should only contain our custom blobs (found {} blobs)",
-                blob_count
+                "Replaced heap should only contain our custom blobs (found {blob_count} blobs)",
             );
 
             Ok(())
@@ -413,8 +410,7 @@ fn test_guid_heap_replacement() -> Result<()> {
             let guid_count = guids.iter().count();
             assert_eq!(
                 guid_count, 2,
-                "Replaced heap should only contain our 2 custom GUIDs (found {} GUIDs)",
-                guid_count
+                "Replaced heap should only contain our 2 custom GUIDs (found {guid_count} GUIDs)",
             );
 
             Ok(())
@@ -454,8 +450,7 @@ fn test_userstring_heap_replacement() -> Result<()> {
             let userstring_count = userstrings.iter().count();
             assert!(
                 userstring_count <= 2, // Empty userstring at index 0 + our 1 userstring
-                "Replaced heap should only contain our custom user string (found {} userstrings)",
-                userstring_count
+                "Replaced heap should only contain our custom user string (found {userstring_count} userstrings)",
             );
 
             Ok(())

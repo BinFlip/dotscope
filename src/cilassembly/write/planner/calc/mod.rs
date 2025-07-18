@@ -75,6 +75,7 @@ pub use crate::cilassembly::write::planner::heap_expansions::HeapExpansions;
 pub(crate) use heaps::{
     calculate_blob_heap_size, calculate_guid_heap_size, calculate_string_heap_size,
     calculate_string_heap_total_size, calculate_userstring_heap_size,
+    calculate_userstring_heap_total_size,
 };
 pub use tables::{calculate_new_row_count, calculate_table_stream_expansion};
 
@@ -173,8 +174,8 @@ mod tests {
 
         let size = heaps::calculate_guid_heap_size(&heap_changes, &assembly).unwrap();
 
-        // 2 GUIDs * 16 bytes each = 32 bytes (already aligned)
-        assert_eq!(size, 32);
+        // Original GUID heap (16 bytes) + 2 new GUIDs (32 bytes) = 48 bytes total
+        assert_eq!(size, 48);
     }
 
     #[test]
@@ -212,7 +213,7 @@ mod tests {
         );
         assert_eq!(
             heaps::calculate_guid_heap_size(&empty_guid_changes, &assembly).unwrap(),
-            0
+            16 // Original GUID heap size (1 GUID) when no changes are made
         );
         assert_eq!(
             heaps::calculate_userstring_heap_size(&empty_string_changes, &assembly).unwrap(),

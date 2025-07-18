@@ -3,7 +3,10 @@
 //! This module handles writing modifications to the #US (UserString) heap, including simple additions
 //! and complex operations involving modifications and removals that require heap rebuilding.
 
-use crate::{cilassembly::write::planner::StreamModification, Error, Result};
+use crate::{
+    cilassembly::write::{planner::StreamModification, utils::compressed_uint_size},
+    Error, Result,
+};
 
 impl<'a> super::HeapWriter<'a> {
     /// Writes user string heap modifications including additions, modifications, and removals.
@@ -90,61 +93,6 @@ impl<'a> super::HeapWriter<'a> {
         Ok(())
     }
 
-    /// Writes userstring heap with modifications by copying original data and appending changes.
-    ///
-    /// This method provides a simpler strategy for cases where we have modifications but
-    /// don't need the complex rebuilding logic. It preserves the original heap structure
-    /// and appends modified and new userstrings as additional entries.
-    ///
-    /// # Strategy
-    ///
-    /// 1. **Copy Original**: Preserve original heap data exactly as-is
-    /// 2. **Append Modified**: Add modified userstrings as new entries
-    /// 3. **Append New**: Add new userstrings as additional entries
-    /// 4. **Alignment**: Apply proper 4-byte alignment padding
-    ///
-    /// # Arguments
-    ///
-    /// * `stream_mod` - The [`crate::cilassembly::write::planner::StreamModification`] for the #US heap
-    pub(super) fn write_userstring_heap_legacy_compat(
-        &mut self,
-        stream_mod: &StreamModification,
-    ) -> Result<()> {
-        let (_stream_layout, write_start) = self.base.get_stream_write_position(stream_mod)?;
-        let mut write_pos = write_start;
-
-        let userstring_changes = &self.base.assembly.changes().userstring_heap_changes;
-
-        // Get the original userstring heap data and copy it exactly
-        if let Some(us_heap) = self.base.assembly.view().userstrings() {
-            let original_data = us_heap.data();
-            let original_slice = self
-                .base
-                .output
-                .get_mut_slice(write_pos, original_data.len())?;
-            original_slice.copy_from_slice(original_data);
-            write_pos += original_data.len();
-        } else {
-            // If no original heap, start with null byte
-            let null_slice = self.base.output.get_mut_slice(write_pos, 1)?;
-            null_slice[0] = 0;
-            write_pos += 1;
-        }
-
-        // Append all modified userstrings as new entries
-        for modified_string in userstring_changes.modified_items.values() {
-            self.write_single_userstring(modified_string, &mut write_pos)?;
-        }
-
-        // Append all new userstrings
-        for appended_string in &userstring_changes.appended_items {
-            self.write_single_userstring(appended_string, &mut write_pos)?;
-        }
-
-        self.base.output.add_heap_padding(write_pos, write_start)?;
-        Ok(())
-    }
-
     /// Writes the user string heap when modifications or removals are present.
     ///
     /// This method provides comprehensive userstring heap writing that handles
@@ -203,10 +151,11 @@ impl<'a> super::HeapWriter<'a> {
                     .write_compressed_uint_at(write_pos as u64, total_length as u32)?
                     as usize;
 
-                if write_pos + utf16_bytes.len() + 1 > stream_end {
-                    return Err(Error::Error(format!(
-                        "UserString heap overflow: write would exceed allocated space"
-                    )));
+                let total_size = utf16_bytes.len() + 1;
+                if write_pos + total_size > stream_end {
+                    return Err(Error::Error(
+                        "UserString heap overflow: write would exceed allocated space".to_string(),
+                    ));
                 }
 
                 let string_slice = self
@@ -224,83 +173,22 @@ impl<'a> super::HeapWriter<'a> {
             return Ok(());
         }
 
-        // Check if we have modifications to the ORIGINAL userstring heap (not appended ones)
-        let original_data_len = if let Some(us_heap) = self.base.assembly.view().userstrings() {
-            us_heap.data().len() as u32
-        } else {
-            0
-        };
-
-        let has_original_modifications = userstring_changes
-            .modified_items_iter()
-            .any(|(index, _)| *index < original_data_len)
-            || userstring_changes
-                .removed_indices_iter()
-                .any(|index| *index < original_data_len);
-
-        // Also check if any appended userstrings have been modified - this requires rebuild
-        // to maintain API index contract and ensure indices remain valid
-        let has_appended_modifications = userstring_changes
-            .modified_items_iter()
-            .any(|(index, _)| *index >= original_data_len);
-
-        let needs_rebuild = has_original_modifications || has_appended_modifications;
-
+        // For userstrings, any modifications or additions require a complete heap rebuild
+        // to ensure proper API index positioning. Unlike other heap types, userstrings
+        // use byte offset indexing and need precise positioning.
         if let Some(us_heap) = self.base.assembly.view().userstrings() {
-            if needs_rebuild {
-                // We have modifications, need to rebuild the entire heap
-                self.write_complete_userstring_heap(
-                    &mut write_pos,
-                    us_heap,
-                    userstring_changes,
-                    stream_end,
-                )?;
-            } else {
-                // No modifications to original heap, copy it exactly to preserve byte structure
-                let original_data = us_heap.data();
-                let output_slice = self
-                    .base
-                    .output
-                    .get_mut_slice(write_pos, original_data.len())?;
-                output_slice.copy_from_slice(original_data);
-                write_pos += original_data.len();
-            }
+            // Always rebuild when we have changes to maintain index integrity
+            self.write_complete_userstring_heap(
+                &mut write_pos,
+                us_heap,
+                userstring_changes,
+                stream_end,
+            )?;
         } else {
             // No original heap, start with null byte
             let null_slice = self.base.output.get_mut_slice(write_pos, 1)?;
             null_slice[0] = 0;
             write_pos += 1;
-        }
-
-        // Only append new userstrings if we didn't do a full rebuild
-        if !needs_rebuild {
-            // Debug info for userstring heap
-
-            // Append new userstrings (simple append-only case)
-            for (heap_index, appended_userstring) in
-                userstring_changes.userstring_items_with_indices()
-            {
-                if userstring_changes.is_removed(heap_index) {
-                    continue;
-                }
-
-                // Apply modification if present, otherwise use original appended string
-                let final_userstring = userstring_changes
-                    .get_modification(heap_index)
-                    .cloned()
-                    .unwrap_or_else(|| appended_userstring.clone());
-
-                // Ensure we won't exceed stream boundary
-                let entry_size = self.calculate_userstring_entry_size(&final_userstring) as usize;
-                if write_pos + entry_size > stream_end {
-                    return Err(crate::Error::WriteLayoutFailed {
-                        message: format!("UserString heap overflow: write would exceed allocated space by {} bytes", 
-                            (write_pos + entry_size) - stream_end)
-                    });
-                }
-
-                self.write_single_userstring(&final_userstring, &mut write_pos)?;
-            }
         }
 
         self.base.output.add_heap_padding(write_pos, write_start)?;
@@ -416,7 +304,7 @@ impl<'a> super::HeapWriter<'a> {
         let mut final_position = heap_start + 1; // Start after null byte
 
         for (_api_index, userstring) in all_userstrings {
-            // Ensure we won't exceed stream boundary
+            // Ensure we won't exceed stream boundary (account for potential padding)
             let entry_size = self.calculate_userstring_entry_size(&userstring) as usize;
             if final_position + entry_size > stream_end {
                 return Err(crate::Error::WriteLayoutFailed {
@@ -619,13 +507,7 @@ impl<'a> super::HeapWriter<'a> {
         let utf16_data_length = utf16_bytes.len();
         let total_length = utf16_data_length + 1;
 
-        let prefix_size = if total_length < 128 {
-            1
-        } else if total_length < 16384 {
-            2
-        } else {
-            4
-        };
-        prefix_size + total_length as u32
+        let prefix_size = compressed_uint_size(total_length);
+        prefix_size as u32 + total_length as u32
     }
 }

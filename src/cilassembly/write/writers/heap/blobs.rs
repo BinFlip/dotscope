@@ -3,7 +3,10 @@
 //! This module handles writing modifications to the #Blob heap, including simple additions
 //! and complex operations involving modifications and removals that require heap rebuilding.
 
-use crate::{cilassembly::write::planner::StreamModification, Error, Result};
+use crate::{
+    cilassembly::write::{planner::StreamModification, utils::compressed_uint_size},
+    Error, Result,
+};
 
 impl<'a> super::HeapWriter<'a> {
     /// Writes blob heap modifications including additions, modifications, and removals.
@@ -112,14 +115,8 @@ impl<'a> super::HeapWriter<'a> {
                 .write_and_advance(&mut write_pos, &final_blob)?;
 
             // Advance API index by actual blob size (same as add_blob logic)
-            let prefix_size = if length < 128 {
-                1
-            } else if length < 16384 {
-                2
-            } else {
-                4
-            };
-            current_api_index += prefix_size + length as u32;
+            let prefix_size = compressed_uint_size(length);
+            current_api_index += prefix_size as u32 + length as u32;
         }
 
         // Add special blob padding to avoid creating extra blob entries during parsing
@@ -174,7 +171,7 @@ impl<'a> super::HeapWriter<'a> {
                         } else {
                             4
                         };
-                        calculated_index -= (prefix_size + item_size) as u32;
+                        calculated_index -= (prefix_size as usize + item_size) as u32;
                         if std::ptr::eq(item, original_blob) {
                             break;
                         }
@@ -264,14 +261,8 @@ impl<'a> super::HeapWriter<'a> {
 
             // Calculate the index for the next blob (prefix + data)
             let length = appended_blob.len();
-            let prefix_size = if length < 128 {
-                1
-            } else if length < 16384 {
-                2
-            } else {
-                4
-            };
-            current_index += prefix_size + length as u32;
+            let prefix_size = compressed_uint_size(length);
+            current_index += prefix_size as u32 + length as u32;
         }
 
         // Write each appended blob, applying modifications if found and skipping removed ones
@@ -369,13 +360,7 @@ impl<'a> super::HeapWriter<'a> {
     /// The total size in bytes (prefix + data) that this blob entry will occupy
     pub(super) fn calculate_blob_entry_size(&self, blob: &[u8]) -> u32 {
         let length = blob.len();
-        let prefix_size = if length < 128 {
-            1
-        } else if length < 16384 {
-            2
-        } else {
-            4
-        };
-        prefix_size + length as u32
+        let prefix_size = compressed_uint_size(length);
+        prefix_size as u32 + length as u32
     }
 }

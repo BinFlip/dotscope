@@ -134,7 +134,7 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 use crate::{
-    cilassembly::write::HeapExpansions,
+    cilassembly::write::{utils::compressed_uint_size, HeapExpansions},
     file::File,
     metadata::{
         cilassemblyview::CilAssemblyView,
@@ -268,14 +268,8 @@ impl CilAssembly {
 
         // Blobs have compressed length prefix + data
         let length = data.len();
-        let prefix_size = if length < 128 {
-            1
-        } else if length < 16384 {
-            2
-        } else {
-            4
-        };
-        blob_changes.next_index += prefix_size + length as u32;
+        let prefix_size = compressed_uint_size(length);
+        blob_changes.next_index += prefix_size as u32 + length as u32;
 
         Ok(index)
     }
@@ -369,14 +363,8 @@ impl CilAssembly {
         let total_length = utf16_length + 1; // +1 for terminator byte
 
         // Calculate compressed length prefix size + UTF-16 data length + terminator
-        let prefix_size = if total_length < 128 {
-            1
-        } else if total_length < 16384 {
-            2
-        } else {
-            4
-        };
-        userstring_changes.next_index += prefix_size + total_length as u32;
+        let prefix_size = compressed_uint_size(total_length);
+        userstring_changes.next_index += prefix_size as u32 + total_length as u32;
 
         Ok(index)
     }

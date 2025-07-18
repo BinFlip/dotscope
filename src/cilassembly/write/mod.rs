@@ -86,7 +86,10 @@ use std::{collections::HashMap, path::Path};
 
 use crate::{
     cilassembly::{
-        remapping::IndexRemapper, write::planner::calc::calculate_string_heap_total_size,
+        remapping::IndexRemapper,
+        write::planner::calc::{
+            calculate_string_heap_total_size, calculate_userstring_heap_total_size,
+        },
         CilAssembly,
     },
     Result,
@@ -96,7 +99,7 @@ pub(crate) use planner::HeapExpansions;
 
 mod output;
 mod planner;
-mod utils;
+pub(crate) mod utils;
 mod writers;
 
 /// Writes a [`crate::cilassembly::CilAssembly`] to a new binary file.
@@ -746,7 +749,7 @@ fn update_metadata_root(
             // Write offset (4 bytes, little-endian)
             stream_directory_data.extend_from_slice(&(relative_stream_offset as u32).to_le_bytes());
 
-            // For the #Strings stream, recalculate the actual heap size to ensure accuracy
+            // For heap streams, recalculate the actual heap size to ensure accuracy
             let actual_stream_size = if stream_layout.name == "#Strings" {
                 let string_changes = &assembly.changes().string_heap_changes;
                 if string_changes.has_additions()
@@ -755,6 +758,48 @@ fn update_metadata_root(
                 {
                     // Recalculate the total reconstructed heap size to match what the heap writer actually produces
                     match calculate_string_heap_total_size(string_changes, assembly) {
+                        Ok(total_size) => total_size as u32,
+                        Err(_) => stream_layout.size,
+                    }
+                } else {
+                    stream_layout.size
+                }
+            } else if stream_layout.name == "#GUID" {
+                let guid_changes = &assembly.changes().guid_heap_changes;
+                if guid_changes.has_additions()
+                    || guid_changes.has_modifications()
+                    || guid_changes.has_removals()
+                {
+                    // Recalculate the total reconstructed heap size to match what the heap writer actually produces
+                    match HeapExpansions::calculate_guid_heap_size(assembly) {
+                        Ok(total_size) => total_size as u32,
+                        Err(_) => stream_layout.size,
+                    }
+                } else {
+                    stream_layout.size
+                }
+            } else if stream_layout.name == "#US" {
+                let userstring_changes = &assembly.changes().userstring_heap_changes;
+                if userstring_changes.has_additions()
+                    || userstring_changes.has_modifications()
+                    || userstring_changes.has_removals()
+                {
+                    // Recalculate the total reconstructed heap size to match what the heap writer actually produces
+                    match calculate_userstring_heap_total_size(userstring_changes, assembly) {
+                        Ok(total_size) => total_size as u32,
+                        Err(_) => stream_layout.size,
+                    }
+                } else {
+                    stream_layout.size
+                }
+            } else if stream_layout.name == "#Blob" {
+                let blob_changes = &assembly.changes().blob_heap_changes;
+                if blob_changes.has_additions()
+                    || blob_changes.has_modifications()
+                    || blob_changes.has_removals()
+                {
+                    // Recalculate the total reconstructed heap size to match what the heap writer actually produces
+                    match HeapExpansions::calculate_blob_heap_size(assembly) {
                         Ok(total_size) => total_size as u32,
                         Err(_) => stream_layout.size,
                     }
