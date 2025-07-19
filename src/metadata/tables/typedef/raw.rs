@@ -132,6 +132,7 @@ impl TypeDefRaw {
     /// - Next row in the `TypeDef` table cannot be found for range calculation
     /// - Field or method tokens cannot be resolved through pointer indirection
     /// - Token value arithmetic overflows during resolution
+    #[allow(clippy::too_many_arguments)]
     pub fn to_owned<F>(
         &self,
         get_ref: F,

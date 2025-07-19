@@ -17,7 +17,6 @@
 #![doc(html_no_source)]
 #![deny(missing_docs)]
 #![allow(dead_code)]
-#![allow(clippy::too_many_arguments)]
 //#![deny(unsafe_code)]
 // - 'userstring.rs' uses a transmute for converting a &[u8] to &[u16]
 // - 'file/physical.rs' uses mmap to map a file into memory

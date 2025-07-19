@@ -202,6 +202,7 @@ impl CilType {
     ///     Some(CilFlavor::Class), // Explicit class flavor
     /// );
     /// ```
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         token: Token,
         namespace: String,

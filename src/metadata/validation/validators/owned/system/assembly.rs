@@ -849,7 +849,13 @@ impl Default for OwnedAssemblyValidator {
 mod tests {
     use super::*;
     use crate::{
-        metadata::validation::ValidationConfig,
+        cilassembly::CilAssembly,
+        metadata::{
+            cilassemblyview::CilAssemblyView,
+            tables::{AssemblyRaw, TableDataOwned, TableId},
+            token::Token,
+            validation::ValidationConfig,
+        },
         test::{get_clean_testfile, owned_validator_test, TestAssembly},
     };
 
@@ -865,15 +871,237 @@ mod tests {
         // 1. REQUIRED: Clean assembly - should pass all assembly validation
         assemblies.push(TestAssembly::new(&clean_testfile, true));
 
-        // TODO: Add negative test cases when builder constraints are resolved
-        // These would test:
-        // - Assembly metadata consistency violations (malformed metadata tables)
-        // - Cross-assembly reference violations (broken external references)
-        // - Assembly version compatibility issues (version conflicts)
-        // - Module file consistency violations (corrupted PE structure)
-        // - Invalid assembly names, cultures, or strong names
+        // 2. NEGATIVE: Test assembly with empty name
+        assemblies.push(create_assembly_with_empty_name()?);
+
+        // 3. NEGATIVE: Test assembly with invalid name format (invalid characters)
+        assemblies.push(create_assembly_with_invalid_name_format()?);
+
+        // 4. NEGATIVE: Test assembly with excessive version numbers
+        assemblies.push(create_assembly_with_excessive_version_numbers()?);
+
+        // 5. NEGATIVE: Test assembly with invalid culture format
+        assemblies.push(create_assembly_with_invalid_culture_format()?);
+
+        // Note: Other test cases (cross-assembly references, module file consistency)
+        // require more complex assembly manipulation and will be added incrementally
 
         Ok(assemblies)
+    }
+
+    /// Creates an assembly with empty name - validation should fail
+    fn create_assembly_with_empty_name() -> crate::Result<TestAssembly> {
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available".to_string(),
+            ));
+        };
+        let view = CilAssemblyView::from_file(&clean_testfile)
+            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+
+        let mut assembly = CilAssembly::new(view);
+
+        // Create assembly with empty name
+        let empty_name_index = assembly
+            .string_add("")
+            .map_err(|e| crate::Error::Error(format!("Failed to add empty assembly name: {e}")))?;
+
+        let assembly_rid = 1; // Assembly table always has RID 1
+
+        let invalid_assembly = AssemblyRaw {
+            rid: assembly_rid,
+            token: Token::new(0x20000000 + assembly_rid),
+            offset: 0,
+            hash_alg_id: 0x8004, // SHA1
+            major_version: 1,
+            minor_version: 0,
+            build_number: 0,
+            revision_number: 0,
+            flags: 0,
+            public_key: 0,
+            name: empty_name_index, // Empty name - should trigger validation failure
+            culture: 0,
+        };
+
+        assembly
+            .table_row_update(
+                TableId::Assembly,
+                1,
+                TableDataOwned::Assembly(invalid_assembly),
+            )
+            .map_err(|e| crate::Error::Error(format!("Failed to update invalid assembly: {e}")))?;
+
+        let temp_file = tempfile::NamedTempFile::new()
+            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+
+        assembly
+            .write_to_file(temp_file.path())
+            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+
+        Ok(TestAssembly::from_temp_file(temp_file, false))
+    }
+
+    /// Creates an assembly with invalid name format (invalid characters) - validation should fail
+    fn create_assembly_with_invalid_name_format() -> crate::Result<TestAssembly> {
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available".to_string(),
+            ));
+        };
+        let view = CilAssemblyView::from_file(&clean_testfile)
+            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+
+        let mut assembly = CilAssembly::new(view);
+
+        // Create assembly name with invalid characters (contains /)
+        let invalid_name = "Invalid/Assembly*Name";
+        let invalid_name_index = assembly.string_add(invalid_name).map_err(|e| {
+            crate::Error::Error(format!("Failed to add invalid assembly name: {e}"))
+        })?;
+
+        let assembly_rid = 1;
+
+        let invalid_assembly = AssemblyRaw {
+            rid: assembly_rid,
+            token: Token::new(0x20000000 + assembly_rid),
+            offset: 0,
+            hash_alg_id: 0x8004, // SHA1
+            major_version: 1,
+            minor_version: 0,
+            build_number: 0,
+            revision_number: 0,
+            flags: 0,
+            public_key: 0,
+            name: invalid_name_index, // Invalid name format - should trigger validation failure
+            culture: 0,
+        };
+
+        assembly
+            .table_row_update(
+                TableId::Assembly,
+                1,
+                TableDataOwned::Assembly(invalid_assembly),
+            )
+            .map_err(|e| crate::Error::Error(format!("Failed to update invalid assembly: {e}")))?;
+
+        let temp_file = tempfile::NamedTempFile::new()
+            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+
+        assembly
+            .write_to_file(temp_file.path())
+            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+
+        Ok(TestAssembly::from_temp_file(temp_file, false))
+    }
+
+    /// Creates an assembly with excessive version numbers - validation should fail
+    fn create_assembly_with_excessive_version_numbers() -> crate::Result<TestAssembly> {
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available".to_string(),
+            ));
+        };
+        let view = CilAssemblyView::from_file(&clean_testfile)
+            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+
+        let mut assembly = CilAssembly::new(view);
+
+        // Create valid assembly name
+        let assembly_name_index = assembly
+            .string_add("ValidAssemblyName")
+            .map_err(|e| crate::Error::Error(format!("Failed to add assembly name: {e}")))?;
+
+        let assembly_rid = 1;
+
+        let invalid_assembly = AssemblyRaw {
+            rid: assembly_rid,
+            token: Token::new(0x20000000 + assembly_rid),
+            offset: 0,
+            hash_alg_id: 0x8004,  // SHA1
+            major_version: 70000, // Excessive version number - should trigger validation failure
+            minor_version: 0,
+            build_number: 0,
+            revision_number: 0,
+            flags: 0,
+            public_key: 0,
+            name: assembly_name_index,
+            culture: 0,
+        };
+
+        assembly
+            .table_row_update(
+                TableId::Assembly,
+                1,
+                TableDataOwned::Assembly(invalid_assembly),
+            )
+            .map_err(|e| crate::Error::Error(format!("Failed to update invalid assembly: {e}")))?;
+
+        let temp_file = tempfile::NamedTempFile::new()
+            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+
+        assembly
+            .write_to_file(temp_file.path())
+            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+
+        Ok(TestAssembly::from_temp_file(temp_file, false))
+    }
+
+    /// Creates an assembly with invalid culture format - validation should fail
+    fn create_assembly_with_invalid_culture_format() -> crate::Result<TestAssembly> {
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available".to_string(),
+            ));
+        };
+        let view = CilAssemblyView::from_file(&clean_testfile)
+            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+
+        let mut assembly = CilAssembly::new(view);
+
+        // Create valid assembly name
+        let assembly_name_index = assembly
+            .string_add("ValidAssemblyName")
+            .map_err(|e| crate::Error::Error(format!("Failed to add assembly name: {e}")))?;
+
+        // Create invalid culture format (too many parts)
+        let invalid_culture = "en-US-extra-invalid";
+        let invalid_culture_index = assembly
+            .string_add(invalid_culture)
+            .map_err(|e| crate::Error::Error(format!("Failed to add invalid culture: {e}")))?;
+
+        let assembly_rid = 1;
+
+        let invalid_assembly = AssemblyRaw {
+            rid: assembly_rid,
+            token: Token::new(0x20000000 + assembly_rid),
+            offset: 0,
+            hash_alg_id: 0x8004, // SHA1
+            major_version: 1,
+            minor_version: 0,
+            build_number: 0,
+            revision_number: 0,
+            flags: 0,
+            public_key: 0,
+            name: assembly_name_index,
+            culture: invalid_culture_index, // Invalid culture format - should trigger validation failure
+        };
+
+        assembly
+            .table_row_update(
+                TableId::Assembly,
+                1,
+                TableDataOwned::Assembly(invalid_assembly),
+            )
+            .map_err(|e| crate::Error::Error(format!("Failed to update invalid assembly: {e}")))?;
+
+        let temp_file = tempfile::NamedTempFile::new()
+            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+
+        assembly
+            .write_to_file(temp_file.path())
+            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+
+        Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     #[test]

@@ -280,21 +280,17 @@ impl OwnedAttributeValidator {
             | CustomAttributeArgument::I(_)
             | CustomAttributeArgument::U(_) => true,
 
-            // String and Type are valid reference types
-            CustomAttributeArgument::String(s) => !s.contains('\0'), // No null characters
-            CustomAttributeArgument::Type(_) => true, // Allow empty type strings in legitimate assemblies
+            CustomAttributeArgument::String(s) => !s.contains('\0'),
+            CustomAttributeArgument::Type(_) => true,
 
-            // Arrays must contain valid elements
             CustomAttributeArgument::Array(elements) => elements
                 .iter()
                 .all(|elem| self.is_valid_attribute_argument(elem)),
 
-            // Enums must have valid type names and underlying values
             CustomAttributeArgument::Enum(type_name, underlying_value) => {
                 !type_name.is_empty() && self.is_valid_attribute_argument(underlying_value)
             }
 
-            // Void is not valid in attribute arguments
             CustomAttributeArgument::Void => false,
         }
     }
@@ -325,7 +321,6 @@ impl OwnedAttributeValidator {
 
         for type_entry in types.all_types() {
             for (_, custom_attr) in type_entry.custom_attributes.iter() {
-                // Check that fixed arguments don't exceed reasonable limits
                 if custom_attr.fixed_args.len() > 20 {
                     return Err(crate::Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
@@ -338,7 +333,6 @@ impl OwnedAttributeValidator {
                     });
                 }
 
-                // Check that named arguments don't exceed reasonable limits
                 if custom_attr.named_args.len() > 50 {
                     return Err(crate::Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
@@ -351,7 +345,6 @@ impl OwnedAttributeValidator {
                     });
                 }
 
-                // Validate named argument uniqueness
                 let mut named_arg_names = std::collections::HashSet::new();
                 for named_arg in &custom_attr.named_args {
                     if !named_arg_names.insert(&named_arg.name) {
@@ -401,7 +394,6 @@ impl OwnedAttributeValidator {
         // Check type-level attributes
         for type_entry in types.all_types() {
             for (_, custom_attr) in type_entry.custom_attributes.iter() {
-                // Check for suspicious attribute patterns
                 if self.has_suspicious_attribute_pattern(custom_attr) {
                     return Err(crate::Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
@@ -414,7 +406,6 @@ impl OwnedAttributeValidator {
                 }
             }
 
-            // Check field attributes
             for (_, field) in type_entry.fields.iter() {
                 for (_, custom_attr) in field.custom_attributes.iter() {
                     if self.has_suspicious_attribute_pattern(custom_attr) {
@@ -431,7 +422,6 @@ impl OwnedAttributeValidator {
             }
         }
 
-        // Check method-level attributes
         for method_entry in methods.iter() {
             let method = method_entry.value();
             for (_, custom_attr) in method.custom_attributes.iter() {
@@ -466,7 +456,6 @@ impl OwnedAttributeValidator {
     /// * `true` - Suspicious patterns detected
     /// * `false` - No concerning patterns found
     fn has_suspicious_attribute_pattern(&self, custom_attr: &CustomAttributeValue) -> bool {
-        // Check for excessively long string arguments
         for arg in &custom_attr.fixed_args {
             if let CustomAttributeArgument::String(s) = arg {
                 if s.len() > 10000 {
@@ -475,12 +464,10 @@ impl OwnedAttributeValidator {
             }
         }
 
-        // Check for deeply nested array structures
         if self.has_deep_array_nesting(custom_attr, 0) {
             return true;
         }
 
-        // Check for excessive named arguments with similar names
         if custom_attr.named_args.len() > 20 {
             let mut similar_names = 0;
             for i in 0..custom_attr.named_args.len() {
@@ -525,7 +512,6 @@ impl OwnedAttributeValidator {
             if let CustomAttributeArgument::Array(elements) = arg {
                 for element in elements {
                     if let CustomAttributeArgument::Array(_) = element {
-                        // Create a temporary CustomAttributeValue to recurse
                         let temp_attr = CustomAttributeValue {
                             fixed_args: vec![element.clone()],
                             named_args: vec![],
@@ -606,9 +592,436 @@ impl Default for OwnedAttributeValidator {
 mod tests {
     use super::*;
     use crate::{
-        metadata::validation::ValidationConfig,
+        cilassembly::CilAssembly,
+        metadata::{
+            cilassemblyview::CilAssemblyView,
+            tables::{CodedIndex, CodedIndexType, CustomAttributeRaw, TableDataOwned, TableId},
+            token::Token,
+            validation::ValidationConfig,
+        },
         test::{get_clean_testfile, owned_validator_test, TestAssembly},
     };
+
+    /// Create assembly with excessive fixed arguments (>20) - validation should fail
+    fn create_assembly_with_excessive_fixed_args() -> crate::Result<TestAssembly> {
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available".to_string(),
+            ));
+        };
+        let view = CilAssemblyView::from_file(&clean_testfile)
+            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+
+        let mut assembly = CilAssembly::new(view);
+
+        // Create a custom attribute value with 25 fixed arguments (exceeds limit of 20)
+        let mut fixed_args = Vec::new();
+        for i in 0..25 {
+            fixed_args.push(crate::metadata::customattributes::CustomAttributeArgument::I4(i));
+        }
+
+        let custom_attr_value = crate::metadata::customattributes::CustomAttributeValue {
+            fixed_args,
+            named_args: vec![],
+        };
+
+        // Encode the custom attribute value to blob
+        let blob_data =
+            crate::metadata::customattributes::encode_custom_attribute_value(&custom_attr_value)
+                .map_err(|e| {
+                    crate::Error::Error(format!("Failed to encode custom attribute: {e}"))
+                })?;
+
+        let blob_index = assembly
+            .blob_add(&blob_data)
+            .map_err(|e| crate::Error::Error(format!("Failed to add blob: {e}")))?;
+
+        let next_rid = assembly.original_table_row_count(TableId::CustomAttribute) + 1;
+
+        // Create CustomAttributeRaw with excessive fixed arguments
+        let invalid_custom_attr = CustomAttributeRaw {
+            rid: next_rid,
+            token: Token::new(0x0C000000 + next_rid),
+            offset: 0,
+            parent: CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasCustomAttribute),
+            constructor: CodedIndex::new(
+                TableId::MethodDef,
+                1,
+                CodedIndexType::CustomAttributeType,
+            ),
+            value: blob_index,
+        };
+
+        assembly
+            .table_row_add(
+                TableId::CustomAttribute,
+                TableDataOwned::CustomAttribute(invalid_custom_attr),
+            )
+            .map_err(|e| crate::Error::Error(format!("Failed to add custom attribute: {e}")))?;
+
+        let temp_file = tempfile::NamedTempFile::new()
+            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+
+        assembly
+            .write_to_file(temp_file.path())
+            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+
+        Ok(TestAssembly::from_temp_file(temp_file, false))
+    }
+
+    /// Create assembly with excessive named arguments (>50) - validation should fail  
+    fn create_assembly_with_excessive_named_args() -> crate::Result<TestAssembly> {
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available".to_string(),
+            ));
+        };
+        let view = CilAssemblyView::from_file(&clean_testfile)
+            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+
+        let mut assembly = CilAssembly::new(view);
+
+        // Create 55 named arguments (exceeds limit of 50)
+        let mut named_args = Vec::new();
+        for i in 0..55 {
+            named_args.push(
+                crate::metadata::customattributes::CustomAttributeNamedArgument {
+                    is_field: false,
+                    name: format!("Property{i}"),
+                    arg_type: "String".to_string(),
+                    value: crate::metadata::customattributes::CustomAttributeArgument::String(
+                        format!("Value{i}"),
+                    ),
+                },
+            );
+        }
+
+        let custom_attr_value = crate::metadata::customattributes::CustomAttributeValue {
+            fixed_args: vec![],
+            named_args,
+        };
+
+        let blob_data =
+            crate::metadata::customattributes::encode_custom_attribute_value(&custom_attr_value)
+                .map_err(|e| {
+                    crate::Error::Error(format!("Failed to encode custom attribute: {e}"))
+                })?;
+
+        let blob_index = assembly
+            .blob_add(&blob_data)
+            .map_err(|e| crate::Error::Error(format!("Failed to add blob: {e}")))?;
+
+        let next_rid = assembly.original_table_row_count(TableId::CustomAttribute) + 1;
+
+        let invalid_custom_attr = CustomAttributeRaw {
+            rid: next_rid,
+            token: Token::new(0x0C000000 + next_rid),
+            offset: 0,
+            parent: CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasCustomAttribute),
+            constructor: CodedIndex::new(
+                TableId::MethodDef,
+                1,
+                CodedIndexType::CustomAttributeType,
+            ),
+            value: blob_index,
+        };
+
+        assembly
+            .table_row_add(
+                TableId::CustomAttribute,
+                TableDataOwned::CustomAttribute(invalid_custom_attr),
+            )
+            .map_err(|e| crate::Error::Error(format!("Failed to add custom attribute: {e}")))?;
+
+        let temp_file = tempfile::NamedTempFile::new()
+            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+
+        assembly
+            .write_to_file(temp_file.path())
+            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+
+        Ok(TestAssembly::from_temp_file(temp_file, false))
+    }
+
+    /// Create assembly with duplicate named argument names - validation should fail
+    fn create_assembly_with_duplicate_named_args() -> crate::Result<TestAssembly> {
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available".to_string(),
+            ));
+        };
+        let view = CilAssemblyView::from_file(&clean_testfile)
+            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+
+        let mut assembly = CilAssembly::new(view);
+
+        // Create named arguments with duplicate names
+        let named_args = vec![
+            crate::metadata::customattributes::CustomAttributeNamedArgument {
+                is_field: false,
+                name: "DuplicateName".to_string(),
+                arg_type: "String".to_string(),
+                value: crate::metadata::customattributes::CustomAttributeArgument::String(
+                    "Value1".to_string(),
+                ),
+            },
+            crate::metadata::customattributes::CustomAttributeNamedArgument {
+                is_field: false,
+                name: "DuplicateName".to_string(), // Same name as above - invalid
+                arg_type: "String".to_string(),
+                value: crate::metadata::customattributes::CustomAttributeArgument::String(
+                    "Value2".to_string(),
+                ),
+            },
+        ];
+
+        let custom_attr_value = crate::metadata::customattributes::CustomAttributeValue {
+            fixed_args: vec![],
+            named_args,
+        };
+
+        let blob_data =
+            crate::metadata::customattributes::encode_custom_attribute_value(&custom_attr_value)
+                .map_err(|e| {
+                    crate::Error::Error(format!("Failed to encode custom attribute: {e}"))
+                })?;
+
+        let blob_index = assembly
+            .blob_add(&blob_data)
+            .map_err(|e| crate::Error::Error(format!("Failed to add blob: {e}")))?;
+
+        let next_rid = assembly.original_table_row_count(TableId::CustomAttribute) + 1;
+
+        let invalid_custom_attr = CustomAttributeRaw {
+            rid: next_rid,
+            token: Token::new(0x0C000000 + next_rid),
+            offset: 0,
+            parent: CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasCustomAttribute),
+            constructor: CodedIndex::new(
+                TableId::MethodDef,
+                1,
+                CodedIndexType::CustomAttributeType,
+            ),
+            value: blob_index,
+        };
+
+        assembly
+            .table_row_add(
+                TableId::CustomAttribute,
+                TableDataOwned::CustomAttribute(invalid_custom_attr),
+            )
+            .map_err(|e| crate::Error::Error(format!("Failed to add custom attribute: {e}")))?;
+
+        let temp_file = tempfile::NamedTempFile::new()
+            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+
+        assembly
+            .write_to_file(temp_file.path())
+            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+
+        Ok(TestAssembly::from_temp_file(temp_file, false))
+    }
+
+    /// Create assembly with empty named argument name - validation should fail
+    fn create_assembly_with_empty_named_arg_name() -> crate::Result<TestAssembly> {
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available".to_string(),
+            ));
+        };
+        let view = CilAssemblyView::from_file(&clean_testfile)
+            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+
+        let mut assembly = CilAssembly::new(view);
+
+        // Create named argument with empty name
+        let named_args = vec![
+            crate::metadata::customattributes::CustomAttributeNamedArgument {
+                is_field: false,
+                name: "".to_string(), // Empty name - invalid
+                arg_type: "String".to_string(),
+                value: crate::metadata::customattributes::CustomAttributeArgument::String(
+                    "Value".to_string(),
+                ),
+            },
+        ];
+
+        let custom_attr_value = crate::metadata::customattributes::CustomAttributeValue {
+            fixed_args: vec![],
+            named_args,
+        };
+
+        let blob_data =
+            crate::metadata::customattributes::encode_custom_attribute_value(&custom_attr_value)
+                .map_err(|e| {
+                    crate::Error::Error(format!("Failed to encode custom attribute: {e}"))
+                })?;
+
+        let blob_index = assembly
+            .blob_add(&blob_data)
+            .map_err(|e| crate::Error::Error(format!("Failed to add blob: {e}")))?;
+
+        let next_rid = assembly.original_table_row_count(TableId::CustomAttribute) + 1;
+
+        let invalid_custom_attr = CustomAttributeRaw {
+            rid: next_rid,
+            token: Token::new(0x0C000000 + next_rid),
+            offset: 0,
+            parent: CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasCustomAttribute),
+            constructor: CodedIndex::new(
+                TableId::MethodDef,
+                1,
+                CodedIndexType::CustomAttributeType,
+            ),
+            value: blob_index,
+        };
+
+        assembly
+            .table_row_add(
+                TableId::CustomAttribute,
+                TableDataOwned::CustomAttribute(invalid_custom_attr),
+            )
+            .map_err(|e| crate::Error::Error(format!("Failed to add custom attribute: {e}")))?;
+
+        let temp_file = tempfile::NamedTempFile::new()
+            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+
+        assembly
+            .write_to_file(temp_file.path())
+            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+
+        Ok(TestAssembly::from_temp_file(temp_file, false))
+    }
+
+    /// Create assembly with null character in string - validation should fail
+    fn create_assembly_with_null_character_string() -> crate::Result<TestAssembly> {
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available".to_string(),
+            ));
+        };
+        let view = CilAssemblyView::from_file(&clean_testfile)
+            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+
+        let mut assembly = CilAssembly::new(view);
+
+        // Create string argument with null character
+        let fixed_args = vec![
+            crate::metadata::customattributes::CustomAttributeArgument::String(
+                "String\0WithNull".to_string(),
+            ),
+        ];
+
+        let custom_attr_value = crate::metadata::customattributes::CustomAttributeValue {
+            fixed_args,
+            named_args: vec![],
+        };
+
+        let blob_data =
+            crate::metadata::customattributes::encode_custom_attribute_value(&custom_attr_value)
+                .map_err(|e| {
+                    crate::Error::Error(format!("Failed to encode custom attribute: {e}"))
+                })?;
+
+        let blob_index = assembly
+            .blob_add(&blob_data)
+            .map_err(|e| crate::Error::Error(format!("Failed to add blob: {e}")))?;
+
+        let next_rid = assembly.original_table_row_count(TableId::CustomAttribute) + 1;
+
+        let invalid_custom_attr = CustomAttributeRaw {
+            rid: next_rid,
+            token: Token::new(0x0C000000 + next_rid),
+            offset: 0,
+            parent: CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasCustomAttribute),
+            constructor: CodedIndex::new(
+                TableId::MethodDef,
+                1,
+                CodedIndexType::CustomAttributeType,
+            ),
+            value: blob_index,
+        };
+
+        assembly
+            .table_row_add(
+                TableId::CustomAttribute,
+                TableDataOwned::CustomAttribute(invalid_custom_attr),
+            )
+            .map_err(|e| crate::Error::Error(format!("Failed to add custom attribute: {e}")))?;
+
+        let temp_file = tempfile::NamedTempFile::new()
+            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+
+        assembly
+            .write_to_file(temp_file.path())
+            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+
+        Ok(TestAssembly::from_temp_file(temp_file, false))
+    }
+
+    /// Create assembly with excessively long string (>10000) - validation should fail
+    fn create_assembly_with_excessive_string_length() -> crate::Result<TestAssembly> {
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(crate::Error::Error(
+                "WindowsBase.dll not available".to_string(),
+            ));
+        };
+        let view = CilAssemblyView::from_file(&clean_testfile)
+            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+
+        let mut assembly = CilAssembly::new(view);
+
+        // Create string with 15,000 characters (exceeds limit of 10,000)
+        let long_string = "A".repeat(15_000);
+        let fixed_args =
+            vec![crate::metadata::customattributes::CustomAttributeArgument::String(long_string)];
+
+        let custom_attr_value = crate::metadata::customattributes::CustomAttributeValue {
+            fixed_args,
+            named_args: vec![],
+        };
+
+        let blob_data =
+            crate::metadata::customattributes::encode_custom_attribute_value(&custom_attr_value)
+                .map_err(|e| {
+                    crate::Error::Error(format!("Failed to encode custom attribute: {e}"))
+                })?;
+
+        let blob_index = assembly
+            .blob_add(&blob_data)
+            .map_err(|e| crate::Error::Error(format!("Failed to add blob: {e}")))?;
+
+        let next_rid = assembly.original_table_row_count(TableId::CustomAttribute) + 1;
+
+        let invalid_custom_attr = CustomAttributeRaw {
+            rid: next_rid,
+            token: Token::new(0x0C000000 + next_rid),
+            offset: 0,
+            parent: CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasCustomAttribute),
+            constructor: CodedIndex::new(
+                TableId::MethodDef,
+                1,
+                CodedIndexType::CustomAttributeType,
+            ),
+            value: blob_index,
+        };
+
+        assembly
+            .table_row_add(
+                TableId::CustomAttribute,
+                TableDataOwned::CustomAttribute(invalid_custom_attr),
+            )
+            .map_err(|e| crate::Error::Error(format!("Failed to add custom attribute: {e}")))?;
+
+        let temp_file = tempfile::NamedTempFile::new()
+            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+
+        assembly
+            .write_to_file(temp_file.path())
+            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+
+        Ok(TestAssembly::from_temp_file(temp_file, false))
+    }
 
     fn owned_attribute_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
         let mut assemblies = Vec::new();
@@ -622,14 +1035,23 @@ mod tests {
         // 1. REQUIRED: Clean assembly - should pass all attribute validation
         assemblies.push(TestAssembly::new(&clean_testfile, true));
 
-        // TODO: Add negative test cases when builder constraints are resolved
-        // These would test:
-        // - Custom attributes with excessive fixed arguments (>20)
-        // - Custom attributes with excessive named arguments (>50)
-        // - Custom attributes with duplicate named argument names
-        // - Custom attributes with suspicious patterns (long strings >10000 chars)
-        // - Custom attributes with deep array nesting (>10 levels)
-        // - Custom attributes with similar names indicating typosquatting
+        // 2. NEGATIVE: Test excessive fixed arguments (>20)
+        assemblies.push(create_assembly_with_excessive_fixed_args()?);
+
+        // 3. NEGATIVE: Test excessive named arguments (>50)
+        assemblies.push(create_assembly_with_excessive_named_args()?);
+
+        // 4. NEGATIVE: Test duplicate named argument names
+        assemblies.push(create_assembly_with_duplicate_named_args()?);
+
+        // 5. NEGATIVE: Test empty named argument name
+        assemblies.push(create_assembly_with_empty_named_arg_name()?);
+
+        // 6. NEGATIVE: Test null character in string argument
+        assemblies.push(create_assembly_with_null_character_string()?);
+
+        // 7. NEGATIVE: Test excessively long string (>10000 chars)
+        assemblies.push(create_assembly_with_excessive_string_length()?);
 
         Ok(assemblies)
     }
