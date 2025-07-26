@@ -3,7 +3,7 @@
 //! This module handles writing modifications to the #GUID heap, including simple additions
 //! and complex operations involving modifications and removals that require heap rebuilding.
 
-use crate::{cilassembly::write::planner::StreamModification, Result};
+use crate::{cilassembly::write::planner::StreamModification, Error, Result};
 
 impl<'a> super::HeapWriter<'a> {
     /// Writes GUID heap modifications including additions, modifications, and removals.
@@ -61,10 +61,19 @@ impl<'a> super::HeapWriter<'a> {
     ) -> Result<()> {
         let (stream_layout, write_start) = self.base.get_stream_write_position(stream_mod)?;
         let mut write_pos = write_start;
-        let allocated_total_bytes = stream_layout.file_region.size as usize;
+        let allocated_total_bytes =
+            usize::try_from(stream_layout.file_region.size).map_err(|_| {
+                Error::WriteLayoutFailed {
+                    message: "Stream size exceeds usize range".to_string(),
+                }
+            })?;
 
         let guid_changes = &self.base.assembly.changes().guid_heap_changes;
-        let stream_end = stream_layout.file_region.end_offset() as usize;
+        let stream_end = usize::try_from(stream_layout.file_region.end_offset()).map_err(|_| {
+            Error::WriteLayoutFailed {
+                message: "Stream end offset exceeds usize range".to_string(),
+            }
+        })?;
 
         if let Some(replacement_heap) = guid_changes.replacement_heap() {
             self.base
@@ -73,7 +82,7 @@ impl<'a> super::HeapWriter<'a> {
 
             for appended_guid in guid_changes.appended_items.iter() {
                 if write_pos + 16 > stream_end {
-                    return Err(crate::Error::WriteLayoutFailed {
+                    return Err(Error::WriteLayoutFailed {
                         message: format!(
                             "GUID heap overflow: write would exceed allocated space by {} bytes",
                             (write_pos + 16) - stream_end
@@ -93,7 +102,10 @@ impl<'a> super::HeapWriter<'a> {
         let mut guids_to_write: Vec<[u8; 16]> = Vec::new();
         if let Some(guid_heap) = self.base.assembly.view().guids() {
             for (i, (_offset, guid)) in guid_heap.iter().enumerate() {
-                let sequential_index = (i + 1) as u32; // GUID indices are 1-based sequential
+                let sequential_index =
+                    u32::try_from(i + 1).map_err(|_| Error::WriteLayoutFailed {
+                        message: "GUID sequential index exceeds u32 range".to_string(),
+                    })?; // GUID indices are 1-based sequential
 
                 if !guid_changes.is_removed(sequential_index) {
                     // Apply modification if present, otherwise use original
@@ -116,7 +128,11 @@ impl<'a> super::HeapWriter<'a> {
         };
 
         for (i, appended_guid) in guid_changes.appended_items.iter().enumerate() {
-            let appended_index = (original_guid_count + i + 1) as u32; // Appended indices start after original GUIDs
+            let appended_index = u32::try_from(original_guid_count + i + 1).map_err(|_| {
+                Error::WriteLayoutFailed {
+                    message: "Appended GUID index exceeds u32 range".to_string(),
+                }
+            })?; // Appended indices start after original GUIDs
 
             if !guid_changes.is_removed(appended_index) {
                 // Apply modification if present, otherwise use original appended GUID
@@ -135,7 +151,7 @@ impl<'a> super::HeapWriter<'a> {
         for guid_to_write in guids_to_write {
             // Ensure we won't exceed stream boundary
             if write_pos + 16 > stream_end {
-                return Err(crate::Error::WriteLayoutFailed {
+                return Err(Error::WriteLayoutFailed {
                     message: format!("GUID heap overflow during writing: write would exceed allocated space by {} bytes", 
                         (write_pos + 16) - stream_end)
                 });

@@ -135,6 +135,7 @@ impl DocumentBuilder {
     /// # use dotscope::prelude::*;
     /// let builder = DocumentBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             name: None,
@@ -161,6 +162,7 @@ impl DocumentBuilder {
     /// let builder = DocumentBuilder::new()
     ///     .name("Program.cs");
     /// ```
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -186,6 +188,7 @@ impl DocumentBuilder {
     /// let builder = DocumentBuilder::new()
     ///     .hash_algorithm(&sha256_guid);
     /// ```
+    #[must_use]
     pub fn hash_algorithm(mut self, guid: &[u8; 16]) -> Self {
         self.hash_algorithm = Some(*guid);
         self
@@ -203,6 +206,7 @@ impl DocumentBuilder {
     /// let builder = DocumentBuilder::new()
     ///     .sha1_hash_algorithm();
     /// ```
+    #[must_use]
     pub fn sha1_hash_algorithm(mut self) -> Self {
         // SHA-1 algorithm GUID: ff1816ec-aa5e-4d10-87f7-6f4963833460
         self.hash_algorithm = Some([
@@ -224,6 +228,7 @@ impl DocumentBuilder {
     /// let builder = DocumentBuilder::new()
     ///     .sha256_hash_algorithm();
     /// ```
+    #[must_use]
     pub fn sha256_hash_algorithm(mut self) -> Self {
         // SHA-256 algorithm GUID: 8b12d62a-377a-428c-9b8c-4109c85e29c6
         self.hash_algorithm = Some([
@@ -250,6 +255,7 @@ impl DocumentBuilder {
     /// let builder = DocumentBuilder::new()
     ///     .hash(hash_bytes);
     /// ```
+    #[must_use]
     pub fn hash(mut self, hash_bytes: Vec<u8>) -> Self {
         self.hash = Some(hash_bytes);
         self
@@ -276,6 +282,7 @@ impl DocumentBuilder {
     /// let builder = DocumentBuilder::new()
     ///     .language(&csharp_guid);
     /// ```
+    #[must_use]
     pub fn language(mut self, guid: &[u8; 16]) -> Self {
         self.language = Some(*guid);
         self
@@ -293,6 +300,7 @@ impl DocumentBuilder {
     /// let builder = DocumentBuilder::new()
     ///     .csharp_language();
     /// ```
+    #[must_use]
     pub fn csharp_language(mut self) -> Self {
         // C# language GUID: 3f5f6f40-155c-11d4-9568-0080c7050626
         self.language = Some([
@@ -314,6 +322,7 @@ impl DocumentBuilder {
     /// let builder = DocumentBuilder::new()
     ///     .vb_language();
     /// ```
+    #[must_use]
     pub fn vb_language(mut self) -> Self {
         // VB.NET language GUID: 3a12d0b8-c26c-11d0-b442-00a0244a1dd2
         self.language = Some([
@@ -335,6 +344,7 @@ impl DocumentBuilder {
     /// let builder = DocumentBuilder::new()
     ///     .fsharp_language();
     /// ```
+    #[must_use]
     pub fn fsharp_language(mut self) -> Self {
         // F# language GUID: ab4f38c9-b6e6-43ba-be3b-58080b2ccce3
         self.language = Some([

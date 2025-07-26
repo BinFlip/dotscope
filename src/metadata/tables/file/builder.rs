@@ -125,6 +125,7 @@ impl FileBuilder {
     /// # use dotscope::prelude::*;
     /// let builder = FileBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             name: None,
@@ -149,6 +150,7 @@ impl FileBuilder {
     /// let builder = FileBuilder::new()
     ///     .name("MyLibrary.netmodule");
     /// ```
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -170,6 +172,7 @@ impl FileBuilder {
     /// let builder = FileBuilder::new()
     ///     .flags(FileAttributes::CONTAINS_NO_META_DATA);
     /// ```
+    #[must_use]
     pub fn flags(mut self, flags: u32) -> Self {
         self.flags = flags;
         self
@@ -188,6 +191,7 @@ impl FileBuilder {
     ///     .name("MyModule.netmodule")
     ///     .contains_metadata();
     /// ```
+    #[must_use]
     pub fn contains_metadata(mut self) -> Self {
         self.flags |= FileAttributes::CONTAINS_META_DATA;
         self.flags &= !FileAttributes::CONTAINS_NO_META_DATA;
@@ -207,6 +211,7 @@ impl FileBuilder {
     ///     .name("Resources.resources")
     ///     .contains_no_metadata();
     /// ```
+    #[must_use]
     pub fn contains_no_metadata(mut self) -> Self {
         self.flags |= FileAttributes::CONTAINS_NO_META_DATA;
         self.flags &= !FileAttributes::CONTAINS_META_DATA;
@@ -230,6 +235,7 @@ impl FileBuilder {
     /// let builder = FileBuilder::new()
     ///     .hash_value(&hash);
     /// ```
+    #[must_use]
     pub fn hash_value(mut self, hash: &[u8]) -> Self {
         self.hash_value = Some(hash.to_vec());
         self

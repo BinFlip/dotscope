@@ -76,7 +76,7 @@ use crate::{
     dispatch_table_type,
     metadata::{
         cilassemblyview::CilAssemblyView,
-        tables::{TableId, *},
+        tables::{AssemblyRaw, FieldRaw, MethodDefRaw, ModuleRaw, TableId, TypeDefRaw},
         validation::{
             context::{RawValidationContext, ValidationContext},
             traits::RawValidator,
@@ -117,6 +117,7 @@ impl RawTableValidator {
     /// # Thread Safety
     ///
     /// The returned validator is thread-safe and can be used concurrently.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -142,7 +143,7 @@ impl RawTableValidator {
     /// - Module table is missing (always required by ECMA-335)
     /// - Module table is present but contains zero rows (at least one required)
     /// - Assembly table contains more than one row (ECMA-335 limit violation)
-    fn validate_required_tables(&self, assembly_view: &CilAssemblyView) -> Result<()> {
+    fn validate_required_tables(assembly_view: &CilAssemblyView) -> Result<()> {
         let tables = assembly_view
             .tables()
             .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
@@ -194,7 +195,7 @@ impl RawTableValidator {
     /// - Table row counts exceed maximum allowed values (0x00FFFFFF)
     /// - RID values within table rows are inconsistent with expected sequential numbering
     /// - Internal table structure inconsistencies are detected during iteration
-    fn validate_table_structures(&self, assembly_view: &CilAssemblyView) -> Result<()> {
+    fn validate_table_structures(assembly_view: &CilAssemblyView) -> Result<()> {
         let tables = assembly_view
             .tables()
             .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
@@ -204,12 +205,12 @@ impl RawTableValidator {
                 if let Some(table) = tables.table::<RawType>() {
                     let row_count = table.row_count;
 
-                    if row_count > 0x00FFFFFF {
+                    if row_count > 0x00FF_FFFF {
                         return Err(malformed_error!(
                             "{:?} table contains {} rows, exceeding maximum of {} rows",
                             table_id,
                             row_count,
-                            0x00FFFFFF
+                            0x00FF_FFFF
                         ));
                     }
                 }
@@ -240,7 +241,7 @@ impl RawTableValidator {
     /// - TypeDef field list references exceed Field table row count
     /// - TypeDef method list references exceed MethodDef table row count
     /// - List-based cross-table references are out of bounds
-    fn validate_table_dependencies(&self, assembly_view: &CilAssemblyView) -> Result<()> {
+    fn validate_table_dependencies(assembly_view: &CilAssemblyView) -> Result<()> {
         let tables = assembly_view
             .tables()
             .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
@@ -248,7 +249,7 @@ impl RawTableValidator {
         if let (Some(typedef_table), Some(field_table)) =
             (tables.table::<TypeDefRaw>(), tables.table::<FieldRaw>())
         {
-            for typedef_row in typedef_table.iter() {
+            for typedef_row in typedef_table {
                 if typedef_row.field_list != 0 && typedef_row.field_list > field_table.row_count + 1
                 {
                     return Err(malformed_error!(
@@ -264,7 +265,7 @@ impl RawTableValidator {
         if let (Some(typedef_table), Some(method_table)) =
             (tables.table::<TypeDefRaw>(), tables.table::<MethodDefRaw>())
         {
-            for typedef_row in typedef_table.iter() {
+            for typedef_row in typedef_table {
                 if typedef_row.method_list != 0
                     && typedef_row.method_list > method_table.row_count + 1
                 {
@@ -317,9 +318,9 @@ impl RawValidator for RawTableValidator {
     fn validate_raw(&self, context: &RawValidationContext) -> Result<()> {
         let assembly_view = context.assembly_view();
 
-        self.validate_required_tables(assembly_view)?;
-        self.validate_table_structures(assembly_view)?;
-        self.validate_table_dependencies(assembly_view)?;
+        Self::validate_required_tables(assembly_view)?;
+        Self::validate_table_structures(assembly_view)?;
+        Self::validate_table_dependencies(assembly_view)?;
 
         Ok(())
     }
@@ -383,11 +384,11 @@ mod tests {
     /// # Errors
     ///
     /// Returns error if WindowsBase.dll is not available for testing
-    fn raw_table_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+    fn raw_table_validator_file_factory() -> Result<Vec<TestAssembly>> {
         let mut assemblies = Vec::new();
 
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
+            return Err(Error::Error(
                 "WindowsBase.dll not available - test cannot run".to_string(),
             ));
         };
@@ -404,7 +405,7 @@ mod tests {
                 ));
             }
             Err(e) => {
-                return Err(crate::Error::Error(format!(
+                return Err(Error::Error(format!(
                     "Failed to create test assembly with multiple Assembly rows: {e}"
                 )));
             }
@@ -419,7 +420,7 @@ mod tests {
                 ));
             }
             Err(e) => {
-                return Err(crate::Error::Error(format!(
+                return Err(Error::Error(format!(
                     "Failed to create test assembly with field list violation: {e}"
                 )));
             }
@@ -434,7 +435,7 @@ mod tests {
                 ));
             }
             Err(e) => {
-                return Err(crate::Error::Error(format!(
+                return Err(Error::Error(format!(
                     "Failed to create test assembly with method list violation: {e}"
                 )));
             }
@@ -449,7 +450,7 @@ mod tests {
                 ));
             }
             Err(e) => {
-                return Err(crate::Error::Error(format!(
+                return Err(Error::Error(format!(
                     "Failed to create test assembly with empty Module table: {e}"
                 )));
             }
@@ -479,7 +480,7 @@ mod tests {
             Err(e) => {
                 // Row deletion failed - maybe Module table is protected
                 // Fall back to just returning an error to indicate this test doesn't work
-                return Err(crate::Error::Error(format!(
+                return Err(Error::Error(format!(
                     "Cannot remove Module table row: {e} - this test case is not supported"
                 )));
             }
@@ -501,7 +502,7 @@ mod tests {
     /// a second Assembly row to violate this constraint.
     fn create_assembly_with_multiple_assembly_rows() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
         let view = CilAssemblyView::from_file(&clean_testfile)?;
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
@@ -653,7 +654,7 @@ mod tests {
     /// Each test case targets exactly one validation rule to ensure test isolation
     /// and clear error attribution.
     #[test]
-    fn test_raw_table_validator() -> crate::Result<()> {
+    fn test_raw_table_validator() -> Result<()> {
         let validator = RawTableValidator::new();
         let config = ValidationConfig {
             enable_structural_validation: true,
@@ -673,14 +674,12 @@ mod tests {
     ///
     /// Verifies that the validator respects enable_structural_validation configuration setting.
     #[test]
-    fn test_raw_table_validator_configuration() -> crate::Result<()> {
+    fn test_raw_table_validator_configuration() -> Result<()> {
         let validator = RawTableValidator::new();
 
-        fn clean_only_factory() -> crate::Result<Vec<TestAssembly>> {
+        fn clean_only_factory() -> Result<Vec<TestAssembly>> {
             let Some(clean_testfile) = get_clean_testfile() else {
-                return Err(crate::Error::Error(
-                    "WindowsBase.dll not available".to_string(),
-                ));
+                return Err(Error::Error("WindowsBase.dll not available".to_string()));
             };
             Ok(vec![TestAssembly::new(&clean_testfile, true)])
         }

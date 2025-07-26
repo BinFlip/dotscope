@@ -83,7 +83,7 @@ use crate::{
             traits::OwnedValidator,
         },
     },
-    Result,
+    Error, Result,
 };
 
 /// Foundation validator for basic type definition structure, attributes, and metadata consistency.
@@ -117,6 +117,7 @@ impl OwnedTypeDefinitionValidator {
     /// # Thread Safety
     ///
     /// The returned validator is thread-safe and can be used concurrently.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -133,7 +134,7 @@ impl OwnedTypeDefinitionValidator {
         for type_entry in types.all_types() {
             // Validate type name is not empty (except for special cases)
             if type_entry.name.is_empty() && type_entry.namespace != "<Module>" {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: {
                         let token_value = type_entry.token.value();
@@ -146,7 +147,7 @@ impl OwnedTypeDefinitionValidator {
             // Validate type token is valid
             if type_entry.token.value() == 0 {
                 let type_name = &type_entry.name;
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!("Type '{type_name}' has invalid token (0)"),
                     source: None,
@@ -156,7 +157,7 @@ impl OwnedTypeDefinitionValidator {
             // Validate type name doesn't contain invalid characters
             if type_entry.name.contains('\0') {
                 let type_name = &type_entry.name;
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!("Type '{type_name}' contains null character in name"),
                     source: None,
@@ -165,7 +166,7 @@ impl OwnedTypeDefinitionValidator {
 
             // Validate namespace doesn't contain invalid characters
             if type_entry.namespace.contains('\0') {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: {
                         let type_name = &type_entry.name;
@@ -190,7 +191,7 @@ impl OwnedTypeDefinitionValidator {
                     || type_entry.name.contains(">e__FixedBuffer");
 
                 if !is_compiler_generated {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: {
                             let type_name = &type_entry.name;
@@ -217,8 +218,8 @@ impl OwnedTypeDefinitionValidator {
 
             // Validate visibility attributes
             let visibility = flags & TypeAttributes::VISIBILITY_MASK;
-            if !self.is_valid_visibility_attribute(visibility) {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+            if !Self::is_valid_visibility_attribute(visibility) {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: {
                         let type_name = &type_entry.name;
@@ -230,8 +231,8 @@ impl OwnedTypeDefinitionValidator {
 
             // Validate layout attributes
             let layout = flags & TypeAttributes::LAYOUT_MASK;
-            if !self.is_valid_layout_attribute(layout) {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+            if !Self::is_valid_layout_attribute(layout) {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: {
                         let type_name = &type_entry.name;
@@ -243,8 +244,8 @@ impl OwnedTypeDefinitionValidator {
 
             // Validate class semantics attributes
             let class_semantics = flags & TypeAttributes::CLASS_SEMANTICS_MASK;
-            if !self.is_valid_class_semantics_attribute(class_semantics) {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+            if !Self::is_valid_class_semantics_attribute(class_semantics) {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: {
                         let type_name = &type_entry.name;
@@ -256,8 +257,8 @@ impl OwnedTypeDefinitionValidator {
 
             // Validate string format attributes
             let string_format = flags & TypeAttributes::STRING_FORMAT_MASK;
-            if !self.is_valid_string_format_attribute(string_format) {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+            if !Self::is_valid_string_format_attribute(string_format) {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: {
                         let type_name = &type_entry.name;
@@ -278,7 +279,7 @@ impl OwnedTypeDefinitionValidator {
             if flags & TypeAttributes::INTERFACE != 0 {
                 // Interfaces must be abstract
                 if flags & TypeAttributes::ABSTRACT == 0 {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: {
                             let type_name = &type_entry.name;
@@ -291,7 +292,7 @@ impl OwnedTypeDefinitionValidator {
                 // Interfaces cannot be sealed
                 if flags & 0x0000_0100 != 0 {
                     // SEALED
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: {
                             let type_name = &type_entry.name;
@@ -319,7 +320,7 @@ impl OwnedTypeDefinitionValidator {
 
             // Validate interface flavor consistency
             if *flavor == CilFlavor::Interface && flags & TypeAttributes::INTERFACE == 0 {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: {
                         let type_name = &type_entry.name;
@@ -333,7 +334,7 @@ impl OwnedTypeDefinitionValidator {
 
             // Validate that interfaces don't have conflicting flavors
             if flags & TypeAttributes::INTERFACE != 0 && !matches!(flavor, CilFlavor::Interface) {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: {
                         let type_name = &type_entry.name;
@@ -355,7 +356,7 @@ impl OwnedTypeDefinitionValidator {
                         // Object is allowed for primitives
                         // Allow some flexibility for special cases
                         if !type_entry.namespace.starts_with("System") {
-                            return Err(crate::Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedValidatorFailed {
                                 validator: self.name().to_string(),
                                 message: {
                                     let type_name = &type_entry.name;
@@ -400,7 +401,7 @@ impl OwnedTypeDefinitionValidator {
                 {
                     // Allow some flexibility for legitimate special names
                     if !type_entry.namespace.starts_with("System") {
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedValidatorFailed {
                             validator: self.name().to_string(),
                             message: {
                                 let type_name = &type_entry.name;
@@ -418,7 +419,7 @@ impl OwnedTypeDefinitionValidator {
                 // RTSpecialName requires SpecialName
                 if flags & 0x0000_0400 == 0 {
                     // SPECIAL_NAME
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: {
                             let type_name = &type_entry.name;
@@ -442,7 +443,7 @@ impl OwnedTypeDefinitionValidator {
     }
 
     /// Checks if a visibility attribute is valid.
-    fn is_valid_visibility_attribute(&self, visibility: u32) -> bool {
+    fn is_valid_visibility_attribute(visibility: u32) -> bool {
         matches!(
             visibility,
             TypeAttributes::NOT_PUBLIC
@@ -457,7 +458,7 @@ impl OwnedTypeDefinitionValidator {
     }
 
     /// Checks if a layout attribute is valid.
-    fn is_valid_layout_attribute(&self, layout: u32) -> bool {
+    fn is_valid_layout_attribute(layout: u32) -> bool {
         matches!(
             layout,
             TypeAttributes::AUTO_LAYOUT
@@ -467,7 +468,7 @@ impl OwnedTypeDefinitionValidator {
     }
 
     /// Checks if a class semantics attribute is valid.
-    fn is_valid_class_semantics_attribute(&self, class_semantics: u32) -> bool {
+    fn is_valid_class_semantics_attribute(class_semantics: u32) -> bool {
         matches!(
             class_semantics,
             TypeAttributes::CLASS | TypeAttributes::INTERFACE
@@ -475,7 +476,7 @@ impl OwnedTypeDefinitionValidator {
     }
 
     /// Checks if a string format attribute is valid.
-    fn is_valid_string_format_attribute(&self, string_format: u32) -> bool {
+    fn is_valid_string_format_attribute(string_format: u32) -> bool {
         matches!(
             string_format,
             TypeAttributes::ANSI_CLASS | TypeAttributes::UNICODE_CLASS | TypeAttributes::AUTO_CLASS
@@ -524,13 +525,14 @@ mod tests {
             validation::ValidationConfig,
         },
         test::{get_clean_testfile, owned_validator_test, TestAssembly},
+        Error, Result,
     };
 
-    fn owned_type_definition_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+    fn owned_type_definition_validator_file_factory() -> Result<Vec<TestAssembly>> {
         let mut assemblies = Vec::new();
 
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
+            return Err(Error::Error(
                 "WindowsBase.dll not available - test cannot run".to_string(),
             ));
         };
@@ -559,26 +561,24 @@ mod tests {
     }
 
     /// Creates an assembly with a type having an empty name - validation should fail
-    fn create_assembly_with_empty_type_name() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_empty_type_name() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         // Create type with empty name
         let empty_name_index = assembly
             .string_add("")
-            .map_err(|e| crate::Error::Error(format!("Failed to add empty type name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add empty type name: {e}")))?;
 
         // Create a regular namespace (not "<Module>") to ensure validation triggers
         let namespace_index = assembly
             .string_add("TestNamespace")
-            .map_err(|e| crate::Error::Error(format!("Failed to add namespace: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add namespace: {e}")))?;
 
         let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
 
@@ -596,27 +596,25 @@ mod tests {
 
         assembly
             .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(invalid_type))
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid type: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid type: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     /// Creates an assembly with a type name containing null character - validation should fail
-    fn create_assembly_with_null_char_in_type_name() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_null_char_in_type_name() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
@@ -624,7 +622,7 @@ mod tests {
         let invalid_name = "Invalid\0Type";
         let invalid_name_index = assembly
             .string_add(invalid_name)
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid type name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid type name: {e}")))?;
 
         let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
 
@@ -642,40 +640,38 @@ mod tests {
 
         assembly
             .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(invalid_type))
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid type: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid type: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     /// Creates an assembly with a namespace containing null character - validation should fail
-    fn create_assembly_with_null_char_in_namespace() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_null_char_in_namespace() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         // Create valid type name
         let type_name_index = assembly
             .string_add("ValidTypeName")
-            .map_err(|e| crate::Error::Error(format!("Failed to add type name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
 
         // Create namespace with null character
         let invalid_namespace = "Invalid\0Namespace";
         let invalid_namespace_index = assembly
             .string_add(invalid_namespace)
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid namespace: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid namespace: {e}")))?;
 
         let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
 
@@ -693,27 +689,25 @@ mod tests {
 
         assembly
             .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(invalid_type))
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid type: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid type: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     /// Creates an assembly with a malformed special name pattern - validation should fail
-    fn create_assembly_with_malformed_special_name() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_malformed_special_name() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
@@ -721,7 +715,7 @@ mod tests {
         let malformed_name = "<InvalidSpecialName";
         let malformed_name_index = assembly
             .string_add(malformed_name)
-            .map_err(|e| crate::Error::Error(format!("Failed to add malformed type name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add malformed type name: {e}")))?;
 
         let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
 
@@ -739,20 +733,20 @@ mod tests {
 
         assembly
             .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(invalid_type))
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid type: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid type: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     #[test]
-    fn test_owned_type_definition_validator() -> crate::Result<()> {
+    fn test_owned_type_definition_validator() -> Result<()> {
         let validator = OwnedTypeDefinitionValidator::new();
         let config = ValidationConfig {
             enable_semantic_validation: true,

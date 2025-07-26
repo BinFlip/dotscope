@@ -82,6 +82,7 @@ impl AssemblyProcessorBuilder {
     ///
     /// let builder = AssemblyProcessorBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self { processor: None }
     }
@@ -116,6 +117,7 @@ impl AssemblyProcessorBuilder {
     /// let builder = AssemblyProcessorBuilder::new()
     ///     .processor(0x8664);
     /// ```
+    #[must_use]
     pub fn processor(mut self, processor: u32) -> Self {
         self.processor = Some(processor);
         self

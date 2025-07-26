@@ -85,6 +85,7 @@ impl PropertyPtrBuilder {
     ///
     /// let builder = PropertyPtrBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self { property: None }
     }
@@ -114,6 +115,7 @@ impl PropertyPtrBuilder {
     /// let builder = PropertyPtrBuilder::new()
     ///     .property(15);
     /// ```
+    #[must_use]
     pub fn property(mut self, property: u32) -> Self {
         self.property = Some(property);
         self

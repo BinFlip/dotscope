@@ -197,6 +197,7 @@ impl CilAssembly {
     /// let assembly = CilAssembly::new(view);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn new(view: CilAssemblyView) -> Self {
         Self {
             changes: AssemblyChanges::new(&view),
@@ -237,12 +238,17 @@ impl CilAssembly {
     /// assert!(world_index > hello_index);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Currently this function does not return errors, but the Result type is
+    /// reserved for future enhancements that may require error handling.
     pub fn string_add(&mut self, value: &str) -> Result<u32> {
         let string_changes = &mut self.changes.string_heap_changes;
         let index = string_changes.next_index;
         string_changes.appended_items.push(value.to_string());
         // Strings are null-terminated, so increment by string length + 1 for null terminator
-        string_changes.next_index += value.len() as u32 + 1;
+        string_changes.next_index += u32::try_from(value.len()).unwrap_or(0) + 1;
 
         Ok(index)
     }
@@ -261,6 +267,10 @@ impl CilAssembly {
     ///
     /// Returns the heap index that can be used to reference this blob.
     /// Indices are 1-based following ECMA-335 conventions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blob cannot be added to the heap.
     pub fn blob_add(&mut self, data: &[u8]) -> Result<u32> {
         let blob_changes = &mut self.changes.blob_heap_changes;
         let index = blob_changes.next_index;
@@ -269,7 +279,8 @@ impl CilAssembly {
         // Blobs have compressed length prefix + data
         let length = data.len();
         let prefix_size = compressed_uint_size(length);
-        blob_changes.next_index += prefix_size as u32 + length as u32;
+        blob_changes.next_index +=
+            u32::try_from(prefix_size).unwrap_or(0) + u32::try_from(length).unwrap_or(0);
 
         Ok(index)
     }
@@ -302,15 +313,19 @@ impl CilAssembly {
     /// let guid_index = assembly.add_guid(&guid)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the GUID cannot be added to the heap.
     pub fn guid_add(&mut self, guid: &[u8; 16]) -> Result<u32> {
         let guid_changes = &mut self.changes.guid_heap_changes;
 
         // GUID heap indices are sequential (1-based), not byte-based
         // Calculate the current GUID count from the original heap size and additions
-        let original_heap_size =
-            guid_changes.next_index - (guid_changes.appended_items.len() as u32 * 16);
+        let original_heap_size = guid_changes.next_index
+            - (u32::try_from(guid_changes.appended_items.len()).unwrap_or(0) * 16);
         let existing_guid_count = original_heap_size / 16;
-        let added_guid_count = guid_changes.appended_items.len() as u32;
+        let added_guid_count = u32::try_from(guid_changes.appended_items.len()).unwrap_or(0);
         let sequential_index = existing_guid_count + added_guid_count + 1;
 
         guid_changes.appended_items.push(*guid);
@@ -352,6 +367,10 @@ impl CilAssembly {
     /// let userstring_index = assembly.add_userstring("Hello, World!")?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the user string cannot be added to the heap.
     pub fn userstring_add(&mut self, value: &str) -> Result<u32> {
         let userstring_changes = &mut self.changes.userstring_heap_changes;
         let index = userstring_changes.next_index;
@@ -364,7 +383,8 @@ impl CilAssembly {
 
         // Calculate compressed length prefix size + UTF-16 data length + terminator
         let prefix_size = compressed_uint_size(total_length);
-        userstring_changes.next_index += prefix_size as u32 + total_length as u32;
+        userstring_changes.next_index +=
+            u32::try_from(prefix_size).unwrap_or(0) + u32::try_from(total_length).unwrap_or(0);
 
         Ok(index)
     }
@@ -395,6 +415,10 @@ impl CilAssembly {
     /// assembly.update_string(42, "Updated String")?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the string cannot be updated.
     pub fn string_update(&mut self, index: u32, new_value: &str) -> Result<()> {
         self.changes
             .string_heap_changes
@@ -432,14 +456,17 @@ impl CilAssembly {
     /// assembly.remove_string(43, ReferenceHandlingStrategy::NullifyReferences)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the string cannot be removed or if references exist when using FailIfReferenced strategy.
     pub fn string_remove(&mut self, index: u32, strategy: ReferenceHandlingStrategy) -> Result<()> {
         let original_heap_size = self
             .view()
             .streams()
             .iter()
             .find(|s| s.name == "#Strings")
-            .map(|s| s.size)
-            .unwrap_or(0);
+            .map_or(0, |s| s.size);
 
         if index >= original_heap_size {
             self.changes
@@ -459,6 +486,10 @@ impl CilAssembly {
     ///
     /// * `index` - The heap index to modify (1-based, following ECMA-335 conventions)
     /// * `new_data` - The new blob data to store at that index
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blob cannot be updated.
     pub fn blob_update(&mut self, index: u32, new_data: &[u8]) -> Result<()> {
         self.changes
             .blob_heap_changes
@@ -472,6 +503,10 @@ impl CilAssembly {
     ///
     /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
     /// * `strategy` - How to handle existing references to this blob
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blob cannot be removed or if references exist when using FailIfReferenced strategy.
     pub fn blob_remove(&mut self, index: u32, strategy: ReferenceHandlingStrategy) -> Result<()> {
         self.changes.blob_heap_changes.add_removal(index, strategy);
         Ok(())
@@ -483,6 +518,10 @@ impl CilAssembly {
     ///
     /// * `index` - The heap index to modify (1-based, following ECMA-335 conventions)
     /// * `new_guid` - The new 16-byte GUID to store at that index
+    ///
+    /// # Errors
+    ///
+    /// Currently always succeeds, but returns `Result` for future extensibility.
     pub fn guid_update(&mut self, index: u32, new_guid: &[u8; 16]) -> Result<()> {
         self.changes
             .guid_heap_changes
@@ -496,6 +535,10 @@ impl CilAssembly {
     ///
     /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
     /// * `strategy` - How to handle existing references to this GUID
+    ///
+    /// # Errors
+    ///
+    /// Currently always succeeds, but returns `Result` for future extensibility.
     pub fn guid_remove(&mut self, index: u32, strategy: ReferenceHandlingStrategy) -> Result<()> {
         self.changes.guid_heap_changes.add_removal(index, strategy);
         Ok(())
@@ -507,6 +550,10 @@ impl CilAssembly {
     ///
     /// * `index` - The heap index to modify (1-based, following ECMA-335 conventions)
     /// * `new_value` - The new string value to store at that index
+    ///
+    /// # Errors
+    ///
+    /// Currently always succeeds, but returns `Result` for future extensibility.
     pub fn userstring_update(&mut self, index: u32, new_value: &str) -> Result<()> {
         self.changes
             .userstring_heap_changes
@@ -520,6 +567,10 @@ impl CilAssembly {
     ///
     /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
     /// * `strategy` - How to handle existing references to this user string
+    ///
+    /// # Errors
+    ///
+    /// Currently always succeeds, but returns `Result` for future extensibility.
     pub fn userstring_remove(
         &mut self,
         index: u32,
@@ -555,6 +606,10 @@ impl CilAssembly {
     /// assembly.string_add_heap(custom_heap)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Currently always succeeds, but returns `Result` for future extensibility.
     pub fn string_add_heap(&mut self, heap_data: Vec<u8>) -> Result<()> {
         self.changes.string_heap_changes.replace_heap(heap_data);
         Ok(())
@@ -584,6 +639,10 @@ impl CilAssembly {
     /// assembly.blob_add_heap(custom_heap)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Currently always succeeds, but returns `Result` for future extensibility.
     pub fn blob_add_heap(&mut self, heap_data: Vec<u8>) -> Result<()> {
         self.changes.blob_heap_changes.replace_heap(heap_data);
         Ok(())
@@ -614,6 +673,10 @@ impl CilAssembly {
     /// assembly.guid_add_heap(guid.to_vec())?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Currently always succeeds, but returns `Result` for future extensibility.
     pub fn guid_add_heap(&mut self, heap_data: Vec<u8>) -> Result<()> {
         self.changes.guid_heap_changes.replace_heap(heap_data);
         Ok(())
@@ -643,6 +706,10 @@ impl CilAssembly {
     /// assembly.userstring_add_heap(custom_heap)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Currently always succeeds, but returns `Result` for future extensibility.
     pub fn userstring_add_heap(&mut self, heap_data: Vec<u8>) -> Result<()> {
         self.changes.userstring_heap_changes.replace_heap(heap_data);
         Ok(())
@@ -661,6 +728,10 @@ impl CilAssembly {
     /// # Returns
     ///
     /// Returns `Ok(())` if the modification was successful.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the table operation fails or the provided row data is invalid.
     pub fn table_row_update(
         &mut self,
         table_id: TableId,
@@ -694,6 +765,10 @@ impl CilAssembly {
     /// # Returns
     ///
     /// Returns `Ok(())` if the removal was successful.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the table operation fails or the specified row does not exist.
     pub fn table_row_remove(
         &mut self,
         table_id: TableId,
@@ -743,7 +818,7 @@ impl CilAssembly {
                 Ok(new_rid)
             }
             TableModifications::Replaced(rows) => {
-                let new_rid = rows.len() as u32 + 1;
+                let new_rid = u32::try_from(rows.len()).unwrap_or(0) + 1;
                 rows.push(row);
                 Ok(new_rid)
             }
@@ -769,7 +844,7 @@ impl CilAssembly {
             IndexRemapper::build_from_changes(&self.changes, &self.view)
         };
 
-        remapper.apply_to_assembly(&mut self.changes)?;
+        remapper.apply_to_assembly(&mut self.changes);
 
         Ok(())
     }
@@ -811,7 +886,7 @@ impl CilAssembly {
             IndexRemapper::build_from_changes(&self.changes, &self.view)
         };
 
-        remapper.apply_to_assembly(&mut self.changes)?;
+        remapper.apply_to_assembly(&mut self.changes);
 
         Ok(())
     }
@@ -824,6 +899,10 @@ impl CilAssembly {
     /// # Arguments
     ///
     /// * `path` - The path where the modified assembly should be written
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be written or if the assembly is invalid.
     pub fn write_to_file<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<()> {
         write::write_assembly_to_file(self, path)
     }

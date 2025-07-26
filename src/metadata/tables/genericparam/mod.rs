@@ -152,4 +152,10 @@ pub mod GenericParamAttributes {
     /// This constraint requires the type argument to have a public parameterless constructor.
     /// Corresponds to `where T : new()` constraint in C#.
     pub const DEFAULT_CONSTRUCTOR_CONSTRAINT: u32 = 0x0010;
+
+    /// Mask for reserved bits that should not be set.
+    ///
+    /// Reserved bits in the flags field that are not currently defined by the ECMA-335
+    /// specification. These bits should be zero in valid metadata.
+    pub const RESERVED_MASK: u32 = 0xFFE0;
 }

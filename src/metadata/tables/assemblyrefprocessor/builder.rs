@@ -89,6 +89,7 @@ impl AssemblyRefProcessorBuilder {
     ///
     /// let builder = AssemblyRefProcessorBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             processor: None,
@@ -127,6 +128,7 @@ impl AssemblyRefProcessorBuilder {
     /// let builder = AssemblyRefProcessorBuilder::new()
     ///     .processor(0xAA64);
     /// ```
+    #[must_use]
     pub fn processor(mut self, processor: u32) -> Self {
         self.processor = Some(processor);
         self
@@ -151,6 +153,7 @@ impl AssemblyRefProcessorBuilder {
     /// let builder = AssemblyRefProcessorBuilder::new()
     ///     .assembly_ref(1);  // References first AssemblyRef
     /// ```
+    #[must_use]
     pub fn assembly_ref(mut self, assembly_ref: u32) -> Self {
         self.assembly_ref = Some(assembly_ref);
         self

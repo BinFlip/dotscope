@@ -114,6 +114,7 @@ impl GenericParamBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::genericparam::GenericParamBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             name: None,
@@ -142,6 +143,7 @@ impl GenericParamBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -166,6 +168,7 @@ impl GenericParamBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn number(mut self, number: u32) -> Self {
         self.number = Some(number);
         self
@@ -189,6 +192,7 @@ impl GenericParamBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn flags(mut self, flags: u32) -> Self {
         self.flags = Some(flags);
         self
@@ -212,6 +216,7 @@ impl GenericParamBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn owner(mut self, owner: CodedIndex) -> Self {
         self.owner = Some(owner);
         self

@@ -80,6 +80,7 @@ impl ImportScopeBuilder {
     ///
     /// let builder = ImportScopeBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             parent: None,
@@ -111,6 +112,7 @@ impl ImportScopeBuilder {
     /// let child_builder = ImportScopeBuilder::new()
     ///     .parent(1);  // References scope with RID 1
     /// ```
+    #[must_use]
     pub fn parent(mut self, parent: u32) -> Self {
         self.parent = Some(parent);
         self
@@ -141,6 +143,7 @@ impl ImportScopeBuilder {
     /// let empty_builder = ImportScopeBuilder::new()
     ///     .imports(&[]);
     /// ```
+    #[must_use]
     pub fn imports(mut self, imports: &[u8]) -> Self {
         self.imports = Some(imports.to_vec());
         self

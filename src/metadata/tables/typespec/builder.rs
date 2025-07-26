@@ -116,6 +116,7 @@ impl TypeSpecBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::typespec::TypeSpecBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self { signature: None }
     }
@@ -144,6 +145,7 @@ impl TypeSpecBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn signature(mut self, signature: TypeSignature) -> Self {
         self.signature = Some(signature);
         self
@@ -200,6 +202,7 @@ impl TypeSpecBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn generic_instantiation(
         mut self,
         generic_type: Token,
@@ -257,6 +260,7 @@ impl TypeSpecBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn single_dimensional_array(mut self, element_type: TypeSignature) -> Self {
         use crate::metadata::signatures::SignatureSzArray;
 
@@ -312,6 +316,7 @@ impl TypeSpecBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn multi_dimensional_array(mut self, element_type: TypeSignature, rank: u32) -> Self {
         use crate::metadata::{signatures::SignatureArray, typesystem::ArrayDimensions};
 
@@ -375,6 +380,7 @@ impl TypeSpecBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn pointer(mut self, pointed_type: TypeSignature) -> Self {
         use crate::metadata::signatures::SignaturePointer;
 
@@ -429,6 +435,7 @@ impl TypeSpecBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn managed_reference(mut self, referenced_type: TypeSignature) -> Self {
         self.signature = Some(TypeSignature::ByRef(Box::new(referenced_type)));
         self
@@ -505,6 +512,7 @@ impl TypeSpecBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn function_pointer(mut self, method_signature: SignatureMethod) -> Self {
         self.signature = Some(TypeSignature::FnPtr(Box::new(method_signature)));
         self

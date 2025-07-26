@@ -87,6 +87,7 @@ impl CustomAttributeBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::customattribute::CustomAttributeBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             parent: None,
@@ -119,6 +120,7 @@ impl CustomAttributeBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn parent(mut self, parent: CodedIndex) -> Self {
         self.parent = Some(parent);
         self
@@ -144,6 +146,7 @@ impl CustomAttributeBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn constructor(mut self, constructor: CodedIndex) -> Self {
         self.constructor = Some(constructor);
         self
@@ -173,6 +176,7 @@ impl CustomAttributeBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn value(mut self, value: &[u8]) -> Self {
         self.value = Some(value.to_vec());
         self

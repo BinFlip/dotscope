@@ -121,6 +121,7 @@ impl FieldMarshalBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::fieldmarshal::FieldMarshalBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             parent: None,
@@ -151,6 +152,7 @@ impl FieldMarshalBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn parent(mut self, parent: CodedIndex) -> Self {
         self.parent = Some(parent);
         self
@@ -182,6 +184,7 @@ impl FieldMarshalBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn native_type(mut self, native_type: &[u8]) -> Self {
         self.native_type = Some(native_type.to_vec());
         self
@@ -199,6 +202,7 @@ impl FieldMarshalBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn simple_native_type(mut self, type_id: u8) -> Self {
         self.native_type = Some(vec![type_id]);
         self
@@ -212,6 +216,7 @@ impl FieldMarshalBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn unicode_string(self) -> Self {
         self.simple_native_type(NATIVE_TYPE::LPWSTR)
     }
@@ -224,6 +229,7 @@ impl FieldMarshalBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn ansi_string(self) -> Self {
         self.simple_native_type(NATIVE_TYPE::LPSTR)
     }
@@ -242,6 +248,7 @@ impl FieldMarshalBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn fixed_array(mut self, element_type: u8, size: u32) -> Self {
         let mut descriptor = vec![NATIVE_TYPE::ARRAY, element_type];
         descriptor.extend_from_slice(&size.to_le_bytes());
@@ -257,6 +264,7 @@ impl FieldMarshalBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn com_interface(self) -> Self {
         self.simple_native_type(NATIVE_TYPE::INTERFACE)
     }
@@ -297,6 +305,7 @@ impl FieldMarshalBuilder {
     ///     })
     ///     .build(&mut context)?;
     /// ```
+    #[must_use]
     pub fn native_type_spec(mut self, native_type: NativeType) -> Self {
         let info = MarshallingInfo {
             primary_type: native_type,
@@ -345,8 +354,9 @@ impl FieldMarshalBuilder {
     ///     .marshalling_info(complex_info)
     ///     .build(&mut context)?;
     /// ```
-    pub fn marshalling_info(mut self, info: MarshallingInfo) -> Self {
-        if let Ok(descriptor) = encode_marshalling_descriptor(&info) {
+    #[must_use]
+    pub fn marshalling_info(mut self, info: &MarshallingInfo) -> Self {
+        if let Ok(descriptor) = encode_marshalling_descriptor(info) {
             self.native_type = Some(descriptor);
         }
 
@@ -365,6 +375,7 @@ impl FieldMarshalBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn pointer(self, ref_type: Option<NativeType>) -> Self {
         let ptr_type = NativeType::Ptr {
             ref_type: ref_type.map(Box::new),
@@ -386,6 +397,7 @@ impl FieldMarshalBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn variable_array(
         self,
         element_type: NativeType,
@@ -413,6 +425,7 @@ impl FieldMarshalBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn fixed_array_typed(self, element_type: Option<NativeType>, size: u32) -> Self {
         let array_type = NativeType::FixedArray {
             element_type: element_type.map(Box::new),
@@ -434,6 +447,7 @@ impl FieldMarshalBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn native_struct(self, packing_size: Option<u8>, class_size: Option<u32>) -> Self {
         let struct_type = NativeType::Struct {
             packing_size,
@@ -455,6 +469,7 @@ impl FieldMarshalBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn safe_array(self, variant_type: u16, user_defined_name: Option<String>) -> Self {
         let array_type = NativeType::SafeArray {
             variant_type,
@@ -478,6 +493,7 @@ impl FieldMarshalBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn custom_marshaler(
         self,
         guid: &str,
@@ -1180,7 +1196,7 @@ mod tests {
 
             let token = FieldMarshalBuilder::new()
                 .parent(param_ref)
-                .marshalling_info(info)
+                .marshalling_info(&info)
                 .build(&mut context)
                 .unwrap();
 

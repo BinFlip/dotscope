@@ -257,12 +257,16 @@ impl ValidationEngine {
     /// # Returns
     ///
     /// Returns validation results from all raw validators.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if raw validation fails or validator execution encounters issues.
     pub fn execute_stage1_validation(
         &self,
         view: &CilAssemblyView,
         changes: Option<&AssemblyChanges>,
     ) -> Result<ValidationResult> {
-        let validators = self.get_raw_validators();
+        let validators = Self::get_raw_validators();
         self.validate_raw_stage(view, changes, validators)
     }
 
@@ -278,8 +282,12 @@ impl ValidationEngine {
     /// # Returns
     ///
     /// Returns validation results from all owned validators.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if owned validation fails or validator execution encounters issues.
     pub fn execute_stage2_validation(&self, object: &CilObject) -> Result<ValidationResult> {
-        let validators = self.get_owned_validators();
+        let validators = Self::get_owned_validators();
         self.validate_owned_stage(object, validators)
     }
 
@@ -294,6 +302,10 @@ impl ValidationEngine {
     /// # Returns
     ///
     /// Returns aggregated validation results.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if validation context creation fails or validator execution encounters issues.
     pub fn validate_raw_stage(
         &self,
         view: &CilAssemblyView,
@@ -354,6 +366,10 @@ impl ValidationEngine {
     /// # Returns
     ///
     /// Returns aggregated validation results.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if validation context creation fails or validator execution encounters issues.
     pub fn validate_owned_stage(
         &self,
         object: &CilObject,
@@ -404,7 +420,7 @@ impl ValidationEngine {
     /// Configuration controls execution through each validator's should_run() method.
     /// This ensures consistent validator registration and makes the system more predictable.
     /// Validators are initialized once and reused for all validation operations.
-    fn get_raw_validators(&self) -> &Vec<Box<dyn RawValidator>> {
+    fn get_raw_validators() -> &'static Vec<Box<dyn RawValidator>> {
         RAW_VALIDATORS.get_or_init(init_raw_validators)
     }
 
@@ -413,26 +429,29 @@ impl ValidationEngine {
     /// Configuration controls execution through each validator's should_run() method.
     /// This ensures consistent validator registration and makes the system more predictable.
     /// Validators are initialized once and reused for all validation operations.
-    fn get_owned_validators(&self) -> &Vec<Box<dyn OwnedValidator>> {
+    fn get_owned_validators() -> &'static Vec<Box<dyn OwnedValidator>> {
         OWNED_VALIDATORS.get_or_init(init_owned_validators)
     }
 
     /// Returns the validation configuration.
+    #[must_use]
     pub fn config(&self) -> &ValidationConfig {
         &self.config
     }
 
     /// Returns the reference scanner.
+    #[must_use]
     pub fn scanner(&self) -> &ReferenceScanner {
         &self.scanner
     }
 
     /// Returns engine statistics and performance information.
+    #[must_use]
     pub fn statistics(&self) -> EngineStatistics {
         EngineStatistics {
             scanner_stats: self.scanner.statistics(),
-            raw_validator_count: self.get_raw_validators().len(),
-            owned_validator_count: self.get_owned_validators().len(),
+            raw_validator_count: Self::get_raw_validators().len(),
+            owned_validator_count: Self::get_owned_validators().len(),
         }
     }
 }
@@ -460,24 +479,40 @@ impl std::fmt::Display for EngineStatistics {
 
 /// Factory functions for creating validation engines with common configurations.
 pub mod factory {
-    use super::*;
+    use super::{CilAssemblyView, Result, ValidationConfig, ValidationEngine};
 
     /// Creates a validation engine with minimal configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if engine initialization fails.
     pub fn minimal_engine(view: &CilAssemblyView) -> Result<ValidationEngine> {
         ValidationEngine::new(view, ValidationConfig::minimal())
     }
 
     /// Creates a validation engine with production configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if engine initialization fails.
     pub fn production_engine(view: &CilAssemblyView) -> Result<ValidationEngine> {
         ValidationEngine::new(view, ValidationConfig::production())
     }
 
     /// Creates a validation engine with comprehensive configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the validation engine cannot be initialized with the comprehensive configuration.
     pub fn comprehensive_engine(view: &CilAssemblyView) -> Result<ValidationEngine> {
         ValidationEngine::new(view, ValidationConfig::comprehensive())
     }
 
     /// Creates a validation engine with strict configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the validation engine cannot be initialized with the strict configuration.
     pub fn strict_engine(view: &CilAssemblyView) -> Result<ValidationEngine> {
         ValidationEngine::new(view, ValidationConfig::strict())
     }

@@ -68,7 +68,7 @@ use crate::{
         write::utils::{align_to, compressed_uint_size},
         CilAssembly, HeapChanges,
     },
-    Result,
+    Error, Result,
 };
 
 /// Calculates the actual byte size needed for string heap modifications.
@@ -106,8 +106,7 @@ pub(crate) fn calculate_string_heap_size(
                 .streams()
                 .iter()
                 .find(|stream| stream.name == "#Strings")
-                .map(|stream| stream.size as u64)
-                .unwrap_or(1)
+                .map_or(1, |stream| u64::from(stream.size))
         } else {
             1u64
         };
@@ -161,13 +160,22 @@ pub(crate) fn calculate_string_heap_total_size(
     let existing_content_end = if let Some(strings_heap) = assembly.view().strings() {
         let mut actual_end = 1u64; // Start after mandatory null byte at index 0
         for (offset, string) in strings_heap.iter() {
-            if !heap_changes.is_removed(offset as u32) {
-                let string_len =
-                    if let Some(modified_string) = heap_changes.get_modification(offset as u32) {
-                        modified_string.len() as u64
-                    } else {
-                        string.len() as u64
-                    };
+            if !heap_changes.is_removed(u32::try_from(offset).map_err(|_| {
+                Error::WriteLayoutFailed {
+                    message: "String heap offset exceeds u32 range".to_string(),
+                }
+            })?) {
+                let string_len = if let Some(modified_string) =
+                    heap_changes.get_modification(u32::try_from(offset).map_err(|_| {
+                        Error::WriteLayoutFailed {
+                            message: "String heap offset exceeds u32 range (modification)"
+                                .to_string(),
+                        }
+                    })?) {
+                    modified_string.len() as u64
+                } else {
+                    string.len() as u64
+                };
                 let string_end = offset as u64 + string_len + 1; // +1 for null terminator
                 actual_end = actual_end.max(string_end);
             }
@@ -184,30 +192,34 @@ pub(crate) fn calculate_string_heap_total_size(
             .streams()
             .iter()
             .find(|stream| stream.name == "#Strings")
-            .map(|stream| stream.size as u64)
-            .unwrap_or(1)
+            .map_or(1, |stream| u64::from(stream.size))
     } else {
         1u64
     };
 
     // Apply the same padding logic as the reconstruction function
     let mut final_index_position = existing_content_end;
-    if final_index_position < original_heap_size {
-        let padding_needed = original_heap_size - final_index_position;
-        final_index_position += padding_needed;
-    } else if final_index_position == original_heap_size {
-        // Don't add padding when we're exactly at the boundary
-        // This matches the reconstruction logic
+    match final_index_position.cmp(&original_heap_size) {
+        std::cmp::Ordering::Less => {
+            let padding_needed = original_heap_size - final_index_position;
+            final_index_position += padding_needed;
+        }
+        std::cmp::Ordering::Equal | std::cmp::Ordering::Greater => {
+            // Don't add padding when we're exactly at the boundary or beyond
+            // This matches the reconstruction logic
+        }
     }
 
     // Add space for new appended strings
     // We need to calculate the final size of each appended string accounting for modifications
     let mut additional_size = 0u64;
-    for appended_string in heap_changes.appended_items.iter() {
+    for appended_string in &heap_changes.appended_items {
         // Calculate the API index for this appended string by working backwards from next_index
         let mut api_index = heap_changes.next_index;
         for item in heap_changes.appended_items.iter().rev() {
-            api_index -= (item.len() + 1) as u32;
+            api_index -= u32::try_from(item.len() + 1).map_err(|_| Error::WriteLayoutFailed {
+                message: "String item size exceeds u32 range".to_string(),
+            })?;
             if std::ptr::eq(item, appended_string) {
                 break;
             }
@@ -291,7 +303,7 @@ pub(crate) fn calculate_blob_heap_size(
         // Build sets for efficient lookup of removed and modified indices
         let removed_indices = &heap_changes.removed_indices;
         let modified_indices: std::collections::HashSet<u32> =
-            heap_changes.modified_items.keys().cloned().collect();
+            heap_changes.modified_items.keys().copied().collect();
 
         // Calculate size of original blobs that are neither removed nor modified
         if let Some(blob_heap) = assembly.view().blobs() {
@@ -301,7 +313,9 @@ pub(crate) fn calculate_blob_heap_size(
                 } // Skip the mandatory null byte at offset 0
 
                 // The heap changes system uses byte offsets as indices
-                let offset_u32 = offset as u32;
+                let offset_u32 = u32::try_from(offset).map_err(|_| Error::WriteLayoutFailed {
+                    message: "Blob heap offset exceeds u32 range".to_string(),
+                })?;
                 if !removed_indices.contains(&offset_u32) && !modified_indices.contains(&offset_u32)
                 {
                     let length_prefix_size = compressed_uint_size(original_blob.len());
@@ -319,7 +333,9 @@ pub(crate) fn calculate_blob_heap_size(
         // Add size of appended blobs that haven't been modified
         // (modified appended blobs are already counted in the modified_items section above)
         let original_heap_size = if let Some(blob_heap) = assembly.view().blobs() {
-            blob_heap.data().len() as u32
+            u32::try_from(blob_heap.data().len()).map_err(|_| Error::WriteLayoutFailed {
+                message: "Blob heap data length exceeds u32 range".to_string(),
+            })?
         } else {
             0
         };
@@ -335,7 +351,11 @@ pub(crate) fn calculate_blob_heap_size(
             // Calculate the index for the next blob (prefix + data)
             let length = blob.len();
             let prefix_size = compressed_uint_size(length);
-            current_index += prefix_size as u32 + length as u32;
+            current_index += u32::try_from(prefix_size).map_err(|_| Error::WriteLayoutFailed {
+                message: "Prefix size exceeds u32 range (blob)".to_string(),
+            })? + u32::try_from(length).map_err(|_| Error::WriteLayoutFailed {
+                message: "Blob length exceeds u32 range".to_string(),
+            })?;
         }
     } else {
         // Addition-only scenario - calculate size of additions only
@@ -409,13 +429,15 @@ pub(crate) fn calculate_guid_heap_size(
         // Build sets for efficient lookup of removed and modified indices
         let removed_indices = &heap_changes.removed_indices;
         let modified_indices: std::collections::HashSet<u32> =
-            heap_changes.modified_items.keys().cloned().collect();
+            heap_changes.modified_items.keys().copied().collect();
 
         // Calculate size of original GUIDs that are neither removed nor modified
         if let Some(guid_heap) = assembly.view().guids() {
             for (offset, _) in guid_heap.iter() {
                 // The heap changes system uses byte offsets as indices
-                let offset_u32 = offset as u32;
+                let offset_u32 = u32::try_from(offset).map_err(|_| Error::WriteLayoutFailed {
+                    message: "Blob heap offset exceeds u32 range".to_string(),
+                })?;
                 if !removed_indices.contains(&offset_u32) && !modified_indices.contains(&offset_u32)
                 {
                     total_size += 16; // Each GUID is exactly 16 bytes
@@ -425,7 +447,9 @@ pub(crate) fn calculate_guid_heap_size(
 
         // Add size of modified GUIDs (but only those that modify original GUIDs, not appended ones)
         let original_guid_count = if let Some(guid_heap) = assembly.view().guids() {
-            guid_heap.iter().count() as u32
+            u32::try_from(guid_heap.iter().count()).map_err(|_| Error::WriteLayoutFailed {
+                message: "GUID heap count exceeds u32 range".to_string(),
+            })?
         } else {
             0
         };
@@ -512,7 +536,7 @@ pub(crate) fn calculate_userstring_heap_size(
         // Build sets for efficient lookup of removed and modified indices
         let removed_indices = &heap_changes.removed_indices;
         let modified_indices: std::collections::HashSet<u32> =
-            heap_changes.modified_items.keys().cloned().collect();
+            heap_changes.modified_items.keys().copied().collect();
 
         // Calculate size of original user strings that are neither removed nor modified
         if let Some(userstring_heap) = assembly.view().userstrings() {
@@ -522,7 +546,9 @@ pub(crate) fn calculate_userstring_heap_size(
                 } // Skip the mandatory null byte at offset 0
 
                 // The heap changes system uses byte offsets as indices
-                let offset_u32 = offset as u32;
+                let offset_u32 = u32::try_from(offset).map_err(|_| Error::WriteLayoutFailed {
+                    message: "Blob heap offset exceeds u32 range".to_string(),
+                })?;
                 if !removed_indices.contains(&offset_u32) && !modified_indices.contains(&offset_u32)
                 {
                     // Convert to string and calculate UTF-16 length
@@ -549,7 +575,7 @@ pub(crate) fn calculate_userstring_heap_size(
         let starting_next_index = if let Some(_userstring_heap) = assembly.view().userstrings() {
             // Use the actual heap size, not max offset (same as HeapChanges::new)
             let heap_stream = assembly.view().streams().iter().find(|s| s.name == "#US");
-            heap_stream.map(|s| s.size).unwrap_or(0)
+            heap_stream.map_or(0, |s| s.size)
         } else {
             0
         };
@@ -558,7 +584,9 @@ pub(crate) fn calculate_userstring_heap_size(
         let mut all_userstrings: Vec<(u32, String)> = Vec::new();
         if let Some(userstring_heap) = assembly.view().userstrings() {
             for (offset, original_userstring) in userstring_heap.iter() {
-                let heap_index = offset as u32;
+                let heap_index = u32::try_from(offset).map_err(|_| Error::WriteLayoutFailed {
+                    message: "Userstring heap offset exceeds u32 range".to_string(),
+                })?;
                 if !removed_indices.contains(&heap_index) {
                     let final_string = if let Some(modified_string) =
                         heap_changes.modified_items.get(&heap_index)
@@ -591,7 +619,16 @@ pub(crate) fn calculate_userstring_heap_size(
             let orig_utf16_len = original_appended_string.encode_utf16().count() * 2;
             let orig_total_len = orig_utf16_len + 1;
             let orig_compressed_len_size = compressed_uint_size(orig_total_len);
-            current_api_index += (orig_compressed_len_size as usize + orig_total_len) as u32;
+            current_api_index += u32::try_from(
+                usize::try_from(orig_compressed_len_size).map_err(|_| {
+                    Error::WriteLayoutFailed {
+                        message: "Compressed length size exceeds usize range".to_string(),
+                    }
+                })? + orig_total_len,
+            )
+            .map_err(|_| Error::WriteLayoutFailed {
+                message: "Combined userstring size exceeds u32 range".to_string(),
+            })?;
         }
 
         // Sort by API index (same as writer)
@@ -656,7 +693,7 @@ pub(crate) fn calculate_userstring_heap_total_size(
         // Build sets for efficient lookup of removed and modified indices
         let removed_indices = &heap_changes.removed_indices;
         let modified_indices: std::collections::HashSet<u32> =
-            heap_changes.modified_items.keys().cloned().collect();
+            heap_changes.modified_items.keys().copied().collect();
 
         // Calculate size of original user strings that are neither removed nor modified
         if let Some(userstring_heap) = assembly.view().userstrings() {
@@ -666,7 +703,9 @@ pub(crate) fn calculate_userstring_heap_total_size(
                 } // Skip the mandatory null byte at offset 0
 
                 // The heap changes system uses byte offsets as indices
-                let offset_u32 = offset as u32;
+                let offset_u32 = u32::try_from(offset).map_err(|_| Error::WriteLayoutFailed {
+                    message: "Blob heap offset exceeds u32 range".to_string(),
+                })?;
                 if !removed_indices.contains(&offset_u32) && !modified_indices.contains(&offset_u32)
                 {
                     // Convert to string and calculate UTF-16 length
@@ -693,7 +732,9 @@ pub(crate) fn calculate_userstring_heap_total_size(
 
         // Add size of appended userstrings that haven't been modified
         let original_heap_size = if let Some(userstring_heap) = assembly.view().userstrings() {
-            userstring_heap.data().len() as u32
+            u32::try_from(userstring_heap.data().len()).map_err(|_| Error::WriteLayoutFailed {
+                message: "Userstring heap data length exceeds u32 range".to_string(),
+            })?
         } else {
             0
         };
@@ -712,7 +753,12 @@ pub(crate) fn calculate_userstring_heap_total_size(
             let length = userstring.encode_utf16().count() * 2;
             let total_length = length + 1;
             let prefix_size = compressed_uint_size(total_length);
-            current_index += prefix_size as u32 + total_length as u32;
+            current_index +=
+                u32::try_from(prefix_size).map_err(|_| Error::WriteLayoutFailed {
+                    message: "Prefix size exceeds u32 range (userstring rebuild)".to_string(),
+                })? + u32::try_from(total_length).map_err(|_| Error::WriteLayoutFailed {
+                    message: "Total length exceeds u32 range (userstring rebuild)".to_string(),
+                })?;
         }
     } else {
         // Addition-only scenario - calculate total size including original heap

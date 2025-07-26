@@ -72,10 +72,10 @@ impl RowWritable for MethodDefRaw {
         // Write RVA (4 bytes)
         write_le_at(data, offset, self.rva)?;
 
-        // Write implementation flags (2 bytes) - cast from u32 to u16
+        // Write implementation flags (2 bytes) - truncate from u32 to u16
         write_le_at(data, offset, self.impl_flags as u16)?;
 
-        // Write method flags (2 bytes) - cast from u32 to u16
+        // Write method flags (2 bytes) - truncate from u32 to u16
         write_le_at(data, offset, self.flags as u16)?;
 
         // Write name string heap index (2 or 4 bytes)

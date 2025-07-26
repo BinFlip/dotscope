@@ -85,6 +85,7 @@ impl EventPtrBuilder {
     ///
     /// let builder = EventPtrBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self { event: None }
     }
@@ -114,6 +115,7 @@ impl EventPtrBuilder {
     /// let builder = EventPtrBuilder::new()
     ///     .event(12);
     /// ```
+    #[must_use]
     pub fn event(mut self, event: u32) -> Self {
         self.event = Some(event);
         self

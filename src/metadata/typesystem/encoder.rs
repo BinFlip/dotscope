@@ -265,13 +265,28 @@ impl TypeSignatureEncoder {
                 }
 
                 // Encode NumSizes and Sizes
-                Self::encode_compressed_uint(sizes.len() as u32, buffer);
+                Self::encode_compressed_uint(
+                    u32::try_from(sizes.len()).map_err(|_| {
+                        Error::Error(format!("Array sizes length out of range: {}", sizes.len()))
+                    })?,
+                    buffer,
+                );
                 for size in sizes {
                     Self::encode_compressed_uint(size, buffer);
                 }
 
                 // Encode NumLoBounds and LoBounds
-                Self::encode_compressed_uint(lower_bounds.len() as u32, buffer);
+                Self::encode_compressed_uint(
+                    u32::try_from(lower_bounds.len()).map_err(|_| {
+                        Error::Error(format!(
+                            "Array lower bounds length out of range: {}",
+                            lower_bounds.len()
+                        ))
+                    })?,
+                    buffer,
+                );
+                #[allow(clippy::cast_possible_wrap)]
+                // Cast to i32 is correct per ECMA-335 - array lower bounds are signed
                 for lower_bound in lower_bounds {
                     Self::encode_compressed_int(lower_bound as i32, buffer);
                 }
@@ -281,7 +296,15 @@ impl TypeSignatureEncoder {
             TypeSignature::GenericInst(base_type, type_args) => {
                 buffer.push(0x15); // ELEMENT_TYPE_GENERICINST
                 Self::encode_type_signature_internal(base_type, buffer, depth + 1)?;
-                Self::encode_compressed_uint(type_args.len() as u32, buffer);
+                Self::encode_compressed_uint(
+                    u32::try_from(type_args.len()).map_err(|_| {
+                        Error::Error(format!(
+                            "Generic type arguments length out of range: {}",
+                            type_args.len()
+                        ))
+                    })?,
+                    buffer,
+                );
                 for type_arg in type_args {
                     Self::encode_type_signature_internal(type_arg, buffer, depth + 1)?;
                 }
@@ -394,7 +417,15 @@ impl TypeSignatureEncoder {
 
         buffer.push(calling_conv);
 
-        Self::encode_compressed_uint(method_sig.params.len() as u32, buffer);
+        Self::encode_compressed_uint(
+            u32::try_from(method_sig.params.len()).map_err(|_| {
+                Error::Error(format!(
+                    "Method parameters length out of range: {}",
+                    method_sig.params.len()
+                ))
+            })?,
+            buffer,
+        );
         Self::encode_type_signature(&method_sig.return_type.base, buffer)?;
 
         for param in &method_sig.params {
@@ -494,6 +525,7 @@ impl TypeSignatureEncoder {
     ///
     /// * `value` - The unsigned integer to encode
     /// * `buffer` - The output buffer to write encoded bytes to
+    #[allow(clippy::cast_possible_truncation)] // Range checks ensure safety
     pub fn encode_compressed_uint(value: u32, buffer: &mut Vec<u8>) {
         if value < 0x80 {
             buffer.push(value as u8);
@@ -518,6 +550,8 @@ impl TypeSignatureEncoder {
     ///
     /// * `value` - The signed integer to encode
     /// * `buffer` - The output buffer to write encoded bytes to
+    #[allow(clippy::cast_possible_truncation)] // Conversion logic ensures safety
+    #[allow(clippy::cast_sign_loss)] // Conversion is safe for encoding algorithm - signed to unsigned is intentional
     pub fn encode_compressed_int(value: i32, buffer: &mut Vec<u8>) {
         // Convert signed to unsigned for encoding
         let unsigned_value = if value >= 0 {

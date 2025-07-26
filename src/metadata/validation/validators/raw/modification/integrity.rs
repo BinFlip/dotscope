@@ -117,6 +117,7 @@ impl RawChangeIntegrityValidator {
     /// # Thread Safety
     ///
     /// The returned validator is thread-safe and can be used concurrently.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -145,7 +146,6 @@ impl RawChangeIntegrityValidator {
     /// - Critical tables become empty after modifications (Module, Assembly tables)
     /// - Replacement tables exceed reasonable size limits (>1,000,000 rows)
     fn validate_table_integrity(
-        &self,
         table_changes: &HashMap<TableId, TableModifications>,
     ) -> Result<()> {
         for (table_id, modifications) in table_changes {
@@ -178,7 +178,8 @@ impl RawChangeIntegrityValidator {
                     }
 
                     if let Some(&max_rid) = final_rids.iter().max() {
-                        let expected_min_count = (final_rids.len() as f64 * 0.7) as u32;
+                        let expected_min_count =
+                            u32::try_from(final_rids.len() * 7 / 10).unwrap_or(0);
                         if max_rid > expected_min_count.max(1) * 2 {
                             return Err(malformed_error!(
                                 "Table {:?} integrity violation: RID sequence too sparse - max RID {} with only {} rows (>70% gaps)",
@@ -251,7 +252,7 @@ impl RawChangeIntegrityValidator {
     /// - Blob heap additions exceed reasonable size limits (>50,000 additions)
     /// - GUID heap additions exceed reasonable size limits (>10,000 additions)
     /// - UserString heap additions exceed reasonable size limits (>50,000 additions)
-    fn validate_heap_integrity(&self, context: &RawValidationContext) -> Result<()> {
+    fn validate_heap_integrity(context: &RawValidationContext) -> Result<()> {
         if let Some(changes) = context.changes() {
             if changes.string_heap_changes.additions_count() > 100_000 {
                 return Err(malformed_error!(
@@ -308,7 +309,6 @@ impl RawChangeIntegrityValidator {
     /// - Critical relationships are broken by changes (TypeDef-Field, TypeDef-Method)
     /// - Parent-child relationships are corrupted (orphaned fields or methods)
     fn validate_reference_integrity(
-        &self,
         table_changes: &HashMap<TableId, TableModifications>,
     ) -> Result<()> {
         let mut final_table_rids: HashMap<TableId, HashSet<u32>> = HashMap::new();
@@ -336,7 +336,7 @@ impl RawChangeIntegrityValidator {
                     }
                 }
                 TableModifications::Replaced(rows) => {
-                    for rid in 1..=rows.len() as u32 {
+                    for rid in 1..=u32::try_from(rows.len()).unwrap_or(u32::MAX) {
                         final_rids.insert(rid);
                     }
                 }
@@ -401,7 +401,6 @@ impl RawChangeIntegrityValidator {
     /// Instead, it relies on logical validation and the operation consolidation
     /// mechanisms in [`crate::cilassembly::TableModifications`] to handle actual conflicts.
     fn validate_change_conflicts(
-        &self,
         table_changes: &HashMap<TableId, TableModifications>,
     ) -> Result<()> {
         for (table_id, modifications) in table_changes {
@@ -473,10 +472,10 @@ impl RawValidator for RawChangeIntegrityValidator {
         if let Some(changes) = context.changes() {
             let table_changes = &changes.table_changes;
 
-            self.validate_table_integrity(table_changes)?;
-            self.validate_heap_integrity(context)?;
-            self.validate_reference_integrity(table_changes)?;
-            self.validate_change_conflicts(table_changes)?;
+            Self::validate_table_integrity(table_changes)?;
+            Self::validate_heap_integrity(context)?;
+            Self::validate_reference_integrity(table_changes)?;
+            Self::validate_change_conflicts(table_changes)?;
         }
 
         Ok(())
@@ -516,10 +515,11 @@ mod tests {
             validation::ValidationConfig,
         },
         test::{get_clean_testfile, validator_test, TestAssembly},
+        Error,
     };
     use std::collections::HashSet;
 
-    fn raw_change_integrity_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+    fn raw_change_integrity_validator_file_factory() -> Result<Vec<TestAssembly>> {
         let mut assemblies = Vec::new();
 
         if let Some(clean_path) = get_clean_testfile() {
@@ -539,11 +539,9 @@ mod tests {
     /// - Reference integrity violations
     /// - Operation chronology violations
     #[test]
-    fn test_raw_change_integrity_validator_direct_corruption() -> crate::Result<()> {
+    fn test_raw_change_integrity_validator_direct_corruption() -> Result<()> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
 
         let view = CilAssemblyView::from_file(&clean_testfile)?;
@@ -794,15 +792,13 @@ mod tests {
     fn test_validator_with_corrupted_changes(
         validator: &RawChangeIntegrityValidator,
         corrupted_changes: AssemblyChanges,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         use crate::metadata::validation::{
             context::RawValidationContext, scanner::ReferenceScanner,
         };
 
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
 
         let view = CilAssemblyView::from_file(&clean_testfile)?;
@@ -822,7 +818,7 @@ mod tests {
         validator.validate_raw(&context)
     }
 
-    fn create_dummy_typedef(rid: u32) -> crate::Result<TypeDefRaw> {
+    fn create_dummy_typedef(rid: u32) -> Result<TypeDefRaw> {
         Ok(TypeDefRaw {
             rid,
             token: Token::new(rid | 0x0200_0000),
@@ -836,7 +832,7 @@ mod tests {
         })
     }
 
-    fn create_dummy_field(rid: u32) -> crate::Result<FieldRaw> {
+    fn create_dummy_field(rid: u32) -> Result<FieldRaw> {
         Ok(FieldRaw {
             rid,
             token: Token::new(rid | 0x0400_0000),
@@ -847,7 +843,7 @@ mod tests {
         })
     }
 
-    fn create_dummy_method(rid: u32) -> crate::Result<MethodDefRaw> {
+    fn create_dummy_method(rid: u32) -> Result<MethodDefRaw> {
         Ok(MethodDefRaw {
             rid,
             token: Token::new(rid | 0x0600_0000),
@@ -862,7 +858,7 @@ mod tests {
     }
 
     #[test]
-    fn test_raw_change_integrity_validator() -> crate::Result<()> {
+    fn test_raw_change_integrity_validator() -> Result<()> {
         let validator = RawChangeIntegrityValidator::new();
         let config = ValidationConfig {
             enable_structural_validation: true,

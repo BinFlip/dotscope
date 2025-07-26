@@ -28,7 +28,7 @@ use crate::{
         token::Token,
         typesystem::TypeSignatureEncoder,
     },
-    Result,
+    Error, Result,
 };
 
 /// Encodes a custom modifier token into binary format according to ECMA-335.
@@ -57,7 +57,7 @@ fn encode_custom_modifier(modifier: &CustomModifier, buffer: &mut Vec<u8>) {
     };
     buffer.push(modifier_type);
 
-    let coded_index = encode_type_def_or_ref_coded_index(&modifier.modifier_type);
+    let coded_index = encode_type_def_or_ref_coded_index(modifier.modifier_type);
     TypeSignatureEncoder::encode_compressed_uint(coded_index, buffer);
 }
 
@@ -75,7 +75,7 @@ fn encode_custom_modifier(modifier: &CustomModifier, buffer: &mut Vec<u8>) {
 /// # Returns
 ///
 /// The TypeDefOrRef coded index value ready for compressed integer encoding.
-fn encode_type_def_or_ref_coded_index(token: &Token) -> u32 {
+fn encode_type_def_or_ref_coded_index(token: Token) -> u32 {
     let table_id = token.table();
     let rid = token.row();
 
@@ -141,6 +141,13 @@ fn encode_parameter(parameter: &SignatureParameter, buffer: &mut Vec<u8>) -> Res
 ///
 /// A vector of bytes representing the encoded method signature.
 ///
+/// # Errors
+///
+/// Returns an error if encoding any parameter or return type fails, typically due to:
+/// - Invalid type signature structures
+/// - Unsupported type encodings
+/// - Issues with type reference tokens
+///
 /// # Examples
 ///
 /// ```rust,ignore
@@ -179,7 +186,14 @@ pub fn encode_method_signature(signature: &SignatureMethod) -> Result<Vec<u8>> {
 
     buffer.push(calling_convention);
 
-    TypeSignatureEncoder::encode_compressed_uint(signature.params.len() as u32, &mut buffer);
+    let param_count =
+        u32::try_from(signature.params.len()).map_err(|_| Error::ModificationInvalidOperation {
+            details: format!(
+                "Too many parameters in method signature: {}",
+                signature.params.len()
+            ),
+        })?;
+    TypeSignatureEncoder::encode_compressed_uint(param_count, &mut buffer);
 
     encode_parameter(&signature.return_type, &mut buffer)?;
     for param in &signature.params {
@@ -203,6 +217,13 @@ pub fn encode_method_signature(signature: &SignatureMethod) -> Result<Vec<u8>> {
 /// # Returns
 ///
 /// A vector of bytes representing the encoded field signature.
+///
+/// # Errors
+///
+/// Returns an error if encoding the field type fails, typically due to:
+/// - Invalid type signature structures
+/// - Unsupported type encodings
+/// - Issues with type reference tokens
 pub fn encode_field_signature(signature: &SignatureField) -> Result<Vec<u8>> {
     let mut buffer = Vec::new();
 
@@ -234,6 +255,14 @@ pub fn encode_field_signature(signature: &SignatureField) -> Result<Vec<u8>> {
 /// # Returns
 ///
 /// A vector of bytes representing the encoded property signature.
+///
+/// # Errors
+///
+/// Returns an error if encoding the property type or any parameter fails, typically due to:
+/// - Invalid type signature structures
+/// - Unsupported type encodings
+/// - Issues with type reference tokens
+/// - Too many parameters (exceeds u32 range)
 pub fn encode_property_signature(signature: &SignatureProperty) -> Result<Vec<u8>> {
     let mut buffer = Vec::new();
 
@@ -243,7 +272,14 @@ pub fn encode_property_signature(signature: &SignatureProperty) -> Result<Vec<u8
     }
     buffer.push(prolog);
 
-    TypeSignatureEncoder::encode_compressed_uint(signature.params.len() as u32, &mut buffer);
+    let param_count =
+        u32::try_from(signature.params.len()).map_err(|_| Error::ModificationInvalidOperation {
+            details: format!(
+                "Too many parameters in property signature: {}",
+                signature.params.len()
+            ),
+        })?;
+    TypeSignatureEncoder::encode_compressed_uint(param_count, &mut buffer);
 
     // Encode custom modifiers before the property type
     // Property signatures can have custom modifiers on the property type itself
@@ -275,12 +311,26 @@ pub fn encode_property_signature(signature: &SignatureProperty) -> Result<Vec<u8
 /// # Returns
 ///
 /// A vector of bytes representing the encoded local variable signature.
+///
+/// # Errors
+///
+/// Returns [`crate::Error`] if:
+/// - Local variable count exceeds u32 range
+/// - Type signature encoding fails
 pub fn encode_local_var_signature(signature: &SignatureLocalVariables) -> Result<Vec<u8>> {
     let mut buffer = Vec::new();
 
     buffer.push(0x07); // LOCAL_SIG signature marker
 
-    TypeSignatureEncoder::encode_compressed_uint(signature.locals.len() as u32, &mut buffer);
+    TypeSignatureEncoder::encode_compressed_uint(
+        u32::try_from(signature.locals.len()).map_err(|_| {
+            Error::Error(format!(
+                "LocalVar signature has too many locals: {}",
+                signature.locals.len()
+            ))
+        })?,
+        &mut buffer,
+    );
 
     for local in &signature.locals {
         if local.is_pinned {
@@ -309,6 +359,10 @@ pub fn encode_local_var_signature(signature: &SignatureLocalVariables) -> Result
 /// # Returns
 ///
 /// A vector of bytes representing the encoded type specification signature.
+///
+/// # Errors
+///
+/// Returns [`crate::Error`] if type signature encoding fails.
 pub fn encode_typespec_signature(signature: &SignatureTypeSpec) -> Result<Vec<u8>> {
     TypeSignatureEncoder::encode(&signature.base)
 }
@@ -458,12 +512,12 @@ mod tests {
 
         // Test TypeDef token (table 0x02)
         let typedef_token = Token::new(0x02000001); // TypeDef table, RID 1
-        let coded_index = encode_type_def_or_ref_coded_index(&typedef_token);
+        let coded_index = encode_type_def_or_ref_coded_index(typedef_token);
         assert_eq!(coded_index, 1 << 2, "TypeDef should encode as (rid << 2)");
 
         // Test TypeRef token (table 0x01)
         let typeref_token = Token::new(0x01000005); // TypeRef table, RID 5
-        let coded_index = encode_type_def_or_ref_coded_index(&typeref_token);
+        let coded_index = encode_type_def_or_ref_coded_index(typeref_token);
         assert_eq!(
             coded_index,
             (5 << 2) | 1,
@@ -472,7 +526,7 @@ mod tests {
 
         // Test TypeSpec token (table 0x1B)
         let typespec_token = Token::new(0x1B000003); // TypeSpec table, RID 3
-        let coded_index = encode_type_def_or_ref_coded_index(&typespec_token);
+        let coded_index = encode_type_def_or_ref_coded_index(typespec_token);
         assert_eq!(
             coded_index,
             (3 << 2) | 2,

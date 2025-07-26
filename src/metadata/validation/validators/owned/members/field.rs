@@ -84,7 +84,7 @@ use crate::{
             traits::OwnedValidator,
         },
     },
-    Result,
+    Error, Result,
 };
 
 /// Foundation validator for field definitions, accessibility rules, and layout constraints.
@@ -118,6 +118,7 @@ impl OwnedFieldValidator {
     /// # Thread Safety
     ///
     /// The returned validator is thread-safe and can be used concurrently.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -150,7 +151,7 @@ impl OwnedFieldValidator {
             for (_, field) in type_entry.fields.iter() {
                 if field.name.is_empty() {
                     let token_value = field.token.value();
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!("Field with token 0x{token_value:08X} has empty name"),
                         source: None,
@@ -159,7 +160,7 @@ impl OwnedFieldValidator {
 
                 if let crate::metadata::signatures::TypeSignature::Unknown = &field.signature.base {
                     let field_name = &field.name;
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!("Field '{field_name}' has unresolved type in signature"),
                         source: None,
@@ -169,7 +170,7 @@ impl OwnedFieldValidator {
                 for (index, modifier) in field.signature.modifiers.iter().enumerate() {
                     if modifier.modifier_type.value() == 0 {
                         let field_name = &field.name;
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedValidatorFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Field '{field_name}' modifier {index} has invalid token"
@@ -223,7 +224,7 @@ impl OwnedFieldValidator {
                     }
                     _ => {
                         let field_name = &field.name;
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedValidatorFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Field '{field_name}' has invalid access level: 0x{access_level:02X}"
@@ -242,7 +243,7 @@ impl OwnedFieldValidator {
 
                 if field.flags & 0x0040 != 0 && field.flags & FieldAttributes::STATIC == 0 {
                     let field_name = &field.name;
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!("Literal field '{field_name}' must also be static"),
                         source: None,
@@ -313,7 +314,7 @@ impl OwnedFieldValidator {
                     if field.flags & 0x0200 == 0 {
                         // SPECIAL_NAME flag
                         let field_name = &field.name;
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedValidatorFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Field '{field_name}' has RTSpecialName but not SpecialName"
@@ -357,7 +358,7 @@ impl OwnedFieldValidator {
                     let access_level = field.flags & FieldAttributes::FIELD_ACCESS_MASK;
                     if access_level != FieldAttributes::PRIVATE {
                         let field_name = &field.name;
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedValidatorFailed {
                             validator: self.name().to_string(),
                             message: format!("Backing field '{field_name}' should be private"),
                             source: None,
@@ -375,7 +376,7 @@ impl OwnedFieldValidator {
 
                 if field.name.contains('\0') {
                     let field_name = &field.name;
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!("Field '{field_name}' contains null character"),
                         source: None,
@@ -431,11 +432,11 @@ mod tests {
         test::{get_clean_testfile, owned_validator_test, TestAssembly},
     };
 
-    fn owned_field_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+    fn owned_field_validator_file_factory() -> Result<Vec<TestAssembly>> {
         let mut assemblies = Vec::new();
 
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
+            return Err(Error::Error(
                 "WindowsBase.dll not available - test cannot run".to_string(),
             ));
         };
@@ -462,25 +463,23 @@ mod tests {
     }
 
     /// Creates an assembly with a field containing null character in name - validation should fail
-    fn create_assembly_with_null_character_field_name() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_null_character_field_name() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         let name_index = assembly
             .string_add("Field\0WithNull")
-            .map_err(|e| crate::Error::Error(format!("Failed to add field name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add field name: {e}")))?;
 
         let signature_bytes = vec![0x08]; // ELEMENT_TYPE_I4
         let signature_index = assembly
             .blob_add(&signature_bytes)
-            .map_err(|e| crate::Error::Error(format!("Failed to add signature: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
 
         let next_rid = assembly.original_table_row_count(TableId::Field) + 1;
 
@@ -495,38 +494,36 @@ mod tests {
 
         assembly
             .table_row_add(TableId::Field, TableDataOwned::Field(invalid_field))
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid field: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid field: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     /// Creates an assembly with a literal field that's not static - validation should fail
-    fn create_assembly_with_literal_non_static_field() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_literal_non_static_field() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         let name_index = assembly
             .string_add("InvalidLiteralField")
-            .map_err(|e| crate::Error::Error(format!("Failed to add field name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add field name: {e}")))?;
 
         let signature_bytes = vec![0x08]; // ELEMENT_TYPE_I4
         let signature_index = assembly
             .blob_add(&signature_bytes)
-            .map_err(|e| crate::Error::Error(format!("Failed to add signature: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
 
         let next_rid = assembly.original_table_row_count(TableId::Field) + 1;
 
@@ -542,38 +539,36 @@ mod tests {
 
         assembly
             .table_row_add(TableId::Field, TableDataOwned::Field(invalid_field))
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid field: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid field: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     /// Creates an assembly with a field having RTSpecialName but not SpecialName - validation should fail
-    fn create_assembly_with_rtspecial_without_special() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_rtspecial_without_special() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         let name_index = assembly
             .string_add("RTSpecialField")
-            .map_err(|e| crate::Error::Error(format!("Failed to add field name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add field name: {e}")))?;
 
         let signature_bytes = vec![0x08]; // ELEMENT_TYPE_I4
         let signature_index = assembly
             .blob_add(&signature_bytes)
-            .map_err(|e| crate::Error::Error(format!("Failed to add signature: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
 
         let next_rid = assembly.original_table_row_count(TableId::Field) + 1;
 
@@ -589,38 +584,36 @@ mod tests {
 
         assembly
             .table_row_add(TableId::Field, TableDataOwned::Field(invalid_field))
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid field: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid field: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     /// Creates an assembly with a field having empty name - validation should fail
-    fn create_assembly_with_empty_field_name() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_empty_field_name() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         let name_index = assembly
             .string_add("")
-            .map_err(|e| crate::Error::Error(format!("Failed to add empty field name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add empty field name: {e}")))?;
 
         let signature_bytes = vec![0x08]; // ELEMENT_TYPE_I4
         let signature_index = assembly
             .blob_add(&signature_bytes)
-            .map_err(|e| crate::Error::Error(format!("Failed to add signature: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
 
         let next_rid = assembly.original_table_row_count(TableId::Field) + 1;
 
@@ -635,38 +628,36 @@ mod tests {
 
         assembly
             .table_row_add(TableId::Field, TableDataOwned::Field(invalid_field))
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid field: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid field: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     /// Creates an assembly with a backing field that's not private - validation should fail
-    fn create_assembly_with_non_private_backing_field() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_non_private_backing_field() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         let name_index = assembly
             .string_add("<MyProperty>k__BackingField")
-            .map_err(|e| crate::Error::Error(format!("Failed to add backing field name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add backing field name: {e}")))?;
 
         let signature_bytes = vec![0x08]; // ELEMENT_TYPE_I4
         let signature_index = assembly
             .blob_add(&signature_bytes)
-            .map_err(|e| crate::Error::Error(format!("Failed to add signature: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
 
         let next_rid = assembly.original_table_row_count(TableId::Field) + 1;
 
@@ -682,20 +673,20 @@ mod tests {
 
         assembly
             .table_row_add(TableId::Field, TableDataOwned::Field(invalid_field))
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid field: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid field: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     #[test]
-    fn test_owned_field_validator() -> crate::Result<()> {
+    fn test_owned_field_validator() -> Result<()> {
         let validator = OwnedFieldValidator::new();
         let config = ValidationConfig {
             enable_semantic_validation: true,

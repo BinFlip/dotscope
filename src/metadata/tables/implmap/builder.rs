@@ -127,6 +127,7 @@ impl ImplMapBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::implmap::ImplMapBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             mapping_flags: None,
@@ -162,6 +163,7 @@ impl ImplMapBuilder {
     ///         PInvokeAttributes::SUPPORTS_LAST_ERROR
     ///     );
     /// ```
+    #[must_use]
     pub fn mapping_flags(mut self, flags: u32) -> Self {
         self.mapping_flags = Some(flags);
         self
@@ -193,6 +195,7 @@ impl ImplMapBuilder {
     /// let builder = ImplMapBuilder::new()
     ///     .member_forwarded(CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MemberForwarded));
     /// ```
+    #[must_use]
     pub fn member_forwarded(mut self, member: CodedIndex) -> Self {
         self.member_forwarded = Some(member);
         self
@@ -219,6 +222,7 @@ impl ImplMapBuilder {
     /// let builder = ImplMapBuilder::new()
     ///     .import_name("MessageBoxW");
     /// ```
+    #[must_use]
     pub fn import_name(mut self, name: impl Into<String>) -> Self {
         self.import_name = Some(name.into());
         self
@@ -245,6 +249,7 @@ impl ImplMapBuilder {
     /// let builder = ImplMapBuilder::new()
     ///     .import_scope(1); // References ModuleRef #1 (e.g., user32.dll)
     /// ```
+    #[must_use]
     pub fn import_scope(mut self, scope: u32) -> Self {
         self.import_scope = Some(scope);
         self

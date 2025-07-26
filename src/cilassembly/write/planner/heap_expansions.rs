@@ -137,6 +137,7 @@ use crate::{
 /// This type is [`Send`] and [`Sync`] as it contains only computed data without
 /// any shared mutable state, making it safe for concurrent access.
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_field_names)]
 pub struct HeapExpansions {
     /// Additional bytes needed for string heap.
     /// Includes null terminators and 4-byte alignment padding.
@@ -215,8 +216,7 @@ impl HeapExpansions {
                 .streams()
                 .iter()
                 .find(|s| s.name == "#Strings")
-                .map(|s| s.size as u64)
-                .unwrap_or(0);
+                .map_or(0, |s| u64::from(s.size));
             total_string_heap_size.saturating_sub(original_string_size)
         } else {
             0
@@ -232,8 +232,7 @@ impl HeapExpansions {
                 .streams()
                 .iter()
                 .find(|s| s.name == "#Blob")
-                .map(|s| s.size as u64)
-                .unwrap_or(0);
+                .map_or(0, |s| u64::from(s.size));
             total_blob_heap_size.saturating_sub(original_blob_size)
         } else {
             0
@@ -249,8 +248,7 @@ impl HeapExpansions {
                 .streams()
                 .iter()
                 .find(|s| s.name == "#GUID")
-                .map(|s| s.size as u64)
-                .unwrap_or(0);
+                .map_or(0, |s| u64::from(s.size));
             total_guid_heap_size.saturating_sub(original_guid_size)
         } else {
             0
@@ -267,8 +265,7 @@ impl HeapExpansions {
                 .streams()
                 .iter()
                 .find(|s| s.name == "#US")
-                .map(|s| s.size as u64)
-                .unwrap_or(0);
+                .map_or(0, |s| u64::from(s.size));
             total_userstring_heap_size.saturating_sub(original_userstring_size)
         } else {
             0

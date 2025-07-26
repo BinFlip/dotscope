@@ -117,6 +117,7 @@ impl GenericParamConstraintBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::genericparamconstraint::GenericParamConstraintBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             owner: None,
@@ -145,6 +146,7 @@ impl GenericParamConstraintBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn owner(mut self, owner: Token) -> Self {
         self.owner = Some(owner);
         self
@@ -175,6 +177,7 @@ impl GenericParamConstraintBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn constraint(mut self, constraint: CodedIndex) -> Self {
         self.constraint = Some(constraint);
         self

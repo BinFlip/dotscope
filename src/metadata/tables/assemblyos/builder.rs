@@ -72,6 +72,7 @@ use crate::{
 ///     .build(&mut context)?;
 /// ```
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_field_names)]
 pub struct AssemblyOSBuilder {
     /// Operating system platform identifier
     os_platform_id: Option<u32>,
@@ -97,6 +98,7 @@ impl AssemblyOSBuilder {
     ///
     /// let builder = AssemblyOSBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             os_platform_id: None,
@@ -136,6 +138,7 @@ impl AssemblyOSBuilder {
     /// let builder = AssemblyOSBuilder::new()
     ///     .os_platform_id(2);
     /// ```
+    #[must_use]
     pub fn os_platform_id(mut self, os_platform_id: u32) -> Self {
         self.os_platform_id = Some(os_platform_id);
         self
@@ -165,6 +168,7 @@ impl AssemblyOSBuilder {
     /// let builder = AssemblyOSBuilder::new()
     ///     .os_major_version(6);
     /// ```
+    #[must_use]
     pub fn os_major_version(mut self, os_major_version: u32) -> Self {
         self.os_major_version = Some(os_major_version);
         self
@@ -194,6 +198,7 @@ impl AssemblyOSBuilder {
     /// let builder = AssemblyOSBuilder::new()
     ///     .os_minor_version(1);
     /// ```
+    #[must_use]
     pub fn os_minor_version(mut self, os_minor_version: u32) -> Self {
         self.os_minor_version = Some(os_minor_version);
         self

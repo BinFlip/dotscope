@@ -117,7 +117,7 @@ use crate::{
         },
         CilAssembly,
     },
-    Result,
+    Error, Result,
 };
 
 mod heap;
@@ -258,7 +258,11 @@ impl<'a> WriterBase<'a> {
         stream_mod: &StreamModification,
     ) -> Result<(&StreamFileLayout, usize)> {
         let stream_layout = self.find_stream_layout(&stream_mod.name)?;
-        let write_start = stream_layout.file_region.offset as usize;
+        let write_start = usize::try_from(stream_layout.file_region.offset).map_err(|_| {
+            Error::WriteLayoutFailed {
+                message: "Stream offset exceeds usize range".to_string(),
+            }
+        })?;
         Ok((stream_layout, write_start))
     }
 }

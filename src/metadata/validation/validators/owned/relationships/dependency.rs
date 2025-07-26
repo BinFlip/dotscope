@@ -107,6 +107,7 @@ impl OwnedDependencyValidator {
     /// # Thread Safety
     ///
     /// The returned validator is thread-safe and can be used concurrently.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -423,13 +424,14 @@ mod tests {
     use crate::{
         metadata::validation::ValidationConfig,
         test::{get_clean_testfile, owned_validator_test, TestAssembly},
+        Error, Result,
     };
 
-    fn owned_dependency_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+    fn owned_dependency_validator_file_factory() -> Result<Vec<TestAssembly>> {
         let mut assemblies = Vec::new();
 
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
+            return Err(Error::Error(
                 "WindowsBase.dll not available - test cannot run".to_string(),
             ));
         };
@@ -449,7 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn test_owned_dependency_validator() -> crate::Result<()> {
+    fn test_owned_dependency_validator() -> Result<()> {
         let validator = OwnedDependencyValidator::new();
         let config = ValidationConfig {
             enable_cross_table_validation: true,

@@ -98,6 +98,7 @@ impl MemberRefBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::memberref::MemberRefBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             class: None,
@@ -126,6 +127,7 @@ impl MemberRefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn class(mut self, class: CodedIndex) -> Self {
         self.class = Some(class);
         self
@@ -147,6 +149,7 @@ impl MemberRefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -174,6 +177,7 @@ impl MemberRefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn signature(mut self, signature: &[u8]) -> Self {
         self.signature = Some(signature.to_vec());
         self

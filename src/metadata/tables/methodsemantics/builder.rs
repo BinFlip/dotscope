@@ -137,6 +137,7 @@ impl MethodSemanticsBuilder {
     ///
     /// let builder = MethodSemanticsBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             semantics: None,
@@ -170,6 +171,7 @@ impl MethodSemanticsBuilder {
     /// let combined = MethodSemanticsBuilder::new()
     ///     .semantics(MethodSemanticsAttributes::GETTER | MethodSemanticsAttributes::OTHER);
     /// ```
+    #[must_use]
     pub fn semantics(mut self, semantics: u32) -> Self {
         self.semantics = Some(semantics);
         self
@@ -196,6 +198,7 @@ impl MethodSemanticsBuilder {
     /// let builder = MethodSemanticsBuilder::new()
     ///     .method(Token::new(0x06000001)); // MethodDef token
     /// ```
+    #[must_use]
     pub fn method(mut self, method: Token) -> Self {
         self.method = Some(method);
         self
@@ -222,6 +225,7 @@ impl MethodSemanticsBuilder {
     /// let builder = MethodSemanticsBuilder::new()
     ///     .association_from_property(Token::new(0x17000001)); // Property token
     /// ```
+    #[must_use]
     pub fn association_from_property(mut self, property: Token) -> Self {
         self.association = Some(CodedIndex::new(
             TableId::Property,
@@ -252,6 +256,7 @@ impl MethodSemanticsBuilder {
     /// let builder = MethodSemanticsBuilder::new()
     ///     .association_from_event(Token::new(0x14000001)); // Event token
     /// ```
+    #[must_use]
     pub fn association_from_event(mut self, event: Token) -> Self {
         self.association = Some(CodedIndex::new(
             TableId::Event,
@@ -288,6 +293,7 @@ impl MethodSemanticsBuilder {
     /// let builder = MethodSemanticsBuilder::new()
     ///     .association(coded_index);
     /// ```
+    #[must_use]
     pub fn association(mut self, association: CodedIndex) -> Self {
         self.association = Some(association);
         self

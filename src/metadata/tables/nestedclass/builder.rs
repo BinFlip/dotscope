@@ -137,6 +137,7 @@ impl NestedClassBuilder {
     /// # use dotscope::prelude::*;
     /// let builder = NestedClassBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             nested_class: None,
@@ -172,6 +173,7 @@ impl NestedClassBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn nested_class(mut self, nested_class_token: Token) -> Self {
         self.nested_class = Some(nested_class_token);
         self
@@ -205,6 +207,7 @@ impl NestedClassBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn enclosing_class(mut self, enclosing_class_token: Token) -> Self {
         self.enclosing_class = Some(enclosing_class_token);
         self

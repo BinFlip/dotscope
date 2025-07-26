@@ -454,7 +454,7 @@ impl PermissionSetEncoder {
         }
         self.buffer.extend_from_slice(class_name_bytes);
 
-        let blob_data = self.encode_permission_blob(permission)?;
+        let blob_data = Self::encode_permission_blob(permission)?;
         #[allow(clippy::cast_possible_truncation)]
         {
             write_compressed_uint(blob_data.len() as u32, &mut self.buffer);
@@ -465,7 +465,7 @@ impl PermissionSetEncoder {
     }
 
     /// Encodes permission blob data (properties and arguments).
-    fn encode_permission_blob(&mut self, permission: &Permission) -> Result<Vec<u8>> {
+    fn encode_permission_blob(permission: &Permission) -> Result<Vec<u8>> {
         let mut blob = Vec::new();
 
         #[allow(clippy::cast_possible_truncation)]
@@ -498,7 +498,9 @@ impl PermissionSetEncoder {
         blob.push(type_byte);
 
         let name_bytes = arg.name.as_bytes();
-        write_compressed_uint(name_bytes.len() as u32, blob);
+        let name_len = u32::try_from(name_bytes.len())
+            .map_err(|_| malformed_error!("Argument name too long: {} bytes", name_bytes.len()))?;
+        write_compressed_uint(name_len, blob);
         blob.extend_from_slice(name_bytes);
 
         match &arg.value {
@@ -510,7 +512,13 @@ impl PermissionSetEncoder {
             }
             ArgumentValue::String(value) => {
                 let string_bytes = value.as_bytes();
-                write_compressed_uint(string_bytes.len() as u32, blob);
+                let string_len = u32::try_from(string_bytes.len()).map_err(|_| {
+                    malformed_error!(
+                        "Argument string value too long: {} bytes",
+                        string_bytes.len()
+                    )
+                })?;
+                write_compressed_uint(string_len, blob);
                 blob.extend_from_slice(string_bytes);
             }
             _ => {
@@ -567,7 +575,7 @@ impl PermissionSetEncoder {
                 }
             };
 
-            let escaped_value = self.xml_escape(&value_str);
+            let escaped_value = Self::xml_escape(&value_str);
             write!(&mut self.buffer, r#" {}="{}""#, arg.name, escaped_value)
                 .map_err(|e| malformed_error!("Failed to write XML attribute: {}", e))?;
         }
@@ -579,7 +587,7 @@ impl PermissionSetEncoder {
     }
 
     /// Escapes XML special characters in attribute values.
-    fn xml_escape(&self, value: &str) -> String {
+    fn xml_escape(value: &str) -> String {
         value
             .replace('&', "&amp;")
             .replace('<', "&lt;")
@@ -692,10 +700,10 @@ mod tests {
 
     #[test]
     fn test_xml_escaping() {
-        let encoder = PermissionSetEncoder::new();
+        let _encoder = PermissionSetEncoder::new();
 
         let input = r#"<test>"value"&more</test>"#;
-        let escaped = encoder.xml_escape(input);
+        let escaped = PermissionSetEncoder::xml_escape(input);
 
         assert_eq!(
             escaped,

@@ -51,7 +51,13 @@ impl RowWritable for MethodSemanticsRaw {
         sizes: &TableInfoRef,
     ) -> Result<()> {
         // Write semantics bitmask (2 bytes)
-        write_le_at(data, offset, self.semantics as u16)?;
+        write_le_at(
+            data,
+            offset,
+            u16::try_from(self.semantics).map_err(|_| {
+                malformed_error!("MethodSemantics semantics out of range: {}", self.semantics)
+            })?,
+        )?;
 
         // Write MethodDef table index
         write_le_at_dyn(

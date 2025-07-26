@@ -88,10 +88,46 @@ impl RowWritable for AssemblyRefRaw {
         sizes: &TableInfoRef,
     ) -> Result<()> {
         // Write fixed-size fields first
-        write_le_at(data, offset, self.major_version as u16)?;
-        write_le_at(data, offset, self.minor_version as u16)?;
-        write_le_at(data, offset, self.build_number as u16)?;
-        write_le_at(data, offset, self.revision_number as u16)?;
+        write_le_at(
+            data,
+            offset,
+            u16::try_from(self.major_version).map_err(|_| {
+                malformed_error!(
+                    "AssemblyRef major version out of range: {}",
+                    self.major_version
+                )
+            })?,
+        )?;
+        write_le_at(
+            data,
+            offset,
+            u16::try_from(self.minor_version).map_err(|_| {
+                malformed_error!(
+                    "AssemblyRef minor version out of range: {}",
+                    self.minor_version
+                )
+            })?,
+        )?;
+        write_le_at(
+            data,
+            offset,
+            u16::try_from(self.build_number).map_err(|_| {
+                malformed_error!(
+                    "AssemblyRef build number out of range: {}",
+                    self.build_number
+                )
+            })?,
+        )?;
+        write_le_at(
+            data,
+            offset,
+            u16::try_from(self.revision_number).map_err(|_| {
+                malformed_error!(
+                    "AssemblyRef revision number out of range: {}",
+                    self.revision_number
+                )
+            })?,
+        )?;
         write_le_at(data, offset, self.flags)?;
 
         // Write variable-size heap indexes

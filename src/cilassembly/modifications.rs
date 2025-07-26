@@ -93,7 +93,7 @@ use crate::{cilassembly::TableOperation, metadata::tables::TableDataOwned, Error
 ///
 /// // Apply operations and consolidate
 /// // modifications.apply_operation(operation)?;
-/// modifications.consolidate_operations()?;
+/// modifications.consolidate_operations();
 /// # Ok::<(), crate::Error>(())
 /// ```
 ///
@@ -255,7 +255,7 @@ impl TableModifications {
     /// This method removes operations that have been superseded by later operations
     /// on the same RID, reducing memory usage and improving performance.
     /// This is critical for builder APIs that may generate many operations.
-    pub fn consolidate_operations(&mut self) -> Result<()> {
+    pub fn consolidate_operations(&mut self) {
         match self {
             Self::Sparse {
                 operations,
@@ -263,7 +263,7 @@ impl TableModifications {
                 ..
             } => {
                 if operations.is_empty() {
-                    return Ok(());
+                    return;
                 }
 
                 // Group operations by RID and keep only the latest operation for each RID
@@ -293,17 +293,14 @@ impl TableModifications {
 
                 // Update deleted_rows to only include RIDs that have final Delete operations
                 deleted_rows.clear();
-                for op in operations.iter() {
+                for op in operations {
                     if let super::Operation::Delete(rid) = &op.operation {
                         deleted_rows.insert(*rid);
                     }
                 }
-
-                Ok(())
             }
             Self::Replaced(_) => {
                 // Replaced tables are already consolidated
-                Ok(())
             }
         }
     }
@@ -316,16 +313,16 @@ impl TableModifications {
         match &op.operation {
             super::Operation::Insert(rid, _) => {
                 if *rid == 0 {
-                    return Err(crate::Error::ModificationInvalidOperation {
+                    return Err(Error::ModificationInvalidOperation {
                         details: format!("RID cannot be zero: {rid}"),
                     });
                 }
 
                 // Check if we already have a row at this RID
-                if self.has_row(*rid)? {
+                if self.has_row(*rid) {
                     // We need the table ID, but it's not available in this context
                     // For now, we'll use a generic error
-                    return Err(crate::Error::ModificationInvalidOperation {
+                    return Err(Error::ModificationInvalidOperation {
                         details: format!("RID {rid} already exists"),
                     });
                 }
@@ -334,14 +331,14 @@ impl TableModifications {
             }
             super::Operation::Update(rid, _) => {
                 if *rid == 0 {
-                    return Err(crate::Error::ModificationInvalidOperation {
+                    return Err(Error::ModificationInvalidOperation {
                         details: format!("RID cannot be zero: {rid}"),
                     });
                 }
 
                 // Check if the row exists to update
-                if !self.has_row(*rid)? {
-                    return Err(crate::Error::ModificationInvalidOperation {
+                if !self.has_row(*rid) {
+                    return Err(Error::ModificationInvalidOperation {
                         details: format!("RID {rid} not found for update"),
                     });
                 }
@@ -350,14 +347,14 @@ impl TableModifications {
             }
             super::Operation::Delete(rid) => {
                 if *rid == 0 {
-                    return Err(crate::Error::ModificationInvalidOperation {
+                    return Err(Error::ModificationInvalidOperation {
                         details: format!("RID cannot be zero: {rid}"),
                     });
                 }
 
                 // Check if the row exists to delete
-                if !self.has_row(*rid)? {
-                    return Err(crate::Error::ModificationInvalidOperation {
+                if !self.has_row(*rid) {
+                    return Err(Error::ModificationInvalidOperation {
                         details: format!("RID {rid} not found for deletion"),
                     });
                 }
@@ -371,7 +368,7 @@ impl TableModifications {
     ///
     /// This method checks if a row with the given RID exists, taking into account
     /// the original table row count and all applied operations.
-    pub fn has_row(&self, rid: u32) -> Result<bool> {
+    pub fn has_row(&self, rid: u32) -> bool {
         match self {
             Self::Sparse {
                 operations,
@@ -380,14 +377,14 @@ impl TableModifications {
             } => {
                 // Check if it's been explicitly deleted
                 if deleted_rows.contains(&rid) {
-                    return Ok(false);
+                    return false;
                 }
 
                 // Check if there's an insert operation for this RID
-                for op in operations.iter() {
+                for op in operations {
                     match &op.operation {
                         super::Operation::Insert(op_rid, _) if *op_rid == rid => {
-                            return Ok(true);
+                            return true;
                         }
                         _ => {}
                     }
@@ -395,11 +392,11 @@ impl TableModifications {
 
                 // Check if it exists in the original table
                 // Note: This assumes RIDs are 1-based and contiguous in the original table
-                Ok(rid > 0 && rid <= self.original_row_count())
+                rid > 0 && rid <= self.original_row_count()
             }
             Self::Replaced(rows) => {
                 // For replaced tables, check if the RID is within the row count
-                Ok(rid > 0 && (rid as usize) <= rows.len())
+                rid > 0 && (rid as usize) <= rows.len()
             }
         }
     }

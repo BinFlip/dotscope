@@ -119,6 +119,7 @@ impl OwnedTypeCircularityValidator {
     /// # Thread Safety
     ///
     /// The returned validator is thread-safe and can be used concurrently.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -148,7 +149,7 @@ impl OwnedTypeCircularityValidator {
         let mut visited = HashSet::new();
         let mut visiting = HashSet::new();
 
-        for entry in type_registry.iter() {
+        for entry in type_registry {
             let token = *entry.key();
             let type_rc = entry.value();
             if !visited.contains(&token) {
@@ -156,7 +157,7 @@ impl OwnedTypeCircularityValidator {
             }
         }
 
-        for entry in type_registry.iter() {
+        for entry in type_registry {
             let type_rc = entry.value();
             self.check_inheritance_depth(type_rc, context, 0)?;
         }
@@ -291,7 +292,7 @@ impl OwnedTypeCircularityValidator {
         let mut visiting = HashSet::new();
 
         let mut nested_relationships = HashMap::new();
-        for entry in type_registry.iter() {
+        for entry in type_registry {
             let token = *entry.key();
             let type_rc = entry.value();
             let mut nested_tokens = Vec::new();
@@ -303,7 +304,7 @@ impl OwnedTypeCircularityValidator {
             nested_relationships.insert(token, nested_tokens);
         }
 
-        for entry in type_registry.iter() {
+        for entry in type_registry {
             let token = *entry.key();
             if !visited.contains(&token) {
                 self.check_nested_type_cycle(
@@ -395,7 +396,7 @@ impl OwnedTypeCircularityValidator {
         let mut visiting = HashSet::new();
 
         let mut interface_relationships = HashMap::new();
-        for entry in type_registry.iter() {
+        for entry in type_registry {
             let token = *entry.key();
             let type_rc = entry.value();
             if type_rc.flavor() == &CilFlavor::Interface {
@@ -409,7 +410,7 @@ impl OwnedTypeCircularityValidator {
             }
         }
 
-        for (token, _) in interface_relationships.iter() {
+        for token in interface_relationships.keys() {
             if !visited.contains(token) {
                 self.check_interface_implementation_cycle(
                     *token,
@@ -512,7 +513,7 @@ mod tests {
         cilassembly::CilAssembly,
         metadata::{
             cilassemblyview::CilAssemblyView,
-            tables::{CodedIndex, CodedIndexType, TableId, TypeAttributes},
+            tables::{CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeAttributes},
             validation::{scanner::ReferenceScanner, ValidationConfig},
         },
         prelude::*,
@@ -634,7 +635,6 @@ mod tests {
             method_list: 1,
         };
 
-        use crate::metadata::tables::TableDataOwned;
         let _actual_class_a_row =
             assembly.table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(class_a_raw))?;
         let _actual_class_b_row =

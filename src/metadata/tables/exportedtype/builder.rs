@@ -153,6 +153,7 @@ impl ExportedTypeBuilder {
     /// # use dotscope::prelude::*;
     /// let builder = ExportedTypeBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             name: None,
@@ -179,6 +180,7 @@ impl ExportedTypeBuilder {
     /// let builder = ExportedTypeBuilder::new()
     ///     .name("Customer");
     /// ```
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -201,6 +203,7 @@ impl ExportedTypeBuilder {
     ///     .name("Customer")
     ///     .namespace("MyApp.Models");
     /// ```
+    #[must_use]
     pub fn namespace(mut self, namespace: impl Into<String>) -> Self {
         self.namespace = Some(namespace.into());
         self
@@ -223,6 +226,7 @@ impl ExportedTypeBuilder {
     /// let builder = ExportedTypeBuilder::new()
     ///     .flags(TypeAttributes::PUBLIC);
     /// ```
+    #[must_use]
     pub fn flags(mut self, flags: u32) -> Self {
         self.flags = flags;
         self
@@ -241,6 +245,7 @@ impl ExportedTypeBuilder {
     ///     .name("PublicService")
     ///     .public();
     /// ```
+    #[must_use]
     pub fn public(mut self) -> Self {
         self.flags = TypeAttributes::PUBLIC;
         self
@@ -259,6 +264,7 @@ impl ExportedTypeBuilder {
     ///     .name("InternalHelper")
     ///     .not_public();
     /// ```
+    #[must_use]
     pub fn not_public(mut self) -> Self {
         self.flags = TypeAttributes::NOT_PUBLIC;
         self
@@ -282,6 +288,7 @@ impl ExportedTypeBuilder {
     ///     .name("Customer")
     ///     .type_def_id(0x02000001); // TypeDef hint
     /// ```
+    #[must_use]
     pub fn type_def_id(mut self, type_def_id: u32) -> Self {
         self.type_def_id = type_def_id;
         self
@@ -313,6 +320,7 @@ impl ExportedTypeBuilder {
     ///     .implementation_file(file_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn implementation_file(mut self, file_token: Token) -> Self {
         self.implementation = Some(CodedIndex::new(
             TableId::File,
@@ -349,6 +357,7 @@ impl ExportedTypeBuilder {
     ///     .implementation_assembly_ref(assembly_ref_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn implementation_assembly_ref(mut self, assembly_ref_token: Token) -> Self {
         self.implementation = Some(CodedIndex::new(
             TableId::AssemblyRef,
@@ -384,6 +393,7 @@ impl ExportedTypeBuilder {
     ///     .implementation_exported_type(base_export_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn implementation_exported_type(mut self, exported_type_token: Token) -> Self {
         self.implementation = Some(CodedIndex::new(
             TableId::ExportedType,

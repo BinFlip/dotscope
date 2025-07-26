@@ -84,7 +84,7 @@ use crate::{
             traits::OwnedValidator,
         },
     },
-    Result,
+    Error, Result,
 };
 
 /// Foundation validator for method definitions, signatures, and implementation requirements.
@@ -118,6 +118,7 @@ impl OwnedMethodValidator {
     /// # Thread Safety
     ///
     /// The returned validator is thread-safe and can be used concurrently.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -147,11 +148,11 @@ impl OwnedMethodValidator {
     fn validate_method_signatures(&self, context: &OwnedValidationContext) -> Result<()> {
         let methods = context.object().methods();
 
-        for entry in methods.iter() {
+        for entry in methods {
             let method = entry.value();
 
             if method.name.is_empty() {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Method with token 0x{:08X} has empty name",
@@ -165,7 +166,7 @@ impl OwnedMethodValidator {
                 if let Some(base_type_ref) = param.base.get() {
                     if let Some(base_type) = base_type_ref.upgrade() {
                         if base_type.name.is_empty() {
-                            return Err(crate::Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedValidatorFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Method '{}' parameter {} has unresolved type",
@@ -175,7 +176,7 @@ impl OwnedMethodValidator {
                             });
                         }
                     } else {
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedValidatorFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Method '{}' parameter {} has unresolved type",
@@ -185,7 +186,7 @@ impl OwnedMethodValidator {
                         });
                     }
                 } else {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Method '{}' parameter {} has unresolved type",
@@ -200,7 +201,7 @@ impl OwnedMethodValidator {
                 &method.signature.return_type.base
             {
                 let method_name = &method.name;
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!("Method '{method_name}' has unresolved return type"),
                     source: None,
@@ -210,7 +211,7 @@ impl OwnedMethodValidator {
             for (index, (_, local)) in method.local_vars.iter().enumerate() {
                 if let Some(local_type) = local.base.upgrade() {
                     if local_type.name.is_empty() {
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedValidatorFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Method '{}' local variable {} has unresolved type",
@@ -220,7 +221,7 @@ impl OwnedMethodValidator {
                         });
                     }
                 } else {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Method '{}' local variable {} has unresolved type",
@@ -260,13 +261,13 @@ impl OwnedMethodValidator {
     fn validate_virtual_inheritance(&self, context: &OwnedValidationContext) -> Result<()> {
         let methods = context.object().methods();
 
-        for entry in methods.iter() {
+        for entry in methods {
             let method = entry.value();
 
             if method.flags_modifiers.contains(MethodModifiers::ABSTRACT)
                 && !method.flags_modifiers.contains(MethodModifiers::VIRTUAL)
             {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!("Abstract method '{}' must also be virtual", method.name),
                     source: None,
@@ -275,7 +276,7 @@ impl OwnedMethodValidator {
 
             if method.flags_modifiers.contains(MethodModifiers::STATIC) {
                 if method.flags_modifiers.contains(MethodModifiers::VIRTUAL) {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!("Static method '{}' cannot be virtual", method.name),
                         source: None,
@@ -283,7 +284,7 @@ impl OwnedMethodValidator {
                 }
 
                 if method.flags_modifiers.contains(MethodModifiers::ABSTRACT) {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!("Static method '{}' cannot be abstract", method.name),
                         source: None,
@@ -291,7 +292,7 @@ impl OwnedMethodValidator {
                 }
 
                 if method.flags_modifiers.contains(MethodModifiers::FINAL) {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!("Static method '{}' cannot be final", method.name),
                         source: None,
@@ -302,7 +303,7 @@ impl OwnedMethodValidator {
             if method.flags_modifiers.contains(MethodModifiers::FINAL)
                 && !method.flags_modifiers.contains(MethodModifiers::VIRTUAL)
             {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!("Final method '{}' must also be virtual", method.name),
                     source: None,
@@ -315,7 +316,7 @@ impl OwnedMethodValidator {
                     .flags_modifiers
                     .contains(MethodModifiers::RTSPECIAL_NAME)
             {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Method '{}' uses NEW_SLOT but is not virtual or runtime special",
@@ -356,7 +357,7 @@ impl OwnedMethodValidator {
     fn validate_constructors(&self, context: &OwnedValidationContext) -> Result<()> {
         let methods = context.object().methods();
 
-        for entry in methods.iter() {
+        for entry in methods {
             let method = entry.value();
 
             // Check instance constructors (.ctor)
@@ -366,7 +367,7 @@ impl OwnedMethodValidator {
                     .flags_modifiers
                     .contains(MethodModifiers::RTSPECIAL_NAME)
                 {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Instance constructor '{}' must have RTSPECIAL_NAME flag",
@@ -380,7 +381,7 @@ impl OwnedMethodValidator {
                     .flags_modifiers
                     .contains(MethodModifiers::SPECIAL_NAME)
                 {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Instance constructor '{}' must have SPECIAL_NAME flag",
@@ -391,7 +392,7 @@ impl OwnedMethodValidator {
                 }
 
                 if method.flags_modifiers.contains(MethodModifiers::STATIC) {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!("Instance constructor '{}' cannot be static", method.name),
                         source: None,
@@ -399,7 +400,7 @@ impl OwnedMethodValidator {
                 }
 
                 if method.flags_modifiers.contains(MethodModifiers::VIRTUAL) {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Instance constructor '{}' cannot be virtual",
@@ -414,7 +415,7 @@ impl OwnedMethodValidator {
             if method.name == ".cctor" {
                 // Static constructors must be static, RTSPECIAL_NAME, and SPECIAL_NAME
                 if !method.flags_modifiers.contains(MethodModifiers::STATIC) {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!("Static constructor '{}' must be static", method.name),
                         source: None,
@@ -425,7 +426,7 @@ impl OwnedMethodValidator {
                     .flags_modifiers
                     .contains(MethodModifiers::RTSPECIAL_NAME)
                 {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Static constructor '{}' must have RTSPECIAL_NAME flag",
@@ -439,7 +440,7 @@ impl OwnedMethodValidator {
                     .flags_modifiers
                     .contains(MethodModifiers::SPECIAL_NAME)
                 {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Static constructor '{}' must have SPECIAL_NAME flag",
@@ -450,7 +451,7 @@ impl OwnedMethodValidator {
                 }
 
                 if !method.flags_access.contains(MethodAccessFlags::PRIVATE) {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!("Static constructor '{}' should be private", method.name),
                         source: None,
@@ -467,7 +468,7 @@ impl OwnedMethodValidator {
                     .flags_modifiers
                     .contains(MethodModifiers::SPECIAL_NAME)
             {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Method '{}' with special name pattern should have SPECIAL_NAME flag",
@@ -506,11 +507,11 @@ impl OwnedMethodValidator {
     fn validate_method_bodies(&self, context: &OwnedValidationContext) -> Result<()> {
         let methods = context.object().methods();
 
-        for entry in methods.iter() {
+        for entry in methods {
             let method = entry.value();
 
             if method.flags_modifiers.contains(MethodModifiers::ABSTRACT) && method.rva.is_some() {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Abstract method '{}' should not have implementation (RVA)",
@@ -525,7 +526,7 @@ impl OwnedMethodValidator {
                 .contains(MethodModifiers::PINVOKE_IMPL)
                 && method.rva.is_some()
             {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "P/Invoke method '{}' should not have implementation (RVA)",
@@ -540,7 +541,7 @@ impl OwnedMethodValidator {
                 .intersects(MethodImplCodeType::RUNTIME)
                 && method.rva.is_some()
             {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Runtime method '{}' should not have implementation (RVA)",
@@ -559,7 +560,7 @@ impl OwnedMethodValidator {
                     .intersects(MethodImplCodeType::RUNTIME)
                 && method.rva.is_none()
             {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Concrete method '{}' must have implementation (RVA)",
@@ -619,11 +620,11 @@ mod tests {
         test::{get_clean_testfile, owned_validator_test, TestAssembly},
     };
 
-    fn owned_method_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+    fn owned_method_validator_file_factory() -> Result<Vec<TestAssembly>> {
         let mut assemblies = Vec::new();
 
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
+            return Err(Error::Error(
                 "WindowsBase.dll not available - test cannot run".to_string(),
             ));
         };
@@ -650,21 +651,19 @@ mod tests {
     }
 
     /// Creates an assembly with a method having an empty name - validation should fail
-    fn create_assembly_with_empty_method_name() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_empty_method_name() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         // Create type to contain the method
         let type_name_index = assembly
             .string_add("TypeWithEmptyMethodName")
-            .map_err(|e| crate::Error::Error(format!("Failed to add type name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
 
         let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
         let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
@@ -684,12 +683,12 @@ mod tests {
         // Create method with empty name
         let empty_name_index = assembly
             .string_add("")
-            .map_err(|e| crate::Error::Error(format!("Failed to add empty method name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add empty method name: {e}")))?;
 
         let signature_bytes = vec![0x00, 0x00]; // Default method signature (no parameters, void return)
         let signature_index = assembly
             .blob_add(&signature_bytes)
-            .map_err(|e| crate::Error::Error(format!("Failed to add signature: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
 
         let invalid_method = MethodDefRaw {
             rid: method_rid,
@@ -705,41 +704,39 @@ mod tests {
 
         assembly
             .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_def))
-            .map_err(|e| crate::Error::Error(format!("Failed to add type: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
 
         assembly
             .table_row_add(
                 TableId::MethodDef,
                 TableDataOwned::MethodDef(invalid_method),
             )
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid method: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid method: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     /// Creates an assembly with an abstract method not marked as virtual - validation should fail
-    fn create_assembly_with_abstract_non_virtual_method() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_abstract_non_virtual_method() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         // Create abstract type to contain the method
         let type_name_index = assembly
             .string_add("AbstractTypeWithNonVirtualMethod")
-            .map_err(|e| crate::Error::Error(format!("Failed to add type name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
 
         let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
         let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
@@ -759,12 +756,12 @@ mod tests {
         // Create method name
         let method_name_index = assembly
             .string_add("AbstractNonVirtualMethod")
-            .map_err(|e| crate::Error::Error(format!("Failed to add method name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add method name: {e}")))?;
 
         let signature_bytes = vec![0x00, 0x00]; // Default method signature
         let signature_index = assembly
             .blob_add(&signature_bytes)
-            .map_err(|e| crate::Error::Error(format!("Failed to add signature: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
 
         let invalid_method = MethodDefRaw {
             rid: method_rid,
@@ -780,41 +777,39 @@ mod tests {
 
         assembly
             .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_def))
-            .map_err(|e| crate::Error::Error(format!("Failed to add type: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
 
         assembly
             .table_row_add(
                 TableId::MethodDef,
                 TableDataOwned::MethodDef(invalid_method),
             )
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid method: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid method: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     /// Creates an assembly with a static method marked as virtual - validation should fail
-    fn create_assembly_with_static_virtual_method() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_static_virtual_method() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         // Create type to contain the method
         let type_name_index = assembly
             .string_add("TypeWithStaticVirtualMethod")
-            .map_err(|e| crate::Error::Error(format!("Failed to add type name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
 
         let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
         let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
@@ -834,12 +829,12 @@ mod tests {
         // Create method name
         let method_name_index = assembly
             .string_add("StaticVirtualMethod")
-            .map_err(|e| crate::Error::Error(format!("Failed to add method name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add method name: {e}")))?;
 
         let signature_bytes = vec![0x00, 0x00]; // Default method signature
         let signature_index = assembly
             .blob_add(&signature_bytes)
-            .map_err(|e| crate::Error::Error(format!("Failed to add signature: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
 
         let invalid_method = MethodDefRaw {
             rid: method_rid,
@@ -855,41 +850,39 @@ mod tests {
 
         assembly
             .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_def))
-            .map_err(|e| crate::Error::Error(format!("Failed to add type: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
 
         assembly
             .table_row_add(
                 TableId::MethodDef,
                 TableDataOwned::MethodDef(invalid_method),
             )
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid method: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid method: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     /// Creates an assembly with an instance constructor without RTSPECIAL_NAME flag - validation should fail
-    fn create_assembly_with_invalid_instance_constructor() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_invalid_instance_constructor() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         // Create type to contain the constructor
         let type_name_index = assembly
             .string_add("TypeWithInvalidConstructor")
-            .map_err(|e| crate::Error::Error(format!("Failed to add type name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
 
         let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
         let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
@@ -909,12 +902,12 @@ mod tests {
         // Create constructor name (.ctor)
         let ctor_name_index = assembly
             .string_add(".ctor")
-            .map_err(|e| crate::Error::Error(format!("Failed to add constructor name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add constructor name: {e}")))?;
 
         let signature_bytes = vec![0x00, 0x00]; // Default method signature
         let signature_index = assembly
             .blob_add(&signature_bytes)
-            .map_err(|e| crate::Error::Error(format!("Failed to add signature: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
 
         let invalid_method = MethodDefRaw {
             rid: method_rid,
@@ -930,41 +923,39 @@ mod tests {
 
         assembly
             .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_def))
-            .map_err(|e| crate::Error::Error(format!("Failed to add type: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
 
         assembly
             .table_row_add(
                 TableId::MethodDef,
                 TableDataOwned::MethodDef(invalid_method),
             )
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid method: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid method: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     /// Creates an assembly with an abstract method that has RVA present - validation should fail
-    fn create_assembly_with_abstract_method_with_rva() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_abstract_method_with_rva() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         // Create abstract type to contain the method
         let type_name_index = assembly
             .string_add("AbstractTypeWithRVAMethod")
-            .map_err(|e| crate::Error::Error(format!("Failed to add type name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
 
         let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
         let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
@@ -984,12 +975,12 @@ mod tests {
         // Create method name
         let method_name_index = assembly
             .string_add("AbstractMethodWithRVA")
-            .map_err(|e| crate::Error::Error(format!("Failed to add method name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add method name: {e}")))?;
 
         let signature_bytes = vec![0x00, 0x00]; // Default method signature
         let signature_index = assembly
             .blob_add(&signature_bytes)
-            .map_err(|e| crate::Error::Error(format!("Failed to add signature: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
 
         let invalid_method = MethodDefRaw {
             rid: method_rid,
@@ -1005,27 +996,27 @@ mod tests {
 
         assembly
             .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_def))
-            .map_err(|e| crate::Error::Error(format!("Failed to add type: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
 
         assembly
             .table_row_add(
                 TableId::MethodDef,
                 TableDataOwned::MethodDef(invalid_method),
             )
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid method: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid method: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     #[test]
-    fn test_owned_method_validator() -> crate::Result<()> {
+    fn test_owned_method_validator() -> Result<()> {
         let validator = OwnedMethodValidator::new();
         let config = ValidationConfig {
             enable_method_validation: true,

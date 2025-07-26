@@ -115,6 +115,10 @@ impl ExportedType {
     /// ## Returns
     /// * `Ok(())` - Implementation reference set successfully
     /// * `Err(_)` - Implementation was already set or other error occurred
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the implementation reference was already set.
     pub fn set_implementation(&self, implementation: CilTypeReference) -> Result<()> {
         self.implementation
             .set(implementation)

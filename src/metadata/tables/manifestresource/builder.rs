@@ -158,6 +158,7 @@ impl ManifestResourceBuilder {
     /// # use dotscope::prelude::*;
     /// let builder = ManifestResourceBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             name: None,
@@ -185,6 +186,7 @@ impl ManifestResourceBuilder {
     /// let builder = ManifestResourceBuilder::new()
     ///     .name("MyApp.Resources.strings.resources");
     /// ```
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -207,6 +209,7 @@ impl ManifestResourceBuilder {
     /// let builder = ManifestResourceBuilder::new()
     ///     .flags(ManifestResourceAttributes::PRIVATE.bits());
     /// ```
+    #[must_use]
     pub fn flags(mut self, flags: u32) -> Self {
         self.flags = flags;
         self
@@ -225,6 +228,7 @@ impl ManifestResourceBuilder {
     ///     .name("MyApp.PublicResources")
     ///     .public();
     /// ```
+    #[must_use]
     pub fn public(mut self) -> Self {
         self.flags |= ManifestResourceAttributes::PUBLIC.bits();
         self.flags &= !ManifestResourceAttributes::PRIVATE.bits();
@@ -244,6 +248,7 @@ impl ManifestResourceBuilder {
     ///     .name("MyApp.InternalResources")
     ///     .private();
     /// ```
+    #[must_use]
     pub fn private(mut self) -> Self {
         self.flags |= ManifestResourceAttributes::PRIVATE.bits();
         self.flags &= !ManifestResourceAttributes::PUBLIC.bits();
@@ -267,6 +272,7 @@ impl ManifestResourceBuilder {
     ///     .name("EmbeddedResource")
     ///     .offset(0x1000);
     /// ```
+    #[must_use]
     pub fn offset(mut self, offset: u32) -> Self {
         self.offset = offset;
         self
@@ -298,6 +304,7 @@ impl ManifestResourceBuilder {
     ///     .implementation_file(file_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn implementation_file(mut self, file_token: Token) -> Self {
         self.implementation = Some(CodedIndex::new(
             TableId::File,
@@ -334,6 +341,7 @@ impl ManifestResourceBuilder {
     ///     .implementation_assembly_ref(assembly_ref_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn implementation_assembly_ref(mut self, assembly_ref_token: Token) -> Self {
         self.implementation = Some(CodedIndex::new(
             TableId::AssemblyRef,
@@ -358,6 +366,7 @@ impl ManifestResourceBuilder {
     ///     .implementation_embedded()
     ///     .offset(0x1000);
     /// ```
+    #[must_use]
     pub fn implementation_embedded(mut self) -> Self {
         self.implementation = None; // Embedded means null implementation
         self
@@ -382,6 +391,7 @@ impl ManifestResourceBuilder {
     ///     .name("TextResource")
     ///     .resource_data(resource_data);
     /// ```
+    #[must_use]
     pub fn resource_data(mut self, data: &[u8]) -> Self {
         self.resource_data = Some(data.to_vec());
         self.implementation = None; // Force embedded implementation
@@ -405,6 +415,7 @@ impl ManifestResourceBuilder {
     ///     .name("ConfigResource")
     ///     .resource_string("key=value\nsetting=option");
     /// ```
+    #[must_use]
     pub fn resource_string(mut self, content: &str) -> Self {
         self.resource_data = Some(content.as_bytes().to_vec());
         self.implementation = None; // Force embedded implementation
@@ -431,6 +442,10 @@ impl ManifestResourceBuilder {
     ///     .add_string_resource("AppTitle", "My Application")
     ///     .add_string_resource("Version", "1.0.0");
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the resource encoder fails to add the string resource.
     pub fn add_string_resource(mut self, resource_name: &str, content: &str) -> Result<Self> {
         let encoder = self
             .resource_encoder
@@ -460,6 +475,10 @@ impl ManifestResourceBuilder {
     ///     .add_binary_resource("AppIcon", &icon_data)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the resource encoder fails to add the binary resource.
     pub fn add_binary_resource(mut self, resource_name: &str, data: &[u8]) -> Result<Self> {
         let encoder = self
             .resource_encoder
@@ -494,6 +513,10 @@ impl ManifestResourceBuilder {
     ///     .add_xml_resource("config.xml", config_xml)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the resource encoder fails to add the XML resource.
     pub fn add_xml_resource(mut self, resource_name: &str, xml_content: &str) -> Result<Self> {
         let encoder = self
             .resource_encoder
@@ -524,6 +547,10 @@ impl ManifestResourceBuilder {
     ///     .add_text_resource("config.json", json_config)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the resource encoder fails to add the text resource.
     pub fn add_text_resource(mut self, resource_name: &str, content: &str) -> Result<Self> {
         let encoder = self
             .resource_encoder
@@ -554,6 +581,7 @@ impl ManifestResourceBuilder {
     ///         // when additional configuration options are implemented
     ///     });
     /// ```
+    #[must_use]
     pub fn configure_encoder<F>(mut self, configure_fn: F) -> Self
     where
         F: FnOnce(&mut DotNetResourceEncoder),

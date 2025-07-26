@@ -525,28 +525,8 @@ impl TypeResolver {
                     Err(TypeNotFound(*token))
                 }
             }
-            TypeSignature::ModifiedRequired(modifiers) => {
-                if let Some(parent_token) = self.token_parent {
-                    if let Some(parent_type) = self.registry.get(&parent_token) {
-                        for modifier in modifiers {
-                            if let Some(mod_type) = self.registry.get(&modifier.modifier_type) {
-                                parent_type.modifiers.push(CilModifier {
-                                    required: modifier.is_required,
-                                    modifier: mod_type.into(),
-                                });
-                            } else {
-                                return Err(TypeNotFound(modifier.modifier_type));
-                            }
-                        }
-                        Ok(parent_type)
-                    } else {
-                        Err(TypeNotFound(parent_token))
-                    }
-                } else {
-                    Err(TypeMissingParent)
-                }
-            }
-            TypeSignature::ModifiedOptional(modifiers) => {
+            TypeSignature::ModifiedRequired(modifiers)
+            | TypeSignature::ModifiedOptional(modifiers) => {
                 if let Some(parent_token) = self.token_parent {
                     if let Some(parent_type) = self.registry.get(&parent_token) {
                         for modifier in modifiers {

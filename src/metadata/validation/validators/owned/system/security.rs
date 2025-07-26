@@ -44,7 +44,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationOwnedValidatorFailed`] for:
+//! This validator returns [`Error::ValidationOwnedValidatorFailed`] for:
 //! - Security permission declaration violations (empty permission sets, invalid XML, suspicious patterns)
 //! - Code access security attribute violations (excessive arguments, dangerous content)
 //! - Security transparency violations (conflicting critical/transparent attributes, invalid inheritance)
@@ -75,11 +75,15 @@
 //! - [.NET Framework Security Model](https://docs.microsoft.com/en-us/dotnet/framework/security/) - Security model compliance
 
 use crate::{
-    metadata::validation::{
-        context::{OwnedValidationContext, ValidationContext},
-        traits::OwnedValidator,
+    metadata::{
+        customattributes::{CustomAttributeArgument, CustomAttributeValue},
+        typesystem::CilType,
+        validation::{
+            context::{OwnedValidationContext, ValidationContext},
+            traits::OwnedValidator,
+        },
     },
-    Result,
+    Error, Result,
 };
 use std::collections::HashSet;
 
@@ -115,6 +119,7 @@ impl OwnedSecurityValidator {
     /// # Thread Safety
     ///
     /// The returned validator is thread-safe and can be used concurrently.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -134,19 +139,19 @@ impl OwnedSecurityValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All security permission declarations are valid (placeholder implementation)
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Declaration violations found
+    /// * `Err(`[`Error::ValidationOwnedValidatorFailed`]`)` - Declaration violations found
     fn validate_security_permission_declarations(
         &self,
         context: &OwnedValidationContext,
     ) -> Result<()> {
         let security_declarations = context.object().security_declarations();
 
-        for entry in security_declarations.iter() {
+        for entry in security_declarations {
             let (_token, decl_security) = (entry.key(), entry.value());
 
             // Validate security action is within valid range
-            if !self.is_valid_security_action(decl_security.action.into()) {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+            if !Self::is_valid_security_action(decl_security.action.into()) {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Security declaration has invalid action: {:?}",
@@ -163,8 +168,8 @@ impl OwnedSecurityValidator {
                 self.validate_permission_set_format(&xml_content)?;
 
                 // Check for permission conflicts
-                if let Some(conflict) = self.detect_permission_conflicts(&xml_content) {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                if let Some(conflict) = Self::detect_permission_conflicts(&xml_content) {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Security declaration has permission conflict: {conflict}"
@@ -176,7 +181,7 @@ impl OwnedSecurityValidator {
                 // For binary format, perform basic validation on the raw data
                 let raw_data = permission_set.raw_data();
                 if raw_data.is_empty() {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: "Security declaration has empty permission set data".to_string(),
                         source: None,
@@ -191,7 +196,7 @@ impl OwnedSecurityValidator {
     /// Validates permission set format according to XML schema.
     fn validate_permission_set_format(&self, permission_set: &str) -> Result<()> {
         if permission_set.is_empty() {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: "Empty permission set in security declaration".to_string(),
                 source: None,
@@ -202,7 +207,7 @@ impl OwnedSecurityValidator {
         if !permission_set.trim_start().starts_with('<')
             || !permission_set.trim_end().ends_with('>')
         {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: "Permission set is not valid XML".to_string(),
                 source: None,
@@ -211,7 +216,7 @@ impl OwnedSecurityValidator {
 
         // Check for required elements
         if !permission_set.contains("PermissionSet") {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: "Permission set missing PermissionSet element".to_string(),
                 source: None,
@@ -219,9 +224,9 @@ impl OwnedSecurityValidator {
         }
 
         // Validate XML is not excessively large
-        if permission_set.len() > 100000 {
+        if permission_set.len() > 100_000 {
             let set_len = permission_set.len();
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: format!("Permission set is excessively large ({set_len} characters)"),
                 source: None,
@@ -229,8 +234,8 @@ impl OwnedSecurityValidator {
         }
 
         // Check for suspicious patterns
-        if self.has_suspicious_permission_patterns(permission_set) {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+        if Self::has_suspicious_permission_patterns(permission_set) {
+            return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: "Permission set contains suspicious patterns".to_string(),
                 source: None,
@@ -241,16 +246,16 @@ impl OwnedSecurityValidator {
     }
 
     /// Validates security action values.
-    fn is_valid_security_action(&self, action: u16) -> bool {
+    fn is_valid_security_action(action: u16) -> bool {
         matches!(action, 1..=14)
     }
 
     /// Detects conflicts in permission sets.
-    fn detect_permission_conflicts(&self, permission_set: &str) -> Option<String> {
+    fn detect_permission_conflicts(permission_set: &str) -> Option<String> {
         // Check for deny/assert conflicts
         if permission_set.contains("Deny") && permission_set.contains("Assert") {
-            let deny_perms = self.extract_permission_types(permission_set, "Deny");
-            let assert_perms = self.extract_permission_types(permission_set, "Assert");
+            let deny_perms = Self::extract_permission_types(permission_set, "Deny");
+            let assert_perms = Self::extract_permission_types(permission_set, "Assert");
 
             for deny_perm in &deny_perms {
                 if assert_perms.contains(deny_perm) {
@@ -263,7 +268,7 @@ impl OwnedSecurityValidator {
 
         // Check for PermitOnly conflicts
         if permission_set.contains("PermitOnly") {
-            let permit_perms = self.extract_permission_types(permission_set, "PermitOnly");
+            let permit_perms = Self::extract_permission_types(permission_set, "PermitOnly");
             if permit_perms.len() > 1 {
                 return Some("Multiple PermitOnly declarations conflict".to_string());
             }
@@ -273,7 +278,7 @@ impl OwnedSecurityValidator {
     }
 
     /// Extracts permission types from permission set XML.
-    fn extract_permission_types(&self, permission_set: &str, action: &str) -> Vec<String> {
+    fn extract_permission_types(permission_set: &str, action: &str) -> Vec<String> {
         let mut permissions = Vec::new();
 
         // Simplified extraction - real implementation would parse XML properly
@@ -293,7 +298,7 @@ impl OwnedSecurityValidator {
     }
 
     /// Checks for suspicious patterns in permission sets.
-    fn has_suspicious_permission_patterns(&self, permission_set: &str) -> bool {
+    fn has_suspicious_permission_patterns(permission_set: &str) -> bool {
         // Check for potentially dangerous permissions
         let dangerous_patterns = [
             "UnmanagedCode",
@@ -347,11 +352,11 @@ impl OwnedSecurityValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All CAS attributes are properly applied
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - CAS attribute violations found
+    /// * `Err(`[`Error::ValidationOwnedValidatorFailed`]`)` - CAS attribute violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`Error::ValidationOwnedValidatorFailed`] if:
     /// - Security attributes have excessive arguments (>10)
     /// - Security attribute content contains dangerous patterns
     fn validate_code_access_security_attributes(
@@ -364,17 +369,17 @@ impl OwnedSecurityValidator {
         // Validate security attributes on types
         for type_entry in types.all_types() {
             for (_, custom_attr) in type_entry.custom_attributes.iter() {
-                if self.is_security_attribute(custom_attr) {
+                if Self::is_security_attribute(custom_attr) {
                     self.validate_security_attribute_usage(custom_attr, "Type", &type_entry.name)?;
                 }
             }
         }
 
         // Validate security attributes on methods
-        for method_entry in methods.iter() {
+        for method_entry in methods {
             let method = method_entry.value();
             for (_, custom_attr) in method.custom_attributes.iter() {
-                if self.is_security_attribute(custom_attr) {
+                if Self::is_security_attribute(custom_attr) {
                     self.validate_security_attribute_usage(custom_attr, "Method", &method.name)?;
                 }
             }
@@ -384,13 +389,10 @@ impl OwnedSecurityValidator {
     }
 
     /// Checks if a custom attribute is a security attribute.
-    fn is_security_attribute(
-        &self,
-        custom_attr: &crate::metadata::customattributes::CustomAttributeValue,
-    ) -> bool {
+    fn is_security_attribute(custom_attr: &CustomAttributeValue) -> bool {
         // This is simplified - real implementation would check the attribute type
         custom_attr.fixed_args.iter().any(|arg| {
-            if let crate::metadata::customattributes::CustomAttributeArgument::String(s) = arg {
+            if let CustomAttributeArgument::String(s) = arg {
                 s.contains("Security") || s.contains("Permission") || s.contains("Principal")
             } else {
                 false
@@ -401,13 +403,13 @@ impl OwnedSecurityValidator {
     /// Validates security attribute usage.
     fn validate_security_attribute_usage(
         &self,
-        custom_attr: &crate::metadata::customattributes::CustomAttributeValue,
+        custom_attr: &CustomAttributeValue,
         target_type: &str,
         target_name: &str,
     ) -> Result<()> {
         // Validate argument count is reasonable
         if custom_attr.fixed_args.len() > 10 {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Security attribute on {} '{}' has excessive arguments ({})",
@@ -421,9 +423,9 @@ impl OwnedSecurityValidator {
 
         // Validate string arguments don't contain dangerous content
         for arg in &custom_attr.fixed_args {
-            if let crate::metadata::customattributes::CustomAttributeArgument::String(s) = arg {
-                if self.has_dangerous_security_content(s) {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+            if let CustomAttributeArgument::String(s) = arg {
+                if Self::has_dangerous_security_content(s) {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Security attribute on {target_type} '{target_name}' contains dangerous content"
@@ -438,7 +440,7 @@ impl OwnedSecurityValidator {
     }
 
     /// Checks for dangerous content in security attribute strings.
-    fn has_dangerous_security_content(&self, content: &str) -> bool {
+    fn has_dangerous_security_content(content: &str) -> bool {
         let dangerous_patterns = [
             "cmd.exe",
             "powershell",
@@ -471,11 +473,11 @@ impl OwnedSecurityValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All security transparency rules are followed
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Transparency violations found
+    /// * `Err(`[`Error::ValidationOwnedValidatorFailed`]`)` - Transparency violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`Error::ValidationOwnedValidatorFailed`] if:
     /// - Types are marked both SecurityCritical and SecurityTransparent
     /// - Transparent types inherit from critical base types
     fn validate_security_transparency(&self, context: &OwnedValidationContext) -> Result<()> {
@@ -485,11 +487,11 @@ impl OwnedSecurityValidator {
 
         // Identify critical and transparent types
         for type_entry in types.all_types() {
-            let is_critical = self.has_security_critical_attribute(&type_entry);
-            let is_transparent = self.has_security_transparent_attribute(&type_entry);
+            let is_critical = Self::has_security_critical_attribute(&type_entry);
+            let is_transparent = Self::has_security_transparent_attribute(&type_entry);
 
             if is_critical && is_transparent {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Type '{}' cannot be both SecurityCritical and SecurityTransparent",
@@ -515,7 +517,7 @@ impl OwnedSecurityValidator {
 
                 // Transparent types cannot inherit from critical types
                 if transparent_types.contains(&type_token) && critical_types.contains(&base_token) {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Transparent type '{}' cannot inherit from critical base type",
@@ -531,13 +533,10 @@ impl OwnedSecurityValidator {
     }
 
     /// Checks if a type has SecurityCritical attribute.
-    fn has_security_critical_attribute(
-        &self,
-        type_entry: &crate::metadata::typesystem::CilType,
-    ) -> bool {
+    fn has_security_critical_attribute(type_entry: &CilType) -> bool {
         type_entry.custom_attributes.iter().any(|(_, attr)| {
             attr.fixed_args.iter().any(|arg| {
-                if let crate::metadata::customattributes::CustomAttributeArgument::String(s) = arg {
+                if let CustomAttributeArgument::String(s) = arg {
                     s.contains("SecurityCritical")
                 } else {
                     false
@@ -547,13 +546,10 @@ impl OwnedSecurityValidator {
     }
 
     /// Checks if a type has SecurityTransparent attribute.
-    fn has_security_transparent_attribute(
-        &self,
-        type_entry: &crate::metadata::typesystem::CilType,
-    ) -> bool {
+    fn has_security_transparent_attribute(type_entry: &CilType) -> bool {
         type_entry.custom_attributes.iter().any(|(_, attr)| {
             attr.fixed_args.iter().any(|arg| {
-                if let crate::metadata::customattributes::CustomAttributeArgument::String(s) = arg {
+                if let CustomAttributeArgument::String(s) = arg {
                     s.contains("SecurityTransparent")
                 } else {
                     false
@@ -597,13 +593,14 @@ mod tests {
     use crate::{
         metadata::validation::ValidationConfig,
         test::{get_clean_testfile, owned_validator_test, TestAssembly},
+        Error, Result,
     };
 
-    fn owned_security_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+    fn owned_security_validator_file_factory() -> Result<Vec<TestAssembly>> {
         let mut assemblies = Vec::new();
 
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
+            return Err(Error::Error(
                 "WindowsBase.dll not available - test cannot run".to_string(),
             ));
         };
@@ -623,7 +620,7 @@ mod tests {
     }
 
     #[test]
-    fn test_owned_security_validator() -> crate::Result<()> {
+    fn test_owned_security_validator() -> Result<()> {
         let validator = OwnedSecurityValidator::new();
         let config = ValidationConfig {
             enable_semantic_validation: true,

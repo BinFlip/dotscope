@@ -146,6 +146,7 @@ impl PropertyMapBuilder {
     /// # use dotscope::prelude::*;
     /// let builder = PropertyMapBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             parent: None,
@@ -180,6 +181,7 @@ impl PropertyMapBuilder {
     ///     .parent(type_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn parent(mut self, parent_token: Token) -> Self {
         self.parent = Some(parent_token);
         self
@@ -202,6 +204,7 @@ impl PropertyMapBuilder {
     /// let builder = PropertyMapBuilder::new()
     ///     .property_list(1); // Start from first property
     /// ```
+    #[must_use]
     pub fn property_list(mut self, property_list_index: u32) -> Self {
         self.property_list = Some(property_list_index);
         self

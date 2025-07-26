@@ -208,6 +208,7 @@ pub enum TableDataOwned {
 
 impl TableDataOwned {
     /// Returns the table type identifier for this row data.
+    #[must_use]
     pub fn table_id(&self) -> TableId {
         match self {
             Self::Module(_) => TableId::Module,
@@ -267,6 +268,7 @@ impl TableDataOwned {
     }
 
     /// Returns a human-readable name for the table row type.
+    #[must_use]
     pub fn type_name(&self) -> &'static str {
         match self {
             Self::Module(_) => "Module",
@@ -326,6 +328,7 @@ impl TableDataOwned {
     }
 
     /// Calculate the row size for this specific table row.
+    #[must_use]
     pub fn calculate_row_size(&self, sizes: &TableInfoRef) -> u32 {
         match self {
             Self::Module(_) => ModuleRaw::row_size(sizes),

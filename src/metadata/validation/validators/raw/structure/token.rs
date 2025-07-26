@@ -74,7 +74,11 @@
 use crate::{
     dispatch_table_type,
     metadata::{
-        tables::{TableId, *},
+        tables::{
+            CodedIndex, ConstantRaw, CustomAttributeRaw, DeclSecurityRaw, FieldMarshalRaw,
+            GenericParamConstraintRaw, GenericParamRaw, InterfaceImplRaw, MemberRefRaw,
+            MetadataTable, MethodImplRaw, MethodSpecRaw, NestedClassRaw, TableId, TypeDefRaw,
+        },
         token::Token,
         validation::{
             context::{RawValidationContext, ValidationContext},
@@ -109,6 +113,7 @@ impl RawTokenValidator {
     /// # Returns
     ///
     /// A new [`RawTokenValidator`] ready for validation operations.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -126,7 +131,7 @@ impl RawTokenValidator {
     /// # Errors
     ///
     /// Returns validation errors if reference integrity issues are detected.
-    fn validate_cross_table_references(&self, context: &RawValidationContext) -> Result<()> {
+    fn validate_cross_table_references(context: &RawValidationContext) -> Result<()> {
         let assembly_view = context.assembly_view();
         let token_validator = TokenValidator::new(context.reference_scanner());
         let reference_validator = ReferenceValidator::new(context.reference_scanner());
@@ -135,7 +140,7 @@ impl RawTokenValidator {
 
         if let Some(tables) = assembly_view.tables() {
             if let Some(table) = tables.table::<TypeDefRaw>() {
-                for typedef in table.iter() {
+                for typedef in table {
                     if typedef.extends.row != 0 {
                         referenced_tokens.push(typedef.extends.token);
                     }
@@ -143,53 +148,53 @@ impl RawTokenValidator {
             }
 
             if let Some(table) = tables.table::<InterfaceImplRaw>() {
-                for interface_impl in table.iter() {
+                for interface_impl in table {
                     token_validator.validate_table_row(TableId::TypeDef, interface_impl.class)?;
                     referenced_tokens.push(interface_impl.interface.token);
                 }
             }
 
             if let Some(table) = tables.table::<MemberRefRaw>() {
-                for memberref in table.iter() {
+                for memberref in table {
                     referenced_tokens.push(memberref.class.token);
                 }
             }
 
             if let Some(table) = tables.table::<CustomAttributeRaw>() {
-                for attr in table.iter() {
+                for attr in table {
                     referenced_tokens.push(attr.parent.token);
                     referenced_tokens.push(attr.constructor.token);
                 }
             }
 
             if let Some(table) = tables.table::<NestedClassRaw>() {
-                for nested in table.iter() {
+                for nested in table {
                     token_validator.validate_table_row(TableId::TypeDef, nested.nested_class)?;
                     token_validator.validate_table_row(TableId::TypeDef, nested.enclosing_class)?;
                 }
             }
 
             if let Some(table) = tables.table::<GenericParamRaw>() {
-                for genparam in table.iter() {
+                for genparam in table {
                     referenced_tokens.push(genparam.owner.token);
                 }
             }
 
             if let Some(table) = tables.table::<MethodSpecRaw>() {
-                for methodspec in table.iter() {
+                for methodspec in table {
                     referenced_tokens.push(methodspec.method.token);
                 }
             }
 
             if let Some(table) = tables.table::<GenericParamConstraintRaw>() {
-                for constraint in table.iter() {
+                for constraint in table {
                     token_validator.validate_table_row(TableId::GenericParam, constraint.owner)?;
                     referenced_tokens.push(constraint.constraint.token);
                 }
             }
 
             if let Some(table) = tables.table::<MethodImplRaw>() {
-                for method_impl in table.iter() {
+                for method_impl in table {
                     token_validator.validate_table_row(TableId::TypeDef, method_impl.class)?;
                     referenced_tokens.push(method_impl.method_body.token);
                     referenced_tokens.push(method_impl.method_declaration.token);
@@ -197,19 +202,19 @@ impl RawTokenValidator {
             }
 
             if let Some(table) = tables.table::<ConstantRaw>() {
-                for constant in table.iter() {
+                for constant in table {
                     referenced_tokens.push(constant.parent.token);
                 }
             }
 
             if let Some(table) = tables.table::<FieldMarshalRaw>() {
-                for marshal in table.iter() {
+                for marshal in table {
                     referenced_tokens.push(marshal.parent.token);
                 }
             }
 
             if let Some(table) = tables.table::<DeclSecurityRaw>() {
-                for security in table.iter() {
+                for security in table {
                     referenced_tokens.push(security.parent.token);
                 }
             }
@@ -235,52 +240,52 @@ impl RawTokenValidator {
     /// Returns [`crate::Error::ValidationTokenError`] if any token reference is invalid,
     /// including cases where RID values are zero (when not permitted) or reference
     /// non-existent tables or rows.
-    fn validate_token_references(&self, context: &RawValidationContext) -> Result<()> {
+    fn validate_token_references(context: &RawValidationContext) -> Result<()> {
         let assembly_view = context.assembly_view();
         let token_validator = TokenValidator::new(context.reference_scanner());
         let reference_validator = ReferenceValidator::new(context.reference_scanner());
 
         if let Some(tables) = assembly_view.tables() {
             if let Some(table) = tables.table::<InterfaceImplRaw>() {
-                self.validate_interfaceimpl_tokens(table, &token_validator, &reference_validator)?;
+                Self::validate_interfaceimpl_tokens(table, &token_validator, &reference_validator)?;
             }
             if let Some(table) = tables.table::<MemberRefRaw>() {
-                self.validate_memberref_tokens(table, &token_validator, &reference_validator)?;
+                Self::validate_memberref_tokens(table, &token_validator, &reference_validator)?;
             }
             if let Some(table) = tables.table::<CustomAttributeRaw>() {
-                self.validate_customattribute_tokens(
+                Self::validate_customattribute_tokens(
                     table,
                     &token_validator,
                     &reference_validator,
                 )?;
             }
             if let Some(table) = tables.table::<NestedClassRaw>() {
-                self.validate_nestedclass_tokens(table, &token_validator, &reference_validator)?;
+                Self::validate_nestedclass_tokens(table, &token_validator, &reference_validator)?;
             }
             if let Some(table) = tables.table::<GenericParamRaw>() {
-                self.validate_genericparam_tokens(table, &token_validator, &reference_validator)?;
+                Self::validate_genericparam_tokens(table, &token_validator, &reference_validator)?;
             }
             if let Some(table) = tables.table::<MethodSpecRaw>() {
-                self.validate_methodspec_tokens(table, &token_validator, &reference_validator)?;
+                Self::validate_methodspec_tokens(table, &token_validator, &reference_validator)?;
             }
             if let Some(table) = tables.table::<GenericParamConstraintRaw>() {
-                self.validate_genericparamconstraint_tokens(
+                Self::validate_genericparamconstraint_tokens(
                     table,
                     &token_validator,
                     &reference_validator,
                 )?;
             }
             if let Some(table) = tables.table::<MethodImplRaw>() {
-                self.validate_methodimpl_tokens(table, &token_validator, &reference_validator)?;
+                Self::validate_methodimpl_tokens(table, &token_validator, &reference_validator)?;
             }
             if let Some(table) = tables.table::<ConstantRaw>() {
-                self.validate_constant_tokens(table, &token_validator, &reference_validator)?;
+                Self::validate_constant_tokens(table, &token_validator, &reference_validator)?;
             }
             if let Some(table) = tables.table::<FieldMarshalRaw>() {
-                self.validate_fieldmarshal_tokens(table, &token_validator, &reference_validator)?;
+                Self::validate_fieldmarshal_tokens(table, &token_validator, &reference_validator)?;
             }
             if let Some(table) = tables.table::<DeclSecurityRaw>() {
-                self.validate_declsecurity_tokens(table, &token_validator, &reference_validator)?;
+                Self::validate_declsecurity_tokens(table, &token_validator, &reference_validator)?;
             }
         }
         Ok(())
@@ -300,7 +305,7 @@ impl RawTokenValidator {
     ///
     /// Returns [`crate::Error::ValidationTokenError`] if any table has RID count > 0x00FFFFFF,
     /// which would make token encoding impossible using the standard 32-bit token format.
-    fn validate_rid_bounds(&self, context: &RawValidationContext) -> Result<()> {
+    fn validate_rid_bounds(context: &RawValidationContext) -> Result<()> {
         let assembly_view = context.assembly_view();
         let token_validator = TokenValidator::new(context.reference_scanner());
         if let Some(tables) = assembly_view.tables() {
@@ -309,7 +314,7 @@ impl RawTokenValidator {
                 dispatch_table_type!(table_id, |RawType| {
                     if let Some(table) = tables.table::<RawType>() {
                         let row_count = table.row_count;
-                        if row_count > 0x00FFFFFF {
+                        if row_count > 0x00FF_FFFF {
                             let token_value = (table_type << 24) | row_count;
                             return Err(crate::Error::ValidationTokenError {
                                 token: Token::new(token_value),
@@ -345,15 +350,15 @@ impl RawTokenValidator {
     ///
     /// Returns [`crate::Error::ValidationTokenError`] if any coded index has invalid
     /// tag values or references inappropriate target table types.
-    fn validate_coded_indexes(&self, context: &RawValidationContext) -> Result<()> {
+    fn validate_coded_indexes(context: &RawValidationContext) -> Result<()> {
         let assembly_view = context.assembly_view();
         let token_validator = TokenValidator::new(context.reference_scanner());
         let reference_validator = ReferenceValidator::new(context.reference_scanner());
 
         if let Some(tables) = assembly_view.tables() {
             if let Some(table) = tables.table::<TypeDefRaw>() {
-                for typedef in table.iter() {
-                    self.validate_coded_index_field(
+                for typedef in table {
+                    Self::validate_coded_index_field(
                         &typedef.extends,
                         &token_validator,
                         &reference_validator,
@@ -362,8 +367,8 @@ impl RawTokenValidator {
             }
 
             if let Some(table) = tables.table::<InterfaceImplRaw>() {
-                for interface_impl in table.iter() {
-                    self.validate_coded_index_field(
+                for interface_impl in table {
+                    Self::validate_coded_index_field(
                         &interface_impl.interface,
                         &token_validator,
                         &reference_validator,
@@ -372,8 +377,8 @@ impl RawTokenValidator {
             }
 
             if let Some(table) = tables.table::<MemberRefRaw>() {
-                for memberref in table.iter() {
-                    self.validate_coded_index_field(
+                for memberref in table {
+                    Self::validate_coded_index_field(
                         &memberref.class,
                         &token_validator,
                         &reference_validator,
@@ -382,13 +387,13 @@ impl RawTokenValidator {
             }
 
             if let Some(table) = tables.table::<CustomAttributeRaw>() {
-                for attr in table.iter() {
-                    self.validate_coded_index_field(
+                for attr in table {
+                    Self::validate_coded_index_field(
                         &attr.parent,
                         &token_validator,
                         &reference_validator,
                     )?;
-                    self.validate_coded_index_field(
+                    Self::validate_coded_index_field(
                         &attr.constructor,
                         &token_validator,
                         &reference_validator,
@@ -397,8 +402,8 @@ impl RawTokenValidator {
             }
 
             if let Some(table) = tables.table::<GenericParamRaw>() {
-                for genparam in table.iter() {
-                    self.validate_coded_index_field(
+                for genparam in table {
+                    Self::validate_coded_index_field(
                         &genparam.owner,
                         &token_validator,
                         &reference_validator,
@@ -407,8 +412,8 @@ impl RawTokenValidator {
             }
 
             if let Some(table) = tables.table::<MethodSpecRaw>() {
-                for methodspec in table.iter() {
-                    self.validate_coded_index_field(
+                for methodspec in table {
+                    Self::validate_coded_index_field(
                         &methodspec.method,
                         &token_validator,
                         &reference_validator,
@@ -417,8 +422,8 @@ impl RawTokenValidator {
             }
 
             if let Some(table) = tables.table::<GenericParamConstraintRaw>() {
-                for constraint in table.iter() {
-                    self.validate_coded_index_field(
+                for constraint in table {
+                    Self::validate_coded_index_field(
                         &constraint.constraint,
                         &token_validator,
                         &reference_validator,
@@ -427,8 +432,8 @@ impl RawTokenValidator {
             }
 
             if let Some(table) = tables.table::<ConstantRaw>() {
-                for constant in table.iter() {
-                    self.validate_coded_index_field(
+                for constant in table {
+                    Self::validate_coded_index_field(
                         &constant.parent,
                         &token_validator,
                         &reference_validator,
@@ -437,8 +442,8 @@ impl RawTokenValidator {
             }
 
             if let Some(table) = tables.table::<FieldMarshalRaw>() {
-                for marshal in table.iter() {
-                    self.validate_coded_index_field(
+                for marshal in table {
+                    Self::validate_coded_index_field(
                         &marshal.parent,
                         &token_validator,
                         &reference_validator,
@@ -447,8 +452,8 @@ impl RawTokenValidator {
             }
 
             if let Some(table) = tables.table::<DeclSecurityRaw>() {
-                for security in table.iter() {
-                    self.validate_coded_index_field(
+                for security in table {
+                    Self::validate_coded_index_field(
                         &security.parent,
                         &token_validator,
                         &reference_validator,
@@ -461,12 +466,11 @@ impl RawTokenValidator {
 
     /// Validates token references in InterfaceImpl table entries using shared facilities.
     fn validate_interfaceimpl_tokens(
-        &self,
         table: &MetadataTable<InterfaceImplRaw>,
         token_validator: &TokenValidator,
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
-        for interface_impl in table.iter() {
+        for interface_impl in table {
             token_validator.validate_table_row(TableId::TypeDef, interface_impl.class)?;
 
             let interface_token = interface_impl.interface.token;
@@ -480,12 +484,11 @@ impl RawTokenValidator {
 
     /// Validates token references in MemberRef table entries using shared facilities.
     fn validate_memberref_tokens(
-        &self,
         table: &MetadataTable<MemberRefRaw>,
         token_validator: &TokenValidator,
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
-        for memberref in table.iter() {
+        for memberref in table {
             let class_token = memberref.class.token;
             let allowed_tables = memberref.class.ci_type.tables();
             token_validator.validate_typed_token(class_token, allowed_tables)?;
@@ -497,12 +500,11 @@ impl RawTokenValidator {
 
     /// Validates token references in CustomAttribute table entries using shared facilities.
     fn validate_customattribute_tokens(
-        &self,
         table: &MetadataTable<CustomAttributeRaw>,
         token_validator: &TokenValidator,
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
-        for attr in table.iter() {
+        for attr in table {
             let parent_token = attr.parent.token;
             token_validator.validate_token_bounds(parent_token)?;
             reference_validator.validate_token_integrity(parent_token)?;
@@ -517,20 +519,19 @@ impl RawTokenValidator {
 
     /// Validates token references in NestedClass table entries using shared facilities.
     fn validate_nestedclass_tokens(
-        &self,
         table: &MetadataTable<NestedClassRaw>,
         token_validator: &TokenValidator,
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
-        for nested in table.iter() {
+        for nested in table {
             token_validator.validate_table_row(TableId::TypeDef, nested.nested_class)?;
 
             token_validator.validate_table_row(TableId::TypeDef, nested.enclosing_class)?;
 
             let nested_class_token =
-                Token::new((TableId::TypeDef.token_type() as u32) << 24 | nested.nested_class);
+                Token::new(u32::from(TableId::TypeDef.token_type()) << 24 | nested.nested_class);
             let enclosing_class_token =
-                Token::new((TableId::TypeDef.token_type() as u32) << 24 | nested.enclosing_class);
+                Token::new(u32::from(TableId::TypeDef.token_type()) << 24 | nested.enclosing_class);
 
             reference_validator
                 .validate_nested_class_relationship(enclosing_class_token, nested_class_token)?;
@@ -540,12 +541,11 @@ impl RawTokenValidator {
 
     /// Validates token references in GenericParam table entries using shared facilities.
     fn validate_genericparam_tokens(
-        &self,
         table: &MetadataTable<GenericParamRaw>,
         token_validator: &TokenValidator,
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
-        for genparam in table.iter() {
+        for genparam in table {
             let owner_token = genparam.owner.token;
             let allowed_tables = genparam.owner.ci_type.tables();
             token_validator.validate_typed_token(owner_token, allowed_tables)?;
@@ -556,12 +556,11 @@ impl RawTokenValidator {
 
     /// Validates token references in MethodSpec table entries.
     fn validate_methodspec_tokens(
-        &self,
         table: &MetadataTable<MethodSpecRaw>,
         token_validator: &TokenValidator,
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
-        for methodspec in table.iter() {
+        for methodspec in table {
             let method_token = methodspec.method.token;
             let allowed_tables = methodspec.method.ci_type.tables();
             token_validator.validate_typed_token(method_token, allowed_tables)?;
@@ -572,12 +571,11 @@ impl RawTokenValidator {
 
     /// Validates token references in GenericParamConstraint table entries.
     fn validate_genericparamconstraint_tokens(
-        &self,
         table: &MetadataTable<GenericParamConstraintRaw>,
         token_validator: &TokenValidator,
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
-        for constraint in table.iter() {
+        for constraint in table {
             token_validator.validate_table_row(TableId::GenericParam, constraint.owner)?;
 
             let constraint_token = constraint.constraint.token;
@@ -590,12 +588,11 @@ impl RawTokenValidator {
 
     /// Validates token references in MethodImpl table entries.
     fn validate_methodimpl_tokens(
-        &self,
         table: &MetadataTable<MethodImplRaw>,
         token_validator: &TokenValidator,
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
-        for method_impl in table.iter() {
+        for method_impl in table {
             token_validator.validate_table_row(TableId::TypeDef, method_impl.class)?;
 
             let body_token = method_impl.method_body.token;
@@ -613,12 +610,11 @@ impl RawTokenValidator {
 
     /// Validates token references in Constant table entries.
     fn validate_constant_tokens(
-        &self,
         table: &MetadataTable<ConstantRaw>,
         token_validator: &TokenValidator,
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
-        for constant in table.iter() {
+        for constant in table {
             let parent_token = constant.parent.token;
             token_validator.validate_token_bounds(parent_token)?;
             reference_validator.validate_token_integrity(parent_token)?;
@@ -628,12 +624,11 @@ impl RawTokenValidator {
 
     /// Validates token references in FieldMarshal table entries.
     fn validate_fieldmarshal_tokens(
-        &self,
         table: &MetadataTable<FieldMarshalRaw>,
         token_validator: &TokenValidator,
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
-        for marshal in table.iter() {
+        for marshal in table {
             let parent_token = marshal.parent.token;
             let allowed_tables = marshal.parent.ci_type.tables();
             token_validator.validate_typed_token(parent_token, allowed_tables)?;
@@ -644,12 +639,11 @@ impl RawTokenValidator {
 
     /// Validates token references in DeclSecurity table entries.
     fn validate_declsecurity_tokens(
-        &self,
         table: &MetadataTable<DeclSecurityRaw>,
         token_validator: &TokenValidator,
         reference_validator: &ReferenceValidator,
     ) -> Result<()> {
-        for security in table.iter() {
+        for security in table {
             let parent_token = security.parent.token;
             let allowed_tables = security.parent.ci_type.tables();
             token_validator.validate_typed_token(parent_token, allowed_tables)?;
@@ -673,7 +667,6 @@ impl RawTokenValidator {
     ///
     /// Returns `Ok(())` if validation passes, or an error if validation fails.
     fn validate_coded_index_field(
-        &self,
         coded_index: &CodedIndex,
         token_validator: &TokenValidator,
         reference_validator: &ReferenceValidator,
@@ -690,12 +683,12 @@ impl RawTokenValidator {
 
 impl RawValidator for RawTokenValidator {
     fn validate_raw(&self, context: &RawValidationContext) -> Result<()> {
-        self.validate_token_references(context)?;
-        self.validate_rid_bounds(context)?;
-        self.validate_coded_indexes(context)?;
+        Self::validate_token_references(context)?;
+        Self::validate_rid_bounds(context)?;
+        Self::validate_coded_indexes(context)?;
 
         if context.config().enable_cross_table_validation {
-            self.validate_cross_table_references(context)?;
+            Self::validate_cross_table_references(context)?;
         }
 
         Ok(())
@@ -727,6 +720,7 @@ mod tests {
         metadata::validation::ValidationConfig,
         prelude::*,
         test::{get_clean_testfile, validator_test, TestAssembly},
+        Error,
     };
     use tempfile::NamedTempFile;
 
@@ -756,7 +750,7 @@ mod tests {
         let mut assemblies = Vec::new();
 
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
+            return Err(Error::Error(
                 "WindowsBase.dll not available - test cannot run".to_string(),
             ));
         };
@@ -771,7 +765,7 @@ mod tests {
                 ));
             }
             Err(e) => {
-                return Err(crate::Error::Error(format!(
+                return Err(Error::Error(format!(
                     "Failed to create test assembly with invalid TypeDef.extends: {e}"
                 )));
             }
@@ -785,7 +779,7 @@ mod tests {
                 ));
             }
             Err(e) => {
-                return Err(crate::Error::Error(format!(
+                return Err(Error::Error(format!(
                     "Failed to create test assembly with invalid MemberRef: {e}"
                 )));
             }
@@ -799,7 +793,7 @@ mod tests {
                 ));
             }
             Err(e) => {
-                return Err(crate::Error::Error(format!(
+                return Err(Error::Error(format!(
                     "Failed to create test assembly with invalid GenericParam: {e}"
                 )));
             }
@@ -813,7 +807,7 @@ mod tests {
                 ));
             }
             Err(e) => {
-                return Err(crate::Error::Error(format!(
+                return Err(Error::Error(format!(
                     "Failed to create test assembly with invalid InterfaceImpl: {e}"
                 )));
             }
@@ -827,7 +821,7 @@ mod tests {
                 ));
             }
             Err(e) => {
-                return Err(crate::Error::Error(format!(
+                return Err(Error::Error(format!(
                     "Failed to create test assembly with invalid MethodSpec: {e}"
                 )));
             }
@@ -838,7 +832,7 @@ mod tests {
                 assemblies.push(TestAssembly::from_temp_file(temp_file, true));
             }
             Err(e) => {
-                return Err(crate::Error::Error(format!(
+                return Err(Error::Error(format!(
                     "Failed to create test assembly for cross-table validation: {e}"
                 )));
             }
@@ -850,7 +844,7 @@ mod tests {
     /// Creates a modified assembly with invalid TypeDef.extends coded index (out-of-bounds RID).
     fn create_assembly_with_invalid_typedef_extends() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
         let view = CilAssemblyView::from_file(&clean_testfile)?;
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
@@ -878,7 +872,7 @@ mod tests {
     /// Creates a modified assembly with a table that would exceed RID bounds.
     fn create_assembly_with_oversized_table() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
         let view = CilAssemblyView::from_file(&clean_testfile)?;
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
@@ -904,7 +898,7 @@ mod tests {
     /// Creates a modified assembly with invalid coded index to test coded index validation.
     fn create_assembly_with_invalid_coded_index() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
         let view = CilAssemblyView::from_file(&clean_testfile)?;
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
@@ -932,7 +926,7 @@ mod tests {
     /// Creates a modified assembly with missing cross-table references.
     fn create_assembly_with_missing_reference() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
         let view = CilAssemblyView::from_file(&clean_testfile)?;
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
@@ -964,7 +958,7 @@ mod tests {
     /// Creates a modified assembly with invalid MemberRef token reference for validate_token_references testing.
     fn create_assembly_with_invalid_memberref() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
         let view = CilAssemblyView::from_file(&clean_testfile)?;
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
@@ -991,7 +985,7 @@ mod tests {
     /// Creates a modified assembly with table exceeding RID bounds for validate_rid_bounds testing.
     fn create_assembly_with_rid_bounds_violation() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
         let view = CilAssemblyView::from_file(&clean_testfile)?;
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
@@ -1016,7 +1010,7 @@ mod tests {
     /// Creates a modified assembly with invalid CustomAttribute for coded index testing.
     fn create_assembly_with_invalid_customattribute() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
         let view = CilAssemblyView::from_file(&clean_testfile)?;
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
@@ -1056,7 +1050,7 @@ mod tests {
     /// Creates a modified assembly with invalid GenericParam for token reference testing.
     fn create_assembly_with_invalid_genericparam() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
         let view = CilAssemblyView::from_file(&clean_testfile)?;
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
@@ -1083,7 +1077,7 @@ mod tests {
     /// Creates a modified assembly with invalid InterfaceImpl for coded index testing.
     fn create_assembly_with_invalid_interfaceimpl() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
         let view = CilAssemblyView::from_file(&clean_testfile)?;
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
@@ -1114,7 +1108,7 @@ mod tests {
     /// Creates a modified assembly with invalid MethodSpec for testing.
     fn create_assembly_with_invalid_methodspec() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
         let view = CilAssemblyView::from_file(&clean_testfile)?;
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
@@ -1140,7 +1134,7 @@ mod tests {
     /// Creates a test specifically for cross-table reference validation.
     fn create_assembly_for_cross_table_validation() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
         let view = CilAssemblyView::from_file(&clean_testfile)?;
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
@@ -1245,9 +1239,7 @@ mod tests {
 
         fn clean_only_factory() -> Result<Vec<TestAssembly>> {
             let Some(clean_testfile) = get_clean_testfile() else {
-                return Err(crate::Error::Error(
-                    "WindowsBase.dll not available".to_string(),
-                ));
+                return Err(Error::Error("WindowsBase.dll not available".to_string()));
             };
             Ok(vec![TestAssembly::new(&clean_testfile, true)])
         }

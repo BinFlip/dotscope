@@ -667,6 +667,7 @@ impl<'a> Guid<'a> {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn data(&self) -> &[u8] {
         self.data
     }

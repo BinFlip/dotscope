@@ -87,15 +87,18 @@ use crate::{
         method::{Method, MethodMap, MethodModifiers},
         tables::TypeAttributes,
         token::Token,
-        typesystem::{CilFlavor, CilType, CilTypeRefList},
+        typesystem::{CilFlavor, CilType, CilTypeRefList, TypeRegistry},
         validation::{
             context::{OwnedValidationContext, ValidationContext},
             traits::OwnedValidator,
         },
     },
-    Result,
+    Error, Result,
 };
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    mem,
+};
 
 /// Foundation validator for inheritance hierarchies, circular dependencies, interface implementation, and method inheritance.
 ///
@@ -146,7 +149,7 @@ struct MethodTypeMapping {
 
 impl MethodTypeMapping {
     /// Builds the method-to-type mapping for fast lookups
-    fn new(types: &crate::metadata::typesystem::TypeRegistry) -> Self {
+    fn new(types: &TypeRegistry) -> Self {
         let mut method_to_type = HashMap::new();
         let mut type_to_methods: HashMap<Token, Vec<Token>> = HashMap::new();
 
@@ -181,8 +184,7 @@ impl MethodTypeMapping {
     fn get_type_methods(&self, type_token: Token) -> &[Token] {
         self.type_to_methods
             .get(&type_token)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+            .map_or(&[], Vec::as_slice)
     }
 }
 
@@ -200,6 +202,7 @@ impl OwnedInheritanceValidator {
     /// # Thread Safety
     ///
     /// The returned validator is thread-safe and can be used concurrently.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -246,7 +249,7 @@ impl OwnedInheritanceValidator {
         depth: usize,
     ) -> Result<()> {
         if depth > context.config().max_nesting_depth {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Inheritance chain depth exceeds maximum nesting depth limit of {} for type '{}'",
@@ -260,7 +263,7 @@ impl OwnedInheritanceValidator {
 
         if visiting.contains(&token) {
             let type_name = &type_entry.name;
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Circular inheritance dependency detected involving type '{type_name}'"
@@ -317,8 +320,8 @@ impl OwnedInheritanceValidator {
                             .starts_with(base_fullname.split('`').next().unwrap_or(""))
                             || base_fullname
                                 .starts_with(derived_fullname.split('`').next().unwrap_or("")));
-                    let is_pointer_relationship = derived_fullname.ends_with("*")
-                        && derived_fullname.trim_end_matches("*") == base_fullname;
+                    let is_pointer_relationship = derived_fullname.ends_with('*')
+                        && derived_fullname.trim_end_matches('*') == base_fullname;
                     let is_array_relationship = derived_fullname.ends_with("[]")
                         && derived_fullname.trim_end_matches("[]") == base_fullname;
 
@@ -333,7 +336,7 @@ impl OwnedInheritanceValidator {
                         && !is_pointer_relationship
                         && !is_array_relationship
                     {
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedValidatorFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Type '{}' cannot inherit from sealed type '{}'",
@@ -349,14 +352,14 @@ impl OwnedInheritanceValidator {
                     let base_fullname = base_type.fullname();
                     let is_array_relationship = derived_fullname.ends_with("[]")
                         && derived_fullname.trim_end_matches("[]") == base_fullname;
-                    let is_pointer_relationship = derived_fullname.ends_with("*")
-                        && derived_fullname.trim_end_matches("*") == base_fullname;
+                    let is_pointer_relationship = derived_fullname.ends_with('*')
+                        && derived_fullname.trim_end_matches('*') == base_fullname;
 
                     if type_entry.flags & TypeAttributes::INTERFACE == 0
                         && !is_array_relationship
                         && !is_pointer_relationship
                     {
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedValidatorFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Type '{}' cannot inherit from interface '{}' (use interface implementation instead)",
@@ -377,16 +380,16 @@ impl OwnedInheritanceValidator {
                     && derived_fullname.starts_with(base_fullname.split('`').next().unwrap_or(""));
                 let is_array_relationship = derived_fullname.ends_with("[]")
                     && derived_fullname.trim_end_matches("[]") == base_fullname;
-                let is_pointer_relationship = derived_fullname.ends_with("*")
-                    && derived_fullname.trim_end_matches("*") == base_fullname;
+                let is_pointer_relationship = derived_fullname.ends_with('*')
+                    && derived_fullname.trim_end_matches('*') == base_fullname;
 
                 if !is_system_type
                     && !is_generic_relationship
                     && !is_array_relationship
                     && !is_pointer_relationship
-                    && !self.is_accessible_inheritance(derived_visibility, base_visibility)
+                    && !Self::is_accessible_inheritance(derived_visibility, base_visibility)
                 {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Type '{}' cannot inherit from less accessible base type '{}'",
@@ -403,8 +406,8 @@ impl OwnedInheritanceValidator {
                     && derived_fullname.starts_with(base_fullname.split('`').next().unwrap_or(""));
                 let is_array_relationship = derived_fullname.ends_with("[]")
                     && derived_fullname.trim_end_matches("[]") == base_fullname;
-                let is_pointer_relationship = derived_fullname.ends_with("*")
-                    && derived_fullname.trim_end_matches("*") == base_fullname;
+                let is_pointer_relationship = derived_fullname.ends_with('*')
+                    && derived_fullname.trim_end_matches('*') == base_fullname;
                 let is_system_relationship =
                     derived_fullname.starts_with("System.") || base_fullname.starts_with("System.");
 
@@ -438,7 +441,7 @@ impl OwnedInheritanceValidator {
                     let is_system_interface = interface_type.fullname().starts_with("System.");
                     if interface_type.flags & TypeAttributes::INTERFACE == 0 && !is_system_interface
                     {
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedValidatorFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Type '{}' tries to implement non-interface type '{}'",
@@ -454,12 +457,12 @@ impl OwnedInheritanceValidator {
 
                     let is_system_interface = interface_type.fullname().starts_with("System.");
                     if !is_system_interface
-                        && !self.is_accessible_interface_implementation(
+                        && !Self::is_accessible_interface_implementation(
                             type_visibility,
                             interface_visibility,
                         )
                     {
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedValidatorFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Type '{}' cannot implement less accessible interface '{}'",
@@ -472,7 +475,7 @@ impl OwnedInheritanceValidator {
             }
 
             if type_entry.interfaces.count() > 1 {
-                self.validate_interface_compatibility(&type_entry.interfaces)?;
+                Self::validate_interface_compatibility(&type_entry.interfaces);
             }
         }
 
@@ -493,7 +496,7 @@ impl OwnedInheritanceValidator {
             let flags = type_entry.flags;
 
             if flags & TypeAttributes::ABSTRACT == 0 && flags & TypeAttributes::INTERFACE != 0 {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!("Interface '{}' must be abstract", type_entry.name),
                     source: None,
@@ -514,12 +517,14 @@ impl OwnedInheritanceValidator {
         let base_flavor = base_type.flavor();
 
         match (derived_flavor, base_flavor) {
-            (CilFlavor::ValueType, CilFlavor::ValueType) => Ok(()),
+            (CilFlavor::ValueType, CilFlavor::ValueType) |
+            (CilFlavor::Class, CilFlavor::Class | CilFlavor::Object) |
+            (CilFlavor::Interface, CilFlavor::Interface) => Ok(()),
             (CilFlavor::ValueType, CilFlavor::Object) => {
                 if base_type.fullname() == "System.Object" {
                     Ok(())
                 } else {
-                    Err(crate::Error::ValidationOwnedValidatorFailed {
+                    Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Value type '{}' has incompatible base type flavor",
@@ -529,11 +534,6 @@ impl OwnedInheritanceValidator {
                     })
                 }
             }
-
-            (CilFlavor::Class, CilFlavor::Class) => Ok(()),
-            (CilFlavor::Class, CilFlavor::Object) => Ok(()),
-
-            (CilFlavor::Interface, CilFlavor::Interface) => Ok(()),
             (CilFlavor::Interface, _) => {
                 Err(crate::Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
@@ -559,7 +559,7 @@ impl OwnedInheritanceValidator {
     }
 
     /// Checks if inheritance is accessible based on visibility rules.
-    fn is_accessible_inheritance(&self, derived_visibility: u32, base_visibility: u32) -> bool {
+    fn is_accessible_inheritance(derived_visibility: u32, base_visibility: u32) -> bool {
         if derived_visibility == TypeAttributes::PUBLIC {
             return base_visibility == TypeAttributes::PUBLIC;
         }
@@ -578,7 +578,6 @@ impl OwnedInheritanceValidator {
 
     /// Checks if interface implementation is accessible based on visibility rules.
     fn is_accessible_interface_implementation(
-        &self,
         type_visibility: u32,
         interface_visibility: u32,
     ) -> bool {
@@ -595,7 +594,7 @@ impl OwnedInheritanceValidator {
     }
 
     /// Validates that multiple interface implementations are compatible.
-    fn validate_interface_compatibility(&self, interfaces: &CilTypeRefList) -> Result<()> {
+    fn validate_interface_compatibility(interfaces: &CilTypeRefList) {
         let mut interface_names = HashSet::new();
 
         for (_, interface_ref) in interfaces.iter() {
@@ -609,8 +608,6 @@ impl OwnedInheritanceValidator {
                 interface_names.insert(interface_name.clone());
             }
         }
-
-        Ok(())
     }
 
     /// Validates method inheritance relationships across type hierarchies.
@@ -718,7 +715,7 @@ impl OwnedInheritanceValidator {
                 if method.flags_modifiers.contains(MethodModifiers::ABSTRACT)
                     && derived_type.flags & TypeAttributes::ABSTRACT == 0
                 {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Concrete type '{}' cannot have abstract method '{}'",
@@ -786,7 +783,7 @@ impl OwnedInheritanceValidator {
                 if base_method
                     .flags_modifiers
                     .contains(MethodModifiers::VIRTUAL)
-                    && self.is_potential_method_override(derived_method, base_method)?
+                    && Self::is_potential_method_override(derived_method, base_method)
                 {
                     self.validate_method_override_rules(derived_method, base_method)?;
                 }
@@ -808,38 +805,34 @@ impl OwnedInheritanceValidator {
     /// # Returns
     ///
     /// `true` if the derived method could override the base method (same signature)
-    fn is_potential_method_override(
-        &self,
-        derived_method: &Method,
-        base_method: &Method,
-    ) -> Result<bool> {
+    fn is_potential_method_override(derived_method: &Method, base_method: &Method) -> bool {
         if derived_method.name != base_method.name {
-            return Ok(false);
+            return false;
         }
 
         if base_method.name.contains('.')
             && (base_method.name.starts_with("System.I") || base_method.name.contains(".I"))
         {
-            return Ok(false);
+            return false;
         }
 
         if derived_method.params.count() != base_method.params.count() {
-            return Ok(false);
+            return false;
         }
 
-        if !self.do_parameter_types_match(derived_method, base_method)? {
-            return Ok(false);
+        if !Self::do_parameter_types_match(derived_method, base_method) {
+            return false;
         }
 
-        if !self.do_return_types_match(derived_method, base_method)? {
-            return Ok(false);
+        if !Self::do_return_types_match(derived_method, base_method) {
+            return false;
         }
 
-        if !self.do_generic_constraints_match(derived_method, base_method)? {
-            return Ok(false);
+        if !Self::do_generic_constraints_match(derived_method, base_method) {
+            return false;
         }
 
-        Ok(true)
+        true
     }
 
     /// Validates the rules for method overriding between derived and base methods.
@@ -861,7 +854,7 @@ impl OwnedInheritanceValidator {
         base_method: &Method,
     ) -> Result<()> {
         if base_method.flags_modifiers.contains(MethodModifiers::FINAL) {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Cannot override final method '{}' - final methods cannot be overridden",
@@ -875,7 +868,7 @@ impl OwnedInheritanceValidator {
             .flags_modifiers
             .contains(MethodModifiers::VIRTUAL)
         {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Cannot override non-virtual method '{}' - only virtual methods can be overridden",
@@ -889,7 +882,7 @@ impl OwnedInheritanceValidator {
             .flags_modifiers
             .contains(MethodModifiers::VIRTUAL)
         {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Method '{}' must be virtual to override base method",
@@ -900,7 +893,7 @@ impl OwnedInheritanceValidator {
         }
 
         if derived_method.flags_access < base_method.flags_access {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Override method '{}' cannot be less accessible than base method",
@@ -931,36 +924,30 @@ impl OwnedInheritanceValidator {
     ///
     /// # Arguments
     ///
-    /// * `derived_method` - The potentially overriding method
-    /// * `base_method` - The base method to compare against
+    /// * `derived` - The potentially overriding method
+    /// * `base` - The base method to compare against
     ///
     /// # Returns
     ///
     /// `true` if all parameter types match exactly
-    fn do_parameter_types_match(
-        &self,
-        derived_method: &Method,
-        base_method: &Method,
-    ) -> Result<bool> {
-        let derived_params = &derived_method.signature.params;
-        let base_params = &base_method.signature.params;
+    fn do_parameter_types_match(derived: &Method, base: &Method) -> bool {
+        let derived_params = &derived.signature.params;
+        let base_params = &base.signature.params;
 
         if derived_params.len() != base_params.len() {
-            return Ok(false);
+            return false;
         }
 
         for (derived_param, base_param) in derived_params.iter().zip(base_params.iter()) {
             // For method overrides, parameter types must be exactly the same
             // This is a simplified comparison - a full implementation would need
             // to handle generic types, array types, and complex type relationships
-            if std::mem::discriminant(&derived_param.base)
-                != std::mem::discriminant(&base_param.base)
-            {
-                return Ok(false);
+            if mem::discriminant(&derived_param.base) != mem::discriminant(&base_param.base) {
+                return false;
             }
         }
 
-        Ok(true)
+        true
     }
 
     /// Checks if return types match between two methods.
@@ -976,14 +963,14 @@ impl OwnedInheritanceValidator {
     /// # Returns
     ///
     /// `true` if return types are compatible
-    fn do_return_types_match(&self, derived_method: &Method, base_method: &Method) -> Result<bool> {
-        let derived_return = &derived_method.signature.return_type.base;
-        let base_return = &base_method.signature.return_type.base;
+    fn do_return_types_match(derived: &Method, base: &Method) -> bool {
+        let derived_return = &derived.signature.return_type.base;
+        let base_return = &base.signature.return_type.base;
 
         // For method overrides, return types typically must be exactly the same
         // This is a simplified comparison - a full implementation would need
         // to handle covariant return types and complex type relationships
-        Ok(std::mem::discriminant(derived_return) == std::mem::discriminant(base_return))
+        mem::discriminant(derived_return) == mem::discriminant(base_return)
     }
 
     /// Checks if generic constraints match between two methods.
@@ -999,24 +986,20 @@ impl OwnedInheritanceValidator {
     /// # Returns
     ///
     /// `true` if generic constraints are compatible
-    fn do_generic_constraints_match(
-        &self,
-        derived_method: &Method,
-        base_method: &Method,
-    ) -> Result<bool> {
-        let derived_generic_count = derived_method.signature.param_count_generic;
-        let base_generic_count = base_method.signature.param_count_generic;
+    fn do_generic_constraints_match(derived: &Method, base: &Method) -> bool {
+        let derived_generic_count = derived.signature.param_count_generic;
+        let base_generic_count = base.signature.param_count_generic;
 
         if derived_generic_count != base_generic_count {
-            return Ok(false);
+            return false;
         }
 
         if derived_generic_count == 0 && base_generic_count == 0 {
-            return Ok(true);
+            return true;
         }
 
         // ToDo: Implement full GenericParam comparison to validate contraints
-        Ok(true)
+        true
     }
 }
 
@@ -1054,18 +1037,17 @@ impl Default for OwnedInheritanceValidator {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::BuilderContext,
-        metadata::tables::{MethodDefBuilder, TypeDefBuilder},
-    };
-    use crate::{
-        cilassembly::CilAssembly,
+        cilassembly::{BuilderContext, CilAssembly},
         metadata::{
             cilassemblyview::CilAssemblyView,
-            tables::{CodedIndex, CodedIndexType, TableId, TypeAttributes},
+            tables::{
+                CodedIndex, CodedIndexType, MethodDefBuilder, TableId, TypeAttributes,
+                TypeDefBuilder,
+            },
             validation::ValidationConfig,
         },
-        prelude::*,
         test::{get_clean_testfile, owned_validator_test, TestAssembly},
+        Error, Result,
     };
     use tempfile::NamedTempFile;
 

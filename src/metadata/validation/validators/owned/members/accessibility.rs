@@ -85,7 +85,7 @@ use crate::{
             traits::OwnedValidator,
         },
     },
-    Result,
+    Error, Result,
 };
 
 /// Foundation validator for accessibility rules, visibility constraints, and access control consistency.
@@ -119,6 +119,7 @@ impl OwnedAccessibilityValidator {
     /// # Thread Safety
     ///
     /// The returned validator is thread-safe and can be used concurrently.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -162,7 +163,7 @@ impl OwnedAccessibilityValidator {
                     // Valid visibility
                 }
                 _ => {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Type '{}' has invalid visibility: 0x{:02X}",
@@ -179,7 +180,7 @@ impl OwnedAccessibilityValidator {
                     if let Some(nested_type) = nested_type_ref.upgrade() {
                         let nested_visibility = nested_type.flags & TypeAttributes::VISIBILITY_MASK;
                         if nested_visibility > TypeAttributes::NESTED_FAM_OR_ASSEM {
-                            return Err(crate::Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedValidatorFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Nested type '{}' has invalid visibility flags: 0x{:02X}",
@@ -196,7 +197,7 @@ impl OwnedAccessibilityValidator {
                 && type_entry.flags & 0x0000_0100 != 0
             {
                 // SEALED flag
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!("Interface '{}' cannot be sealed", type_entry.name),
                     source: None,
@@ -239,7 +240,7 @@ impl OwnedAccessibilityValidator {
                     // to get its actual accessibility flags. Here we're working with references.
 
                     if method.name.is_empty() {
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedValidatorFailed {
                             validator: self.name().to_string(),
                             message: format!("Method in type '{}' has empty name", type_entry.name),
                             source: None,
@@ -262,7 +263,7 @@ impl OwnedAccessibilityValidator {
                     // LITERAL flag but not static
                     let field_name = &field.name;
                     let type_name = &type_entry.name;
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Literal field '{field_name}' in type '{type_name}' must be static"
@@ -314,7 +315,7 @@ impl OwnedAccessibilityValidator {
                     }
 
                     if interface_type.name.is_empty() {
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedValidatorFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Type '{}' implements interface with empty name",
@@ -329,7 +330,7 @@ impl OwnedAccessibilityValidator {
             if type_entry.flags & TypeAttributes::INTERFACE != 0 {
                 for (_, field) in type_entry.fields.iter() {
                     if field.flags & FieldAttributes::STATIC == 0 {
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedValidatorFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Interface '{}' contains non-static field '{}'",
@@ -341,7 +342,7 @@ impl OwnedAccessibilityValidator {
 
                     if field.flags & 0x0040 == 0 {
                         // Not LITERAL
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedValidatorFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Interface '{}' contains non-constant field '{}'",
@@ -376,7 +377,7 @@ impl OwnedAccessibilityValidator {
     ///
     /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if inheritance accessibility patterns are violated
     /// (specific violations depend on resolved type hierarchy analysis).
-    fn validate_inheritance_accessibility(&self, context: &OwnedValidationContext) -> Result<()> {
+    fn validate_inheritance_accessibility(context: &OwnedValidationContext) {
         let types = context.object().types();
 
         for type_entry in types.all_types() {
@@ -401,8 +402,6 @@ impl OwnedAccessibilityValidator {
                 }
             }
         }
-
-        Ok(())
     }
 }
 
@@ -411,7 +410,7 @@ impl OwnedValidator for OwnedAccessibilityValidator {
         self.validate_type_accessibility(context)?;
         self.validate_member_accessibility(context)?;
         self.validate_interface_accessibility(context)?;
-        self.validate_inheritance_accessibility(context)?;
+        Self::validate_inheritance_accessibility(context);
 
         Ok(())
     }
@@ -452,11 +451,11 @@ mod tests {
         test::{get_clean_testfile, owned_validator_test, TestAssembly},
     };
 
-    fn owned_accessibility_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+    fn owned_accessibility_validator_file_factory() -> Result<Vec<TestAssembly>> {
         let mut assemblies = Vec::new();
 
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
+            return Err(Error::Error(
                 "WindowsBase.dll not available - test cannot run".to_string(),
             ));
         };
@@ -483,20 +482,18 @@ mod tests {
     }
 
     /// Creates an assembly with a sealed interface - validation should fail
-    fn create_assembly_with_sealed_interface() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_sealed_interface() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         let name_index = assembly
             .string_add("InvalidSealedInterface")
-            .map_err(|e| crate::Error::Error(format!("Failed to add type name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
 
         let next_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
 
@@ -515,34 +512,32 @@ mod tests {
 
         assembly
             .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(invalid_interface))
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid interface: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid interface: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     /// Creates an assembly with interface containing non-static field - validation should fail
-    fn create_assembly_with_interface_instance_field() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_interface_instance_field() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         // Create interface type
         let interface_name_index = assembly
             .string_add("InterfaceWithInstanceField")
-            .map_err(|e| crate::Error::Error(format!("Failed to add interface name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add interface name: {e}")))?;
 
         let interface_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
         let field_rid = assembly.original_table_row_count(TableId::Field) + 1;
@@ -562,12 +557,12 @@ mod tests {
         // Create field with instance (non-static) flag - invalid in interface
         let field_name_index = assembly
             .string_add("InstanceField")
-            .map_err(|e| crate::Error::Error(format!("Failed to add field name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add field name: {e}")))?;
 
         let signature_bytes = vec![0x08]; // ELEMENT_TYPE_I4
         let signature_index = assembly
             .blob_add(&signature_bytes)
-            .map_err(|e| crate::Error::Error(format!("Failed to add signature: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
 
         let invalid_field = FieldRaw {
             rid: field_rid,
@@ -580,38 +575,36 @@ mod tests {
 
         assembly
             .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(interface_type))
-            .map_err(|e| crate::Error::Error(format!("Failed to add interface: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add interface: {e}")))?;
 
         assembly
             .table_row_add(TableId::Field, TableDataOwned::Field(invalid_field))
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid field: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid field: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     /// Creates an assembly with interface containing non-constant field - validation should fail
-    fn create_assembly_with_interface_non_constant_field() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_interface_non_constant_field() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         // Create interface type
         let interface_name_index = assembly
             .string_add("InterfaceWithNonConstantField")
-            .map_err(|e| crate::Error::Error(format!("Failed to add interface name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add interface name: {e}")))?;
 
         let interface_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
         let field_rid = assembly.original_table_row_count(TableId::Field) + 1;
@@ -631,12 +624,12 @@ mod tests {
         // Create static field without LITERAL flag - invalid in interface
         let field_name_index = assembly
             .string_add("NonConstantField")
-            .map_err(|e| crate::Error::Error(format!("Failed to add field name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add field name: {e}")))?;
 
         let signature_bytes = vec![0x08]; // ELEMENT_TYPE_I4
         let signature_index = assembly
             .blob_add(&signature_bytes)
-            .map_err(|e| crate::Error::Error(format!("Failed to add signature: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
 
         let invalid_field = FieldRaw {
             rid: field_rid,
@@ -649,38 +642,36 @@ mod tests {
 
         assembly
             .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(interface_type))
-            .map_err(|e| crate::Error::Error(format!("Failed to add interface: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add interface: {e}")))?;
 
         assembly
             .table_row_add(TableId::Field, TableDataOwned::Field(invalid_field))
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid field: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid field: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     /// Creates an assembly with method having empty name - validation should fail
-    fn create_assembly_with_empty_method_name() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_empty_method_name() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         // Create type
         let type_name_index = assembly
             .string_add("TypeWithEmptyMethodName")
-            .map_err(|e| crate::Error::Error(format!("Failed to add type name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
 
         let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
         let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
@@ -700,12 +691,12 @@ mod tests {
         // Create method with empty name
         let empty_name_index = assembly
             .string_add("")
-            .map_err(|e| crate::Error::Error(format!("Failed to add empty method name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add empty method name: {e}")))?;
 
         let signature_bytes = vec![0x00, 0x00]; // Default method signature
         let signature_index = assembly
             .blob_add(&signature_bytes)
-            .map_err(|e| crate::Error::Error(format!("Failed to add signature: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
 
         let invalid_method = MethodDefRaw {
             rid: method_rid,
@@ -721,41 +712,39 @@ mod tests {
 
         assembly
             .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_def))
-            .map_err(|e| crate::Error::Error(format!("Failed to add type: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
 
         assembly
             .table_row_add(
                 TableId::MethodDef,
                 TableDataOwned::MethodDef(invalid_method),
             )
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid method: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid method: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     /// Creates an assembly with literal field that's not static - validation should fail
-    fn create_assembly_with_literal_non_static_field() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_literal_non_static_field() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         // Create type
         let type_name_index = assembly
             .string_add("TypeWithLiteralInstanceField")
-            .map_err(|e| crate::Error::Error(format!("Failed to add type name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
 
         let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
         let field_rid = assembly.original_table_row_count(TableId::Field) + 1;
@@ -775,12 +764,12 @@ mod tests {
         // Create literal field without static flag - invalid per ECMA-335
         let field_name_index = assembly
             .string_add("LiteralInstanceField")
-            .map_err(|e| crate::Error::Error(format!("Failed to add field name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add field name: {e}")))?;
 
         let signature_bytes = vec![0x08]; // ELEMENT_TYPE_I4
         let signature_index = assembly
             .blob_add(&signature_bytes)
-            .map_err(|e| crate::Error::Error(format!("Failed to add signature: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
 
         let invalid_field = FieldRaw {
             rid: field_rid,
@@ -793,24 +782,24 @@ mod tests {
 
         assembly
             .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_def))
-            .map_err(|e| crate::Error::Error(format!("Failed to add type: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
 
         assembly
             .table_row_add(TableId::Field, TableDataOwned::Field(invalid_field))
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid field: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid field: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     #[test]
-    fn test_owned_accessibility_validator() -> crate::Result<()> {
+    fn test_owned_accessibility_validator() -> Result<()> {
         let validator = OwnedAccessibilityValidator::new();
         let config = ValidationConfig {
             enable_semantic_validation: true,

@@ -84,6 +84,7 @@ impl FieldPtrBuilder {
     ///
     /// let builder = FieldPtrBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self { field: None }
     }
@@ -113,6 +114,7 @@ impl FieldPtrBuilder {
     /// let builder = FieldPtrBuilder::new()
     ///     .field(15);
     /// ```
+    #[must_use]
     pub fn field(mut self, field: u32) -> Self {
         self.field = Some(field);
         self

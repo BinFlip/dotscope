@@ -84,6 +84,7 @@ impl StateMachineMethodBuilder {
     ///
     /// let builder = StateMachineMethodBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             move_next_method: None,
@@ -110,6 +111,7 @@ impl StateMachineMethodBuilder {
     /// let builder = StateMachineMethodBuilder::new()
     ///     .move_next_method(123);  // RID of compiler-generated method
     /// ```
+    #[must_use]
     pub fn move_next_method(mut self, move_next_method: u32) -> Self {
         self.move_next_method = Some(move_next_method);
         self
@@ -134,6 +136,7 @@ impl StateMachineMethodBuilder {
     /// let builder = StateMachineMethodBuilder::new()
     ///     .kickoff_method(45);  // RID of original user method
     /// ```
+    #[must_use]
     pub fn kickoff_method(mut self, kickoff_method: u32) -> Self {
         self.kickoff_method = Some(kickoff_method);
         self

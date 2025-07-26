@@ -81,7 +81,9 @@
 use crate::{
     metadata::{
         cilassemblyview::CilAssemblyView,
-        tables::*,
+        tables::{
+            FieldRaw, MemberRefRaw, MethodDefRaw, PropertyRaw, StandAloneSigRaw, TypeSpecRaw,
+        },
         validation::{
             context::{RawValidationContext, ValidationContext},
             traits::RawValidator,
@@ -142,6 +144,7 @@ impl RawSignatureValidator {
     /// # Thread Safety
     ///
     /// The returned validator is thread-safe and can be used concurrently.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -177,7 +180,6 @@ impl RawSignatureValidator {
     /// - Malformed compressed integer encoding
     /// - Insufficient blob data for declared signature size
     fn validate_signature_blob_integrity(
-        &self,
         assembly_view: &CilAssemblyView,
         blob_index: u32,
         expected_kind: SignatureKind,
@@ -211,7 +213,7 @@ impl RawSignatureValidator {
         }
 
         let calling_convention = blob_data[0];
-        self.validate_calling_convention(calling_convention, expected_kind, blob_index)?;
+        Self::validate_calling_convention(calling_convention, expected_kind, blob_index)?;
 
         if matches!(
             expected_kind,
@@ -227,10 +229,10 @@ impl RawSignatureValidator {
                 });
             }
 
-            self.validate_compressed_integer(&blob_data[1..], blob_index)?;
+            Self::validate_compressed_integer(&blob_data[1..], blob_index)?;
         }
 
-        self.validate_blob_bounds(blob_data, blob_index)?;
+        Self::validate_blob_bounds(blob_data, blob_index)?;
 
         Ok(())
     }
@@ -250,7 +252,6 @@ impl RawSignatureValidator {
     ///
     /// Returns validation error if calling convention is invalid for signature kind.
     fn validate_calling_convention(
-        &self,
         calling_convention: u8,
         expected_kind: SignatureKind,
         blob_index: u32,
@@ -331,7 +332,7 @@ impl RawSignatureValidator {
     /// # Returns
     ///
     /// Returns validation error if compressed integer encoding is malformed.
-    fn validate_compressed_integer(&self, data: &[u8], blob_index: u32) -> Result<()> {
+    fn validate_compressed_integer(data: &[u8], blob_index: u32) -> Result<()> {
         if data.is_empty() {
             return Err(Error::ValidationRawValidatorFailed {
                 validator: "RawSignatureValidator".to_string(),
@@ -395,7 +396,7 @@ impl RawSignatureValidator {
     /// # Returns
     ///
     /// Returns validation error for structural inconsistencies.
-    fn validate_blob_bounds(&self, blob_data: &[u8], blob_index: u32) -> Result<()> {
+    fn validate_blob_bounds(blob_data: &[u8], blob_index: u32) -> Result<()> {
         if blob_data.len() > 65536 {
             return Err(Error::ValidationRawValidatorFailed {
                 validator: "RawSignatureValidator".to_string(),
@@ -451,7 +452,7 @@ impl RawValidator for RawSignatureValidator {
         };
 
         if let Some(table) = tables.table::<MethodDefRaw>() {
-            for method in table.iter() {
+            for method in table {
                 if let Some(blob_heap) = assembly_view.blobs() {
                     if let Ok(blob_data) = blob_heap.get(method.signature as usize) {
                         if !blob_data.is_empty() {
@@ -461,7 +462,7 @@ impl RawValidator for RawSignatureValidator {
                                 _ => SignatureKind::Method,
                             };
 
-                            self.validate_signature_blob_integrity(
+                            Self::validate_signature_blob_integrity(
                                 assembly_view,
                                 method.signature,
                                 signature_kind,
@@ -469,7 +470,7 @@ impl RawValidator for RawSignatureValidator {
                         }
                     }
                 } else {
-                    self.validate_signature_blob_integrity(
+                    Self::validate_signature_blob_integrity(
                         assembly_view,
                         method.signature,
                         SignatureKind::Method,
@@ -479,8 +480,8 @@ impl RawValidator for RawSignatureValidator {
         }
 
         if let Some(table) = tables.table::<FieldRaw>() {
-            for field in table.iter() {
-                self.validate_signature_blob_integrity(
+            for field in table {
+                Self::validate_signature_blob_integrity(
                     assembly_view,
                     field.signature,
                     SignatureKind::Field,
@@ -489,8 +490,8 @@ impl RawValidator for RawSignatureValidator {
         }
 
         if let Some(table) = tables.table::<PropertyRaw>() {
-            for property in table.iter() {
-                self.validate_signature_blob_integrity(
+            for property in table {
+                Self::validate_signature_blob_integrity(
                     assembly_view,
                     property.signature,
                     SignatureKind::Property,
@@ -499,7 +500,7 @@ impl RawValidator for RawSignatureValidator {
         }
 
         if let Some(table) = tables.table::<StandAloneSigRaw>() {
-            for standalone_sig in table.iter() {
+            for standalone_sig in table {
                 if let Some(blob_heap) = assembly_view.blobs() {
                     if let Ok(blob_data) = blob_heap.get(standalone_sig.signature as usize) {
                         if !blob_data.is_empty() {
@@ -510,7 +511,7 @@ impl RawValidator for RawSignatureValidator {
                                 _ => SignatureKind::Method,
                             };
 
-                            self.validate_signature_blob_integrity(
+                            Self::validate_signature_blob_integrity(
                                 assembly_view,
                                 standalone_sig.signature,
                                 signature_kind,
@@ -522,8 +523,8 @@ impl RawValidator for RawSignatureValidator {
         }
 
         if let Some(table) = tables.table::<TypeSpecRaw>() {
-            for type_spec in table.iter() {
-                self.validate_signature_blob_integrity(
+            for type_spec in table {
+                Self::validate_signature_blob_integrity(
                     assembly_view,
                     type_spec.signature,
                     SignatureKind::TypeSpec,
@@ -532,7 +533,7 @@ impl RawValidator for RawSignatureValidator {
         }
 
         if let Some(table) = tables.table::<MemberRefRaw>() {
-            for member_ref in table.iter() {
+            for member_ref in table {
                 if let Some(blob_heap) = assembly_view.blobs() {
                     if let Ok(blob_data) = blob_heap.get(member_ref.signature as usize) {
                         if !blob_data.is_empty() {
@@ -542,7 +543,7 @@ impl RawValidator for RawSignatureValidator {
                                 _ => SignatureKind::Method,
                             };
 
-                            self.validate_signature_blob_integrity(
+                            Self::validate_signature_blob_integrity(
                                 assembly_view,
                                 member_ref.signature,
                                 signature_kind,
@@ -550,7 +551,7 @@ impl RawValidator for RawSignatureValidator {
                         }
                     }
                 } else {
-                    self.validate_signature_blob_integrity(
+                    Self::validate_signature_blob_integrity(
                         assembly_view,
                         member_ref.signature,
                         SignatureKind::MemberRef,
@@ -595,12 +596,14 @@ impl Default for RawSignatureValidator {
 mod tests {
     use super::*;
     use crate::{
-        metadata::validation::ValidationConfig,
+        cilassembly::{BuilderContext, CilAssembly},
+        metadata::{cilassemblyview::CilAssemblyView, validation::ValidationConfig},
         test::{get_clean_testfile, validator_test, TestAssembly},
+        Error, Result,
     };
     use tempfile::NamedTempFile;
 
-    fn raw_signature_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+    fn raw_signature_validator_file_factory() -> Result<Vec<TestAssembly>> {
         let mut assemblies = Vec::new();
 
         if let Some(clean_path) = get_clean_testfile() {
@@ -619,7 +622,7 @@ mod tests {
                 ));
             }
             Err(e) => {
-                return Err(crate::Error::Error(format!(
+                return Err(Error::Error(format!(
                     "Failed to create test assembly with invalid method calling convention: {e}"
                 )));
             }
@@ -634,7 +637,7 @@ mod tests {
                 ));
             }
             Err(e) => {
-                return Err(crate::Error::Error(format!(
+                return Err(Error::Error(format!(
                     "Failed to create test assembly with invalid field calling convention: {e}"
                 )));
             }
@@ -649,7 +652,7 @@ mod tests {
                 ));
             }
             Err(e) => {
-                return Err(crate::Error::Error(format!(
+                return Err(Error::Error(format!(
                     "Failed to create test assembly with malformed compressed integer: {e}"
                 )));
             }
@@ -664,7 +667,7 @@ mod tests {
                 ));
             }
             Err(e) => {
-                return Err(crate::Error::Error(format!(
+                return Err(Error::Error(format!(
                     "Failed to create test assembly with oversized signature blob: {e}"
                 )));
             }
@@ -678,12 +681,12 @@ mod tests {
     /// Creates a signature blob with an invalid method calling convention that exceeds
     /// the valid range (0x00-0x05) defined by ECMA-335, triggering RawSignatureValidator
     /// validation failure.
-    fn create_assembly_with_invalid_method_calling_convention() -> crate::Result<NamedTempFile> {
+    fn create_assembly_with_invalid_method_calling_convention() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
-        let view = crate::metadata::cilassemblyview::CilAssemblyView::from_file(&clean_testfile)?;
-        let assembly = crate::cilassembly::CilAssembly::new(view);
-        let mut context = crate::cilassembly::BuilderContext::new(assembly);
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
 
         // Create a proper blob heap with corrupted signature
         // Blob heap format: [null_byte, size_prefix, blob_data, size_prefix, blob_data, ...]
@@ -713,12 +716,12 @@ mod tests {
     /// Creates a signature blob with an invalid field calling convention that doesn't
     /// match the required 0x06 value defined by ECMA-335, triggering RawSignatureValidator
     /// validation failure.
-    fn create_assembly_with_invalid_field_calling_convention() -> crate::Result<NamedTempFile> {
+    fn create_assembly_with_invalid_field_calling_convention() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
-        let view = crate::metadata::cilassemblyview::CilAssemblyView::from_file(&clean_testfile)?;
-        let assembly = crate::cilassembly::CilAssembly::new(view);
-        let mut context = crate::cilassembly::BuilderContext::new(assembly);
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
 
         // Create a proper blob heap with corrupted field signature
         let blob_heap = vec![
@@ -744,12 +747,12 @@ mod tests {
     ///
     /// Creates a signature blob with invalid compressed integer encoding that violates
     /// ECMA-335 format requirements, triggering RawSignatureValidator validation failure.
-    fn create_assembly_with_malformed_compressed_integer() -> crate::Result<NamedTempFile> {
+    fn create_assembly_with_malformed_compressed_integer() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
-        let view = crate::metadata::cilassemblyview::CilAssemblyView::from_file(&clean_testfile)?;
-        let assembly = crate::cilassembly::CilAssembly::new(view);
-        let mut context = crate::cilassembly::BuilderContext::new(assembly);
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
 
         // Create a proper blob heap with malformed compressed integer
         let blob_heap = vec![
@@ -776,12 +779,12 @@ mod tests {
     ///
     /// Creates a signature blob that exceeds the maximum reasonable size limit,
     /// triggering RawSignatureValidator blob bounds validation failure.
-    fn create_assembly_with_oversized_signature_blob() -> crate::Result<NamedTempFile> {
+    fn create_assembly_with_oversized_signature_blob() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
-        let view = crate::metadata::cilassemblyview::CilAssemblyView::from_file(&clean_testfile)?;
-        let assembly = crate::cilassembly::CilAssembly::new(view);
-        let mut context = crate::cilassembly::BuilderContext::new(assembly);
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
 
         // Create a proper blob heap with oversized signature blob
         let mut blob_heap = vec![
@@ -808,7 +811,7 @@ mod tests {
     }
 
     #[test]
-    fn test_raw_signature_validator() -> crate::Result<()> {
+    fn test_raw_signature_validator() -> Result<()> {
         let validator = RawSignatureValidator::new();
         let config = ValidationConfig {
             enable_token_validation: true,

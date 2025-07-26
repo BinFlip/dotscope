@@ -55,6 +55,7 @@ impl TypeRefBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::typeref::TypeRefBuilder`] ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             name: None,
@@ -72,6 +73,7 @@ impl TypeRefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -86,6 +88,7 @@ impl TypeRefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn namespace(mut self, namespace: impl Into<String>) -> Self {
         self.namespace = Some(namespace.into());
         self
@@ -100,6 +103,7 @@ impl TypeRefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn resolution_scope(mut self, resolution_scope: CodedIndex) -> Self {
         self.resolution_scope = Some(resolution_scope);
         self

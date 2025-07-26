@@ -85,6 +85,7 @@ impl MethodPtrBuilder {
     ///
     /// let builder = MethodPtrBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self { method: None }
     }
@@ -114,6 +115,7 @@ impl MethodPtrBuilder {
     /// let builder = MethodPtrBuilder::new()
     ///     .method(25);
     /// ```
+    #[must_use]
     pub fn method(mut self, method: u32) -> Self {
         self.method = Some(method);
         self

@@ -120,6 +120,7 @@ impl LocalScopeBuilder {
     /// # use dotscope::prelude::*;
     /// let builder = LocalScopeBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -140,6 +141,7 @@ impl LocalScopeBuilder {
     /// let builder = LocalScopeBuilder::new()
     ///     .method(Token::new(0x06000001));
     /// ```
+    #[must_use]
     pub fn method(mut self, method: Token) -> Self {
         self.method = Some(method);
         self
@@ -162,6 +164,7 @@ impl LocalScopeBuilder {
     /// let builder = LocalScopeBuilder::new()
     ///     .import_scope(2);  // Reference to ImportScope RID 2
     /// ```
+    #[must_use]
     pub fn import_scope(mut self, import_scope: u32) -> Self {
         self.import_scope = Some(import_scope);
         self
@@ -184,6 +187,7 @@ impl LocalScopeBuilder {
     /// let builder = LocalScopeBuilder::new()
     ///     .variable_list(5);  // Variables start at LocalVariable RID 5
     /// ```
+    #[must_use]
     pub fn variable_list(mut self, variable_list: u32) -> Self {
         self.variable_list = Some(variable_list);
         self
@@ -206,6 +210,7 @@ impl LocalScopeBuilder {
     /// let builder = LocalScopeBuilder::new()
     ///     .constant_list(3);  // Constants start at LocalConstant RID 3
     /// ```
+    #[must_use]
     pub fn constant_list(mut self, constant_list: u32) -> Self {
         self.constant_list = Some(constant_list);
         self
@@ -227,6 +232,7 @@ impl LocalScopeBuilder {
     /// let builder = LocalScopeBuilder::new()
     ///     .start_offset(0x10);  // Scope starts at IL offset 16
     /// ```
+    #[must_use]
     pub fn start_offset(mut self, start_offset: u32) -> Self {
         self.start_offset = Some(start_offset);
         self
@@ -248,6 +254,7 @@ impl LocalScopeBuilder {
     /// let builder = LocalScopeBuilder::new()
     ///     .length(0x50);  // Scope covers 80 bytes of IL code
     /// ```
+    #[must_use]
     pub fn length(mut self, length: u32) -> Self {
         self.length = Some(length);
         self

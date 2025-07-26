@@ -85,6 +85,7 @@ impl ParamPtrBuilder {
     ///
     /// let builder = ParamPtrBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self { param: None }
     }
@@ -114,6 +115,7 @@ impl ParamPtrBuilder {
     /// let builder = ParamPtrBuilder::new()
     ///     .param(10);
     /// ```
+    #[must_use]
     pub fn param(mut self, param: u32) -> Self {
         self.param = Some(param);
         self

@@ -202,7 +202,7 @@ impl Output {
     pub fn get_mut_slice(&mut self, start: usize, size: usize) -> Result<&mut [u8]> {
         let end = start + size;
         if end > self.mmap.len() {
-            return Err(crate::Error::WriteMmapFailed {
+            return Err(Error::WriteMmapFailed {
                 message: format!(
                     "Write would exceed file size: start={}, size={}, end={}, file_size={}",
                     start,
@@ -226,7 +226,9 @@ impl Output {
     /// # Errors
     /// Returns [`crate::Error::WriteMmapFailed`] if the write would exceed file bounds.
     pub fn write_at(&mut self, offset: u64, data: &[u8]) -> Result<()> {
-        let start = offset as usize;
+        let start = usize::try_from(offset).map_err(|_| Error::WriteMmapFailed {
+            message: format!("Offset {offset} too large for target architecture"),
+        })?;
         let end = start + data.len();
 
         if end > self.mmap.len() {
@@ -255,7 +257,9 @@ impl Output {
     /// # Errors
     /// Returns [`crate::Error::WriteMmapFailed`] if the offset exceeds file bounds.
     pub fn write_byte_at(&mut self, offset: u64, byte: u8) -> Result<()> {
-        let index = offset as usize;
+        let index = usize::try_from(offset).map_err(|_| Error::WriteMmapFailed {
+            message: format!("Offset {offset} too large for target architecture"),
+        })?;
 
         if index >= self.mmap.len() {
             return Err(Error::WriteMmapFailed {
@@ -353,7 +357,14 @@ impl Output {
 
         if padding_needed > 0 {
             // Fill padding with 0xFF bytes to prevent creation of valid heap entries
-            let padding_slice = self.get_mut_slice(data_end as usize, padding_needed)?;
+            let padding_slice = self.get_mut_slice(
+                usize::try_from(data_end).map_err(|_| Error::WriteMmapFailed {
+                    message: format!(
+                        "Data end offset {data_end} too large for target architecture"
+                    ),
+                })?,
+                padding_needed,
+            )?;
             padding_slice.fill(0xFF);
         }
 
@@ -394,7 +405,12 @@ impl Output {
     /// # Errors
     /// Returns [`crate::Error::WriteMmapFailed`] if the region would exceed file bounds.
     pub fn fill_region(&mut self, offset: u64, size: usize, fill_byte: u8) -> Result<()> {
-        let slice = self.get_mut_slice(offset as usize, size)?;
+        let slice = self.get_mut_slice(
+            usize::try_from(offset).map_err(|_| Error::WriteMmapFailed {
+                message: format!("Offset {offset} too large for target architecture"),
+            })?,
+            size,
+        )?;
         slice.fill(fill_byte);
         Ok(())
     }
@@ -498,7 +514,20 @@ impl Output {
     /// let slice = output.get_mut_slice_region(&region)?;
     /// ```
     pub fn get_mut_slice_region(&mut self, region: &FileRegion) -> Result<&mut [u8]> {
-        self.get_mut_slice(region.offset as usize, region.size as usize)
+        self.get_mut_slice(
+            usize::try_from(region.offset).map_err(|_| Error::WriteMmapFailed {
+                message: format!(
+                    "Region offset {} too large for target architecture",
+                    region.offset
+                ),
+            })?,
+            usize::try_from(region.size).map_err(|_| Error::WriteMmapFailed {
+                message: format!(
+                    "Region size {} too large for target architecture",
+                    region.size
+                ),
+            })?,
+        )
     }
 
     /// Writes data to a FileRegion.

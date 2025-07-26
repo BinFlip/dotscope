@@ -97,6 +97,7 @@ impl<'a> ReferenceValidator<'a> {
     /// # Returns
     ///
     /// A new [`ReferenceValidator`] instance ready for validation operations.
+    #[must_use]
     pub fn new(scanner: &'a ReferenceScanner) -> Self {
         Self { scanner }
     }
@@ -148,6 +149,10 @@ impl<'a> ReferenceValidator<'a> {
     /// # Returns
     ///
     /// Returns `Ok(())` if reference integrity is maintained, or an error otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the token does not exist or if any referenced tokens are invalid.
     pub fn validate_token_integrity(&self, token: Token) -> Result<()> {
         if !self.scanner.token_exists(token) {
             return Err(Error::ValidationInvalidRid {
@@ -194,6 +199,7 @@ impl<'a> ReferenceValidator<'a> {
     /// # Returns
     ///
     /// Returns `true` if a circular reference is detected, `false` otherwise.
+    #[must_use]
     pub fn has_circular_references(&self, start_token: Token) -> bool {
         let mut visited = HashSet::new();
         let mut recursion_stack = HashSet::new();
@@ -243,8 +249,9 @@ impl<'a> ReferenceValidator<'a> {
     /// # Returns
     ///
     /// Returns a set of (table_id, rid) pairs that reference the target row.
+    #[must_use]
     pub fn find_references_to_row(&self, table_id: TableId, rid: u32) -> HashSet<(TableId, u32)> {
-        let target_token_value = ((table_id.token_type() as u32) << 24) | (rid & 0x00FFFFFF);
+        let target_token_value = (u32::from(table_id.token_type()) << 24) | (rid & 0x00FF_FFFF);
         let target_token = Token::new(target_token_value);
 
         let referencing_tokens = self.scanner.get_references_to(target_token);
@@ -296,14 +303,14 @@ impl<'a> ReferenceValidator<'a> {
     /// # Returns
     ///
     /// Returns a `ReferenceAnalysis` struct containing detailed analysis results.
+    #[must_use]
     pub fn analyze_reference_patterns(&self) -> ReferenceAnalysis {
         let mut analysis = ReferenceAnalysis::default();
         for table_id in TableId::iter() {
             let row_count = self.scanner.table_row_count(table_id);
             for rid in 1..=row_count {
-                if let Some(token) = self.create_token(table_id, rid) {
-                    self.analyze_token_references(token, &mut analysis);
-                }
+                let token = Self::create_token(table_id, rid);
+                self.analyze_token_references(token, &mut analysis);
             }
         }
 
@@ -334,9 +341,9 @@ impl<'a> ReferenceValidator<'a> {
     }
 
     /// Creates a token from table ID and RID.
-    fn create_token(&self, table_id: TableId, rid: u32) -> Option<Token> {
-        let table_token_base = (table_id.token_type() as u32) << 24;
-        Some(Token::new(table_token_base | rid))
+    fn create_token(table_id: TableId, rid: u32) -> Token {
+        let table_token_base = u32::from(table_id.token_type()) << 24;
+        Token::new(table_token_base | rid)
     }
 
     /// Validates forward references are properly resolved.
@@ -351,6 +358,10 @@ impl<'a> ReferenceValidator<'a> {
     /// # Returns
     ///
     /// Returns `Ok(())` if forward references are valid, or an error otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any forward reference points to a non-existent token.
     pub fn validate_forward_references(&self, token: Token) -> Result<()> {
         let references = self.scanner.get_references_from(token);
 
@@ -382,6 +393,10 @@ impl<'a> ReferenceValidator<'a> {
     /// # Returns
     ///
     /// Returns `Ok(())` if the parent-child relationship is valid, or an error otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either the parent or child token does not exist, or if the relationship is invalid.
     pub fn validate_parent_child_relationship(
         &self,
         parent_token: Token,
@@ -440,6 +455,10 @@ impl<'a> ReferenceValidator<'a> {
     ///
     /// Returns `Ok(())` if the nested class relationship is valid, or an error if
     /// there would be circular nesting (e.g., A nests B which nests A).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either token does not exist or if there would be circular nesting.
     pub fn validate_nested_class_relationship(
         &self,
         enclosing_token: Token,
@@ -482,6 +501,7 @@ impl<'a> ReferenceValidator<'a> {
     /// # Returns
     ///
     /// Returns comprehensive reference statistics for analysis and reporting.
+    #[must_use]
     pub fn get_reference_statistics(&self) -> ReferenceStatistics {
         let analysis = self.analyze_reference_patterns();
 

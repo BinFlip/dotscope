@@ -118,6 +118,7 @@ impl RawHeapValidator {
     /// # Thread Safety
     ///
     /// The returned validator is thread-safe and can be used concurrently.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -145,12 +146,12 @@ impl RawHeapValidator {
     /// - String heap offset exceeds maximum allowed value
     /// - String entries contain invalid UTF-8 sequences
     /// - String entries are not properly null-terminated
-    fn validate_string_heap(&self, assembly_view: &CilAssemblyView) -> Result<()> {
+    fn validate_string_heap(assembly_view: &CilAssemblyView) -> Result<()> {
         let streams = assembly_view.streams();
 
         let strings_stream = streams.iter().find(|s| s.name == "#Strings");
         if let Some(stream) = strings_stream {
-            if stream.size > 0x7FFFFFFF {
+            if stream.size > 0x7FFF_FFFF {
                 return Err(malformed_error!(
                     "String heap (#Strings) size {} exceeds maximum allowed size",
                     stream.size
@@ -164,7 +165,7 @@ impl RawHeapValidator {
                 ));
             }
 
-            if stream.offset > 0x7FFFFFFF {
+            if stream.offset > 0x7FFF_FFFF {
                 return Err(malformed_error!(
                     "String heap (#Strings) offset {} exceeds maximum allowed offset",
                     stream.offset
@@ -173,7 +174,7 @@ impl RawHeapValidator {
         }
 
         // Validate string heap content
-        self.validate_string_heap_content(assembly_view)?;
+        Self::validate_string_heap_content(assembly_view)?;
 
         Ok(())
     }
@@ -198,7 +199,7 @@ impl RawHeapValidator {
     /// - String contains invalid UTF-8 byte sequences
     /// - String is not properly null-terminated (ECMA-335 requirement)
     /// - String heap iteration fails due to corruption
-    fn validate_string_heap_content(&self, assembly_view: &CilAssemblyView) -> Result<()> {
+    fn validate_string_heap_content(assembly_view: &CilAssemblyView) -> Result<()> {
         if let Some(strings) = assembly_view.strings() {
             for (offset, string_data) in strings.iter() {
                 if std::str::from_utf8(string_data.as_bytes()).is_err() {
@@ -235,13 +236,13 @@ impl RawHeapValidator {
     /// - Blob heap size is not 4-byte aligned as required by ECMA-335
     /// - Blob heap offset exceeds maximum allowed value
     /// - Blob entries have invalid size encoding or data corruption
-    fn validate_blob_heap(&self, assembly_view: &CilAssemblyView) -> Result<()> {
+    fn validate_blob_heap(assembly_view: &CilAssemblyView) -> Result<()> {
         let streams = assembly_view.streams();
 
         let blob_stream = streams.iter().find(|s| s.name == "#Blob");
 
         if let Some(stream) = blob_stream {
-            if stream.size > 0x7FFFFFFF {
+            if stream.size > 0x7FFF_FFFF {
                 return Err(malformed_error!(
                     "Blob heap (#Blob) size {} exceeds maximum allowed size",
                     stream.size
@@ -255,7 +256,7 @@ impl RawHeapValidator {
                 ));
             }
 
-            if stream.offset > 0x7FFFFFFF {
+            if stream.offset > 0x7FFF_FFFF {
                 return Err(malformed_error!(
                     "Blob heap (#Blob) offset {} exceeds maximum allowed offset",
                     stream.offset
@@ -263,7 +264,7 @@ impl RawHeapValidator {
             }
         }
 
-        self.validate_blob_heap_content(assembly_view)?;
+        Self::validate_blob_heap_content(assembly_view)?;
 
         Ok(())
     }
@@ -288,15 +289,15 @@ impl RawHeapValidator {
     /// - Blob has invalid compressed integer size prefix
     /// - Blob data length doesn't match encoded size
     /// - Blob heap iteration fails due to corruption
-    fn validate_blob_heap_content(&self, assembly_view: &CilAssemblyView) -> Result<()> {
+    fn validate_blob_heap_content(assembly_view: &CilAssemblyView) -> Result<()> {
         if let Some(blobs) = assembly_view.blobs() {
             for (offset, blob_data) in blobs.iter() {
-                if blob_data.len() > 0x1FFFFFFF {
+                if blob_data.len() > 0x1FFF_FFFF {
                     return Err(malformed_error!(
                         "Blob at offset {} has excessive size {} bytes (max: {})",
                         offset,
                         blob_data.len(),
-                        0x1FFFFFFF
+                        0x1FFF_FFFF
                     ));
                 }
 
@@ -334,12 +335,12 @@ impl RawHeapValidator {
     /// - GUID heap size is not 4-byte aligned as required by ECMA-335
     /// - GUID heap offset exceeds maximum allowed value
     /// - GUID entries are malformed or contain invalid data
-    fn validate_guid_heap(&self, assembly_view: &CilAssemblyView) -> Result<()> {
+    fn validate_guid_heap(assembly_view: &CilAssemblyView) -> Result<()> {
         let streams = assembly_view.streams();
         let guid_stream = streams.iter().find(|s| s.name == "#GUID");
 
         if let Some(stream) = guid_stream {
-            if stream.size > 0x7FFFFFFF {
+            if stream.size > 0x7FFF_FFFF {
                 return Err(malformed_error!(
                     "GUID heap (#GUID) size {} exceeds maximum allowed size",
                     stream.size
@@ -360,7 +361,7 @@ impl RawHeapValidator {
                 ));
             }
 
-            if stream.offset > 0x7FFFFFFF {
+            if stream.offset > 0x7FFF_FFFF {
                 return Err(malformed_error!(
                     "GUID heap (#GUID) offset {} exceeds maximum allowed offset",
                     stream.offset
@@ -368,7 +369,7 @@ impl RawHeapValidator {
             }
         }
 
-        self.validate_guid_heap_content(assembly_view)?;
+        Self::validate_guid_heap_content(assembly_view);
 
         Ok(())
     }
@@ -392,18 +393,17 @@ impl RawHeapValidator {
     /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - GUID heap iteration fails due to corruption
     /// - GUID entries are inaccessible or malformed
-    fn validate_guid_heap_content(&self, assembly_view: &CilAssemblyView) -> Result<()> {
-        if let Some(guids) = assembly_view.guids() {
-            for (index, _guid_data) in guids.iter() {
-                // Basic validation - ensure GUID data is accessible
-                // GUIDs are always 16 bytes by design, so just verify accessibility
-                // More sophisticated validation could verify GUID format patterns
-                // The fact that we can iterate means the GUID is accessible and valid
-                let _guid_index = index + 1; // GUID heap uses 1-based indexing
-            }
-        }
-
-        Ok(())
+    fn validate_guid_heap_content(_assembly_view: &CilAssemblyView) {
+        // ToDo: Implement better GUID heap validation
+        // if let Some(guids) = assembly_view.guids() {
+        //     for (_index, _guid_data) in guids.iter() {
+        //         // Basic validation - ensure GUID data is accessible
+        //         // GUIDs are always 16 bytes by design, so just verify accessibility
+        //         // More sophisticated validation could verify GUID format patterns
+        //         // The fact that we can iterate means the GUID is accessible and valid
+        //         // GUID heap uses 1-based indexing - we add 1 to convert from 0-based iterator index
+        //     }
+        // }
     }
 
     /// Validates the user string heap for UTF-16 encoding compliance and proper length prefixes.
@@ -428,13 +428,13 @@ impl RawHeapValidator {
     /// - UserString heap size is not 4-byte aligned as required by ECMA-335
     /// - UserString heap offset exceeds maximum allowed value
     /// - UserString entries have invalid UTF-16 encoding or length prefixes
-    fn validate_userstring_heap(&self, assembly_view: &CilAssemblyView) -> Result<()> {
+    fn validate_userstring_heap(assembly_view: &CilAssemblyView) -> Result<()> {
         let streams = assembly_view.streams();
 
         let us_stream = streams.iter().find(|s| s.name == "#US");
 
         if let Some(stream) = us_stream {
-            if stream.size > 0x7FFFFFFF {
+            if stream.size > 0x7FFF_FFFF {
                 return Err(malformed_error!(
                     "UserString heap (#US) size {} exceeds maximum allowed size",
                     stream.size
@@ -448,7 +448,7 @@ impl RawHeapValidator {
                 ));
             }
 
-            if stream.offset > 0x7FFFFFFF {
+            if stream.offset > 0x7FFF_FFFF {
                 return Err(malformed_error!(
                     "UserString heap (#US) offset {} exceeds maximum allowed offset",
                     stream.offset
@@ -456,7 +456,7 @@ impl RawHeapValidator {
             }
         }
 
-        self.validate_userstring_heap_content(assembly_view)?;
+        Self::validate_userstring_heap_content(assembly_view)?;
 
         Ok(())
     }
@@ -481,16 +481,16 @@ impl RawHeapValidator {
     /// - User string contains invalid UTF-16 encoding
     /// - User string length prefix is malformed
     /// - User string heap iteration fails due to corruption
-    fn validate_userstring_heap_content(&self, assembly_view: &CilAssemblyView) -> Result<()> {
+    fn validate_userstring_heap_content(assembly_view: &CilAssemblyView) -> Result<()> {
         if let Some(userstrings) = assembly_view.userstrings() {
             for (offset, userstring_data) in userstrings.iter().take(1000) {
                 let utf16_chars = userstring_data.as_slice();
-                if utf16_chars.len() > 0x1FFFFFFF {
+                if utf16_chars.len() > 0x1FFF_FFFF {
                     return Err(malformed_error!(
                         "UserString at offset {} has excessive length {} characters (max: {})",
                         offset,
                         utf16_chars.len(),
-                        0x1FFFFFFF
+                        0x1FFF_FFFF
                     ));
                 }
 
@@ -543,10 +543,10 @@ impl RawValidator for RawHeapValidator {
     fn validate_raw(&self, context: &RawValidationContext) -> Result<()> {
         let assembly_view = context.assembly_view();
 
-        self.validate_string_heap(assembly_view)?;
-        self.validate_blob_heap(assembly_view)?;
-        self.validate_guid_heap(assembly_view)?;
-        self.validate_userstring_heap(assembly_view)?;
+        Self::validate_string_heap(assembly_view)?;
+        Self::validate_blob_heap(assembly_view)?;
+        Self::validate_guid_heap(assembly_view)?;
+        Self::validate_userstring_heap(assembly_view)?;
 
         Ok(())
     }
@@ -575,8 +575,9 @@ mod tests {
     use super::*;
     use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        metadata::validation::ValidationConfig,
+        metadata::{cilassemblyview::CilAssemblyView, validation::ValidationConfig},
         test::{get_clean_testfile, validator_test, TestAssembly},
+        Error, Result,
     };
     use tempfile::NamedTempFile;
 
@@ -610,11 +611,11 @@ mod tests {
     /// # Errors
     ///
     /// Returns error if WindowsBase.dll is not available for testing
-    fn raw_heap_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+    fn raw_heap_validator_file_factory() -> Result<Vec<TestAssembly>> {
         let mut assemblies = Vec::new();
 
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
+            return Err(Error::Error(
                 "WindowsBase.dll not available - test cannot run".to_string(),
             ));
         };
@@ -631,7 +632,7 @@ mod tests {
                 ));
             }
             Err(e) => {
-                return Err(crate::Error::Error(format!(
+                return Err(Error::Error(format!(
                     "Failed to create test assembly with invalid UTF-16 userstring: {e}"
                 )));
             }
@@ -646,7 +647,7 @@ mod tests {
         //         ));
         //     }
         //     Err(e) => {
-        //         return Err(crate::Error::Error(format!(
+        //         return Err(Error::Error(format!(
         //             "Failed to create test assembly with invalid UTF-8 string: {e}"
         //         )));
         //     }
@@ -661,7 +662,7 @@ mod tests {
                 ));
             }
             Err(e) => {
-                return Err(crate::Error::Error(format!(
+                return Err(Error::Error(format!(
                     "Failed to create test assembly with invalid GUID alignment: {e}"
                 )));
             }
@@ -678,10 +679,10 @@ mod tests {
     /// Creates a test assembly with invalid UTF-16 in the userstring heap.
     ///
     /// Creates a userstring heap with invalid UTF-16 sequences using heap replacement.
-    fn create_assembly_with_invalid_utf16_userstring() -> crate::Result<NamedTempFile> {
+    fn create_assembly_with_invalid_utf16_userstring() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
-        let view = crate::metadata::cilassemblyview::CilAssemblyView::from_file(&clean_testfile)?;
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
 
@@ -710,10 +711,10 @@ mod tests {
     /// Creates a test assembly with invalid GUID heap size alignment.
     ///
     /// Creates a GUID heap that is not a multiple of 16 bytes using heap replacement.
-    fn create_assembly_with_invalid_guid_alignment() -> crate::Result<NamedTempFile> {
+    fn create_assembly_with_invalid_guid_alignment() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
-        let view = crate::metadata::cilassemblyview::CilAssemblyView::from_file(&clean_testfile)?;
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
 
@@ -735,8 +736,68 @@ mod tests {
         Ok(temp_file)
     }
 
+    /// Creates a test assembly with userstring heap size not 4-byte aligned.
+    fn create_assembly_with_unaligned_userstring_heap() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        // Create a userstring heap that is not 4-byte aligned (5 bytes)
+        let userstring_heap = vec![0, 0x03, 0x41, 0x00, 0x01]; // 5 bytes - not 4-byte aligned
+        context.userstring_add_heap(userstring_heap)?;
+
+        let mut assembly = context.finish();
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+
+        Ok(temp_file)
+    }
+
+    /// Creates a test assembly with individual userstring exceeding character limit.
+    ///
+    /// Creates a userstring heap with a userstring that simulates exceeding the 0x1FFFFFFF character limit.
+    fn create_assembly_with_oversized_individual_userstring() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        // Create a userstring heap with a userstring that would report excessive character count
+        let mut userstring_heap = vec![0]; // Required null byte at index 0
+
+        // Create a userstring with size that appears to exceed 0x1FFFFFFF characters when parsed
+        // Using compressed integer encoding for length prefix
+        userstring_heap.extend_from_slice(&[
+            0xFF, 0xFF, 0xFF,
+            0xFF, // Length prefix indicating very long userstring (compressed integer)
+            0x41, 0x00, // 'A' character in UTF-16
+            0x42, 0x00, // 'B' character in UTF-16
+            0x01, // Terminator byte
+        ]);
+
+        // Pad to 4-byte alignment
+        while userstring_heap.len() % 4 != 0 {
+            userstring_heap.push(0);
+        }
+
+        context.userstring_add_heap(userstring_heap)?;
+
+        let mut assembly = context.finish();
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+
+        Ok(temp_file)
+    }
+
     #[test]
-    fn test_raw_heap_validator() -> crate::Result<()> {
+    fn test_raw_heap_validator() -> Result<()> {
         let validator = RawHeapValidator::new();
         let config = ValidationConfig {
             enable_structural_validation: true,
@@ -753,14 +814,12 @@ mod tests {
     }
 
     #[test]
-    fn test_raw_heap_validator_configuration() -> crate::Result<()> {
+    fn test_raw_heap_validator_configuration() -> Result<()> {
         let validator = RawHeapValidator::new();
 
-        fn clean_only_factory() -> crate::Result<Vec<TestAssembly>> {
+        fn clean_only_factory() -> Result<Vec<TestAssembly>> {
             let Some(clean_testfile) = get_clean_testfile() else {
-                return Err(crate::Error::Error(
-                    "WindowsBase.dll not available".to_string(),
-                ));
+                return Err(Error::Error("WindowsBase.dll not available".to_string()));
             };
             Ok(vec![TestAssembly::new(&clean_testfile, true)])
         }

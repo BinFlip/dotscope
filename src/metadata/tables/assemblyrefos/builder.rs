@@ -103,6 +103,7 @@ impl AssemblyRefOSBuilder {
     ///
     /// let builder = AssemblyRefOSBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             os_platform_id: None,
@@ -142,6 +143,7 @@ impl AssemblyRefOSBuilder {
     /// let builder = AssemblyRefOSBuilder::new()
     ///     .os_platform_id(99);
     /// ```
+    #[must_use]
     pub fn os_platform_id(mut self, os_platform_id: u32) -> Self {
         self.os_platform_id = Some(os_platform_id);
         self
@@ -171,6 +173,7 @@ impl AssemblyRefOSBuilder {
     /// let builder = AssemblyRefOSBuilder::new()
     ///     .os_major_version(6);
     /// ```
+    #[must_use]
     pub fn os_major_version(mut self, os_major_version: u32) -> Self {
         self.os_major_version = Some(os_major_version);
         self
@@ -200,6 +203,7 @@ impl AssemblyRefOSBuilder {
     /// let builder = AssemblyRefOSBuilder::new()
     ///     .os_minor_version(1);
     /// ```
+    #[must_use]
     pub fn os_minor_version(mut self, os_minor_version: u32) -> Self {
         self.os_minor_version = Some(os_minor_version);
         self
@@ -224,6 +228,7 @@ impl AssemblyRefOSBuilder {
     /// let builder = AssemblyRefOSBuilder::new()
     ///     .assembly_ref(1);  // References first AssemblyRef
     /// ```
+    #[must_use]
     pub fn assembly_ref(mut self, assembly_ref: u32) -> Self {
         self.assembly_ref = Some(assembly_ref);
         self

@@ -248,12 +248,12 @@ impl RidRemapper {
 
         // First, map all original RIDs that aren't deleted
         for original_rid in 1..=original_count {
-            if !deleted_rids.contains(&original_rid) {
-                self.mapping.insert(original_rid, Some(final_rid));
-                final_rid += 1;
-            } else {
+            if deleted_rids.contains(&original_rid) {
                 // Mark deleted RIDs as None
                 self.mapping.insert(original_rid, None);
+            } else {
+                self.mapping.insert(original_rid, Some(final_rid));
+                final_rid += 1;
             }
         }
 

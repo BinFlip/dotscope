@@ -68,12 +68,18 @@
 //! - [ECMA-335 II.22.37](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - TypeDef table and inheritance chains
 //! - [ECMA-335 II.22.32](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - NestedClass table and containment relationships
 
+use std::collections::{HashMap, HashSet};
+
 use crate::{
-    metadata::validation::{
-        context::{OwnedValidationContext, ValidationContext},
-        traits::OwnedValidator,
+    metadata::{
+        token::Token,
+        typesystem::CilType,
+        validation::{
+            context::{OwnedValidationContext, ValidationContext},
+            traits::OwnedValidator,
+        },
     },
-    Result,
+    Error, Result,
 };
 
 /// Foundation validator for circular reference detection in resolved metadata structures.
@@ -107,6 +113,7 @@ impl OwnedCircularityValidator {
     /// # Thread Safety
     ///
     /// The returned validator is thread-safe and can be used concurrently.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -127,8 +134,8 @@ impl OwnedCircularityValidator {
     /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Inheritance circularity detected
     fn validate_inheritance_cycles(&self, context: &OwnedValidationContext) -> Result<()> {
         let types = context.object().types();
-        let mut visited = std::collections::HashSet::new();
-        let mut visiting = std::collections::HashSet::new();
+        let mut visited = HashSet::new();
+        let mut visiting = HashSet::new();
 
         for type_entry in types.all_types() {
             let token = type_entry.token;
@@ -137,7 +144,6 @@ impl OwnedCircularityValidator {
                     &type_entry,
                     &mut visited,
                     &mut visiting,
-                    types,
                 )?;
             }
         }
@@ -157,17 +163,15 @@ impl OwnedCircularityValidator {
     /// * `type_entry` - Type to check for inheritance cycles
     /// * `visited` - Set of completely processed types (black)
     /// * `visiting` - Set of currently processing types (gray)
-    /// * `types` - Type registry for resolving references
     ///
     /// # Returns
     ///
     /// Returns error if a cycle is detected in the inheritance relationships.
     fn check_inheritance_cycle_relationships(
         &self,
-        type_entry: &crate::metadata::typesystem::CilType,
-        visited: &mut std::collections::HashSet<crate::metadata::token::Token>,
-        visiting: &mut std::collections::HashSet<crate::metadata::token::Token>,
-        _types: &crate::prelude::TypeRegistry,
+        type_entry: &CilType,
+        visited: &mut HashSet<Token>,
+        visiting: &mut HashSet<Token>,
     ) -> Result<()> {
         let current_token = type_entry.token;
 
@@ -178,7 +182,7 @@ impl OwnedCircularityValidator {
 
         // If currently being processed, we found a cycle
         if visiting.contains(&current_token) {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Circular inheritance relationship detected: Type '{}' (token 0x{:08X}) is part of an inheritance cycle",
@@ -193,7 +197,7 @@ impl OwnedCircularityValidator {
 
         // Check base type relationships
         if let Some(base_type) = type_entry.base() {
-            self.check_inheritance_cycle_relationships(&base_type, visited, visiting, _types)?;
+            self.check_inheritance_cycle_relationships(&base_type, visited, visiting)?;
         }
 
         // Mark as completely processed and remove from currently processing
@@ -221,11 +225,11 @@ impl OwnedCircularityValidator {
         context: &OwnedValidationContext,
     ) -> Result<()> {
         let types = context.object().types();
-        let mut visited = std::collections::HashSet::new();
-        let mut visiting = std::collections::HashSet::new();
+        let mut visited = HashSet::new();
+        let mut visiting = HashSet::new();
 
         // Build interface implementation relationships map
-        let mut interface_relationships = std::collections::HashMap::new();
+        let mut interface_relationships = HashMap::new();
         for type_entry in types.all_types() {
             let token = type_entry.token;
             let mut implemented_interfaces = Vec::new();
@@ -267,13 +271,10 @@ impl OwnedCircularityValidator {
     /// Returns error if a cycle is detected in the interface implementation relationships.
     fn check_interface_implementation_cycle(
         &self,
-        token: crate::metadata::token::Token,
-        interface_relationships: &std::collections::HashMap<
-            crate::metadata::token::Token,
-            Vec<crate::metadata::token::Token>,
-        >,
-        visited: &mut std::collections::HashSet<crate::metadata::token::Token>,
-        visiting: &mut std::collections::HashSet<crate::metadata::token::Token>,
+        token: Token,
+        interface_relationships: &HashMap<Token, Vec<Token>>,
+        visited: &mut HashSet<Token>,
+        visiting: &mut HashSet<Token>,
     ) -> Result<()> {
         // If already completely processed, skip
         if visited.contains(&token) {
@@ -282,7 +283,7 @@ impl OwnedCircularityValidator {
 
         // If currently being processed, we found a cycle
         if visiting.contains(&token) {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Circular interface implementation relationship detected: Type with token 0x{:08X} implements itself through interface chain",
@@ -330,12 +331,12 @@ impl OwnedCircularityValidator {
     /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Cross-reference circularity detected
     fn validate_cross_reference_cycles(&self, context: &OwnedValidationContext) -> Result<()> {
         let types = context.object().types();
-        let mut visited = std::collections::HashSet::new();
-        let mut visiting = std::collections::HashSet::new();
+        let mut visited = HashSet::new();
+        let mut visiting = HashSet::new();
 
         // Build specific reference map focusing on inheritance and interface relationships
         // Exclude nested types as they can legitimately reference their containers
-        let mut reference_relationships = std::collections::HashMap::new();
+        let mut reference_relationships = HashMap::new();
         for type_entry in types.all_types() {
             let token = type_entry.token;
             let mut references = Vec::new();
@@ -396,13 +397,10 @@ impl OwnedCircularityValidator {
     /// Returns error if a cycle is detected in the cross-reference relationships.
     fn check_cross_reference_cycle(
         &self,
-        token: crate::metadata::token::Token,
-        reference_relationships: &std::collections::HashMap<
-            crate::metadata::token::Token,
-            Vec<crate::metadata::token::Token>,
-        >,
-        visited: &mut std::collections::HashSet<crate::metadata::token::Token>,
-        visiting: &mut std::collections::HashSet<crate::metadata::token::Token>,
+        token: Token,
+        reference_relationships: &HashMap<Token, Vec<Token>>,
+        visited: &mut HashSet<Token>,
+        visiting: &mut HashSet<Token>,
     ) -> Result<()> {
         // If already completely processed, skip
         if visited.contains(&token) {
@@ -411,7 +409,7 @@ impl OwnedCircularityValidator {
 
         // If currently being processed, we found a cycle
         if visiting.contains(&token) {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Circular cross-reference relationship detected: Type with token 0x{:08X} references itself through relationship chain",
@@ -476,15 +474,24 @@ impl Default for OwnedCircularityValidator {
 mod tests {
     use super::*;
     use crate::{
-        metadata::validation::ValidationConfig,
+        cilassembly::CilAssembly,
+        metadata::{
+            cilassemblyview::CilAssemblyView,
+            tables::{
+                CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeAttributes, TypeDefRaw,
+            },
+            token::Token,
+            validation::ValidationConfig,
+        },
         test::{get_clean_testfile, owned_validator_test, TestAssembly},
+        Error, Result,
     };
 
-    fn owned_circularity_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+    fn owned_circularity_validator_file_factory() -> Result<Vec<TestAssembly>> {
         let mut assemblies = Vec::new();
 
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
+            return Err(Error::Error(
                 "WindowsBase.dll not available - test cannot run".to_string(),
             ));
         };
@@ -492,19 +499,20 @@ mod tests {
         // 1. REQUIRED: Clean assembly - should pass all circularity validation
         assemblies.push(TestAssembly::new(&clean_testfile, true));
 
-        // TODO: Add negative test cases when builder constraints are resolved
-        // These would test:
-        // - Circular inheritance chains (A->B->C->A)
-        // - Circular interface implementation chains
-        // - Circular cross-reference relationships
-        // - Self-referential type definitions
-        // - Complex circular dependency patterns
+        // 2. NEGATIVE: Test circular inheritance chain (A->B->A)
+        assemblies.push(create_assembly_with_circular_inheritance()?);
+
+        // 3. NEGATIVE: Test self-referential type definition
+        assemblies.push(create_assembly_with_self_referential_type()?);
+
+        // 4. NEGATIVE: Test circular interface implementation
+        assemblies.push(create_assembly_with_circular_interface_implementation()?);
 
         Ok(assemblies)
     }
 
     #[test]
-    fn test_owned_circularity_validator() -> crate::Result<()> {
+    fn test_owned_circularity_validator() -> Result<()> {
         let validator = OwnedCircularityValidator::new();
         let config = ValidationConfig {
             enable_cross_table_validation: true,
@@ -518,5 +526,191 @@ mod tests {
             config,
             |context| validator.validate_owned(context),
         )
+    }
+
+    /// Creates an assembly with circular inheritance (A->B->A)
+    fn create_assembly_with_circular_inheritance() -> Result<TestAssembly> {
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
+        };
+        let view = CilAssemblyView::from_file(&clean_testfile)
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+
+        let mut assembly = CilAssembly::new(view);
+
+        // Create type A name
+        let type_a_name_index = assembly
+            .string_add("TypeA")
+            .map_err(|e| Error::Error(format!("Failed to add TypeA name: {e}")))?;
+
+        // Create type B name
+        let type_b_name_index = assembly
+            .string_add("TypeB")
+            .map_err(|e| Error::Error(format!("Failed to add TypeB name: {e}")))?;
+
+        let type_a_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
+        let type_b_rid = type_a_rid + 1;
+
+        // Create TypeA that extends TypeB
+        let type_a = TypeDefRaw {
+            rid: type_a_rid,
+            token: Token::new(0x02000000 + type_a_rid),
+            offset: 0,
+            flags: TypeAttributes::PUBLIC,
+            type_name: type_a_name_index,
+            type_namespace: 0,
+            extends: CodedIndex::new(TableId::TypeDef, type_b_rid, CodedIndexType::TypeDefOrRef), // A extends B
+            field_list: 1,
+            method_list: 1,
+        };
+
+        // Create TypeB that extends TypeA - creates circular inheritance
+        let type_b = TypeDefRaw {
+            rid: type_b_rid,
+            token: Token::new(0x02000000 + type_b_rid),
+            offset: 0,
+            flags: TypeAttributes::PUBLIC,
+            type_name: type_b_name_index,
+            type_namespace: 0,
+            extends: CodedIndex::new(TableId::TypeDef, type_a_rid, CodedIndexType::TypeDefOrRef), // B extends A - circular!
+            field_list: 1,
+            method_list: 1,
+        };
+
+        assembly
+            .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_a))
+            .map_err(|e| Error::Error(format!("Failed to add TypeA: {e}")))?;
+
+        assembly
+            .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_b))
+            .map_err(|e| Error::Error(format!("Failed to add TypeB: {e}")))?;
+
+        let temp_file = tempfile::NamedTempFile::new()
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+
+        assembly
+            .write_to_file(temp_file.path())
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+
+        Ok(TestAssembly::from_temp_file(temp_file, false))
+    }
+
+    /// Creates an assembly with self-referential type definition
+    fn create_assembly_with_self_referential_type() -> Result<TestAssembly> {
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
+        };
+        let view = CilAssemblyView::from_file(&clean_testfile)
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+
+        let mut assembly = CilAssembly::new(view);
+
+        // Create self-referential type name
+        let type_name_index = assembly
+            .string_add("SelfReferentialType")
+            .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
+
+        let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
+
+        // Create type that extends itself - direct circular inheritance
+        let self_ref_type = TypeDefRaw {
+            rid: type_rid,
+            token: Token::new(0x02000000 + type_rid),
+            offset: 0,
+            flags: TypeAttributes::PUBLIC,
+            type_name: type_name_index,
+            type_namespace: 0,
+            extends: CodedIndex::new(TableId::TypeDef, type_rid, CodedIndexType::TypeDefOrRef), // Extends itself!
+            field_list: 1,
+            method_list: 1,
+        };
+
+        assembly
+            .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(self_ref_type))
+            .map_err(|e| Error::Error(format!("Failed to add self-referential type: {e}")))?;
+
+        let temp_file = tempfile::NamedTempFile::new()
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+
+        assembly
+            .write_to_file(temp_file.path())
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+
+        Ok(TestAssembly::from_temp_file(temp_file, false))
+    }
+
+    /// Creates an assembly with circular interface implementation
+    fn create_assembly_with_circular_interface_implementation() -> Result<TestAssembly> {
+        let Some(clean_testfile) = get_clean_testfile() else {
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
+        };
+        let view = CilAssemblyView::from_file(&clean_testfile)
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+
+        let mut assembly = CilAssembly::new(view);
+
+        // Create interface I1 name
+        let interface_i1_name_index = assembly
+            .string_add("IInterface1")
+            .map_err(|e| Error::Error(format!("Failed to add IInterface1 name: {e}")))?;
+
+        // Create interface I2 name
+        let interface_i2_name_index = assembly
+            .string_add("IInterface2")
+            .map_err(|e| Error::Error(format!("Failed to add IInterface2 name: {e}")))?;
+
+        let interface_i1_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
+        let interface_i2_rid = interface_i1_rid + 1;
+
+        // Create IInterface1 that extends IInterface2
+        let interface_i1 = TypeDefRaw {
+            rid: interface_i1_rid,
+            token: Token::new(0x02000000 + interface_i1_rid),
+            offset: 0,
+            flags: TypeAttributes::INTERFACE | TypeAttributes::ABSTRACT | TypeAttributes::PUBLIC,
+            type_name: interface_i1_name_index,
+            type_namespace: 0,
+            extends: CodedIndex::new(
+                TableId::TypeDef,
+                interface_i2_rid,
+                CodedIndexType::TypeDefOrRef,
+            ), // I1 extends I2
+            field_list: 1,
+            method_list: 1,
+        };
+
+        // Create IInterface2 that extends IInterface1 - creates circular interface implementation
+        let interface_i2 = TypeDefRaw {
+            rid: interface_i2_rid,
+            token: Token::new(0x02000000 + interface_i2_rid),
+            offset: 0,
+            flags: TypeAttributes::INTERFACE | TypeAttributes::ABSTRACT | TypeAttributes::PUBLIC,
+            type_name: interface_i2_name_index,
+            type_namespace: 0,
+            extends: CodedIndex::new(
+                TableId::TypeDef,
+                interface_i1_rid,
+                CodedIndexType::TypeDefOrRef,
+            ), // I2 extends I1 - circular!
+            field_list: 1,
+            method_list: 1,
+        };
+
+        assembly
+            .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(interface_i1))
+            .map_err(|e| Error::Error(format!("Failed to add IInterface1: {e}")))?;
+
+        assembly
+            .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(interface_i2))
+            .map_err(|e| Error::Error(format!("Failed to add IInterface2: {e}")))?;
+
+        let temp_file = tempfile::NamedTempFile::new()
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+
+        assembly
+            .write_to_file(temp_file.path())
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+
+        Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 }

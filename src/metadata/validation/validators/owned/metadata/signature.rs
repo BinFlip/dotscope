@@ -76,8 +76,9 @@ use crate::{
         context::{OwnedValidationContext, ValidationContext},
         traits::OwnedValidator,
     },
-    Result,
+    Error, Result,
 };
+use std::collections::HashMap;
 
 /// Foundation validator for method signatures, calling conventions, and signature compatibility.
 ///
@@ -110,6 +111,7 @@ impl OwnedSignatureValidator {
     /// # Thread Safety
     ///
     /// The returned validator is thread-safe and can be used concurrently.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -142,12 +144,12 @@ impl OwnedSignatureValidator {
     fn validate_method_signature_format(&self, context: &OwnedValidationContext) -> Result<()> {
         let methods = context.object().methods();
 
-        for entry in methods.iter() {
+        for entry in methods {
             let method = entry.value();
 
             // Validate method name is not empty (basic signature validation)
             if method.name.is_empty() {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Method with token 0x{:08X} has empty name",
@@ -161,7 +163,7 @@ impl OwnedSignatureValidator {
             if method.signature.return_type.base
                 == crate::metadata::signatures::TypeSignature::Unknown
             {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!("Method '{}' has unresolved return type", method.name),
                     source: None,
@@ -173,7 +175,7 @@ impl OwnedSignatureValidator {
                 // Validate parameter name is reasonable (if present)
                 if let Some(param_name) = &param.name {
                     if param_name.len() > 255 {
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedValidatorFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Method '{}' parameter {} has excessively long name ({} characters)",
@@ -188,7 +190,7 @@ impl OwnedSignatureValidator {
 
                 // Validate parameter has resolved type (copied from method validator)
                 if param.base.get().is_none() {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Method '{}' parameter {} has unresolved type",
@@ -201,7 +203,7 @@ impl OwnedSignatureValidator {
                 // Check for reasonable number of custom attributes on parameters
                 let custom_attr_count = param.custom_attributes.iter().count();
                 if custom_attr_count > 10 {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Method '{}' parameter {} has excessive custom attributes ({})",
@@ -216,7 +218,7 @@ impl OwnedSignatureValidator {
             for (_, generic_param) in method.generic_params.iter() {
                 // Validate generic parameter name
                 if generic_param.name.is_empty() {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Method '{}' has generic parameter with empty name",
@@ -227,7 +229,7 @@ impl OwnedSignatureValidator {
                 }
 
                 if generic_param.name.len() > 255 {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Method '{}' generic parameter '{}' has excessively long name",
@@ -239,7 +241,7 @@ impl OwnedSignatureValidator {
 
                 // Validate generic parameter flags are reasonable
                 if generic_param.flags > 0x001F {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Method '{}' generic parameter '{}' has invalid flags: 0x{:04X}",
@@ -277,11 +279,10 @@ impl OwnedSignatureValidator {
         let methods = context.object().methods();
 
         // Track method signatures by name for compatibility checking
-        let mut method_signatures: std::collections::HashMap<String, Vec<u32>> =
-            std::collections::HashMap::new();
+        let mut method_signatures: HashMap<String, Vec<u32>> = HashMap::new();
 
         // Collect all methods by name
-        for entry in methods.iter() {
+        for entry in methods {
             let method = entry.value();
             method_signatures
                 .entry(method.name.clone())
@@ -293,7 +294,7 @@ impl OwnedSignatureValidator {
         // Allow reasonable number of overloads as found in legitimate .NET libraries
         for (method_name, method_tokens) in method_signatures {
             if method_tokens.len() > 1024 {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Method '{}' has excessive overloads ({}), potential signature complexity issue",
@@ -352,11 +353,11 @@ mod tests {
         test::{get_clean_testfile, owned_validator_test, TestAssembly},
     };
 
-    fn owned_signature_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+    fn owned_signature_validator_file_factory() -> Result<Vec<TestAssembly>> {
         let mut assemblies = Vec::new();
 
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
+            return Err(Error::Error(
                 "WindowsBase.dll not available - test cannot run".to_string(),
             ));
         };
@@ -383,21 +384,19 @@ mod tests {
     }
 
     /// Creates an assembly with a method having an empty name - validation should fail
-    fn create_assembly_with_empty_method_name() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_empty_method_name() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         // Create type to contain the method
         let type_name_index = assembly
             .string_add("TypeWithEmptyMethodName")
-            .map_err(|e| crate::Error::Error(format!("Failed to add type name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
 
         let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
         let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
@@ -417,12 +416,12 @@ mod tests {
         // Create method with empty name
         let empty_name_index = assembly
             .string_add("")
-            .map_err(|e| crate::Error::Error(format!("Failed to add empty method name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add empty method name: {e}")))?;
 
         let signature_bytes = vec![0x00, 0x00]; // Default method signature (no parameters, void return)
         let signature_index = assembly
             .blob_add(&signature_bytes)
-            .map_err(|e| crate::Error::Error(format!("Failed to add signature: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
 
         let invalid_method = MethodDefRaw {
             rid: method_rid,
@@ -438,41 +437,39 @@ mod tests {
 
         assembly
             .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_def))
-            .map_err(|e| crate::Error::Error(format!("Failed to add type: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
 
         assembly
             .table_row_add(
                 TableId::MethodDef,
                 TableDataOwned::MethodDef(invalid_method),
             )
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid method: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid method: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     /// Creates an assembly with a parameter having an excessively long name - validation should fail
-    fn create_assembly_with_long_parameter_name() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_long_parameter_name() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         // Create type to contain the method
         let type_name_index = assembly
             .string_add("TypeWithLongParameterName")
-            .map_err(|e| crate::Error::Error(format!("Failed to add type name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
 
         let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
         let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
@@ -493,13 +490,13 @@ mod tests {
         // Create method name
         let method_name_index = assembly
             .string_add("MethodWithLongParam")
-            .map_err(|e| crate::Error::Error(format!("Failed to add method name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add method name: {e}")))?;
 
         // Create signature with one parameter
         let signature_bytes = vec![0x00, 0x01, 0x01, 0x08]; // 1 parameter, void return, I4 parameter
         let signature_index = assembly
             .blob_add(&signature_bytes)
-            .map_err(|e| crate::Error::Error(format!("Failed to add signature: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
 
         let method_def = MethodDefRaw {
             rid: method_rid,
@@ -517,7 +514,7 @@ mod tests {
         let long_param_name = "a".repeat(300); // 300 characters - should trigger validation failure
         let long_param_name_index = assembly
             .string_add(&long_param_name)
-            .map_err(|e| crate::Error::Error(format!("Failed to add long parameter name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add long parameter name: {e}")))?;
 
         let invalid_param = ParamRaw {
             rid: param_rid,
@@ -530,42 +527,40 @@ mod tests {
 
         assembly
             .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_def))
-            .map_err(|e| crate::Error::Error(format!("Failed to add type: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
 
         assembly
             .table_row_add(TableId::MethodDef, TableDataOwned::MethodDef(method_def))
-            .map_err(|e| crate::Error::Error(format!("Failed to add method: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add method: {e}")))?;
 
         assembly
             .table_row_add(TableId::Param, TableDataOwned::Param(invalid_param))
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid parameter: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid parameter: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     /// Creates an assembly with a parameter having excessive custom attributes - validation should fail
-    fn create_assembly_with_excessive_parameter_attributes() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_excessive_parameter_attributes() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         // Create type to contain the method
         let type_name_index = assembly
             .string_add("TypeWithExcessiveParamAttrs")
-            .map_err(|e| crate::Error::Error(format!("Failed to add type name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
 
         let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
         let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
@@ -586,13 +581,13 @@ mod tests {
         // Create method name
         let method_name_index = assembly
             .string_add("MethodWithExcessiveParamAttrs")
-            .map_err(|e| crate::Error::Error(format!("Failed to add method name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add method name: {e}")))?;
 
         // Create signature with one parameter
         let signature_bytes = vec![0x00, 0x01, 0x01, 0x08]; // 1 parameter, void return, I4 parameter
         let signature_index = assembly
             .blob_add(&signature_bytes)
-            .map_err(|e| crate::Error::Error(format!("Failed to add signature: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
 
         let method_def = MethodDefRaw {
             rid: method_rid,
@@ -609,7 +604,7 @@ mod tests {
         // Create parameter
         let param_name_index = assembly
             .string_add("paramWithManyAttrs")
-            .map_err(|e| crate::Error::Error(format!("Failed to add parameter name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add parameter name: {e}")))?;
 
         let param = ParamRaw {
             rid: param_rid,
@@ -622,42 +617,40 @@ mod tests {
 
         assembly
             .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_def))
-            .map_err(|e| crate::Error::Error(format!("Failed to add type: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
 
         assembly
             .table_row_add(TableId::MethodDef, TableDataOwned::MethodDef(method_def))
-            .map_err(|e| crate::Error::Error(format!("Failed to add method: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add method: {e}")))?;
 
         assembly
             .table_row_add(TableId::Param, TableDataOwned::Param(param))
-            .map_err(|e| crate::Error::Error(format!("Failed to add parameter: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add parameter: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     /// Creates an assembly with a method having unresolved return type - validation should fail
-    fn create_assembly_with_unresolved_return_type() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_unresolved_return_type() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         // Create type to contain the method
         let type_name_index = assembly
             .string_add("TypeWithUnresolvedReturnType")
-            .map_err(|e| crate::Error::Error(format!("Failed to add type name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
 
         let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
         let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
@@ -677,7 +670,7 @@ mod tests {
         // Create method name
         let method_name_index = assembly
             .string_add("MethodWithUnresolvedReturnType")
-            .map_err(|e| crate::Error::Error(format!("Failed to add method name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add method name: {e}")))?;
 
         // Create invalid signature blob with unresolved return type
         // Format: [calling_convention, param_count, return_type, ...params]
@@ -690,7 +683,7 @@ mod tests {
         ];
         let signature_index = assembly
             .blob_add(&invalid_signature_bytes)
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid signature: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid signature: {e}")))?;
 
         let invalid_method = MethodDefRaw {
             rid: method_rid,
@@ -706,41 +699,39 @@ mod tests {
 
         assembly
             .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_def))
-            .map_err(|e| crate::Error::Error(format!("Failed to add type: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
 
         assembly
             .table_row_add(
                 TableId::MethodDef,
                 TableDataOwned::MethodDef(invalid_method),
             )
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid method: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid method: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     /// Creates an assembly with a method having unresolved parameter type - validation should fail
-    fn create_assembly_with_unresolved_parameter_type() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_unresolved_parameter_type() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         // Create type to contain the method
         let type_name_index = assembly
             .string_add("TypeWithUnresolvedParamType")
-            .map_err(|e| crate::Error::Error(format!("Failed to add type name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
 
         let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
         let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
@@ -761,7 +752,7 @@ mod tests {
         // Create method name
         let method_name_index = assembly
             .string_add("MethodWithUnresolvedParamType")
-            .map_err(|e| crate::Error::Error(format!("Failed to add method name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add method name: {e}")))?;
 
         // Create invalid signature blob with unresolved parameter type
         // Format: [calling_convention, param_count, return_type, param1_type, ...]
@@ -775,7 +766,7 @@ mod tests {
         ];
         let signature_index = assembly
             .blob_add(&invalid_signature_bytes)
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid signature: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid signature: {e}")))?;
 
         let invalid_method = MethodDefRaw {
             rid: method_rid,
@@ -792,7 +783,7 @@ mod tests {
         // Create parameter with name (the signature is what has the unresolved type)
         let param_name_index = assembly
             .string_add("unresolvedParam")
-            .map_err(|e| crate::Error::Error(format!("Failed to add parameter name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add parameter name: {e}")))?;
 
         let param = ParamRaw {
             rid: param_rid,
@@ -805,31 +796,31 @@ mod tests {
 
         assembly
             .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_def))
-            .map_err(|e| crate::Error::Error(format!("Failed to add type: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
 
         assembly
             .table_row_add(
                 TableId::MethodDef,
                 TableDataOwned::MethodDef(invalid_method),
             )
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid method: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid method: {e}")))?;
 
         assembly
             .table_row_add(TableId::Param, TableDataOwned::Param(param))
-            .map_err(|e| crate::Error::Error(format!("Failed to add parameter: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add parameter: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     #[test]
-    fn test_owned_signature_validator() -> crate::Result<()> {
+    fn test_owned_signature_validator() -> Result<()> {
         let validator = OwnedSignatureValidator::new();
         let config = ValidationConfig {
             enable_method_validation: true,

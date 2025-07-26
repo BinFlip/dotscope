@@ -69,6 +69,7 @@ impl ParamBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::param::ParamBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             name: None,
@@ -89,6 +90,7 @@ impl ParamBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -111,6 +113,7 @@ impl ParamBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn flags(mut self, flags: u32) -> Self {
         self.flags = Some(flags);
         self
@@ -131,6 +134,7 @@ impl ParamBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn sequence(mut self, sequence: u32) -> Self {
         self.sequence = Some(sequence);
         self

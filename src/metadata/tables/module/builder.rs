@@ -115,6 +115,7 @@ impl ModuleBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::module::ModuleBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             generation: None,
@@ -146,6 +147,7 @@ impl ModuleBuilder {
     /// let builder = ModuleBuilder::new()
     ///     .generation(0); // Always 0 per ECMA-335
     /// ```
+    #[must_use]
     pub fn generation(mut self, generation: u32) -> Self {
         self.generation = Some(generation);
         self
@@ -172,6 +174,7 @@ impl ModuleBuilder {
     /// let builder = ModuleBuilder::new()
     ///     .name("MyLibrary.dll");
     /// ```
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -201,6 +204,7 @@ impl ModuleBuilder {
     ///         0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88
     ///     ]);
     /// ```
+    #[must_use]
     pub fn mvid(mut self, mvid: &[u8; 16]) -> Self {
         self.mvid = Some(*mvid);
         self
@@ -230,6 +234,7 @@ impl ModuleBuilder {
     ///         0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99
     ///     ]);
     /// ```
+    #[must_use]
     pub fn encid(mut self, encid: &[u8; 16]) -> Self {
         self.encid = Some(*encid);
         self
@@ -259,6 +264,7 @@ impl ModuleBuilder {
     ///         0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00
     ///     ]);
     /// ```
+    #[must_use]
     pub fn encbaseid(mut self, encbaseid: &[u8; 16]) -> Self {
         self.encbaseid = Some(*encbaseid);
         self
@@ -370,10 +376,19 @@ fn generate_random_guid() -> [u8; 16] {
 
     static COUNTER: AtomicU64 = AtomicU64::new(1);
 
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
+    let timestamp = u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos(),
+    )
+    .unwrap_or_else(|_| {
+        // Fallback to seconds-based timestamp if nanoseconds overflow
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    });
 
     let counter = COUNTER.fetch_add(1, Ordering::SeqCst);
     let combined = timestamp.wrapping_add(counter);

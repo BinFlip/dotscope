@@ -134,6 +134,7 @@ impl StandAloneSigBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::standalonesig::StandAloneSigBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self { signature: None }
     }
@@ -160,6 +161,7 @@ impl StandAloneSigBuilder {
     /// let builder = StandAloneSigBuilder::new()
     ///     .signature(&[0x00, 0x01, 0x01]); // Simple void method signature
     /// ```
+    #[must_use]
     pub fn signature(mut self, data: &[u8]) -> Self {
         self.signature = Some(data.to_vec());
         self

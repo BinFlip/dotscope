@@ -257,7 +257,11 @@ impl<'a> TableWriter<'a> {
             if let Some(table_mod) = self.assembly.changes().get_table_modifications(table_id) {
                 match table_mod {
                     TableModifications::Replaced(new_rows) => {
-                        row_count = new_rows.len() as u32;
+                        row_count = u32::try_from(new_rows.len()).map_err(|_| {
+                            Error::WriteLayoutFailed {
+                                message: "New table row count exceeds u32 range".to_string(),
+                            }
+                        })?;
                     }
                     TableModifications::Sparse { operations, .. } => {
                         let original_row_count = self.tables_header.table_row_count(table_id);
@@ -297,7 +301,9 @@ impl<'a> TableWriter<'a> {
                     TableModifications::Replaced(new_rows) => {
                         // Write complete replacement
                         self.write_replaced_table_at_offset(new_rows, current_offset)?;
-                        new_rows.len() as u64 * row_size as u64
+                        u64::try_from(new_rows.len()).map_err(|_| Error::WriteTableFailed {
+                            message: "New rows count exceeds u64 range".to_string(),
+                        })? * u64::from(row_size)
                     }
                     TableModifications::Sparse { operations, .. } => {
                         // Apply sparse modifications to original table data
@@ -312,7 +318,7 @@ impl<'a> TableWriter<'a> {
             } else {
                 // Table has no modifications - copy original table data completely
                 let original_row_count = self.tables_header.table_row_count(table_id);
-                let table_size = original_row_count as u64 * row_size as u64;
+                let table_size = u64::from(original_row_count) * u64::from(row_size);
 
                 if table_size > 0 {
                     self.write_table_by_id(table_id, current_offset)?;
@@ -401,22 +407,29 @@ impl<'a> TableWriter<'a> {
     where
         T: RowReadable + RowWritable + Clone,
     {
-        let row_size = T::row_size(self.table_info) as u64;
-        let table_size = table.row_count as u64 * row_size;
+        let row_size = u64::from(T::row_size(self.table_info));
+        let table_size = u64::from(table.row_count) * row_size;
 
         if table_size == 0 {
             return Ok(0);
         }
 
         // Get mutable slice for the entire table
-        let table_slice = self
-            .output
-            .get_mut_slice(table_offset as usize, table_size as usize)?;
+        let table_slice = self.output.get_mut_slice(
+            usize::try_from(table_offset).map_err(|_| Error::WriteLayoutFailed {
+                message: "Table offset exceeds usize range".to_string(),
+            })?,
+            usize::try_from(table_size).map_err(|_| Error::WriteLayoutFailed {
+                message: "Table size exceeds usize range".to_string(),
+            })?,
+        )?;
 
         // Serialize each row by delegating to the row's RowWritable implementation
         let mut current_offset = 0;
         for (row_index, row) in table.iter().enumerate() {
-            let rid = (row_index + 1) as u32; // RIDs are 1-based
+            let rid = u32::try_from(row_index + 1).map_err(|_| Error::WriteLayoutFailed {
+                message: "Row index exceeds u32 range".to_string(),
+            })?; // RIDs are 1-based
             row.row_write(table_slice, &mut current_offset, rid, self.table_info)?;
         }
 
@@ -437,7 +450,12 @@ impl<'a> TableWriter<'a> {
         let header_size = 24 + (present_table_count * 4);
 
         // Get mutable slice for the header
-        let header_slice = self.output.get_mut_slice(offset as usize, header_size)?;
+        let header_slice = self.output.get_mut_slice(
+            usize::try_from(offset).map_err(|_| Error::WriteLayoutFailed {
+                message: "Header offset exceeds usize range".to_string(),
+            })?,
+            header_size,
+        )?;
         let mut pos = 0;
 
         // Write header fields using project's IO functions
@@ -479,20 +497,27 @@ impl<'a> TableWriter<'a> {
     ) -> Result<()> {
         let total_size: u64 = new_rows
             .iter()
-            .map(|row| row.calculate_row_size(self.table_info) as u64)
+            .map(|row| u64::from(row.calculate_row_size(self.table_info)))
             .sum();
 
         if total_size == 0 {
             return Ok(());
         }
 
-        let table_slice = self
-            .output
-            .get_mut_slice(offset as usize, total_size as usize)?;
+        let table_slice = self.output.get_mut_slice(
+            usize::try_from(offset).map_err(|_| Error::WriteLayoutFailed {
+                message: "Table offset exceeds usize range".to_string(),
+            })?,
+            usize::try_from(total_size).map_err(|_| Error::WriteLayoutFailed {
+                message: "Table size exceeds usize range".to_string(),
+            })?,
+        )?;
 
         let mut current_offset = 0;
         for (index, row) in new_rows.iter().enumerate() {
-            let rid = (index + 1) as u32; // RIDs are 1-based
+            let rid = u32::try_from(index + 1).map_err(|_| Error::WriteLayoutFailed {
+                message: "Row index exceeds u32 range".to_string(),
+            })?; // RIDs are 1-based
             row.row_write(table_slice, &mut current_offset, rid, self.table_info)?;
         }
 
@@ -511,10 +536,10 @@ impl<'a> TableWriter<'a> {
         offset: u64,
     ) -> Result<u64> {
         let original_row_count = self.tables_header.table_row_count(table_id);
-        let row_size = self.get_table_row_size(table_id) as u64;
+        let row_size = u64::from(self.get_table_row_size(table_id));
         let remapper = RidRemapper::build_from_operations(operations, original_row_count);
         let final_row_count = remapper.final_row_count();
-        let final_table_size = final_row_count as u64 * row_size;
+        let final_table_size = u64::from(final_row_count) * row_size;
 
         if final_row_count == 0 {
             return Ok(0);
@@ -538,10 +563,15 @@ impl<'a> TableWriter<'a> {
 
             for final_rid in 1..=final_row_count {
                 if let Some(original_rid) = remapper.reverse_lookup(final_rid) {
-                    let row_offset = offset + ((final_rid - 1) as u64 * row_size);
-                    let row_slice = self
-                        .output
-                        .get_mut_slice(row_offset as usize, row_size as usize)?;
+                    let row_offset = offset + (u64::from(final_rid - 1) * row_size);
+                    let row_slice = self.output.get_mut_slice(
+                        usize::try_from(row_offset).map_err(|_| Error::WriteLayoutFailed {
+                            message: "Row offset exceeds usize range".to_string(),
+                        })?,
+                        usize::try_from(row_size).map_err(|_| Error::WriteLayoutFailed {
+                            message: "Row size exceeds usize range".to_string(),
+                        })?,
+                    )?;
                     let mut write_offset = 0;
 
                     if let Some(modified_data) = operation_data.get(&original_rid) {
@@ -560,12 +590,12 @@ impl<'a> TableWriter<'a> {
                                 self.table_info,
                             )?;
                         } else {
-                            return Err(crate::Error::Error(format!(
+                            return Err(Error::Error(format!(
                                 "Cannot read original row {original_rid} from table {table_id:?}"
                             )));
                         }
                     } else {
-                        return Err(crate::Error::Error(format!(
+                        return Err(Error::Error(format!(
                             "Original table {table_id:?} not found during sparse modification writing"
                         )));
                     }

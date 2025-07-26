@@ -118,6 +118,7 @@ impl ConstantBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::constant::ConstantBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             element_type: None,
@@ -150,6 +151,7 @@ impl ConstantBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn element_type(mut self, element_type: u8) -> Self {
         self.element_type = Some(element_type);
         self
@@ -173,6 +175,7 @@ impl ConstantBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn parent(mut self, parent: CodedIndex) -> Self {
         self.parent = Some(parent);
         self
@@ -214,6 +217,7 @@ impl ConstantBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn value(mut self, value: &[u8]) -> Self {
         self.value = Some(value.to_vec());
         self
@@ -232,11 +236,12 @@ impl ConstantBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn string_value(mut self, string_value: &str) -> Self {
         // Encode string as UTF-16 bytes (little-endian)
         let utf16_bytes: Vec<u8> = string_value
             .encode_utf16()
-            .flat_map(|c| c.to_le_bytes())
+            .flat_map(u16::to_le_bytes)
             .collect();
 
         self.element_type = Some(ELEMENT_TYPE::STRING);
@@ -256,6 +261,7 @@ impl ConstantBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn i4_value(mut self, int_value: i32) -> Self {
         self.element_type = Some(ELEMENT_TYPE::I4);
         self.value = Some(int_value.to_le_bytes().to_vec());
@@ -275,9 +281,10 @@ impl ConstantBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn boolean_value(mut self, bool_value: bool) -> Self {
         self.element_type = Some(ELEMENT_TYPE::BOOLEAN);
-        self.value = Some(vec![if bool_value { 1u8 } else { 0u8 }]);
+        self.value = Some(vec![u8::from(bool_value)]);
         self
     }
 
@@ -290,6 +297,7 @@ impl ConstantBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn null_reference_value(mut self) -> Self {
         self.element_type = Some(ELEMENT_TYPE::CLASS);
         self.value = Some(vec![0, 0, 0, 0]); // 4-byte zero value for null references

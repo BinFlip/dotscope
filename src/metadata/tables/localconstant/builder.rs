@@ -80,6 +80,7 @@ impl LocalConstantBuilder {
     ///
     /// let builder = LocalConstantBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             name: None,
@@ -111,6 +112,7 @@ impl LocalConstantBuilder {
     /// let anon_builder = LocalConstantBuilder::new()
     ///     .name("");
     /// ```
+    #[must_use]
     pub fn name<T: Into<String>>(mut self, name: T) -> Self {
         self.name = Some(name.into());
         self
@@ -142,6 +144,7 @@ impl LocalConstantBuilder {
     /// let builder = LocalConstantBuilder::new()
     ///     .signature(&string_signature);
     /// ```
+    #[must_use]
     pub fn signature(mut self, signature: &[u8]) -> Self {
         self.signature = Some(signature.to_vec());
         self

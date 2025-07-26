@@ -248,7 +248,7 @@ impl<'a> NativeTablesWriter<'a> {
 
             if rva >= section_start && rva < section_end {
                 let offset_in_section = rva - section_start;
-                let file_offset = section_layout.file_region.offset + offset_in_section as u64;
+                let file_offset = section_layout.file_region.offset + u64::from(offset_in_section);
                 return Ok(file_offset);
             }
         }
@@ -263,12 +263,13 @@ impl<'a> NativeTablesWriter<'a> {
 
             if rva >= section_start && rva < section_end {
                 let offset_in_section = rva - section_start;
-                let file_offset = section.pointer_to_raw_data as u64 + offset_in_section as u64;
+                let file_offset =
+                    u64::from(section.pointer_to_raw_data) + u64::from(offset_in_section);
                 return Ok(file_offset);
             }
         }
 
-        Ok(rva as u64)
+        Ok(u64::from(rva))
     }
 
     /// Determines if this is a PE32+ format file.

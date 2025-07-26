@@ -124,6 +124,7 @@ impl DeclSecurityBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::declsecurity::DeclSecurityBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             action: None,
@@ -152,6 +153,7 @@ impl DeclSecurityBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn action(mut self, action: SecurityAction) -> Self {
         self.action = Some(action.into());
         self
@@ -170,6 +172,7 @@ impl DeclSecurityBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn action_raw(mut self, action: u16) -> Self {
         self.action = Some(action);
         self
@@ -199,6 +202,7 @@ impl DeclSecurityBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn parent(mut self, parent: CodedIndex) -> Self {
         self.parent = Some(parent);
         self
@@ -231,6 +235,7 @@ impl DeclSecurityBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn permission_set(mut self, permission_set: &[u8]) -> Self {
         self.permission_set = Some(permission_set.to_vec());
         self
@@ -245,6 +250,7 @@ impl DeclSecurityBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn unrestricted_permission_set(mut self) -> Self {
         // Create a minimal unrestricted permission set blob
         // This is a simplified representation - in practice, you'd want to create

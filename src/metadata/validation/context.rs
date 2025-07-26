@@ -203,6 +203,7 @@ impl<'a> RawValidationContext<'a> {
     /// let context = RawValidationContext::new_for_loading(&view, &scanner, &config);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn new_for_loading(
         view: &'a CilAssemblyView,
         scanner: &'a ReferenceScanner,
@@ -251,6 +252,7 @@ impl<'a> RawValidationContext<'a> {
     ///
     /// Returns `Some(&`[`crate::cilassembly::AssemblyChanges`]`)` for modification validation,
     /// `None` for loading validation contexts.
+    #[must_use]
     pub fn changes(&self) -> Option<&AssemblyChanges> {
         self.changes
     }
@@ -260,6 +262,7 @@ impl<'a> RawValidationContext<'a> {
     /// # Returns
     ///
     /// Returns `true` if this context contains assembly changes, `false` otherwise.
+    #[must_use]
     pub fn is_modification_validation(&self) -> bool {
         self.changes.is_some()
     }
@@ -269,6 +272,7 @@ impl<'a> RawValidationContext<'a> {
     /// # Returns
     ///
     /// Returns `true` if this context is for loading validation, `false` otherwise.
+    #[must_use]
     pub fn is_loading_validation(&self) -> bool {
         self.changes.is_none()
     }
@@ -280,12 +284,13 @@ impl<'a> RawValidationContext<'a> {
     /// # Returns
     ///
     /// Returns a reference to the [`crate::metadata::cilassemblyview::CilAssemblyView`] being validated.
+    #[must_use]
     pub fn assembly_view(&self) -> &CilAssemblyView {
         self.view
     }
 }
 
-impl<'a> ValidationContext for RawValidationContext<'a> {
+impl ValidationContext for RawValidationContext<'_> {
     fn validation_stage(&self) -> ValidationStage {
         ValidationStage::Raw
     }
@@ -337,12 +342,13 @@ impl<'a> OwnedValidationContext<'a> {
     ///
     /// This provides access to both raw and fully resolved metadata including type registries,
     /// method maps, and other resolved structures through CilObject's public API.
+    #[must_use]
     pub fn object(&self) -> &CilObject {
         self.object
     }
 }
 
-impl<'a> ValidationContext for OwnedValidationContext<'a> {
+impl ValidationContext for OwnedValidationContext<'_> {
     fn validation_stage(&self) -> ValidationStage {
         ValidationStage::Owned
     }
@@ -358,7 +364,10 @@ impl<'a> ValidationContext for OwnedValidationContext<'a> {
 
 /// Factory functions for creating validation contexts.
 pub mod factory {
-    use super::*;
+    use super::{
+        AssemblyChanges, CilAssemblyView, CilObject, OwnedValidationContext, RawValidationContext,
+        ReferenceScanner, ValidationConfig,
+    };
 
     /// Creates a raw validation context for loading validation.
     pub fn raw_loading_context<'a>(
@@ -391,6 +400,7 @@ pub mod factory {
 
 #[cfg(test)]
 mod tests {
+    #[allow(clippy::wildcard_imports)]
     use super::*;
     use crate::metadata::validation::config::ValidationConfig;
     use std::path::PathBuf;

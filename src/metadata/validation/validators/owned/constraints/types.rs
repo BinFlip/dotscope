@@ -116,6 +116,7 @@ impl OwnedTypeConstraintValidator {
     /// # Thread Safety
     ///
     /// The returned validator is thread-safe and can be used concurrently.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -360,7 +361,7 @@ impl OwnedTypeConstraintValidator {
         for type_entry in types.all_types() {
             // Check base type constraint satisfaction
             if let Some(base_type) = type_entry.base() {
-                self.validate_inheritance_constraints(&type_entry, &base_type)?;
+                Self::validate_inheritance_constraints(&type_entry, &base_type);
             }
 
             // Check interface implementation constraint satisfaction
@@ -383,18 +384,14 @@ impl OwnedTypeConstraintValidator {
     ///
     /// # Returns
     ///
-    /// Returns error if inheritance constraint violations are detected.
-    fn validate_inheritance_constraints(
-        &self,
-        derived_type: &CilType,
-        base_type: &CilType,
-    ) -> Result<()> {
+    /// Validates inheritance constraints.
+    fn validate_inheritance_constraints(derived_type: &CilType, base_type: &CilType) {
         // Skip validation for System types and special relationships
         let derived_fullname = derived_type.fullname();
         let base_fullname = base_type.fullname();
 
         if derived_fullname.starts_with("System.") || base_fullname.starts_with("System.") {
-            return Ok(());
+            return;
         }
 
         // For generic types, verify that constraint satisfaction is maintained
@@ -403,8 +400,6 @@ impl OwnedTypeConstraintValidator {
             // this would check that all generic constraints are properly satisfied
             // through the inheritance relationship
         }
-
-        Ok(())
     }
 
     /// Validates interface implementation constraint satisfaction.
@@ -432,7 +427,7 @@ impl OwnedTypeConstraintValidator {
         if interface_type.flags & TypeAttributes::INTERFACE == 0 {
             // Allow for external interfaces that might not have correct flags
             let is_likely_interface =
-                interface_fullname.contains(".I") || interface_fullname.starts_with("I");
+                interface_fullname.contains(".I") || interface_fullname.starts_with('I');
             if !is_likely_interface {
                 return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),

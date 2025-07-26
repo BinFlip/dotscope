@@ -145,13 +145,13 @@ pub fn calculate_pe_updates(assembly: &CilAssembly, file_layout: &FileLayout) ->
             };
 
             // Check if file offset changed
-            if new_section.file_region.offset != original_section.pointer_to_raw_data as u64 {
+            if new_section.file_region.offset != u64::from(original_section.pointer_to_raw_data) {
                 update.new_file_offset = Some(new_section.file_region.offset);
                 section_table_needs_update = true;
             }
 
             // Check if file size changed
-            if new_section.file_region.size != original_section.size_of_raw_data as u64 {
+            if new_section.file_region.size != u64::from(original_section.size_of_raw_data) {
                 update.new_file_size = Some(new_section.file_region.size as u32);
                 section_table_needs_update = true;
             }
@@ -258,7 +258,7 @@ pub fn update_layout_for_native_tables(
             let size_increase = new_virtual_size - section.virtual_size;
 
             section.virtual_size = new_virtual_size;
-            section.file_region.size += size_increase as u64;
+            section.file_region.size += u64::from(size_increase);
         }
     }
 

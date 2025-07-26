@@ -345,6 +345,10 @@ impl CilType {
     /// * `Ok(())` - External reference set successfully
     /// * `Err(_)` - External reference was already set or other error occurred
     ///
+    /// # Errors
+    ///
+    /// Returns an error if the external reference was already set.
+    ///
     /// ## Thread Safety
     /// This method is thread-safe and can be called concurrently. Only the first
     /// call will succeed in setting the external reference.

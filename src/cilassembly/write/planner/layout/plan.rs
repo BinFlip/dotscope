@@ -89,7 +89,7 @@ use crate::{
         CilAssembly,
     },
     metadata::tables::TableId,
-    Result,
+    Error, Result,
 };
 
 /// Layout plan for section-by-section copy with proper relocations.
@@ -327,7 +327,7 @@ impl LayoutPlan {
             .metadata_streams
             .iter()
             .find(|stream| stream.name == "#~" || stream.name == "#-")
-            .ok_or_else(|| crate::Error::WriteLayoutFailed {
+            .ok_or_else(|| Error::WriteLayoutFailed {
                 message: "Tables stream (#~ or #-) not found in metadata section".to_string(),
             })?;
 
@@ -390,12 +390,10 @@ impl LayoutPlan {
     /// ```
     pub fn summary(&self) -> String {
         let updates_needed = if self.requires_updates() { "Yes" } else { "No" };
-        let size_change = if self.total_size > self.original_size {
-            format!("+{} bytes", self.size_increase())
-        } else if self.total_size < self.original_size {
-            format!("-{} bytes", self.original_size - self.total_size)
-        } else {
-            "unchanged".to_string()
+        let size_change = match self.total_size.cmp(&self.original_size) {
+            std::cmp::Ordering::Greater => format!("+{} bytes", self.size_increase()),
+            std::cmp::Ordering::Less => format!("-{} bytes", self.original_size - self.total_size),
+            std::cmp::Ordering::Equal => "unchanged".to_string(),
         };
 
         format!(

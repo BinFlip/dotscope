@@ -1434,13 +1434,13 @@ mod tests {
     #[test]
     fn read_le_u64() {
         let result = read_le::<u64>(&TEST_BUFFER).unwrap();
-        assert_eq!(result, 0x0807060504030201);
+        assert_eq!(result, 0x0807_0605_0403_0201);
     }
 
     #[test]
     fn read_le_i64() {
         let result = read_le::<i64>(&TEST_BUFFER).unwrap();
-        assert_eq!(result, 0x0807060504030201);
+        assert_eq!(result, 0x0807_0605_0403_0201);
     }
 
     #[test]
@@ -1470,25 +1470,25 @@ mod tests {
     #[test]
     fn read_be_u32() {
         let result = read_be::<u32>(&TEST_BUFFER).unwrap();
-        assert_eq!(result, 0x1020304);
+        assert_eq!(result, 0x0102_0304);
     }
 
     #[test]
     fn read_be_i32() {
         let result = read_be::<i32>(&TEST_BUFFER).unwrap();
-        assert_eq!(result, 0x1020304);
+        assert_eq!(result, 0x0102_0304);
     }
 
     #[test]
     fn read_be_u64() {
         let result = read_be::<u64>(&TEST_BUFFER).unwrap();
-        assert_eq!(result, 0x102030405060708);
+        assert_eq!(result, 0x0102_0304_0506_0708);
     }
 
     #[test]
     fn read_be_i64() {
         let result = read_be::<i64>(&TEST_BUFFER).unwrap();
-        assert_eq!(result, 0x102030405060708);
+        assert_eq!(result, 0x0102_0304_0506_0708);
     }
 
     #[test]

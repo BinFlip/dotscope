@@ -127,6 +127,7 @@ impl ClassLayoutBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::classlayout::ClassLayoutBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             packing_size: None,
@@ -163,6 +164,7 @@ impl ClassLayoutBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn packing_size(mut self, packing: u16) -> Self {
         self.packing_size = Some(packing);
         self
@@ -196,6 +198,7 @@ impl ClassLayoutBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn class_size(mut self, size: u32) -> Self {
         self.class_size = Some(size);
         self
@@ -228,6 +231,7 @@ impl ClassLayoutBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn parent(mut self, parent: Token) -> Self {
         self.parent = Some(parent);
         self
@@ -260,6 +264,8 @@ impl ClassLayoutBuilder {
     /// - Returns error if class_size exceeds 256MB limit
     /// - Returns error if table operations fail
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+        const MAX_CLASS_SIZE: u32 = 0x1000_0000; // 256MB
+
         let packing_size =
             self.packing_size
                 .ok_or_else(|| Error::ModificationInvalidOperation {
@@ -305,7 +311,6 @@ impl ClassLayoutBuilder {
             });
         }
 
-        const MAX_CLASS_SIZE: u32 = 0x1000_0000; // 256MB
         if class_size > MAX_CLASS_SIZE {
             return Err(Error::ModificationInvalidOperation {
                 details: format!(

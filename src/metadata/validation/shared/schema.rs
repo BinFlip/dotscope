@@ -99,6 +99,7 @@ impl<'a> SchemaValidator<'a> {
     /// # Returns
     ///
     /// A new [`SchemaValidator`] instance ready for validation operations.
+    #[must_use]
     pub fn new(scanner: &'a ReferenceScanner) -> Self {
         Self { scanner }
     }
@@ -211,7 +212,7 @@ impl<'a> SchemaValidator<'a> {
         // If we have methods, we must have type definitions that own them
         if methoddef_count > 0 && typedef_count == 0 {
             return Err(Error::ValidationMethodError {
-                method_token: crate::metadata::token::Token::new(0x06000001), // Placeholder MethodDef token
+                method_token: crate::metadata::token::Token::new(0x0600_0001), // Placeholder MethodDef token
                 message: "MethodDef table requires TypeDef table".to_string(),
             });
         }
@@ -253,6 +254,10 @@ impl<'a> SchemaValidator<'a> {
     /// # Returns
     ///
     /// Returns `Ok(())` if all heap references are valid, or the first error encountered.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any heap reference is invalid or out of bounds.
     pub fn validate_heap_references<I>(&self, heap_type: &str, indices: I) -> Result<()>
     where
         I: IntoIterator<Item = u32>,
@@ -357,6 +362,10 @@ impl<'a> SchemaValidator<'a> {
     /// # Returns
     ///
     /// Returns `Ok(())` if the string index is valid, or an error otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the string index is invalid or out of bounds.
     pub fn validate_string_index(&self, index: u32) -> Result<()> {
         self.validate_heap_reference("strings", index)
     }
@@ -373,6 +382,10 @@ impl<'a> SchemaValidator<'a> {
     /// # Returns
     ///
     /// Returns `Ok(())` if the blob index is valid, or an error otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blob index is invalid or out of bounds.
     pub fn validate_blob_index(&self, index: u32) -> Result<()> {
         self.validate_heap_reference("blobs", index)
     }
@@ -389,6 +402,10 @@ impl<'a> SchemaValidator<'a> {
     /// # Returns
     ///
     /// Returns `Ok(())` if the GUID index is valid, or an error otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the GUID index is invalid or out of bounds.
     pub fn validate_guid_index(&self, index: u32) -> Result<()> {
         if index == 0 {
             // Null GUID reference is valid
@@ -421,6 +438,10 @@ impl<'a> SchemaValidator<'a> {
     /// # Returns
     ///
     /// Returns `Ok(())` if the user string index is valid, or an error otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the user string index is invalid or out of bounds.
     pub fn validate_user_string_index(&self, index: u32) -> Result<()> {
         self.validate_heap_reference("userstrings", index)
     }
@@ -433,6 +454,7 @@ impl<'a> SchemaValidator<'a> {
     /// # Returns
     ///
     /// Returns a `SchemaValidationStatistics` struct containing detailed information.
+    #[must_use]
     pub fn get_validation_statistics(&self) -> SchemaValidationStatistics {
         SchemaValidationStatistics {
             total_tables: self.scanner.count_non_empty_tables(),

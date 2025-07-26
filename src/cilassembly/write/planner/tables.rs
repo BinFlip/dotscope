@@ -168,10 +168,10 @@ pub fn create_table_modification_region(
 
     let original_row_count = tables.table_row_count(table_id);
     let row_size = calculate_table_row_size(table_id, &tables.info);
-    let original_size = original_row_count as u64 * row_size as u64;
+    let original_size = u64::from(original_row_count) * u64::from(row_size);
 
     let new_row_count = calc::calculate_new_row_count(assembly, table_id, table_mod)?;
-    let new_size = new_row_count as u64 * row_size as u64;
+    let new_size = u64::from(new_row_count) * u64::from(row_size);
 
     let needs_replacement = matches!(table_mod, TableModifications::Replaced(_));
     Ok(TableModificationRegion {

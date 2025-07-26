@@ -118,6 +118,7 @@ impl RawOperationValidator {
     /// # Thread Safety
     ///
     /// The returned validator is thread-safe and can be used concurrently.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -146,7 +147,6 @@ impl RawOperationValidator {
     /// - Table data types are incompatible with target tables
     /// - RID allocation jumps too far ahead of next available RID
     fn validate_insert_operations(
-        &self,
         table_changes: &HashMap<TableId, TableModifications>,
     ) -> Result<()> {
         for (table_id, modifications) in table_changes {
@@ -170,7 +170,7 @@ impl RawOperationValidator {
                         }
 
                         // Validate RID doesn't exceed reasonable bounds (2^24 - 1 for metadata tokens)
-                        if *rid > 0xFFFFFF {
+                        if *rid > 0xFF_FFFF {
                             return Err(malformed_error!(
                                 "Insert operation for table {:?} has RID {} exceeding maximum metadata token limit",
                                 table_id,
@@ -208,7 +208,7 @@ impl RawOperationValidator {
                         }
 
                         // Validate table data type matches the target table
-                        if !self.validate_table_data_compatibility(*table_id, table_data) {
+                        if !Self::validate_table_data_compatibility(*table_id, table_data) {
                             return Err(malformed_error!(
                                 "Insert operation for table {:?} has incompatible table data type",
                                 table_id
@@ -245,7 +245,6 @@ impl RawOperationValidator {
     /// - Table data types are incompatible with target tables
     /// - Excessive updates target the same RID (potential update loop detection)
     fn validate_update_operations(
-        &self,
         table_changes: &HashMap<TableId, TableModifications>,
     ) -> Result<()> {
         for (table_id, modifications) in table_changes {
@@ -305,7 +304,7 @@ impl RawOperationValidator {
                         }
 
                         // Validate table data type matches the target table
-                        if !self.validate_table_data_compatibility(*table_id, table_data) {
+                        if !Self::validate_table_data_compatibility(*table_id, table_data) {
                             return Err(malformed_error!(
                                 "Update operation for table {:?} has incompatible table data type",
                                 table_id
@@ -342,7 +341,6 @@ impl RawOperationValidator {
     /// - Multiple deletes target the same RID within the same table
     /// - Critical metadata rows are being deleted (Module RID 1, Assembly RID 1)
     fn validate_delete_operations(
-        &self,
         table_changes: &HashMap<TableId, TableModifications>,
     ) -> Result<()> {
         for (table_id, modifications) in table_changes {
@@ -425,7 +423,6 @@ impl RawOperationValidator {
     /// - Multiple insert or delete operations target the same RID
     /// - Update operations occur after delete operations for the same RID
     fn validate_operation_sequences(
-        &self,
         table_changes: &HashMap<TableId, TableModifications>,
     ) -> Result<()> {
         for (table_id, modifications) in table_changes {
@@ -531,11 +528,7 @@ impl RawOperationValidator {
     /// // Incompatible: TypeDef data for Field table
     /// assert!(!validator.validate_table_data_compatibility(TableId::Field, &type_def_data));
     /// ```
-    fn validate_table_data_compatibility(
-        &self,
-        table_id: TableId,
-        table_data: &TableDataOwned,
-    ) -> bool {
+    fn validate_table_data_compatibility(table_id: TableId, table_data: &TableDataOwned) -> bool {
         let data_table_id = table_data.table_id();
         data_table_id == table_id
     }
@@ -579,10 +572,10 @@ impl RawValidator for RawOperationValidator {
         if let Some(changes) = context.changes() {
             let table_changes = &changes.table_changes;
 
-            self.validate_insert_operations(table_changes)?;
-            self.validate_update_operations(table_changes)?;
-            self.validate_delete_operations(table_changes)?;
-            self.validate_operation_sequences(table_changes)?;
+            Self::validate_insert_operations(table_changes)?;
+            Self::validate_update_operations(table_changes)?;
+            Self::validate_delete_operations(table_changes)?;
+            Self::validate_operation_sequences(table_changes)?;
         }
 
         Ok(())
@@ -620,9 +613,10 @@ mod tests {
             tables::{TableDataOwned, TableId, TypeDefRaw},
         },
         test::{get_clean_testfile, validator_test, TestAssembly},
+        Error,
     };
 
-    fn raw_operation_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+    fn raw_operation_validator_file_factory() -> Result<Vec<TestAssembly>> {
         let mut assemblies = Vec::new();
 
         // 1. Clean test assembly (should pass all operation validation when no modifications)
@@ -639,7 +633,7 @@ mod tests {
     }
 
     #[test]
-    fn test_raw_operation_validator() -> crate::Result<()> {
+    fn test_raw_operation_validator() -> Result<()> {
         let validator = RawOperationValidator::new();
         let config = ValidationConfig {
             enable_structural_validation: true,
@@ -656,7 +650,7 @@ mod tests {
     }
 
     #[test]
-    fn test_raw_operation_validator_direct_corruption() -> crate::Result<()> {
+    fn test_raw_operation_validator_direct_corruption() -> Result<()> {
         let validator = RawOperationValidator::new();
 
         {
@@ -754,15 +748,13 @@ mod tests {
     fn test_validator_with_corrupted_changes(
         validator: &RawOperationValidator,
         corrupted_changes: AssemblyChanges,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         use crate::metadata::validation::{
             context::RawValidationContext, scanner::ReferenceScanner,
         };
 
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
 
         let view = CilAssemblyView::from_file(&clean_testfile)?;
@@ -976,11 +968,9 @@ mod tests {
         corrupted_changes
     }
 
-    fn create_assembly_with_invalid_rid_zero() -> crate::Result<tempfile::NamedTempFile> {
+    fn create_assembly_with_invalid_rid_zero() -> Result<tempfile::NamedTempFile> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
 
         // Load clean assembly and create CilAssembly
@@ -1014,11 +1004,9 @@ mod tests {
         create_temp_assembly_with_changes(assembly, corrupted_changes)
     }
 
-    fn create_assembly_with_excessive_rid() -> crate::Result<tempfile::NamedTempFile> {
+    fn create_assembly_with_excessive_rid() -> Result<tempfile::NamedTempFile> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
 
         let view = CilAssemblyView::from_file(&clean_testfile)?;
@@ -1043,11 +1031,9 @@ mod tests {
         create_temp_assembly_with_changes(assembly, corrupted_changes)
     }
 
-    fn create_assembly_with_nonexistent_target() -> crate::Result<tempfile::NamedTempFile> {
+    fn create_assembly_with_nonexistent_target() -> Result<tempfile::NamedTempFile> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
 
         let view = CilAssemblyView::from_file(&clean_testfile)?;
@@ -1072,11 +1058,9 @@ mod tests {
         create_temp_assembly_with_changes(assembly, corrupted_changes)
     }
 
-    fn create_assembly_with_update_after_delete() -> crate::Result<tempfile::NamedTempFile> {
+    fn create_assembly_with_update_after_delete() -> Result<tempfile::NamedTempFile> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
 
         let view = CilAssemblyView::from_file(&clean_testfile)?;
@@ -1109,11 +1093,9 @@ mod tests {
         create_temp_assembly_with_changes(assembly, corrupted_changes)
     }
 
-    fn create_assembly_with_excessive_updates() -> crate::Result<tempfile::NamedTempFile> {
+    fn create_assembly_with_excessive_updates() -> Result<tempfile::NamedTempFile> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
 
         let view = CilAssemblyView::from_file(&clean_testfile)?;
@@ -1142,11 +1124,9 @@ mod tests {
         create_temp_assembly_with_changes(assembly, corrupted_changes)
     }
 
-    fn create_assembly_with_unordered_operations() -> crate::Result<tempfile::NamedTempFile> {
+    fn create_assembly_with_unordered_operations() -> Result<tempfile::NamedTempFile> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
 
         let view = CilAssemblyView::from_file(&clean_testfile)?;
@@ -1180,11 +1160,9 @@ mod tests {
         create_temp_assembly_with_changes(assembly, corrupted_changes)
     }
 
-    fn create_assembly_with_conflicting_inserts() -> crate::Result<tempfile::NamedTempFile> {
+    fn create_assembly_with_conflicting_inserts() -> Result<tempfile::NamedTempFile> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
 
         let view = CilAssemblyView::from_file(&clean_testfile)?;
@@ -1220,7 +1198,7 @@ mod tests {
     fn create_temp_assembly_with_changes(
         _assembly: CilAssembly,
         _corrupted_changes: AssemblyChanges,
-    ) -> crate::Result<tempfile::NamedTempFile> {
+    ) -> Result<tempfile::NamedTempFile> {
         let temp_file = tempfile::NamedTempFile::new()?;
         let temp_path = temp_file.path();
 

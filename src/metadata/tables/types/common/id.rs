@@ -439,6 +439,7 @@ impl TableId {
     /// assert_eq!(TableId::TypeRef.token_type(), 0x01);
     /// assert_eq!(TableId::TypeDef.token_type(), 0x02);
     /// ```
+    #[must_use]
     pub fn token_type(&self) -> u8 {
         *self as u8
     }
@@ -467,6 +468,7 @@ impl TableId {
     /// assert_eq!(TableId::from_token_type(0x02), Some(TableId::TypeDef));
     /// assert_eq!(TableId::from_token_type(0xFF), None);
     /// ```
+    #[must_use]
     pub fn from_token_type(token_type: u8) -> Option<Self> {
         match token_type {
             0x00 => Some(TableId::Module),

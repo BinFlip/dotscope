@@ -183,7 +183,7 @@ impl RelocationEntry {
     /// assert_eq!(raw, (3 << 12) | 0x123);
     /// ```
     pub fn to_raw(&self) -> u16 {
-        ((self.relocation_type as u16) << 12) | (self.offset & 0x0FFF)
+        (u16::from(self.relocation_type) << 12) | (self.offset & 0x0FFF)
     }
 
     /// Gets the size in bytes for this relocation type.

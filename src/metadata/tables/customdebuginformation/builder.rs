@@ -97,6 +97,7 @@ impl CustomDebugInformationBuilder {
     ///
     /// let builder = CustomDebugInformationBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             parent: None,
@@ -137,6 +138,7 @@ impl CustomDebugInformationBuilder {
     /// let builder = CustomDebugInformationBuilder::new()
     ///     .parent(document_parent);
     /// ```
+    #[must_use]
     pub fn parent(mut self, parent: CodedIndex) -> Self {
         self.parent = Some(parent);
         self
@@ -161,6 +163,7 @@ impl CustomDebugInformationBuilder {
     /// let builder = CustomDebugInformationBuilder::new()
     ///     .kind(1);  // Points to Source Link GUID in heap
     /// ```
+    #[must_use]
     pub fn kind(mut self, kind: u32) -> Self {
         self.kind = Some(kind);
         self
@@ -196,6 +199,7 @@ impl CustomDebugInformationBuilder {
     /// let builder = CustomDebugInformationBuilder::new()
     ///     .value(&[]);
     /// ```
+    #[must_use]
     pub fn value(mut self, value: &[u8]) -> Self {
         self.value = Some(value.to_vec());
         self

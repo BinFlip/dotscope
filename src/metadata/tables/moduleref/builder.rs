@@ -106,6 +106,7 @@ impl ModuleRefBuilder {
     /// # use dotscope::prelude::*;
     /// let builder = ModuleRefBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self { name: None }
     }
@@ -126,6 +127,7 @@ impl ModuleRefBuilder {
     /// let builder = ModuleRefBuilder::new()
     ///     .name("System.Core.dll");
     /// ```
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self

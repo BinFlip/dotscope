@@ -94,6 +94,7 @@ impl<'a> TokenValidator<'a> {
     /// # Returns
     ///
     /// A new [`TokenValidator`] instance ready for validation operations.
+    #[must_use]
     pub fn new(scanner: &'a ReferenceScanner) -> Self {
         Self { scanner }
     }
@@ -134,6 +135,7 @@ impl<'a> TokenValidator<'a> {
     /// # Returns
     ///
     /// Returns `true` if the token exists, `false` otherwise.
+    #[must_use]
     pub fn token_exists(&self, token: Token) -> bool {
         self.scanner.token_exists(token)
     }
@@ -150,6 +152,10 @@ impl<'a> TokenValidator<'a> {
     /// # Returns
     ///
     /// Returns `Ok(())` if all tokens are valid, or the first validation error encountered.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any token in the collection is invalid or out of bounds.
     pub fn validate_token_collection<I>(&self, tokens: I) -> Result<()>
     where
         I: IntoIterator<Item = Token>,
@@ -206,6 +212,7 @@ impl<'a> TokenValidator<'a> {
     /// # Returns
     ///
     /// Returns `true` if the token can be safely deleted, `false` if it would break references.
+    #[must_use]
     pub fn can_delete_token(&self, token: Token) -> bool {
         self.scanner.can_delete_token(token)
     }
@@ -222,6 +229,7 @@ impl<'a> TokenValidator<'a> {
     /// # Returns
     ///
     /// A set of tokens that reference the specified token.
+    #[must_use]
     pub fn get_references_to(&self, token: Token) -> std::collections::HashSet<Token> {
         self.scanner.get_references_to(token)
     }
@@ -238,6 +246,7 @@ impl<'a> TokenValidator<'a> {
     /// # Returns
     ///
     /// A set of tokens referenced by the specified token.
+    #[must_use]
     pub fn get_references_from(&self, token: Token) -> std::collections::HashSet<Token> {
         self.scanner.get_references_from(token)
     }
@@ -321,6 +330,7 @@ impl<'a> TokenValidator<'a> {
     /// # Returns
     ///
     /// The number of rows in the table, or 0 if the table doesn't exist.
+    #[must_use]
     pub fn table_row_count(&self, table_id: TableId) -> u32 {
         self.scanner.table_row_count(table_id)
     }
@@ -337,6 +347,10 @@ impl<'a> TokenValidator<'a> {
     /// # Returns
     ///
     /// Returns `Ok(())` if the token is valid, or an error describing the validation failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the token value is invalid or out of bounds for its table.
     pub fn validate_token_value(&self, token_value: u32) -> Result<()> {
         let token = Token::new(token_value);
         self.validate_token_bounds(token)
@@ -355,6 +369,10 @@ impl<'a> TokenValidator<'a> {
     /// # Returns
     ///
     /// Returns `Ok(())` if the row exists, or an error if it doesn't.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the RID is invalid (zero) or out of bounds for the table.
     pub fn validate_table_row(&self, table_id: TableId, rid: u32) -> Result<()> {
         if rid == 0 {
             return Err(Error::ValidationInvalidRid {
@@ -386,6 +404,10 @@ impl<'a> TokenValidator<'a> {
     /// # Returns
     ///
     /// Returns `Ok(())` if all tokens are valid, or the first error encountered.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any token value in the collection is invalid or out of bounds.
     pub fn validate_token_values<I>(&self, token_values: I) -> Result<()>
     where
         I: IntoIterator<Item = u32>,

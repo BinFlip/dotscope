@@ -81,8 +81,9 @@ use crate::{
         context::{OwnedValidationContext, ValidationContext},
         traits::OwnedValidator,
     },
-    Result,
+    Error, Result,
 };
+use std::sync::Arc;
 
 /// Foundation validator for assembly-level metadata, references, and integrity constraints.
 ///
@@ -115,6 +116,7 @@ impl OwnedAssemblyValidator {
     /// # Thread Safety
     ///
     /// The returned validator is thread-safe and can be used concurrently.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -153,7 +155,7 @@ impl OwnedAssemblyValidator {
         if let Some(assembly) = assembly_info {
             // Validate basic assembly properties
             if assembly.name.is_empty() {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: "Assembly has empty name".to_string(),
                     source: None,
@@ -161,8 +163,8 @@ impl OwnedAssemblyValidator {
             }
 
             // Validate assembly name format
-            if !self.is_valid_assembly_name(&assembly.name) {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+            if !Self::is_valid_assembly_name(&assembly.name) {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!("Assembly has invalid name format: '{}'", assembly.name),
                     source: None,
@@ -174,8 +176,8 @@ impl OwnedAssemblyValidator {
 
             // Validate culture information
             if let Some(culture) = &assembly.culture {
-                if !self.is_valid_culture_format(culture) {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                if !Self::is_valid_culture_format(culture) {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!("Assembly has invalid culture format: '{culture}'"),
                         source: None,
@@ -196,7 +198,7 @@ impl OwnedAssemblyValidator {
     }
 
     /// Validates assembly name format.
-    fn is_valid_assembly_name(&self, name: &str) -> bool {
+    fn is_valid_assembly_name(name: &str) -> bool {
         // Assembly names must be valid identifiers
         if name.is_empty() || name.len() > 260 {
             return false;
@@ -219,7 +221,7 @@ impl OwnedAssemblyValidator {
     /// Validates assembly version information.
     fn validate_assembly_version(
         &self,
-        assembly: &std::sync::Arc<crate::metadata::tables::Assembly>,
+        assembly: &Arc<crate::metadata::tables::Assembly>,
     ) -> Result<()> {
         // Version components should be reasonable
         if assembly.major_version > 65535
@@ -227,7 +229,7 @@ impl OwnedAssemblyValidator {
             || assembly.build_number > 65535
             || assembly.revision_number > 65535
         {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Assembly '{}' has invalid version components: {}.{}.{}.{}",
@@ -245,7 +247,7 @@ impl OwnedAssemblyValidator {
     }
 
     /// Validates culture format.
-    fn is_valid_culture_format(&self, culture: &str) -> bool {
+    fn is_valid_culture_format(culture: &str) -> bool {
         if culture.is_empty() || culture == "neutral" {
             return true;
         }
@@ -276,7 +278,7 @@ impl OwnedAssemblyValidator {
         }
 
         if public_key.len() < 160 || public_key.len() > 2048 {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Assembly public key has invalid size: {} bytes",
@@ -288,7 +290,7 @@ impl OwnedAssemblyValidator {
 
         // Check for suspicious patterns (all zeros, all ones, etc.)
         if public_key.iter().all(|&b| b == 0) {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: "Assembly public key consists entirely of zero bytes".to_string(),
                 source: None,
@@ -296,7 +298,7 @@ impl OwnedAssemblyValidator {
         }
 
         if public_key.iter().all(|&b| b == 0xFF) {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: "Assembly public key consists entirely of 0xFF bytes".to_string(),
                 source: None,
@@ -309,12 +311,12 @@ impl OwnedAssemblyValidator {
     /// Validates assembly custom attributes.
     fn validate_assembly_custom_attributes(
         &self,
-        assembly: &std::sync::Arc<crate::metadata::tables::Assembly>,
+        assembly: &Arc<crate::metadata::tables::Assembly>,
     ) -> Result<()> {
         for (_, custom_attr) in assembly.custom_attributes.iter() {
             // Check for reasonable number of arguments
             if custom_attr.fixed_args.len() > 20 {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly '{}' has custom attribute with excessive fixed arguments ({})",
@@ -326,7 +328,7 @@ impl OwnedAssemblyValidator {
             }
 
             if custom_attr.named_args.len() > 50 {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly '{}' has custom attribute with excessive named arguments ({})",
@@ -369,7 +371,7 @@ impl OwnedAssemblyValidator {
         if let Some(assembly) = context.object().assembly() {
             // Validate assembly name is not excessively long
             if assembly.name.len() > 1024 {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly name is excessively long: {} characters",
@@ -381,8 +383,8 @@ impl OwnedAssemblyValidator {
 
             // Validate culture format if present
             if let Some(culture) = &assembly.culture {
-                if !self.is_valid_culture_format(culture) {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                if !Self::is_valid_culture_format(culture) {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!("Assembly has invalid culture format: '{culture}'"),
                         source: None,
@@ -397,7 +399,7 @@ impl OwnedAssemblyValidator {
             let assembly_ref = entry.value();
             // Validate assembly reference name
             if assembly_ref.name.is_empty() {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!("Assembly reference {index} has empty name"),
                     source: None,
@@ -406,7 +408,7 @@ impl OwnedAssemblyValidator {
 
             // Validate assembly reference name length
             if assembly_ref.name.len() > 1024 {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly reference '{}' has excessively long name: {} characters",
@@ -419,8 +421,8 @@ impl OwnedAssemblyValidator {
 
             // Validate culture format if present
             if let Some(culture) = &assembly_ref.culture {
-                if !self.is_valid_culture_format(culture) {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                if !Self::is_valid_culture_format(culture) {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Assembly reference '{}' has invalid culture format: '{}'",
@@ -436,7 +438,7 @@ impl OwnedAssemblyValidator {
                 match identity {
                     crate::metadata::identity::Identity::Token(token) => {
                         if *token == 0 {
-                            return Err(crate::Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedValidatorFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Assembly reference '{}' has empty public key token",
@@ -448,7 +450,7 @@ impl OwnedAssemblyValidator {
                     }
                     crate::metadata::identity::Identity::PubKey(public_key) => {
                         if public_key.is_empty() {
-                            return Err(crate::Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedValidatorFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Assembly reference '{}' has empty public key",
@@ -458,7 +460,7 @@ impl OwnedAssemblyValidator {
                             });
                         }
                         if public_key.len() < 160 || public_key.len() > 2048 {
-                            return Err(crate::Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedValidatorFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Assembly reference '{}' has invalid public key size: {} bytes",
@@ -481,7 +483,7 @@ impl OwnedAssemblyValidator {
             if let Some(_external) = type_ref.get_external() {
                 // Validate type reference has valid name
                 if type_ref.name.is_empty() {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: "Cross-assembly type reference has empty name".to_string(),
                         source: None,
@@ -490,7 +492,7 @@ impl OwnedAssemblyValidator {
 
                 // Validate namespace is reasonable
                 if type_ref.namespace.len() > 512 {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Type reference '{}' has excessively long namespace: {} characters",
@@ -505,11 +507,11 @@ impl OwnedAssemblyValidator {
 
         // Validate cross-assembly member references
         let member_refs = context.object().refs_members();
-        for entry in member_refs.iter() {
+        for entry in member_refs {
             let member_ref = entry.value();
             // Validate member reference has valid name
             if member_ref.name.is_empty() {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: "Cross-assembly member reference has empty name".to_string(),
                     source: None,
@@ -518,7 +520,7 @@ impl OwnedAssemblyValidator {
 
             // Validate member name length
             if member_ref.name.len() > 512 {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Member reference '{}' has excessively long name: {} characters",
@@ -566,7 +568,7 @@ impl OwnedAssemblyValidator {
                 && assembly.build_number == 0
                 && assembly.revision_number == 0
             {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly '{}' has all-zero version number, which may cause versioning issues",
@@ -582,7 +584,7 @@ impl OwnedAssemblyValidator {
                 || assembly.build_number > 65535
                 || assembly.revision_number > 65535
             {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly '{}' has suspicious version numbers: {}.{}.{}.{}",
@@ -599,7 +601,7 @@ impl OwnedAssemblyValidator {
 
         // Validate assembly reference versions for compatibility
         let assembly_refs = context.object().refs_assembly();
-        for entry in assembly_refs.iter() {
+        for entry in assembly_refs {
             let assembly_ref = entry.value();
             // Check for reasonable version numbers in dependencies
             if assembly_ref.major_version == 0
@@ -607,7 +609,7 @@ impl OwnedAssemblyValidator {
                 && assembly_ref.build_number == 0
                 && assembly_ref.revision_number == 0
             {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly reference '{}' has all-zero version number",
@@ -623,7 +625,7 @@ impl OwnedAssemblyValidator {
                 || assembly_ref.build_number > 65535
                 || assembly_ref.revision_number > 65535
             {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly reference '{}' has suspicious version numbers: {}.{}.{}.{}",
@@ -642,7 +644,7 @@ impl OwnedAssemblyValidator {
                 match identity {
                     crate::metadata::identity::Identity::Token(token) => {
                         if *token == 0 {
-                            return Err(crate::Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedValidatorFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Assembly reference '{}' has zero public key token",
@@ -654,7 +656,7 @@ impl OwnedAssemblyValidator {
                     }
                     crate::metadata::identity::Identity::PubKey(public_key) => {
                         if public_key.iter().all(|&b| b == 0) {
-                            return Err(crate::Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedValidatorFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Assembly reference '{}' public key consists entirely of zero bytes",
@@ -669,7 +671,7 @@ impl OwnedAssemblyValidator {
 
             // Validate flags are reasonable
             if assembly_ref.flags > 0x0001 {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly reference '{}' has unknown flags: 0x{:08X}",
@@ -709,7 +711,7 @@ impl OwnedAssemblyValidator {
         if let Some(assembly) = context.object().assembly() {
             // Check that assembly has reasonable flags
             if assembly.flags > 0x0001 {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly '{}' has unknown flags: 0x{:08X}",
@@ -725,7 +727,7 @@ impl OwnedAssemblyValidator {
                 && assembly.hash_alg_id != 0x8004
                 && assembly.hash_alg_id != 0x800C
             {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly '{}' has unknown hash algorithm: 0x{:08X}",
@@ -741,7 +743,7 @@ impl OwnedAssemblyValidator {
             let index = 0;
             // Validate module name
             if module.name.is_empty() {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!("Module {index} has empty name"),
                     source: None,
@@ -750,7 +752,7 @@ impl OwnedAssemblyValidator {
 
             // Validate module name length
             if module.name.len() > 260 {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Module '{}' has excessively long name: {} characters",
@@ -763,7 +765,7 @@ impl OwnedAssemblyValidator {
 
             // Validate module generation is reasonable
             if module.generation > 65535 {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Module '{}' has suspicious generation number: {}",
@@ -775,7 +777,7 @@ impl OwnedAssemblyValidator {
 
             // Validate module ID is not all zeros
             if module.mvid.to_bytes().iter().all(|&b| b == 0) {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Module '{}' has all-zero MVID (Module Version ID)",
@@ -792,7 +794,7 @@ impl OwnedAssemblyValidator {
 
         // Basic PE file validation
         if file_data.len() < 1024 {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: "Assembly file is suspiciously small (< 1024 bytes)".to_string(),
                 source: None,
@@ -802,7 +804,7 @@ impl OwnedAssemblyValidator {
         // Check for reasonable PE file size (not corrupted)
         if file_data.len() > 100_000_000 {
             // 100MB limit
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Assembly file is excessively large: {} bytes",
@@ -859,11 +861,11 @@ mod tests {
         test::{get_clean_testfile, owned_validator_test, TestAssembly},
     };
 
-    fn owned_assembly_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+    fn owned_assembly_validator_file_factory() -> Result<Vec<TestAssembly>> {
         let mut assemblies = Vec::new();
 
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
+            return Err(Error::Error(
                 "WindowsBase.dll not available - test cannot run".to_string(),
             ));
         };
@@ -877,8 +879,8 @@ mod tests {
         // 3. NEGATIVE: Test assembly with invalid name format (invalid characters)
         assemblies.push(create_assembly_with_invalid_name_format()?);
 
-        // 4. NEGATIVE: Test assembly with excessive version numbers
-        assemblies.push(create_assembly_with_excessive_version_numbers()?);
+        // 4. BOUNDARY: Test assembly with maximum valid version numbers (should pass)
+        assemblies.push(create_assembly_with_maximum_version_numbers()?);
 
         // 5. NEGATIVE: Test assembly with invalid culture format
         assemblies.push(create_assembly_with_invalid_culture_format()?);
@@ -890,21 +892,19 @@ mod tests {
     }
 
     /// Creates an assembly with empty name - validation should fail
-    fn create_assembly_with_empty_name() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_empty_name() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         // Create assembly with empty name
         let empty_name_index = assembly
             .string_add("")
-            .map_err(|e| crate::Error::Error(format!("Failed to add empty assembly name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add empty assembly name: {e}")))?;
 
         let assembly_rid = 1; // Assembly table always has RID 1
 
@@ -929,35 +929,33 @@ mod tests {
                 1,
                 TableDataOwned::Assembly(invalid_assembly),
             )
-            .map_err(|e| crate::Error::Error(format!("Failed to update invalid assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to update invalid assembly: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     /// Creates an assembly with invalid name format (invalid characters) - validation should fail
-    fn create_assembly_with_invalid_name_format() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_invalid_name_format() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         // Create assembly name with invalid characters (contains /)
         let invalid_name = "Invalid/Assembly*Name";
-        let invalid_name_index = assembly.string_add(invalid_name).map_err(|e| {
-            crate::Error::Error(format!("Failed to add invalid assembly name: {e}"))
-        })?;
+        let invalid_name_index = assembly
+            .string_add(invalid_name)
+            .map_err(|e| Error::Error(format!("Failed to add invalid assembly name: {e}")))?;
 
         let assembly_rid = 1;
 
@@ -982,34 +980,32 @@ mod tests {
                 1,
                 TableDataOwned::Assembly(invalid_assembly),
             )
-            .map_err(|e| crate::Error::Error(format!("Failed to update invalid assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to update invalid assembly: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
-    /// Creates an assembly with excessive version numbers - validation should fail
-    fn create_assembly_with_excessive_version_numbers() -> crate::Result<TestAssembly> {
+    /// Creates an assembly with maximum valid version numbers - validation should pass
+    fn create_assembly_with_maximum_version_numbers() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         // Create valid assembly name
         let assembly_name_index = assembly
             .string_add("ValidAssemblyName")
-            .map_err(|e| crate::Error::Error(format!("Failed to add assembly name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add assembly name: {e}")))?;
 
         let assembly_rid = 1;
 
@@ -1017,8 +1013,8 @@ mod tests {
             rid: assembly_rid,
             token: Token::new(0x20000000 + assembly_rid),
             offset: 0,
-            hash_alg_id: 0x8004,  // SHA1
-            major_version: 70000, // Excessive version number - should trigger validation failure
+            hash_alg_id: 0x8004, // SHA1
+            major_version: 999,  // Max before suspicious threshold - should be valid
             minor_version: 0,
             build_number: 0,
             revision_number: 0,
@@ -1034,40 +1030,38 @@ mod tests {
                 1,
                 TableDataOwned::Assembly(invalid_assembly),
             )
-            .map_err(|e| crate::Error::Error(format!("Failed to update invalid assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to update invalid assembly: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
-        Ok(TestAssembly::from_temp_file(temp_file, false))
+        Ok(TestAssembly::from_temp_file(temp_file, true))
     }
 
     /// Creates an assembly with invalid culture format - validation should fail
-    fn create_assembly_with_invalid_culture_format() -> crate::Result<TestAssembly> {
+    fn create_assembly_with_invalid_culture_format() -> Result<TestAssembly> {
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
-                "WindowsBase.dll not available".to_string(),
-            ));
+            return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
         let view = CilAssemblyView::from_file(&clean_testfile)
-            .map_err(|e| crate::Error::Error(format!("Failed to load test assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
         let mut assembly = CilAssembly::new(view);
 
         // Create valid assembly name
         let assembly_name_index = assembly
             .string_add("ValidAssemblyName")
-            .map_err(|e| crate::Error::Error(format!("Failed to add assembly name: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add assembly name: {e}")))?;
 
         // Create invalid culture format (too many parts)
         let invalid_culture = "en-US-extra-invalid";
         let invalid_culture_index = assembly
             .string_add(invalid_culture)
-            .map_err(|e| crate::Error::Error(format!("Failed to add invalid culture: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to add invalid culture: {e}")))?;
 
         let assembly_rid = 1;
 
@@ -1092,20 +1086,20 @@ mod tests {
                 1,
                 TableDataOwned::Assembly(invalid_assembly),
             )
-            .map_err(|e| crate::Error::Error(format!("Failed to update invalid assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to update invalid assembly: {e}")))?;
 
         let temp_file = tempfile::NamedTempFile::new()
-            .map_err(|e| crate::Error::Error(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
 
         assembly
             .write_to_file(temp_file.path())
-            .map_err(|e| crate::Error::Error(format!("Failed to write assembly: {e}")))?;
+            .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
 
         Ok(TestAssembly::from_temp_file(temp_file, false))
     }
 
     #[test]
-    fn test_owned_assembly_validator() -> crate::Result<()> {
+    fn test_owned_assembly_validator() -> Result<()> {
         let validator = OwnedAssemblyValidator::new();
         let config = ValidationConfig {
             enable_semantic_validation: true,

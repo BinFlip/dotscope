@@ -118,6 +118,7 @@ impl MethodDebugInformationBuilder {
     /// # use dotscope::prelude::*;
     /// let builder = MethodDebugInformationBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             document: None,
@@ -142,6 +143,7 @@ impl MethodDebugInformationBuilder {
     /// let builder = MethodDebugInformationBuilder::new()
     ///     .document(1);
     /// ```
+    #[must_use]
     pub fn document(mut self, document_index: u32) -> Self {
         self.document = Some(document_index);
         self
@@ -165,6 +167,7 @@ impl MethodDebugInformationBuilder {
     /// let builder = MethodDebugInformationBuilder::new()
     ///     .sequence_points(sequence_data);
     /// ```
+    #[must_use]
     pub fn sequence_points(mut self, data: Vec<u8>) -> Self {
         self.sequence_points = Some(data);
         self
@@ -188,7 +191,8 @@ impl MethodDebugInformationBuilder {
     /// let builder = MethodDebugInformationBuilder::new()
     ///     .sequence_points_parsed(points);
     /// ```
-    pub fn sequence_points_parsed(mut self, points: SequencePoints) -> Self {
+    #[must_use]
+    pub fn sequence_points_parsed(mut self, points: &SequencePoints) -> Self {
         self.sequence_points = Some(points.to_bytes());
         self
     }

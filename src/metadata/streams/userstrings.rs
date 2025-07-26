@@ -236,6 +236,7 @@ impl<'a> UserStrings<'a> {
     ///
     /// This provides access to the complete heap data including the null byte at offset 0
     /// and all userstring entries in their original binary format.
+    #[must_use]
     pub fn data(&self) -> &[u8] {
         self.data
     }
@@ -313,22 +314,20 @@ impl<'a> Iterator for UserStringsIterator<'a> {
         let start_position = self.position;
 
         // Read compressed length according to ECMA-335 II.24.2.4 and .NET runtime implementation
-        let (total_bytes, compressed_length_size) =
-            match read_compressed_int(self.user_strings.data, &mut self.position) {
-                Ok((length, consumed)) => {
-                    // Reset position since read_compressed_int advanced it
-                    self.position -= consumed;
-                    (length, consumed)
-                }
-                Err(_) => {
-                    // Try to skip over bad data by advancing one byte and trying again
-                    self.position += 1;
-                    if self.position < self.user_strings.data.len() {
-                        return self.next(); // Recursive call to try next position
-                    }
-                    return None;
-                }
-            };
+        let (total_bytes, compressed_length_size) = if let Ok((length, consumed)) =
+            read_compressed_int(self.user_strings.data, &mut self.position)
+        {
+            // Reset position since read_compressed_int advanced it
+            self.position -= consumed;
+            (length, consumed)
+        } else {
+            // Try to skip over bad data by advancing one byte and trying again
+            self.position += 1;
+            if self.position < self.user_strings.data.len() {
+                return self.next(); // Recursive call to try next position
+            }
+            return None;
+        };
 
         // Handle zero-length entries (invalid according to .NET spec, but may exist in malformed data)
         if total_bytes == 0 {
@@ -339,16 +338,13 @@ impl<'a> Iterator for UserStringsIterator<'a> {
             return None;
         }
 
-        let string = match self.user_strings.get(start_position) {
-            Ok(string) => string,
-            Err(_) => {
-                // Skip over the malformed entry
-                self.position += compressed_length_size + total_bytes;
-                if self.position < self.user_strings.data.len() {
-                    return self.next(); // Recursive call to try next position
-                }
-                return None;
+        let Ok(string) = self.user_strings.get(start_position) else {
+            // Skip over the malformed entry
+            self.position += compressed_length_size + total_bytes;
+            if self.position < self.user_strings.data.len() {
+                return self.next(); // Recursive call to try next position
             }
+            return None;
         };
 
         let new_position = self.position + compressed_length_size + total_bytes;

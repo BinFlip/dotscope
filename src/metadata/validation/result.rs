@@ -121,6 +121,7 @@ impl ValidationResult {
     /// assert!(result.is_success());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn success() -> Self {
         Self {
             outcomes: Vec::new(),
@@ -143,6 +144,7 @@ impl ValidationResult {
     /// # Returns
     ///
     /// Returns a [`crate::metadata::validation::result::ValidationResult`] aggregating all individual results.
+    #[must_use]
     pub fn from_results(results: Vec<Result<()>>, duration: Duration) -> Self {
         let mut outcomes = Vec::with_capacity(results.len());
         let mut success = true;
@@ -179,6 +181,7 @@ impl ValidationResult {
     ///
     /// * `named_results` - Pairs of (validator_name, result)
     /// * `duration` - Total time spent on validation
+    #[must_use]
     pub fn from_named_results(named_results: Vec<(&str, Result<()>)>, duration: Duration) -> Self {
         let mut outcomes = Vec::with_capacity(named_results.len());
         let mut success = true;
@@ -211,6 +214,7 @@ impl ValidationResult {
     /// # Arguments
     ///
     /// * `results` - Collection of validation results to combine
+    #[must_use]
     pub fn combine(results: Vec<ValidationResult>) -> Self {
         let mut combined_outcomes = Vec::new();
         let mut total_validator_count = 0;
@@ -233,31 +237,37 @@ impl ValidationResult {
     }
 
     /// Returns whether the validation was successful.
+    #[must_use]
     pub fn is_success(&self) -> bool {
         self.success
     }
 
     /// Returns whether the validation failed.
+    #[must_use]
     pub fn is_failure(&self) -> bool {
         !self.success
     }
 
     /// Returns the number of validators that ran.
+    #[must_use]
     pub fn validator_count(&self) -> usize {
         self.validator_count
     }
 
     /// Returns the total validation duration.
+    #[must_use]
     pub fn duration(&self) -> Duration {
         self.duration
     }
 
     /// Returns all validation outcomes.
+    #[must_use]
     pub fn outcomes(&self) -> &[ValidationOutcome] {
         &self.outcomes
     }
 
     /// Returns only the failed validation outcomes.
+    #[must_use]
     pub fn failures(&self) -> Vec<&ValidationOutcome> {
         self.outcomes
             .iter()
@@ -266,6 +276,7 @@ impl ValidationResult {
     }
 
     /// Returns the number of failed validators.
+    #[must_use]
     pub fn failure_count(&self) -> usize {
         self.outcomes
             .iter()
@@ -274,6 +285,7 @@ impl ValidationResult {
     }
 
     /// Returns all errors from failed validations.
+    #[must_use]
     pub fn errors(&self) -> Vec<&Error> {
         self.outcomes
             .iter()
@@ -285,6 +297,10 @@ impl ValidationResult {
     ///
     /// If validation was successful, returns `Ok(())`. If validation failed,
     /// returns an appropriate error containing details about the failures.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if validation failed, containing details about all validation failures.
     pub fn into_result(self) -> Result<()> {
         if self.is_success() {
             Ok(())
@@ -305,6 +321,7 @@ impl ValidationResult {
     }
 
     /// Returns the first error if validation failed.
+    #[must_use]
     pub fn first_error(&self) -> Option<&Error> {
         self.failures().first().and_then(|outcome| outcome.error())
     }
@@ -374,6 +391,7 @@ impl ValidationOutcome {
     /// # Arguments
     ///
     /// * `validator_name` - Name of the validator that succeeded
+    #[must_use]
     pub fn success(validator_name: String) -> Self {
         Self {
             validator_name,
@@ -389,6 +407,7 @@ impl ValidationOutcome {
     ///
     /// * `validator_name` - Name of the validator that succeeded
     /// * `duration` - Time spent on validation
+    #[must_use]
     pub fn success_with_duration(validator_name: String, duration: Duration) -> Self {
         Self {
             validator_name,
@@ -404,6 +423,7 @@ impl ValidationOutcome {
     ///
     /// * `validator_name` - Name of the validator that failed
     /// * `error` - The validation error
+    #[must_use]
     pub fn failure(validator_name: String, error: Error) -> Self {
         Self {
             validator_name,
@@ -420,6 +440,7 @@ impl ValidationOutcome {
     /// * `validator_name` - Name of the validator that failed
     /// * `error` - The validation error
     /// * `duration` - Time spent on validation
+    #[must_use]
     pub fn failure_with_duration(validator_name: String, error: Error, duration: Duration) -> Self {
         Self {
             validator_name,
@@ -430,26 +451,31 @@ impl ValidationOutcome {
     }
 
     /// Returns the validator name.
+    #[must_use]
     pub fn validator_name(&self) -> &str {
         &self.validator_name
     }
 
     /// Returns whether the validation succeeded.
+    #[must_use]
     pub fn is_success(&self) -> bool {
         self.success
     }
 
     /// Returns whether the validation failed.
+    #[must_use]
     pub fn is_failure(&self) -> bool {
         !self.success
     }
 
     /// Returns the error if validation failed.
+    #[must_use]
     pub fn error(&self) -> Option<&Error> {
         self.error.as_ref()
     }
 
     /// Returns the validation duration.
+    #[must_use]
     pub fn duration(&self) -> Duration {
         self.duration
     }
@@ -467,7 +493,7 @@ impl fmt::Display for ValidationOutcome {
                 self.duration,
                 self.error
                     .as_ref()
-                    .map(|e| e.to_string())
+                    .map(ToString::to_string)
                     .as_deref()
                     .unwrap_or("Unknown error")
             )
@@ -515,6 +541,7 @@ pub struct TwoStageValidationResult {
 
 impl TwoStageValidationResult {
     /// Creates a new two-stage validation result.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             stage1_result: None,
@@ -536,40 +563,50 @@ impl TwoStageValidationResult {
     }
 
     /// Returns the Stage 1 result if available.
+    #[must_use]
     pub fn stage1_result(&self) -> Option<&ValidationResult> {
         self.stage1_result.as_ref()
     }
 
     /// Returns the Stage 2 result if available.
+    #[must_use]
     pub fn stage2_result(&self) -> Option<&ValidationResult> {
         self.stage2_result.as_ref()
     }
 
     /// Returns whether Stage 1 passed.
+    #[must_use]
     pub fn stage1_passed(&self) -> bool {
         self.stage1_result
             .as_ref()
-            .is_none_or(|result| result.is_success())
+            .is_none_or(ValidationResult::is_success)
     }
 
     /// Returns whether Stage 2 passed.
+    #[must_use]
     pub fn stage2_passed(&self) -> bool {
         self.stage2_result
             .as_ref()
-            .is_none_or(|result| result.is_success())
+            .is_none_or(ValidationResult::is_success)
     }
 
     /// Returns whether both stages passed.
+    #[must_use]
     pub fn is_success(&self) -> bool {
         self.stage1_passed() && self.stage2_passed()
     }
 
     /// Returns the total validation duration.
+    #[must_use]
     pub fn total_duration(&self) -> Duration {
         self.total_duration
     }
 
     /// Converts this result into a standard `Result<(), Error>`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if validation failed in either stage, containing details about the failure.
     pub fn into_result(self) -> Result<()> {
         if let Some(stage1) = &self.stage1_result {
             if stage1.is_failure() {

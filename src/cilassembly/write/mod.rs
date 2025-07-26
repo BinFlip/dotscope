@@ -92,7 +92,7 @@ use crate::{
         },
         CilAssembly,
     },
-    Result,
+    Error, Result,
 };
 
 pub(crate) use planner::HeapExpansions;
@@ -306,7 +306,10 @@ impl<'a> WriteContext<'a> {
         // Pre-calculate expensive RVA and offset information
         let cor20_header = view.cor20header();
         let original_metadata_rva = cor20_header.meta_data_rva;
-        let original_cor20_rva = view.file().clr().0 as u32;
+        let original_cor20_rva =
+            u32::try_from(view.file().clr().0).map_err(|_| Error::WriteLayoutFailed {
+                message: "CLR header RVA exceeds u32 range".to_string(),
+            })?;
 
         let (
             metadata_file_offset,
@@ -317,15 +320,15 @@ impl<'a> WriteContext<'a> {
             let metadata_offset_in_sec =
                 original_metadata_rva - orig_metadata_section.virtual_address;
             let cor20_offset_in_sec = original_cor20_rva - orig_metadata_section.virtual_address;
-            let metadata_file_off =
-                orig_metadata_section.pointer_to_raw_data as u64 + metadata_offset_in_sec as u64;
-            let cor20_file_off =
-                orig_metadata_section.pointer_to_raw_data as u64 + cor20_offset_in_sec as u64;
+            let metadata_file_off = u64::from(orig_metadata_section.pointer_to_raw_data)
+                + u64::from(metadata_offset_in_sec);
+            let cor20_file_off = u64::from(orig_metadata_section.pointer_to_raw_data)
+                + u64::from(cor20_offset_in_sec);
             (
                 metadata_file_off,
                 cor20_file_off,
-                metadata_offset_in_sec as u64,
-                cor20_offset_in_sec as u64,
+                u64::from(metadata_offset_in_sec),
+                u64::from(cor20_offset_in_sec),
             )
         } else {
             (0, 0, 0, 0)
@@ -392,8 +395,12 @@ fn copy_pe_headers(
         context,
         mmap_file,
         0,
-        dos_region.offset as usize,
-        dos_region.size as usize,
+        usize::try_from(dos_region.offset).map_err(|_| Error::WriteLayoutFailed {
+            message: "DOS header offset exceeds usize range".to_string(),
+        })?,
+        usize::try_from(dos_region.size).map_err(|_| Error::WriteLayoutFailed {
+            message: "DOS header size exceeds usize range".to_string(),
+        })?,
     )?;
 
     // Copy PE headers (PE signature + COFF + Optional header)
@@ -401,9 +408,15 @@ fn copy_pe_headers(
     copy_data_region(
         context,
         mmap_file,
-        pe_region.offset as usize,
-        pe_region.offset as usize,
-        pe_region.size as usize,
+        usize::try_from(pe_region.offset).map_err(|_| Error::WriteLayoutFailed {
+            message: "PE header source offset exceeds usize range".to_string(),
+        })?,
+        usize::try_from(pe_region.offset).map_err(|_| Error::WriteLayoutFailed {
+            message: "PE header target offset exceeds usize range".to_string(),
+        })?,
+        usize::try_from(pe_region.size).map_err(|_| Error::WriteLayoutFailed {
+            message: "PE header size exceeds usize range".to_string(),
+        })?,
     )
 }
 
@@ -427,7 +440,10 @@ fn copy_section_table(
     // Calculate original section table location
     let pe_headers_end =
         layout_plan.file_layout.pe_headers.offset + layout_plan.file_layout.pe_headers.size;
-    let original_section_table_offset = pe_headers_end as usize;
+    let original_section_table_offset =
+        usize::try_from(pe_headers_end).map_err(|_| Error::WriteLayoutFailed {
+            message: "Section table offset exceeds usize range".to_string(),
+        })?;
     let _section_table_size = layout_plan.file_layout.sections.len() * 40; // 40 bytes per section entry
 
     // Write the new section table based on our calculated layout
@@ -462,7 +478,12 @@ fn copy_section_table(
                     .unwrap()
                     * 40);
             let orig_section_data = &context.data[orig_section_offset..orig_section_offset + 40];
-            let output_slice = mmap_file.get_mut_slice(section_entry_offset as usize, 40)?;
+            let output_slice = mmap_file.get_mut_slice(
+                usize::try_from(section_entry_offset).map_err(|_| Error::WriteLayoutFailed {
+                    message: "Section entry offset exceeds usize range".to_string(),
+                })?,
+                40,
+            )?;
             output_slice.copy_from_slice(orig_section_data);
 
             // Update with new layout values
@@ -476,12 +497,20 @@ fn copy_section_table(
             // Update SizeOfRawData (offset 16)
             mmap_file.write_u32_le_at(
                 section_entry_offset + 16,
-                new_section_layout.file_region.size as u32,
+                u32::try_from(new_section_layout.file_region.size).map_err(|_| {
+                    Error::WriteLayoutFailed {
+                        message: "Section raw size exceeds u32 range".to_string(),
+                    }
+                })?,
             )?;
             // Update PointerToRawData (offset 20)
             mmap_file.write_u32_le_at(
                 section_entry_offset + 20,
-                new_section_layout.file_region.offset as u32,
+                u32::try_from(new_section_layout.file_region.offset).map_err(|_| {
+                    Error::WriteLayoutFailed {
+                        message: "Section raw offset exceeds u32 range".to_string(),
+                    }
+                })?,
             )?;
             // Update Characteristics (offset 36)
             mmap_file.write_u32_le_at(
@@ -490,7 +519,12 @@ fn copy_section_table(
             )?;
         } else if new_section_layout.name == ".meta" {
             // Handle new .meta section - create section header from scratch
-            let output_slice = mmap_file.get_mut_slice(section_entry_offset as usize, 40)?;
+            let output_slice = mmap_file.get_mut_slice(
+                usize::try_from(section_entry_offset).map_err(|_| Error::WriteLayoutFailed {
+                    message: "Meta section entry offset exceeds usize range".to_string(),
+                })?,
+                40,
+            )?;
 
             // Initialize with zeros
             output_slice.fill(0);
@@ -508,11 +542,19 @@ fn copy_section_table(
             output_slice[12..16].copy_from_slice(&virtual_addr_bytes);
 
             // Write SizeOfRawData (offset 16)
-            let raw_size_bytes = (new_section_layout.file_region.size as u32).to_le_bytes();
+            let raw_size_bytes = u32::try_from(new_section_layout.file_region.size)
+                .map_err(|_| Error::WriteLayoutFailed {
+                    message: "Meta section raw size exceeds u32 range".to_string(),
+                })?
+                .to_le_bytes();
             output_slice[16..20].copy_from_slice(&raw_size_bytes);
 
             // Write PointerToRawData (offset 20)
-            let raw_ptr_bytes = (new_section_layout.file_region.offset as u32).to_le_bytes();
+            let raw_ptr_bytes = u32::try_from(new_section_layout.file_region.offset)
+                .map_err(|_| Error::WriteLayoutFailed {
+                    message: "Meta section raw pointer exceeds u32 range".to_string(),
+                })?
+                .to_le_bytes();
             output_slice[20..24].copy_from_slice(&raw_ptr_bytes);
 
             // Write Characteristics (offset 36)
@@ -559,12 +601,24 @@ fn copy_sections_to_new_locations(
                 continue;
             }
 
-            let new_offset = new_section_layout.file_region.offset as usize;
+            let new_offset =
+                usize::try_from(new_section_layout.file_region.offset).map_err(|_| {
+                    Error::WriteLayoutFailed {
+                        message: "Section new offset exceeds usize range".to_string(),
+                    }
+                })?;
 
             // Check if this section copy would overwrite the section table
-            let section_table_start = layout_plan.file_layout.section_table.offset as usize;
-            let section_table_end =
-                section_table_start + layout_plan.file_layout.section_table.size as usize;
+            let section_table_start = usize::try_from(layout_plan.file_layout.section_table.offset)
+                .map_err(|_| Error::WriteLayoutFailed {
+                    message: "Section table start exceeds usize range".to_string(),
+                })?;
+            let section_table_end = section_table_start
+                + usize::try_from(layout_plan.file_layout.section_table.size).map_err(|_| {
+                    Error::WriteLayoutFailed {
+                        message: "Section table size exceeds usize range".to_string(),
+                    }
+                })?;
 
             if new_offset < section_table_end && new_offset + original_size > section_table_start {
                 // Section copy would overwrite section table - skip or handle accordingly
@@ -572,8 +626,14 @@ fn copy_sections_to_new_locations(
 
             // Copy the entire section content to preserve any non-metadata parts
             // For metadata sections, stream writers will later overwrite the metadata portions
-            let copy_size =
-                std::cmp::min(original_size, new_section_layout.file_region.size as usize);
+            let copy_size = std::cmp::min(
+                original_size,
+                usize::try_from(new_section_layout.file_region.size).map_err(|_| {
+                    Error::WriteLayoutFailed {
+                        message: "Section region size exceeds usize range".to_string(),
+                    }
+                })?,
+            );
             copy_data_region(context, mmap_file, original_offset, new_offset, copy_size)?;
         } else if new_section_layout.name == ".meta" && new_section_layout.contains_metadata {
             // Special case: .meta section doesn't have a matching original section
@@ -615,15 +675,21 @@ fn copy_original_metadata_to_meta_section(
     copy_data_region(
         context,
         mmap_file,
-        original_cor20_file_offset as usize,
-        new_cor20_offset as usize,
-        cor20_size as usize,
+        usize::try_from(original_cor20_file_offset).map_err(|_| Error::WriteLayoutFailed {
+            message: "COR20 source file offset exceeds usize range".to_string(),
+        })?,
+        usize::try_from(new_cor20_offset).map_err(|_| Error::WriteLayoutFailed {
+            message: "COR20 target offset exceeds usize range".to_string(),
+        })?,
+        usize::try_from(cor20_size).map_err(|_| Error::WriteLayoutFailed {
+            message: "COR20 size exceeds usize range".to_string(),
+        })?,
     )?;
 
     // Copy only the metadata root signature, version, and flags (but NOT the stream directory)
     // The metadata RVA in COR20 header points to where the metadata root should be
     let metadata_rva_offset_from_cor20 = original_metadata_rva - cor20_rva;
-    let metadata_root_target_offset = new_cor20_offset + metadata_rva_offset_from_cor20 as u64;
+    let metadata_root_target_offset = new_cor20_offset + u64::from(metadata_rva_offset_from_cor20);
 
     // Only copy the fixed part: signature(4) + major(2) + minor(2) + reserved(4) + length(4) + version_string + flags(2) + stream_count(2)
     // But NOT the actual stream directory entries that follow
@@ -632,15 +698,29 @@ fn copy_original_metadata_to_meta_section(
     copy_data_region(
         context,
         mmap_file,
-        original_metadata_file_offset as usize,
-        metadata_root_target_offset as usize,
-        fixed_metadata_header_size as usize,
+        usize::try_from(original_metadata_file_offset).map_err(|_| Error::WriteLayoutFailed {
+            message: "Metadata file offset exceeds usize range".to_string(),
+        })?,
+        usize::try_from(metadata_root_target_offset).map_err(|_| Error::WriteLayoutFailed {
+            message: "Metadata root target offset exceeds usize range".to_string(),
+        })?,
+        usize::try_from(fixed_metadata_header_size).map_err(|_| Error::WriteLayoutFailed {
+            message: "Metadata header size exceeds usize range".to_string(),
+        })?,
     )?;
 
     // Write the correct stream count based on the actual streams in the layout
     let stream_count_offset = metadata_root_target_offset + fixed_metadata_header_size;
-    let stream_count = context.view.streams().len() as u16; // Use actual number of streams
-    let stream_count_slice = mmap_file.get_mut_slice(stream_count_offset as usize, 2)?;
+    let stream_count =
+        u16::try_from(context.view.streams().len()).map_err(|_| Error::WriteLayoutFailed {
+            message: "Stream count exceeds u16 range".to_string(),
+        })?; // Use actual number of streams
+    let stream_count_slice = mmap_file.get_mut_slice(
+        usize::try_from(stream_count_offset).map_err(|_| Error::WriteLayoutFailed {
+            message: "Stream count offset exceeds usize range".to_string(),
+        })?,
+        2,
+    )?;
     stream_count_slice.copy_from_slice(&stream_count.to_le_bytes());
 
     for stream_layout in &meta_section_layout.metadata_streams {
@@ -652,21 +732,35 @@ fn copy_original_metadata_to_meta_section(
 
         if let Some(orig_stream) = original_stream {
             let original_stream_file_offset =
-                original_metadata_file_offset + orig_stream.offset as u64;
+                original_metadata_file_offset + u64::from(orig_stream.offset);
             let original_stream_size = orig_stream.size as usize;
 
             // Ensure we don't read beyond the original file
-            if original_stream_file_offset + original_stream_size as u64
-                <= context.data.len() as u64
+            if original_stream_file_offset
+                + u64::try_from(original_stream_size).map_err(|_| Error::WriteLayoutFailed {
+                    message: "Stream size exceeds u64 range".to_string(),
+                })?
+                <= u64::try_from(context.data.len()).map_err(|_| Error::WriteLayoutFailed {
+                    message: "Data length exceeds u64 range".to_string(),
+                })?
             {
-                let new_stream_offset = stream_layout.file_region.offset as usize;
+                let new_stream_offset =
+                    usize::try_from(stream_layout.file_region.offset).map_err(|_| {
+                        Error::WriteLayoutFailed {
+                            message: "Stream offset exceeds usize range".to_string(),
+                        }
+                    })?;
 
                 // Always copy the complete original stream data to the new location
                 // This ensures that unmodified data is preserved correctly
                 copy_data_region(
                     context,
                     mmap_file,
-                    original_stream_file_offset as usize,
+                    usize::try_from(original_stream_file_offset).map_err(|_| {
+                        Error::WriteLayoutFailed {
+                            message: "Original stream file offset exceeds usize range".to_string(),
+                        }
+                    })?,
                     new_stream_offset,
                     original_stream_size,
                 )?;
@@ -698,7 +792,7 @@ fn update_metadata_root(
         .sections
         .iter()
         .find(|section| section.contains_metadata && section.name == ".meta")
-        .ok_or_else(|| crate::Error::WriteLayoutFailed {
+        .ok_or_else(|| Error::WriteLayoutFailed {
             message: "No .meta section found for metadata root update".to_string(),
         })?;
 
@@ -706,7 +800,10 @@ fn update_metadata_root(
 
     // Calculate the metadata root location within the .meta section
     // Use the same calculation as copy_original_metadata_to_meta_section to ensure alignment
-    let original_cor20_rva = view.file().clr().0 as u32;
+    let original_cor20_rva =
+        u32::try_from(view.file().clr().0).map_err(|_| Error::WriteLayoutFailed {
+            message: "CLR header RVA exceeds u32 range (update_metadata_root)".to_string(),
+        })?;
     let original_metadata_rva = view.cor20header().meta_data_rva;
     let metadata_rva_offset_from_cor20 = original_metadata_rva - original_cor20_rva;
 
@@ -723,8 +820,8 @@ fn update_metadata_root(
         .unwrap();
 
     let cor20_offset_in_section = original_cor20_rva - original_metadata_section.virtual_address;
-    let new_cor20_offset = metadata_section.file_region.offset + cor20_offset_in_section as u64;
-    let metadata_root_offset = new_cor20_offset + metadata_rva_offset_from_cor20 as u64;
+    let new_cor20_offset = metadata_section.file_region.offset + u64::from(cor20_offset_in_section);
+    let metadata_root_offset = new_cor20_offset + u64::from(metadata_rva_offset_from_cor20);
 
     // Calculate the stream directory offset within the metadata root
     // Based on ECMA-335 II.24.2.1: metadata root = signature + version info + stream directory
@@ -747,7 +844,13 @@ fn update_metadata_root(
             let relative_stream_offset = stream_layout.file_region.offset - metadata_root_offset;
 
             // Write offset (4 bytes, little-endian)
-            stream_directory_data.extend_from_slice(&(relative_stream_offset as u32).to_le_bytes());
+            stream_directory_data.extend_from_slice(
+                &u32::try_from(relative_stream_offset)
+                    .map_err(|_| Error::WriteLayoutFailed {
+                        message: "Stream offset exceeds u32 range".to_string(),
+                    })?
+                    .to_le_bytes(),
+            );
 
             // For heap streams, recalculate the actual heap size to ensure accuracy
             let actual_stream_size = if stream_layout.name == "#Strings" {
@@ -758,7 +861,11 @@ fn update_metadata_root(
                 {
                     // Recalculate the total reconstructed heap size to match what the heap writer actually produces
                     match calculate_string_heap_total_size(string_changes, assembly) {
-                        Ok(total_size) => total_size as u32,
+                        Ok(total_size) => {
+                            u32::try_from(total_size).map_err(|_| Error::WriteLayoutFailed {
+                                message: "String heap size exceeds u32 range".to_string(),
+                            })?
+                        }
                         Err(_) => stream_layout.size,
                     }
                 } else {
@@ -772,7 +879,11 @@ fn update_metadata_root(
                 {
                     // Recalculate the total reconstructed heap size to match what the heap writer actually produces
                     match HeapExpansions::calculate_guid_heap_size(assembly) {
-                        Ok(total_size) => total_size as u32,
+                        Ok(total_size) => {
+                            u32::try_from(total_size).map_err(|_| Error::WriteLayoutFailed {
+                                message: "String heap size exceeds u32 range".to_string(),
+                            })?
+                        }
                         Err(_) => stream_layout.size,
                     }
                 } else {
@@ -786,7 +897,11 @@ fn update_metadata_root(
                 {
                     // Recalculate the total reconstructed heap size to match what the heap writer actually produces
                     match calculate_userstring_heap_total_size(userstring_changes, assembly) {
-                        Ok(total_size) => total_size as u32,
+                        Ok(total_size) => {
+                            u32::try_from(total_size).map_err(|_| Error::WriteLayoutFailed {
+                                message: "String heap size exceeds u32 range".to_string(),
+                            })?
+                        }
                         Err(_) => stream_layout.size,
                     }
                 } else {
@@ -800,7 +915,11 @@ fn update_metadata_root(
                 {
                     // Recalculate the total reconstructed heap size to match what the heap writer actually produces
                     match HeapExpansions::calculate_blob_heap_size(assembly) {
-                        Ok(total_size) => total_size as u32,
+                        Ok(total_size) => {
+                            u32::try_from(total_size).map_err(|_| Error::WriteLayoutFailed {
+                                message: "String heap size exceeds u32 range".to_string(),
+                            })?
+                        }
                         Err(_) => stream_layout.size,
                     }
                 } else {
@@ -828,7 +947,9 @@ fn update_metadata_root(
 
     // Write the complete stream directory
     let stream_dir_slice = mmap_file.get_mut_slice(
-        stream_directory_offset as usize,
+        usize::try_from(stream_directory_offset).map_err(|_| Error::WriteLayoutFailed {
+            message: "Stream directory offset exceeds usize range".to_string(),
+        })?,
         stream_directory_data.len(),
     )?;
     stream_dir_slice.copy_from_slice(&stream_directory_data);
@@ -898,7 +1019,7 @@ fn apply_heap_index_remapping(
 
     // Apply the remapping to update cross-references in the assembly changes
     let changes = &mut assembly.changes;
-    remapper.apply_to_assembly(changes)?;
+    remapper.apply_to_assembly(changes);
 
     Ok(())
 }
@@ -975,7 +1096,10 @@ fn zero_original_metadata_location(
 
     if let Some(orig_section) = original_metadata_section {
         // Calculate both COR20 header and metadata offsets
-        let original_cor20_rva = view.file().clr().0 as u32;
+        let original_cor20_rva =
+            u32::try_from(view.file().clr().0).map_err(|_| Error::WriteLayoutFailed {
+                message: "CLR header RVA exceeds u32 range (zero_original_metadata)".to_string(),
+            })?;
         let cor20_offset_in_section = original_cor20_rva - orig_section.virtual_address;
         let metadata_offset_in_section = original_metadata_rva - orig_section.virtual_address;
 
@@ -990,13 +1114,13 @@ fn zero_original_metadata_location(
         if let Some(section_layout) = copied_section {
             // Zero out the COR20 header (72 bytes)
             let cor20_file_offset =
-                section_layout.file_region.offset + cor20_offset_in_section as u64;
+                section_layout.file_region.offset + u64::from(cor20_offset_in_section);
             let cor20_size = 72u64;
 
             // Zero out the metadata area
             let metadata_file_offset =
-                section_layout.file_region.offset + metadata_offset_in_section as u64;
-            let original_metadata_size = view.cor20header().meta_data_size as u64;
+                section_layout.file_region.offset + u64::from(metadata_offset_in_section);
+            let original_metadata_size = u64::from(view.cor20header().meta_data_size);
 
             // Ensure we don't exceed section boundaries and don't interfere with the new .meta section
             let section_end = section_layout.file_region.offset + section_layout.file_region.size;
@@ -1013,7 +1137,15 @@ fn zero_original_metadata_location(
                         <= meta.file_region.offset
                         || cor20_file_offset >= meta.file_region.offset + meta.file_region.size);
                     if !would_overlap_meta {
-                        let zero_buffer = vec![0u8; cor20_size as usize];
+                        let zero_buffer = vec![
+                            0u8;
+                            usize::try_from(cor20_size).map_err(|_| {
+                                Error::WriteLayoutFailed {
+                                    message: "COR20 size exceeds usize range for zero buffer"
+                                        .to_string(),
+                                }
+                            })?
+                        ];
                         mmap_file.write_at(cor20_file_offset, &zero_buffer)?;
                     }
                 }
@@ -1026,7 +1158,15 @@ fn zero_original_metadata_location(
                         <= meta.file_region.offset
                         || metadata_file_offset >= meta.file_region.offset + meta.file_region.size);
                     if !would_overlap_meta {
-                        let zero_buffer = vec![0u8; original_metadata_size as usize];
+                        let zero_buffer = vec![
+                            0u8;
+                            usize::try_from(original_metadata_size).map_err(
+                                |_| Error::WriteLayoutFailed {
+                                    message: "Metadata size exceeds usize range for zero buffer"
+                                        .to_string(),
+                                }
+                            )?
+                        ];
                         mmap_file.write_at(metadata_file_offset, &zero_buffer)?;
                     }
                 }

@@ -146,6 +146,10 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The heap index that can be used to reference this string.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the string cannot be added to the heap.
     pub fn string_add(&mut self, value: &str) -> Result<u32> {
         self.assembly.string_add(value)
     }
@@ -163,6 +167,10 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The heap index that can be used to reference this string.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the string cannot be added to the heap.
     pub fn string_get_or_add(&mut self, value: &str) -> Result<u32> {
         if let Some(existing_index) = self.string_find(value) {
             return Ok(existing_index);
@@ -200,6 +208,10 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The heap index that can be used to reference this blob.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blob cannot be added to the heap.
     pub fn blob_add(&mut self, data: &[u8]) -> Result<u32> {
         self.assembly.blob_add(data)
     }
@@ -216,6 +228,10 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The heap index that can be used to reference this GUID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the GUID cannot be added to the heap.
     pub fn guid_add(&mut self, guid: &[u8; 16]) -> Result<u32> {
         self.assembly.guid_add(guid)
     }
@@ -232,6 +248,10 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The heap index that can be used to reference this user string.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the user string cannot be added to the heap.
     pub fn userstring_add(&mut self, value: &str) -> Result<u32> {
         self.assembly.userstring_add(value)
     }
@@ -264,6 +284,10 @@ impl BuilderContext {
     /// context.string_add_heap(custom_heap)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the heap data is invalid or cannot be applied.
     pub fn string_add_heap(&mut self, heap_data: Vec<u8>) -> Result<()> {
         self.assembly.string_add_heap(heap_data)
     }
@@ -296,6 +320,10 @@ impl BuilderContext {
     /// context.blob_add_heap(custom_heap)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the heap data is invalid or cannot be applied.
     pub fn blob_add_heap(&mut self, heap_data: Vec<u8>) -> Result<()> {
         self.assembly.blob_add_heap(heap_data)
     }
@@ -329,6 +357,10 @@ impl BuilderContext {
     /// context.guid_add_heap(guid.to_vec())?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the heap data is invalid or cannot be applied.
     pub fn guid_add_heap(&mut self, heap_data: Vec<u8>) -> Result<()> {
         self.assembly.guid_add_heap(heap_data)
     }
@@ -361,6 +393,10 @@ impl BuilderContext {
     /// context.userstring_add_heap(custom_heap)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the heap data is invalid or cannot be applied.
     pub fn userstring_add_heap(&mut self, heap_data: Vec<u8>) -> Result<()> {
         self.assembly.userstring_add_heap(heap_data)
     }
@@ -378,6 +414,10 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The RID (Row ID) assigned to the newly created row as a [`crate::metadata::token::Token`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the row cannot be added to the table.
     pub fn table_row_add(&mut self, table_id: TableId, row: TableDataOwned) -> Result<Token> {
         let rid = self.assembly.table_row_add(table_id, row)?;
 
@@ -443,7 +483,7 @@ impl BuilderContext {
                         // Convert 0-based index to 1-based RID
                         return Some(CodedIndex::new(
                             TableId::AssemblyRef,
-                            (index + 1) as u32,
+                            u32::try_from(index + 1).unwrap_or(u32::MAX),
                             CodedIndexType::Implementation,
                         ));
                     }
@@ -502,6 +542,10 @@ impl BuilderContext {
     /// let blob_index = context.add_method_signature(&signature)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the signature cannot be encoded or added to the blob heap.
     pub fn add_method_signature(&mut self, signature: &SignatureMethod) -> Result<u32> {
         let encoded_data = encode_method_signature(signature)?;
         self.blob_add(&encoded_data)
@@ -520,6 +564,10 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The blob heap index that can be used to reference this signature.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the signature cannot be encoded or added to the blob heap.
     pub fn add_field_signature(&mut self, signature: &SignatureField) -> Result<u32> {
         let encoded_data = encode_field_signature(signature)?;
         self.blob_add(&encoded_data)
@@ -538,6 +586,10 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The blob heap index that can be used to reference this signature.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the signature cannot be encoded or added to the blob heap.
     pub fn add_property_signature(&mut self, signature: &SignatureProperty) -> Result<u32> {
         let encoded_data = encode_property_signature(signature)?;
         self.blob_add(&encoded_data)
@@ -556,6 +608,10 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The blob heap index that can be used to reference this signature.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the signature cannot be encoded or added to the blob heap.
     pub fn add_local_var_signature(&mut self, signature: &SignatureLocalVariables) -> Result<u32> {
         let encoded_data = encode_local_var_signature(signature)?;
         self.blob_add(&encoded_data)
@@ -574,6 +630,10 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The blob heap index that can be used to reference this signature.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the signature cannot be encoded or added to the blob heap.
     pub fn add_typespec_signature(&mut self, signature: &SignatureTypeSpec) -> Result<u32> {
         let encoded_data = encode_typespec_signature(signature)?;
         self.blob_add(&encoded_data)
@@ -859,6 +919,10 @@ impl BuilderContext {
     /// # Returns
     ///
     /// Returns `Ok(())` if the modification was successful.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the string index is invalid or the update operation fails.
     pub fn string_update(&mut self, index: u32, new_value: &str) -> Result<()> {
         self.assembly.string_update(index, new_value)
     }
@@ -889,6 +953,10 @@ impl BuilderContext {
     /// context.remove_string(43, true)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the string index is invalid or if references exist and `remove_references` is false.
     pub fn string_remove(&mut self, index: u32, remove_references: bool) -> Result<()> {
         let strategy = if remove_references {
             ReferenceHandlingStrategy::RemoveReferences
@@ -904,6 +972,10 @@ impl BuilderContext {
     ///
     /// * `index` - The heap index to modify (1-based, following ECMA-335 conventions)
     /// * `new_data` - The new blob data to store at that index
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blob index is invalid or the update operation fails.
     pub fn blob_update(&mut self, index: u32, new_data: &[u8]) -> Result<()> {
         self.assembly.blob_update(index, new_data)
     }
@@ -914,6 +986,10 @@ impl BuilderContext {
     ///
     /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
     /// * `remove_references` - If true, automatically removes all references; if false, fails if references exist
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blob index is invalid or if references exist and `remove_references` is false.
     pub fn blob_remove(&mut self, index: u32, remove_references: bool) -> Result<()> {
         let strategy = if remove_references {
             ReferenceHandlingStrategy::RemoveReferences
@@ -929,6 +1005,10 @@ impl BuilderContext {
     ///
     /// * `index` - The heap index to modify (1-based, following ECMA-335 conventions)
     /// * `new_guid` - The new 16-byte GUID to store at that index
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the GUID index is invalid or the update operation fails.
     pub fn guid_update(&mut self, index: u32, new_guid: &[u8; 16]) -> Result<()> {
         self.assembly.guid_update(index, new_guid)
     }
@@ -939,6 +1019,10 @@ impl BuilderContext {
     ///
     /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
     /// * `remove_references` - If true, automatically removes all references; if false, fails if references exist
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the GUID index is invalid or if references exist and `remove_references` is false.
     pub fn guid_remove(&mut self, index: u32, remove_references: bool) -> Result<()> {
         let strategy = if remove_references {
             ReferenceHandlingStrategy::RemoveReferences
@@ -954,6 +1038,10 @@ impl BuilderContext {
     ///
     /// * `index` - The heap index to modify (1-based, following ECMA-335 conventions)
     /// * `new_value` - The new string value to store at that index
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the user string index is invalid or the update operation fails.
     pub fn userstring_update(&mut self, index: u32, new_value: &str) -> Result<()> {
         self.assembly.userstring_update(index, new_value)
     }
@@ -964,6 +1052,10 @@ impl BuilderContext {
     ///
     /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
     /// * `remove_references` - If true, automatically removes all references; if false, fails if references exist
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the user string index is invalid or if references exist and `remove_references` is false.
     pub fn userstring_remove(&mut self, index: u32, remove_references: bool) -> Result<()> {
         let strategy = if remove_references {
             ReferenceHandlingStrategy::RemoveReferences
@@ -987,6 +1079,10 @@ impl BuilderContext {
     /// # Returns
     ///
     /// Returns `Ok(())` if the modification was successful.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the table ID or RID is invalid or the update operation fails.
     pub fn table_row_update(
         &mut self,
         table_id: TableId,
@@ -1024,6 +1120,10 @@ impl BuilderContext {
     /// context.remove_table_row(TableId::MethodDef, 42, true)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the table ID or RID is invalid or if references exist and `remove_references` is false.
     pub fn table_row_remove(
         &mut self,
         table_id: TableId,

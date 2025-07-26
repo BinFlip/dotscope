@@ -130,6 +130,7 @@ impl MethodSpecBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::methodspec::MethodSpecBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             method: None,
@@ -161,6 +162,7 @@ impl MethodSpecBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn method(mut self, method: CodedIndex) -> Self {
         self.method = Some(method);
         self
@@ -192,6 +194,7 @@ impl MethodSpecBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn instantiation(mut self, instantiation: &[u8]) -> Self {
         self.instantiation = Some(instantiation.to_vec());
         self
@@ -210,6 +213,7 @@ impl MethodSpecBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn simple_instantiation(mut self, element_type: u8) -> Self {
         let signature = vec![
             0x01,         // Generic argument count (1)
@@ -231,8 +235,9 @@ impl MethodSpecBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn multiple_primitives(mut self, element_types: &[u8]) -> Self {
-        let mut signature = vec![element_types.len() as u8]; // Generic argument count
+        let mut signature = vec![u8::try_from(element_types.len()).unwrap_or(255)]; // Generic argument count
         signature.extend_from_slice(element_types);
         self.instantiation = Some(signature);
         self
@@ -250,6 +255,7 @@ impl MethodSpecBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn array_instantiation(mut self, element_type: u8) -> Self {
         let signature = vec![
             0x01,         // Generic argument count (1)

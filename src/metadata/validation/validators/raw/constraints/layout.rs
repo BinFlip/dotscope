@@ -74,7 +74,7 @@
 use crate::{
     metadata::{
         cilassemblyview::CilAssemblyView,
-        tables::*,
+        tables::{ClassLayoutRaw, FieldLayoutRaw, FieldRaw, TypeDefRaw},
         validation::{
             context::{RawValidationContext, ValidationContext},
             traits::RawValidator,
@@ -115,6 +115,7 @@ impl RawLayoutConstraintValidator {
     /// # Thread Safety
     ///
     /// The returned validator is thread-safe and can be used concurrently.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -142,7 +143,7 @@ impl RawLayoutConstraintValidator {
     /// - Field layouts overlap in explicit layout scenarios (multiple fields at same offset)
     /// - Field references are invalid or null (zero field reference)
     /// - Field references exceed Field table row count
-    fn validate_field_layouts(&self, assembly_view: &CilAssemblyView) -> Result<()> {
+    fn validate_field_layouts(assembly_view: &CilAssemblyView) -> Result<()> {
         let tables = assembly_view
             .tables()
             .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
@@ -150,7 +151,7 @@ impl RawLayoutConstraintValidator {
         if let Some(field_layout_table) = tables.table::<FieldLayoutRaw>() {
             let mut field_offsets: HashMap<usize, Vec<(u32, u32)>> = HashMap::new();
 
-            for field_layout in field_layout_table.iter() {
+            for field_layout in field_layout_table {
                 if field_layout.field == 0 {
                     return Err(malformed_error!(
                         "FieldLayout RID {} has null field reference",
@@ -158,7 +159,7 @@ impl RawLayoutConstraintValidator {
                     ));
                 }
 
-                if field_layout.field_offset > 0x7FFFFFFF {
+                if field_layout.field_offset > 0x7FFF_FFFF {
                     return Err(malformed_error!(
                         "FieldLayout RID {} has invalid field offset {} exceeding maximum",
                         field_layout.rid,
@@ -223,7 +224,7 @@ impl RawLayoutConstraintValidator {
     /// - Class sizes exceed reasonable bounds (exceeding 0x7FFFFFFF)
     /// - Parent type references are invalid (null or exceed TypeDef table row count)
     /// - Layout constraints are malformed
-    fn validate_class_layouts(&self, assembly_view: &CilAssemblyView) -> Result<()> {
+    fn validate_class_layouts(assembly_view: &CilAssemblyView) -> Result<()> {
         let tables = assembly_view
             .tables()
             .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
@@ -231,7 +232,7 @@ impl RawLayoutConstraintValidator {
         if let Some(class_layout_table) = tables.table::<ClassLayoutRaw>() {
             let typedef_table = tables.table::<TypeDefRaw>();
 
-            for class_layout in class_layout_table.iter() {
+            for class_layout in class_layout_table {
                 let packing_size = class_layout.packing_size;
                 if packing_size != 0 && !packing_size.is_power_of_two() {
                     return Err(malformed_error!(
@@ -249,7 +250,7 @@ impl RawLayoutConstraintValidator {
                     ));
                 }
 
-                if class_layout.class_size > 0x7FFFFFFF {
+                if class_layout.class_size > 0x7FFF_FFFF {
                     return Err(malformed_error!(
                         "ClassLayout RID {} has invalid class size {} exceeding maximum",
                         class_layout.rid,
@@ -302,7 +303,7 @@ impl RawLayoutConstraintValidator {
     /// - Parent type references are invalid or missing (non-existent TypeDef RIDs)
     /// - Field layouts exceed reasonable offset bounds (>1MB suggesting corruption)
     /// - ClassLayout parent references point to non-existent TypeDef entries
-    fn validate_layout_consistency(&self, assembly_view: &CilAssemblyView) -> Result<()> {
+    fn validate_layout_consistency(assembly_view: &CilAssemblyView) -> Result<()> {
         let tables = assembly_view
             .tables()
             .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
@@ -313,12 +314,12 @@ impl RawLayoutConstraintValidator {
             tables.table::<TypeDefRaw>(),
         ) {
             let mut class_layouts: HashMap<u32, u32> = HashMap::new();
-            for class_layout in class_layout_table.iter() {
+            for class_layout in class_layout_table {
                 class_layouts.insert(class_layout.parent, class_layout.rid);
             }
 
-            for field_layout in field_layout_table.iter() {
-                if field_layout.field_offset == 0x7FFFFFFF {
+            for field_layout in field_layout_table {
+                if field_layout.field_offset == 0x7FFF_FFFF {
                     return Err(malformed_error!(
                         "FieldLayout RID {} has field offset at maximum boundary - potential overflow",
                         field_layout.rid
@@ -360,7 +361,7 @@ impl RawLayoutConstraintValidator {
                                 // due to explicit layout, union types, interop scenarios, inheritance, etc.
                                 // Only flag truly unreasonable offsets that suggest corruption
                                 if parent_class_layout.class_size > 0
-                                    && field_layout.field_offset > 1048576
+                                    && field_layout.field_offset > 1_048_576
                                 {
                                     return Err(malformed_error!(
                                         "FieldLayout RID {} has unreasonably large field offset {} (possible corruption)",
@@ -374,7 +375,7 @@ impl RawLayoutConstraintValidator {
                 }
             }
 
-            for class_layout in class_layout_table.iter() {
+            for class_layout in class_layout_table {
                 let typedef_found = typedef_table
                     .iter()
                     .any(|typedef| typedef.rid == class_layout.parent);
@@ -413,7 +414,7 @@ impl RawLayoutConstraintValidator {
     /// - Field offsets are not properly aligned for their type
     /// - Field layouts violate natural alignment requirements
     /// - Explicit layout fields have unreasonable spacing
-    fn validate_field_alignment(&self, assembly_view: &CilAssemblyView) -> Result<()> {
+    fn validate_field_alignment(assembly_view: &CilAssemblyView) -> Result<()> {
         let tables = assembly_view
             .tables()
             .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
@@ -421,7 +422,7 @@ impl RawLayoutConstraintValidator {
         if let (Some(field_layout_table), Some(_field_table)) =
             (tables.table::<FieldLayoutRaw>(), tables.table::<FieldRaw>())
         {
-            for field_layout in field_layout_table.iter() {
+            for field_layout in field_layout_table {
                 let field_offset = field_layout.field_offset;
 
                 if (field_offset % 4 == 1 || field_offset % 4 == 3) && field_offset > 65536 {
@@ -432,7 +433,7 @@ impl RawLayoutConstraintValidator {
                         ));
                 }
 
-                if field_offset > 16777216 {
+                if field_offset > 16_777_216 {
                     return Err(malformed_error!(
                         "FieldLayout RID {} has extremely large field offset {} - possible corruption",
                         field_layout.rid,
@@ -474,7 +475,7 @@ impl RawLayoutConstraintValidator {
     /// - Value type class sizes exceed reasonable stack limits
     /// - Value type packing constraints are inappropriate
     /// - Value type field layouts create alignment issues
-    fn validate_value_type_layouts(&self, assembly_view: &CilAssemblyView) -> Result<()> {
+    fn validate_value_type_layouts(assembly_view: &CilAssemblyView) -> Result<()> {
         let tables = assembly_view
             .tables()
             .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
@@ -483,7 +484,7 @@ impl RawLayoutConstraintValidator {
             tables.table::<ClassLayoutRaw>(),
             tables.table::<TypeDefRaw>(),
         ) {
-            for class_layout in class_layout_table.iter() {
+            for class_layout in class_layout_table {
                 if let Some(typedef_entry) = typedef_table
                     .iter()
                     .find(|td| td.rid == class_layout.parent)
@@ -494,7 +495,7 @@ impl RawLayoutConstraintValidator {
                     let is_likely_value_type = (typedef_entry.flags & SEALED_FLAG) != 0;
 
                     if is_likely_value_type {
-                        if class_layout.class_size > 1048576 {
+                        if class_layout.class_size > 1_048_576 {
                             return Err(malformed_error!(
                                 "ClassLayout RID {} for potential value type has excessive size {} - may cause stack issues",
                                 class_layout.rid,
@@ -534,7 +535,7 @@ impl RawLayoutConstraintValidator {
     ///
     /// * `Ok(())` - All sequential layouts are valid
     /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Sequential layout violations found
-    fn validate_sequential_layout(&self, assembly_view: &CilAssemblyView) -> Result<()> {
+    fn validate_sequential_layout(assembly_view: &CilAssemblyView) -> Result<()> {
         let tables = assembly_view
             .tables()
             .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
@@ -560,7 +561,7 @@ impl RawLayoutConstraintValidator {
                         let field2 = &window[1];
                         let gap = field2.field_offset.saturating_sub(field1.field_offset);
 
-                        if gap > 1048576 {
+                        if gap > 1_048_576 {
                             return Err(malformed_error!(
                                 "Large gap {} between FieldLayout RID {} and {} - possible layout issue",
                                 gap,
@@ -622,13 +623,13 @@ impl RawValidator for RawLayoutConstraintValidator {
     fn validate_raw(&self, context: &RawValidationContext) -> Result<()> {
         let assembly_view = context.assembly_view();
 
-        self.validate_field_layouts(assembly_view)?;
-        self.validate_class_layouts(assembly_view)?;
-        self.validate_layout_consistency(assembly_view)?;
+        Self::validate_field_layouts(assembly_view)?;
+        Self::validate_class_layouts(assembly_view)?;
+        Self::validate_layout_consistency(assembly_view)?;
 
-        self.validate_field_alignment(assembly_view)?;
-        self.validate_value_type_layouts(assembly_view)?;
-        self.validate_sequential_layout(assembly_view)?;
+        Self::validate_field_alignment(assembly_view)?;
+        Self::validate_value_type_layouts(assembly_view)?;
+        Self::validate_sequential_layout(assembly_view)?;
 
         Ok(())
     }
@@ -666,11 +667,11 @@ mod tests {
     };
     use tempfile::NamedTempFile;
 
-    fn raw_layout_constraint_validator_file_factory() -> crate::Result<Vec<TestAssembly>> {
+    fn raw_layout_constraint_validator_file_factory() -> Result<Vec<TestAssembly>> {
         let mut assemblies = Vec::new();
 
         let Some(clean_testfile) = get_clean_testfile() else {
-            return Err(crate::Error::Error(
+            return Err(Error::Error(
                 "WindowsBase.dll not available - test cannot run".to_string(),
             ));
         };
@@ -687,7 +688,7 @@ mod tests {
                 ));
             }
             Err(e) => {
-                return Err(crate::Error::Error(format!(
+                return Err(Error::Error(format!(
                     "Failed to create assembly with null field reference: {e}"
                 )));
             }
@@ -702,7 +703,7 @@ mod tests {
                 ));
             }
             Err(e) => {
-                return Err(crate::Error::Error(format!(
+                return Err(Error::Error(format!(
                     "Failed to create assembly with invalid field offset: {e}"
                 )));
             }
@@ -717,7 +718,7 @@ mod tests {
                 ));
             }
             Err(e) => {
-                return Err(crate::Error::Error(format!(
+                return Err(Error::Error(format!(
                     "Failed to create assembly with invalid packing size: {e}"
                 )));
             }
@@ -732,7 +733,7 @@ mod tests {
                 ));
             }
             Err(e) => {
-                return Err(crate::Error::Error(format!(
+                return Err(Error::Error(format!(
                     "Failed to create assembly with excessive class size: {e}"
                 )));
             }
@@ -744,7 +745,7 @@ mod tests {
     /// Creates an assembly with overlapping fields at the same offset to test field layout validation.
     fn create_assembly_with_overlapping_fields() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
         let view = CilAssemblyView::from_file(&clean_testfile)?;
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
@@ -792,7 +793,7 @@ mod tests {
     /// Creates an assembly with invalid packing size (not power of 2) to test class layout validation.
     fn create_assembly_with_invalid_packing_size() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
         let view = CilAssemblyView::from_file(&clean_testfile)?;
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
@@ -830,7 +831,7 @@ mod tests {
     /// Creates an assembly with excessive class size to test class layout validation.
     fn create_assembly_with_excessive_class_size() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
         let view = CilAssemblyView::from_file(&clean_testfile)?;
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
@@ -868,7 +869,7 @@ mod tests {
     /// Creates an assembly with invalid field offset to test field layout validation.
     fn create_assembly_with_invalid_field_offset() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
         let view = CilAssemblyView::from_file(&clean_testfile)?;
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
@@ -911,7 +912,7 @@ mod tests {
     /// Creates an assembly with null field reference to test field layout validation.
     fn create_assembly_with_null_field_reference() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
         let view = CilAssemblyView::from_file(&clean_testfile)?;
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
@@ -948,7 +949,7 @@ mod tests {
     /// Creates an assembly with field offset at maximum boundary to test overflow detection.
     fn create_assembly_with_boundary_field_offset() -> Result<NamedTempFile> {
         let clean_testfile = get_clean_testfile()
-            .ok_or_else(|| crate::Error::Error("WindowsBase.dll not available".to_string()))?;
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
         let view = CilAssemblyView::from_file(&clean_testfile)?;
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
@@ -989,7 +990,7 @@ mod tests {
     }
 
     #[test]
-    fn test_raw_layout_constraint_validator() -> crate::Result<()> {
+    fn test_raw_layout_constraint_validator() -> Result<()> {
         let validator = RawLayoutConstraintValidator::new();
         let config = ValidationConfig {
             enable_constraint_validation: true,

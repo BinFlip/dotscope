@@ -59,6 +59,7 @@ impl MethodDefBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::methoddef::MethodDefBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             name: None,
@@ -84,6 +85,7 @@ impl MethodDefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -124,6 +126,7 @@ impl MethodDefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn flags(mut self, flags: u32) -> Self {
         self.flags = Some(flags);
         self
@@ -152,6 +155,7 @@ impl MethodDefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn impl_flags(mut self, impl_flags: u32) -> Self {
         self.impl_flags = Some(impl_flags);
         self
@@ -179,6 +183,7 @@ impl MethodDefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn signature(mut self, signature: &[u8]) -> Self {
         self.signature = Some(signature.to_vec());
         self
@@ -197,6 +202,7 @@ impl MethodDefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn rva(mut self, rva: u32) -> Self {
         self.rva = Some(rva);
         self
@@ -215,6 +221,7 @@ impl MethodDefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn param_list(mut self, param_list: u32) -> Self {
         self.param_list = Some(param_list);
         self

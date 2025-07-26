@@ -54,7 +54,13 @@ impl RowWritable for ImplMapRaw {
         sizes: &TableInfoRef,
     ) -> Result<()> {
         // Write mapping flags (2 bytes)
-        write_le_at(data, offset, self.mapping_flags as u16)?;
+        write_le_at(
+            data,
+            offset,
+            u16::try_from(self.mapping_flags).map_err(|_| {
+                malformed_error!("ImplMap mapping flags out of range: {}", self.mapping_flags)
+            })?,
+        )?;
 
         // Write MemberForwarded coded index
         let member_forwarded_value = sizes.encode_coded_index(

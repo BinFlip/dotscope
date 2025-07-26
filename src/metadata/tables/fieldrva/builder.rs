@@ -131,6 +131,7 @@ impl FieldRVABuilder {
     /// # use dotscope::prelude::*;
     /// let builder = FieldRVABuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             field: None,
@@ -166,6 +167,7 @@ impl FieldRVABuilder {
     ///     .field(field_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn field(mut self, field_token: Token) -> Self {
         self.field = Some(field_token);
         self
@@ -188,6 +190,7 @@ impl FieldRVABuilder {
     /// let builder = FieldRVABuilder::new()
     ///     .rva(0x2000); // RVA pointing to initial data
     /// ```
+    #[must_use]
     pub fn rva(mut self, rva: u32) -> Self {
         self.rva = Some(rva);
         self

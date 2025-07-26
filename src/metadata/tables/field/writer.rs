@@ -61,7 +61,7 @@ impl RowWritable for FieldRaw {
         _rid: u32,
         sizes: &TableInfoRef,
     ) -> Result<()> {
-        // Write flags (2 bytes) - cast from u32 to u16
+        // Write flags (2 bytes) - truncate from u32 to u16
         write_le_at(data, offset, self.flags as u16)?;
 
         // Write name string heap index (2 or 4 bytes)

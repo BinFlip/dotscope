@@ -59,6 +59,7 @@ impl TypeDefBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::typedef::TypeDefBuilder`] ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             name: None,
@@ -79,6 +80,7 @@ impl TypeDefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -93,6 +95,7 @@ impl TypeDefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn namespace(mut self, namespace: impl Into<String>) -> Self {
         self.namespace = Some(namespace.into());
         self
@@ -107,6 +110,7 @@ impl TypeDefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn extends(mut self, extends: CodedIndex) -> Self {
         self.extends = Some(extends);
         self
@@ -121,6 +125,7 @@ impl TypeDefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn flags(mut self, flags: u32) -> Self {
         self.flags = Some(flags);
         self
@@ -135,6 +140,7 @@ impl TypeDefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn field_list(mut self, field_list: u32) -> Self {
         self.field_list = Some(field_list);
         self
@@ -149,6 +155,7 @@ impl TypeDefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn method_list(mut self, method_list: u32) -> Self {
         self.method_list = Some(method_list);
         self
@@ -161,6 +168,7 @@ impl TypeDefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn public_class(mut self) -> Self {
         self.flags = Some(0x0010_0001); // Public | Class
         self
@@ -173,6 +181,7 @@ impl TypeDefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn public_interface(mut self) -> Self {
         self.flags = Some(0x0010_0161); // Public | Interface | Abstract
         self
@@ -185,6 +194,7 @@ impl TypeDefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn public_value_type(mut self) -> Self {
         self.flags = Some(0x0010_0101); // Public | Sealed
         self

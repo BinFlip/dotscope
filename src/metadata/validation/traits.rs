@@ -279,6 +279,7 @@ pub trait ValidatorCollection<V> {
     /// # Returns
     ///
     /// Returns the updated collection with the validator added.
+    #[must_use]
     fn add_validator(self, validator: V) -> Self;
 
     /// Sorts validators by priority (highest first).
@@ -289,6 +290,7 @@ pub trait ValidatorCollection<V> {
     /// # Returns
     ///
     /// Returns the collection sorted by validator priority in descending order.
+    #[must_use]
     fn sort_by_priority(self) -> Self;
 }
 

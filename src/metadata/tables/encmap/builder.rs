@@ -83,6 +83,7 @@ impl EncMapBuilder {
     ///
     /// let builder = EncMapBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             original_token: None,
@@ -115,6 +116,7 @@ impl EncMapBuilder {
     /// let builder = EncMapBuilder::new()
     ///     .original_token_obj(token);
     /// ```
+    #[must_use]
     pub fn original_token(mut self, original_token: u32) -> Self {
         self.original_token = Some(Token::new(original_token));
         self
@@ -140,6 +142,7 @@ impl EncMapBuilder {
     /// let builder = EncMapBuilder::new()
     ///     .original_token_obj(token);
     /// ```
+    #[must_use]
     pub fn original_token_obj(mut self, original_token: Token) -> Self {
         self.original_token = Some(original_token);
         self

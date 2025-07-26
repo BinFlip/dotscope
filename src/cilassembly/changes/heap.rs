@@ -230,7 +230,7 @@ impl<T> HeapChanges<T> {
     /// This resets the next_index to the size of the replacement heap, as
     /// new additions will be appended after the replacement data.
     pub fn replace_heap(&mut self, heap_data: Vec<u8>) {
-        self.next_index = heap_data.len() as u32;
+        self.next_index = u32::try_from(heap_data.len()).unwrap_or(0);
         self.replacement_heap = Some(heap_data);
 
         // Clear existing changes since they would apply to the original heap
@@ -321,11 +321,11 @@ impl<T> HeapChanges<T> {
     /// }
     /// ```
     pub fn items_with_indices(&self) -> impl Iterator<Item = (u32, &T)> {
-        let start_index = self.next_index - self.appended_items.len() as u32;
+        let start_index = self.next_index - u32::try_from(self.appended_items.len()).unwrap_or(0);
         self.appended_items
             .iter()
             .enumerate()
-            .map(move |(i, item)| (start_index + i as u32, item))
+            .map(move |(i, item)| (start_index + u32::try_from(i).unwrap_or(0), item))
     }
 
     /// Calculates the size these changes will add to the binary heap.
@@ -356,7 +356,10 @@ impl HeapChanges<String> {
 
     /// Returns the total character count of all added strings.
     pub fn total_character_count(&self) -> usize {
-        self.appended_items.iter().map(|s| s.len()).sum()
+        self.appended_items
+            .iter()
+            .map(std::string::String::len)
+            .sum()
     }
 
     /// Returns an iterator over all added strings with their correct byte indices.
@@ -374,7 +377,7 @@ impl HeapChanges<String> {
                 // Calculate the API index for this appended item
                 let mut api_index = self.next_index;
                 for item in self.appended_items.iter().rev() {
-                    api_index -= (item.len() + 1) as u32;
+                    api_index -= u32::try_from(item.len() + 1).unwrap_or(0);
                     if std::ptr::eq(item, original_string) {
                         break;
                     }
@@ -382,9 +385,9 @@ impl HeapChanges<String> {
 
                 // Check if this string is modified and use the final size
                 if let Some(modified_string) = self.get_modification(api_index) {
-                    (modified_string.len() + 1) as u32
+                    u32::try_from(modified_string.len() + 1).unwrap_or(0)
                 } else {
-                    (original_string.len() + 1) as u32
+                    u32::try_from(original_string.len() + 1).unwrap_or(0)
                 }
             })
             .sum();
@@ -398,7 +401,7 @@ impl HeapChanges<String> {
                 // Calculate the API index for this item
                 let mut api_index = self.next_index;
                 for rev_item in self.appended_items.iter().rev() {
-                    api_index -= (rev_item.len() + 1) as u32;
+                    api_index -= u32::try_from(rev_item.len() + 1).unwrap_or(0);
                     if std::ptr::eq(rev_item, item) {
                         break;
                     }
@@ -406,9 +409,9 @@ impl HeapChanges<String> {
 
                 // Use final size (modified or original) for index advancement
                 let final_size = if let Some(modified_string) = self.get_modification(api_index) {
-                    (modified_string.len() + 1) as u32
+                    u32::try_from(modified_string.len() + 1).unwrap_or(0)
                 } else {
-                    (item.len() + 1) as u32
+                    u32::try_from(item.len() + 1).unwrap_or(0)
                 };
 
                 *index += final_size;
@@ -435,7 +438,8 @@ impl HeapChanges<String> {
 
                 let compressed_length_size = compressed_uint_size(total_length);
 
-                (compressed_length_size as usize + total_length) as u32
+                u32::try_from(usize::try_from(compressed_length_size).unwrap_or(0) + total_length)
+                    .unwrap_or(0)
             })
             .sum();
         current_index -= total_size;
@@ -448,7 +452,10 @@ impl HeapChanges<String> {
                 let utf16_bytes: usize = item.encode_utf16().map(|_| 2).sum();
                 let total_length = utf16_bytes + 1;
                 let compressed_length_size = compressed_uint_size(total_length);
-                *index += (compressed_length_size as usize + total_length) as u32;
+                *index += u32::try_from(
+                    usize::try_from(compressed_length_size).unwrap_or(0) + total_length,
+                )
+                .unwrap_or(0);
                 Some((current, item))
             })
     }
@@ -469,7 +476,7 @@ impl HeapChanges<String> {
 
                 let compressed_length_size = compressed_uint_size(total_length);
 
-                compressed_length_size as usize + total_length
+                usize::try_from(compressed_length_size).unwrap_or(0) + total_length
             })
             .sum()
     }
@@ -487,14 +494,14 @@ impl HeapChanges<Vec<u8>> {
             .map(|blob| {
                 let length = blob.len();
                 let compressed_length_size = compressed_uint_size(length);
-                compressed_length_size as usize + length
+                usize::try_from(compressed_length_size).unwrap_or(0) + length
             })
             .sum()
     }
 
     /// Returns the total byte count of all added blobs.
     pub fn total_byte_count(&self) -> usize {
-        self.appended_items.iter().map(|b| b.len()).sum()
+        self.appended_items.iter().map(std::vec::Vec::len).sum()
     }
 }
 

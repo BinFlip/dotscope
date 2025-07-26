@@ -147,6 +147,7 @@ impl EventMapBuilder {
     /// # use dotscope::prelude::*;
     /// let builder = EventMapBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             parent: None,
@@ -181,6 +182,7 @@ impl EventMapBuilder {
     ///     .parent(type_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn parent(mut self, parent_token: Token) -> Self {
         self.parent = Some(parent_token);
         self
@@ -203,6 +205,7 @@ impl EventMapBuilder {
     /// let builder = EventMapBuilder::new()
     ///     .event_list(1); // Start from first event
     /// ```
+    #[must_use]
     pub fn event_list(mut self, event_list_index: u32) -> Self {
         self.event_list = Some(event_list_index);
         self

@@ -84,6 +84,7 @@ impl LocalVariableBuilder {
     ///
     /// let builder = LocalVariableBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             attributes: None,
@@ -112,6 +113,7 @@ impl LocalVariableBuilder {
     /// let builder = LocalVariableBuilder::new()
     ///     .attributes(0x01);  // Set specific attribute flag
     /// ```
+    #[must_use]
     pub fn attributes(mut self, attributes: u16) -> Self {
         self.attributes = Some(attributes);
         self
@@ -137,6 +139,7 @@ impl LocalVariableBuilder {
     /// let builder = LocalVariableBuilder::new()
     ///     .index(0);  // First local variable
     /// ```
+    #[must_use]
     pub fn index(mut self, index: u16) -> Self {
         self.index = Some(index);
         self
@@ -166,6 +169,7 @@ impl LocalVariableBuilder {
     /// let anon_builder = LocalVariableBuilder::new()
     ///     .name("");
     /// ```
+    #[must_use]
     pub fn name<T: Into<String>>(mut self, name: T) -> Self {
         self.name = Some(name.into());
         self

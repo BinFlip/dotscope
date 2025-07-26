@@ -98,6 +98,7 @@ impl InterfaceImplBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::interfaceimpl::InterfaceImplBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             class: None,
@@ -124,6 +125,7 @@ impl InterfaceImplBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn class(mut self, class: u32) -> Self {
         self.class = Some(class);
         self
@@ -147,6 +149,7 @@ impl InterfaceImplBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn interface(mut self, interface: CodedIndex) -> Self {
         self.interface = Some(interface);
         self

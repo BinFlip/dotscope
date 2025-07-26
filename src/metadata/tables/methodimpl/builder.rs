@@ -110,6 +110,7 @@ impl MethodImplBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::methodimpl::MethodImplBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             class: None,
@@ -160,6 +161,7 @@ impl MethodImplBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn class(mut self, class_token: Token) -> Self {
         self.class = Some(class_token);
         self
@@ -207,6 +209,7 @@ impl MethodImplBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn method_body_from_method_def(mut self, method_token: Token) -> Self {
         // Extract RID from MethodDef token (0x06xxxxxx)
         let rid = method_token.value() & 0x00FF_FFFF;
@@ -260,6 +263,7 @@ impl MethodImplBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn method_body_from_member_ref(mut self, member_token: Token) -> Self {
         // Extract RID from MemberRef token (0x0Axxxxxx)
         let rid = member_token.value() & 0x00FF_FFFF;
@@ -313,6 +317,7 @@ impl MethodImplBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn method_declaration_from_method_def(mut self, method_token: Token) -> Self {
         // Extract RID from MethodDef token (0x06xxxxxx)
         let rid = method_token.value() & 0x00FF_FFFF;
@@ -366,6 +371,7 @@ impl MethodImplBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn method_declaration_from_member_ref(mut self, member_token: Token) -> Self {
         // Extract RID from MemberRef token (0x0Axxxxxx)
         let rid = member_token.value() & 0x00FF_FFFF;
@@ -398,6 +404,7 @@ impl MethodImplBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn method_body(mut self, coded_index: CodedIndex) -> Self {
         self.method_body = Some(coded_index);
         self
@@ -424,6 +431,7 @@ impl MethodImplBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn method_declaration(mut self, coded_index: CodedIndex) -> Self {
         self.method_declaration = Some(coded_index);
         self

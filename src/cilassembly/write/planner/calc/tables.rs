@@ -129,22 +129,25 @@ pub fn calculate_table_stream_expansion(assembly: &CilAssembly) -> Result<u64> {
             let additional_rows = match table_mod {
                 TableModifications::Replaced(new_rows) => {
                     let original_count = tables.table_row_count(table_id);
-                    if new_rows.len() as u32 > original_count {
-                        new_rows.len() as u32 - original_count
+                    if u32::try_from(new_rows.len()).unwrap_or(0) > original_count {
+                        u32::try_from(new_rows.len()).unwrap_or(0) - original_count
                     } else {
                         0 // Table shrunk or stayed same size
                     }
                 }
                 TableModifications::Sparse { operations, .. } => {
                     // Count insert operations
-                    operations
-                        .iter()
-                        .filter(|op| matches!(op.operation, Operation::Insert(_, _)))
-                        .count() as u32
+                    u32::try_from(
+                        operations
+                            .iter()
+                            .filter(|op| matches!(op.operation, Operation::Insert(_, _)))
+                            .count(),
+                    )
+                    .unwrap_or(0)
                 }
             };
 
-            let expansion_bytes = additional_rows as u64 * row_size as u64;
+            let expansion_bytes = u64::from(additional_rows) * u64::from(row_size);
             total_expansion += expansion_bytes;
         }
     }
@@ -205,7 +208,7 @@ pub fn calculate_new_row_count(
     table_mod: &TableModifications,
 ) -> Result<u32> {
     match table_mod {
-        TableModifications::Replaced(rows) => Ok(rows.len() as u32),
+        TableModifications::Replaced(rows) => Ok(u32::try_from(rows.len()).unwrap_or(0)),
         TableModifications::Sparse { operations, .. } => {
             // Calculate final row count after all operations
             let view = assembly.view();
@@ -226,7 +229,8 @@ pub fn calculate_new_row_count(
                 .filter(|op| matches!(op.operation, Operation::Delete(_)))
                 .count();
 
-            Ok(original_count + added_count as u32 - deleted_count as u32)
+            Ok(original_count + u32::try_from(added_count).unwrap_or(0)
+                - u32::try_from(deleted_count).unwrap_or(0))
         }
     }
 }

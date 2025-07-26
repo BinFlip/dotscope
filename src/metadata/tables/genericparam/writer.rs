@@ -64,10 +64,21 @@ impl RowWritable for GenericParamRaw {
         sizes: &TableInfoRef,
     ) -> Result<()> {
         // Write parameter number (2 bytes)
-        write_le_at(data, offset, self.number as u16)?;
+        write_le_at(
+            data,
+            offset,
+            u16::try_from(self.number).map_err(|_| {
+                malformed_error!("GenericParam number out of range: {}", self.number)
+            })?,
+        )?;
 
         // Write parameter flags (2 bytes)
-        write_le_at(data, offset, self.flags as u16)?;
+        write_le_at(
+            data,
+            offset,
+            u16::try_from(self.flags)
+                .map_err(|_| malformed_error!("GenericParam flags out of range: {}", self.flags))?,
+        )?;
 
         // Write TypeOrMethodDef coded index for owner
         let owner_value = sizes.encode_coded_index(

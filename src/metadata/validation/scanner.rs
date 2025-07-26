@@ -228,7 +228,7 @@ impl ReferenceScanner {
         )?;
 
         if let Some(tables) = object.tables() {
-            self.analyze_tables(tables)?;
+            self.analyze_tables(tables);
         }
 
         Ok(())
@@ -244,7 +244,7 @@ impl ReferenceScanner {
         )?;
 
         if let Some(tables) = view.tables() {
-            self.analyze_tables(tables)?;
+            self.analyze_tables(tables);
         }
 
         Ok(())
@@ -259,35 +259,37 @@ impl ReferenceScanner {
         userstrings: Option<&UserStrings>,
     ) -> Result<()> {
         if let Some(strings) = strings {
-            self.heap_sizes.strings = strings.data().len() as u32;
+            self.heap_sizes.strings = u32::try_from(strings.data().len())
+                .map_err(|_| malformed_error!("String heap size exceeds u32 range"))?;
         }
 
         if let Some(blobs) = blobs {
-            self.heap_sizes.blobs = blobs.data().len() as u32;
+            self.heap_sizes.blobs = u32::try_from(blobs.data().len())
+                .map_err(|_| malformed_error!("Blob heap size exceeds u32 range"))?;
         }
 
         if let Some(guids) = guids {
-            self.heap_sizes.guids = guids.data().len() as u32;
+            self.heap_sizes.guids = u32::try_from(guids.data().len())
+                .map_err(|_| malformed_error!("GUID heap size exceeds u32 range"))?;
         }
 
         if let Some(userstrings) = userstrings {
-            self.heap_sizes.userstrings = userstrings.data().len() as u32;
+            self.heap_sizes.userstrings = u32::try_from(userstrings.data().len())
+                .map_err(|_| malformed_error!("UserString heap size exceeds u32 range"))?;
         }
 
         Ok(())
     }
 
     /// Analyzes metadata tables to build reference maps.
-    fn analyze_tables(&mut self, tables: &crate::TablesHeader) -> Result<()> {
-        self.collect_valid_tokens(tables)?;
+    fn analyze_tables(&mut self, tables: &crate::TablesHeader) {
+        self.collect_valid_tokens(tables);
 
-        self.analyze_references(tables)?;
-
-        Ok(())
+        self.analyze_references(tables);
     }
 
     /// Collects all valid tokens from metadata tables.
-    fn collect_valid_tokens(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+    fn collect_valid_tokens(&mut self, tables: &crate::TablesHeader) {
         for table in tables.present_tables() {
             let row_count = tables.table_row_count(table);
             if row_count == 0 {
@@ -296,64 +298,58 @@ impl ReferenceScanner {
 
             self.table_row_counts.insert(table, row_count);
 
-            let table_token_base = (table.token_type() as u32) << 24;
+            let table_token_base = u32::from(table.token_type()) << 24;
             for rid in 1..=row_count {
                 let token = Token::new(table_token_base | rid);
                 self.valid_tokens.insert(token);
             }
         }
-
-        Ok(())
     }
 
     /// Analyzes references between tokens in metadata tables.
-    fn analyze_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
-        self.analyze_typedef_references(tables)?;
-        self.analyze_typeref_references(tables)?;
-        self.analyze_interfaceimpl_references(tables)?;
-        self.analyze_memberref_references(tables)?;
-        self.analyze_methoddef_references(tables)?;
-        self.analyze_field_references(tables)?;
-        self.analyze_customattribute_references(tables)?;
-        self.analyze_generic_references(tables)?;
-        self.analyze_nested_references(tables)?;
-        self.analyze_additional_references(tables)?;
-
-        Ok(())
+    fn analyze_references(&mut self, tables: &crate::TablesHeader) {
+        self.analyze_typedef_references(tables);
+        self.analyze_typeref_references(tables);
+        self.analyze_interfaceimpl_references(tables);
+        self.analyze_memberref_references(tables);
+        Self::analyze_methoddef_references(tables);
+        Self::analyze_field_references(tables);
+        self.analyze_customattribute_references(tables);
+        self.analyze_generic_references(tables);
+        self.analyze_nested_references(tables);
+        self.analyze_additional_references(tables);
     }
 
-    fn analyze_typedef_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+    fn analyze_typedef_references(&mut self, tables: &crate::TablesHeader) {
         if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
-            for typedef_row in typedef_table.iter() {
-                let from_token = Token::new(0x02000000 | typedef_row.rid);
+            for typedef_row in typedef_table {
+                let from_token = Token::new(0x0200_0000 | typedef_row.rid);
 
                 if typedef_row.extends.row != 0 {
                     self.add_reference(from_token, typedef_row.extends.token);
                 }
             }
         }
-        Ok(())
     }
 
-    fn analyze_typeref_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+    fn analyze_typeref_references(&mut self, tables: &crate::TablesHeader) {
         if let Some(typeref_table) = tables.table::<TypeRefRaw>() {
-            for typeref_row in typeref_table.iter() {
-                let from_token = Token::new(0x01000000 | typeref_row.rid);
+            for typeref_row in typeref_table {
+                let from_token = Token::new(0x0100_0000 | typeref_row.rid);
 
                 if typeref_row.resolution_scope.row != 0 {
                     self.add_reference(from_token, typeref_row.resolution_scope.token);
                 }
             }
         }
-        Ok(())
     }
 
-    fn analyze_interfaceimpl_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+    fn analyze_interfaceimpl_references(&mut self, tables: &crate::TablesHeader) {
         if let Some(interface_table) = tables.table::<InterfaceImplRaw>() {
-            for impl_row in interface_table.iter() {
-                let from_token = Token::new(0x09000000 | impl_row.rid);
+            for impl_row in interface_table {
+                let from_token = Token::new(0x0900_0000 | impl_row.rid);
 
-                let class_token = Token::new(0x02000000 | impl_row.class);
+                let class_token = Token::new(0x0200_0000 | impl_row.class);
                 self.add_reference(from_token, class_token);
 
                 if impl_row.interface.row != 0 {
@@ -361,13 +357,12 @@ impl ReferenceScanner {
                 }
             }
         }
-        Ok(())
     }
 
-    fn analyze_memberref_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+    fn analyze_memberref_references(&mut self, tables: &crate::TablesHeader) {
         if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
-            for memberref_row in memberref_table.iter() {
-                let from_token = Token::new(0x0A000000 | memberref_row.rid);
+            for memberref_row in memberref_table {
+                let from_token = Token::new(0x0A00_0000 | memberref_row.rid);
 
                 if memberref_row.class.row != 0 {
                     self.add_reference(from_token, memberref_row.class.token);
@@ -376,31 +371,28 @@ impl ReferenceScanner {
                 // TODO: Parse signature blob for type references (future phase)
             }
         }
-        Ok(())
     }
 
-    fn analyze_methoddef_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+    fn analyze_methoddef_references(tables: &crate::TablesHeader) {
         if let Some(methoddef_table) = tables.table::<MethodDefRaw>() {
-            for _methoddef_row in methoddef_table.iter() {
+            for _methoddef_row in methoddef_table {
                 // TODO: Parse signature blob for type references (future phase)
             }
         }
-        Ok(())
     }
 
-    fn analyze_field_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+    fn analyze_field_references(tables: &crate::TablesHeader) {
         if let Some(field_table) = tables.table::<FieldRaw>() {
-            for _field_row in field_table.iter() {
+            for _field_row in field_table {
                 // TODO: Parse signature blob for type references (future phase)
             }
         }
-        Ok(())
     }
 
-    fn analyze_customattribute_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+    fn analyze_customattribute_references(&mut self, tables: &crate::TablesHeader) {
         if let Some(attr_table) = tables.table::<CustomAttributeRaw>() {
-            for attr_row in attr_table.iter() {
-                let from_token = Token::new(0x0C000000 | attr_row.rid);
+            for attr_row in attr_table {
+                let from_token = Token::new(0x0C00_0000 | attr_row.rid);
 
                 if attr_row.parent.row != 0 {
                     self.add_reference(from_token, attr_row.parent.token);
@@ -411,13 +403,12 @@ impl ReferenceScanner {
                 }
             }
         }
-        Ok(())
     }
 
-    fn analyze_generic_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+    fn analyze_generic_references(&mut self, tables: &crate::TablesHeader) {
         if let Some(param_table) = tables.table::<GenericParamRaw>() {
-            for param_row in param_table.iter() {
-                let from_token = Token::new(0x2A000000 | param_row.rid);
+            for param_row in param_table {
+                let from_token = Token::new(0x2A00_0000 | param_row.rid);
 
                 if param_row.owner.row != 0 {
                     self.add_reference(from_token, param_row.owner.token);
@@ -426,10 +417,10 @@ impl ReferenceScanner {
         }
 
         if let Some(constraint_table) = tables.table::<GenericParamConstraintRaw>() {
-            for constraint_row in constraint_table.iter() {
-                let from_token = Token::new(0x2C000000 | constraint_row.rid);
+            for constraint_row in constraint_table {
+                let from_token = Token::new(0x2C00_0000 | constraint_row.rid);
 
-                let param_token = Token::new(0x2A000000 | constraint_row.owner);
+                let param_token = Token::new(0x2A00_0000 | constraint_row.owner);
                 self.add_reference(from_token, param_token);
 
                 if constraint_row.constraint.row != 0 {
@@ -437,31 +428,28 @@ impl ReferenceScanner {
                 }
             }
         }
-
-        Ok(())
     }
 
-    fn analyze_nested_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+    fn analyze_nested_references(&mut self, tables: &crate::TablesHeader) {
         if let Some(nested_table) = tables.table::<NestedClassRaw>() {
-            for nested_row in nested_table.iter() {
-                let from_token = Token::new(0x29000000 | nested_row.rid);
+            for nested_row in nested_table {
+                let from_token = Token::new(0x2900_0000 | nested_row.rid);
 
-                let nested_token = Token::new(0x02000000 | nested_row.nested_class);
+                let nested_token = Token::new(0x0200_0000 | nested_row.nested_class);
                 self.add_reference(from_token, nested_token);
 
-                let enclosing_token = Token::new(0x02000000 | nested_row.enclosing_class);
+                let enclosing_token = Token::new(0x0200_0000 | nested_row.enclosing_class);
                 self.add_reference(from_token, enclosing_token);
             }
         }
-        Ok(())
     }
 
-    fn analyze_additional_references(&mut self, tables: &crate::TablesHeader) -> Result<()> {
+    fn analyze_additional_references(&mut self, tables: &crate::TablesHeader) {
         if let Some(methodimpl_table) = tables.table::<MethodImplRaw>() {
-            for methodimpl_row in methodimpl_table.iter() {
-                let from_token = Token::new(0x19000000 | methodimpl_row.rid);
+            for methodimpl_row in methodimpl_table {
+                let from_token = Token::new(0x1900_0000 | methodimpl_row.rid);
 
-                let class_token = Token::new(0x02000000 | methodimpl_row.class);
+                let class_token = Token::new(0x0200_0000 | methodimpl_row.class);
                 self.add_reference(from_token, class_token);
 
                 if methodimpl_row.method_body.row != 0 {
@@ -475,26 +463,26 @@ impl ReferenceScanner {
         }
 
         if let Some(fieldlayout_table) = tables.table::<FieldLayoutRaw>() {
-            for fieldlayout_row in fieldlayout_table.iter() {
-                let from_token = Token::new(0x10000000 | fieldlayout_row.rid);
+            for fieldlayout_row in fieldlayout_table {
+                let from_token = Token::new(0x1000_0000 | fieldlayout_row.rid);
 
-                let field_token = Token::new(0x04000000 | fieldlayout_row.field);
+                let field_token = Token::new(0x0400_0000 | fieldlayout_row.field);
                 self.add_reference(from_token, field_token);
             }
         }
 
         if let Some(classlayout_table) = tables.table::<ClassLayoutRaw>() {
-            for classlayout_row in classlayout_table.iter() {
-                let from_token = Token::new(0x0F000000 | classlayout_row.rid);
+            for classlayout_row in classlayout_table {
+                let from_token = Token::new(0x0F00_0000 | classlayout_row.rid);
 
-                let parent_token = Token::new(0x02000000 | classlayout_row.parent);
+                let parent_token = Token::new(0x0200_0000 | classlayout_row.parent);
                 self.add_reference(from_token, parent_token);
             }
         }
 
         if let Some(constant_table) = tables.table::<ConstantRaw>() {
-            for constant_row in constant_table.iter() {
-                let from_token = Token::new(0x0B000000 | constant_row.rid);
+            for constant_row in constant_table {
+                let from_token = Token::new(0x0B00_0000 | constant_row.rid);
 
                 if constant_row.parent.row != 0 {
                     self.add_reference(from_token, constant_row.parent.token);
@@ -503,16 +491,14 @@ impl ReferenceScanner {
         }
 
         if let Some(marshal_table) = tables.table::<FieldMarshalRaw>() {
-            for marshal_row in marshal_table.iter() {
-                let from_token = Token::new(0x0D000000 | marshal_row.rid);
+            for marshal_row in marshal_table {
+                let from_token = Token::new(0x0D00_0000 | marshal_row.rid);
 
                 if marshal_row.parent.row != 0 {
                     self.add_reference(from_token, marshal_row.parent.token);
                 }
             }
         }
-
-        Ok(())
     }
 
     fn add_reference(&mut self, from_token: Token, to_token: Token) {
@@ -544,6 +530,7 @@ impl ReferenceScanner {
     /// # Returns
     ///
     /// Returns `true` if the token exists, `false` otherwise.
+    #[must_use]
     pub fn token_exists(&self, token: Token) -> bool {
         self.valid_tokens.contains(&token)
     }
@@ -557,6 +544,7 @@ impl ReferenceScanner {
     /// # Returns
     ///
     /// Returns the row count for the table, or 0 if the table doesn't exist.
+    #[must_use]
     pub fn table_row_count(&self, table_id: TableId) -> u32 {
         self.table_row_counts.get(&table_id).copied().unwrap_or(0)
     }
@@ -570,6 +558,10 @@ impl ReferenceScanner {
     /// # Returns
     ///
     /// Returns `Ok(())` if the token is valid, or an error if it's out of bounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the token is invalid or out of bounds for its table.
     pub fn validate_token_bounds(&self, token: Token) -> Result<()> {
         let table_value = token.table();
         let rid = token.row();
@@ -607,6 +599,7 @@ impl ReferenceScanner {
     /// # Returns
     ///
     /// Returns a set of tokens that reference the given token.
+    #[must_use]
     pub fn get_references_to(&self, token: Token) -> HashSet<Token> {
         self.forward_references
             .get(&token)
@@ -623,6 +616,7 @@ impl ReferenceScanner {
     /// # Returns
     ///
     /// Returns a set of tokens that the given token references.
+    #[must_use]
     pub fn get_references_from(&self, token: Token) -> HashSet<Token> {
         self.backward_references
             .get(&token)
@@ -640,11 +634,13 @@ impl ReferenceScanner {
     ///
     /// Returns `true` if the token can be safely deleted, `false` if it would
     /// break reference integrity.
+    #[must_use]
     pub fn can_delete_token(&self, token: Token) -> bool {
         self.get_references_to(token).is_empty()
     }
 
     /// Returns the heap sizes for bounds checking.
+    #[must_use]
     pub fn heap_sizes(&self) -> &HeapSizes {
         &self.heap_sizes
     }
@@ -659,6 +655,10 @@ impl ReferenceScanner {
     /// # Returns
     ///
     /// Returns `Ok(())` if the index is valid, or an error if it's out of bounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the heap index is out of bounds or the heap type is unknown.
     pub fn validate_heap_index(&self, heap_type: &str, index: u32) -> Result<()> {
         let max_size = match heap_type {
             "strings" => self.heap_sizes.strings,
@@ -684,6 +684,7 @@ impl ReferenceScanner {
     }
 
     /// Returns statistics about the analyzed assembly.
+    #[must_use]
     pub fn statistics(&self) -> ScannerStatistics {
         ScannerStatistics {
             total_tokens: self.valid_tokens.len(),
@@ -691,7 +692,7 @@ impl ReferenceScanner {
             total_references: self
                 .forward_references
                 .values()
-                .map(|refs| refs.len())
+                .map(std::collections::HashSet::len)
                 .sum(),
             heap_sizes: self.heap_sizes.clone(),
         }
@@ -706,6 +707,7 @@ impl ReferenceScanner {
     /// # Returns
     ///
     /// The count of tables that contain at least one row.
+    #[must_use]
     pub fn count_non_empty_tables(&self) -> usize {
         self.table_row_counts.len()
     }
@@ -718,6 +720,7 @@ impl ReferenceScanner {
     /// # Returns
     ///
     /// The total count of rows across all metadata tables.
+    #[must_use]
     pub fn count_total_rows(&self) -> u32 {
         self.table_row_counts.values().sum()
     }
