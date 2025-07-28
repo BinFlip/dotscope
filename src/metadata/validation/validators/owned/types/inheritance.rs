@@ -1129,7 +1129,9 @@ mod tests {
             }
         }
 
-        // TODO: 6. Assembly with method inheritance violation (needs proper method-type association)
+        // 6. Assembly with method inheritance violation (temporarily disabled - test case needs refinement)
+        // The current implementation is not triggering the expected validation failure
+        // TODO: Investigate why concrete type with abstract method is not detected as violation
         // match create_assembly_with_method_inheritance_violation() {
         //     Ok(temp_file) => {
         //         assemblies.push(TestAssembly::from_temp_file_with_error(
@@ -1138,14 +1140,13 @@ mod tests {
         //         ));
         //     }
         //     Err(e) => {
-        //         eprintln!(
-        //             "Warning: Could not create method inheritance violation assembly: {}",
-        //             e
-        //         );
+        //         eprintln!("Warning: Could not create method inheritance violation assembly: {e}");
         //     }
         // }
 
-        // TODO: 7. Assembly with circular inheritance dependency (complex to create with builder API)
+        // 7. Assembly with circular inheritance dependency (temporarily disabled - test case needs refinement)
+        // The current implementation is not triggering the expected validation failure
+        // TODO: Investigate why deep inheritance chain is not triggering depth limit validation
         // match create_assembly_with_circular_inheritance() {
         //     Ok(temp_file) => {
         //         assemblies.push(TestAssembly::from_temp_file_with_error(
@@ -1154,10 +1155,7 @@ mod tests {
         //         ));
         //     }
         //     Err(e) => {
-        //         eprintln!(
-        //             "Warning: Could not create circular inheritance assembly: {}",
-        //             e
-        //         );
+        //         eprintln!("Warning: Could not create circular inheritance assembly: {e}");
         //     }
         // }
 

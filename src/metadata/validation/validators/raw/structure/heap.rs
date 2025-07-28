@@ -369,7 +369,7 @@ impl RawHeapValidator {
             }
         }
 
-        Self::validate_guid_heap_content(assembly_view);
+        Self::validate_guid_heap_content(assembly_view)?;
 
         Ok(())
     }
@@ -378,6 +378,7 @@ impl RawHeapValidator {
     ///
     /// Performs deep content validation of GUID heap entries according to ECMA-335 requirements.
     /// Each GUID must be exactly 16 bytes and accessible through the heap interface.
+    /// Validates GUID heap accessibility, iteration capability, and basic format compliance.
     ///
     /// # Arguments
     ///
@@ -393,17 +394,75 @@ impl RawHeapValidator {
     /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
     /// - GUID heap iteration fails due to corruption
     /// - GUID entries are inaccessible or malformed
-    fn validate_guid_heap_content(_assembly_view: &CilAssemblyView) {
-        // ToDo: Implement better GUID heap validation
-        // if let Some(guids) = assembly_view.guids() {
-        //     for (_index, _guid_data) in guids.iter() {
-        //         // Basic validation - ensure GUID data is accessible
-        //         // GUIDs are always 16 bytes by design, so just verify accessibility
-        //         // More sophisticated validation could verify GUID format patterns
-        //         // The fact that we can iterate means the GUID is accessible and valid
-        //         // GUID heap uses 1-based indexing - we add 1 to convert from 0-based iterator index
-        //     }
-        // }
+    /// - GUID heap contains inconsistent data
+    /// - Individual GUID access fails unexpectedly
+    fn validate_guid_heap_content(assembly_view: &CilAssemblyView) -> Result<()> {
+        if let Some(guids) = assembly_view.guids() {
+            let mut guid_count = 0;
+
+            // Validate accessibility through iteration
+            for (offset, guid_data) in guids.iter() {
+                guid_count += 1;
+
+                // Verify GUID data is properly accessible
+                let guid_bytes = guid_data.to_bytes();
+
+                // GUID format validation: ensure it's exactly 16 bytes
+                if guid_bytes.len() != 16 {
+                    return Err(malformed_error!(
+                        "GUID at offset {} has invalid length {} (expected 16 bytes)",
+                        offset,
+                        guid_bytes.len()
+                    ));
+                }
+
+                // Verify 1-based indexing access works correctly
+                // GUID heap uses 1-based indexing, and offsets are in increments of 16
+                let one_based_index = (offset / 16) + 1;
+                match guids.get(one_based_index) {
+                    Ok(indexed_guid) => {
+                        let indexed_bytes = indexed_guid.to_bytes();
+                        if indexed_bytes != guid_bytes {
+                            return Err(malformed_error!(
+                                "GUID heap consistency error: iterator and indexed access return different data for index {} (offset {})",
+                                one_based_index,
+                                offset
+                            ));
+                        }
+                    }
+                    Err(_) => {
+                        return Err(malformed_error!(
+                            "GUID heap access error: cannot access GUID at 1-based index {} (offset {})",
+                            one_based_index,
+                            offset
+                        ));
+                    }
+                }
+
+                // Prevent excessive iteration in case of heap corruption
+                if guid_count > 65536 {
+                    return Err(malformed_error!(
+                        "GUID heap contains excessive number of entries (>65536), possible corruption"
+                    ));
+                }
+            }
+
+            // Verify count consistency with heap size
+            let streams = assembly_view.streams();
+            if let Some(guid_stream) = streams.iter().find(|s| s.name == "#GUID") {
+                let expected_count = (guid_stream.size / 16) as usize;
+                if guid_count != expected_count {
+                    return Err(malformed_error!(
+                        "GUID heap count mismatch: found {} GUIDs but stream size {} indicates {} GUIDs",
+                        guid_count,
+                        guid_stream.size,
+                        expected_count
+                    ));
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Validates the user string heap for UTF-16 encoding compliance and proper length prefixes.
@@ -638,20 +697,14 @@ mod tests {
             }
         }
 
-        // 3. String heap with invalid UTF-8 (temporarily disabled - needs investigation)
-        // match create_assembly_with_invalid_utf8_string() {
-        //     Ok(temp_file) => {
-        //         assemblies.push(TestAssembly::from_temp_file_with_error(
-        //             temp_file,
-        //             "Malformed",
-        //         ));
-        //     }
-        //     Err(e) => {
-        //         return Err(Error::Error(format!(
-        //             "Failed to create test assembly with invalid UTF-8 string: {e}"
-        //         )));
-        //     }
-        // }
+        // 3. String heap with invalid UTF-8 (temporarily disabled - heap replacement approach fails)
+        // The current heap replacement approach doesn't work because the strings iterator
+        // cannot parse heavily corrupted heaps, so the validation never runs.
+        // This would require a different approach, such as:
+        // - Direct raw table manipulation to reference corrupted string indices
+        // - Lower-level heap corruption that maintains parseable structure
+        // - Alternative assembly creation method that bypasses heap validation
+        // TODO: Investigate alternative approaches for creating invalid UTF-8 in parseable string heaps
 
         // 4. GUID heap with invalid size alignment
         match create_assembly_with_invalid_guid_alignment() {
@@ -664,6 +717,18 @@ mod tests {
             Err(e) => {
                 return Err(Error::Error(format!(
                     "Failed to create test assembly with invalid GUID alignment: {e}"
+                )));
+            }
+        }
+
+        // 5. GUID heap with valid content (tests our new validation logic)
+        match create_assembly_with_valid_guid_content() {
+            Ok(temp_file) => {
+                assemblies.push(TestAssembly::from_temp_file(temp_file, true));
+            }
+            Err(e) => {
+                return Err(Error::Error(format!(
+                    "Failed to create test assembly with GUID content: {e}"
                 )));
             }
         }
@@ -724,6 +789,40 @@ mod tests {
         guid_heap.extend_from_slice(&[0x12; 16]);
         // Add incomplete GUID (only 10 bytes) - violates 16-byte alignment requirement
         guid_heap.extend_from_slice(&[0x34; 10]);
+
+        context.guid_add_heap(guid_heap)?;
+
+        let mut assembly = context.finish();
+        assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
+
+        let temp_file = NamedTempFile::new()?;
+        assembly.write_to_file(temp_file.path())?;
+
+        Ok(temp_file)
+    }
+
+    /// Creates a test assembly with valid GUID heap content to test
+    /// the new GUID content validation logic.
+    ///
+    /// Creates a minimal test to validate the new GUID content validation logic
+    /// works correctly with valid GUID data.
+    fn create_assembly_with_valid_guid_content() -> Result<NamedTempFile> {
+        let clean_testfile = get_clean_testfile()
+            .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let assembly = CilAssembly::new(view);
+        let mut context = BuilderContext::new(assembly);
+
+        // Create a very simple GUID heap with just one GUID that should pass basic validation
+        // The real test is to ensure our new validation code runs without errors
+        // on a valid GUID heap, demonstrating the implementation is working
+        let mut guid_heap = Vec::new();
+
+        // Add exactly 1 complete GUID (16 bytes)
+        guid_heap.extend_from_slice(&[
+            0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
+            0x77, 0x88,
+        ]);
 
         context.guid_add_heap(guid_heap)?;
 
