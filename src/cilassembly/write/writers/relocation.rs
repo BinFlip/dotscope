@@ -79,7 +79,7 @@
 //! # Integration
 //!
 //! This module integrates with:
-//! - [`crate::cilassembly::write::writers::pe`] - PE structure updates and section management
+//! - PE structure updates and section management
 //! - [`crate::cilassembly::write::output`] - Binary output buffer management
 //! - [`crate::cilassembly::write::planner`] - Layout planning and section movement detection
 //! - [`crate::file`] - PE file structure parsing and RVA conversion
@@ -183,7 +183,7 @@ impl RelocationEntry {
     /// assert_eq!(raw, (3 << 12) | 0x123);
     /// ```
     pub fn to_raw(&self) -> u16 {
-        ((self.relocation_type as u16) << 12) | (self.offset & 0x0FFF)
+        (u16::from(self.relocation_type) << 12) | (self.offset & 0x0FFF)
     }
 
     /// Gets the size in bytes for this relocation type.
@@ -211,13 +211,12 @@ impl RelocationEntry {
     /// ```
     pub fn size_bytes(&self) -> usize {
         match self.relocation_type {
-            RelocationTypes::IMAGE_REL_BASED_ABSOLUTE => 0,
-            RelocationTypes::IMAGE_REL_BASED_HIGH => 2,
-            RelocationTypes::IMAGE_REL_BASED_LOW => 2,
-            RelocationTypes::IMAGE_REL_BASED_HIGHLOW => 4,
-            RelocationTypes::IMAGE_REL_BASED_HIGHADJ => 4,
+            RelocationTypes::IMAGE_REL_BASED_HIGH | RelocationTypes::IMAGE_REL_BASED_LOW => 2,
+            RelocationTypes::IMAGE_REL_BASED_HIGHLOW | RelocationTypes::IMAGE_REL_BASED_HIGHADJ => {
+                4
+            }
             RelocationTypes::IMAGE_REL_BASED_DIR64 => 8,
-            _ => 0, // Unknown type, assume no size
+            _ => 0, // Unknown type or absolute (no operation), assume no size
         }
     }
 }
@@ -479,7 +478,7 @@ impl<'a> RelocationWriter<'a> {
 
         let address_mapping = self.create_address_mapping();
         for i in 0..self.relocation_blocks.len() {
-            self.update_block_relocations(i, &address_mapping)?;
+            self.update_block_relocations(i, &address_mapping);
         }
 
         Ok(())
@@ -561,7 +560,7 @@ impl<'a> RelocationWriter<'a> {
         &mut self,
         block_index: usize,
         address_mapping: &HashMap<(u32, u32), u32>,
-    ) -> Result<()> {
+    ) {
         // We need to work backwards through entries since we might remove some
         let block = &self.relocation_blocks[block_index];
         let block_va = block.virtual_address;
@@ -577,14 +576,12 @@ impl<'a> RelocationWriter<'a> {
                     let new_target_rva = new_start + offset_in_section;
 
                     if new_target_rva != current_target_rva {
-                        self.update_relocation_entry(block_index, entry_index, new_target_rva)?;
+                        self.update_relocation_entry(block_index, entry_index, new_target_rva);
                     }
                     break;
                 }
             }
         }
-
-        Ok(())
     }
 
     /// Updates a relocation entry when the target address has moved.
@@ -596,14 +593,16 @@ impl<'a> RelocationWriter<'a> {
         block_index: usize,
         entry_index: usize,
         new_target_rva: u32,
-    ) -> Result<()> {
+    ) {
         let new_page_base = new_target_rva & !0xFFF; // Clear lower 12 bits
         let new_offset = new_target_rva & 0xFFF; // Keep lower 12 bits
 
         let current_block_va = self.relocation_blocks[block_index].virtual_address;
-        if new_page_base != current_block_va {
+        if new_page_base == current_block_va {
+            self.relocation_blocks[block_index].entries[entry_index].offset = new_offset as u16;
+        } else {
             let entry_to_move = self.relocation_blocks[block_index].entries[entry_index].clone();
-            let target_block_index = self.find_or_create_relocation_block(new_page_base)?;
+            let target_block_index = self.find_or_create_relocation_block(new_page_base);
             let relocated_entry = RelocationEntry {
                 offset: new_offset as u16,
                 relocation_type: entry_to_move.relocation_type,
@@ -615,24 +614,20 @@ impl<'a> RelocationWriter<'a> {
                 .entries
                 .remove(entry_index);
             self.relocation_blocks[block_index].size_of_block -= 2;
-        } else {
-            self.relocation_blocks[block_index].entries[entry_index].offset = new_offset as u16;
         }
-
-        Ok(())
     }
 
     /// Finds an existing relocation block for the given page or creates a new one.
-    fn find_or_create_relocation_block(&mut self, page_base: u32) -> Result<usize> {
+    fn find_or_create_relocation_block(&mut self, page_base: u32) -> usize {
         for (index, block) in self.relocation_blocks.iter().enumerate() {
             if block.virtual_address == page_base {
-                return Ok(index);
+                return index;
             }
         }
 
         let new_block = RelocationBlock::new(page_base);
         self.relocation_blocks.push(new_block);
-        Ok(self.relocation_blocks.len() - 1)
+        self.relocation_blocks.len() - 1
     }
 }
 
@@ -830,24 +825,18 @@ mod tests {
         assert_eq!(writer.relocation_blocks.len(), 0);
 
         // Create first block
-        let index1 = writer
-            .find_or_create_relocation_block(0x1000)
-            .expect("Failed to create block");
+        let index1 = writer.find_or_create_relocation_block(0x1000);
         assert_eq!(index1, 0);
         assert_eq!(writer.relocation_blocks.len(), 1);
         assert_eq!(writer.relocation_blocks[0].virtual_address, 0x1000);
 
         // Find existing block
-        let index2 = writer
-            .find_or_create_relocation_block(0x1000)
-            .expect("Failed to find block");
+        let index2 = writer.find_or_create_relocation_block(0x1000);
         assert_eq!(index2, 0);
         assert_eq!(writer.relocation_blocks.len(), 1);
 
         // Create second block
-        let index3 = writer
-            .find_or_create_relocation_block(0x2000)
-            .expect("Failed to create block");
+        let index3 = writer.find_or_create_relocation_block(0x2000);
         assert_eq!(index3, 1);
         assert_eq!(writer.relocation_blocks.len(), 2);
         assert_eq!(writer.relocation_blocks[1].virtual_address, 0x2000);
@@ -874,9 +863,7 @@ mod tests {
 
         // Target is at 0x1200, should move to 0x1300 (same page: 0x1000)
         let new_target_rva = 0x1300;
-        writer
-            .update_relocation_entry(0, 0, new_target_rva)
-            .expect("Failed to update entry");
+        writer.update_relocation_entry(0, 0, new_target_rva);
 
         // Entry should be updated within the same block
         assert_eq!(writer.relocation_blocks.len(), 1);
@@ -905,9 +892,7 @@ mod tests {
 
         // Target moves from 0x1200 to 0x3200 (different page: 0x1000 -> 0x3000)
         let new_target_rva = 0x3200;
-        writer
-            .update_relocation_entry(0, 0, new_target_rva)
-            .expect("Failed to update entry");
+        writer.update_relocation_entry(0, 0, new_target_rva);
 
         // Should have 2 blocks now: original (empty) and new (with entry)
         assert_eq!(writer.relocation_blocks.len(), 2);

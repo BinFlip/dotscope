@@ -3,12 +3,15 @@
 //! This module provides builders for creating CilType and ExportedType instances
 //! with various characteristics including inheritance, interfaces, and value types.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
-use crate::metadata::{
-    tables::{ExportedType, ExportedTypeRc},
-    token::Token,
-    typesystem::{CilFlavor, CilType, CilTypeRc, CilTypeReference},
+use crate::{
+    metadata::{
+        tables::{ExportedType, ExportedTypeRc},
+        token::Token,
+        typesystem::{CilFlavor, CilType, CilTypeRc, CilTypeReference},
+    },
+    test::FileBuilder,
 };
 
 /// Builder for creating mock CilType instances with various characteristics
@@ -113,7 +116,15 @@ impl Default for CilTypeBuilder {
 
 /// Helper function to create an ExportedTypeRc
 pub fn create_exportedtype(dummy_type: CilTypeRc) -> ExportedTypeRc {
-    use super::files::FileBuilder;
+    let implementation_lock = OnceLock::new();
+    implementation_lock
+        .set(CilTypeReference::File(
+            FileBuilder::new()
+                .with_rid(1)
+                .with_name("export_test")
+                .build(),
+        ))
+        .ok();
 
     Arc::new(ExportedType {
         rid: 1,
@@ -123,12 +134,7 @@ pub fn create_exportedtype(dummy_type: CilTypeRc) -> ExportedTypeRc {
         type_def_id: dummy_type.token.0,
         name: "ExportedType".to_string(),
         namespace: Some("Test.Namespace".to_string()),
-        implementation: CilTypeReference::File(
-            FileBuilder::new()
-                .with_rid(1)
-                .with_name("export_test")
-                .build(),
-        ),
+        implementation: implementation_lock,
         custom_attributes: Arc::new(boxcar::Vec::new()),
     })
 }

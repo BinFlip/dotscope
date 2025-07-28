@@ -83,7 +83,9 @@ mod tests {
 
     use crate::metadata::tables::{
         methodspec::MethodSpecRaw,
-        types::{CodedIndex, RowReadable, RowWritable, TableId, TableInfo, TableRow},
+        types::{
+            CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+        },
     };
     use crate::metadata::token::Token;
 
@@ -128,7 +130,7 @@ mod tests {
             rid: 1,
             token: Token::new(0x2B000001),
             offset: 0,
-            method: CodedIndex::new(TableId::MemberRef, 0), // MemberRef(0) = (0 << 1) | 1 = 1
+            method: CodedIndex::new(TableId::MemberRef, 0, CodedIndexType::MethodDefOrRef), // MemberRef(0) = (0 << 1) | 1 = 1
             instantiation: 0x0202,
         };
 
@@ -162,7 +164,7 @@ mod tests {
             rid: 1,
             token: Token::new(0x2B000001),
             offset: 0,
-            method: CodedIndex::new(TableId::MemberRef, 0), // MemberRef(0) = (0 << 1) | 1 = 1
+            method: CodedIndex::new(TableId::MemberRef, 0, CodedIndexType::MethodDefOrRef), // MemberRef(0) = (0 << 1) | 1 = 1
             instantiation: 0x02020202,
         };
 
@@ -196,8 +198,8 @@ mod tests {
             rid: 42,
             token: Token::new(0x2B00002A),
             offset: 0,
-            method: CodedIndex::new(TableId::MethodDef, 25), // MethodDef(25) = (25 << 1) | 0 = 50
-            instantiation: 128,                              // Blob index 128
+            method: CodedIndex::new(TableId::MethodDef, 25, CodedIndexType::MethodDefOrRef), // MethodDef(25) = (25 << 1) | 0 = 50
+            instantiation: 128, // Blob index 128
         };
 
         // Write to buffer
@@ -241,7 +243,7 @@ mod tests {
                 rid: 1,
                 token: Token::new(0x2B000001),
                 offset: 0,
-                method: CodedIndex::new(method_tag, method_row),
+                method: CodedIndex::new(method_tag, method_row, CodedIndexType::MethodDefOrRef),
                 instantiation: blob_index,
             };
 
@@ -299,7 +301,7 @@ mod tests {
                 rid: method_row,
                 token: Token::new(0x2B000000 + method_row),
                 offset: 0,
-                method: CodedIndex::new(method_tag, method_row),
+                method: CodedIndex::new(method_tag, method_row, CodedIndexType::MethodDefOrRef),
                 instantiation: blob_index,
             };
 
@@ -333,7 +335,7 @@ mod tests {
             rid: 1,
             token: Token::new(0x2B000001),
             offset: 0,
-            method: CodedIndex::new(TableId::MethodDef, 0), // MethodDef(0) = (0 << 1) | 0 = 0
+            method: CodedIndex::new(TableId::MethodDef, 0, CodedIndexType::MethodDefOrRef), // MethodDef(0) = (0 << 1) | 0 = 0
             instantiation: 0,
         };
 
@@ -355,7 +357,7 @@ mod tests {
             rid: 1,
             token: Token::new(0x2B000001),
             offset: 0,
-            method: CodedIndex::new(TableId::MemberRef, 0x7FFF), // Max for 2-byte coded index
+            method: CodedIndex::new(TableId::MemberRef, 0x7FFF, CodedIndexType::MethodDefOrRef), // Max for 2-byte coded index
             instantiation: 0xFFFF,
         };
 
@@ -394,7 +396,7 @@ mod tests {
                 rid: 1,
                 token: Token::new(0x2B000001),
                 offset: 0,
-                method: CodedIndex::new(method_tag, method_row),
+                method: CodedIndex::new(method_tag, method_row, CodedIndexType::MethodDefOrRef),
                 instantiation: blob_index,
             };
 
@@ -430,7 +432,7 @@ mod tests {
                 rid: 1,
                 token: Token::new(0x2B000001),
                 offset: 0,
-                method: CodedIndex::new(TableId::MethodDef, 1),
+                method: CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef),
                 instantiation: 0x12345678,
             };
 
@@ -466,7 +468,7 @@ mod tests {
             rid: 1,
             token: Token::new(0x2B000001),
             offset: 0,
-            method: CodedIndex::new(TableId::MemberRef, 0), // MemberRef(0) = (0 << 1) | 1 = 1
+            method: CodedIndex::new(TableId::MemberRef, 0, CodedIndexType::MethodDefOrRef), // MemberRef(0) = (0 << 1) | 1 = 1
             instantiation: 0x0202,
         };
 

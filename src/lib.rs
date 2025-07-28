@@ -17,7 +17,6 @@
 #![doc(html_no_source)]
 #![deny(missing_docs)]
 #![allow(dead_code)]
-#![allow(clippy::too_many_arguments)]
 //#![deny(unsafe_code)]
 // - 'userstring.rs' uses a transmute for converting a &[u8] to &[u16]
 // - 'file/physical.rs' uses mmap to map a file into memory
@@ -500,16 +499,14 @@ pub use metadata::cilassemblyview::CilAssemblyView;
 /// let mut assembly = view.to_owned();
 ///
 /// // Add a new string to the heap
-/// let string_index = assembly.add_string("Hello, World!")?;
+/// let string_index = assembly.string_add("Hello, World!")?;
 ///
 /// // Write changes back to file
 /// assembly.write_to_file("modified_assembly.dll")?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub use cilassembly::{
-    BasicSchemaValidator, BuilderContext, CilAssembly, LastWriteWinsResolver,
-    ReferenceHandlingStrategy, ReferentialIntegrityValidator, RidConsistencyValidator,
-    ValidationPipeline,
+    BuilderContext, CilAssembly, LastWriteWinsResolver, ReferenceHandlingStrategy,
 };
 mod cilassembly;
 
@@ -544,7 +541,7 @@ pub use metadata::cilobject::CilObject;
 /// )?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
-pub use metadata::validation::ValidationConfig;
+pub use metadata::validation::{ValidationConfig, ValidationEngine};
 
 /// Metadata streams and heaps for direct access to ECMA-335 data structures.
 ///

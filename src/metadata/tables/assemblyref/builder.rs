@@ -139,6 +139,7 @@ impl AssemblyRefBuilder {
     /// # use dotscope::prelude::*;
     /// let builder = AssemblyRefBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             name: None,
@@ -169,6 +170,7 @@ impl AssemblyRefBuilder {
     /// let builder = AssemblyRefBuilder::new()
     ///     .name("System.Core");
     /// ```
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -193,6 +195,7 @@ impl AssemblyRefBuilder {
     /// let builder = AssemblyRefBuilder::new()
     ///     .version(4, 0, 0, 0);
     /// ```
+    #[must_use]
     pub fn version(mut self, major: u32, minor: u32, build: u32, revision: u32) -> Self {
         self.major_version = major;
         self.minor_version = minor;
@@ -218,6 +221,7 @@ impl AssemblyRefBuilder {
     /// let builder = AssemblyRefBuilder::new()
     ///     .flags(AssemblyFlags::RETARGETABLE);
     /// ```
+    #[must_use]
     pub fn flags(mut self, flags: u32) -> Self {
         self.flags = flags;
         self
@@ -240,6 +244,7 @@ impl AssemblyRefBuilder {
     /// let builder = AssemblyRefBuilder::new()
     ///     .public_key(&public_key);
     /// ```
+    #[must_use]
     pub fn public_key(mut self, public_key: &[u8]) -> Self {
         self.public_key_or_token = Some(public_key.to_vec());
         self.flags |= AssemblyFlags::PUBLIC_KEY;
@@ -263,6 +268,7 @@ impl AssemblyRefBuilder {
     /// let builder = AssemblyRefBuilder::new()
     ///     .public_key_token(&token);
     /// ```
+    #[must_use]
     pub fn public_key_token(mut self, token: &[u8]) -> Self {
         self.public_key_or_token = Some(token.to_vec());
         self.flags &= !AssemblyFlags::PUBLIC_KEY; // Clear the PUBLIC_KEY flag for tokens
@@ -285,6 +291,7 @@ impl AssemblyRefBuilder {
     /// let builder = AssemblyRefBuilder::new()
     ///     .culture("en-US");
     /// ```
+    #[must_use]
     pub fn culture(mut self, culture: impl Into<String>) -> Self {
         self.culture = Some(culture.into());
         self
@@ -307,6 +314,7 @@ impl AssemblyRefBuilder {
     /// let builder = AssemblyRefBuilder::new()
     ///     .hash_value(&hash);
     /// ```
+    #[must_use]
     pub fn hash_value(mut self, hash: &[u8]) -> Self {
         self.hash_value = Some(hash.to_vec());
         self
@@ -386,13 +394,13 @@ impl AssemblyRefBuilder {
             });
         }
 
-        let name_index = context.get_or_add_string(&name)?;
+        let name_index = context.string_get_or_add(&name)?;
 
         let culture_index = if let Some(culture) = self.culture {
             if culture.is_empty() {
                 0 // Empty culture string means culture-neutral
             } else {
-                context.get_or_add_string(&culture)?
+                context.string_get_or_add(&culture)?
             }
         } else {
             0 // No culture means culture-neutral
@@ -407,7 +415,7 @@ impl AssemblyRefBuilder {
                         details: "Public key token must be exactly 8 bytes".to_string(),
                     });
                 }
-                context.add_blob(&data)?
+                context.blob_add(&data)?
             }
         } else {
             0
@@ -417,7 +425,7 @@ impl AssemblyRefBuilder {
             if hash.is_empty() {
                 0
             } else {
-                context.add_blob(&hash)?
+                context.blob_add(&hash)?
             }
         } else {
             0
@@ -442,7 +450,7 @@ impl AssemblyRefBuilder {
         };
 
         let table_data = TableDataOwned::AssemblyRef(assembly_ref);
-        context.add_table_row(TableId::AssemblyRef, table_data)?;
+        context.table_row_add(TableId::AssemblyRef, table_data)?;
 
         Ok(token)
     }
@@ -452,16 +460,8 @@ impl AssemblyRefBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::CilAssembly,
-        metadata::{cilassemblyview::CilAssemblyView, tables::AssemblyFlags},
+        metadata::tables::AssemblyFlags, test::factories::table::assemblyref::get_test_assembly,
     };
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
 
     #[test]
     fn test_assemblyref_builder_basic() -> Result<()> {

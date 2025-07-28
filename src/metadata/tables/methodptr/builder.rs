@@ -85,6 +85,7 @@ impl MethodPtrBuilder {
     ///
     /// let builder = MethodPtrBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self { method: None }
     }
@@ -114,6 +115,7 @@ impl MethodPtrBuilder {
     /// let builder = MethodPtrBuilder::new()
     ///     .method(25);
     /// ```
+    #[must_use]
     pub fn method(mut self, method: u32) -> Self {
         self.method = Some(method);
         self
@@ -163,7 +165,7 @@ impl MethodPtrBuilder {
             method,
         };
 
-        context.add_table_row(TableId::MethodPtr, TableDataOwned::MethodPtr(method_ptr))?;
+        context.table_row_add(TableId::MethodPtr, TableDataOwned::MethodPtr(method_ptr))?;
         Ok(token)
     }
 }
@@ -181,16 +183,8 @@ impl Default for MethodPtrBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
-        metadata::cilassemblyview::CilAssemblyView,
+        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
     };
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
 
     #[test]
     fn test_methodptr_builder_new() {

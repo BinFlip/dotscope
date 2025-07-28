@@ -106,6 +106,7 @@ impl ModuleRefBuilder {
     /// # use dotscope::prelude::*;
     /// let builder = ModuleRefBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self { name: None }
     }
@@ -126,6 +127,7 @@ impl ModuleRefBuilder {
     /// let builder = ModuleRefBuilder::new()
     ///     .name("System.Core.dll");
     /// ```
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -182,7 +184,7 @@ impl ModuleRefBuilder {
             });
         }
 
-        let name_index = context.get_or_add_string(&name)?;
+        let name_index = context.string_get_or_add(&name)?;
         let rid = context.next_rid(TableId::ModuleRef);
         let token = Token::new(((TableId::ModuleRef as u32) << 24) | rid);
 
@@ -193,7 +195,7 @@ impl ModuleRefBuilder {
             name: name_index,
         };
 
-        context.add_table_row(TableId::ModuleRef, TableDataOwned::ModuleRef(module_ref))?;
+        context.table_row_add(TableId::ModuleRef, TableDataOwned::ModuleRef(module_ref))?;
 
         Ok(token)
     }
@@ -202,14 +204,7 @@ impl ModuleRefBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{cilassembly::CilAssembly, metadata::cilassemblyview::CilAssemblyView};
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
+    use crate::test::factories::table::assemblyref::get_test_assembly;
 
     #[test]
     fn test_moduleref_builder_basic() -> Result<()> {

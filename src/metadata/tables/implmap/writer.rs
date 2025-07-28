@@ -54,7 +54,13 @@ impl RowWritable for ImplMapRaw {
         sizes: &TableInfoRef,
     ) -> Result<()> {
         // Write mapping flags (2 bytes)
-        write_le_at(data, offset, self.mapping_flags as u16)?;
+        write_le_at(
+            data,
+            offset,
+            u16::try_from(self.mapping_flags).map_err(|_| {
+                malformed_error!("ImplMap mapping flags out of range: {}", self.mapping_flags)
+            })?,
+        )?;
 
         // Write MemberForwarded coded index
         let member_forwarded_value = sizes.encode_coded_index(
@@ -90,7 +96,9 @@ mod tests {
 
     use crate::metadata::tables::{
         implmap::ImplMapRaw,
-        types::{CodedIndex, RowReadable, RowWritable, TableId, TableInfo, TableRow},
+        types::{
+            CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+        },
     };
     use crate::metadata::token::Token;
 
@@ -148,7 +156,7 @@ mod tests {
             token: Token::new(0x1C000001),
             offset: 0,
             mapping_flags: 0x0101,
-            member_forwarded: CodedIndex::new(TableId::Field, 1), // Field(1) = (1 << 1) | 0 = 2
+            member_forwarded: CodedIndex::new(TableId::Field, 1, CodedIndexType::MemberForwarded), // Field(1) = (1 << 1) | 0 = 2
             import_name: 0x0303,
             import_scope: 0x0404,
         };
@@ -190,7 +198,7 @@ mod tests {
             token: Token::new(0x1C000001),
             offset: 0,
             mapping_flags: 0x0101,
-            member_forwarded: CodedIndex::new(TableId::Field, 1), // Field(1) = (1 << 1) | 0 = 2
+            member_forwarded: CodedIndex::new(TableId::Field, 1, CodedIndexType::MemberForwarded), // Field(1) = (1 << 1) | 0 = 2
             import_name: 0x03030303,
             import_scope: 0x04040404,
         };
@@ -233,7 +241,11 @@ mod tests {
             token: Token::new(0x1C00002A),
             offset: 0,
             mapping_flags: 0x0001, // NoMangle
-            member_forwarded: CodedIndex::new(TableId::MethodDef, 25), // MethodDef(25) = (25 << 1) | 1 = 51
+            member_forwarded: CodedIndex::new(
+                TableId::MethodDef,
+                25,
+                CodedIndexType::MemberForwarded,
+            ), // MethodDef(25) = (25 << 1) | 1 = 51
             import_name: 128,
             import_scope: 5,
         };
@@ -285,7 +297,11 @@ mod tests {
                 token: Token::new(0x1C000001),
                 offset: 0,
                 mapping_flags: 0x0001,
-                member_forwarded: CodedIndex::new(member_tag, member_row),
+                member_forwarded: CodedIndex::new(
+                    member_tag,
+                    member_row,
+                    CodedIndexType::MemberForwarded,
+                ),
                 import_name: 100,
                 import_scope: 3,
             };
@@ -340,7 +356,11 @@ mod tests {
                 token: Token::new(0x1C000001),
                 offset: 0,
                 mapping_flags: flags,
-                member_forwarded: CodedIndex::new(TableId::MethodDef, 1),
+                member_forwarded: CodedIndex::new(
+                    TableId::MethodDef,
+                    1,
+                    CodedIndexType::MemberForwarded,
+                ),
                 import_name: 50,
                 import_scope: 2,
             };
@@ -376,7 +396,7 @@ mod tests {
             token: Token::new(0x1C000001),
             offset: 0,
             mapping_flags: 0,
-            member_forwarded: CodedIndex::new(TableId::Field, 0), // Field(0) = (0 << 1) | 0 = 0
+            member_forwarded: CodedIndex::new(TableId::Field, 0, CodedIndexType::MemberForwarded), // Field(0) = (0 << 1) | 0 = 0
             import_name: 0,
             import_scope: 0,
         };
@@ -402,7 +422,11 @@ mod tests {
             token: Token::new(0x1C000001),
             offset: 0,
             mapping_flags: 0xFFFF,
-            member_forwarded: CodedIndex::new(TableId::MethodDef, 0x7FFF), // Max for 2-byte coded index
+            member_forwarded: CodedIndex::new(
+                TableId::MethodDef,
+                0x7FFF,
+                CodedIndexType::MemberForwarded,
+            ), // Max for 2-byte coded index
             import_name: 0xFFFF,
             import_scope: 0xFFFF,
         };
@@ -436,7 +460,7 @@ mod tests {
             token: Token::new(0x1C000001),
             offset: 0,
             mapping_flags: 0x0101,
-            member_forwarded: CodedIndex::new(TableId::Field, 1), // Field(1) = (1 << 1) | 0 = 2
+            member_forwarded: CodedIndex::new(TableId::Field, 1, CodedIndexType::MemberForwarded), // Field(1) = (1 << 1) | 0 = 2
             import_name: 0x0303,
             import_scope: 0x0404,
         };

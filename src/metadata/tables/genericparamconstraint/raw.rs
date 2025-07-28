@@ -29,7 +29,6 @@ use crate::{
         },
         token::Token,
         typesystem::TypeRegistry,
-        validation::ConstraintValidator,
     },
     Result,
 };
@@ -142,13 +141,6 @@ impl GenericParamConstraintRaw {
 
         match generic_params.get(&Token::new(self.owner | 0x2A00_0000)) {
             Some(owner) => {
-                ConstraintValidator::validate_constraint(
-                    &constraint,
-                    owner.value().flags,
-                    &owner.value().name,
-                    owner.value().token.value(),
-                )?;
-
                 owner.value().constraints.push(constraint.into());
                 Ok(())
             }

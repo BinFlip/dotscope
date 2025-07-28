@@ -125,11 +125,7 @@ mod tests {
             type_def_id: 0x02020202,
             name: 0x0303,
             namespace: 0x0404,
-            implementation: CodedIndex {
-                tag: TableId::File,
-                row: 1,
-                token: Token::new(1 | 0x26000000),
-            },
+            implementation: CodedIndex::new(TableId::File, 1, CodedIndexType::Implementation),
         };
 
         // Create minimal table info for testing (small heap)
@@ -178,11 +174,7 @@ mod tests {
             type_def_id: 0x02020202,
             name: 0x03030303,
             namespace: 0x04040404,
-            implementation: CodedIndex {
-                tag: TableId::File,
-                row: 1,
-                token: Token::new(1 | 0x26000000),
-            },
+            implementation: CodedIndex::new(TableId::File, 1, CodedIndexType::Implementation),
         };
 
         // Create minimal table info for testing (large heap)
@@ -239,11 +231,7 @@ mod tests {
             type_def_id: 0x02020202,
             name: 0x0303,
             namespace: 0x0404,
-            implementation: CodedIndex {
-                tag: TableId::File,
-                row: 1,
-                token: Token::new(1 | 0x26000000),
-            },
+            implementation: CodedIndex::new(TableId::File, 1, CodedIndexType::Implementation),
         };
 
         let table_info = std::sync::Arc::new(TableInfo::new_test(
@@ -294,11 +282,7 @@ mod tests {
             type_def_id: 0x02020202,
             name: 0x03030303,
             namespace: 0x04040404,
-            implementation: CodedIndex {
-                tag: TableId::File,
-                row: 1,
-                token: Token::new(1 | 0x26000000),
-            },
+            implementation: CodedIndex::new(TableId::File, 1, CodedIndexType::Implementation),
         };
 
         let table_info = std::sync::Arc::new(TableInfo::new_test(

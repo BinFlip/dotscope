@@ -98,7 +98,7 @@
 //! # Integration
 //!
 //! This module integrates with:
-//! - [`crate::metadata::imports::container`] - Unified import container combining CIL and native
+//! - [`crate::metadata::imports::UnifiedImportContainer`] - Unified import container combining CIL and native
 //! - [`crate::cilassembly::CilAssembly`] - PE writing pipeline for import table generation
 //! - [`goblin`] - PE parsing library for import directory analysis
 
@@ -426,7 +426,7 @@ impl NativeImports {
     /// # Panics
     ///
     /// Panics if the DLL has not been added to the import table first.
-    /// Use [`add_dll`] before calling this method.
+    /// Use [`Self::add_dll`] before calling this method.
     pub fn add_function(&mut self, dll_name: &str, function_name: &str) -> Result<()> {
         if function_name.is_empty() {
             return Err(Error::Error("Function name cannot be empty".to_string()));
@@ -505,7 +505,7 @@ impl NativeImports {
     /// # Panics
     ///
     /// Panics if the DLL has not been added to the import table first.
-    /// Use [`add_dll`] before calling this method.
+    /// Use [`Self::add_dll`] before calling this method.
     pub fn add_function_by_ordinal(&mut self, dll_name: &str, ordinal: u16) -> Result<()> {
         if ordinal == 0 {
             return Err(Error::Error("Ordinal cannot be 0".to_string()));

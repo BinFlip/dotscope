@@ -82,7 +82,7 @@ impl StreamFileLayout {
     pub fn additional_data_size(&self) -> u64 {
         if self.has_additions {
             // Calculate the difference between file region size and actual stream size
-            self.file_region.size.saturating_sub(self.size as u64)
+            self.file_region.size.saturating_sub(u64::from(self.size))
         } else {
             0
         }

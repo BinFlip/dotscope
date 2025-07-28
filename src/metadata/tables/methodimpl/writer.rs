@@ -90,7 +90,9 @@ mod tests {
 
     use crate::metadata::tables::{
         methodimpl::MethodImplRaw,
-        types::{CodedIndex, RowReadable, RowWritable, TableId, TableInfo, TableRow},
+        types::{
+            CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+        },
     };
     use crate::metadata::token::Token;
 
@@ -148,8 +150,12 @@ mod tests {
             token: Token::new(0x19000001),
             offset: 0,
             class: 0x0101,
-            method_body: CodedIndex::new(TableId::MethodDef, 1), // MethodDef(1) = (1 << 1) | 0 = 2
-            method_declaration: CodedIndex::new(TableId::MethodDef, 1), // MethodDef(1) = (1 << 1) | 0 = 2
+            method_body: CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef), // MethodDef(1) = (1 << 1) | 0 = 2
+            method_declaration: CodedIndex::new(
+                TableId::MethodDef,
+                1,
+                CodedIndexType::MethodDefOrRef,
+            ), // MethodDef(1) = (1 << 1) | 0 = 2
         };
 
         let mut buffer = vec![0u8; <MethodImplRaw as TableRow>::row_size(&sizes) as usize];
@@ -188,8 +194,12 @@ mod tests {
             token: Token::new(0x19000001),
             offset: 0,
             class: 0x01010101,
-            method_body: CodedIndex::new(TableId::MethodDef, 1), // MethodDef(1) = (1 << 1) | 0 = 2
-            method_declaration: CodedIndex::new(TableId::MemberRef, 10), // MemberRef(10) = (10 << 1) | 1 = 21
+            method_body: CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef), // MethodDef(1) = (1 << 1) | 0 = 2
+            method_declaration: CodedIndex::new(
+                TableId::MemberRef,
+                10,
+                CodedIndexType::MethodDefOrRef,
+            ), // MemberRef(10) = (10 << 1) | 1 = 21
         };
 
         let mut buffer = vec![0u8; <MethodImplRaw as TableRow>::row_size(&sizes) as usize];
@@ -230,8 +240,12 @@ mod tests {
             token: Token::new(0x1900002A),
             offset: 0,
             class: 55,
-            method_body: CodedIndex::new(TableId::MethodDef, 25),
-            method_declaration: CodedIndex::new(TableId::MemberRef, 15),
+            method_body: CodedIndex::new(TableId::MethodDef, 25, CodedIndexType::MethodDefOrRef),
+            method_declaration: CodedIndex::new(
+                TableId::MemberRef,
+                15,
+                CodedIndexType::MethodDefOrRef,
+            ),
         };
 
         // Write to buffer
@@ -280,8 +294,12 @@ mod tests {
                 token: Token::new(0x19000001),
                 offset: 0,
                 class: 10,
-                method_body: CodedIndex::new(body_tag, body_row),
-                method_declaration: CodedIndex::new(decl_tag, decl_row),
+                method_body: CodedIndex::new(body_tag, body_row, CodedIndexType::MethodDefOrRef),
+                method_declaration: CodedIndex::new(
+                    decl_tag,
+                    decl_row,
+                    CodedIndexType::MethodDefOrRef,
+                ),
             };
 
             let mut buffer = vec![0u8; <MethodImplRaw as TableRow>::row_size(&sizes) as usize];
@@ -319,8 +337,12 @@ mod tests {
             token: Token::new(0x19000001),
             offset: 0,
             class: 0,
-            method_body: CodedIndex::new(TableId::MethodDef, 0),
-            method_declaration: CodedIndex::new(TableId::MethodDef, 0),
+            method_body: CodedIndex::new(TableId::MethodDef, 0, CodedIndexType::MethodDefOrRef),
+            method_declaration: CodedIndex::new(
+                TableId::MethodDef,
+                0,
+                CodedIndexType::MethodDefOrRef,
+            ),
         };
 
         let mut buffer = vec![0u8; <MethodImplRaw as TableRow>::row_size(&sizes) as usize];
@@ -344,8 +366,16 @@ mod tests {
             token: Token::new(0x19000001),
             offset: 0,
             class: 0xFFFF,
-            method_body: CodedIndex::new(TableId::MemberRef, 0x7FFF), // Max for 2-byte coded index
-            method_declaration: CodedIndex::new(TableId::MethodDef, 0x7FFF),
+            method_body: CodedIndex::new(
+                TableId::MemberRef,
+                0x7FFF,
+                CodedIndexType::MethodDefOrRef,
+            ), // Max for 2-byte coded index
+            method_declaration: CodedIndex::new(
+                TableId::MethodDef,
+                0x7FFF,
+                CodedIndexType::MethodDefOrRef,
+            ),
         };
 
         let mut buffer = vec![0u8; <MethodImplRaw as TableRow>::row_size(&sizes) as usize];
@@ -377,8 +407,12 @@ mod tests {
             token: Token::new(0x19000001),
             offset: 0,
             class: 0x0101,
-            method_body: CodedIndex::new(TableId::MethodDef, 1), // MethodDef(1) = (1 << 1) | 0 = 2
-            method_declaration: CodedIndex::new(TableId::MethodDef, 1), // MethodDef(1) = (1 << 1) | 0 = 2
+            method_body: CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef), // MethodDef(1) = (1 << 1) | 0 = 2
+            method_declaration: CodedIndex::new(
+                TableId::MethodDef,
+                1,
+                CodedIndexType::MethodDefOrRef,
+            ), // MethodDef(1) = (1 << 1) | 0 = 2
         };
 
         let mut buffer = vec![0u8; <MethodImplRaw as TableRow>::row_size(&sizes) as usize];

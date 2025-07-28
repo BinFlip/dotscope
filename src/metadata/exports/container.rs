@@ -1,6 +1,6 @@
 //! Unified export container combining both CIL and native PE exports.
 //!
-//! This module provides the [`ExportContainer`] which serves as a unified interface
+//! This module provides the [`UnifiedExportContainer`] which serves as a unified interface
 //! for managing both managed (.NET) exports and native PE export tables. It builds
 //! on the existing sophisticated CIL export functionality while adding native support
 //! through composition rather than duplication.
@@ -22,9 +22,9 @@
 //! # Examples
 //!
 //! ```rust,ignore
-//! use dotscope::metadata::exports::ExportContainer;
+//! use dotscope::metadata::exports::UnifiedExportContainer;
 //!
-//! let container = ExportContainer::new();
+//! let container = UnifiedExportContainer::new();
 //!
 //! // Access existing CIL functionality
 //! let cil_exports = container.cil();
@@ -197,7 +197,7 @@ impl UnifiedExportContainer {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// let container = ExportContainer::new();
+    /// let container = UnifiedExportContainer::new();
     /// let cil_exports = container.cil();
     ///
     /// // Use existing CIL functionality
@@ -215,7 +215,7 @@ impl UnifiedExportContainer {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// let container = ExportContainer::new();
+    /// let container = UnifiedExportContainer::new();
     /// let native_exports = container.native();
     ///
     /// // Check native function exports
@@ -234,7 +234,7 @@ impl UnifiedExportContainer {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// let mut container = ExportContainer::new();
+    /// let mut container = UnifiedExportContainer::new();
     /// container.native_mut().add_function("MyFunction", 1, 0x1000)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
@@ -257,7 +257,7 @@ impl UnifiedExportContainer {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// let container = ExportContainer::new();
+    /// let container = UnifiedExportContainer::new();
     /// let exports = container.find_by_name("MyFunction");
     ///
     /// for export in exports {
@@ -292,7 +292,7 @@ impl UnifiedExportContainer {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// let container = ExportContainer::new();
+    /// let container = UnifiedExportContainer::new();
     /// let functions = container.get_all_exported_functions();
     ///
     /// for func in functions {
@@ -342,7 +342,7 @@ impl UnifiedExportContainer {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// let container = ExportContainer::new();
+    /// let container = UnifiedExportContainer::new();
     /// let native_functions = container.get_native_function_names();
     /// println!("Native functions: {:?}", native_functions);
     /// ```
@@ -355,7 +355,7 @@ impl UnifiedExportContainer {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// let container = ExportContainer::new();
+    /// let container = UnifiedExportContainer::new();
     /// if container.is_empty() {
     ///     println!("No exports found");
     /// }
@@ -369,7 +369,7 @@ impl UnifiedExportContainer {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// let container = ExportContainer::new();
+    /// let container = UnifiedExportContainer::new();
     /// println!("Total exports: {}", container.total_count());
     /// ```
     pub fn total_count(&self) -> usize {
@@ -392,7 +392,7 @@ impl UnifiedExportContainer {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// let mut container = ExportContainer::new();
+    /// let mut container = UnifiedExportContainer::new();
     /// container.add_native_function("MyFunction", 1, 0x1000)?;
     /// container.add_native_function("AnotherFunction", 2, 0x2000)?;
     /// # Ok::<(), dotscope::Error>(())
@@ -422,7 +422,7 @@ impl UnifiedExportContainer {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// let mut container = ExportContainer::new();
+    /// let mut container = UnifiedExportContainer::new();
     /// container.add_native_function_by_ordinal(100, 0x1000)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
@@ -448,7 +448,7 @@ impl UnifiedExportContainer {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// let mut container = ExportContainer::new();
+    /// let mut container = UnifiedExportContainer::new();
     /// container.add_native_forwarder("GetProcessId", 1, "kernel32.dll.GetCurrentProcessId")?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
@@ -478,7 +478,7 @@ impl UnifiedExportContainer {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// let container = ExportContainer::new();
+    /// let container = UnifiedExportContainer::new();
     /// if let Some(export_data) = container.get_export_table_data()? {
     ///     // Write export_data to PE export directory
     /// }
@@ -503,7 +503,7 @@ impl UnifiedExportContainer {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// let mut container = ExportContainer::new();
+    /// let mut container = UnifiedExportContainer::new();
     /// container.set_dll_name("MyLibrary.dll");
     /// ```
     pub fn set_dll_name(&self, _dll_name: &str) {
@@ -622,7 +622,7 @@ impl Default for UnifiedExportContainer {
 // Implement common traits for convenience
 impl std::fmt::Debug for UnifiedExportContainer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ExportContainer")
+        f.debug_struct("UnifiedExportContainer")
             .field("cil_count", &self.cil.len())
             .field("native_function_count", &self.native.function_count())
             .field("native_forwarder_count", &self.native.forwarder_count())

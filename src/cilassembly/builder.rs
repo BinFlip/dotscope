@@ -5,11 +5,11 @@
 //!
 //! # Key Components
 //!
-//! - [`crate::cilassembly::builder::BuilderContext`] - Central coordination context for all builder operations
+//! - [`crate::cilassembly::BuilderContext`] - Central coordination context for all builder operations
 //!
 //! # Architecture
 //!
-//! The builder system centers around [`crate::cilassembly::builder::BuilderContext`], which coordinates
+//! The builder system centers around [`crate::cilassembly::BuilderContext`], which coordinates
 //! all builder operations and provides:
 //! - RID management for all tables
 //! - Cross-reference validation
@@ -29,7 +29,7 @@ use crate::{
             encode_property_signature, encode_typespec_signature, SignatureField,
             SignatureLocalVariables, SignatureMethod, SignatureProperty, SignatureTypeSpec,
         },
-        tables::{AssemblyRefRaw, CodedIndex, TableDataOwned, TableId},
+        tables::{AssemblyRefRaw, CodedIndex, CodedIndexType, TableDataOwned, TableId},
         token::Token,
     },
     Result,
@@ -87,7 +87,7 @@ impl BuilderContext {
     ///
     /// # Returns
     ///
-    /// A new [`crate::cilassembly::builder::BuilderContext`] ready for builder operations.
+    /// A new [`crate::cilassembly::BuilderContext`] ready for builder operations.
     pub fn new(assembly: CilAssembly) -> Self {
         let mut next_rids = HashMap::new();
         if let Some(tables) = assembly.view().tables() {
@@ -105,7 +105,7 @@ impl BuilderContext {
 
     /// Finishes the building process and returns ownership of the assembly.
     ///
-    /// This consumes the [`crate::cilassembly::builder::BuilderContext`] and returns the owned [`crate::cilassembly::CilAssembly`]
+    /// This consumes the [`crate::cilassembly::BuilderContext`] and returns the owned [`crate::cilassembly::CilAssembly`]
     /// with all modifications applied. After calling this method, the context
     /// can no longer be used, and the assembly can be written to disk or
     /// used for other operations.
@@ -146,8 +146,12 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The heap index that can be used to reference this string.
-    pub fn add_string(&mut self, value: &str) -> Result<u32> {
-        self.assembly.add_string(value)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the string cannot be added to the heap.
+    pub fn string_add(&mut self, value: &str) -> Result<u32> {
+        self.assembly.string_add(value)
     }
 
     /// Gets or adds a string to the assembly's string heap, reusing existing strings when possible.
@@ -163,19 +167,23 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The heap index that can be used to reference this string.
-    pub fn get_or_add_string(&mut self, value: &str) -> Result<u32> {
-        if let Some(existing_index) = self.find_existing_string(value) {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the string cannot be added to the heap.
+    pub fn string_get_or_add(&mut self, value: &str) -> Result<u32> {
+        if let Some(existing_index) = self.string_find(value) {
             return Ok(existing_index);
         }
 
-        self.add_string(value)
+        self.string_add(value)
     }
 
     /// Helper method to find an existing string in the current heap changes.
     ///
     /// This searches through the strings added in the current builder session
     /// to avoid duplicates within the same session.
-    fn find_existing_string(&self, value: &str) -> Option<u32> {
+    fn string_find(&self, value: &str) -> Option<u32> {
         let heap_changes = &self.assembly.changes().string_heap_changes;
 
         // Use the proper string_items_with_indices iterator to get correct byte offsets
@@ -200,8 +208,12 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The heap index that can be used to reference this blob.
-    pub fn add_blob(&mut self, data: &[u8]) -> Result<u32> {
-        self.assembly.add_blob(data)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blob cannot be added to the heap.
+    pub fn blob_add(&mut self, data: &[u8]) -> Result<u32> {
+        self.assembly.blob_add(data)
     }
 
     /// Adds a GUID to the assembly's GUID heap and returns its index.
@@ -216,8 +228,12 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The heap index that can be used to reference this GUID.
-    pub fn add_guid(&mut self, guid: &[u8; 16]) -> Result<u32> {
-        self.assembly.add_guid(guid)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the GUID cannot be added to the heap.
+    pub fn guid_add(&mut self, guid: &[u8; 16]) -> Result<u32> {
+        self.assembly.guid_add(guid)
     }
 
     /// Adds a user string to the assembly's user string heap and returns its index.
@@ -232,8 +248,157 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The heap index that can be used to reference this user string.
-    pub fn add_userstring(&mut self, value: &str) -> Result<u32> {
-        self.assembly.add_userstring(value)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the user string cannot be added to the heap.
+    pub fn userstring_add(&mut self, value: &str) -> Result<u32> {
+        self.assembly.userstring_add(value)
+    }
+
+    /// Replaces the entire string heap (#Strings) with the provided raw data.
+    ///
+    /// This completely replaces the string heap content, ignoring the original heap.
+    /// If there is no existing string heap, a new one will be created. All subsequent
+    /// append/modify/remove operations will be applied to this replacement heap
+    /// instead of the original.
+    ///
+    /// This is a convenience method that delegates to the underlying
+    /// [`crate::cilassembly::CilAssembly::string_add_heap`] method.
+    ///
+    /// # Arguments
+    ///
+    /// * `heap_data` - The raw bytes that will form the new string heap
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
+    ///
+    /// // Replace with custom string heap containing "Hello\0World\0"
+    /// let custom_heap = b"Hello\0World\0".to_vec();
+    /// context.string_add_heap(custom_heap)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the heap data is invalid or cannot be applied.
+    pub fn string_add_heap(&mut self, heap_data: Vec<u8>) -> Result<()> {
+        self.assembly.string_add_heap(heap_data)
+    }
+
+    /// Replaces the entire blob heap (#Blob) with the provided raw data.
+    ///
+    /// This completely replaces the blob heap content, ignoring the original heap.
+    /// If there is no existing blob heap, a new one will be created. All subsequent
+    /// append/modify/remove operations will be applied to this replacement heap
+    /// instead of the original.
+    ///
+    /// This is a convenience method that delegates to the underlying
+    /// [`crate::cilassembly::CilAssembly::blob_add_heap`] method.
+    ///
+    /// # Arguments
+    ///
+    /// * `heap_data` - The raw bytes that will form the new blob heap
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
+    ///
+    /// // Replace with custom blob heap containing length-prefixed blobs
+    /// let custom_heap = vec![0x03, 0x01, 0x02, 0x03, 0x02, 0xFF, 0xFE];
+    /// context.blob_add_heap(custom_heap)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the heap data is invalid or cannot be applied.
+    pub fn blob_add_heap(&mut self, heap_data: Vec<u8>) -> Result<()> {
+        self.assembly.blob_add_heap(heap_data)
+    }
+
+    /// Replaces the entire GUID heap (#GUID) with the provided raw data.
+    ///
+    /// This completely replaces the GUID heap content, ignoring the original heap.
+    /// If there is no existing GUID heap, a new one will be created. All subsequent
+    /// append/modify/remove operations will be applied to this replacement heap
+    /// instead of the original.
+    ///
+    /// This is a convenience method that delegates to the underlying
+    /// [`crate::cilassembly::CilAssembly::guid_add_heap`] method.
+    ///
+    /// # Arguments
+    ///
+    /// * `heap_data` - The raw bytes that will form the new GUID heap (must be 16-byte aligned)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
+    ///
+    /// // Replace with custom GUID heap containing one GUID
+    /// let guid = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0,
+    ///             0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+    /// context.guid_add_heap(guid.to_vec())?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the heap data is invalid or cannot be applied.
+    pub fn guid_add_heap(&mut self, heap_data: Vec<u8>) -> Result<()> {
+        self.assembly.guid_add_heap(heap_data)
+    }
+
+    /// Replaces the entire user string heap (#US) with the provided raw data.
+    ///
+    /// This completely replaces the user string heap content, ignoring the original heap.
+    /// If there is no existing user string heap, a new one will be created. All subsequent
+    /// append/modify/remove operations will be applied to this replacement heap
+    /// instead of the original.
+    ///
+    /// This is a convenience method that delegates to the underlying
+    /// [`crate::cilassembly::CilAssembly::userstring_add_heap`] method.
+    ///
+    /// # Arguments
+    ///
+    /// * `heap_data` - The raw bytes that will form the new user string heap
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::prelude::*;
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let assembly = CilAssembly::new(view);
+    /// let mut context = BuilderContext::new(assembly);
+    ///
+    /// // Replace with custom user string heap containing UTF-16 strings with length prefixes
+    /// let custom_heap = vec![0x07, 0x48, 0x00, 0x65, 0x00, 0x6C, 0x00, 0x01]; // "Hel" + terminator
+    /// context.userstring_add_heap(custom_heap)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the heap data is invalid or cannot be applied.
+    pub fn userstring_add_heap(&mut self, heap_data: Vec<u8>) -> Result<()> {
+        self.assembly.userstring_add_heap(heap_data)
     }
 
     /// Allocates the next available RID for a table and adds the row.
@@ -249,8 +414,12 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The RID (Row ID) assigned to the newly created row as a [`crate::metadata::token::Token`].
-    pub fn add_table_row(&mut self, table_id: TableId, row: TableDataOwned) -> Result<Token> {
-        let rid = self.assembly.add_table_row(table_id, row)?;
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the row cannot be added to the table.
+    pub fn table_row_add(&mut self, table_id: TableId, row: TableDataOwned) -> Result<Token> {
+        let rid = self.assembly.table_row_add(table_id, row)?;
 
         self.next_rids.insert(table_id, rid + 1);
 
@@ -312,7 +481,11 @@ impl BuilderContext {
                 if let Ok(assembly_name) = strings.get(assemblyref.name as usize) {
                     if assembly_name == name {
                         // Convert 0-based index to 1-based RID
-                        return Some(CodedIndex::new(TableId::AssemblyRef, (index + 1) as u32));
+                        return Some(CodedIndex::new(
+                            TableId::AssemblyRef,
+                            u32::try_from(index + 1).unwrap_or(u32::MAX),
+                            CodedIndexType::Implementation,
+                        ));
                     }
                 }
             }
@@ -329,7 +502,7 @@ impl BuilderContext {
     /// - "System.Runtime" (.NET Core/.NET 5+)
     /// - "System.Private.CoreLib" (some .NET implementations)
     ///
-    /// This is a convenience method that uses [`crate::cilassembly::builder::BuilderContext::find_assembly_ref_by_name`] internally.
+    /// This is a convenience method that uses [`crate::cilassembly::BuilderContext::find_assembly_ref_by_name`] internally.
     ///
     /// # Returns
     ///
@@ -369,9 +542,13 @@ impl BuilderContext {
     /// let blob_index = context.add_method_signature(&signature)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the signature cannot be encoded or added to the blob heap.
     pub fn add_method_signature(&mut self, signature: &SignatureMethod) -> Result<u32> {
         let encoded_data = encode_method_signature(signature)?;
-        self.add_blob(&encoded_data)
+        self.blob_add(&encoded_data)
     }
 
     /// Adds a field signature to the blob heap and returns its index.
@@ -387,9 +564,13 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The blob heap index that can be used to reference this signature.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the signature cannot be encoded or added to the blob heap.
     pub fn add_field_signature(&mut self, signature: &SignatureField) -> Result<u32> {
         let encoded_data = encode_field_signature(signature)?;
-        self.add_blob(&encoded_data)
+        self.blob_add(&encoded_data)
     }
 
     /// Adds a property signature to the blob heap and returns its index.
@@ -405,9 +586,13 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The blob heap index that can be used to reference this signature.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the signature cannot be encoded or added to the blob heap.
     pub fn add_property_signature(&mut self, signature: &SignatureProperty) -> Result<u32> {
         let encoded_data = encode_property_signature(signature)?;
-        self.add_blob(&encoded_data)
+        self.blob_add(&encoded_data)
     }
 
     /// Adds a local variable signature to the blob heap and returns its index.
@@ -423,9 +608,13 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The blob heap index that can be used to reference this signature.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the signature cannot be encoded or added to the blob heap.
     pub fn add_local_var_signature(&mut self, signature: &SignatureLocalVariables) -> Result<u32> {
         let encoded_data = encode_local_var_signature(signature)?;
-        self.add_blob(&encoded_data)
+        self.blob_add(&encoded_data)
     }
 
     /// Adds a type specification signature to the blob heap and returns its index.
@@ -441,9 +630,13 @@ impl BuilderContext {
     /// # Returns
     ///
     /// The blob heap index that can be used to reference this signature.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the signature cannot be encoded or added to the blob heap.
     pub fn add_typespec_signature(&mut self, signature: &SignatureTypeSpec) -> Result<u32> {
         let encoded_data = encode_typespec_signature(signature)?;
-        self.add_blob(&encoded_data)
+        self.blob_add(&encoded_data)
     }
 
     /// Adds a DLL to the native import table.
@@ -726,8 +919,12 @@ impl BuilderContext {
     /// # Returns
     ///
     /// Returns `Ok(())` if the modification was successful.
-    pub fn update_string(&mut self, index: u32, new_value: &str) -> Result<()> {
-        self.assembly.update_string(index, new_value)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the string index is invalid or the update operation fails.
+    pub fn string_update(&mut self, index: u32, new_value: &str) -> Result<()> {
+        self.assembly.string_update(index, new_value)
     }
 
     /// Removes a string from the string heap with configurable reference handling.
@@ -756,13 +953,17 @@ impl BuilderContext {
     /// context.remove_string(43, true)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn remove_string(&mut self, index: u32, remove_references: bool) -> Result<()> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the string index is invalid or if references exist and `remove_references` is false.
+    pub fn string_remove(&mut self, index: u32, remove_references: bool) -> Result<()> {
         let strategy = if remove_references {
             ReferenceHandlingStrategy::RemoveReferences
         } else {
             ReferenceHandlingStrategy::FailIfReferenced
         };
-        self.assembly.remove_string(index, strategy)
+        self.assembly.string_remove(index, strategy)
     }
 
     /// Updates an existing blob in the blob heap at the specified index.
@@ -771,8 +972,12 @@ impl BuilderContext {
     ///
     /// * `index` - The heap index to modify (1-based, following ECMA-335 conventions)
     /// * `new_data` - The new blob data to store at that index
-    pub fn update_blob(&mut self, index: u32, new_data: &[u8]) -> Result<()> {
-        self.assembly.update_blob(index, new_data)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blob index is invalid or the update operation fails.
+    pub fn blob_update(&mut self, index: u32, new_data: &[u8]) -> Result<()> {
+        self.assembly.blob_update(index, new_data)
     }
 
     /// Removes a blob from the blob heap with configurable reference handling.
@@ -781,13 +986,17 @@ impl BuilderContext {
     ///
     /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
     /// * `remove_references` - If true, automatically removes all references; if false, fails if references exist
-    pub fn remove_blob(&mut self, index: u32, remove_references: bool) -> Result<()> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blob index is invalid or if references exist and `remove_references` is false.
+    pub fn blob_remove(&mut self, index: u32, remove_references: bool) -> Result<()> {
         let strategy = if remove_references {
             ReferenceHandlingStrategy::RemoveReferences
         } else {
             ReferenceHandlingStrategy::FailIfReferenced
         };
-        self.assembly.remove_blob(index, strategy)
+        self.assembly.blob_remove(index, strategy)
     }
 
     /// Updates an existing GUID in the GUID heap at the specified index.
@@ -796,8 +1005,12 @@ impl BuilderContext {
     ///
     /// * `index` - The heap index to modify (1-based, following ECMA-335 conventions)
     /// * `new_guid` - The new 16-byte GUID to store at that index
-    pub fn update_guid(&mut self, index: u32, new_guid: &[u8; 16]) -> Result<()> {
-        self.assembly.update_guid(index, new_guid)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the GUID index is invalid or the update operation fails.
+    pub fn guid_update(&mut self, index: u32, new_guid: &[u8; 16]) -> Result<()> {
+        self.assembly.guid_update(index, new_guid)
     }
 
     /// Removes a GUID from the GUID heap with configurable reference handling.
@@ -806,13 +1019,17 @@ impl BuilderContext {
     ///
     /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
     /// * `remove_references` - If true, automatically removes all references; if false, fails if references exist
-    pub fn remove_guid(&mut self, index: u32, remove_references: bool) -> Result<()> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the GUID index is invalid or if references exist and `remove_references` is false.
+    pub fn guid_remove(&mut self, index: u32, remove_references: bool) -> Result<()> {
         let strategy = if remove_references {
             ReferenceHandlingStrategy::RemoveReferences
         } else {
             ReferenceHandlingStrategy::FailIfReferenced
         };
-        self.assembly.remove_guid(index, strategy)
+        self.assembly.guid_remove(index, strategy)
     }
 
     /// Updates an existing user string in the user string heap at the specified index.
@@ -821,8 +1038,12 @@ impl BuilderContext {
     ///
     /// * `index` - The heap index to modify (1-based, following ECMA-335 conventions)
     /// * `new_value` - The new string value to store at that index
-    pub fn update_userstring(&mut self, index: u32, new_value: &str) -> Result<()> {
-        self.assembly.update_userstring(index, new_value)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the user string index is invalid or the update operation fails.
+    pub fn userstring_update(&mut self, index: u32, new_value: &str) -> Result<()> {
+        self.assembly.userstring_update(index, new_value)
     }
 
     /// Removes a user string from the user string heap with configurable reference handling.
@@ -831,13 +1052,17 @@ impl BuilderContext {
     ///
     /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
     /// * `remove_references` - If true, automatically removes all references; if false, fails if references exist
-    pub fn remove_userstring(&mut self, index: u32, remove_references: bool) -> Result<()> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the user string index is invalid or if references exist and `remove_references` is false.
+    pub fn userstring_remove(&mut self, index: u32, remove_references: bool) -> Result<()> {
         let strategy = if remove_references {
             ReferenceHandlingStrategy::RemoveReferences
         } else {
             ReferenceHandlingStrategy::FailIfReferenced
         };
-        self.assembly.remove_userstring(index, strategy)
+        self.assembly.userstring_remove(index, strategy)
     }
 
     /// Updates an existing table row at the specified RID.
@@ -854,13 +1079,17 @@ impl BuilderContext {
     /// # Returns
     ///
     /// Returns `Ok(())` if the modification was successful.
-    pub fn update_table_row(
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the table ID or RID is invalid or the update operation fails.
+    pub fn table_row_update(
         &mut self,
         table_id: TableId,
         rid: u32,
         new_row: TableDataOwned,
     ) -> Result<()> {
-        self.assembly.update_table_row(table_id, rid, new_row)
+        self.assembly.table_row_update(table_id, rid, new_row)
     }
 
     /// Removes a table row with configurable reference handling.
@@ -891,7 +1120,11 @@ impl BuilderContext {
     /// context.remove_table_row(TableId::MethodDef, 42, true)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn remove_table_row(
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the table ID or RID is invalid or if references exist and `remove_references` is false.
+    pub fn table_row_remove(
         &mut self,
         table_id: TableId,
         rid: u32,
@@ -902,7 +1135,7 @@ impl BuilderContext {
         } else {
             ReferenceHandlingStrategy::FailIfReferenced
         };
-        self.assembly.delete_table_row(table_id, rid, strategy)
+        self.assembly.table_row_remove(table_id, rid, strategy)
     }
 }
 
@@ -940,11 +1173,11 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Test string heap operations
-            let string_idx = context.add_string("TestString").unwrap();
+            let string_idx = context.string_add("TestString").unwrap();
             assert!(string_idx > 0);
 
             // Test blob heap operations
-            let blob_idx = context.add_blob(&[1, 2, 3, 4]).unwrap();
+            let blob_idx = context.blob_add(&[1, 2, 3, 4]).unwrap();
             assert!(blob_idx > 0);
 
             // Test GUID heap operations
@@ -952,11 +1185,11 @@ mod tests {
                 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
                 0x77, 0x88,
             ];
-            let guid_idx = context.add_guid(&guid).unwrap();
+            let guid_idx = context.guid_add(&guid).unwrap();
             assert!(guid_idx > 0);
 
             // Test user string heap operations
-            let userstring_idx = context.add_userstring("User String").unwrap();
+            let userstring_idx = context.userstring_add("User String").unwrap();
             assert!(userstring_idx > 0);
         }
     }
@@ -969,25 +1202,25 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Add the same namespace string multiple times
-            let namespace1 = context.get_or_add_string("MyNamespace").unwrap();
-            let namespace2 = context.get_or_add_string("MyNamespace").unwrap();
-            let namespace3 = context.get_or_add_string("MyNamespace").unwrap();
+            let namespace1 = context.string_get_or_add("MyNamespace").unwrap();
+            let namespace2 = context.string_get_or_add("MyNamespace").unwrap();
+            let namespace3 = context.string_get_or_add("MyNamespace").unwrap();
 
             // All should return the same index (deduplication working)
             assert_eq!(namespace1, namespace2);
             assert_eq!(namespace2, namespace3);
 
             // Different strings should get different indices
-            let different_namespace = context.get_or_add_string("DifferentNamespace").unwrap();
+            let different_namespace = context.string_get_or_add("DifferentNamespace").unwrap();
             assert_ne!(namespace1, different_namespace);
 
             // Verify the regular add_string method still creates duplicates
-            let duplicate1 = context.add_string("DuplicateTest").unwrap();
-            let duplicate2 = context.add_string("DuplicateTest").unwrap();
+            let duplicate1 = context.string_add("DuplicateTest").unwrap();
+            let duplicate2 = context.string_add("DuplicateTest").unwrap();
             assert_ne!(duplicate1, duplicate2); // Should be different indices
 
             // But get_or_add_string should reuse existing ones
-            let reused = context.get_or_add_string("DuplicateTest").unwrap();
+            let reused = context.string_get_or_add("DuplicateTest").unwrap();
             assert_eq!(reused, duplicate1); // Should match the first one added
         }
     }

@@ -10,8 +10,8 @@
 //!
 //! The EventMap table is designed to efficiently associate types with their event definitions
 //! through a range-based mapping system. The table is sorted by parent type token, and event
-//! ownership is determined by ranges: events from EventList[i] to EventList[i+1]-1 belong to
-//! Parent[i]. This design enables O(log n) type-to-event lookups and efficient enumeration
+//! ownership is determined by ranges: events from EventList\[i\] to EventList\[i+1\]-1 belong to
+//! Parent\[i\]. This design enables O(log n) type-to-event lookups and efficient enumeration
 //! of all events owned by a specific type.
 //!
 //! # Key Components

@@ -16,11 +16,12 @@
 //! ## Loading Process
 //!
 //! 1. **Detection**: Checks if `TypeDef` table exists in metadata header
-//! 2. **Sequential Processing**: Loads type definitions in declaration order
+//! 2. **Parallel Phase 1**: Loads type definitions in parallel without base type resolution
 //! 3. **String Resolution**: Resolves type names from the string heap
 //! 4. **Member Linking**: Establishes connections to fields and methods
 //! 5. **Type System Integration**: Registers types in the global type registry
-//! 6. **Validation**: Validates type structure and member relationships
+//! 6. **Parallel Phase 2**: Resolves base types in parallel after all types are loaded
+//! 7. **Validation**: Validates type structure and inheritance relationships
 //!
 //! ## Dependencies
 //!
@@ -98,7 +99,20 @@ use crate::{
 pub(crate) struct TypeDefLoader;
 
 impl MetadataLoader for TypeDefLoader {
-    /// Loads and processes all `TypeDef` table entries from the metadata.
+    /// Loads and processes all `TypeDef` table entries from the metadata using parallel two-phase loading.
+    ///
+    /// This method implements parallel two-phase loading to handle forward references in TypeDef->TypeDef
+    /// inheritance relationships:
+    ///
+    /// **Phase 1**: Load all TypeDef entries in parallel without resolving base types to ensure all types
+    /// are available in the type registry for subsequent lookups.
+    ///
+    /// **Phase 2**: Resolve base types in parallel for all loaded TypeDef entries now that all types
+    /// are available for reference resolution.
+    ///
+    /// This approach fixes the forward reference resolution issue where types referencing
+    /// base types that appear later in the TypeDef table would fail to resolve properly, while
+    /// leveraging parallel processing for improved performance on large assemblies.
     ///
     /// ## Arguments
     ///
@@ -111,8 +125,8 @@ impl MetadataLoader for TypeDefLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
             if let Some(table) = header.table::<TypeDefRaw>() {
-                for row in table {
-                    let res = row.to_owned(
+                table.par_iter().try_for_each(|row| -> Result<()> {
+                    let type_def = row.to_owned(
                         |coded_index| context.get_ref(coded_index),
                         strings,
                         &context.field,
@@ -120,10 +134,23 @@ impl MetadataLoader for TypeDefLoader {
                         context.method_def,
                         &context.method_ptr,
                         table,
+                        false, // Skip base type resolution in Phase 1
                     )?;
 
-                    context.types.insert(res);
-                }
+                    context.types.insert(type_def);
+                    Ok(())
+                })?;
+
+                table.par_iter().try_for_each(|row| -> Result<()> {
+                    if let Some(base_type_ref) =
+                        row.resolve_base_type(|coded_index| context.get_ref(coded_index))
+                    {
+                        if let Some(type_def) = context.types.get(&row.token) {
+                            let _ = type_def.set_base(base_type_ref);
+                        }
+                    }
+                    Ok(())
+                })?;
             }
         }
         Ok(())

@@ -86,7 +86,9 @@ mod tests {
 
     use crate::metadata::tables::{
         constant::ConstantRaw,
-        types::{CodedIndex, RowReadable, RowWritable, TableId, TableInfo, TableRow},
+        types::{
+            CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+        },
     };
     use crate::metadata::token::Token;
 
@@ -144,7 +146,7 @@ mod tests {
             token: Token::new(0x0B000001),
             offset: 0,
             base: 0x01,
-            parent: CodedIndex::new(TableId::Property, 128), // Property(128) = (128 << 2) | 2 = 514
+            parent: CodedIndex::new(TableId::Property, 128, CodedIndexType::HasConstant), // Property(128) = (128 << 2) | 2 = 514
             value: 0x0303,
         };
 
@@ -186,7 +188,7 @@ mod tests {
             token: Token::new(0x0B000001),
             offset: 0,
             base: 0x01,
-            parent: CodedIndex::new(TableId::Property, 0x808080), // Property(0x808080) = (0x808080 << 2) | 2 = 0x2020202
+            parent: CodedIndex::new(TableId::Property, 0x808080, CodedIndexType::HasConstant), // Property(0x808080) = (0x808080 << 2) | 2 = 0x2020202
             value: 0x03030303,
         };
 
@@ -227,9 +229,9 @@ mod tests {
             rid: 42,
             token: Token::new(0x0B00002A),
             offset: 0,
-            base: 0x08,                                  // ELEMENT_TYPE_I4
-            parent: CodedIndex::new(TableId::Field, 25), // Field(25) = (25 << 2) | 0 = 100
-            value: 128,                                  // Blob index 128
+            base: 0x08, // ELEMENT_TYPE_I4
+            parent: CodedIndex::new(TableId::Field, 25, CodedIndexType::HasConstant), // Field(25) = (25 << 2) | 0 = 100
+            value: 128, // Blob index 128
         };
 
         // Write to buffer
@@ -279,7 +281,7 @@ mod tests {
                 token: Token::new(0x0B000001),
                 offset: 0,
                 base: element_type,
-                parent: CodedIndex::new(parent_tag, parent_row),
+                parent: CodedIndex::new(parent_tag, parent_row, CodedIndexType::HasConstant),
                 value: blob_index,
             };
 
@@ -336,7 +338,7 @@ mod tests {
                 token: Token::new(0x0B000001),
                 offset: 0,
                 base: element_type,
-                parent: CodedIndex::new(TableId::Field, 1),
+                parent: CodedIndex::new(TableId::Field, 1, CodedIndexType::HasConstant),
                 value: 100,
             };
 
@@ -372,7 +374,7 @@ mod tests {
             token: Token::new(0x0B000001),
             offset: 0,
             base: 0,
-            parent: CodedIndex::new(TableId::Field, 0), // Field(0) = (0 << 2) | 0 = 0
+            parent: CodedIndex::new(TableId::Field, 0, CodedIndexType::HasConstant), // Field(0) = (0 << 2) | 0 = 0
             value: 0,
         };
 
@@ -397,7 +399,7 @@ mod tests {
             token: Token::new(0x0B000001),
             offset: 0,
             base: 0xFF,
-            parent: CodedIndex::new(TableId::Property, 0x3FFF), // Max for 2-byte coded index
+            parent: CodedIndex::new(TableId::Property, 0x3FFF, CodedIndexType::HasConstant), // Max for 2-byte coded index
             value: 0xFFFF,
         };
 
@@ -437,7 +439,7 @@ mod tests {
                 token: Token::new(0x0B000001),
                 offset: 0,
                 base: element_type,
-                parent: CodedIndex::new(parent_tag, parent_row),
+                parent: CodedIndex::new(parent_tag, parent_row, CodedIndexType::HasConstant),
                 value: blob_index,
             };
 
@@ -467,7 +469,7 @@ mod tests {
             token: Token::new(0x0B000001),
             offset: 0,
             base: 0x01,
-            parent: CodedIndex::new(TableId::Property, 128), // Property(128) = (128 << 2) | 2 = 514 = 0x0202
+            parent: CodedIndex::new(TableId::Property, 128, CodedIndexType::HasConstant), // Property(128) = (128 << 2) | 2 = 514 = 0x0202
             value: 0x0303,
         };
 

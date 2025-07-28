@@ -105,6 +105,7 @@
 
 use crate::{
     cilassembly::{
+        remapping::RidRemapper,
         write::{output::Output, planner::LayoutPlan, utils::calculate_table_row_size},
         CilAssembly, Operation, TableModifications, TableOperation,
     },
@@ -119,6 +120,7 @@ use crate::{
     },
     Error, Result,
 };
+use std::collections::HashMap;
 
 /// A stateful writer for metadata tables that encapsulates all necessary context.
 ///
@@ -160,9 +162,9 @@ impl<'a> TableWriter<'a> {
     ///
     /// # Returns
     /// Returns the total header size in bytes.
-    fn calculate_tables_header_size(&self) -> Result<usize> {
+    fn calculate_tables_header_size(&self) -> usize {
         let present_table_count = self.tables_header.valid.count_ones() as usize;
-        Ok(24 + (present_table_count * 4))
+        24 + (present_table_count * 4)
     }
 
     /// Helper method to get the row size for a specific table.
@@ -255,14 +257,17 @@ impl<'a> TableWriter<'a> {
             if let Some(table_mod) = self.assembly.changes().get_table_modifications(table_id) {
                 match table_mod {
                     TableModifications::Replaced(new_rows) => {
-                        row_count = new_rows.len() as u32;
+                        row_count = u32::try_from(new_rows.len()).map_err(|_| {
+                            Error::WriteLayoutFailed {
+                                message: "New table row count exceeds u32 range".to_string(),
+                            }
+                        })?;
                     }
                     TableModifications::Sparse { operations, .. } => {
-                        let inserts = operations
-                            .iter()
-                            .filter(|op| matches!(op.operation, Operation::Insert(_, _)))
-                            .count();
-                        row_count += inserts as u32;
+                        let original_row_count = self.tables_header.table_row_count(table_id);
+                        let remapper =
+                            RidRemapper::build_from_operations(operations, original_row_count);
+                        row_count = remapper.final_row_count();
                     }
                 }
             }
@@ -282,7 +287,7 @@ impl<'a> TableWriter<'a> {
     /// and unmodified tables to their correct positions. This eliminates any gaps
     /// or inconsistencies that could occur with selective modification approaches.
     fn write_all_tables_systematically(&mut self, tables_stream_offset: u64) -> Result<()> {
-        let header_size = self.calculate_tables_header_size()?;
+        let header_size = self.calculate_tables_header_size();
         let mut current_offset = tables_stream_offset + header_size as u64;
 
         // Process each table systematically
@@ -296,7 +301,9 @@ impl<'a> TableWriter<'a> {
                     TableModifications::Replaced(new_rows) => {
                         // Write complete replacement
                         self.write_replaced_table_at_offset(new_rows, current_offset)?;
-                        new_rows.len() as u64 * row_size as u64
+                        u64::try_from(new_rows.len()).map_err(|_| Error::WriteTableFailed {
+                            message: "New rows count exceeds u64 range".to_string(),
+                        })? * u64::from(row_size)
                     }
                     TableModifications::Sparse { operations, .. } => {
                         // Apply sparse modifications to original table data
@@ -311,7 +318,7 @@ impl<'a> TableWriter<'a> {
             } else {
                 // Table has no modifications - copy original table data completely
                 let original_row_count = self.tables_header.table_row_count(table_id);
-                let table_size = original_row_count as u64 * row_size as u64;
+                let table_size = u64::from(original_row_count) * u64::from(row_size);
 
                 if table_size > 0 {
                     self.write_table_by_id(table_id, current_offset)?;
@@ -400,22 +407,29 @@ impl<'a> TableWriter<'a> {
     where
         T: RowReadable + RowWritable + Clone,
     {
-        let row_size = T::row_size(self.table_info) as u64;
-        let table_size = table.row_count as u64 * row_size;
+        let row_size = u64::from(T::row_size(self.table_info));
+        let table_size = u64::from(table.row_count) * row_size;
 
         if table_size == 0 {
             return Ok(0);
         }
 
         // Get mutable slice for the entire table
-        let table_slice = self
-            .output
-            .get_mut_slice(table_offset as usize, table_size as usize)?;
+        let table_slice = self.output.get_mut_slice(
+            usize::try_from(table_offset).map_err(|_| Error::WriteLayoutFailed {
+                message: "Table offset exceeds usize range".to_string(),
+            })?,
+            usize::try_from(table_size).map_err(|_| Error::WriteLayoutFailed {
+                message: "Table size exceeds usize range".to_string(),
+            })?,
+        )?;
 
         // Serialize each row by delegating to the row's RowWritable implementation
         let mut current_offset = 0;
         for (row_index, row) in table.iter().enumerate() {
-            let rid = (row_index + 1) as u32; // RIDs are 1-based
+            let rid = u32::try_from(row_index + 1).map_err(|_| Error::WriteLayoutFailed {
+                message: "Row index exceeds u32 range".to_string(),
+            })?; // RIDs are 1-based
             row.row_write(table_slice, &mut current_offset, rid, self.table_info)?;
         }
 
@@ -436,7 +450,12 @@ impl<'a> TableWriter<'a> {
         let header_size = 24 + (present_table_count * 4);
 
         // Get mutable slice for the header
-        let header_slice = self.output.get_mut_slice(offset as usize, header_size)?;
+        let header_slice = self.output.get_mut_slice(
+            usize::try_from(offset).map_err(|_| Error::WriteLayoutFailed {
+                message: "Header offset exceeds usize range".to_string(),
+            })?,
+            header_size,
+        )?;
         let mut pos = 0;
 
         // Write header fields using project's IO functions
@@ -478,20 +497,27 @@ impl<'a> TableWriter<'a> {
     ) -> Result<()> {
         let total_size: u64 = new_rows
             .iter()
-            .map(|row| row.calculate_row_size(self.table_info) as u64)
+            .map(|row| u64::from(row.calculate_row_size(self.table_info)))
             .sum();
 
         if total_size == 0 {
             return Ok(());
         }
 
-        let table_slice = self
-            .output
-            .get_mut_slice(offset as usize, total_size as usize)?;
+        let table_slice = self.output.get_mut_slice(
+            usize::try_from(offset).map_err(|_| Error::WriteLayoutFailed {
+                message: "Table offset exceeds usize range".to_string(),
+            })?,
+            usize::try_from(total_size).map_err(|_| Error::WriteLayoutFailed {
+                message: "Table size exceeds usize range".to_string(),
+            })?,
+        )?;
 
         let mut current_offset = 0;
         for (index, row) in new_rows.iter().enumerate() {
-            let rid = (index + 1) as u32; // RIDs are 1-based
+            let rid = u32::try_from(index + 1).map_err(|_| Error::WriteLayoutFailed {
+                message: "Row index exceeds u32 range".to_string(),
+            })?; // RIDs are 1-based
             row.row_write(table_slice, &mut current_offset, rid, self.table_info)?;
         }
 
@@ -501,47 +527,83 @@ impl<'a> TableWriter<'a> {
     /// Writes a table with sparse modifications applied to original data.
     ///
     /// Used by the systematic rebuild approach to handle sparse modifications.
+    /// This implementation uses RID remapping to create sequential, gap-free
+    /// RID assignments while properly handling row deletions.
     fn write_table_with_sparse_modifications(
         &mut self,
         table_id: TableId,
         operations: &[TableOperation],
         offset: u64,
     ) -> Result<u64> {
-        // First, copy the original table data
         let original_row_count = self.tables_header.table_row_count(table_id);
-        let row_size = self.get_table_row_size(table_id) as u64;
-        let original_table_size = original_row_count as u64 * row_size;
+        let row_size = u64::from(self.get_table_row_size(table_id));
+        let remapper = RidRemapper::build_from_operations(operations, original_row_count);
+        let final_row_count = remapper.final_row_count();
+        let final_table_size = u64::from(final_row_count) * row_size;
 
-        if original_table_size > 0 {
-            self.write_table_by_id(table_id, offset)?;
+        if final_row_count == 0 {
+            return Ok(0);
         }
 
-        // Calculate final row count after modifications
-        let inserts = operations
-            .iter()
-            .filter(|op| matches!(op.operation, Operation::Insert(_, _)))
-            .count();
-        let final_row_count = original_row_count + inserts as u32;
-        let final_table_size = final_row_count as u64 * row_size;
-
-        // Apply sparse modifications
+        // Create operation data map for quick lookup
+        let mut operation_data: HashMap<u32, TableDataOwned> = HashMap::new();
         for operation in operations {
             match &operation.operation {
                 Operation::Insert(rid, row_data) | Operation::Update(rid, row_data) => {
-                    let row_offset = offset + ((*rid - 1) as u64 * row_size);
-                    let row_slice = self
-                        .output
-                        .get_mut_slice(row_offset as usize, row_size as usize)?;
-                    let mut write_offset = 0;
-                    row_data.row_write(row_slice, &mut write_offset, *rid, self.table_info)?;
+                    operation_data.insert(*rid, row_data.clone());
                 }
-                Operation::Delete(_rid) => {
-                    // Delete operations handled by omitting from new table
+                Operation::Delete(_) => {
+                    // Deletions are handled by the remapper
                 }
             }
         }
 
-        Ok(final_table_size)
+        dispatch_table_type!(table_id, |RawType| {
+            let original_table = self.tables_header.table::<RawType>();
+
+            for final_rid in 1..=final_row_count {
+                if let Some(original_rid) = remapper.reverse_lookup(final_rid) {
+                    let row_offset = offset + (u64::from(final_rid - 1) * row_size);
+                    let row_slice = self.output.get_mut_slice(
+                        usize::try_from(row_offset).map_err(|_| Error::WriteLayoutFailed {
+                            message: "Row offset exceeds usize range".to_string(),
+                        })?,
+                        usize::try_from(row_size).map_err(|_| Error::WriteLayoutFailed {
+                            message: "Row size exceeds usize range".to_string(),
+                        })?,
+                    )?;
+                    let mut write_offset = 0;
+
+                    if let Some(modified_data) = operation_data.get(&original_rid) {
+                        modified_data.row_write(
+                            row_slice,
+                            &mut write_offset,
+                            final_rid,
+                            self.table_info,
+                        )?;
+                    } else if let Some(original_table) = original_table {
+                        if let Some(original_row) = original_table.get(original_rid) {
+                            original_row.row_write(
+                                row_slice,
+                                &mut write_offset,
+                                final_rid,
+                                self.table_info,
+                            )?;
+                        } else {
+                            return Err(Error::Error(format!(
+                                "Cannot read original row {original_rid} from table {table_id:?}"
+                            )));
+                        }
+                    } else {
+                        return Err(Error::Error(format!(
+                            "Original table {table_id:?} not found during sparse modification writing"
+                        )));
+                    }
+                }
+            }
+
+            Ok(final_table_size)
+        })
     }
 }
 

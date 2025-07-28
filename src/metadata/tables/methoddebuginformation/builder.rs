@@ -118,6 +118,7 @@ impl MethodDebugInformationBuilder {
     /// # use dotscope::prelude::*;
     /// let builder = MethodDebugInformationBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             document: None,
@@ -142,6 +143,7 @@ impl MethodDebugInformationBuilder {
     /// let builder = MethodDebugInformationBuilder::new()
     ///     .document(1);
     /// ```
+    #[must_use]
     pub fn document(mut self, document_index: u32) -> Self {
         self.document = Some(document_index);
         self
@@ -165,6 +167,7 @@ impl MethodDebugInformationBuilder {
     /// let builder = MethodDebugInformationBuilder::new()
     ///     .sequence_points(sequence_data);
     /// ```
+    #[must_use]
     pub fn sequence_points(mut self, data: Vec<u8>) -> Self {
         self.sequence_points = Some(data);
         self
@@ -188,7 +191,8 @@ impl MethodDebugInformationBuilder {
     /// let builder = MethodDebugInformationBuilder::new()
     ///     .sequence_points_parsed(points);
     /// ```
-    pub fn sequence_points_parsed(mut self, points: SequencePoints) -> Self {
+    #[must_use]
+    pub fn sequence_points_parsed(mut self, points: &SequencePoints) -> Self {
         self.sequence_points = Some(points.to_bytes());
         self
     }
@@ -240,7 +244,7 @@ impl MethodDebugInformationBuilder {
             if data.is_empty() {
                 0
             } else {
-                context.add_blob(&data)?
+                context.blob_add(&data)?
             }
         } else {
             0
@@ -255,7 +259,7 @@ impl MethodDebugInformationBuilder {
         };
 
         let table_data = TableDataOwned::MethodDebugInformation(method_debug_info);
-        context.add_table_row(TableId::MethodDebugInformation, table_data)?;
+        context.table_row_add(TableId::MethodDebugInformation, table_data)?;
 
         Ok(token)
     }
@@ -265,16 +269,8 @@ impl MethodDebugInformationBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::CilAssembly,
-        metadata::{cilassemblyview::CilAssemblyView, tables::TableId},
+        metadata::tables::TableId, test::factories::table::assemblyref::get_test_assembly,
     };
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
 
     #[test]
     fn test_method_debug_information_builder_basic() -> Result<()> {

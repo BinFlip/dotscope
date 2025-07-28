@@ -36,7 +36,7 @@
 //! use crate::metadata::cilassemblyview::CilAssemblyView;
 //! use std::path::Path;
 //!
-//! # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+//! # let view = CilAssemblyView::from_file(Path::new("test.dll"));
 //! # let mut changes = AssemblyChanges::new(&view);
 //! // Build complete remapping from changes
 //! let remapper = IndexRemapper::build_from_changes(&changes, &view);
@@ -47,7 +47,7 @@
 //! }
 //!
 //! // Apply remapping to update cross-references
-//! remapper.apply_to_assembly(&mut changes)?;
+//! remapper.apply_to_assembly(&mut changes);
 //! # Ok::<(), crate::Error>(())
 //! ```
 //!
@@ -72,7 +72,6 @@ use crate::{
         cilassemblyview::CilAssemblyView,
         tables::{CodedIndex, TableDataOwned, TableId},
     },
-    Result,
 };
 
 /// Manages index remapping during binary generation phase.
@@ -108,7 +107,7 @@ use crate::{
 /// use crate::metadata::tables::TableId;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+/// # let view = CilAssemblyView::from_file(Path::new("test.dll"));
 /// # let changes = AssemblyChanges::new(&view);
 /// // Build remapper from assembly changes
 /// let remapper = IndexRemapper::build_from_changes(&changes, &view);
@@ -225,11 +224,11 @@ impl IndexRemapper {
                     self.table_maps.insert(*table_id, rid_remapper);
                 }
                 TableModifications::Replaced(rows) => {
-                    let mut rid_remapper = RidRemapper::new(rows.len() as u32);
+                    let mut rid_remapper = RidRemapper::new(u32::try_from(rows.len()).unwrap_or(0));
 
                     // Map each row index to sequential RID
                     for i in 0..rows.len() {
-                        let rid = (i + 1) as u32;
+                        let rid = u32::try_from(i + 1).unwrap_or(0);
                         rid_remapper.mapping.insert(rid, Some(rid));
                     }
 
@@ -257,8 +256,7 @@ impl IndexRemapper {
             .streams()
             .iter()
             .find(|stream| stream.name == "#Strings")
-            .map(|stream| stream.size)
-            .unwrap_or(1);
+            .map_or(1, |stream| stream.size);
 
         // Build mapping with heap compaction
         let mut final_index = 1u32; // Final indices start at 1 (0 is reserved)
@@ -275,7 +273,7 @@ impl IndexRemapper {
 
         // Map appended items to their final indices
         for (i, _) in string_changes.appended_items.iter().enumerate() {
-            let original_appended_index = original_size + 1 + i as u32;
+            let original_appended_index = original_size + 1 + u32::try_from(i).unwrap_or(0);
             self.string_map.insert(original_appended_index, final_index);
             final_index += 1;
         }
@@ -308,8 +306,7 @@ impl IndexRemapper {
                 .streams()
                 .iter()
                 .find(|stream| stream.name == "#Blob")
-                .map(|stream| stream.size)
-                .unwrap_or(1)
+                .map_or(1, |stream| stream.size)
         };
 
         // Build mapping with heap compaction
@@ -327,7 +324,7 @@ impl IndexRemapper {
 
         // Map appended items to their final indices
         for (i, _) in blob_changes.appended_items.iter().enumerate() {
-            let original_appended_index = original_count + 1 + i as u32;
+            let original_appended_index = original_count + 1 + u32::try_from(i).unwrap_or(0);
             self.blob_map.insert(original_appended_index, final_index);
             final_index += 1;
         }
@@ -360,8 +357,7 @@ impl IndexRemapper {
                 .streams()
                 .iter()
                 .find(|stream| stream.name == "#GUID")
-                .map(|stream| stream.size / 16) // GUID entries are exactly 16 bytes each
-                .unwrap_or(0)
+                .map_or(0, |stream| stream.size / 16) // GUID entries are exactly 16 bytes each
         };
 
         // Build mapping with heap compaction
@@ -379,7 +375,7 @@ impl IndexRemapper {
 
         // Map appended items to their final indices
         for (i, _) in guid_changes.appended_items.iter().enumerate() {
-            let original_appended_index = original_count + 1 + i as u32;
+            let original_appended_index = original_count + 1 + u32::try_from(i).unwrap_or(0);
             self.guid_map.insert(original_appended_index, final_index);
             final_index += 1;
         }
@@ -413,8 +409,7 @@ impl IndexRemapper {
                     .streams()
                     .iter()
                     .find(|stream| stream.name == "#US")
-                    .map(|stream| stream.size)
-                    .unwrap_or(1)
+                    .map_or(1, |stream| stream.size)
             };
 
         // Build mapping with heap compaction
@@ -432,7 +427,7 @@ impl IndexRemapper {
 
         // Map appended items to their final indices
         for (i, _) in userstring_changes.appended_items.iter().enumerate() {
-            let original_appended_index = original_count + 1 + i as u32;
+            let original_appended_index = original_count + 1 + u32::try_from(i).unwrap_or(0);
             self.userstring_map
                 .insert(original_appended_index, final_index);
             final_index += 1;
@@ -462,25 +457,23 @@ impl IndexRemapper {
     /// 4. User string heap indices - updated using userstring_map
     /// 5. RID references - updated using table-specific RID remappers
     /// 6. CodedIndex references - updated using appropriate table RID remappers
-    pub fn apply_to_assembly(&self, changes: &mut AssemblyChanges) -> Result<()> {
+    pub fn apply_to_assembly(&self, changes: &mut AssemblyChanges) {
         for table_modifications in changes.table_changes.values_mut() {
             match table_modifications {
                 TableModifications::Sparse { operations, .. } => {
                     for table_operation in operations {
                         if let Some(row_data) = table_operation.operation.get_row_data_mut() {
-                            self.update_table_data_references(row_data)?;
+                            self.update_table_data_references(row_data);
                         }
                     }
                 }
                 TableModifications::Replaced(rows) => {
                     for row_data in rows {
-                        self.update_table_data_references(row_data)?;
+                        self.update_table_data_references(row_data);
                     }
                 }
             }
         }
-
-        Ok(())
     }
 
     /// Update all cross-references within a specific table row data.
@@ -495,271 +488,259 @@ impl IndexRemapper {
     ///
     /// # Returns
     ///
-    /// [`Result<()>`] indicating success or failure of the reference update process.
-    fn update_table_data_references(&self, row_data: &mut TableDataOwned) -> Result<()> {
+    /// No return value as all operations are infallible.
+    fn update_table_data_references(&self, row_data: &mut TableDataOwned) {
         match row_data {
             TableDataOwned::Module(row) => {
-                self.update_string_index(&mut row.name)?;
-                self.update_guid_index(&mut row.mvid)?;
-                self.update_guid_index(&mut row.encid)?;
-                self.update_guid_index(&mut row.encbaseid)?;
+                self.update_string_index(&mut row.name);
+                self.update_guid_index(&mut row.mvid);
+                self.update_guid_index(&mut row.encid);
+                self.update_guid_index(&mut row.encbaseid);
             }
             TableDataOwned::TypeRef(row) => {
-                self.update_coded_index(&mut row.resolution_scope)?;
-                self.update_string_index(&mut row.type_name)?;
-                self.update_string_index(&mut row.type_namespace)?;
+                self.update_coded_index(&mut row.resolution_scope);
+                self.update_string_index(&mut row.type_name);
+                self.update_string_index(&mut row.type_namespace);
             }
             TableDataOwned::TypeDef(row) => {
-                self.update_string_index(&mut row.type_name)?;
-                self.update_string_index(&mut row.type_namespace)?;
-                self.update_coded_index(&mut row.extends)?;
-                self.update_table_index(&mut row.field_list, TableId::Field)?;
-                self.update_table_index(&mut row.method_list, TableId::MethodDef)?;
+                self.update_string_index(&mut row.type_name);
+                self.update_string_index(&mut row.type_namespace);
+                self.update_coded_index(&mut row.extends);
+                self.update_table_index(&mut row.field_list, TableId::Field);
+                self.update_table_index(&mut row.method_list, TableId::MethodDef);
             }
             TableDataOwned::FieldPtr(row) => {
-                self.update_table_index(&mut row.field, TableId::Field)?;
+                self.update_table_index(&mut row.field, TableId::Field);
             }
             TableDataOwned::Field(row) => {
-                self.update_string_index(&mut row.name)?;
-                self.update_blob_index(&mut row.signature)?;
+                self.update_string_index(&mut row.name);
+                self.update_blob_index(&mut row.signature);
             }
             TableDataOwned::MethodPtr(row) => {
-                self.update_table_index(&mut row.method, TableId::MethodDef)?;
+                self.update_table_index(&mut row.method, TableId::MethodDef);
             }
             TableDataOwned::MethodDef(row) => {
-                self.update_string_index(&mut row.name)?;
-                self.update_blob_index(&mut row.signature)?;
-                self.update_table_index(&mut row.param_list, TableId::Param)?;
+                self.update_string_index(&mut row.name);
+                self.update_blob_index(&mut row.signature);
+                self.update_table_index(&mut row.param_list, TableId::Param);
             }
             TableDataOwned::ParamPtr(row) => {
-                self.update_table_index(&mut row.param, TableId::Param)?;
+                self.update_table_index(&mut row.param, TableId::Param);
             }
             TableDataOwned::Param(row) => {
-                self.update_string_index(&mut row.name)?;
+                self.update_string_index(&mut row.name);
             }
             TableDataOwned::InterfaceImpl(row) => {
-                self.update_table_index(&mut row.class, TableId::TypeDef)?;
-                self.update_coded_index(&mut row.interface)?;
+                self.update_table_index(&mut row.class, TableId::TypeDef);
+                self.update_coded_index(&mut row.interface);
             }
 
             // Reference and Attribute Tables (0x0A-0x0E)
             TableDataOwned::MemberRef(row) => {
-                self.update_coded_index(&mut row.class)?;
-                self.update_string_index(&mut row.name)?;
-                self.update_blob_index(&mut row.signature)?;
+                self.update_coded_index(&mut row.class);
+                self.update_string_index(&mut row.name);
+                self.update_blob_index(&mut row.signature);
             }
             TableDataOwned::Constant(row) => {
-                self.update_coded_index(&mut row.parent)?;
-                self.update_blob_index(&mut row.value)?;
+                self.update_coded_index(&mut row.parent);
+                self.update_blob_index(&mut row.value);
             }
             TableDataOwned::CustomAttribute(row) => {
-                self.update_coded_index(&mut row.parent)?;
-                self.update_coded_index(&mut row.constructor)?;
-                self.update_blob_index(&mut row.value)?;
+                self.update_coded_index(&mut row.parent);
+                self.update_coded_index(&mut row.constructor);
+                self.update_blob_index(&mut row.value);
             }
             TableDataOwned::FieldMarshal(row) => {
-                self.update_coded_index(&mut row.parent)?;
-                self.update_blob_index(&mut row.native_type)?;
+                self.update_coded_index(&mut row.parent);
+                self.update_blob_index(&mut row.native_type);
             }
             TableDataOwned::DeclSecurity(row) => {
-                self.update_coded_index(&mut row.parent)?;
-                self.update_blob_index(&mut row.permission_set)?;
+                self.update_coded_index(&mut row.parent);
+                self.update_blob_index(&mut row.permission_set);
             }
             TableDataOwned::ClassLayout(row) => {
-                self.update_table_index(&mut row.parent, TableId::TypeDef)?;
+                self.update_table_index(&mut row.parent, TableId::TypeDef);
             }
             TableDataOwned::FieldLayout(row) => {
-                self.update_table_index(&mut row.field, TableId::Field)?;
+                self.update_table_index(&mut row.field, TableId::Field);
             }
             TableDataOwned::StandAloneSig(row) => {
-                self.update_blob_index(&mut row.signature)?;
+                self.update_blob_index(&mut row.signature);
             }
             TableDataOwned::EventMap(row) => {
-                self.update_table_index(&mut row.parent, TableId::TypeDef)?;
-                self.update_table_index(&mut row.event_list, TableId::Event)?;
+                self.update_table_index(&mut row.parent, TableId::TypeDef);
+                self.update_table_index(&mut row.event_list, TableId::Event);
             }
             TableDataOwned::EventPtr(row) => {
-                self.update_table_index(&mut row.event, TableId::Event)?;
+                self.update_table_index(&mut row.event, TableId::Event);
             }
             TableDataOwned::Event(row) => {
-                self.update_string_index(&mut row.name)?;
-                self.update_coded_index(&mut row.event_type)?;
+                self.update_string_index(&mut row.name);
+                self.update_coded_index(&mut row.event_type);
             }
             TableDataOwned::PropertyMap(row) => {
-                self.update_table_index(&mut row.parent, TableId::TypeDef)?;
-                self.update_table_index(&mut row.property_list, TableId::Property)?;
+                self.update_table_index(&mut row.parent, TableId::TypeDef);
+                self.update_table_index(&mut row.property_list, TableId::Property);
             }
             TableDataOwned::PropertyPtr(row) => {
-                self.update_table_index(&mut row.property, TableId::Property)?;
+                self.update_table_index(&mut row.property, TableId::Property);
             }
             TableDataOwned::Property(row) => {
-                self.update_string_index(&mut row.name)?;
-                self.update_blob_index(&mut row.signature)?;
+                self.update_string_index(&mut row.name);
+                self.update_blob_index(&mut row.signature);
             }
             TableDataOwned::MethodSemantics(row) => {
-                self.update_table_index(&mut row.method, TableId::MethodDef)?;
-                self.update_coded_index(&mut row.association)?;
+                self.update_table_index(&mut row.method, TableId::MethodDef);
+                self.update_coded_index(&mut row.association);
             }
             TableDataOwned::MethodImpl(row) => {
-                self.update_table_index(&mut row.class, TableId::TypeDef)?;
-                self.update_coded_index(&mut row.method_body)?;
-                self.update_coded_index(&mut row.method_declaration)?;
+                self.update_table_index(&mut row.class, TableId::TypeDef);
+                self.update_coded_index(&mut row.method_body);
+                self.update_coded_index(&mut row.method_declaration);
             }
             TableDataOwned::ModuleRef(row) => {
-                self.update_string_index(&mut row.name)?;
+                self.update_string_index(&mut row.name);
             }
             TableDataOwned::TypeSpec(row) => {
-                self.update_blob_index(&mut row.signature)?;
+                self.update_blob_index(&mut row.signature);
             }
             TableDataOwned::ImplMap(row) => {
-                self.update_coded_index(&mut row.member_forwarded)?;
-                self.update_string_index(&mut row.import_name)?;
-                self.update_table_index(&mut row.import_scope, TableId::ModuleRef)?;
+                self.update_coded_index(&mut row.member_forwarded);
+                self.update_string_index(&mut row.import_name);
+                self.update_table_index(&mut row.import_scope, TableId::ModuleRef);
             }
             TableDataOwned::FieldRVA(row) => {
-                self.update_table_index(&mut row.field, TableId::Field)?;
+                self.update_table_index(&mut row.field, TableId::Field);
             }
             TableDataOwned::Assembly(row) => {
-                self.update_string_index(&mut row.name)?;
-                self.update_string_index(&mut row.culture)?;
-                self.update_blob_index(&mut row.public_key)?;
+                self.update_string_index(&mut row.name);
+                self.update_string_index(&mut row.culture);
+                self.update_blob_index(&mut row.public_key);
             }
-            TableDataOwned::AssemblyProcessor(_) => {
-                // No cross-references to update
-            }
-            TableDataOwned::AssemblyOS(_) => {
+            TableDataOwned::AssemblyProcessor(_)
+            | TableDataOwned::AssemblyOS(_)
+            | TableDataOwned::EncLog(_)
+            | TableDataOwned::EncMap(_) => {
                 // No cross-references to update
             }
             TableDataOwned::AssemblyRef(row) => {
-                self.update_string_index(&mut row.name)?;
-                self.update_string_index(&mut row.culture)?;
-                self.update_blob_index(&mut row.public_key_or_token)?;
-                self.update_blob_index(&mut row.hash_value)?;
+                self.update_string_index(&mut row.name);
+                self.update_string_index(&mut row.culture);
+                self.update_blob_index(&mut row.public_key_or_token);
+                self.update_blob_index(&mut row.hash_value);
             }
             TableDataOwned::AssemblyRefProcessor(row) => {
-                self.update_table_index(&mut row.assembly_ref, TableId::AssemblyRef)?;
+                self.update_table_index(&mut row.assembly_ref, TableId::AssemblyRef);
             }
             TableDataOwned::AssemblyRefOS(row) => {
-                self.update_table_index(&mut row.assembly_ref, TableId::AssemblyRef)?;
+                self.update_table_index(&mut row.assembly_ref, TableId::AssemblyRef);
             }
             TableDataOwned::File(row) => {
-                self.update_string_index(&mut row.name)?;
-                self.update_blob_index(&mut row.hash_value)?;
+                self.update_string_index(&mut row.name);
+                self.update_blob_index(&mut row.hash_value);
             }
             TableDataOwned::ExportedType(row) => {
-                self.update_string_index(&mut row.name)?;
-                self.update_string_index(&mut row.namespace)?;
-                self.update_coded_index(&mut row.implementation)?;
+                self.update_string_index(&mut row.name);
+                self.update_string_index(&mut row.namespace);
+                self.update_coded_index(&mut row.implementation);
             }
             TableDataOwned::ManifestResource(row) => {
-                self.update_string_index(&mut row.name)?;
-                self.update_coded_index(&mut row.implementation)?;
+                self.update_string_index(&mut row.name);
+                self.update_coded_index(&mut row.implementation);
             }
             TableDataOwned::NestedClass(row) => {
-                self.update_table_index(&mut row.nested_class, TableId::TypeDef)?;
-                self.update_table_index(&mut row.enclosing_class, TableId::TypeDef)?;
+                self.update_table_index(&mut row.nested_class, TableId::TypeDef);
+                self.update_table_index(&mut row.enclosing_class, TableId::TypeDef);
             }
             TableDataOwned::GenericParam(row) => {
-                self.update_coded_index(&mut row.owner)?;
-                self.update_string_index(&mut row.name)?;
+                self.update_coded_index(&mut row.owner);
+                self.update_string_index(&mut row.name);
             }
             TableDataOwned::MethodSpec(row) => {
-                self.update_coded_index(&mut row.method)?;
-                self.update_blob_index(&mut row.instantiation)?;
+                self.update_coded_index(&mut row.method);
+                self.update_blob_index(&mut row.instantiation);
             }
             TableDataOwned::GenericParamConstraint(row) => {
-                self.update_table_index(&mut row.owner, TableId::GenericParam)?;
-                self.update_coded_index(&mut row.constraint)?;
+                self.update_table_index(&mut row.owner, TableId::GenericParam);
+                self.update_coded_index(&mut row.constraint);
             }
             TableDataOwned::Document(row) => {
-                self.update_blob_index(&mut row.name)?;
-                self.update_guid_index(&mut row.hash_algorithm)?;
-                self.update_blob_index(&mut row.hash)?;
-                self.update_guid_index(&mut row.language)?;
+                self.update_blob_index(&mut row.name);
+                self.update_guid_index(&mut row.hash_algorithm);
+                self.update_blob_index(&mut row.hash);
+                self.update_guid_index(&mut row.language);
             }
             TableDataOwned::MethodDebugInformation(row) => {
-                self.update_table_index(&mut row.document, TableId::Document)?;
-                self.update_blob_index(&mut row.sequence_points)?;
+                self.update_table_index(&mut row.document, TableId::Document);
+                self.update_blob_index(&mut row.sequence_points);
             }
             TableDataOwned::LocalScope(row) => {
-                self.update_table_index(&mut row.method, TableId::MethodDef)?;
-                self.update_table_index(&mut row.import_scope, TableId::ImportScope)?;
-                self.update_table_index(&mut row.variable_list, TableId::LocalVariable)?;
-                self.update_table_index(&mut row.constant_list, TableId::LocalConstant)?;
+                self.update_table_index(&mut row.method, TableId::MethodDef);
+                self.update_table_index(&mut row.import_scope, TableId::ImportScope);
+                self.update_table_index(&mut row.variable_list, TableId::LocalVariable);
+                self.update_table_index(&mut row.constant_list, TableId::LocalConstant);
             }
             TableDataOwned::LocalVariable(row) => {
-                self.update_string_index(&mut row.name)?;
+                self.update_string_index(&mut row.name);
             }
             TableDataOwned::LocalConstant(row) => {
-                self.update_string_index(&mut row.name)?;
-                self.update_blob_index(&mut row.signature)?;
+                self.update_string_index(&mut row.name);
+                self.update_blob_index(&mut row.signature);
             }
             TableDataOwned::ImportScope(row) => {
-                self.update_table_index(&mut row.parent, TableId::ImportScope)?;
-                self.update_blob_index(&mut row.imports)?;
+                self.update_table_index(&mut row.parent, TableId::ImportScope);
+                self.update_blob_index(&mut row.imports);
             }
             TableDataOwned::StateMachineMethod(row) => {
-                self.update_table_index(&mut row.move_next_method, TableId::MethodDef)?;
-                self.update_table_index(&mut row.kickoff_method, TableId::MethodDef)?;
+                self.update_table_index(&mut row.move_next_method, TableId::MethodDef);
+                self.update_table_index(&mut row.kickoff_method, TableId::MethodDef);
             }
             TableDataOwned::CustomDebugInformation(row) => {
-                self.update_coded_index(&mut row.parent)?;
-                self.update_guid_index(&mut row.kind)?;
-                self.update_blob_index(&mut row.value)?;
-            }
-            TableDataOwned::EncLog(_) => {
-                // No cross-references to update - only contains tokens and function codes
-            }
-            TableDataOwned::EncMap(_) => {
-                // No cross-references to update - only contains tokens
+                self.update_coded_index(&mut row.parent);
+                self.update_guid_index(&mut row.kind);
+                self.update_blob_index(&mut row.value);
             }
         }
-
-        Ok(())
     }
 
     /// Update a string heap index reference.
-    fn update_string_index(&self, index: &mut u32) -> Result<()> {
+    fn update_string_index(&self, index: &mut u32) {
         if *index != 0 {
             if let Some(new_index) = self.string_map.get(index) {
                 *index = *new_index;
             }
         }
-        Ok(())
     }
 
     /// Update a blob heap index reference.
-    fn update_blob_index(&self, index: &mut u32) -> Result<()> {
+    fn update_blob_index(&self, index: &mut u32) {
         if *index != 0 {
             if let Some(new_index) = self.blob_map.get(index) {
                 *index = *new_index;
             }
         }
-        Ok(())
     }
 
     /// Update a GUID heap index reference.
-    fn update_guid_index(&self, index: &mut u32) -> Result<()> {
+    fn update_guid_index(&self, index: &mut u32) {
         if *index != 0 {
             if let Some(new_index) = self.guid_map.get(index) {
                 *index = *new_index;
             }
         }
-        Ok(())
     }
 
     /// Update a user string heap index reference.
-    fn update_userstring_index(&self, index: &mut u32) -> Result<()> {
+    fn update_userstring_index(&self, index: &mut u32) {
         if *index != 0 {
             if let Some(new_index) = self.userstring_map.get(index) {
                 *index = *new_index;
             }
         }
-        Ok(())
     }
 
     /// Update a direct table RID reference.
-    fn update_table_index(&self, index: &mut u32, table_id: TableId) -> Result<()> {
+    fn update_table_index(&self, index: &mut u32, table_id: TableId) {
         if *index != 0 {
             if let Some(remapper) = self.table_maps.get(&table_id) {
                 if let Some(new_rid) = remapper.map_rid(*index) {
@@ -767,20 +748,18 @@ impl IndexRemapper {
                 }
             }
         }
-        Ok(())
     }
 
     /// Update a CodedIndex reference.
-    fn update_coded_index(&self, coded_index: &mut CodedIndex) -> Result<()> {
+    fn update_coded_index(&self, coded_index: &mut CodedIndex) {
         if coded_index.row != 0 {
             if let Some(remapper) = self.table_maps.get(&coded_index.tag) {
                 if let Some(new_rid) = remapper.map_rid(coded_index.row) {
                     // Create a new CodedIndex with the updated RID
-                    *coded_index = CodedIndex::new(coded_index.tag, new_rid);
+                    *coded_index = CodedIndex::new(coded_index.tag, new_rid, coded_index.ci_type);
                 }
             }
         }
-        Ok(())
     }
 
     /// Get the final index for a string heap index.
@@ -853,26 +832,9 @@ mod tests {
         cilassembly::{
             AssemblyChanges, HeapChanges, Operation, TableModifications, TableOperation,
         },
-        metadata::{
-            cilassemblyview::CilAssemblyView,
-            tables::{CodedIndex, TableDataOwned, TableId, TypeDefRaw},
-            token::Token,
-        },
+        metadata::{cilassemblyview::CilAssemblyView, tables::CodedIndexType, token::Token},
+        test::factories::table::cilassembly::create_test_row,
     };
-
-    fn create_test_row() -> TableDataOwned {
-        TableDataOwned::TypeDef(TypeDefRaw {
-            rid: 0,
-            token: Token::new(0x02000000),
-            offset: 0,
-            flags: 0,
-            type_name: 1,
-            type_namespace: 0,
-            extends: CodedIndex::new(TableId::TypeRef, 0),
-            field_list: 1,
-            method_list: 1,
-        })
-    }
 
     #[test]
     fn test_index_remapper_empty_changes() {
@@ -1108,7 +1070,9 @@ mod tests {
                 typedef_data.type_namespace = 100; // String index
                 typedef_data.field_list = 25; // Field table RID
                 typedef_data.method_list = 75; // MethodDef table RID
-                typedef_data.extends = CodedIndex::new(TableId::TypeRef, 10); // CodedIndex
+                typedef_data.extends =
+                    CodedIndex::new(TableId::TypeRef, 10, CodedIndexType::TypeDefOrRef);
+                // CodedIndex
             }
 
             // Add table operation with the test row
@@ -1131,9 +1095,7 @@ mod tests {
             let mut updated_changes = changes;
 
             // Apply cross-reference remapping
-            remapper
-                .apply_to_assembly(&mut updated_changes)
-                .expect("Cross-reference update should succeed");
+            remapper.apply_to_assembly(&mut updated_changes);
 
             // Verify cross-references were updated correctly
             if let Some(TableModifications::Sparse { operations, .. }) =
@@ -1296,9 +1258,17 @@ mod tests {
                     rid: 1,
                     token: Token::new(0x0C000001),
                     offset: 0,
-                    parent: CodedIndex::new(TableId::TypeDef, 15), // CodedIndex reference
-                    constructor: CodedIndex::new(TableId::MethodDef, 25), // CodedIndex reference
-                    value: 150,                                    // Blob heap index
+                    parent: CodedIndex::new(
+                        TableId::TypeDef,
+                        15,
+                        CodedIndexType::HasCustomAttribute,
+                    ), // CodedIndex reference
+                    constructor: CodedIndex::new(
+                        TableId::MethodDef,
+                        25,
+                        CodedIndexType::CustomAttributeType,
+                    ), // CodedIndex reference
+                    value: 150, // Blob heap index
                 });
 
             // Add table operation
@@ -1327,9 +1297,7 @@ mod tests {
             let mut updated_changes = changes;
 
             // Apply cross-reference updates
-            remapper
-                .apply_to_assembly(&mut updated_changes)
-                .expect("Cross-reference update should succeed");
+            remapper.apply_to_assembly(&mut updated_changes);
 
             // Verify the CustomAttribute row was updated correctly
             if let Some(TableModifications::Sparse { operations, .. }) =

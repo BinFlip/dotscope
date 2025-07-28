@@ -123,26 +123,36 @@ impl TypeRefRaw {
     /// ## Arguments
     /// * `get_ref` - Closure to resolve coded indexes to scope references
     /// * `strings` - The #String heap for resolving type names and namespaces
+    /// * `skip_intra_table_resolution` - Skip resolution of intra-table references for two-pass loading
     ///
     /// ## Returns
     /// Returns a reference-counted [`crate::metadata::typesystem::CilType`] representing the external type reference.
     ///
     /// ## Errors
     /// - Type name or namespace cannot be resolved from the strings heap
-    /// - Resolution scope coded index cannot be resolved to a valid scope
+    /// - Resolution scope coded index cannot be resolved to a valid scope (when not skipped)
     /// - String heap indices are invalid or point to non-existent data
-    pub fn to_owned<F>(&self, get_ref: F, strings: &Strings) -> Result<CilTypeRc>
+    pub fn to_owned<F>(
+        &self,
+        get_ref: F,
+        strings: &Strings,
+        skip_intra_table_resolution: bool,
+    ) -> Result<CilTypeRc>
     where
         F: Fn(&CodedIndex) -> CilTypeReference,
     {
-        let resolution_scope = match get_ref(&self.resolution_scope) {
-            CilTypeReference::None => {
-                return Err(malformed_error!(
-                    "Failed to resolve resolution scope - {}",
-                    self.resolution_scope.token.value()
-                ))
+        let resolution_scope = if skip_intra_table_resolution {
+            None
+        } else {
+            match get_ref(&self.resolution_scope) {
+                CilTypeReference::None => {
+                    return Err(malformed_error!(
+                        "Failed to resolve resolution scope - {}",
+                        self.resolution_scope.token.value()
+                    ))
+                }
+                resolved => Some(resolved),
             }
-            resolved => Some(resolved),
         };
 
         Ok(Arc::new(CilType::new(
@@ -156,6 +166,27 @@ impl TypeRefRaw {
             Arc::new(boxcar::Vec::new()),
             None,
         )))
+    }
+
+    /// Resolves the resolution scope for this TypeRef in a second pass.
+    ///
+    /// This method resolves intra-table TypeRef references that were skipped during
+    /// the initial loading pass to handle forward references correctly.
+    ///
+    /// ## Arguments
+    /// * `get_ref` - Closure to resolve coded indexes to scope references
+    ///
+    /// ## Returns
+    /// Returns the resolved `CilTypeReference` for the resolution scope, or `None` if resolution fails.
+    /// This method is used in the second pass to resolve any references that were skipped in the first pass.
+    pub fn resolve_resolution_scope<F>(&self, get_ref: F) -> Option<CilTypeReference>
+    where
+        F: Fn(&CodedIndex) -> CilTypeReference,
+    {
+        match get_ref(&self.resolution_scope) {
+            CilTypeReference::None => None,
+            resolved => Some(resolved),
+        }
     }
 }
 

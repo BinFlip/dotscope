@@ -1263,23 +1263,14 @@ impl<'a> CustomAttributeParser<'a> {
 mod tests {
     use super::*;
     use crate::metadata::{
-        method::MethodRc,
         tables::Param,
         token::Token,
         typesystem::{CilFlavor, CilTypeRef, TypeBuilder, TypeRegistry},
     };
-    use crate::test::MethodBuilder;
+    use crate::test::factories::metadata::customattributes::{
+        create_constructor_with_params, create_empty_constructor,
+    };
     use std::sync::{Arc, OnceLock};
-
-    // Helper function to create a simple method for basic parsing tests
-    fn create_empty_constructor() -> MethodRc {
-        MethodBuilder::new().with_name("EmptyConstructor").build()
-    }
-
-    // Helper function to create a method with specific parameter types using builders
-    fn create_constructor_with_params(param_types: Vec<CilFlavor>) -> MethodRc {
-        MethodBuilder::with_param_types("AttributeConstructor", param_types).build()
-    }
 
     #[test]
     fn test_parse_empty_blob_with_method() {

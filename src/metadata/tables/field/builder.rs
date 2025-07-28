@@ -60,6 +60,7 @@ impl FieldBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::field::FieldBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             name: None,
@@ -77,6 +78,7 @@ impl FieldBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -111,6 +113,7 @@ impl FieldBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn flags(mut self, flags: u32) -> Self {
         self.flags = Some(flags);
         self
@@ -132,6 +135,7 @@ impl FieldBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn signature(mut self, signature: &[u8]) -> Self {
         self.signature = Some(signature.to_vec());
         self
@@ -180,10 +184,10 @@ impl FieldBuilder {
                 })?;
 
         // Add name to string heap
-        let name_index = context.get_or_add_string(&name)?;
+        let name_index = context.string_get_or_add(&name)?;
 
         // Add signature to blob heap
-        let signature_index = context.add_blob(&signature)?;
+        let signature_index = context.blob_add(&signature)?;
 
         // Get the next RID for the Field table
         let rid = context.next_rid(TableId::Field);
@@ -203,7 +207,7 @@ impl FieldBuilder {
         };
 
         // Add the field to the table
-        context.add_table_row(TableId::Field, TableDataOwned::Field(field_raw))
+        context.table_row_add(TableId::Field, TableDataOwned::Field(field_raw))
     }
 }
 

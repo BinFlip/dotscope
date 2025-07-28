@@ -113,7 +113,7 @@ mod tests {
     use crate::{
         metadata::tables::{
             types::{RowReadable, TableInfo, TableRow},
-            CodedIndex,
+            CodedIndex, CodedIndexType,
         },
         metadata::token::Token,
     };
@@ -160,7 +160,7 @@ mod tests {
             flags: 0x01000000,
             type_name: 0x42,
             type_namespace: 0x43,
-            extends: CodedIndex::new(TableId::TypeRef, 2),
+            extends: CodedIndex::new(TableId::TypeRef, 2, CodedIndexType::TypeDefOrRef),
             field_list: 3,
             method_list: 4,
         };
@@ -268,7 +268,7 @@ mod tests {
             flags: 0x00100001, // Public | Class
             type_name: 0x12345,
             type_namespace: 0x67890,
-            extends: CodedIndex::new(TableId::TypeSpec, 0x4000), // Large row index
+            extends: CodedIndex::new(TableId::TypeSpec, 0x4000, CodedIndexType::TypeDefOrRef), // Large row index
             field_list: 0x8000,
             method_list: 0x9000,
         };
@@ -316,7 +316,7 @@ mod tests {
             flags: 0,
             type_name: 0,
             type_namespace: 0,
-            extends: CodedIndex::new(TableId::TypeDef, 0), // Null base type
+            extends: CodedIndex::new(TableId::TypeDef, 0, CodedIndexType::TypeDefOrRef), // Null base type
             field_list: 0,
             method_list: 0,
         };

@@ -51,7 +51,13 @@ impl RowWritable for MethodSemanticsRaw {
         sizes: &TableInfoRef,
     ) -> Result<()> {
         // Write semantics bitmask (2 bytes)
-        write_le_at(data, offset, self.semantics as u16)?;
+        write_le_at(
+            data,
+            offset,
+            u16::try_from(self.semantics).map_err(|_| {
+                malformed_error!("MethodSemantics semantics out of range: {}", self.semantics)
+            })?,
+        )?;
 
         // Write MethodDef table index
         write_le_at_dyn(
@@ -84,7 +90,9 @@ mod tests {
 
     use crate::metadata::tables::{
         methodsemantics::MethodSemanticsRaw,
-        types::{CodedIndex, RowReadable, RowWritable, TableId, TableInfo, TableRow},
+        types::{
+            CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+        },
     };
     use crate::metadata::token::Token;
 
@@ -146,7 +154,7 @@ mod tests {
             offset: 0,
             semantics: 0x0002, // GETTER
             method: 42,
-            association: CodedIndex::new(TableId::Property, 15), // Property table, index 15
+            association: CodedIndex::new(TableId::Property, 15, CodedIndexType::HasSemantics), // Property table, index 15
         };
 
         let mut buffer = vec![0u8; <MethodSemanticsRaw as TableRow>::row_size(&sizes) as usize];
@@ -189,7 +197,7 @@ mod tests {
             offset: 0,
             semantics: 0x0008, // ADD_ON
             method: 0x8000,
-            association: CodedIndex::new(TableId::Event, 25), // Event table, index 25
+            association: CodedIndex::new(TableId::Event, 25, CodedIndexType::HasSemantics), // Event table, index 25
         };
 
         let mut buffer = vec![0u8; <MethodSemanticsRaw as TableRow>::row_size(&sizes) as usize];
@@ -232,7 +240,7 @@ mod tests {
             offset: 0,
             semantics: 0x0001, // SETTER
             method: 55,
-            association: CodedIndex::new(TableId::Property, 10),
+            association: CodedIndex::new(TableId::Property, 10, CodedIndexType::HasSemantics),
         };
 
         // Write to buffer
@@ -285,7 +293,7 @@ mod tests {
                 offset: 0,
                 semantics: semantic_value,
                 method: 10,
-                association: CodedIndex::new(TableId::Property, 5),
+                association: CodedIndex::new(TableId::Property, 5, CodedIndexType::HasSemantics),
             };
 
             let mut buffer = vec![0u8; <MethodSemanticsRaw as TableRow>::row_size(&sizes) as usize];
@@ -320,7 +328,7 @@ mod tests {
             offset: 0,
             semantics: 0,
             method: 0,
-            association: CodedIndex::new(TableId::Event, 0),
+            association: CodedIndex::new(TableId::Event, 0, CodedIndexType::HasSemantics),
         };
 
         let mut buffer = vec![0u8; <MethodSemanticsRaw as TableRow>::row_size(&sizes) as usize];
@@ -345,7 +353,7 @@ mod tests {
             offset: 0,
             semantics: 0xFFFF,
             method: 0xFFFF,
-            association: CodedIndex::new(TableId::Property, 0x7FFF), // Max for 2-byte coded index
+            association: CodedIndex::new(TableId::Property, 0x7FFF, CodedIndexType::HasSemantics), // Max for 2-byte coded index
         };
 
         let mut buffer = vec![0u8; <MethodSemanticsRaw as TableRow>::row_size(&sizes) as usize];
@@ -377,7 +385,7 @@ mod tests {
             offset: 0,
             semantics: 0x0101,
             method: 0x0202,
-            association: CodedIndex::new(TableId::Event, 1), // Event(1) = (1 << 1) | 0 = 2 = 0x0002
+            association: CodedIndex::new(TableId::Event, 1, CodedIndexType::HasSemantics), // Event(1) = (1 << 1) | 0 = 2 = 0x0002
         };
 
         let mut buffer = vec![0u8; <MethodSemanticsRaw as TableRow>::row_size(&sizes) as usize];

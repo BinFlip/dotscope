@@ -53,19 +53,11 @@ mod tests {
             assert_eq!(row.token.value(), 0x0C000001);
             assert_eq!(
                 row.parent,
-                CodedIndex {
-                    tag: TableId::TypeRef,
-                    row: 16,
-                    token: Token::new(16 | 0x01000000),
-                }
+                CodedIndex::new(TableId::TypeRef, 16, CodedIndexType::HasCustomAttribute)
             );
             assert_eq!(
                 row.constructor,
-                CodedIndex {
-                    tag: TableId::MemberRef,
-                    row: 96,
-                    token: Token::new(96 | 0x0A000000),
-                }
+                CodedIndex::new(TableId::MemberRef, 96, CodedIndexType::CustomAttributeType)
             );
             assert_eq!(row.value, 0x404);
         };
@@ -107,19 +99,19 @@ mod tests {
             assert_eq!(row.token.value(), 0x0C000001);
             assert_eq!(
                 row.parent,
-                CodedIndex {
-                    tag: TableId::TypeRef,
-                    row: 0x101010,
-                    token: Token::new(0x101010 | 0x01000000),
-                }
+                CodedIndex::new(
+                    TableId::TypeRef,
+                    0x101010,
+                    CodedIndexType::HasCustomAttribute
+                )
             );
             assert_eq!(
                 row.constructor,
-                CodedIndex {
-                    tag: TableId::MemberRef,
-                    row: 0x606060,
-                    token: Token::new(0x606060 | 0x0A000000),
-                }
+                CodedIndex::new(
+                    TableId::MemberRef,
+                    0x606060,
+                    CodedIndexType::CustomAttributeType
+                )
             );
             assert_eq!(row.value, 0x4040404);
         };

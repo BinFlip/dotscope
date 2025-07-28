@@ -67,7 +67,7 @@ use crate::{
 ///
 /// // Create a base class constraint: where T : BaseClass
 /// let generic_param_token = Token::new(0x2A000001); // GenericParam RID 1
-/// let base_class_ref = CodedIndex::new(TableId::TypeDef, 1); // Local base class
+/// let base_class_ref = CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeDefOrRef); // Local base class
 ///
 /// let base_constraint = GenericParamConstraintBuilder::new()
 ///     .owner(generic_param_token)
@@ -75,7 +75,7 @@ use crate::{
 ///     .build(&mut context)?;
 ///
 /// // Create an interface constraint: where T : IComparable
-/// let interface_ref = CodedIndex::new(TableId::TypeRef, 1); // External interface
+/// let interface_ref = CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef); // External interface
 ///
 /// let interface_constraint = GenericParamConstraintBuilder::new()
 ///     .owner(generic_param_token) // Same parameter can have multiple constraints
@@ -83,7 +83,7 @@ use crate::{
 ///     .build(&mut context)?;
 ///
 /// // Create a generic interface constraint: where T : IEnumerable<string>
-/// let generic_interface_spec = CodedIndex::new(TableId::TypeSpec, 1); // Generic type spec
+/// let generic_interface_spec = CodedIndex::new(TableId::TypeSpec, 1, CodedIndexType::TypeDefOrRef); // Generic type spec
 ///
 /// let generic_constraint = GenericParamConstraintBuilder::new()
 ///     .owner(generic_param_token)
@@ -92,7 +92,7 @@ use crate::{
 ///
 /// // Create constraints for a method-level generic parameter
 /// let method_param_token = Token::new(0x2A000002); // GenericParam RID 2 (method parameter)
-/// let system_object_ref = CodedIndex::new(TableId::TypeRef, 2); // System.Object
+/// let system_object_ref = CodedIndex::new(TableId::TypeRef, 2, CodedIndexType::TypeDefOrRef); // System.Object
 ///
 /// let method_constraint = GenericParamConstraintBuilder::new()
 ///     .owner(method_param_token)
@@ -117,6 +117,7 @@ impl GenericParamConstraintBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::genericparamconstraint::GenericParamConstraintBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             owner: None,
@@ -145,6 +146,7 @@ impl GenericParamConstraintBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn owner(mut self, owner: Token) -> Self {
         self.owner = Some(owner);
         self
@@ -175,6 +177,7 @@ impl GenericParamConstraintBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn constraint(mut self, constraint: CodedIndex) -> Self {
         self.constraint = Some(constraint);
         self
@@ -253,7 +256,7 @@ impl GenericParamConstraintBuilder {
             constraint,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::GenericParamConstraint,
             TableDataOwned::GenericParamConstraint(constraint_raw),
         )
@@ -283,7 +286,8 @@ mod tests {
 
             // Create a basic generic parameter constraint
             let owner_token = Token::new(0x2A000001); // GenericParam RID 1
-            let constraint_type = CodedIndex::new(TableId::TypeRef, 1); // External base class
+            let constraint_type =
+                CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef); // External base class
 
             let token = GenericParamConstraintBuilder::new()
                 .owner(owner_token)
@@ -306,7 +310,7 @@ mod tests {
 
             // Create a base class constraint
             let generic_param = Token::new(0x2A000001); // GenericParam RID 1
-            let base_class = CodedIndex::new(TableId::TypeDef, 1); // Local base class
+            let base_class = CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeDefOrRef); // Local base class
 
             let token = GenericParamConstraintBuilder::new()
                 .owner(generic_param)
@@ -328,7 +332,7 @@ mod tests {
 
             // Create an interface constraint
             let generic_param = Token::new(0x2A000002); // GenericParam RID 2
-            let interface_ref = CodedIndex::new(TableId::TypeRef, 2); // External interface
+            let interface_ref = CodedIndex::new(TableId::TypeRef, 2, CodedIndexType::TypeDefOrRef); // External interface
 
             let token = GenericParamConstraintBuilder::new()
                 .owner(generic_param)
@@ -350,7 +354,8 @@ mod tests {
 
             // Create a generic type constraint (e.g., IComparable<T>)
             let generic_param = Token::new(0x2A000003); // GenericParam RID 3
-            let generic_interface = CodedIndex::new(TableId::TypeSpec, 1); // Generic interface instantiation
+            let generic_interface =
+                CodedIndex::new(TableId::TypeSpec, 1, CodedIndexType::TypeDefOrRef); // Generic interface instantiation
 
             let token = GenericParamConstraintBuilder::new()
                 .owner(generic_param)
@@ -370,7 +375,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let constraint_type = CodedIndex::new(TableId::TypeRef, 1);
+            let constraint_type =
+                CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef);
 
             let result = GenericParamConstraintBuilder::new()
                 .constraint(constraint_type)
@@ -408,7 +414,8 @@ mod tests {
 
             // Use a token that's not from GenericParam table
             let invalid_owner = Token::new(0x02000001); // TypeDef token instead
-            let constraint_type = CodedIndex::new(TableId::TypeRef, 1);
+            let constraint_type =
+                CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef);
 
             let result = GenericParamConstraintBuilder::new()
                 .owner(invalid_owner)
@@ -429,7 +436,8 @@ mod tests {
 
             // Use a GenericParam token with RID 0 (invalid)
             let invalid_owner = Token::new(0x2A000000); // GenericParam with RID 0
-            let constraint_type = CodedIndex::new(TableId::TypeRef, 1);
+            let constraint_type =
+                CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef);
 
             let result = GenericParamConstraintBuilder::new()
                 .owner(invalid_owner)
@@ -450,7 +458,8 @@ mod tests {
 
             let owner_token = Token::new(0x2A000001); // GenericParam RID 1
                                                       // Use a table type that's not valid for TypeDefOrRef
-            let invalid_constraint = CodedIndex::new(TableId::Field, 1); // Field not in TypeDefOrRef
+            let invalid_constraint =
+                CodedIndex::new(TableId::Field, 1, CodedIndexType::TypeDefOrRef); // Field not in TypeDefOrRef
 
             let result = GenericParamConstraintBuilder::new()
                 .owner(owner_token)
@@ -472,10 +481,11 @@ mod tests {
             let generic_param = Token::new(0x2A000001); // GenericParam RID 1
 
             // Create multiple constraints for the same parameter
-            let base_class = CodedIndex::new(TableId::TypeDef, 1); // Base class constraint
-            let interface1 = CodedIndex::new(TableId::TypeRef, 1); // First interface
-            let interface2 = CodedIndex::new(TableId::TypeRef, 2); // Second interface
-            let generic_interface = CodedIndex::new(TableId::TypeSpec, 1); // Generic interface
+            let base_class = CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeDefOrRef); // Base class constraint
+            let interface1 = CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef); // First interface
+            let interface2 = CodedIndex::new(TableId::TypeRef, 2, CodedIndexType::TypeDefOrRef); // Second interface
+            let generic_interface =
+                CodedIndex::new(TableId::TypeSpec, 1, CodedIndexType::TypeDefOrRef); // Generic interface
 
             let constraint1 = GenericParamConstraintBuilder::new()
                 .owner(generic_param)
@@ -546,8 +556,10 @@ mod tests {
             let type_param = Token::new(0x2A000001); // Type-level parameter
             let method_param = Token::new(0x2A000002); // Method-level parameter
 
-            let type_constraint = CodedIndex::new(TableId::TypeRef, 1); // System.Object
-            let method_constraint = CodedIndex::new(TableId::TypeRef, 2); // IDisposable
+            let type_constraint =
+                CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef); // System.Object
+            let method_constraint =
+                CodedIndex::new(TableId::TypeRef, 2, CodedIndexType::TypeDefOrRef); // IDisposable
 
             let type_const = GenericParamConstraintBuilder::new()
                 .owner(type_param)
@@ -582,21 +594,33 @@ mod tests {
             // TypeDef constraint (local type)
             let typedef_constraint = GenericParamConstraintBuilder::new()
                 .owner(generic_param)
-                .constraint(CodedIndex::new(TableId::TypeDef, 1))
+                .constraint(CodedIndex::new(
+                    TableId::TypeDef,
+                    1,
+                    CodedIndexType::TypeDefOrRef,
+                ))
                 .build(&mut context)
                 .unwrap();
 
             // TypeRef constraint (external type)
             let typeref_constraint = GenericParamConstraintBuilder::new()
                 .owner(generic_param)
-                .constraint(CodedIndex::new(TableId::TypeRef, 1))
+                .constraint(CodedIndex::new(
+                    TableId::TypeRef,
+                    1,
+                    CodedIndexType::TypeDefOrRef,
+                ))
                 .build(&mut context)
                 .unwrap();
 
             // TypeSpec constraint (generic type instantiation)
             let typespec_constraint = GenericParamConstraintBuilder::new()
                 .owner(generic_param)
-                .constraint(CodedIndex::new(TableId::TypeSpec, 1))
+                .constraint(CodedIndex::new(
+                    TableId::TypeSpec,
+                    1,
+                    CodedIndexType::TypeDefOrRef,
+                ))
                 .build(&mut context)
                 .unwrap();
 
@@ -634,21 +658,33 @@ mod tests {
             // Base class constraint: T : BaseClass
             let base_class_constraint = GenericParamConstraintBuilder::new()
                 .owner(type_param_t)
-                .constraint(CodedIndex::new(TableId::TypeDef, 1)) // Local BaseClass
+                .constraint(CodedIndex::new(
+                    TableId::TypeDef,
+                    1,
+                    CodedIndexType::TypeDefOrRef,
+                )) // Local BaseClass
                 .build(&mut context)
                 .unwrap();
 
             // Generic interface constraint: T : IComparable<T>
             let comparable_constraint = GenericParamConstraintBuilder::new()
                 .owner(type_param_t)
-                .constraint(CodedIndex::new(TableId::TypeSpec, 1)) // IComparable<T> type spec
+                .constraint(CodedIndex::new(
+                    TableId::TypeSpec,
+                    1,
+                    CodedIndexType::TypeDefOrRef,
+                )) // IComparable<T> type spec
                 .build(&mut context)
                 .unwrap();
 
             // Interface constraint: T : IDisposable
             let disposable_constraint = GenericParamConstraintBuilder::new()
                 .owner(type_param_t)
-                .constraint(CodedIndex::new(TableId::TypeRef, 1)) // External IDisposable
+                .constraint(CodedIndex::new(
+                    TableId::TypeRef,
+                    1,
+                    CodedIndexType::TypeDefOrRef,
+                )) // External IDisposable
                 .build(&mut context)
                 .unwrap();
 

@@ -28,7 +28,7 @@ use crate::{
         tables::{TableId, TableInfoRef},
         token::Token,
     },
-    Error, Result,
+    Result,
 };
 
 /// Represents all possible coded index types defined in the CLI metadata specification.
@@ -258,15 +258,16 @@ impl CodedIndexType {
 /// A decoded representation of a coded index value.
 ///
 /// This structure contains the decoded components of a coded index, providing
-/// direct access to the target table, row index, and the computed metadata token.
-/// Coded indices are space-efficient encodings that combine table type and row
-/// information into a single value.
+/// direct access to the target table, row index, computed metadata token, and
+/// the coded index type information. Coded indices are space-efficient encodings
+/// that combine table type and row information into a single value.
 ///
 /// ## Fields
 ///
 /// - `tag`: The specific metadata table being referenced
 /// - `row`: The 1-based row index within that table
 /// - `token`: The computed metadata token for direct table access
+/// - `ci_type`: The coded index type defining allowed target tables
 #[derive(Clone, Debug, PartialEq)]
 pub struct CodedIndex {
     /// The [`TableId`] this index is referring to.
@@ -286,6 +287,13 @@ pub struct CodedIndex {
     /// (in the lower bits) to create a unique identifier that can be used
     /// for direct table lookups.
     pub token: Token,
+
+    /// The coded index type defining which tables are valid targets.
+    ///
+    /// This field provides access to the coded index type information, allowing
+    /// validation code to determine which tables are valid targets by calling
+    /// `ci_type.tables()` instead of manually specifying allowed tables.
+    pub ci_type: CodedIndexType,
 }
 
 impl CodedIndex {
@@ -326,23 +334,24 @@ impl CodedIndex {
         };
 
         let (tag, row) = info.decode_coded_index(coded_index, ci_type)?;
-        Ok(CodedIndex::new(tag, row))
+        Ok(CodedIndex::new(tag, row, ci_type))
     }
 
-    /// Creates a new `CodedIndex` with the specified table and row.
+    /// Creates a new `CodedIndex` with the specified table, row, and coded index type.
     ///
-    /// This method constructs a new coded index by combining the table identifier
-    /// and row index, automatically computing the appropriate metadata token based
-    /// on the ECMA-335 token encoding scheme.
+    /// This method constructs a new coded index by combining the table identifier,
+    /// row index, and coded index type information, automatically computing the
+    /// appropriate metadata token based on the ECMA-335 token encoding scheme.
     ///
     /// ## Arguments
     ///
     /// * `tag` - The [`crate::metadata::tables::types::TableId`] specifying which metadata table is being referenced
     /// * `row` - The 1-based row index within the specified table
+    /// * `ci_type` - The [`crate::metadata::tables::types::CodedIndexType`] defining the valid target tables
     ///
     /// ## Returns
     ///
-    /// A new [`crate::metadata::tables::types::CodedIndex`] instance with the computed token.
+    /// A new [`crate::metadata::tables::types::CodedIndex`] instance with the computed token and type information.
     ///
     /// ## Token Encoding
     ///
@@ -350,10 +359,11 @@ impl CodedIndex {
     /// with the row index (lower 24 bits). Each table type has a predefined token
     /// prefix as defined in the ECMA-335 specification.
     #[must_use]
-    pub fn new(tag: TableId, row: u32) -> CodedIndex {
+    pub fn new(tag: TableId, row: u32, ci_type: CodedIndexType) -> CodedIndex {
         CodedIndex {
             tag,
             row,
+            ci_type,
             token: match tag {
                 TableId::Module => Token::new(row),
                 TableId::TypeRef => Token::new(row | 0x0100_0000),
@@ -410,115 +420,5 @@ impl CodedIndex {
                 TableId::CustomDebugInformation => Token::new(row | 0x3700_0000),
             },
         }
-    }
-}
-
-impl TryFrom<Token> for CodedIndex {
-    type Error = Error;
-
-    /// Converts a Token to a CodedIndex.
-    ///
-    /// This conversion extracts the table type and row from the token and creates
-    /// a corresponding CodedIndex. The conversion will fail if the token represents
-    /// a null reference (value 0) or references an invalid table type.
-    ///
-    /// # Arguments
-    ///
-    /// * `token` - The Token to convert
-    ///
-    /// # Returns
-    ///
-    /// A Result containing the CodedIndex on success, or an Error if the token
-    /// cannot be converted (e.g., null token or invalid table type).
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use dotscope::metadata::token::Token;
-    /// use dotscope::metadata::tables::CodedIndex;
-    ///
-    /// // Convert a TypeDef token to CodedIndex
-    /// let token = Token::new(0x02000001); // TypeDef table, row 1
-    /// let coded_index: CodedIndex = token.try_into().unwrap();
-    ///
-    /// assert_eq!(coded_index.row, 1);
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The token is null (value 0)
-    /// - The token contains an unrecognized table type
-    fn try_from(token: Token) -> Result<Self> {
-        if token.is_null() {
-            return Err(malformed_error!("Cannot convert null token to CodedIndex"));
-        }
-
-        let table_id = token.table();
-        let row = token.row();
-
-        // Convert table ID to TableId enum
-        let table = match table_id {
-            0x00 => TableId::Module,
-            0x01 => TableId::TypeRef,
-            0x02 => TableId::TypeDef,
-            0x03 => TableId::FieldPtr,
-            0x04 => TableId::Field,
-            0x05 => TableId::MethodPtr,
-            0x06 => TableId::MethodDef,
-            0x07 => TableId::ParamPtr,
-            0x08 => TableId::Param,
-            0x09 => TableId::InterfaceImpl,
-            0x0A => TableId::MemberRef,
-            0x0B => TableId::Constant,
-            0x0C => TableId::CustomAttribute,
-            0x0D => TableId::FieldMarshal,
-            0x0E => TableId::DeclSecurity,
-            0x0F => TableId::ClassLayout,
-            0x10 => TableId::FieldLayout,
-            0x11 => TableId::StandAloneSig,
-            0x12 => TableId::EventMap,
-            0x13 => TableId::EventPtr,
-            0x14 => TableId::Event,
-            0x15 => TableId::PropertyMap,
-            0x16 => TableId::PropertyPtr,
-            0x17 => TableId::Property,
-            0x18 => TableId::MethodSemantics,
-            0x19 => TableId::MethodImpl,
-            0x1A => TableId::ModuleRef,
-            0x1B => TableId::TypeSpec,
-            0x1C => TableId::ImplMap,
-            0x1D => TableId::FieldRVA,
-            0x1E => TableId::EncLog,
-            0x1F => TableId::EncMap,
-            0x20 => TableId::Assembly,
-            0x21 => TableId::AssemblyProcessor,
-            0x22 => TableId::AssemblyOS,
-            0x23 => TableId::AssemblyRef,
-            0x24 => TableId::AssemblyRefProcessor,
-            0x25 => TableId::AssemblyRefOS,
-            0x26 => TableId::File,
-            0x27 => TableId::ExportedType,
-            0x28 => TableId::ManifestResource,
-            0x29 => TableId::NestedClass,
-            0x2A => TableId::GenericParam,
-            0x2B => TableId::MethodSpec,
-            0x2C => TableId::GenericParamConstraint,
-            0x30 => TableId::Document,
-            0x31 => TableId::MethodDebugInformation,
-            0x32 => TableId::LocalScope,
-            0x33 => TableId::LocalVariable,
-            0x34 => TableId::LocalConstant,
-            0x35 => TableId::ImportScope,
-            0x36 => TableId::StateMachineMethod,
-            0x37 => TableId::CustomDebugInformation,
-            _ => {
-                return Err(malformed_error!(&format!(
-                    "Unknown table ID: 0x{table_id:02x}"
-                )))
-            }
-        };
-
-        Ok(CodedIndex::new(table, row))
     }
 }

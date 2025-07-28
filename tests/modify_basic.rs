@@ -62,7 +62,7 @@ fn test_write_with_minimal_modification() -> Result<()> {
 
     // Add a single string - minimal modification to trigger write pipeline
     let test_string = "MinimalTestString";
-    let string_index = context.add_string(test_string)?;
+    let string_index = context.string_add(test_string)?;
     assert!(string_index > 0, "String index should be positive");
 
     let mut assembly = context.finish();
@@ -112,7 +112,7 @@ fn test_write_preserves_existing_data() -> Result<()> {
     // Make a modification
     let assembly = view.to_owned();
     let mut context = BuilderContext::new(assembly);
-    let _string_idx = context.add_string("PreservationTestString")?;
+    let _string_idx = context.string_add("PreservationTestString")?;
     let mut assembly = context.finish();
 
     // Validate and apply changes

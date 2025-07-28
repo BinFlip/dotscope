@@ -288,7 +288,7 @@ impl GenericTypeInstantiationBuilder {
             instantiated_token,
             self.generic_type.namespace.clone(),
             instantiated_name,
-            self.generic_type.external.clone(),
+            self.generic_type.get_external().cloned(),
             None, // base type
             self.generic_type.flags,
             self.generic_type.fields.clone(),

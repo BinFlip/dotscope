@@ -26,7 +26,7 @@
 use crate::{
     metadata::{
         customattributes::CustomAttributeValueList, tables::GenericParamRc, token::Token,
-        typesystem::CilTypeRc, validation::ConstraintValidator,
+        typesystem::CilTypeRc,
     },
     Result,
 };
@@ -142,13 +142,6 @@ impl GenericParamConstraint {
     /// - **Circular Dependency**: If the constraint creates an invalid circular reference
     /// - **Validation Failure**: If constraint validation encounters other issues
     pub fn apply(&self) -> Result<()> {
-        ConstraintValidator::validate_constraint(
-            &self.constraint,
-            self.owner.flags,
-            &self.owner.name,
-            self.owner.token.value(),
-        )?;
-
         self.owner.constraints.push(self.constraint.clone().into());
         Ok(())
     }

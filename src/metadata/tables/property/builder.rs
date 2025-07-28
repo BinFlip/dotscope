@@ -83,6 +83,7 @@ impl PropertyBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::property::PropertyBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             name: None,
@@ -104,6 +105,7 @@ impl PropertyBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -125,6 +127,7 @@ impl PropertyBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn flags(mut self, flags: u32) -> Self {
         self.flags = Some(flags);
         self
@@ -149,6 +152,7 @@ impl PropertyBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn signature(mut self, signature: &[u8]) -> Self {
         self.signature = Some(signature.to_vec());
         self
@@ -199,8 +203,8 @@ impl PropertyBuilder {
                 details: "Property signature is required".to_string(),
             })?;
 
-        let name_index = context.get_or_add_string(&name)?;
-        let signature_index = context.add_blob(&signature)?;
+        let name_index = context.string_get_or_add(&name)?;
+        let signature_index = context.blob_add(&signature)?;
         let rid = context.next_rid(TableId::Property);
 
         let token_value = ((TableId::Property as u32) << 24) | rid;
@@ -215,7 +219,7 @@ impl PropertyBuilder {
             signature: signature_index,
         };
 
-        context.add_table_row(TableId::Property, TableDataOwned::Property(property_raw))
+        context.table_row_add(TableId::Property, TableDataOwned::Property(property_raw))
     }
 }
 

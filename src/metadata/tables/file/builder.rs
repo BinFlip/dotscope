@@ -125,6 +125,7 @@ impl FileBuilder {
     /// # use dotscope::prelude::*;
     /// let builder = FileBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             name: None,
@@ -149,6 +150,7 @@ impl FileBuilder {
     /// let builder = FileBuilder::new()
     ///     .name("MyLibrary.netmodule");
     /// ```
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -170,6 +172,7 @@ impl FileBuilder {
     /// let builder = FileBuilder::new()
     ///     .flags(FileAttributes::CONTAINS_NO_META_DATA);
     /// ```
+    #[must_use]
     pub fn flags(mut self, flags: u32) -> Self {
         self.flags = flags;
         self
@@ -188,6 +191,7 @@ impl FileBuilder {
     ///     .name("MyModule.netmodule")
     ///     .contains_metadata();
     /// ```
+    #[must_use]
     pub fn contains_metadata(mut self) -> Self {
         self.flags |= FileAttributes::CONTAINS_META_DATA;
         self.flags &= !FileAttributes::CONTAINS_NO_META_DATA;
@@ -207,6 +211,7 @@ impl FileBuilder {
     ///     .name("Resources.resources")
     ///     .contains_no_metadata();
     /// ```
+    #[must_use]
     pub fn contains_no_metadata(mut self) -> Self {
         self.flags |= FileAttributes::CONTAINS_NO_META_DATA;
         self.flags &= !FileAttributes::CONTAINS_META_DATA;
@@ -230,6 +235,7 @@ impl FileBuilder {
     /// let builder = FileBuilder::new()
     ///     .hash_value(&hash);
     /// ```
+    #[must_use]
     pub fn hash_value(mut self, hash: &[u8]) -> Self {
         self.hash_value = Some(hash.to_vec());
         self
@@ -287,13 +293,13 @@ impl FileBuilder {
             });
         }
 
-        let name_index = context.get_or_add_string(&name)?;
+        let name_index = context.string_get_or_add(&name)?;
 
         let hash_value_index = if let Some(hash) = self.hash_value {
             if hash.is_empty() {
                 0
             } else {
-                context.add_blob(&hash)?
+                context.blob_add(&hash)?
             }
         } else {
             0
@@ -312,7 +318,7 @@ impl FileBuilder {
         };
 
         let table_data = TableDataOwned::File(file);
-        context.add_table_row(TableId::File, table_data)?;
+        context.table_row_add(TableId::File, table_data)?;
 
         Ok(token)
     }
@@ -322,16 +328,8 @@ impl FileBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::CilAssembly,
-        metadata::{cilassemblyview::CilAssemblyView, tables::FileAttributes},
+        metadata::tables::FileAttributes, test::factories::table::assemblyref::get_test_assembly,
     };
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
 
     #[test]
     fn test_file_builder_basic() -> Result<()> {

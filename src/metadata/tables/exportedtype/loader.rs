@@ -63,12 +63,25 @@ impl MetadataLoader for ExportedTypeLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
             if let Some(table) = header.table::<ExportedTypeRaw>() {
-                for row in table {
+                table.par_iter().try_for_each(|row| -> Result<()> {
                     let owned =
-                        row.to_owned(|coded_index| context.get_ref(coded_index), strings)?;
+                        row.to_owned(|coded_index| context.get_ref(coded_index), strings, true)?;
 
                     context.exported_type.insert(row.token, owned.clone())?;
-                }
+                    Ok(())
+                })?;
+
+                table.par_iter().try_for_each(|row| -> Result<()> {
+                    if let Some(implementation) =
+                        row.resolve_implementation(|coded_index| context.get_ref(coded_index))
+                    {
+                        if let Some(exported_type_entry) = context.exported_type.get(&row.token) {
+                            let exported_type = exported_type_entry.value();
+                            exported_type.set_implementation(implementation)?;
+                        }
+                    }
+                    Ok(())
+                })?;
             }
         }
         Ok(())

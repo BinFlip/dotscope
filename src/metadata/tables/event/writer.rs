@@ -58,7 +58,7 @@ impl RowWritable for EventRaw {
         _rid: u32,
         sizes: &TableInfoRef,
     ) -> Result<()> {
-        // Write flags (2 bytes) - cast from u32 to u16
+        // Write flags (2 bytes) - truncate from u32 to u16
         write_le_at(data, offset, self.flags as u16)?;
 
         // Write name string heap index (2 or 4 bytes)
@@ -137,11 +137,7 @@ mod tests {
             offset: 0,
             flags: 0x0101,
             name: 0x0202,
-            event_type: CodedIndex {
-                tag: TableId::TypeDef,
-                row: 192,
-                token: Token::new(192 | 0x02000000),
-            },
+            event_type: CodedIndex::new(TableId::TypeDef, 192, CodedIndexType::TypeDefOrRef),
         };
 
         // Create minimal table info for testing
@@ -281,11 +277,7 @@ mod tests {
                 offset: 0,
                 flags,
                 name: 0x100,
-                event_type: CodedIndex {
-                    tag: TableId::TypeDef,
-                    row: 1,
-                    token: Token::new(1 | 0x02000000),
-                },
+                event_type: CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeDefOrRef),
             };
 
             let row_size = <EventRaw as TableRow>::row_size(&table_info) as usize;
@@ -335,11 +327,7 @@ mod tests {
                 offset: 0,
                 flags: 0x0200, // SpecialName
                 name: 0x100,
-                event_type: CodedIndex {
-                    tag: table_id,
-                    row: 1,
-                    token: Token::new(1 | ((table_id as u32) << 24)),
-                },
+                event_type: CodedIndex::new(table_id, 1, CodedIndexType::TypeDefOrRef),
             };
 
             let row_size = <EventRaw as TableRow>::row_size(&table_info) as usize;
@@ -371,11 +359,7 @@ mod tests {
             offset: 0,
             flags: 0x0600, // Complex flags combination
             name: 0x123456,
-            event_type: CodedIndex {
-                tag: TableId::TypeRef,
-                row: 0x8000,
-                token: Token::new(0x8000 | 0x01000000),
-            },
+            event_type: CodedIndex::new(TableId::TypeRef, 0x8000, CodedIndexType::TypeDefOrRef),
         };
 
         let table_info = Arc::new(TableInfo::new_test(
@@ -416,11 +400,7 @@ mod tests {
             offset: 0,
             flags: 0, // No attributes
             name: 0,  // Unnamed (null string reference)
-            event_type: CodedIndex {
-                tag: TableId::TypeDef,
-                row: 1, // Use a valid row instead of 0
-                token: Token::new(1 | 0x02000000),
-            },
+            event_type: CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeDefOrRef), // Use a valid row instead of 0
         };
 
         let table_info = Arc::new(TableInfo::new_test(
@@ -461,11 +441,7 @@ mod tests {
             offset: 0,
             flags: 0x12345678, // Large value that should truncate to 0x5678
             name: 0x100,
-            event_type: CodedIndex {
-                tag: TableId::TypeDef,
-                row: 1,
-                token: Token::new(1 | 0x02000000),
-            },
+            event_type: CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeDefOrRef),
         };
 
         let table_info = Arc::new(TableInfo::new_test(

@@ -492,6 +492,7 @@ public struct BufferStruct
 
 use dotscope::metadata::marshalling::{parse_marshalling_descriptor, NativeType};
 use dotscope::metadata::security::{ArgumentValue, PermissionSet, PermissionSetFormat};
+use dotscope::metadata::tables::CodedIndexType;
 use dotscope::prelude::*;
 use std::path::PathBuf;
 
@@ -642,7 +643,7 @@ fn verify_tableheader(asm: &CilObject) {
             assert_eq!(row.token.value(), 0x01000001);
             assert_eq!(
                 row.resolution_scope,
-                CodedIndex::new(TableId::AssemblyRef, 1)
+                CodedIndex::new(TableId::AssemblyRef, 1, CodedIndexType::ResolutionScope)
             );
             assert_eq!(row.type_name, 0x80D);
             assert_eq!(row.type_namespace, 0xBE8);
@@ -661,7 +662,10 @@ fn verify_tableheader(asm: &CilObject) {
             assert_eq!(row.flags, 0);
             assert_eq!(row.type_name, 0x1FD);
             assert_eq!(row.type_namespace, 0);
-            assert_eq!(row.extends, CodedIndex::new(TableId::TypeDef, 0));
+            assert_eq!(
+                row.extends,
+                CodedIndex::new(TableId::TypeDef, 0, CodedIndexType::TypeDefOrRef)
+            );
             assert_eq!(row.field_list, 1);
             assert_eq!(row.method_list, 1);
         }
@@ -725,7 +729,10 @@ fn verify_tableheader(asm: &CilObject) {
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.class, 7);
-            assert_eq!(row.interface, CodedIndex::new(TableId::TypeDef, 6));
+            assert_eq!(
+                row.interface,
+                CodedIndex::new(TableId::TypeDef, 6, CodedIndexType::TypeDefOrRef)
+            );
         }
         None => {
             panic!("This table should be there");
@@ -738,7 +745,10 @@ fn verify_tableheader(asm: &CilObject) {
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
-            assert_eq!(row.class, CodedIndex::new(TableId::TypeRef, 1));
+            assert_eq!(
+                row.class,
+                CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::MemberRefParent)
+            );
             assert_eq!(row.name, 0xBA5);
             assert_eq!(row.signature, 1);
         }
@@ -754,7 +764,10 @@ fn verify_tableheader(asm: &CilObject) {
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.base, 0xA);
-            assert_eq!(row.parent, CodedIndex::new(TableId::Field, 7));
+            assert_eq!(
+                row.parent,
+                CodedIndex::new(TableId::Field, 7, CodedIndexType::HasConstant)
+            );
             assert_eq!(row.value, 0x265);
         }
 
@@ -769,8 +782,14 @@ fn verify_tableheader(asm: &CilObject) {
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
-            assert_eq!(row.parent, CodedIndex::new(TableId::Module, 1));
-            assert_eq!(row.constructor, CodedIndex::new(TableId::MemberRef, 10));
+            assert_eq!(
+                row.parent,
+                CodedIndex::new(TableId::Module, 1, CodedIndexType::HasCustomAttribute)
+            );
+            assert_eq!(
+                row.constructor,
+                CodedIndex::new(TableId::MemberRef, 10, CodedIndexType::CustomAttributeType)
+            );
             assert_eq!(row.value, 0x297);
         }
         None => {
@@ -784,7 +803,10 @@ fn verify_tableheader(asm: &CilObject) {
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
-            assert_eq!(row.parent, CodedIndex::new(TableId::Field, 18));
+            assert_eq!(
+                row.parent,
+                CodedIndex::new(TableId::Field, 18, CodedIndexType::HasFieldMarshal)
+            );
             assert_eq!(row.native_type, 0x503);
         }
         None => {
@@ -799,7 +821,10 @@ fn verify_tableheader(asm: &CilObject) {
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.action, 8);
-            assert_eq!(row.parent, CodedIndex::new(TableId::Assembly, 1));
+            assert_eq!(
+                row.parent,
+                CodedIndex::new(TableId::Assembly, 1, CodedIndexType::HasDeclSecurity)
+            );
             assert_eq!(row.permission_set, 0x29C);
         }
         None => {
@@ -871,7 +896,10 @@ fn verify_tableheader(asm: &CilObject) {
             assert_eq!(row.rid, 1);
             assert_eq!(row.flags, 0);
             assert_eq!(row.name, 0x102);
-            assert_eq!(row.event_type, CodedIndex::new(TableId::TypeRef, 23));
+            assert_eq!(
+                row.event_type,
+                CodedIndex::new(TableId::TypeRef, 23, CodedIndexType::TypeDefOrRef)
+            );
         }
         None => {
             panic!("This table should be there");
@@ -915,7 +943,10 @@ fn verify_tableheader(asm: &CilObject) {
             assert_eq!(row.rid, 1);
             assert_eq!(row.semantics, 8);
             assert_eq!(row.method, 0xE);
-            assert_eq!(row.association, CodedIndex::new(TableId::Event, 1));
+            assert_eq!(
+                row.association,
+                CodedIndex::new(TableId::Event, 1, CodedIndexType::HasSemantics)
+            );
         }
         None => {
             panic!("This table should be there");
@@ -929,10 +960,13 @@ fn verify_tableheader(asm: &CilObject) {
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.class, 0xE);
-            assert_eq!(row.method_body, CodedIndex::new(TableId::MethodDef, 39));
+            assert_eq!(
+                row.method_body,
+                CodedIndex::new(TableId::MethodDef, 39, CodedIndexType::MethodDefOrRef)
+            );
             assert_eq!(
                 row.method_declaration,
-                CodedIndex::new(TableId::MethodDef, 13)
+                CodedIndex::new(TableId::MethodDef, 13, CodedIndexType::MethodDefOrRef)
             );
         }
         None => {
@@ -973,7 +1007,10 @@ fn verify_tableheader(asm: &CilObject) {
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.mapping_flags, 0x104);
-            assert_eq!(row.member_forwarded, CodedIndex::new(TableId::MethodDef, 8));
+            assert_eq!(
+                row.member_forwarded,
+                CodedIndex::new(TableId::MethodDef, 8, CodedIndexType::MemberForwarded)
+            );
             assert_eq!(row.import_name, 0xE86);
             assert_eq!(row.import_scope, 0x1);
         }
@@ -1057,7 +1094,10 @@ fn verify_tableheader(asm: &CilObject) {
             assert_eq!(row.rid, 1);
             assert_eq!(row.number, 0);
             assert_eq!(row.flags, 4);
-            assert_eq!(row.owner, CodedIndex::new(TableId::TypeDef, 9));
+            assert_eq!(
+                row.owner,
+                CodedIndex::new(TableId::TypeDef, 9, CodedIndexType::TypeOrMethodDef)
+            );
             assert_eq!(row.name, 0x22F);
         }
         None => {
@@ -1071,7 +1111,10 @@ fn verify_tableheader(asm: &CilObject) {
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
-            assert_eq!(row.method, CodedIndex::new(TableId::MemberRef, 33));
+            assert_eq!(
+                row.method,
+                CodedIndex::new(TableId::MemberRef, 33, CodedIndexType::MethodDefOrRef)
+            );
             assert_eq!(row.instantiation, 0x88);
         }
         None => {
@@ -1086,7 +1129,10 @@ fn verify_tableheader(asm: &CilObject) {
             let row: GenericParamConstraintRaw = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.owner, 0x3);
-            assert_eq!(row.constraint, CodedIndex::new(TableId::TypeRef, 24));
+            assert_eq!(
+                row.constraint,
+                CodedIndex::new(TableId::TypeRef, 24, CodedIndexType::TypeDefOrRef)
+            );
         }
         None => {
             panic!("This table should be there");

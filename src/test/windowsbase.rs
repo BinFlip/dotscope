@@ -9,8 +9,8 @@ use crate::metadata::{
     root::{Root, CIL_HEADER_MAGIC},
     streams::TablesHeader,
     tables::{
-        AssemblyRaw, AssemblyRefMap, AssemblyRefRaw, ClassLayoutRaw, CodedIndex, ConstantRaw,
-        CustomAttributeRaw, DeclSecurityRaw, EventMapRaw, EventRaw, ExportedTypeRaw,
+        AssemblyRaw, AssemblyRefMap, AssemblyRefRaw, ClassLayoutRaw, CodedIndex, CodedIndexType,
+        ConstantRaw, CustomAttributeRaw, DeclSecurityRaw, EventMapRaw, EventRaw, ExportedTypeRaw,
         FieldLayoutRaw, FieldMarshalRaw, FieldRaw, FieldRvaRaw, GenericParamConstraintRaw,
         GenericParamRaw, ImplMapRaw, InterfaceImplRaw, ManifestResourceAttributes,
         ManifestResourceRaw, MemberRefRaw, MethodDefRaw, MethodImplRaw, MethodSemanticsRaw,
@@ -152,7 +152,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.token.value(), 0x01000001);
             assert_eq!(
                 row.resolution_scope,
-                CodedIndex::new(TableId::AssemblyRef, 1)
+                CodedIndex::new(TableId::AssemblyRef, 1, CodedIndexType::ResolutionScope)
             );
             assert_eq!(row.type_name, 0x18C2C);
             assert_eq!(row.type_namespace, 0x277D8);
@@ -160,7 +160,10 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             let row = module.get(5).unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.token.value(), 0x01000005);
-            assert_eq!(row.resolution_scope, CodedIndex::new(TableId::TypeRef, 4));
+            assert_eq!(
+                row.resolution_scope,
+                CodedIndex::new(TableId::TypeRef, 4, CodedIndexType::ResolutionScope)
+            );
             assert_eq!(row.type_name, 0x27A21);
             assert_eq!(row.type_namespace, 0);
 
@@ -169,7 +172,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.token.value(), 0x01000140);
             assert_eq!(
                 row.resolution_scope,
-                CodedIndex::new(TableId::AssemblyRef, 16)
+                CodedIndex::new(TableId::AssemblyRef, 16, CodedIndexType::ResolutionScope)
             );
             assert_eq!(row.type_name, 0x22D9A);
             assert_eq!(row.type_namespace, 0x1E15D);
@@ -188,7 +191,10 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.flags, 0);
             assert_eq!(row.type_name, 0x1495);
             assert_eq!(row.type_namespace, 0);
-            assert_eq!(row.extends, CodedIndex::new(TableId::TypeDef, 0));
+            assert_eq!(
+                row.extends,
+                CodedIndex::new(TableId::TypeDef, 0, CodedIndexType::TypeDefOrRef)
+            );
             assert_eq!(row.field_list, 1);
             assert_eq!(row.method_list, 1);
 
@@ -197,7 +203,10 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.flags, 0x100180);
             assert_eq!(row.type_name, 0x26FB4);
             assert_eq!(row.type_namespace, 0xA58);
-            assert_eq!(row.extends, CodedIndex::new(TableId::TypeRef, 29));
+            assert_eq!(
+                row.extends,
+                CodedIndex::new(TableId::TypeRef, 29, CodedIndexType::TypeDefOrRef)
+            );
             assert_eq!(row.field_list, 0x2C);
             assert_eq!(row.method_list, 1);
 
@@ -206,7 +215,10 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.flags, 0x100000);
             assert_eq!(row.type_name, 0x1238D);
             assert_eq!(row.type_namespace, 0x2AF5E);
-            assert_eq!(row.extends, CodedIndex::new(TableId::TypeDef, 319));
+            assert_eq!(
+                row.extends,
+                CodedIndex::new(TableId::TypeDef, 319, CodedIndexType::TypeDefOrRef)
+            );
             assert_eq!(row.field_list, 0xF45);
             assert_eq!(row.method_list, 0xD60);
         }
@@ -312,17 +324,26 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             let row = module.get(1).unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.class, 0xB);
-            assert_eq!(row.interface, CodedIndex::new(TableId::TypeRef, 64));
+            assert_eq!(
+                row.interface,
+                CodedIndex::new(TableId::TypeRef, 64, CodedIndexType::TypeDefOrRef)
+            );
 
             let row = module.get(5).unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.class, 0x10);
-            assert_eq!(row.interface, CodedIndex::new(TableId::TypeSpec, 3));
+            assert_eq!(
+                row.interface,
+                CodedIndex::new(TableId::TypeSpec, 3, CodedIndexType::TypeDefOrRef)
+            );
 
             let row = module.get(100).unwrap();
             assert_eq!(row.rid, 100);
             assert_eq!(row.class, 0x308);
-            assert_eq!(row.interface, CodedIndex::new(TableId::TypeRef, 126));
+            assert_eq!(
+                row.interface,
+                CodedIndex::new(TableId::TypeRef, 126, CodedIndexType::TypeDefOrRef)
+            );
         }
         None => {
             panic!("This tables should be there");
@@ -335,19 +356,28 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
 
             let row = module.get(1).unwrap();
             assert_eq!(row.rid, 1);
-            assert_eq!(row.class, CodedIndex::new(TableId::TypeRef, 1));
+            assert_eq!(
+                row.class,
+                CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::MemberRefParent)
+            );
             assert_eq!(row.name, 0x26F0B);
             assert_eq!(row.signature, 1);
 
             let row = module.get(5).unwrap();
             assert_eq!(row.rid, 5);
-            assert_eq!(row.class, CodedIndex::new(TableId::TypeRef, 7));
+            assert_eq!(
+                row.class,
+                CodedIndex::new(TableId::TypeRef, 7, CodedIndexType::MemberRefParent)
+            );
             assert_eq!(row.name, 0x26F0B);
             assert_eq!(row.signature, 0x10);
 
             let row = module.get(100).unwrap();
             assert_eq!(row.rid, 100);
-            assert_eq!(row.class, CodedIndex::new(TableId::TypeRef, 64));
+            assert_eq!(
+                row.class,
+                CodedIndex::new(TableId::TypeRef, 64, CodedIndexType::MemberRefParent)
+            );
             assert_eq!(row.name, 0x17B5F);
             assert_eq!(row.signature, 1);
         }
@@ -363,19 +393,28 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             let row = module.get(1).unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.base, 0xE);
-            assert_eq!(row.parent, CodedIndex::new(TableId::Field, 1));
+            assert_eq!(
+                row.parent,
+                CodedIndex::new(TableId::Field, 1, CodedIndexType::HasConstant)
+            );
             assert_eq!(row.value, 0x3BB9);
 
             let row = module.get(5).unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.base, 0xE);
-            assert_eq!(row.parent, CodedIndex::new(TableId::Field, 5));
+            assert_eq!(
+                row.parent,
+                CodedIndex::new(TableId::Field, 5, CodedIndexType::HasConstant)
+            );
             assert_eq!(row.value, 0x3C1D);
 
             let row = module.get(100).unwrap();
             assert_eq!(row.rid, 100);
             assert_eq!(row.base, 8);
-            assert_eq!(row.parent, CodedIndex::new(TableId::Field, 106));
+            assert_eq!(
+                row.parent,
+                CodedIndex::new(TableId::Field, 106, CodedIndexType::HasConstant)
+            );
             assert_eq!(row.value, 0x4114);
         }
 
@@ -390,20 +429,42 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
 
             let row = module.get(1).unwrap();
             assert_eq!(row.rid, 1);
-            assert_eq!(row.parent, CodedIndex::new(TableId::Module, 1));
-            assert_eq!(row.constructor, CodedIndex::new(TableId::MemberRef, 23));
+            assert_eq!(
+                row.parent,
+                CodedIndex::new(TableId::Module, 1, CodedIndexType::HasCustomAttribute)
+            );
+            assert_eq!(
+                row.constructor,
+                CodedIndex::new(TableId::MemberRef, 23, CodedIndexType::CustomAttributeType)
+            );
             assert_eq!(row.value, 0x4015);
 
             let row = module.get(5).unwrap();
             assert_eq!(row.rid, 5);
-            assert_eq!(row.parent, CodedIndex::new(TableId::Assembly, 1));
-            assert_eq!(row.constructor, CodedIndex::new(TableId::MemberRef, 3));
+            assert_eq!(
+                row.parent,
+                CodedIndex::new(TableId::Assembly, 1, CodedIndexType::HasCustomAttribute)
+            );
+            assert_eq!(
+                row.constructor,
+                CodedIndex::new(TableId::MemberRef, 3, CodedIndexType::CustomAttributeType)
+            );
             assert_eq!(row.value, 0xFC8F);
 
             let row = module.get(100).unwrap();
             assert_eq!(row.rid, 100);
-            assert_eq!(row.parent, CodedIndex::new(TableId::TypeDef, 81));
-            assert_eq!(row.constructor, CodedIndex::new(TableId::MethodDef, 2621));
+            assert_eq!(
+                row.parent,
+                CodedIndex::new(TableId::TypeDef, 81, CodedIndexType::HasCustomAttribute)
+            );
+            assert_eq!(
+                row.constructor,
+                CodedIndex::new(
+                    TableId::MethodDef,
+                    2621,
+                    CodedIndexType::CustomAttributeType
+                )
+            );
             assert_eq!(row.value, 0x4015);
         }
         None => {
@@ -417,17 +478,26 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
 
             let row = module.get(1).unwrap();
             assert_eq!(row.rid, 1);
-            assert_eq!(row.parent, CodedIndex::new(TableId::Param, 135));
+            assert_eq!(
+                row.parent,
+                CodedIndex::new(TableId::Param, 135, CodedIndexType::HasFieldMarshal)
+            );
             assert_eq!(row.native_type, 0xA56F);
 
             let row = module.get(5).unwrap();
             assert_eq!(row.rid, 5);
-            assert_eq!(row.parent, CodedIndex::new(TableId::Param, 309));
+            assert_eq!(
+                row.parent,
+                CodedIndex::new(TableId::Param, 309, CodedIndexType::HasFieldMarshal)
+            );
             assert_eq!(row.native_type, 0xA58F);
 
             let row = module.get(100).unwrap();
             assert_eq!(row.rid, 100);
-            assert_eq!(row.parent, CodedIndex::new(TableId::Field, 4740));
+            assert_eq!(
+                row.parent,
+                CodedIndex::new(TableId::Field, 4740, CodedIndexType::HasFieldMarshal)
+            );
             assert_eq!(row.native_type, 0xA0E9);
         }
         None => {
@@ -442,7 +512,10 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             let row = module.get(1).unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.action, 8);
-            assert_eq!(row.parent, CodedIndex::new(TableId::Assembly, 1));
+            assert_eq!(
+                row.parent,
+                CodedIndex::new(TableId::Assembly, 1, CodedIndexType::HasDeclSecurity)
+            );
             assert_eq!(row.permission_set, 0xA4C9);
         }
         None => {
@@ -554,19 +627,28 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.rid, 1);
             assert_eq!(row.flags, 0);
             assert_eq!(row.name, 0xEF15);
-            assert_eq!(row.event_type, CodedIndex::new(TableId::TypeRef, 69));
+            assert_eq!(
+                row.event_type,
+                CodedIndex::new(TableId::TypeRef, 69, CodedIndexType::TypeDefOrRef)
+            );
 
             let row = module.get(5).unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.flags, 0);
             assert_eq!(row.name, 0x1BBAA);
-            assert_eq!(row.event_type, CodedIndex::new(TableId::TypeDef, 290));
+            assert_eq!(
+                row.event_type,
+                CodedIndex::new(TableId::TypeDef, 290, CodedIndexType::TypeDefOrRef)
+            );
 
             let row = module.get(25).unwrap();
             assert_eq!(row.rid, 25);
             assert_eq!(row.flags, 0);
             assert_eq!(row.name, 0x13403);
-            assert_eq!(row.event_type, CodedIndex::new(TableId::TypeDef, 369));
+            assert_eq!(
+                row.event_type,
+                CodedIndex::new(TableId::TypeDef, 369, CodedIndexType::TypeDefOrRef)
+            );
         }
         None => {
             panic!("This tables should be there");
@@ -632,19 +714,28 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.rid, 1);
             assert_eq!(row.semantics, 8);
             assert_eq!(row.method, 0x19C);
-            assert_eq!(row.association, CodedIndex::new(TableId::Event, 1));
+            assert_eq!(
+                row.association,
+                CodedIndex::new(TableId::Event, 1, CodedIndexType::HasSemantics)
+            );
 
             let row = module.get(5).unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.semantics, 0x10);
             assert_eq!(row.method, 0x336);
-            assert_eq!(row.association, CodedIndex::new(TableId::Event, 2));
+            assert_eq!(
+                row.association,
+                CodedIndex::new(TableId::Event, 2, CodedIndexType::HasSemantics)
+            );
 
             let row = module.get(100).unwrap();
             assert_eq!(row.rid, 100);
             assert_eq!(row.semantics, 8);
             assert_eq!(row.method, 0x10FF);
-            assert_eq!(row.association, CodedIndex::new(TableId::Event, 32));
+            assert_eq!(
+                row.association,
+                CodedIndex::new(TableId::Event, 32, CodedIndexType::HasSemantics)
+            );
         }
         None => {
             panic!("This tables should be there");
@@ -658,28 +749,37 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             let row = module.get(1).unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.class, 0xC);
-            assert_eq!(row.method_body, CodedIndex::new(TableId::MethodDef, 408));
+            assert_eq!(
+                row.method_body,
+                CodedIndex::new(TableId::MethodDef, 408, CodedIndexType::MethodDefOrRef)
+            );
             assert_eq!(
                 row.method_declaration,
-                CodedIndex::new(TableId::MemberRef, 25)
+                CodedIndex::new(TableId::MemberRef, 25, CodedIndexType::MethodDefOrRef)
             );
 
             let row = module.get(5).unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.class, 0x5C);
-            assert_eq!(row.method_body, CodedIndex::new(TableId::MethodDef, 1074));
+            assert_eq!(
+                row.method_body,
+                CodedIndex::new(TableId::MethodDef, 1074, CodedIndexType::MethodDefOrRef)
+            );
             assert_eq!(
                 row.method_declaration,
-                CodedIndex::new(TableId::MemberRef, 40)
+                CodedIndex::new(TableId::MemberRef, 40, CodedIndexType::MethodDefOrRef)
             );
 
             let row = module.get(100).unwrap();
             assert_eq!(row.rid, 100);
             assert_eq!(row.class, 0x2E9);
-            assert_eq!(row.method_body, CodedIndex::new(TableId::MethodDef, 6142));
+            assert_eq!(
+                row.method_body,
+                CodedIndex::new(TableId::MethodDef, 6142, CodedIndexType::MethodDefOrRef)
+            );
             assert_eq!(
                 row.method_declaration,
-                CodedIndex::new(TableId::MethodDef, 1822)
+                CodedIndex::new(TableId::MethodDef, 1822, CodedIndexType::MethodDefOrRef)
             );
         }
         None => {
@@ -738,7 +838,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.mapping_flags, 0x147);
             assert_eq!(
                 row.member_forwarded,
-                CodedIndex::new(TableId::MethodDef, 14)
+                CodedIndex::new(TableId::MethodDef, 14, CodedIndexType::MemberForwarded)
             );
             assert_eq!(row.import_name, 0x2A5E1);
             assert_eq!(row.import_scope, 0x2);
@@ -748,7 +848,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.mapping_flags, 0x1120);
             assert_eq!(
                 row.member_forwarded,
-                CodedIndex::new(TableId::MethodDef, 21)
+                CodedIndex::new(TableId::MethodDef, 21, CodedIndexType::MemberForwarded)
             );
             assert_eq!(row.import_name, 0x1BAE);
             assert_eq!(row.import_scope, 0x3);
@@ -758,7 +858,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.mapping_flags, 0x1166);
             assert_eq!(
                 row.member_forwarded,
-                CodedIndex::new(TableId::MethodDef, 137)
+                CodedIndex::new(TableId::MethodDef, 137, CodedIndexType::MemberForwarded)
             );
             assert_eq!(row.import_name, 0x14090);
             assert_eq!(row.import_scope, 0x5);
@@ -861,7 +961,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.namespace, 0x1DB2B);
             assert_eq!(
                 row.implementation,
-                CodedIndex::new(TableId::AssemblyRef, 11)
+                CodedIndex::new(TableId::AssemblyRef, 11, CodedIndexType::Implementation)
             );
 
             let row = module.get(5).unwrap();
@@ -872,7 +972,7 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.namespace, 0xFCCD);
             assert_eq!(
                 row.implementation,
-                CodedIndex::new(TableId::AssemblyRef, 11)
+                CodedIndex::new(TableId::AssemblyRef, 11, CodedIndexType::Implementation)
             );
 
             let row = module.get(50).unwrap();
@@ -881,7 +981,10 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.type_def_id, 0);
             assert_eq!(row.name, 0x1881B);
             assert_eq!(row.namespace, 0x23909);
-            assert_eq!(row.implementation, CodedIndex::new(TableId::AssemblyRef, 2));
+            assert_eq!(
+                row.implementation,
+                CodedIndex::new(TableId::AssemblyRef, 2, CodedIndexType::Implementation)
+            );
         }
         None => {
             panic!("This tables should be there");
@@ -896,7 +999,10 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.rid, 1);
             assert_eq!(row.flags, 1);
             assert_eq!(row.name, 0x279FC);
-            assert_eq!(row.implementation, CodedIndex::new(TableId::File, 0));
+            assert_eq!(
+                row.implementation,
+                CodedIndex::new(TableId::File, 0, CodedIndexType::Implementation)
+            );
         }
         None => {
             panic!("This tables should be there");
@@ -935,21 +1041,30 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             assert_eq!(row.rid, 1);
             assert_eq!(row.number, 0);
             assert_eq!(row.flags, 0);
-            assert_eq!(row.owner, CodedIndex::new(TableId::TypeDef, 19));
+            assert_eq!(
+                row.owner,
+                CodedIndex::new(TableId::TypeDef, 19, CodedIndexType::TypeOrMethodDef)
+            );
             assert_eq!(row.name, 0xB6F1);
 
             let row = module.get(5).unwrap();
             assert_eq!(row.rid, 5);
             assert_eq!(row.number, 0);
             assert_eq!(row.flags, 0);
-            assert_eq!(row.owner, CodedIndex::new(TableId::TypeDef, 23));
+            assert_eq!(
+                row.owner,
+                CodedIndex::new(TableId::TypeDef, 23, CodedIndexType::TypeOrMethodDef)
+            );
             assert_eq!(row.name, 0xB6F1);
 
             let row = module.get(50).unwrap();
             assert_eq!(row.rid, 50);
             assert_eq!(row.number, 0);
             assert_eq!(row.flags, 0);
-            assert_eq!(row.owner, CodedIndex::new(TableId::MethodDef, 1031));
+            assert_eq!(
+                row.owner,
+                CodedIndex::new(TableId::MethodDef, 1031, CodedIndexType::TypeOrMethodDef)
+            );
             assert_eq!(row.name, 0xB6F1);
         }
         None => {
@@ -963,17 +1078,26 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
 
             let row = module.get(1).unwrap();
             assert_eq!(row.rid, 1);
-            assert_eq!(row.method, CodedIndex::new(TableId::MemberRef, 160));
+            assert_eq!(
+                row.method,
+                CodedIndex::new(TableId::MemberRef, 160, CodedIndexType::MethodDefOrRef)
+            );
             assert_eq!(row.instantiation, 0x343);
 
             let row = module.get(5).unwrap();
             assert_eq!(row.rid, 5);
-            assert_eq!(row.method, CodedIndex::new(TableId::MemberRef, 249));
+            assert_eq!(
+                row.method,
+                CodedIndex::new(TableId::MemberRef, 249, CodedIndexType::MethodDefOrRef)
+            );
             assert_eq!(row.instantiation, 0x50C);
 
             let row = module.get(25).unwrap();
             assert_eq!(row.rid, 25);
-            assert_eq!(row.method, CodedIndex::new(TableId::MemberRef, 1281));
+            assert_eq!(
+                row.method,
+                CodedIndex::new(TableId::MemberRef, 1281, CodedIndexType::MethodDefOrRef)
+            );
             assert_eq!(row.instantiation, 0x2A34);
         }
         None => {
@@ -988,12 +1112,18 @@ pub fn verify_tableheader(tables_header: &TablesHeader) {
             let row: GenericParamConstraintRaw = module.get(1).unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.owner, 0x11);
-            assert_eq!(row.constraint, CodedIndex::new(TableId::TypeRef, 73));
+            assert_eq!(
+                row.constraint,
+                CodedIndex::new(TableId::TypeRef, 73, CodedIndexType::TypeDefOrRef)
+            );
 
             let row = module.get(3).unwrap();
             assert_eq!(row.rid, 3);
             assert_eq!(row.owner, 0x32);
-            assert_eq!(row.constraint, CodedIndex::new(TableId::TypeRef, 64));
+            assert_eq!(
+                row.constraint,
+                CodedIndex::new(TableId::TypeRef, 64, CodedIndexType::TypeDefOrRef)
+            );
         }
         None => {
             panic!("This tables should be there");

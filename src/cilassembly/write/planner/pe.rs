@@ -154,7 +154,7 @@ pub fn extract_pe_layout(assembly: &CilAssembly) -> Result<PeLayout> {
 
     // Use the already parsed goblin PE structure instead of manual parsing
     let dos_header = file.header_dos();
-    let pe_signature_offset = dos_header.pe_pointer as u64;
+    let pe_signature_offset = u64::from(dos_header.pe_pointer);
     let coff_header_offset = pe_signature_offset + 4; // PE signature is 4 bytes
 
     // Get optional header size from the parsed structure
@@ -174,11 +174,13 @@ pub fn extract_pe_layout(assembly: &CilAssembly) -> Result<PeLayout> {
     };
 
     // Calculate section table offset
-    let section_table_offset = optional_header_offset + optional_header_size as u64;
+    let section_table_offset = optional_header_offset + u64::from(optional_header_size);
 
     // Extract section layouts from goblin's parsed sections
-    let sections = extract_section_layouts_from_goblin(file)?;
-    let section_count = sections.len() as u16;
+    let sections = extract_section_layouts_from_goblin(file);
+    let section_count = u16::try_from(sections.len()).map_err(|_| Error::WriteLayoutFailed {
+        message: format!("Too many sections: {}", sections.len()),
+    })?;
 
     Ok(PeLayout {
         dos_header_offset: 0,
@@ -201,7 +203,7 @@ pub fn extract_pe_layout(assembly: &CilAssembly) -> Result<PeLayout> {
 ///
 /// # Returns
 /// Returns a vector of [`crate::cilassembly::write::planner::pe::SectionLayout`] structures.
-pub fn extract_section_layouts_from_goblin(file: &File) -> Result<Vec<SectionLayout>> {
+pub fn extract_section_layouts_from_goblin(file: &File) -> Vec<SectionLayout> {
     let mut sections = Vec::new();
 
     for section in file.sections() {
@@ -215,13 +217,13 @@ pub fn extract_section_layouts_from_goblin(file: &File) -> Result<Vec<SectionLay
             name,
             virtual_address: section.virtual_address,
             virtual_size: section.virtual_size,
-            file_offset: section.pointer_to_raw_data as u64,
+            file_offset: u64::from(section.pointer_to_raw_data),
             file_size: section.size_of_raw_data,
             characteristics: section.characteristics,
         });
     }
 
-    Ok(sections)
+    sections
 }
 
 #[cfg(test)]

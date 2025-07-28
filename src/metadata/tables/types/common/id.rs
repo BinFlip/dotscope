@@ -423,6 +423,112 @@ pub enum TableId {
     CustomDebugInformation = 0x37,
 }
 
+impl TableId {
+    /// Returns the token type value for this table ID.
+    ///
+    /// The token type is the high byte (bits 24-31) of metadata tokens that reference
+    /// rows in this table. This value is used to construct token values and extract
+    /// table information from existing tokens.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use crate::metadata::tables::TableId;
+    ///
+    /// assert_eq!(TableId::Module.token_type(), 0x00);
+    /// assert_eq!(TableId::TypeRef.token_type(), 0x01);
+    /// assert_eq!(TableId::TypeDef.token_type(), 0x02);
+    /// ```
+    #[must_use]
+    pub fn token_type(&self) -> u8 {
+        *self as u8
+    }
+
+    /// Creates a TableId from a token type value.
+    ///
+    /// Converts the high byte (bits 24-31) of a metadata token back to the
+    /// corresponding TableId. Returns `None` if the token type doesn't correspond
+    /// to a valid table ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `token_type` - The token type value (0x00-0x37)
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(TableId)` if the token type is valid, `None` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use crate::metadata::tables::TableId;
+    ///
+    /// assert_eq!(TableId::from_token_type(0x00), Some(TableId::Module));
+    /// assert_eq!(TableId::from_token_type(0x01), Some(TableId::TypeRef));
+    /// assert_eq!(TableId::from_token_type(0x02), Some(TableId::TypeDef));
+    /// assert_eq!(TableId::from_token_type(0xFF), None);
+    /// ```
+    #[must_use]
+    pub fn from_token_type(token_type: u8) -> Option<Self> {
+        match token_type {
+            0x00 => Some(TableId::Module),
+            0x01 => Some(TableId::TypeRef),
+            0x02 => Some(TableId::TypeDef),
+            0x03 => Some(TableId::FieldPtr),
+            0x04 => Some(TableId::Field),
+            0x05 => Some(TableId::MethodPtr),
+            0x06 => Some(TableId::MethodDef),
+            0x07 => Some(TableId::ParamPtr),
+            0x08 => Some(TableId::Param),
+            0x09 => Some(TableId::InterfaceImpl),
+            0x0A => Some(TableId::MemberRef),
+            0x0B => Some(TableId::Constant),
+            0x0C => Some(TableId::CustomAttribute),
+            0x0D => Some(TableId::FieldMarshal),
+            0x0E => Some(TableId::DeclSecurity),
+            0x0F => Some(TableId::ClassLayout),
+            0x10 => Some(TableId::FieldLayout),
+            0x11 => Some(TableId::StandAloneSig),
+            0x12 => Some(TableId::EventMap),
+            0x13 => Some(TableId::EventPtr),
+            0x14 => Some(TableId::Event),
+            0x15 => Some(TableId::PropertyMap),
+            0x16 => Some(TableId::PropertyPtr),
+            0x17 => Some(TableId::Property),
+            0x18 => Some(TableId::MethodSemantics),
+            0x19 => Some(TableId::MethodImpl),
+            0x1A => Some(TableId::ModuleRef),
+            0x1B => Some(TableId::TypeSpec),
+            0x1C => Some(TableId::ImplMap),
+            0x1D => Some(TableId::FieldRVA),
+            0x1E => Some(TableId::EncLog),
+            0x1F => Some(TableId::EncMap),
+            0x20 => Some(TableId::Assembly),
+            0x21 => Some(TableId::AssemblyProcessor),
+            0x22 => Some(TableId::AssemblyOS),
+            0x23 => Some(TableId::AssemblyRef),
+            0x24 => Some(TableId::AssemblyRefProcessor),
+            0x25 => Some(TableId::AssemblyRefOS),
+            0x26 => Some(TableId::File),
+            0x27 => Some(TableId::ExportedType),
+            0x28 => Some(TableId::ManifestResource),
+            0x29 => Some(TableId::NestedClass),
+            0x2A => Some(TableId::GenericParam),
+            0x2B => Some(TableId::MethodSpec),
+            0x2C => Some(TableId::GenericParamConstraint),
+            0x30 => Some(TableId::Document),
+            0x31 => Some(TableId::MethodDebugInformation),
+            0x32 => Some(TableId::LocalScope),
+            0x33 => Some(TableId::LocalVariable),
+            0x34 => Some(TableId::LocalConstant),
+            0x35 => Some(TableId::ImportScope),
+            0x36 => Some(TableId::StateMachineMethod),
+            0x37 => Some(TableId::CustomDebugInformation),
+            _ => None,
+        }
+    }
+}
+
 /// Macro that provides unified dispatch from TableId enum values to their corresponding Raw table types.
 ///
 /// This macro eliminates code duplication across the framework by providing a single source of truth

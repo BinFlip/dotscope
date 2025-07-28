@@ -3,7 +3,7 @@
 //! This module handles writing modifications to the #Strings heap, including simple additions
 //! and complex operations involving modifications and removals that require heap rebuilding.
 
-use crate::{cilassembly::write::planner::StreamModification, Result};
+use crate::{cilassembly::write::planner::StreamModification, Error, Result};
 use std::collections::HashMap;
 
 /// Result of string heap reconstruction containing the new heap data and index mapping.
@@ -17,7 +17,7 @@ pub struct StringHeapReconstruction {
     pub final_size: usize,
 }
 
-impl<'a> super::HeapWriter<'a> {
+impl super::HeapWriter<'_> {
     /// Reconstructs the complete string heap in memory with all modifications applied.
     ///
     /// This is the correct architectural approach that:
@@ -33,6 +33,64 @@ impl<'a> super::HeapWriter<'a> {
         let mut index_mapping = HashMap::new();
         let mut final_index_position = 1u32; // Start at 1, index 0 is always null
 
+        if let Some(replacement_heap) = string_changes.replacement_heap() {
+            final_heap.clone_from(replacement_heap);
+
+            // Create basic index mapping for the replacement heap
+            // Note: This is a simplified mapping that assumes the replacement heap
+            // is well-formed. In a more sophisticated implementation, we would
+            // parse the replacement heap to create proper mappings.
+            let mut current_position = 1u32; // Skip null byte at index 0
+            let heap_data = &final_heap[1..]; // Skip the null byte at start
+            let mut start = 0;
+
+            while start < heap_data.len() {
+                if let Some(null_pos) = heap_data[start..].iter().position(|&b| b == 0) {
+                    index_mapping.insert(current_position, Some(current_position));
+                    current_position += u32::try_from(null_pos + 1).unwrap_or(0);
+                    start += null_pos + 1;
+                } else {
+                    break;
+                }
+            }
+
+            for original_string in &string_changes.appended_items {
+                let original_heap_index = {
+                    let mut calculated_index = string_changes.next_index;
+                    for item in string_changes.appended_items.iter().rev() {
+                        calculated_index -= u32::try_from(item.len() + 1).unwrap_or(0);
+                        if std::ptr::eq(item, original_string) {
+                            break;
+                        }
+                    }
+                    calculated_index
+                };
+
+                if !string_changes.is_removed(original_heap_index) {
+                    let final_string = string_changes
+                        .get_modification(original_heap_index)
+                        .cloned()
+                        .unwrap_or_else(|| original_string.clone());
+
+                    index_mapping.insert(original_heap_index, Some(final_index_position));
+                    final_heap.extend_from_slice(final_string.as_bytes());
+                    final_heap.push(0);
+                    final_index_position += u32::try_from(final_string.len()).unwrap_or(0) + 1;
+                }
+            }
+
+            while final_heap.len() % 4 != 0 {
+                final_heap.push(0xFF);
+            }
+
+            let final_size = final_heap.len();
+            return Ok(StringHeapReconstruction {
+                heap_data: final_heap,
+                index_mapping,
+                final_size,
+            });
+        }
+
         // Always start with null byte at position 0
         final_heap.push(0);
 
@@ -41,7 +99,10 @@ impl<'a> super::HeapWriter<'a> {
         if let Some(strings_heap) = self.base.assembly.view().strings() {
             // Phase 1: Process all original strings with modifications/removals
             for (original_index, original_string) in strings_heap.iter() {
-                let original_index = original_index as u32;
+                let original_index =
+                    u32::try_from(original_index).map_err(|_| Error::WriteLayoutFailed {
+                        message: "String heap index exceeds u32 range".to_string(),
+                    })?;
 
                 if string_changes.is_removed(original_index) {
                     // String is removed - no mapping entry (means removed)
@@ -53,14 +114,22 @@ impl<'a> super::HeapWriter<'a> {
                     index_mapping.insert(original_index, Some(final_index_position));
                     final_heap.extend_from_slice(modified_string.as_bytes());
                     final_heap.push(0); // null terminator
-                    final_index_position += modified_string.len() as u32 + 1;
+                    final_index_position += u32::try_from(modified_string.len()).map_err(|_| {
+                        Error::WriteLayoutFailed {
+                            message: "Modified string length exceeds u32 range".to_string(),
+                        }
+                    })? + 1;
                 } else {
                     // String is unchanged - add original version
                     let original_data = original_string.to_string();
                     index_mapping.insert(original_index, Some(final_index_position));
                     final_heap.extend_from_slice(original_data.as_bytes());
                     final_heap.push(0); // null terminator
-                    final_index_position += original_data.len() as u32 + 1;
+                    final_index_position += u32::try_from(original_data.len()).map_err(|_| {
+                        Error::WriteLayoutFailed {
+                            message: "Original string length exceeds u32 range".to_string(),
+                        }
+                    })? + 1;
                 }
             }
 
@@ -73,29 +142,34 @@ impl<'a> super::HeapWriter<'a> {
                 .streams()
                 .iter()
                 .find(|stream| stream.name == "#Strings")
-                .map(|stream| stream.size)
-                .unwrap_or(1);
+                .map_or(1, |stream| stream.size);
 
             // Only add padding if we haven't reached the original heap boundary yet
             // If we've exactly reached it, new strings can start immediately
-            if final_index_position < original_heap_size {
-                let padding_needed = original_heap_size - final_index_position;
-                final_heap.extend(vec![0xFFu8; padding_needed as usize]);
-                final_index_position += padding_needed;
-            } else if final_index_position == original_heap_size {
-                // Don't add padding when we're exactly at the boundary
-                // This matches the calculation logic
+            match final_index_position.cmp(&original_heap_size) {
+                std::cmp::Ordering::Less => {
+                    let padding_needed = original_heap_size - final_index_position;
+                    final_heap.extend(vec![0xFFu8; padding_needed as usize]);
+                    final_index_position += padding_needed;
+                }
+                std::cmp::Ordering::Equal => {
+                    // Don't add padding when we're exactly at the boundary
+                    // This matches the calculation logic
+                }
+                std::cmp::Ordering::Greater => {
+                    // final_index_position > original_heap_size - no action needed
+                }
             }
         }
 
         // Phase 2: Add all new strings
         // Process in order of appended items to ensure proper sequential placement
-        for original_string in string_changes.appended_items.iter() {
+        for original_string in &string_changes.appended_items {
             // Calculate the original heap index for this item
             let original_heap_index = {
                 let mut calculated_index = string_changes.next_index;
                 for item in string_changes.appended_items.iter().rev() {
-                    calculated_index -= (item.len() + 1) as u32;
+                    calculated_index -= u32::try_from(item.len() + 1).unwrap_or(0);
                     if std::ptr::eq(item, original_string) {
                         break;
                     }
@@ -116,7 +190,7 @@ impl<'a> super::HeapWriter<'a> {
                 final_heap.extend_from_slice(final_string.as_bytes());
                 final_heap.push(0); // null terminator
 
-                final_index_position += final_string.len() as u32 + 1;
+                final_index_position += u32::try_from(final_string.len()).unwrap_or(0) + 1;
             }
         }
 
@@ -161,6 +235,7 @@ impl<'a> super::HeapWriter<'a> {
         if !string_changes.has_additions()
             && !string_changes.has_modifications()
             && !string_changes.has_removals()
+            && !string_changes.has_replacement()
         {
             return Ok(None);
         }
@@ -170,10 +245,17 @@ impl<'a> super::HeapWriter<'a> {
 
         // Phase 2: Write the reconstructed heap to the .meta section
         let stream_layout = self.base.find_stream_layout(&stream_mod.name)?;
-        let write_start = stream_layout.file_region.offset as usize;
-        self.base
-            .output
-            .write_at(write_start as u64, &reconstruction.heap_data)?;
+        let write_start = usize::try_from(stream_layout.file_region.offset).map_err(|_| {
+            Error::WriteLayoutFailed {
+                message: "Stream write start offset exceeds usize range".to_string(),
+            }
+        })?;
+        self.base.output.write_at(
+            u64::try_from(write_start).map_err(|_| Error::WriteLayoutFailed {
+                message: "Write start position exceeds u64 range".to_string(),
+            })?,
+            &reconstruction.heap_data,
+        )?;
 
         // Phase 3: Convert index mapping to the format expected by IndexRemapper
         let mut final_index_mapping = std::collections::HashMap::new();
@@ -211,7 +293,11 @@ impl<'a> super::HeapWriter<'a> {
     ) -> Result<()> {
         let (stream_layout, write_start) = self.base.get_stream_write_position(stream_mod)?;
         let mut write_pos = write_start;
-        let stream_end = stream_layout.file_region.end_offset() as usize;
+        let stream_end = usize::try_from(stream_layout.file_region.end_offset()).map_err(|_| {
+            Error::WriteLayoutFailed {
+                message: "Stream end offset exceeds usize range".to_string(),
+            }
+        })?;
         let string_changes = &self.base.assembly.changes().string_heap_changes;
 
         // Step 1: Reconstruct the original heap to preserve all original offsets
@@ -224,8 +310,7 @@ impl<'a> super::HeapWriter<'a> {
                 .streams()
                 .iter()
                 .find(|stream| stream.name == "#Strings")
-                .map(|stream| stream.size as usize)
-                .unwrap_or(1);
+                .map_or(1, |stream| usize::try_from(stream.size).unwrap_or(1));
 
             // Initialize the heap area with zeros
             let heap_slice = self
@@ -252,7 +337,9 @@ impl<'a> super::HeapWriter<'a> {
 
             // Step 2: Apply modifications in-place where possible
             for (offset, string) in strings_heap.iter() {
-                let heap_index = offset as u32;
+                let heap_index = u32::try_from(offset).map_err(|_| Error::WriteLayoutFailed {
+                    message: "String heap offset exceeds u32 range".to_string(),
+                })?;
 
                 if string_changes.is_removed(heap_index) {
                     // Zero-fill removed strings instead of removing them
@@ -326,7 +413,7 @@ impl<'a> super::HeapWriter<'a> {
 
                 // Ensure we won't exceed stream boundary
                 if write_pos + string_size > stream_end {
-                    return Err(crate::Error::WriteLayoutFailed {
+                    return Err(Error::WriteLayoutFailed {
                         message: format!(
                             "String heap overflow: write would exceed allocated space by {} bytes",
                             (write_pos + string_size) - stream_end

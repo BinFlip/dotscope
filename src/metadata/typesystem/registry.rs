@@ -735,7 +735,7 @@ impl TypeRegistry {
             return;
         }
 
-        let source = match &new_type.external {
+        let source = match new_type.get_external() {
             Some(external_source) => self.register_source(external_source),
             None => TypeSource::CurrentModule,
         };

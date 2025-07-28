@@ -89,6 +89,7 @@ impl EncLogBuilder {
     ///
     /// let builder = EncLogBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             token_value: None,
@@ -125,6 +126,7 @@ impl EncLogBuilder {
     /// let builder = EncLogBuilder::new()
     ///     .token_value(0x04000010);  // Field RID 16
     /// ```
+    #[must_use]
     pub fn token_value(mut self, token_value: u32) -> Self {
         self.token_value = Some(token_value);
         self
@@ -163,6 +165,7 @@ impl EncLogBuilder {
     /// let builder = EncLogBuilder::new()
     ///     .func_code(2);
     /// ```
+    #[must_use]
     pub fn func_code(mut self, func_code: u32) -> Self {
         self.func_code = Some(func_code);
         self
@@ -183,6 +186,7 @@ impl EncLogBuilder {
     /// let builder = EncLogBuilder::new()
     ///     .create();  // Equivalent to .func_code(0)
     /// ```
+    #[must_use]
     pub fn create(mut self) -> Self {
         self.func_code = Some(0);
         self
@@ -203,6 +207,7 @@ impl EncLogBuilder {
     /// let builder = EncLogBuilder::new()
     ///     .update();  // Equivalent to .func_code(1)
     /// ```
+    #[must_use]
     pub fn update(mut self) -> Self {
         self.func_code = Some(1);
         self
@@ -223,6 +228,7 @@ impl EncLogBuilder {
     /// let builder = EncLogBuilder::new()
     ///     .delete();  // Equivalent to .func_code(2)
     /// ```
+    #[must_use]
     pub fn delete(mut self) -> Self {
         self.func_code = Some(2);
         self
@@ -280,7 +286,7 @@ impl EncLogBuilder {
             func_code,
         };
 
-        context.add_table_row(TableId::EncLog, TableDataOwned::EncLog(enc_log))?;
+        context.table_row_add(TableId::EncLog, TableDataOwned::EncLog(enc_log))?;
         Ok(token)
     }
 }
@@ -298,16 +304,8 @@ impl Default for EncLogBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
-        metadata::cilassemblyview::CilAssemblyView,
+        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
     };
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
 
     #[test]
     fn test_enclog_builder_new() {

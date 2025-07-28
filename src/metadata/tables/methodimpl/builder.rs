@@ -8,7 +8,7 @@
 use crate::{
     cilassembly::BuilderContext,
     metadata::{
-        tables::{CodedIndex, MethodImplRaw, TableDataOwned, TableId},
+        tables::{CodedIndex, CodedIndexType, MethodImplRaw, TableDataOwned, TableId},
         token::Token,
     },
     Error, Result,
@@ -110,6 +110,7 @@ impl MethodImplBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::methodimpl::MethodImplBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             class: None,
@@ -160,6 +161,7 @@ impl MethodImplBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn class(mut self, class_token: Token) -> Self {
         self.class = Some(class_token);
         self
@@ -207,10 +209,15 @@ impl MethodImplBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn method_body_from_method_def(mut self, method_token: Token) -> Self {
         // Extract RID from MethodDef token (0x06xxxxxx)
         let rid = method_token.value() & 0x00FF_FFFF;
-        self.method_body = Some(CodedIndex::new(TableId::MethodDef, rid));
+        self.method_body = Some(CodedIndex::new(
+            TableId::MethodDef,
+            rid,
+            CodedIndexType::MethodDefOrRef,
+        ));
         self
     }
 
@@ -256,10 +263,15 @@ impl MethodImplBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn method_body_from_member_ref(mut self, member_token: Token) -> Self {
         // Extract RID from MemberRef token (0x0Axxxxxx)
         let rid = member_token.value() & 0x00FF_FFFF;
-        self.method_body = Some(CodedIndex::new(TableId::MemberRef, rid));
+        self.method_body = Some(CodedIndex::new(
+            TableId::MemberRef,
+            rid,
+            CodedIndexType::MethodDefOrRef,
+        ));
         self
     }
 
@@ -305,10 +317,15 @@ impl MethodImplBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn method_declaration_from_method_def(mut self, method_token: Token) -> Self {
         // Extract RID from MethodDef token (0x06xxxxxx)
         let rid = method_token.value() & 0x00FF_FFFF;
-        self.method_declaration = Some(CodedIndex::new(TableId::MethodDef, rid));
+        self.method_declaration = Some(CodedIndex::new(
+            TableId::MethodDef,
+            rid,
+            CodedIndexType::MethodDefOrRef,
+        ));
         self
     }
 
@@ -354,10 +371,15 @@ impl MethodImplBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn method_declaration_from_member_ref(mut self, member_token: Token) -> Self {
         // Extract RID from MemberRef token (0x0Axxxxxx)
         let rid = member_token.value() & 0x00FF_FFFF;
-        self.method_declaration = Some(CodedIndex::new(TableId::MemberRef, rid));
+        self.method_declaration = Some(CodedIndex::new(
+            TableId::MemberRef,
+            rid,
+            CodedIndexType::MethodDefOrRef,
+        ));
         self
     }
 
@@ -382,6 +404,7 @@ impl MethodImplBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn method_body(mut self, coded_index: CodedIndex) -> Self {
         self.method_body = Some(coded_index);
         self
@@ -408,6 +431,7 @@ impl MethodImplBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn method_declaration(mut self, coded_index: CodedIndex) -> Self {
         self.method_declaration = Some(coded_index);
         self
@@ -476,7 +500,7 @@ impl MethodImplBuilder {
             method_declaration,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::MethodImpl,
             TableDataOwned::MethodImpl(method_impl_raw),
         )
@@ -623,8 +647,10 @@ mod tests {
             let expected_rid = context.next_rid(TableId::MethodImpl);
 
             let implementing_class = Token::new(0x02000001);
-            let method_body_idx = CodedIndex::new(TableId::MethodDef, 1);
-            let method_decl_idx = CodedIndex::new(TableId::MemberRef, 1);
+            let method_body_idx =
+                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef);
+            let method_decl_idx =
+                CodedIndex::new(TableId::MemberRef, 1, CodedIndexType::MethodDefOrRef);
 
             let token = MethodImplBuilder::new()
                 .class(implementing_class)

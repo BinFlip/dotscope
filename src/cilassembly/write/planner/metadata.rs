@@ -82,7 +82,7 @@ use crate::{
         write::{
             planner::calc::{
                 self, calculate_string_heap_total_size, calculate_table_stream_expansion,
-                HeapExpansions,
+                calculate_userstring_heap_total_size, HeapExpansions,
             },
             utils::align_to_4_bytes,
         },
@@ -200,7 +200,7 @@ pub struct StreamModification {
 /// Returns [`crate::Error`] if metadata structure analysis fails or stream calculations are invalid.
 pub fn extract_metadata_layout(
     assembly: &CilAssembly,
-    heap_expansions: &HeapExpansions,
+    _heap_expansions: &HeapExpansions,
 ) -> Result<MetadataLayout> {
     let view = assembly.view();
     let streams = view.streams();
@@ -218,10 +218,17 @@ pub fn extract_metadata_layout(
 
     // Calculate stream headers size
     let mut stream_headers_size = 0u32;
-    for stream in streams.iter() {
+    for stream in streams {
         // Each stream header: offset(4) + size(4) + name_length + null terminator + padding to 4-byte boundary
         let name_with_null = stream.name.len() + 1;
-        let padded_name_length = align_to_4_bytes(name_with_null as u64) as u32;
+        let padded_name_length = u32::try_from(align_to_4_bytes(
+            u64::try_from(name_with_null).map_err(|_| Error::WriteLayoutFailed {
+                message: "Name length exceeds u64 range".to_string(),
+            })?,
+        ))
+        .map_err(|_| Error::WriteLayoutFailed {
+            message: "Padded name length exceeds u32 range".to_string(),
+        })?;
         stream_headers_size += 8 + padded_name_length; // offset + size + padded name
     }
 
@@ -231,7 +238,7 @@ pub fn extract_metadata_layout(
     let mut stream_layouts = Vec::new();
     let mut current_offset = 0u32;
 
-    for stream in streams.iter() {
+    for stream in streams {
         let mut size = stream.size;
 
         // Add expansion size for heap streams and table stream
@@ -246,16 +253,75 @@ pub fn extract_metadata_layout(
                     // Use total reconstructed heap size for any changes
                     let total_heap_size =
                         calculate_string_heap_total_size(string_changes, assembly)?;
-                    size = total_heap_size as u32;
+                    size = u32::try_from(total_heap_size).map_err(|_| {
+                        malformed_error!("String heap size exceeds u32 limit: {}", total_heap_size)
+                    })?;
                 }
             }
-            "#Blob" => size += heap_expansions.blob_heap_addition as u32,
-            "#GUID" => size += heap_expansions.guid_heap_addition as u32,
-            "#US" => size += heap_expansions.userstring_heap_addition as u32,
+            "#Blob" => {
+                // Check if we need heap reconstruction
+                let blob_changes = &assembly.changes().blob_heap_changes;
+                if blob_changes.has_additions()
+                    || blob_changes.has_modifications()
+                    || blob_changes.has_removals()
+                {
+                    // Use total reconstructed heap size for any changes
+                    let total_heap_size = HeapExpansions::calculate_blob_heap_size(assembly)?;
+                    size = u32::try_from(total_heap_size).map_err(|_| {
+                        malformed_error!("Blob heap size exceeds u32 limit: {}", total_heap_size)
+                    })?;
+                } else {
+                    // No changes, keep original size
+                    size = stream.size;
+                }
+            }
+            "#GUID" => {
+                // Check if we need heap reconstruction
+                let guid_changes = &assembly.changes().guid_heap_changes;
+                if guid_changes.has_additions()
+                    || guid_changes.has_modifications()
+                    || guid_changes.has_removals()
+                {
+                    // Use total reconstructed heap size for any changes
+                    let total_heap_size = HeapExpansions::calculate_guid_heap_size(assembly)?;
+                    size = u32::try_from(total_heap_size).map_err(|_| {
+                        malformed_error!("GUID heap size exceeds u32 limit: {}", total_heap_size)
+                    })?;
+                } else {
+                    // No changes, keep original size
+                    size = stream.size;
+                }
+            }
+            "#US" => {
+                // Check if we need heap reconstruction
+                let userstring_changes = &assembly.changes().userstring_heap_changes;
+                if userstring_changes.has_additions()
+                    || userstring_changes.has_modifications()
+                    || userstring_changes.has_removals()
+                {
+                    // Use total reconstructed heap size for any changes
+                    let total_heap_size =
+                        calculate_userstring_heap_total_size(userstring_changes, assembly)?;
+                    size = u32::try_from(total_heap_size).map_err(|_| {
+                        malformed_error!(
+                            "UserString heap size exceeds u32 limit: {}",
+                            total_heap_size
+                        )
+                    })?;
+                } else {
+                    // No changes, keep original size
+                    size = stream.size;
+                }
+            }
             "#~" | "#-" => {
                 // Add space for additional table rows
                 let table_expansion = calculate_table_stream_expansion(assembly)?;
-                size += table_expansion as u32;
+                size += u32::try_from(table_expansion).map_err(|_| {
+                    malformed_error!(
+                        "Table expansion size exceeds u32 limit: {}",
+                        table_expansion
+                    )
+                })?;
             }
             _ => {} // Other streams remain unchanged
         }
@@ -267,7 +333,11 @@ pub fn extract_metadata_layout(
         });
 
         // Align to 4-byte boundary
-        current_offset += align_to_4_bytes(size as u64) as u32;
+        current_offset += u32::try_from(align_to_4_bytes(u64::from(size))).map_err(|_| {
+            Error::WriteLayoutFailed {
+                message: "Aligned size exceeds u32 range".to_string(),
+            }
+        })?;
     }
 
     Ok(MetadataLayout {
@@ -295,31 +365,19 @@ pub fn identify_metadata_modifications(assembly: &CilAssembly) -> Result<Metadat
 
     // Identify which streams need modifications
     let mut stream_modifications = Vec::new();
-    if changes.string_heap_changes.has_additions()
-        || changes.string_heap_changes.has_modifications()
-        || changes.string_heap_changes.has_removals()
-    {
+    if changes.string_heap_changes.has_changes() {
         stream_modifications.push(create_string_stream_modification(assembly)?);
     }
 
-    if changes.blob_heap_changes.has_additions()
-        || changes.blob_heap_changes.has_modifications()
-        || changes.blob_heap_changes.has_removals()
-    {
+    if changes.blob_heap_changes.has_changes() {
         stream_modifications.push(create_blob_stream_modification(assembly)?);
     }
 
-    if changes.guid_heap_changes.has_additions()
-        || changes.guid_heap_changes.has_modifications()
-        || changes.guid_heap_changes.has_removals()
-    {
+    if changes.guid_heap_changes.has_changes() {
         stream_modifications.push(create_guid_stream_modification(assembly)?);
     }
 
-    if changes.userstring_heap_changes.has_additions()
-        || changes.userstring_heap_changes.has_modifications()
-        || changes.userstring_heap_changes.has_removals()
-    {
+    if changes.userstring_heap_changes.has_changes() {
         stream_modifications.push(create_userstring_stream_modification(assembly)?);
     }
 
@@ -357,24 +415,21 @@ fn create_string_stream_modification(assembly: &CilAssembly) -> Result<StreamMod
     let (write_offset, size_field_offset) = calculate_stream_offsets(assembly, "#Strings")?;
 
     let string_changes = &assembly.changes().string_heap_changes;
-    let has_modifications = string_changes.has_modifications();
-    let has_removals = string_changes.has_removals();
-    let has_additions = string_changes.has_additions();
 
-    let (new_size, additional_data_size) = if has_additions || has_modifications || has_removals {
+    let (new_size, additional_data_size) = if string_changes.has_changes() {
         // Heap writer always does reconstruction for ANY changes, so use total reconstructed heap size
         let total_heap_size = calculate_string_heap_total_size(string_changes, assembly)?;
-        let additional = total_heap_size.saturating_sub(stream.size as u64);
+        let additional = total_heap_size.saturating_sub(u64::from(stream.size));
         (total_heap_size, additional)
     } else {
         // No changes at all
-        (stream.size as u64, 0)
+        (u64::from(stream.size), 0)
     };
 
     Ok(StreamModification {
         name: "#Strings".to_string(),
-        original_offset: stream.offset as u64,
-        original_size: stream.size as u64,
+        original_offset: u64::from(stream.offset),
+        original_size: u64::from(stream.size),
         new_size,
         additional_data_size,
         write_offset,
@@ -402,21 +457,22 @@ fn create_blob_stream_modification(assembly: &CilAssembly) -> Result<StreamModif
             message: "Stream #Blob not found in original file".to_string(),
         })?;
 
-    let rebuilt_heap_size = HeapExpansions::calculate_blob_heap_size(assembly)?;
     let (write_offset, size_field_offset) = calculate_stream_offsets(assembly, "#Blob")?;
 
     let blob_changes = &assembly.changes().blob_heap_changes;
     let (new_size, additional_data_size) = if blob_changes.has_changes() {
-        let additional = rebuilt_heap_size.saturating_sub(stream.size as u64);
-        (rebuilt_heap_size, additional)
+        // Calculate the total size needed for the blob heap
+        let total_blob_heap_size = HeapExpansions::calculate_blob_heap_size(assembly)?;
+        let additional = total_blob_heap_size.saturating_sub(u64::from(stream.size));
+        (total_blob_heap_size, additional)
     } else {
-        (stream.size as u64, 0)
+        (u64::from(stream.size), 0)
     };
 
     Ok(StreamModification {
         name: "#Blob".to_string(),
-        original_offset: stream.offset as u64,
-        original_size: stream.size as u64,
+        original_offset: u64::from(stream.offset),
+        original_size: u64::from(stream.size),
         new_size,
         additional_data_size,
         write_offset,
@@ -444,22 +500,22 @@ fn create_guid_stream_modification(assembly: &CilAssembly) -> Result<StreamModif
             message: "Stream #GUID not found in original file".to_string(),
         })?;
 
-    let rebuilt_heap_size = HeapExpansions::calculate_guid_heap_size(assembly)?;
     let (write_offset, size_field_offset) = calculate_stream_offsets(assembly, "#GUID")?;
 
     let guid_changes = &assembly.changes().guid_heap_changes;
-    let (new_size, additional_data_size) =
-        if guid_changes.has_modifications() || guid_changes.has_removals() {
-            let additional = rebuilt_heap_size.saturating_sub(stream.size as u64);
-            (rebuilt_heap_size, additional)
-        } else {
-            (stream.size as u64 + rebuilt_heap_size, rebuilt_heap_size)
-        };
+    let (new_size, additional_data_size) = if guid_changes.has_changes() {
+        // Calculate the total size needed for the GUID heap
+        let total_guid_heap_size = HeapExpansions::calculate_guid_heap_size(assembly)?;
+        let additional = total_guid_heap_size.saturating_sub(u64::from(stream.size));
+        (total_guid_heap_size, additional)
+    } else {
+        (u64::from(stream.size), 0)
+    };
 
     Ok(StreamModification {
         name: "#GUID".to_string(),
-        original_offset: stream.offset as u64,
-        original_size: stream.size as u64,
+        original_offset: u64::from(stream.offset),
+        original_size: u64::from(stream.size),
         new_size,
         additional_data_size,
         write_offset,
@@ -487,22 +543,22 @@ fn create_userstring_stream_modification(assembly: &CilAssembly) -> Result<Strea
             message: "Stream #US not found in original file".to_string(),
         })?;
 
-    let rebuilt_heap_size = HeapExpansions::calculate_userstring_heap_size(assembly)?;
     let (write_offset, size_field_offset) = calculate_stream_offsets(assembly, "#US")?;
 
     let userstring_changes = &assembly.changes().userstring_heap_changes;
-    let (new_size, additional_data_size) =
-        if userstring_changes.has_modifications() || userstring_changes.has_removals() {
-            let additional = rebuilt_heap_size.saturating_sub(stream.size as u64);
-            (rebuilt_heap_size, additional)
-        } else {
-            (stream.size as u64 + rebuilt_heap_size, rebuilt_heap_size)
-        };
+    let (new_size, additional_data_size) = if userstring_changes.has_changes() {
+        // Use the same function as metadata layout planning for consistency
+        let total_heap_size = calculate_userstring_heap_total_size(userstring_changes, assembly)?;
+        let additional = total_heap_size.saturating_sub(u64::from(stream.size));
+        (total_heap_size, additional)
+    } else {
+        (u64::from(stream.size), 0)
+    };
 
     Ok(StreamModification {
         name: "#US".to_string(),
-        original_offset: stream.offset as u64,
-        original_size: stream.size as u64,
+        original_offset: u64::from(stream.offset),
+        original_size: u64::from(stream.size),
         new_size,
         additional_data_size,
         write_offset,
@@ -530,15 +586,15 @@ fn create_table_stream_modification(assembly: &CilAssembly) -> Result<StreamModi
         })?;
 
     let additional_data_size = calc::calculate_table_stream_expansion(assembly)?;
-    let raw_new_size = stream.size as u64 + additional_data_size;
+    let raw_new_size = u64::from(stream.size) + additional_data_size;
     let aligned_new_size = align_to_4_bytes(raw_new_size);
 
     let (write_offset, size_field_offset) = calculate_stream_offsets(assembly, &stream.name)?;
 
     Ok(StreamModification {
         name: stream.name.clone(),
-        original_offset: stream.offset as u64,
-        original_size: stream.size as u64,
+        original_offset: u64::from(stream.offset),
+        original_size: u64::from(stream.size),
         new_size: aligned_new_size,
         additional_data_size,
         write_offset,
@@ -574,9 +630,9 @@ fn calculate_stream_offsets(assembly: &CilAssembly, stream_name: &str) -> Result
     // Write offset is where the additional data should be appended
     // (after the original stream content)
     let write_offset = metadata_root_offset as u64 +
-        view.metadata_root().length as u64 + 20 + // root header size
-        stream.offset as u64 +
-        stream.size as u64;
+        u64::from(view.metadata_root().length) + 20 + // root header size
+        u64::from(stream.offset) +
+        u64::from(stream.size);
 
     // Size field offset is where the stream size is stored in the stream directory
     // We need to parse the stream directory to find this
@@ -620,12 +676,15 @@ fn find_stream_size_field_offset(
     let metadata_root = view.metadata_root();
 
     // Stream directory starts after the metadata root header
-    let version_length = metadata_root.length as usize;
+    let version_length =
+        usize::try_from(metadata_root.length).map_err(|_| Error::WriteLayoutFailed {
+            message: "Version length exceeds usize range".to_string(),
+        })?;
     let stream_directory_offset = metadata_root_offset + 16 + version_length + 4;
 
     // Iterate through stream entries to find the target stream
     let mut current_offset = stream_directory_offset;
-    for stream in view.streams().iter() {
+    for stream in view.streams() {
         if stream.name == stream_name {
             // The size field is at current_offset + 4 (after the offset field)
             return Ok(current_offset as u64 + 4);
@@ -652,7 +711,7 @@ fn find_stream_size_field_offset(
 ///
 /// # Returns
 /// Returns the total metadata root header size in bytes.
-pub fn calculate_metadata_root_header_size(assembly: &CilAssembly) -> Result<u64> {
+pub fn calculate_metadata_root_header_size(assembly: &CilAssembly) -> u64 {
     let view = assembly.view();
     let streams = view.streams();
 
@@ -666,7 +725,7 @@ pub fn calculate_metadata_root_header_size(assembly: &CilAssembly) -> Result<u64
 
     // Add version string size (use the original metadata root's length field)
     let metadata_root = view.metadata_root();
-    size += metadata_root.length as u64;
+    size += u64::from(metadata_root.length);
 
     size += 4; // Flags (2 bytes) and stream count (2 bytes)
 
@@ -677,7 +736,7 @@ pub fn calculate_metadata_root_header_size(assembly: &CilAssembly) -> Result<u64
         size += name_size;
     }
 
-    Ok(size)
+    size
 }
 
 /// Gets the metadata version string from the original file.
@@ -756,8 +815,7 @@ mod tests {
             .expect("Failed to load test assembly");
         let assembly = view.to_owned();
 
-        let header_size =
-            calculate_metadata_root_header_size(&assembly).expect("Should calculate header size");
+        let header_size = calculate_metadata_root_header_size(&assembly);
 
         assert!(header_size > 20, "Header size should be at least 20 bytes");
         assert!(header_size < 1024, "Header size should be reasonable");

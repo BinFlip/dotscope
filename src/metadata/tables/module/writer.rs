@@ -80,7 +80,13 @@ impl RowWritable for ModuleRaw {
         sizes: &TableInfoRef,
     ) -> Result<()> {
         // Write generation as u16 (the raw struct stores it as u32)
-        write_le_at(data, offset, self.generation as u16)?;
+        write_le_at(
+            data,
+            offset,
+            u16::try_from(self.generation).map_err(|_| {
+                malformed_error!("Module generation out of range: {}", self.generation)
+            })?,
+        )?;
 
         // Write variable-size heap indexes
         write_le_at_dyn(data, offset, self.name, sizes.is_large_str())?;

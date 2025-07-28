@@ -100,7 +100,7 @@ impl RowWritable for CustomDebugInformationRaw {
 mod tests {
     use super::*;
     use crate::{
-        metadata::tables::types::{CodedIndex, RowReadable, TableInfo, TableRow},
+        metadata::tables::types::{CodedIndex, CodedIndexType, RowReadable, TableInfo, TableRow},
         metadata::{tables::TableId, token::Token},
     };
 
@@ -111,11 +111,11 @@ mod tests {
             rid: 1,
             token: Token::new(0x3700_0001),
             offset: 0,
-            parent: CodedIndex {
-                tag: TableId::MethodDef,
-                row: 42,
-                token: Token::new(0x0600_002A),
-            },
+            parent: CodedIndex::new(
+                TableId::MethodDef,
+                42,
+                CodedIndexType::HasCustomDebugInformation,
+            ),
             kind: 15,
             value: 200,
         };
@@ -164,11 +164,11 @@ mod tests {
             rid: 2,
             token: Token::new(0x3700_0002),
             offset: 0,
-            parent: CodedIndex {
-                tag: TableId::TypeDef,
-                row: 12345,
-                token: Token::new(0x0200_3039),
-            },
+            parent: CodedIndex::new(
+                TableId::TypeDef,
+                12345,
+                CodedIndexType::HasCustomDebugInformation,
+            ),
             kind: 0x12345,
             value: 0x54321,
         };
@@ -218,11 +218,11 @@ mod tests {
             rid: 1,
             token: Token::new(0x3700_0001),
             offset: 0,
-            parent: CodedIndex {
-                tag: TableId::MemberRef, // Tag 6 in HasCustomDebugInformation
-                row: 0,                  // This creates coded index 0x06 (tag 6, row 0)
-                token: Token::new(0x0A00_0000),
-            },
+            parent: CodedIndex::new(
+                TableId::MemberRef,
+                0,
+                CodedIndexType::HasCustomDebugInformation,
+            ),
             kind: 0x0001,
             value: 0x000A,
         };
@@ -269,11 +269,11 @@ mod tests {
             rid: 1,
             token: Token::new(0x3700_0001),
             offset: 0,
-            parent: CodedIndex {
-                tag: TableId::MemberRef, // Tag 6 in HasCustomDebugInformation
-                row: 8,                  // This creates coded index 0x00000106 (tag 6, row 8)
-                token: Token::new(0x0A00_0008),
-            },
+            parent: CodedIndex::new(
+                TableId::MemberRef,
+                8,
+                CodedIndexType::HasCustomDebugInformation,
+            ),
             kind: 0x00000101,
             value: 0x0000020A,
         };
@@ -335,11 +335,7 @@ mod tests {
                 rid: 1,
                 token: Token::new(0x3700_0001),
                 offset: 0,
-                parent: CodedIndex {
-                    tag: table_id,
-                    row,
-                    token: Token::new((table_id as u32) << 24 | row),
-                },
+                parent: CodedIndex::new(table_id, row, CodedIndexType::HasCustomDebugInformation),
                 kind: 100,
                 value: 200,
             };
@@ -394,11 +390,11 @@ mod tests {
                 rid: 1,
                 token: Token::new(0x3700_0001),
                 offset: 0,
-                parent: CodedIndex {
-                    tag: TableId::MethodDef,
-                    row: 100,
-                    token: Token::new(0x0600_0064),
-                },
+                parent: CodedIndex::new(
+                    TableId::MethodDef,
+                    100,
+                    CodedIndexType::HasCustomDebugInformation,
+                ),
                 kind,
                 value,
             };

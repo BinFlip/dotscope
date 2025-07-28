@@ -69,7 +69,8 @@ use crate::{
     metadata::{
         resources::DotNetResourceEncoder,
         tables::{
-            CodedIndex, ManifestResourceAttributes, ManifestResourceRaw, TableDataOwned, TableId,
+            CodedIndex, CodedIndexType, ManifestResourceAttributes, ManifestResourceRaw,
+            TableDataOwned, TableId,
         },
         token::Token,
     },
@@ -157,6 +158,7 @@ impl ManifestResourceBuilder {
     /// # use dotscope::prelude::*;
     /// let builder = ManifestResourceBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             name: None,
@@ -184,6 +186,7 @@ impl ManifestResourceBuilder {
     /// let builder = ManifestResourceBuilder::new()
     ///     .name("MyApp.Resources.strings.resources");
     /// ```
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -206,6 +209,7 @@ impl ManifestResourceBuilder {
     /// let builder = ManifestResourceBuilder::new()
     ///     .flags(ManifestResourceAttributes::PRIVATE.bits());
     /// ```
+    #[must_use]
     pub fn flags(mut self, flags: u32) -> Self {
         self.flags = flags;
         self
@@ -224,6 +228,7 @@ impl ManifestResourceBuilder {
     ///     .name("MyApp.PublicResources")
     ///     .public();
     /// ```
+    #[must_use]
     pub fn public(mut self) -> Self {
         self.flags |= ManifestResourceAttributes::PUBLIC.bits();
         self.flags &= !ManifestResourceAttributes::PRIVATE.bits();
@@ -243,6 +248,7 @@ impl ManifestResourceBuilder {
     ///     .name("MyApp.InternalResources")
     ///     .private();
     /// ```
+    #[must_use]
     pub fn private(mut self) -> Self {
         self.flags |= ManifestResourceAttributes::PRIVATE.bits();
         self.flags &= !ManifestResourceAttributes::PUBLIC.bits();
@@ -266,6 +272,7 @@ impl ManifestResourceBuilder {
     ///     .name("EmbeddedResource")
     ///     .offset(0x1000);
     /// ```
+    #[must_use]
     pub fn offset(mut self, offset: u32) -> Self {
         self.offset = offset;
         self
@@ -297,8 +304,13 @@ impl ManifestResourceBuilder {
     ///     .implementation_file(file_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn implementation_file(mut self, file_token: Token) -> Self {
-        self.implementation = Some(CodedIndex::new(TableId::File, file_token.row()));
+        self.implementation = Some(CodedIndex::new(
+            TableId::File,
+            file_token.row(),
+            CodedIndexType::Implementation,
+        ));
         self
     }
 
@@ -329,10 +341,12 @@ impl ManifestResourceBuilder {
     ///     .implementation_assembly_ref(assembly_ref_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn implementation_assembly_ref(mut self, assembly_ref_token: Token) -> Self {
         self.implementation = Some(CodedIndex::new(
             TableId::AssemblyRef,
             assembly_ref_token.row(),
+            CodedIndexType::Implementation,
         ));
         self
     }
@@ -352,6 +366,7 @@ impl ManifestResourceBuilder {
     ///     .implementation_embedded()
     ///     .offset(0x1000);
     /// ```
+    #[must_use]
     pub fn implementation_embedded(mut self) -> Self {
         self.implementation = None; // Embedded means null implementation
         self
@@ -376,6 +391,7 @@ impl ManifestResourceBuilder {
     ///     .name("TextResource")
     ///     .resource_data(resource_data);
     /// ```
+    #[must_use]
     pub fn resource_data(mut self, data: &[u8]) -> Self {
         self.resource_data = Some(data.to_vec());
         self.implementation = None; // Force embedded implementation
@@ -399,6 +415,7 @@ impl ManifestResourceBuilder {
     ///     .name("ConfigResource")
     ///     .resource_string("key=value\nsetting=option");
     /// ```
+    #[must_use]
     pub fn resource_string(mut self, content: &str) -> Self {
         self.resource_data = Some(content.as_bytes().to_vec());
         self.implementation = None; // Force embedded implementation
@@ -425,6 +442,10 @@ impl ManifestResourceBuilder {
     ///     .add_string_resource("AppTitle", "My Application")
     ///     .add_string_resource("Version", "1.0.0");
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the resource encoder fails to add the string resource.
     pub fn add_string_resource(mut self, resource_name: &str, content: &str) -> Result<Self> {
         let encoder = self
             .resource_encoder
@@ -454,6 +475,10 @@ impl ManifestResourceBuilder {
     ///     .add_binary_resource("AppIcon", &icon_data)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the resource encoder fails to add the binary resource.
     pub fn add_binary_resource(mut self, resource_name: &str, data: &[u8]) -> Result<Self> {
         let encoder = self
             .resource_encoder
@@ -488,6 +513,10 @@ impl ManifestResourceBuilder {
     ///     .add_xml_resource("config.xml", config_xml)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the resource encoder fails to add the XML resource.
     pub fn add_xml_resource(mut self, resource_name: &str, xml_content: &str) -> Result<Self> {
         let encoder = self
             .resource_encoder
@@ -518,6 +547,10 @@ impl ManifestResourceBuilder {
     ///     .add_text_resource("config.json", json_config)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the resource encoder fails to add the text resource.
     pub fn add_text_resource(mut self, resource_name: &str, content: &str) -> Result<Self> {
         let encoder = self
             .resource_encoder
@@ -548,6 +581,7 @@ impl ManifestResourceBuilder {
     ///         // when additional configuration options are implemented
     ///     });
     /// ```
+    #[must_use]
     pub fn configure_encoder<F>(mut self, configure_fn: F) -> Self
     where
         F: FnOnce(&mut DotNetResourceEncoder),
@@ -614,7 +648,7 @@ impl ManifestResourceBuilder {
             });
         }
 
-        let name_index = context.get_or_add_string(&name)?;
+        let name_index = context.string_get_or_add(&name)?;
 
         let implementation = if let Some(impl_ref) = self.implementation {
             match impl_ref.tag {
@@ -648,17 +682,17 @@ impl ManifestResourceBuilder {
             }
         } else {
             // For embedded resources, create a null coded index (row 0)
-            CodedIndex::new(TableId::File, 0) // This will have row = 0, indicating embedded
+            CodedIndex::new(TableId::File, 0, CodedIndexType::Implementation) // This will have row = 0, indicating embedded
         };
 
         // Handle resource data if provided
         let mut final_offset = self.offset;
         if let Some(encoder) = self.resource_encoder {
             let encoded_data = encoder.encode_dotnet_format()?;
-            let blob_index = context.add_blob(&encoded_data)?;
+            let blob_index = context.blob_add(&encoded_data)?;
             final_offset = blob_index;
         } else if let Some(data) = self.resource_data {
-            let blob_index = context.add_blob(&data)?;
+            let blob_index = context.blob_add(&data)?;
             final_offset = blob_index;
         }
 
@@ -676,7 +710,7 @@ impl ManifestResourceBuilder {
         };
 
         let table_data = TableDataOwned::ManifestResource(manifest_resource);
-        context.add_table_row(TableId::ManifestResource, table_data)?;
+        context.table_row_add(TableId::ManifestResource, table_data)?;
 
         Ok(token)
     }
@@ -686,19 +720,9 @@ impl ManifestResourceBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::CilAssembly,
-        metadata::{
-            cilassemblyview::CilAssemblyView,
-            tables::{ManifestResourceAttributes, TableId},
-        },
+        metadata::tables::{ManifestResourceAttributes, TableId},
+        test::factories::table::assemblyref::get_test_assembly,
     };
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
 
     #[test]
     fn test_manifest_resource_builder_basic() -> Result<()> {
@@ -923,7 +947,11 @@ mod tests {
         let mut builder = ManifestResourceBuilder::new().name("InvalidImplementation");
 
         // Manually set an invalid implementation (TypeDef is not valid for Implementation coded index)
-        builder.implementation = Some(CodedIndex::new(TableId::TypeDef, 1));
+        builder.implementation = Some(CodedIndex::new(
+            TableId::TypeDef,
+            1,
+            CodedIndexType::Implementation,
+        ));
 
         let result = builder.build(&mut context);
 
@@ -943,7 +971,11 @@ mod tests {
         let mut builder = ManifestResourceBuilder::new().name("ZeroRowImplementation");
 
         // Manually set an implementation with row 0 (invalid for non-embedded)
-        builder.implementation = Some(CodedIndex::new(TableId::File, 0));
+        builder.implementation = Some(CodedIndex::new(
+            TableId::File,
+            0,
+            CodedIndexType::Implementation,
+        ));
 
         let result = builder.build(&mut context);
 
@@ -963,7 +995,11 @@ mod tests {
         let mut builder = ManifestResourceBuilder::new().name("ExportedTypeResource");
 
         // Set a valid ExportedType implementation (row > 0)
-        builder.implementation = Some(CodedIndex::new(TableId::ExportedType, 1));
+        builder.implementation = Some(CodedIndex::new(
+            TableId::ExportedType,
+            1,
+            CodedIndexType::Implementation,
+        ));
 
         let result = builder.build(&mut context);
 

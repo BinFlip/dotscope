@@ -1,9 +1,19 @@
-//! # Metadata Validation System for .NET Assemblies
+//! Metadata validation system for .NET assemblies.
 //!
 //! This module provides a comprehensive validation framework for ensuring metadata integrity,
 //! type safety, and ECMA-335 compliance across .NET assembly structures. The validation system
 //! operates at multiple levels, from basic structural validation to complex semantic analysis,
 //! ensuring that loaded metadata conforms to runtime requirements and specification constraints.
+//!
+//! # Key Components
+//!
+//! - `ValidationConfig` - Configuration for validation behavior
+//! - `ValidationEngine` - Main validation orchestrator
+//! - `ValidationContext` - Validation context abstractions
+//! - `RawValidator` and `OwnedValidator` traits - Validator trait definitions
+//! - validator implementations - Collection of all validator implementations
+//! - `ValidationResult` and `ValidationOutcome` - Validation result types
+//! - `ReferenceScanner` - Reference scanning infrastructure
 //!
 //! ## Architecture Overview
 //!
@@ -152,27 +162,22 @@
 //! - ISO/IEC 23271: Common Language Infrastructure specification
 //! - Microsoft .NET Documentation: Assembly loading and validation
 
-// Validation component modules
 mod config;
-mod constraint;
-mod field;
-mod layout;
-mod method;
-mod nested;
-mod orchestrator;
-mod semantic;
-mod token;
+mod context;
+mod engine;
+mod result;
+mod scanner;
+mod shared;
+mod traits;
+mod validators;
 
-// Public API exports
-/// Configuration for controlling validation behavior and performance.
 pub use config::ValidationConfig;
-
-// Internal validator exports for use within the validation system
-pub(crate) use constraint::ConstraintValidator;
-pub(crate) use field::FieldValidator;
-pub(crate) use layout::LayoutValidator;
-pub(crate) use method::MethodValidator;
-pub(crate) use nested::NestedClassValidator;
-pub(crate) use orchestrator::Orchestrator;
-pub(crate) use semantic::SemanticValidator;
-pub(crate) use token::TokenValidator;
+pub use context::{
+    OwnedValidationContext, RawValidationContext, ValidationContext, ValidationStage,
+};
+pub use engine::{factory, EngineStatistics, ValidationEngine};
+pub use result::{TwoStageValidationResult, ValidationOutcome, ValidationResult};
+pub use scanner::{ReferenceScanner, ScannerStatistics};
+pub use shared::{ReferenceValidator, SchemaValidator, TokenValidator};
+pub use traits::{OwnedValidator, RawValidator, ValidatorCollection};
+pub use validators::*;

@@ -663,15 +663,9 @@ pub use crate::{BuilderContext, CilAssembly, ReferenceHandlingStrategy};
 
 /// Assembly validation pipeline components.
 ///
-/// ValidationPipeline orchestrates multiple validation stages for assembly modifications.
-/// Individual validators handle specific aspects like schema validation, RID consistency,
-/// and referential integrity. Conflict resolvers handle operation conflicts with different
-/// strategies (last-write-wins, etc.). These components enable comprehensive validation
-/// of assembly modifications before they are applied.
-pub use crate::{
-    BasicSchemaValidator, LastWriteWinsResolver, ReferentialIntegrityValidator,
-    RidConsistencyValidator, ValidationPipeline,
-};
+/// Conflict resolvers handle operation conflicts with different strategies (last-write-wins, etc.).
+/// For validation, use the unified ValidationEngine from the metadata::validation module.
+pub use crate::LastWriteWinsResolver;
 
 /// Assembly and module builders.
 ///

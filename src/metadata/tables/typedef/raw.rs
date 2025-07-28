@@ -26,7 +26,7 @@ use crate::{
             TableId, TableInfoRef, TableRow,
         },
         token::Token,
-        typesystem::{CilType, CilTypeRc, CilTypeReference},
+        typesystem::{CilType, CilTypeRc, CilTypeRef, CilTypeReference},
     },
     Result,
 };
@@ -109,8 +109,8 @@ impl TypeDefRaw {
     /// Converts this raw `TypeDef` entry into a fully resolved [`CilType`].
     ///
     /// This method resolves all references and builds a complete type representation
-    /// including fields, methods, base type, and namespace information. It handles
-    /// field and method pointer indirection when present.
+    /// including fields, methods, namespace information, and optionally base type.
+    /// It handles field and method pointer indirection when present.
     ///
     /// ## Arguments
     /// * `get_ref` - Closure to resolve coded indexes to type references
@@ -120,9 +120,11 @@ impl TypeDefRaw {
     /// * `methods` - Map of all processed Method entries indexed by token
     /// * `method_ptr` - Map of `MethodPtr` entries for indirection resolution
     /// * `defs` - The complete `TypeDef` table for determining field/method ranges
+    /// * `resolve_base_type` - Whether to resolve the base type during creation (for two-phase loading)
     ///
     /// ## Returns
     /// Returns a reference-counted [`CilType`] with all metadata resolved and owned.
+    /// If `resolve_base_type` is false, the base type will be None and must be set later.
     ///
     /// ## Errors
     /// Returns an error if:
@@ -130,6 +132,7 @@ impl TypeDefRaw {
     /// - Next row in the `TypeDef` table cannot be found for range calculation
     /// - Field or method tokens cannot be resolved through pointer indirection
     /// - Token value arithmetic overflows during resolution
+    #[allow(clippy::too_many_arguments)]
     pub fn to_owned<F>(
         &self,
         get_ref: F,
@@ -139,6 +142,7 @@ impl TypeDefRaw {
         methods: &MethodMap,
         method_ptr: &MethodPtrMap,
         defs: &MetadataTable<TypeDefRaw>,
+        resolve_base_type: bool,
     ) -> Result<CilTypeRc>
     where
         F: Fn(&CodedIndex) -> CilTypeReference,
@@ -281,15 +285,15 @@ impl TypeDefRaw {
             type_methods
         };
 
-        let base_type = if self.extends.row == 0 {
-            None
-        } else {
+        let base_type = if resolve_base_type && self.extends.row != 0 {
             match get_ref(&self.extends) {
                 CilTypeReference::TypeDef(type_ref)
                 | CilTypeReference::TypeRef(type_ref)
                 | CilTypeReference::TypeSpec(type_ref) => Some(type_ref),
                 _ => None,
             }
+        } else {
+            None
         };
 
         Ok(Arc::new(CilType::new(
@@ -303,6 +307,36 @@ impl TypeDefRaw {
             type_methods,
             None,
         )))
+    }
+
+    /// Resolves and returns the base type reference for this TypeDef entry.
+    ///
+    /// This method is used during the second phase of two-phase loading to resolve
+    /// base types after all TypeDef entries have been loaded. It handles the same
+    /// logic as `to_owned` but only for base type resolution.
+    ///
+    /// # Arguments
+    ///
+    /// * `get_ref` - Closure to resolve coded index references to type references
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(CilTypeRef)` if this type has a base type that can be resolved,
+    /// or `None` if this type has no base type or the base type cannot be resolved.
+    pub fn resolve_base_type<F>(&self, get_ref: F) -> Option<CilTypeRef>
+    where
+        F: Fn(&CodedIndex) -> CilTypeReference,
+    {
+        if self.extends.row == 0 {
+            None
+        } else {
+            match get_ref(&self.extends) {
+                CilTypeReference::TypeDef(type_ref)
+                | CilTypeReference::TypeRef(type_ref)
+                | CilTypeReference::TypeSpec(type_ref) => Some(type_ref),
+                _ => None,
+            }
+        }
     }
 
     /// Applies this `TypeDef` entry to update related metadata structures.

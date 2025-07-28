@@ -85,6 +85,7 @@ impl ParamPtrBuilder {
     ///
     /// let builder = ParamPtrBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self { param: None }
     }
@@ -114,6 +115,7 @@ impl ParamPtrBuilder {
     /// let builder = ParamPtrBuilder::new()
     ///     .param(10);
     /// ```
+    #[must_use]
     pub fn param(mut self, param: u32) -> Self {
         self.param = Some(param);
         self
@@ -163,7 +165,7 @@ impl ParamPtrBuilder {
             param,
         };
 
-        context.add_table_row(TableId::ParamPtr, TableDataOwned::ParamPtr(param_ptr))?;
+        context.table_row_add(TableId::ParamPtr, TableDataOwned::ParamPtr(param_ptr))?;
         Ok(token)
     }
 }
@@ -181,16 +183,8 @@ impl Default for ParamPtrBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
-        metadata::cilassemblyview::CilAssemblyView,
+        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
     };
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
 
     #[test]
     fn test_paramptr_builder_new() {

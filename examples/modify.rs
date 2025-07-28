@@ -22,7 +22,7 @@
 
 use dotscope::{
     metadata::{
-        tables::{CodedIndex, TableDataOwned, TableId, TypeDefRaw},
+        tables::{CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeDefRaw},
         token::Token,
     },
     prelude::*,
@@ -86,9 +86,9 @@ fn main() -> Result<()> {
 
     // Add strings to the string heap
     println!("📝 Adding strings to #Strings heap...");
-    let hello_index = assembly.add_string("Hello from modified assembly!")?;
-    let debug_index = assembly.add_string("DEBUG_MODIFIED")?;
-    let version_index = assembly.add_string("v2.0.0-modified")?;
+    let hello_index = assembly.string_add("Hello from modified assembly!")?;
+    let debug_index = assembly.string_add("DEBUG_MODIFIED")?;
+    let version_index = assembly.string_add("v2.0.0-modified")?;
     println!("  ✅ Added 'Hello from modified assembly!' at index {hello_index}");
     println!("  ✅ Added 'DEBUG_MODIFIED' at index {debug_index}");
     println!("  ✅ Added 'v2.0.0-modified' at index {version_index}");
@@ -97,8 +97,8 @@ fn main() -> Result<()> {
     println!("📦 Adding blobs to #Blob heap...");
     let signature_blob = vec![0x07, 0x01, 0x0E]; // Sample method signature blob
     let custom_data_blob = vec![0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE];
-    let signature_index = assembly.add_blob(&signature_blob)?;
-    let custom_data_index = assembly.add_blob(&custom_data_blob)?;
+    let signature_index = assembly.blob_add(&signature_blob)?;
+    let custom_data_index = assembly.blob_add(&custom_data_blob)?;
     println!("  ✅ Added method signature blob at index {signature_index}");
     println!("  ✅ Added custom data blob at index {custom_data_index}");
 
@@ -112,15 +112,15 @@ fn main() -> Result<()> {
         0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x07, 0x18, 0x29, 0x3A, 0x4B, 0x5C, 0x6D, 0x7E, 0x8F,
         0x90,
     ];
-    let module_guid_index = assembly.add_guid(&module_guid)?;
-    let type_guid_index = assembly.add_guid(&type_guid)?;
+    let module_guid_index = assembly.guid_add(&module_guid)?;
+    let type_guid_index = assembly.guid_add(&type_guid)?;
     println!("  ✅ Added module GUID at index {module_guid_index}");
     println!("  ✅ Added type GUID at index {type_guid_index}");
 
     // Add user strings to the user string heap
     println!("💭 Adding user strings to #US heap...");
-    let user_message = assembly.add_userstring("This assembly has been modified!")?;
-    let user_warning = assembly.add_userstring("⚠️ MODIFIED ASSEMBLY")?;
+    let user_message = assembly.userstring_add("This assembly has been modified!")?;
+    let user_warning = assembly.userstring_add("⚠️ MODIFIED ASSEMBLY")?;
     println!("  ✅ Added user message at index {user_message}");
     println!("  ✅ Added user warning at index {user_warning}");
 
@@ -128,8 +128,8 @@ fn main() -> Result<()> {
     println!("✏️  Updating existing heap content...");
     // Note: In a real scenario, you would know the indices of existing content
     // For demonstration, we'll update our newly added strings
-    assembly.update_string(debug_index, "RELEASE_MODIFIED")?;
-    assembly.update_blob(custom_data_index, &[0xFF, 0xEE, 0xDD, 0xCC])?;
+    assembly.string_update(debug_index, "RELEASE_MODIFIED")?;
+    assembly.blob_update(custom_data_index, &[0xFF, 0xEE, 0xDD, 0xCC])?;
     println!("  ✅ Updated debug string to 'RELEASE_MODIFIED'");
     println!("  ✅ Updated custom data blob");
     println!();
@@ -180,17 +180,13 @@ fn main() -> Result<()> {
         flags: 0x00100001,      // Class, Public
         type_name: debug_index, // Reference to our added string
         type_namespace: 0,      // No namespace (root)
-        extends: CodedIndex {
-            tag: TableId::TypeRef,
-            row: 1, // Typically System.Object
-            token: Token::new(0x01000001),
-        },
+        extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
         field_list: 1,  // Start of field list
         method_list: 1, // Start of method list
     };
 
     let new_typedef_rid =
-        assembly.add_table_row(TableId::TypeDef, TableDataOwned::TypeDef(new_typedef))?;
+        assembly.table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(new_typedef))?;
     println!("  ✅ Added new TypeDef row with RID {new_typedef_rid}");
 
     // Update an existing table row (if any exist)
@@ -204,7 +200,7 @@ fn main() -> Result<()> {
                     let mut modified_row = first_row.clone();
                     modified_row.type_name = version_index; // Point to our version string
 
-                    assembly.update_table_row(
+                    assembly.table_row_update(
                         TableId::TypeDef,
                         1,
                         TableDataOwned::TypeDef(modified_row),
@@ -219,7 +215,7 @@ fn main() -> Result<()> {
     println!("🗑️  Demonstrating table row deletion...");
     // Note: Be very careful with deletions as they can break assembly integrity
     // For safety, we'll only delete the row we just added
-    assembly.delete_table_row(
+    assembly.table_row_remove(
         TableId::TypeDef,
         new_typedef_rid,
         ReferenceHandlingStrategy::FailIfReferenced,

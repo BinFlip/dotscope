@@ -1198,8 +1198,8 @@ impl CilPrimitive {
     /// * `blob`    - The data blob to parse for the value
     ///
     /// # Errors
-    /// Returns [`TypeNotPrimitive`] if the primitive type is invalid.
-    /// Returns [`OutOfBounds`] or other errors if the blob data is insufficient or invalid.
+    /// Returns [`crate::Error::TypeNotPrimitive`] if the primitive type is invalid.
+    /// Returns [`crate::Error::OutOfBounds`] or other errors if the blob data is insufficient or invalid.
     pub fn from_blob(p_type: u8, blob: &[u8]) -> Result<Self> {
         Ok(CilPrimitive {
             kind: CilPrimitiveKind::from_byte(p_type)?,

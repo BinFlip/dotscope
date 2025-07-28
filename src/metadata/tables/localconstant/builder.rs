@@ -80,6 +80,7 @@ impl LocalConstantBuilder {
     ///
     /// let builder = LocalConstantBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             name: None,
@@ -111,6 +112,7 @@ impl LocalConstantBuilder {
     /// let anon_builder = LocalConstantBuilder::new()
     ///     .name("");
     /// ```
+    #[must_use]
     pub fn name<T: Into<String>>(mut self, name: T) -> Self {
         self.name = Some(name.into());
         self
@@ -142,6 +144,7 @@ impl LocalConstantBuilder {
     /// let builder = LocalConstantBuilder::new()
     ///     .signature(&string_signature);
     /// ```
+    #[must_use]
     pub fn signature(mut self, signature: &[u8]) -> Self {
         self.signature = Some(signature.to_vec());
         self
@@ -199,13 +202,13 @@ impl LocalConstantBuilder {
         let name_index = if name.is_empty() {
             0
         } else {
-            context.add_string(&name)?
+            context.string_add(&name)?
         };
 
         let signature_index = if signature.is_empty() {
             0
         } else {
-            context.add_blob(&signature)?
+            context.blob_add(&signature)?
         };
 
         let local_constant = LocalConstantRaw {
@@ -216,7 +219,7 @@ impl LocalConstantBuilder {
             signature: signature_index,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::LocalConstant,
             TableDataOwned::LocalConstant(local_constant),
         )?;
@@ -237,16 +240,8 @@ impl Default for LocalConstantBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
-        metadata::cilassemblyview::CilAssemblyView,
+        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
     };
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
 
     #[test]
     fn test_localconstant_builder_new() {

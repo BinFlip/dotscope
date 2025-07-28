@@ -95,7 +95,9 @@ mod tests {
 
     use crate::metadata::tables::{
         manifestresource::ManifestResourceRaw,
-        types::{CodedIndex, RowReadable, RowWritable, TableId, TableInfo, TableRow},
+        types::{
+            CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+        },
     };
     use crate::metadata::token::Token;
 
@@ -158,7 +160,7 @@ mod tests {
             offset_field: 0x01010101,
             flags: 0x02020202,
             name: 0x0303,
-            implementation: CodedIndex::new(TableId::File, 1), // File(1) = (1 << 2) | 0 = 4
+            implementation: CodedIndex::new(TableId::File, 1, CodedIndexType::Implementation), // File(1) = (1 << 2) | 0 = 4
         };
 
         let mut buffer = vec![0u8; <ManifestResourceRaw as TableRow>::row_size(&sizes) as usize];
@@ -200,7 +202,7 @@ mod tests {
             offset_field: 0x01010101,
             flags: 0x02020202,
             name: 0x03030303,
-            implementation: CodedIndex::new(TableId::File, 1), // File(1) = (1 << 2) | 0 = 4
+            implementation: CodedIndex::new(TableId::File, 1, CodedIndexType::Implementation), // File(1) = (1 << 2) | 0 = 4
         };
 
         let mut buffer = vec![0u8; <ManifestResourceRaw as TableRow>::row_size(&sizes) as usize];
@@ -242,8 +244,12 @@ mod tests {
             offset: 0,
             offset_field: 0x12345678,
             flags: 0x87654321,
-            name: 256,                                                // String index 256
-            implementation: CodedIndex::new(TableId::AssemblyRef, 5), // AssemblyRef(5) = (5 << 2) | 1 = 21
+            name: 256, // String index 256
+            implementation: CodedIndex::new(
+                TableId::AssemblyRef,
+                5,
+                CodedIndexType::Implementation,
+            ), // AssemblyRef(5) = (5 << 2) | 1 = 21
         };
 
         // Write to buffer
@@ -296,7 +302,7 @@ mod tests {
                 offset_field,
                 flags: 0x00000001, // Public visibility
                 name: 100,
-                implementation: CodedIndex::new(impl_tag, impl_row),
+                implementation: CodedIndex::new(impl_tag, impl_row, CodedIndexType::Implementation),
             };
 
             let mut buffer =
@@ -345,7 +351,7 @@ mod tests {
                 offset_field: 1024, // Resource at offset 1024
                 flags,
                 name: 100,
-                implementation: CodedIndex::new(TableId::File, 0), // Embedded resource
+                implementation: CodedIndex::new(TableId::File, 0, CodedIndexType::Implementation), // Embedded resource
             };
 
             let mut buffer =
@@ -385,7 +391,7 @@ mod tests {
             offset_field: 0,
             flags: 0,
             name: 0,
-            implementation: CodedIndex::new(TableId::File, 0),
+            implementation: CodedIndex::new(TableId::File, 0, CodedIndexType::Implementation),
         };
 
         let mut buffer = vec![0u8; <ManifestResourceRaw as TableRow>::row_size(&sizes) as usize];
@@ -411,7 +417,11 @@ mod tests {
             offset_field: 0xFFFFFFFF,
             flags: 0xFFFFFFFF,
             name: 0xFFFF,
-            implementation: CodedIndex::new(TableId::ExportedType, 0x3FFF), // Max for 2-byte coded index
+            implementation: CodedIndex::new(
+                TableId::ExportedType,
+                0x3FFF,
+                CodedIndexType::Implementation,
+            ), // Max for 2-byte coded index
         };
 
         let mut buffer = vec![0u8; <ManifestResourceRaw as TableRow>::row_size(&sizes) as usize];
@@ -450,7 +460,7 @@ mod tests {
                 offset_field: 0x12345678,
                 flags: 0x87654321,
                 name: 0x12345678,
-                implementation: CodedIndex::new(TableId::File, 1),
+                implementation: CodedIndex::new(TableId::File, 1, CodedIndexType::Implementation),
             };
 
             // Verify row size includes correct string index size
@@ -526,7 +536,7 @@ mod tests {
                 offset_field,
                 flags,
                 name: 100,
-                implementation: CodedIndex::new(impl_tag, impl_row),
+                implementation: CodedIndex::new(impl_tag, impl_row, CodedIndexType::Implementation),
             };
 
             let mut buffer =
@@ -568,7 +578,7 @@ mod tests {
             offset_field: 0x01010101,
             flags: 0x02020202,
             name: 0x0303,
-            implementation: CodedIndex::new(TableId::File, 1), // File(1) = (1 << 2) | 0 = 4
+            implementation: CodedIndex::new(TableId::File, 1, CodedIndexType::Implementation), // File(1) = (1 << 2) | 0 = 4
         };
 
         let mut buffer = vec![0u8; <ManifestResourceRaw as TableRow>::row_size(&sizes) as usize];

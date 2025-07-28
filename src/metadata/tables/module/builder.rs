@@ -115,6 +115,7 @@ impl ModuleBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::module::ModuleBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             generation: None,
@@ -146,6 +147,7 @@ impl ModuleBuilder {
     /// let builder = ModuleBuilder::new()
     ///     .generation(0); // Always 0 per ECMA-335
     /// ```
+    #[must_use]
     pub fn generation(mut self, generation: u32) -> Self {
         self.generation = Some(generation);
         self
@@ -172,6 +174,7 @@ impl ModuleBuilder {
     /// let builder = ModuleBuilder::new()
     ///     .name("MyLibrary.dll");
     /// ```
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -201,6 +204,7 @@ impl ModuleBuilder {
     ///         0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88
     ///     ]);
     /// ```
+    #[must_use]
     pub fn mvid(mut self, mvid: &[u8; 16]) -> Self {
         self.mvid = Some(*mvid);
         self
@@ -230,6 +234,7 @@ impl ModuleBuilder {
     ///         0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99
     ///     ]);
     /// ```
+    #[must_use]
     pub fn encid(mut self, encid: &[u8; 16]) -> Self {
         self.encid = Some(*encid);
         self
@@ -259,6 +264,7 @@ impl ModuleBuilder {
     ///         0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00
     ///     ]);
     /// ```
+    #[must_use]
     pub fn encbaseid(mut self, encbaseid: &[u8; 16]) -> Self {
         self.encbaseid = Some(*encbaseid);
         self
@@ -317,23 +323,23 @@ impl ModuleBuilder {
             });
         }
 
-        let name_index = context.add_string(&name)?;
+        let name_index = context.string_add(&name)?;
 
         let mvid_index = if let Some(mvid) = self.mvid {
-            context.add_guid(&mvid)?
+            context.guid_add(&mvid)?
         } else {
             let new_mvid = generate_random_guid();
-            context.add_guid(&new_mvid)?
+            context.guid_add(&new_mvid)?
         };
 
         let encid_index = if let Some(encid) = self.encid {
-            context.add_guid(&encid)?
+            context.guid_add(&encid)?
         } else {
             0 // 0 indicates no EncId
         };
 
         let encbaseid_index = if let Some(encbaseid) = self.encbaseid {
-            context.add_guid(&encbaseid)?
+            context.guid_add(&encbaseid)?
         } else {
             0 // 0 indicates no EncBaseId
         };
@@ -353,7 +359,7 @@ impl ModuleBuilder {
         };
 
         let table_data = TableDataOwned::Module(module_raw);
-        context.add_table_row(TableId::Module, table_data)?;
+        context.table_row_add(TableId::Module, table_data)?;
 
         Ok(token)
     }
@@ -370,10 +376,19 @@ fn generate_random_guid() -> [u8; 16] {
 
     static COUNTER: AtomicU64 = AtomicU64::new(1);
 
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
+    let timestamp = u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos(),
+    )
+    .unwrap_or_else(|_| {
+        // Fallback to seconds-based timestamp if nanoseconds overflow
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    });
 
     let counter = COUNTER.fetch_add(1, Ordering::SeqCst);
     let combined = timestamp.wrapping_add(counter);
@@ -391,14 +406,7 @@ fn generate_random_guid() -> [u8; 16] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{cilassembly::CilAssembly, metadata::cilassemblyview::CilAssemblyView};
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
+    use crate::test::factories::table::assemblyref::get_test_assembly;
 
     #[test]
     fn test_module_builder_basic() -> Result<()> {

@@ -59,6 +59,7 @@ impl MethodDefBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::methoddef::MethodDefBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             name: None,
@@ -84,6 +85,7 @@ impl MethodDefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -124,6 +126,7 @@ impl MethodDefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn flags(mut self, flags: u32) -> Self {
         self.flags = Some(flags);
         self
@@ -152,6 +155,7 @@ impl MethodDefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn impl_flags(mut self, impl_flags: u32) -> Self {
         self.impl_flags = Some(impl_flags);
         self
@@ -179,6 +183,7 @@ impl MethodDefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn signature(mut self, signature: &[u8]) -> Self {
         self.signature = Some(signature.to_vec());
         self
@@ -197,6 +202,7 @@ impl MethodDefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn rva(mut self, rva: u32) -> Self {
         self.rva = Some(rva);
         self
@@ -215,6 +221,7 @@ impl MethodDefBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn param_list(mut self, param_list: u32) -> Self {
         self.param_list = Some(param_list);
         self
@@ -270,8 +277,8 @@ impl MethodDefBuilder {
 
         let rva = self.rva.unwrap_or(0); // Default to 0 (abstract/interface method)
         let param_list = self.param_list.unwrap_or(0); // Default to 0 (no parameters)
-        let name_index = context.get_or_add_string(&name)?;
-        let signature_index = context.add_blob(&signature)?;
+        let name_index = context.string_get_or_add(&name)?;
+        let signature_index = context.blob_add(&signature)?;
         let rid = context.next_rid(TableId::MethodDef);
 
         let token_value = ((TableId::MethodDef as u32) << 24) | rid;
@@ -290,7 +297,7 @@ impl MethodDefBuilder {
         };
 
         // Add the method to the table
-        context.add_table_row(TableId::MethodDef, TableDataOwned::MethodDef(method_raw))
+        context.table_row_add(TableId::MethodDef, TableDataOwned::MethodDef(method_raw))
     }
 }
 

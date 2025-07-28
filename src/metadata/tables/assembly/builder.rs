@@ -55,6 +55,7 @@ impl AssemblyBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::assembly::AssemblyBuilder`] ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             hash_alg_id: None,
@@ -78,6 +79,7 @@ impl AssemblyBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -95,11 +97,12 @@ impl AssemblyBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn version(mut self, major: u16, minor: u16, build: u16, revision: u16) -> Self {
-        self.major_version = Some(major as u32);
-        self.minor_version = Some(minor as u32);
-        self.build_number = Some(build as u32);
-        self.revision_number = Some(revision as u32);
+        self.major_version = Some(u32::from(major));
+        self.minor_version = Some(u32::from(minor));
+        self.build_number = Some(u32::from(build));
+        self.revision_number = Some(u32::from(revision));
         self
     }
 
@@ -112,6 +115,7 @@ impl AssemblyBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn culture(mut self, culture: impl Into<String>) -> Self {
         self.culture = Some(culture.into());
         self
@@ -126,6 +130,7 @@ impl AssemblyBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn flags(mut self, flags: u32) -> Self {
         self.flags = Some(flags);
         self
@@ -140,6 +145,7 @@ impl AssemblyBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn hash_algorithm(mut self, hash_alg_id: u32) -> Self {
         self.hash_alg_id = Some(hash_alg_id);
         self
@@ -154,6 +160,7 @@ impl AssemblyBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn public_key(mut self, public_key: Vec<u8>) -> Self {
         self.public_key = Some(public_key);
         self
@@ -182,20 +189,20 @@ impl AssemblyBuilder {
             .ok_or_else(|| malformed_error!("Assembly name is required"))?;
 
         // Add strings to heaps and get indices
-        let name_index = context.add_string(&name)?;
+        let name_index = context.string_add(&name)?;
 
         let culture_index = if let Some(culture) = &self.culture {
             if culture == "neutral" || culture.is_empty() {
                 0 // Culture-neutral assembly
             } else {
-                context.add_string(culture)?
+                context.string_add(culture)?
             }
         } else {
             0 // Default to culture-neutral
         };
 
         let public_key_index = if let Some(public_key) = &self.public_key {
-            context.add_blob(public_key)?
+            context.blob_add(public_key)?
         } else {
             0 // No public key (unsigned assembly)
         };
@@ -220,7 +227,7 @@ impl AssemblyBuilder {
         };
 
         // Add the row to the assembly and return the token
-        context.add_table_row(TableId::Assembly, TableDataOwned::Assembly(assembly_raw))
+        context.table_row_add(TableId::Assembly, TableDataOwned::Assembly(assembly_raw))
     }
 }
 

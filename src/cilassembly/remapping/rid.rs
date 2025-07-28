@@ -248,12 +248,12 @@ impl RidRemapper {
 
         // First, map all original RIDs that aren't deleted
         for original_rid in 1..=original_count {
-            if !deleted_rids.contains(&original_rid) {
-                self.mapping.insert(original_rid, Some(final_rid));
-                final_rid += 1;
-            } else {
+            if deleted_rids.contains(&original_rid) {
                 // Mark deleted RIDs as None
                 self.mapping.insert(original_rid, None);
+            } else {
+                self.mapping.insert(original_rid, Some(final_rid));
+                final_rid += 1;
             }
         }
 
@@ -332,28 +332,45 @@ impl RidRemapper {
     pub fn next_available_rid(&self) -> u32 {
         self.next_rid
     }
+
+    /// Returns the original RID that maps to the given final RID.
+    ///
+    /// This performs a reverse lookup to find which original RID corresponds to a specific
+    /// final RID in the sequential mapping. Used during table writing to iterate through
+    /// final RIDs in order while accessing the correct original row data.
+    ///
+    /// # Arguments
+    ///
+    /// * `final_rid` - The final RID to look up (1-based)
+    ///
+    /// # Returns
+    ///
+    /// The original RID that maps to the given final RID, or `None` if no mapping exists.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// let remapper = RidRemapper::build_from_operations(&operations, 5);
+    /// // If original RID 3 maps to final RID 2 (due to deletions)
+    /// assert_eq!(remapper.reverse_lookup(2), Some(3));
+    /// ```
+    pub fn reverse_lookup(&self, final_rid: u32) -> Option<u32> {
+        for (&original_rid, &mapped_rid) in &self.mapping {
+            if mapped_rid == Some(final_rid) {
+                return Some(original_rid);
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cilassembly::{Operation, TableOperation};
-    use crate::metadata::tables::{CodedIndex, TableDataOwned, TableId, TypeDefRaw};
-    use crate::metadata::token::Token;
-
-    fn create_test_row() -> TableDataOwned {
-        TableDataOwned::TypeDef(TypeDefRaw {
-            rid: 0,
-            token: Token::new(0x02000000),
-            offset: 0,
-            flags: 0,
-            type_name: 1,
-            type_namespace: 0,
-            extends: CodedIndex::new(TableId::TypeRef, 0),
-            field_list: 1,
-            method_list: 1,
-        })
-    }
+    use crate::{
+        cilassembly::{Operation, TableOperation},
+        test::factories::table::cilassembly::create_test_row,
+    };
 
     #[test]
     fn test_rid_remapper_no_operations() {

@@ -85,6 +85,7 @@ impl EventBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::event::EventBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             name: None,
@@ -106,6 +107,7 @@ impl EventBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -126,6 +128,7 @@ impl EventBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn flags(mut self, flags: u32) -> Self {
         self.flags = Some(flags);
         self
@@ -149,6 +152,7 @@ impl EventBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn event_type(mut self, event_type: CodedIndex) -> Self {
         self.event_type = Some(event_type);
         self
@@ -208,7 +212,7 @@ impl EventBuilder {
             });
         }
 
-        let name_index = context.get_or_add_string(&name)?;
+        let name_index = context.string_get_or_add(&name)?;
         let rid = context.next_rid(TableId::Event);
         let token_value = ((TableId::Event as u32) << 24) | rid;
         let token = Token::new(token_value);
@@ -222,7 +226,7 @@ impl EventBuilder {
             event_type,
         };
 
-        context.add_table_row(TableId::Event, TableDataOwned::Event(event_raw))
+        context.table_row_add(TableId::Event, TableDataOwned::Event(event_raw))
     }
 }
 
@@ -248,7 +252,8 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Create a TypeDefOrRef coded index (System.EventHandler)
-            let event_handler_type = CodedIndex::new(TableId::TypeRef, 1);
+            let event_handler_type =
+                CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef);
 
             let token = EventBuilder::new()
                 .name("TestEvent")
@@ -271,7 +276,8 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Create a TypeDefOrRef coded index
-            let event_handler_type = CodedIndex::new(TableId::TypeRef, 2);
+            let event_handler_type =
+                CodedIndex::new(TableId::TypeRef, 2, CodedIndexType::TypeDefOrRef);
 
             // Create an event with special naming
             let token = EventBuilder::new()
@@ -294,7 +300,8 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Create a TypeDefOrRef coded index
-            let event_handler_type = CodedIndex::new(TableId::TypeRef, 3);
+            let event_handler_type =
+                CodedIndex::new(TableId::TypeRef, 3, CodedIndexType::TypeDefOrRef);
 
             // Create an event with runtime special naming
             let token = EventBuilder::new()
@@ -316,7 +323,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let event_handler_type = CodedIndex::new(TableId::TypeRef, 1);
+            let event_handler_type =
+                CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef);
 
             let result = EventBuilder::new()
                 .flags(0)
@@ -335,7 +343,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let event_handler_type = CodedIndex::new(TableId::TypeRef, 1);
+            let event_handler_type =
+                CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef);
 
             let result = EventBuilder::new()
                 .name("TestEvent")
@@ -372,7 +381,7 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Use wrong coded index type (not TypeDefOrRef)
-            let wrong_type = CodedIndex::new(TableId::MethodDef, 1); // MethodDef is not valid for TypeDefOrRef
+            let wrong_type = CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::TypeDefOrRef); // MethodDef is not valid for TypeDefOrRef
 
             let result = EventBuilder::new()
                 .name("TestEvent")
@@ -392,9 +401,12 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let event_handler_type1 = CodedIndex::new(TableId::TypeRef, 1);
-            let event_handler_type2 = CodedIndex::new(TableId::TypeRef, 2);
-            let event_handler_type3 = CodedIndex::new(TableId::TypeRef, 3);
+            let event_handler_type1 =
+                CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef);
+            let event_handler_type2 =
+                CodedIndex::new(TableId::TypeRef, 2, CodedIndexType::TypeDefOrRef);
+            let event_handler_type3 =
+                CodedIndex::new(TableId::TypeRef, 3, CodedIndexType::TypeDefOrRef);
 
             // Create multiple events
             let event1 = EventBuilder::new()

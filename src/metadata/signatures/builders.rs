@@ -99,7 +99,7 @@
 //! All builders produce signature structures that can be encoded using the existing
 //! [`crate::metadata::typesystem::encoder::TypeSignatureEncoder`] and stored in blob heaps.
 //! Integration with the assembly modification system is provided through the
-//! [`crate::cilassembly::builder::BuilderContext`].
+//! [`crate::cilassembly::BuilderContext`].
 //!
 //! # Validation and Error Handling
 //!
@@ -279,6 +279,7 @@ impl MethodSignatureBuilder {
     ///
     /// # Arguments
     /// * `has_this` - `true` for instance methods, `false` for static methods
+    #[must_use]
     pub fn has_this(mut self, has_this: bool) -> Self {
         self.signature.has_this = has_this;
         self
@@ -291,6 +292,7 @@ impl MethodSignatureBuilder {
     ///
     /// # Arguments
     /// * `explicit_this` - `true` if `this` is explicitly declared
+    #[must_use]
     pub fn explicit_this(mut self, explicit_this: bool) -> Self {
         self.signature.explicit_this = explicit_this;
         self
@@ -315,6 +317,7 @@ impl MethodSignatureBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn generic_param_count(mut self, count: u32) -> Self {
         self.signature.param_count_generic = count;
         self
@@ -336,6 +339,7 @@ impl MethodSignatureBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn returns(mut self, return_type: TypeSignature) -> Self {
         self.signature.return_type.base = return_type;
         self
@@ -344,6 +348,7 @@ impl MethodSignatureBuilder {
     /// Sets the return type to be passed by reference.
     ///
     /// This is used for methods that return references (`ref` returns in C#).
+    #[must_use]
     pub fn returns_by_ref(mut self) -> Self {
         self.signature.return_type.by_ref = true;
         self
@@ -354,6 +359,7 @@ impl MethodSignatureBuilder {
     /// # Arguments
     /// * `modifier_token` - Token referencing the modifier type
     /// * `is_required` - Whether this is a required (modreq) or optional (modopt) modifier
+    #[must_use]
     pub fn return_modifier(mut self, modifier_token: Token, is_required: bool) -> Self {
         self.signature.return_type.modifiers.push(CustomModifier {
             is_required,
@@ -382,6 +388,7 @@ impl MethodSignatureBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn param(mut self, param_type: TypeSignature) -> Self {
         let param = SignatureParameter {
             modifiers: vec![],
@@ -398,6 +405,7 @@ impl MethodSignatureBuilder {
     ///
     /// # Arguments
     /// * `param_type` - The type signature for the parameter
+    #[must_use]
     pub fn param_by_ref(mut self, param_type: TypeSignature) -> Self {
         let param = SignatureParameter {
             modifiers: vec![],
@@ -413,6 +421,7 @@ impl MethodSignatureBuilder {
     /// # Arguments
     /// * `param_type` - The type signature for the parameter
     /// * `modifiers` - Custom modifiers to apply to the parameter
+    #[must_use]
     pub fn param_with_modifiers(
         mut self,
         param_type: TypeSignature,
@@ -450,6 +459,7 @@ impl MethodSignatureBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn vararg_param(mut self, param_type: TypeSignature) -> Self {
         let param = SignatureParameter {
             modifiers: vec![],
@@ -514,7 +524,11 @@ impl MethodSignatureBuilder {
         }
 
         // Update param_count to match actual parameter count
-        self.signature.param_count = self.signature.params.len() as u32;
+        self.signature.param_count = u32::try_from(self.signature.params.len()).map_err(|_| {
+            Error::ModificationInvalidOperation {
+                details: format!("Too many parameters: {}", self.signature.params.len()),
+            }
+        })?;
 
         Ok(self.signature)
     }
@@ -578,6 +592,7 @@ pub struct FieldSignatureBuilder {
 
 impl FieldSignatureBuilder {
     /// Creates a new field signature builder.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             field_type: None,
@@ -589,6 +604,7 @@ impl FieldSignatureBuilder {
     ///
     /// # Arguments
     /// * `field_type` - The type signature for the field
+    #[must_use]
     pub fn field_type(mut self, field_type: TypeSignature) -> Self {
         self.field_type = Some(field_type);
         self
@@ -601,6 +617,7 @@ impl FieldSignatureBuilder {
     ///
     /// # Arguments
     /// * `modifier_token` - Token referencing the modifier type
+    #[must_use]
     pub fn custom_modifier(mut self, modifier_token: Token, is_required: bool) -> Self {
         self.modifiers.push(CustomModifier {
             is_required,
@@ -678,6 +695,7 @@ pub struct PropertySignatureBuilder {
 
 impl PropertySignatureBuilder {
     /// Creates a new property signature builder.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             signature: SignatureProperty {
@@ -696,6 +714,7 @@ impl PropertySignatureBuilder {
     ///
     /// # Arguments
     /// * `has_this` - `true` for instance properties, `false` for static properties
+    #[must_use]
     pub fn has_this(mut self, has_this: bool) -> Self {
         self.signature.has_this = has_this;
         self
@@ -705,6 +724,7 @@ impl PropertySignatureBuilder {
     ///
     /// # Arguments
     /// * `property_type` - The type signature for the property's value
+    #[must_use]
     pub fn property_type(mut self, property_type: TypeSignature) -> Self {
         self.signature.base = property_type;
         self
@@ -715,6 +735,7 @@ impl PropertySignatureBuilder {
     /// # Arguments
     /// * `modifier_token` - Token referencing the modifier type
     /// * `is_required` - Whether this is a required (modreq) or optional (modopt) modifier
+    #[must_use]
     pub fn property_type_modifier(mut self, modifier_token: Token, is_required: bool) -> Self {
         self.signature.modifiers.push(CustomModifier {
             is_required,
@@ -730,6 +751,7 @@ impl PropertySignatureBuilder {
     ///
     /// # Arguments
     /// * `param_type` - The type signature for the index parameter
+    #[must_use]
     pub fn param(mut self, param_type: TypeSignature) -> Self {
         let param = SignatureParameter {
             modifiers: vec![],
@@ -744,6 +766,7 @@ impl PropertySignatureBuilder {
     ///
     /// # Arguments
     /// * `param_type` - The type signature for the index parameter
+    #[must_use]
     pub fn param_by_ref(mut self, param_type: TypeSignature) -> Self {
         let param = SignatureParameter {
             modifiers: vec![],
@@ -758,6 +781,10 @@ impl PropertySignatureBuilder {
     ///
     /// # Returns
     /// A [`SignatureProperty`] instance ready for encoding.
+    ///
+    /// # Errors
+    /// This function currently never returns an error, but the `Result` return type
+    /// allows for future validation logic to be added without breaking API compatibility.
     pub fn build(self) -> Result<SignatureProperty> {
         Ok(self.signature)
     }
@@ -809,6 +836,7 @@ pub struct LocalVariableSignatureBuilder {
 
 impl LocalVariableSignatureBuilder {
     /// Creates a new local variable signature builder.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             signature: SignatureLocalVariables { locals: vec![] },
@@ -819,6 +847,7 @@ impl LocalVariableSignatureBuilder {
     ///
     /// # Arguments
     /// * `local_type` - The type signature for the local variable
+    #[must_use]
     pub fn add_local(mut self, local_type: TypeSignature) -> Self {
         let local = SignatureLocalVariable {
             modifiers: vec![],
@@ -837,6 +866,7 @@ impl LocalVariableSignatureBuilder {
     ///
     /// # Arguments
     /// * `local_type` - The type signature for the pinned local variable
+    #[must_use]
     pub fn add_pinned_local(mut self, local_type: TypeSignature) -> Self {
         let local = SignatureLocalVariable {
             modifiers: vec![],
@@ -855,6 +885,7 @@ impl LocalVariableSignatureBuilder {
     ///
     /// # Arguments
     /// * `local_type` - The type signature for the referenced type
+    #[must_use]
     pub fn add_byref_local(mut self, local_type: TypeSignature) -> Self {
         let local = SignatureLocalVariable {
             modifiers: vec![],
@@ -871,6 +902,7 @@ impl LocalVariableSignatureBuilder {
     /// # Arguments
     /// * `local_type` - The type signature for the local variable
     /// * `modifiers` - Custom modifiers to apply to the local
+    #[must_use]
     pub fn add_local_with_modifiers(
         mut self,
         local_type: TypeSignature,
@@ -890,6 +922,10 @@ impl LocalVariableSignatureBuilder {
     ///
     /// # Returns
     /// A [`SignatureLocalVariables`] instance ready for encoding.
+    ///
+    /// # Errors
+    /// This function currently never returns an error, but the `Result` return type
+    /// allows for future validation logic to be added without breaking API compatibility.
     pub fn build(self) -> Result<SignatureLocalVariables> {
         Ok(self.signature)
     }
@@ -947,6 +983,7 @@ pub struct TypeSpecSignatureBuilder {
 
 impl TypeSpecSignatureBuilder {
     /// Creates a new type specification signature builder.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             type_signature: None,
@@ -957,6 +994,7 @@ impl TypeSpecSignatureBuilder {
     ///
     /// # Arguments
     /// * `type_signature` - The type signature for the type specification
+    #[must_use]
     pub fn type_signature(mut self, type_signature: TypeSignature) -> Self {
         self.type_signature = Some(type_signature);
         self
@@ -988,6 +1026,7 @@ impl TypeSpecSignatureBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn generic_instantiation(
         mut self,
         base_type: TypeSignature,

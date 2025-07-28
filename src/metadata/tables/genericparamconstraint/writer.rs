@@ -89,7 +89,9 @@ mod tests {
 
     use crate::metadata::tables::{
         genericparamconstraint::GenericParamConstraintRaw,
-        types::{CodedIndex, RowReadable, RowWritable, TableId, TableInfo, TableRow},
+        types::{
+            CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+        },
     };
     use crate::metadata::token::Token;
 
@@ -153,7 +155,7 @@ mod tests {
             token: Token::new(0x2C000001),
             offset: 0,
             owner: 0x0101,
-            constraint: CodedIndex::new(TableId::TypeDef, 2), // TypeDef(2) = (2 << 2) | 0 = 8
+            constraint: CodedIndex::new(TableId::TypeDef, 2, CodedIndexType::TypeDefOrRef), // TypeDef(2) = (2 << 2) | 0 = 8
         };
 
         let mut buffer =
@@ -193,7 +195,7 @@ mod tests {
             token: Token::new(0x2C000001),
             offset: 0,
             owner: 0x01010101,
-            constraint: CodedIndex::new(TableId::TypeDef, 2), // TypeDef(2) = (2 << 2) | 0 = 8
+            constraint: CodedIndex::new(TableId::TypeDef, 2, CodedIndexType::TypeDefOrRef), // TypeDef(2) = (2 << 2) | 0 = 8
         };
 
         let mut buffer =
@@ -233,8 +235,8 @@ mod tests {
             rid: 42,
             token: Token::new(0x2C00002A),
             offset: 0,
-            owner: 25,                                         // GenericParam index 25
-            constraint: CodedIndex::new(TableId::TypeRef, 10), // TypeRef(10) = (10 << 2) | 1 = 41
+            owner: 25, // GenericParam index 25
+            constraint: CodedIndex::new(TableId::TypeRef, 10, CodedIndexType::TypeDefOrRef), // TypeRef(10) = (10 << 2) | 1 = 41
         };
 
         // Write to buffer
@@ -291,7 +293,11 @@ mod tests {
                 token: Token::new(0x2C000001),
                 offset: 0,
                 owner: owner_idx,
-                constraint: CodedIndex::new(constraint_tag, constraint_row),
+                constraint: CodedIndex::new(
+                    constraint_tag,
+                    constraint_row,
+                    CodedIndexType::TypeDefOrRef,
+                ),
             };
 
             let mut buffer =
@@ -342,7 +348,11 @@ mod tests {
                 token: Token::new(0x2C000000 + param_idx),
                 offset: 0,
                 owner: param_idx,
-                constraint: CodedIndex::new(constraint_tag, constraint_row),
+                constraint: CodedIndex::new(
+                    constraint_tag,
+                    constraint_row,
+                    CodedIndexType::TypeDefOrRef,
+                ),
             };
 
             let mut buffer =
@@ -391,7 +401,11 @@ mod tests {
                 token: Token::new(0x2C000001),
                 offset: 0,
                 owner: param_idx,
-                constraint: CodedIndex::new(constraint_tag, constraint_row),
+                constraint: CodedIndex::new(
+                    constraint_tag,
+                    constraint_row,
+                    CodedIndexType::TypeDefOrRef,
+                ),
             };
 
             let mut buffer =
@@ -431,7 +445,7 @@ mod tests {
             token: Token::new(0x2C000001),
             offset: 0,
             owner: 0,
-            constraint: CodedIndex::new(TableId::TypeDef, 0), // TypeDef(0) = (0 << 2) | 0 = 0
+            constraint: CodedIndex::new(TableId::TypeDef, 0, CodedIndexType::TypeDefOrRef), // TypeDef(0) = (0 << 2) | 0 = 0
         };
 
         let mut buffer =
@@ -454,7 +468,7 @@ mod tests {
             token: Token::new(0x2C000001),
             offset: 0,
             owner: 0xFFFF,
-            constraint: CodedIndex::new(TableId::TypeSpec, 0x3FFF), // Max for 2-byte coded index
+            constraint: CodedIndex::new(TableId::TypeSpec, 0x3FFF, CodedIndexType::TypeDefOrRef), // Max for 2-byte coded index
         };
 
         let mut buffer =
@@ -497,7 +511,11 @@ mod tests {
                 token: Token::new(0x2C000001),
                 offset: 0,
                 owner: 1,
-                constraint: CodedIndex::new(constraint_tag, constraint_row),
+                constraint: CodedIndex::new(
+                    constraint_tag,
+                    constraint_row,
+                    CodedIndexType::TypeDefOrRef,
+                ),
             };
 
             let mut buffer =
@@ -540,7 +558,7 @@ mod tests {
             token: Token::new(0x2C000001),
             offset: 0,
             owner: 0x0101,
-            constraint: CodedIndex::new(TableId::TypeDef, 2), // TypeDef(2) = (2 << 2) | 0 = 8
+            constraint: CodedIndex::new(TableId::TypeDef, 2, CodedIndexType::TypeDefOrRef), // TypeDef(2) = (2 << 2) | 0 = 8
         };
 
         let mut buffer =

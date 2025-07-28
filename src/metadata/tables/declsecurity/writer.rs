@@ -90,7 +90,9 @@ mod tests {
 
     use crate::metadata::tables::{
         declsecurity::DeclSecurityRaw,
-        types::{CodedIndex, RowReadable, RowWritable, TableId, TableInfo, TableRow},
+        types::{
+            CodedIndex, CodedIndexType, RowReadable, RowWritable, TableId, TableInfo, TableRow,
+        },
     };
     use crate::metadata::token::Token;
 
@@ -151,7 +153,7 @@ mod tests {
             token: Token::new(0x0E000001),
             offset: 0,
             action: 0x0101,
-            parent: CodedIndex::new(TableId::Assembly, 128), // Assembly(128) = (128 << 2) | 2 = 514
+            parent: CodedIndex::new(TableId::Assembly, 128, CodedIndexType::HasDeclSecurity), // Assembly(128) = (128 << 2) | 2 = 514
             permission_set: 0x0303,
         };
 
@@ -192,7 +194,7 @@ mod tests {
             token: Token::new(0x0E000001),
             offset: 0,
             action: 0x0101,
-            parent: CodedIndex::new(TableId::Assembly, 0x808080), // Assembly(0x808080) = (0x808080 << 2) | 2 = 0x2020202
+            parent: CodedIndex::new(TableId::Assembly, 0x808080, CodedIndexType::HasDeclSecurity), // Assembly(0x808080) = (0x808080 << 2) | 2 = 0x2020202
             permission_set: 0x03030303,
         };
 
@@ -232,9 +234,9 @@ mod tests {
             rid: 42,
             token: Token::new(0x0E00002A),
             offset: 0,
-            action: 2,                                     // Demand security action
-            parent: CodedIndex::new(TableId::TypeDef, 25), // TypeDef(25) = (25 << 2) | 0 = 100
-            permission_set: 128,                           // Blob index 128
+            action: 2, // Demand security action
+            parent: CodedIndex::new(TableId::TypeDef, 25, CodedIndexType::HasDeclSecurity), // TypeDef(25) = (25 << 2) | 0 = 100
+            permission_set: 128, // Blob index 128
         };
 
         // Write to buffer
@@ -284,7 +286,7 @@ mod tests {
                 token: Token::new(0x0E000001),
                 offset: 0,
                 action,
-                parent: CodedIndex::new(parent_tag, parent_row),
+                parent: CodedIndex::new(parent_tag, parent_row, CodedIndexType::HasDeclSecurity),
                 permission_set: blob_index,
             };
 
@@ -338,7 +340,7 @@ mod tests {
                 token: Token::new(0x0E000001),
                 offset: 0,
                 action: action_value,
-                parent: CodedIndex::new(TableId::TypeDef, 1),
+                parent: CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasDeclSecurity),
                 permission_set: 100,
             };
 
@@ -373,7 +375,7 @@ mod tests {
             token: Token::new(0x0E000001),
             offset: 0,
             action: 0,
-            parent: CodedIndex::new(TableId::TypeDef, 0), // TypeDef(0) = (0 << 2) | 0 = 0
+            parent: CodedIndex::new(TableId::TypeDef, 0, CodedIndexType::HasDeclSecurity), // TypeDef(0) = (0 << 2) | 0 = 0
             permission_set: 0,
         };
 
@@ -397,7 +399,7 @@ mod tests {
             token: Token::new(0x0E000001),
             offset: 0,
             action: 0xFFFF,
-            parent: CodedIndex::new(TableId::Assembly, 0x3FFF), // Max for 2-byte coded index
+            parent: CodedIndex::new(TableId::Assembly, 0x3FFF, CodedIndexType::HasDeclSecurity), // Max for 2-byte coded index
             permission_set: 0xFFFF,
         };
 
@@ -439,7 +441,7 @@ mod tests {
                 token: Token::new(0x0E000001),
                 offset: 0,
                 action,
-                parent: CodedIndex::new(parent_tag, parent_row),
+                parent: CodedIndex::new(parent_tag, parent_row, CodedIndexType::HasDeclSecurity),
                 permission_set: blob_index,
             };
 
@@ -474,7 +476,7 @@ mod tests {
             token: Token::new(0x0E000001),
             offset: 0,
             action: 0x0101,
-            parent: CodedIndex::new(TableId::Assembly, 128), // Assembly(128) = (128 << 2) | 2 = 514 = 0x0202
+            parent: CodedIndex::new(TableId::Assembly, 128, CodedIndexType::HasDeclSecurity), // Assembly(128) = (128 << 2) | 2 = 514 = 0x0202
             permission_set: 0x0303,
         };
 

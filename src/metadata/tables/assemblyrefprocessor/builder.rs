@@ -89,6 +89,7 @@ impl AssemblyRefProcessorBuilder {
     ///
     /// let builder = AssemblyRefProcessorBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             processor: None,
@@ -127,6 +128,7 @@ impl AssemblyRefProcessorBuilder {
     /// let builder = AssemblyRefProcessorBuilder::new()
     ///     .processor(0xAA64);
     /// ```
+    #[must_use]
     pub fn processor(mut self, processor: u32) -> Self {
         self.processor = Some(processor);
         self
@@ -151,6 +153,7 @@ impl AssemblyRefProcessorBuilder {
     /// let builder = AssemblyRefProcessorBuilder::new()
     ///     .assembly_ref(1);  // References first AssemblyRef
     /// ```
+    #[must_use]
     pub fn assembly_ref(mut self, assembly_ref: u32) -> Self {
         self.assembly_ref = Some(assembly_ref);
         self
@@ -210,7 +213,7 @@ impl AssemblyRefProcessorBuilder {
             assembly_ref,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::AssemblyRefProcessor,
             TableDataOwned::AssemblyRefProcessor(assembly_ref_processor),
         )?;
@@ -231,16 +234,8 @@ impl Default for AssemblyRefProcessorBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
-        metadata::cilassemblyview::CilAssemblyView,
+        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
     };
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
 
     #[test]
     fn test_assemblyrefprocessor_builder_new() {

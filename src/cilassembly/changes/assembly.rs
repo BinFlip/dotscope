@@ -45,7 +45,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    cilassembly::{HeapChanges, TableModifications},
+    cilassembly::{write::utils::compressed_uint_size, HeapChanges, TableModifications},
     metadata::{
         cilassemblyview::CilAssemblyView, exports::UnifiedExportContainer,
         imports::UnifiedImportContainer, tables::TableId,
@@ -174,15 +174,34 @@ impl AssemblyChanges {
             if let Some(strings) = view.strings() {
                 let mut actual_end = 1u32; // Start after mandatory null byte at index 0
                 for (offset, string) in strings.iter() {
-                    let string_end = offset as u32 + string.len() as u32 + 1; // +1 for null terminator
+                    let string_end = u32::try_from(offset).unwrap_or(0)
+                        + u32::try_from(string.len()).unwrap_or(0)
+                        + 1; // +1 for null terminator
                     actual_end = actual_end.max(string_end);
                 }
                 let _stream_size = view
                     .streams()
                     .iter()
                     .find(|stream| stream.name == stream_name)
-                    .map(|stream| stream.size)
-                    .unwrap_or(1);
+                    .map_or(1, |stream| stream.size);
+                actual_end
+            } else {
+                1
+            }
+        } else if stream_name == "#US" {
+            // For UserString heap, calculate actual end of content, not padded stream size
+            if let Some(userstrings) = view.userstrings() {
+                let mut actual_end = 1u32; // Start after mandatory null byte at index 0
+                for (offset, userstring) in userstrings.iter() {
+                    let string_val = userstring.to_string_lossy();
+                    let utf16_bytes = string_val.encode_utf16().count() * 2;
+                    let total_length = utf16_bytes + 1; // +1 for terminator
+                    let compressed_length_size = compressed_uint_size(total_length);
+                    let entry_end = u32::try_from(offset).unwrap_or(0)
+                        + u32::try_from(compressed_length_size).unwrap_or(0)
+                        + u32::try_from(total_length).unwrap_or(0);
+                    actual_end = actual_end.max(entry_end);
+                }
                 actual_end
             } else {
                 1
@@ -192,8 +211,7 @@ impl AssemblyChanges {
             view.streams()
                 .iter()
                 .find(|stream| stream.name == stream_name)
-                .map(|stream| stream.size)
-                .unwrap_or(1)
+                .map_or(1, |stream| stream.size)
         }
     }
 

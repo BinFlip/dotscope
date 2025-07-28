@@ -84,6 +84,7 @@ impl StateMachineMethodBuilder {
     ///
     /// let builder = StateMachineMethodBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             move_next_method: None,
@@ -110,6 +111,7 @@ impl StateMachineMethodBuilder {
     /// let builder = StateMachineMethodBuilder::new()
     ///     .move_next_method(123);  // RID of compiler-generated method
     /// ```
+    #[must_use]
     pub fn move_next_method(mut self, move_next_method: u32) -> Self {
         self.move_next_method = Some(move_next_method);
         self
@@ -134,6 +136,7 @@ impl StateMachineMethodBuilder {
     /// let builder = StateMachineMethodBuilder::new()
     ///     .kickoff_method(45);  // RID of original user method
     /// ```
+    #[must_use]
     pub fn kickoff_method(mut self, kickoff_method: u32) -> Self {
         self.kickoff_method = Some(kickoff_method);
         self
@@ -193,7 +196,7 @@ impl StateMachineMethodBuilder {
             kickoff_method,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::StateMachineMethod,
             TableDataOwned::StateMachineMethod(state_machine_method),
         )?;
@@ -214,16 +217,8 @@ impl Default for StateMachineMethodBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
-        metadata::cilassemblyview::CilAssemblyView,
+        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
     };
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
 
     #[test]
     fn test_statemachinemethod_builder_new() {

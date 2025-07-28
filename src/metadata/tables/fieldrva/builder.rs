@@ -131,6 +131,7 @@ impl FieldRVABuilder {
     /// # use dotscope::prelude::*;
     /// let builder = FieldRVABuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             field: None,
@@ -166,6 +167,7 @@ impl FieldRVABuilder {
     ///     .field(field_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn field(mut self, field_token: Token) -> Self {
         self.field = Some(field_token);
         self
@@ -188,6 +190,7 @@ impl FieldRVABuilder {
     /// let builder = FieldRVABuilder::new()
     ///     .rva(0x2000); // RVA pointing to initial data
     /// ```
+    #[must_use]
     pub fn rva(mut self, rva: u32) -> Self {
         self.rva = Some(rva);
         self
@@ -281,7 +284,7 @@ impl FieldRVABuilder {
         };
 
         let table_data = TableDataOwned::FieldRVA(field_rva);
-        context.add_table_row(TableId::FieldRVA, table_data)?;
+        context.table_row_add(TableId::FieldRVA, table_data)?;
 
         Ok(token)
     }
@@ -291,19 +294,9 @@ impl FieldRVABuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::CilAssembly,
-        metadata::{
-            cilassemblyview::CilAssemblyView,
-            tables::{FieldAttributes, TableId},
-        },
+        metadata::tables::{FieldAttributes, TableId},
+        test::factories::table::assemblyref::get_test_assembly,
     };
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
 
     #[test]
     fn test_field_rva_builder_basic() -> Result<()> {

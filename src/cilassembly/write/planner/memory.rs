@@ -54,7 +54,7 @@
 //!
 //! // Find space for a table within existing sections
 //! let allocated_regions = vec![(0x2000, 0x100)]; // Example allocated regions
-//! if let Some(rva) = find_space_in_sections(&assembly, 0x200, &allocated_regions)? {
+//! if let Some(rva) = find_space_in_sections(&assembly, 0x200, &allocated_regions) {
 //!     println!("Found space at RVA: 0x{:X}", rva);
 //! }
 //! # Ok::<(), crate::Error>(())
@@ -71,7 +71,7 @@
 //! - [`crate::cilassembly::write::planner::validation`] - Space allocation validation
 //! - [`crate::cilassembly::write::planner::FileLayout`] - File layout planning
 //! - [`crate::cilassembly::write::planner::NativeTableRequirements`] - Native table space requirements
-//! - [`crate::cilassembly::file`] - PE file structure analysis
+//! - [`crate::file::File`] - PE file structure analysis
 
 use crate::{
     cilassembly::{
@@ -110,11 +110,10 @@ use crate::{
 ///
 /// # let assembly = CilAssembly::new(view);
 /// // Convert RVA to file offset
-/// let file_offset = rva_to_file_offset_for_planning(&assembly, 0x2000)?;
+/// let file_offset = rva_to_file_offset_for_planning(&assembly, 0x2000);
 /// println!("RVA 0x2000 maps to file offset: 0x{:X}", file_offset);
-/// # Ok::<(), crate::Error>(())
 /// ```
-pub fn rva_to_file_offset_for_planning(assembly: &CilAssembly, rva: u32) -> Result<u64> {
+pub fn rva_to_file_offset_for_planning(assembly: &CilAssembly, rva: u32) -> u64 {
     let file = assembly.file();
 
     for section in file.sections() {
@@ -123,14 +122,14 @@ pub fn rva_to_file_offset_for_planning(assembly: &CilAssembly, rva: u32) -> Resu
 
         if rva >= section_start && rva < section_end {
             let offset_in_section = rva - section_start;
-            let file_offset = section.pointer_to_raw_data as u64 + offset_in_section as u64;
-            return Ok(file_offset);
+            let file_offset = u64::from(section.pointer_to_raw_data) + u64::from(offset_in_section);
+            return file_offset;
         }
     }
 
     // RVA is beyond existing sections - assume 1:1 mapping for simplicity
     // This is a conservative approach for newly allocated space
-    Ok(rva as u64)
+    u64::from(rva)
 }
 
 /// Calculates total file size from complete layout and native table requirements.
@@ -191,17 +190,15 @@ pub fn calculate_total_size_from_layout(
 
     // Account for native table space requirements
     if let Some(import_rva) = native_requirements.import_table_rva {
-        if let Ok(import_offset) = rva_to_file_offset_for_planning(assembly, import_rva) {
-            let import_end = import_offset + native_requirements.import_table_size;
-            max_end = max_end.max(import_end);
-        }
+        let import_offset = rva_to_file_offset_for_planning(assembly, import_rva);
+        let import_end = import_offset + native_requirements.import_table_size;
+        max_end = max_end.max(import_end);
     }
 
     if let Some(export_rva) = native_requirements.export_table_rva {
-        if let Ok(export_offset) = rva_to_file_offset_for_planning(assembly, export_rva) {
-            let export_end = export_offset + native_requirements.export_table_size;
-            max_end = max_end.max(export_end);
-        }
+        let export_offset = rva_to_file_offset_for_planning(assembly, export_rva);
+        let export_end = export_offset + native_requirements.export_table_size;
+        max_end = max_end.max(export_end);
     }
 
     // Account for trailing data like certificate tables that exist beyond normal sections
@@ -244,7 +241,12 @@ pub fn get_available_space_after_rva(
                 return Ok(0);
             }
 
-            return get_padding_space_after_rva(assembly, section, table_end, section_end);
+            return Ok(get_padding_space_after_rva(
+                assembly,
+                section,
+                table_end,
+                section_end,
+            ));
         }
     }
 
@@ -271,39 +273,36 @@ pub fn get_padding_space_after_rva(
     section: &goblin::pe::section_table::SectionTable,
     start_rva: u32,
     section_end_rva: u32,
-) -> Result<u32> {
+) -> u32 {
     let file = assembly.file();
 
     if section.size_of_raw_data == 0 {
-        return Ok(0);
+        return 0;
     }
 
-    let start_file_offset = match file.rva_to_offset(start_rva as usize) {
-        Ok(offset) => offset,
-        Err(_) => return Ok(0),
+    let Ok(start_file_offset) = file.rva_to_offset(start_rva as usize) else {
+        return 0;
     };
 
-    let section_file_offset = match file.rva_to_offset(section.virtual_address as usize) {
-        Ok(offset) => offset,
-        Err(_) => return Ok(0),
+    let Ok(section_file_offset) = file.rva_to_offset(section.virtual_address as usize) else {
+        return 0;
     };
 
     let offset_in_section = start_file_offset.saturating_sub(section_file_offset);
     if offset_in_section >= section.size_of_raw_data as usize {
-        return Ok(0);
+        return 0;
     }
 
     let remaining_raw_size = (section.size_of_raw_data as usize).saturating_sub(offset_in_section);
     if remaining_raw_size == 0 {
-        return Ok(0);
+        return 0;
     }
 
-    let section_data = match file.data_slice(start_file_offset, remaining_raw_size) {
-        Ok(data) => data,
-        Err(_) => return Ok(0),
+    let Ok(section_data) = file.data_slice(start_file_offset, remaining_raw_size) else {
+        return 0;
     };
 
-    let mut padding_count = 0;
+    let mut padding_count = 0u32;
     for &byte in section_data {
         if byte == 0x00 || byte == 0xCC {
             padding_count += 1;
@@ -313,9 +312,7 @@ pub fn get_padding_space_after_rva(
     }
 
     let max_rva_space = section_end_rva.saturating_sub(start_rva);
-    let padding_rva_space = std::cmp::min(padding_count as u32, max_rva_space);
-
-    Ok(padding_rva_space)
+    std::cmp::min(padding_count, max_rva_space)
 }
 
 /// Finds available space within existing sections for a table.
@@ -334,7 +331,7 @@ pub fn find_space_in_sections(
     assembly: &CilAssembly,
     required_size: u32,
     allocated_regions: &[(u32, u32)],
-) -> Result<Option<u32>> {
+) -> Option<u32> {
     let file = assembly.file();
     let preferred_sections = [".text", ".rdata", ".data"];
 
@@ -346,20 +343,20 @@ pub fn find_space_in_sections(
         let is_preferred = preferred_sections.contains(&section_name);
         if is_preferred {
             if let Some(allocation_rva) =
-                find_padding_space_in_section(assembly, section, required_size)?
+                find_padding_space_in_section(assembly, section, required_size)
             {
                 if !validation::conflicts_with_regions(
                     allocation_rva,
                     required_size,
                     allocated_regions,
                 ) {
-                    return Ok(Some(allocation_rva));
+                    return Some(allocation_rva);
                 }
             }
         }
     }
 
-    Ok(None)
+    None
 }
 
 /// Finds contiguous padding space within a specific section.
@@ -378,26 +375,20 @@ pub fn find_padding_space_in_section(
     assembly: &CilAssembly,
     section: &goblin::pe::section_table::SectionTable,
     required_size: u32,
-) -> Result<Option<u32>> {
+) -> Option<u32> {
     let file = assembly.file();
 
     if section.size_of_raw_data == 0 {
-        return Ok(None);
+        return None;
     }
 
-    let section_file_offset = match file.rva_to_offset(section.virtual_address as usize) {
-        Ok(offset) => offset,
-        Err(_) => {
-            return Ok(None);
-        }
+    let Ok(section_file_offset) = file.rva_to_offset(section.virtual_address as usize) else {
+        return None;
     };
 
-    let section_data = match file.data_slice(section_file_offset, section.size_of_raw_data as usize)
-    {
-        Ok(data) => data,
-        Err(_) => {
-            return Ok(None);
-        }
+    let Ok(section_data) = file.data_slice(section_file_offset, section.size_of_raw_data as usize)
+    else {
+        return None;
     };
 
     let aligned_required_size = ((required_size + 7) & !7) as usize;
@@ -419,12 +410,13 @@ pub fn find_padding_space_in_section(
                 if aligned_start + aligned_required_size
                     <= padding_start_offset + current_padding_length
                 {
-                    let allocation_rva = section.virtual_address + aligned_start as u32;
+                    let allocation_rva =
+                        section.virtual_address + u32::try_from(aligned_start).unwrap_or(0);
 
                     if allocation_rva + required_size
                         <= section.virtual_address + section.virtual_size
                     {
-                        return Ok(Some(allocation_rva));
+                        return Some(allocation_rva);
                     }
                 }
             }
@@ -434,7 +426,7 @@ pub fn find_padding_space_in_section(
         }
     }
 
-    Ok(None)
+    None
 }
 
 /// Allocates space at the end of sections, but only within section boundaries.

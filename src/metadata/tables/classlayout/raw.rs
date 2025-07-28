@@ -72,7 +72,6 @@ use crate::{
         tables::{ClassLayout, ClassLayoutRc, TableId, TableInfoRef, TableRow},
         token::Token,
         typesystem::TypeRegistry,
-        validation::LayoutValidator,
     },
     Result,
 };
@@ -194,8 +193,6 @@ impl ClassLayoutRaw {
     pub fn apply(&self, types: &TypeRegistry) -> Result<()> {
         match types.get(&Token::new(self.parent | 0x0200_0000)) {
             Some(class) => {
-                LayoutValidator::validate_class_layout(self.class_size, self.packing_size, &class)?;
-
                 class
                     .class_size
                     .set(self.class_size)

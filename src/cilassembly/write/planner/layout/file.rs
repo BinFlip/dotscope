@@ -212,7 +212,9 @@ impl FileLayout {
         let new_section_count = original_section_count + 1; // We're adding a new .meta section
         let section_table = FileRegion::new(
             pe_headers.end_offset(),
-            (new_section_count * 40) as u64, // 40 bytes per section entry
+            u64::try_from(new_section_count * 40).map_err(|_| Error::WriteLayoutFailed {
+                message: "Section table size exceeds u64 range".to_string(),
+            })?, // 40 bytes per section entry
         );
 
         // Calculate section layouts with potential relocations
@@ -331,7 +333,12 @@ impl FileLayout {
                 native_requirements.import_table_size + native_requirements.export_table_size;
 
             // Extend the virtual size to accommodate native tables
-            last_section.virtual_size = (last_section.virtual_size as u64 + additional_size) as u32;
+            last_section.virtual_size = u32::try_from(
+                u64::from(last_section.virtual_size) + additional_size,
+            )
+            .map_err(|_| Error::WriteLayoutFailed {
+                message: "Combined virtual size exceeds u32 range".to_string(),
+            })?;
 
             // Update the file region size as well
             last_section.file_region.size += additional_size;
@@ -360,12 +367,18 @@ impl FileLayout {
         // Calculate how much the section table has grown
         let original_section_count = original_sections.len();
         let new_section_count = original_section_count + 1; // Adding .meta section
-        let original_section_table_size = (original_section_count * 40) as u64;
-        let new_section_table_size = (new_section_count * 40) as u64;
+        let original_section_table_size =
+            u64::try_from(original_section_count * 40).map_err(|_| Error::WriteLayoutFailed {
+                message: "Original section table size exceeds u64 range".to_string(),
+            })?;
+        let new_section_table_size =
+            u64::try_from(new_section_count * 40).map_err(|_| Error::WriteLayoutFailed {
+                message: "New section table size exceeds u64 range".to_string(),
+            })?;
         let section_table_growth = new_section_table_size - original_section_table_size;
 
         // Step 1: Copy all sections, adjusting their file offsets to account for expanded section table
-        for original_section in original_sections.iter() {
+        for original_section in &original_sections {
             let section_name = std::str::from_utf8(&original_section.name)
                 .unwrap_or("<invalid>")
                 .trim_end_matches('\0');
@@ -374,12 +387,12 @@ impl FileLayout {
 
             // Adjust file offset to account for expanded section table
             let adjusted_file_offset =
-                original_section.pointer_to_raw_data as u64 + section_table_growth;
+                u64::from(original_section.pointer_to_raw_data) + section_table_growth;
 
             // Copy all sections but mark that original metadata section no longer contains metadata
             let file_region = FileRegion::new(
                 adjusted_file_offset,
-                original_section.size_of_raw_data as u64,
+                u64::from(original_section.size_of_raw_data),
             );
 
             new_sections.push(SectionFileLayout {
@@ -423,9 +436,9 @@ impl FileLayout {
 
         // Calculate actual gap between COR20 and metadata root from the assembly
         let view = assembly.view();
-        let original_cor20_rva = view.file().clr().0 as u32;
+        let original_cor20_rva = u32::try_from(view.file().clr().0).unwrap_or(0);
         let original_metadata_rva = view.cor20header().meta_data_rva;
-        let actual_gap = (original_metadata_rva - original_cor20_rva) as u64;
+        let actual_gap = u64::from(original_metadata_rva - original_cor20_rva);
 
         let total_metadata_structure_size =
             cor20_header_size + actual_gap + calculated_metadata_size;
@@ -455,7 +468,11 @@ impl FileLayout {
             name: ".meta".to_string(),
             file_region,
             virtual_address: aligned_virtual_address,
-            virtual_size: new_section_size as u32,
+            virtual_size: u32::try_from(new_section_size).map_err(|_| {
+                Error::WriteLayoutFailed {
+                    message: "New section virtual size exceeds u32 range".to_string(),
+                }
+            })?,
             characteristics: meta_characteristics,
             contains_metadata: true,
             metadata_streams,
@@ -493,7 +510,7 @@ impl FileLayout {
 
         // For the .meta section, account for the COR20 header position within the section
         // Calculate where the COR20 header will be placed within the .meta section
-        let original_cor20_rva = view.file().clr().0 as u32;
+        let original_cor20_rva = u32::try_from(view.file().clr().0).unwrap_or(0);
         let original_metadata_rva = view.cor20header().meta_data_rva;
         let metadata_rva_offset_from_cor20 = original_metadata_rva - original_cor20_rva;
 
@@ -513,18 +530,25 @@ impl FileLayout {
             original_cor20_rva - original_metadata_section.virtual_address;
 
         // Position COR20 at the same relative offset within the .meta section
-        let cor20_offset_in_meta = section_start_offset + cor20_offset_in_original_section as u64;
-        let metadata_root_offset = cor20_offset_in_meta + metadata_rva_offset_from_cor20 as u64;
+        let cor20_offset_in_meta =
+            section_start_offset + u64::from(cor20_offset_in_original_section);
+        let metadata_root_offset = cor20_offset_in_meta + u64::from(metadata_rva_offset_from_cor20);
 
         // Start streams after metadata root header including the stream directory
         // Calculate the exact position where streams should start (after the stream directory)
         let version_string = view.metadata_root().version.clone();
-        let version_length = version_string.len() as u64;
+        let version_length =
+            u64::try_from(version_string.len()).map_err(|_| Error::WriteLayoutFailed {
+                message: "Version string length exceeds u64 range".to_string(),
+            })?;
         let version_length_padded = (version_length + 3) & !3; // 4-byte align
         let stream_directory_start = metadata_root_offset + 16 + version_length_padded + 4; // +4 for flags + stream_count
 
         // Estimate stream directory size: each stream needs 8 bytes + name + padding
-        let estimated_stream_dir_size = view.streams().len() as u64 * 20; // Extra conservative estimate
+        let estimated_stream_dir_size =
+            u64::try_from(view.streams().len()).map_err(|_| Error::WriteLayoutFailed {
+                message: "Stream count exceeds u64 range".to_string(),
+            })? * 20; // Extra conservative estimate
         let mut current_stream_offset = stream_directory_start + estimated_stream_dir_size;
 
         // Align to 4-byte boundary
@@ -538,14 +562,18 @@ impl FileLayout {
             // Check if this stream has modifications and calculate the complete rebuilt size
             for stream_mod in &mut metadata_modifications.stream_modifications {
                 if stream_mod.name == *stream_name {
-                    new_size = stream_mod.new_size as u32;
+                    new_size = u32::try_from(stream_mod.new_size).map_err(|_| {
+                        Error::WriteLayoutFailed {
+                            message: "Stream new size exceeds u32 range".to_string(),
+                        }
+                    })?;
                     has_additions = stream_mod.additional_data_size > 0;
                     break;
                 }
             }
 
             // Calculate aligned size for this stream
-            let aligned_stream_size = align_to_4_bytes(new_size as u64);
+            let aligned_stream_size = align_to_4_bytes(u64::from(new_size));
 
             // Update the write offset for this stream in modifications
             for stream_mod in &mut metadata_modifications.stream_modifications {

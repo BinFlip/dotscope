@@ -32,7 +32,7 @@
 //! - **[`crate::metadata::typesystem`]**: Provides type registry for class resolution and type reference management
 //! - **[`crate::metadata::tables::methoddef`]**: Resolves local method definitions for implementation mappings
 //! - **[`crate::metadata::tables::memberref`]**: Handles external method references for cross-assembly scenarios
-//! - **[`crate::metadata::loader::context::LoaderContext`]**: Provides coded index resolution during conversion
+//! - **Internal loader context**: Provides coded index resolution during conversion
 //!
 //! The raw implementation mapping system serves as the foundation layer for method implementation processing,
 //! enabling the transformation from binary metadata to semantic type system relationships.

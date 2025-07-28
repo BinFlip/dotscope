@@ -61,11 +61,7 @@ mod tests {
             assert_eq!(row.name, 0x0202);
             assert_eq!(
                 row.event_type,
-                CodedIndex {
-                    tag: TableId::TypeDef,
-                    row: 192,
-                    token: Token::new(192 | 0x02000000),
-                }
+                CodedIndex::new(TableId::TypeDef, 192, CodedIndexType::TypeDefOrRef)
             );
         };
 
@@ -108,11 +104,7 @@ mod tests {
             assert_eq!(row.name, 0x02020202);
             assert_eq!(
                 row.event_type,
-                CodedIndex {
-                    tag: TableId::TypeDef,
-                    row: 0xC0C0C0,
-                    token: Token::new(0xC0C0C0 | 0x02000000)
-                }
+                CodedIndex::new(TableId::TypeDef, 0xC0C0C0, CodedIndexType::TypeDefOrRef)
             );
         };
 

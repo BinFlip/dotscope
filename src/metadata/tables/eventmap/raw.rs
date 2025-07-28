@@ -13,7 +13,7 @@
 //! - **`EventList`** (2/4 bytes): `Event` table index pointing to the first owned event
 //!
 //! `EventMap` entries define contiguous ranges of events owned by specific types. The range
-//! for type N extends from `EventList[N]` to `EventList[N+1]`-1, enabling efficient enumeration
+//! for type N extends from `EventList\[N\]` to `EventList\[N+1\]`-1, enabling efficient enumeration
 //! of all events belonging to a particular type.
 //!
 //! # Sorted Table Structure

@@ -25,7 +25,6 @@ use crate::{
     metadata::{
         tables::{FieldLayout, FieldLayoutRc, FieldMap, TableId, TableInfoRef, TableRow},
         token::Token,
-        validation::FieldValidator,
     },
     Result,
 };
@@ -112,8 +111,6 @@ impl FieldLayoutRaw {
     /// - **Duplicate Layout**: Field already has layout assigned
     /// - **Token Error**: Invalid field token calculation
     pub fn apply(&self, fields: &FieldMap) -> Result<()> {
-        FieldValidator::validate_field_offset(self.field_offset, None)?;
-
         match fields.get(&Token::new(self.field | 0x0400_0000)) {
             Some(field) => field
                 .value()

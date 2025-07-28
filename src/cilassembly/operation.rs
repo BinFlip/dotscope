@@ -56,7 +56,7 @@
 //!
 //! This module integrates with:
 //! - [`crate::cilassembly::modifications::TableModifications`] - Operation storage and application
-//! - [`crate::cilassembly::validation`] - Operation validation and conflict detection
+//! - Assembly validation - Operation validation and conflict detection
 //! - [`crate::metadata::tables`] - Table data structures and row types
 
 use crate::metadata::tables::TableDataOwned;
@@ -362,6 +362,7 @@ impl TableOperation {
     ///
     /// Current timestamp in microseconds since Unix epoch, or 0 if system time
     /// is not available.
+    #[allow(clippy::cast_possible_truncation)] // Intentional: timestamp fits in u64 for practical purposes
     fn current_timestamp_micros() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)

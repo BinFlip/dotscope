@@ -417,6 +417,8 @@ impl TableInfo {
         let tag_bits = (tables.len() as f32).log2().ceil() as u8;
 
         // Encode: (row << tag_bits) | tag
+        // Tag cast is safe as table count is limited by metadata format
+        #[allow(clippy::cast_possible_truncation)]
         let encoded = (row << tag_bits) | (tag as u32);
 
         Ok(encoded)

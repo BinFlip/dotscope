@@ -80,6 +80,7 @@ impl ImportScopeBuilder {
     ///
     /// let builder = ImportScopeBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             parent: None,
@@ -111,6 +112,7 @@ impl ImportScopeBuilder {
     /// let child_builder = ImportScopeBuilder::new()
     ///     .parent(1);  // References scope with RID 1
     /// ```
+    #[must_use]
     pub fn parent(mut self, parent: u32) -> Self {
         self.parent = Some(parent);
         self
@@ -141,6 +143,7 @@ impl ImportScopeBuilder {
     /// let empty_builder = ImportScopeBuilder::new()
     ///     .imports(&[]);
     /// ```
+    #[must_use]
     pub fn imports(mut self, imports: &[u8]) -> Self {
         self.imports = Some(imports.to_vec());
         self
@@ -197,7 +200,7 @@ impl ImportScopeBuilder {
         let imports_index = if imports.is_empty() {
             0
         } else {
-            context.add_blob(&imports)?
+            context.blob_add(&imports)?
         };
 
         let import_scope = ImportScopeRaw {
@@ -208,7 +211,7 @@ impl ImportScopeBuilder {
             imports: imports_index,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::ImportScope,
             TableDataOwned::ImportScope(import_scope),
         )?;
@@ -229,16 +232,8 @@ impl Default for ImportScopeBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
-        metadata::cilassemblyview::CilAssemblyView,
+        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
     };
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
 
     #[test]
     fn test_importscope_builder_new() {

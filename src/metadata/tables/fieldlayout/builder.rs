@@ -127,6 +127,7 @@ impl FieldLayoutBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::fieldlayout::FieldLayoutBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             field_offset: None,
@@ -161,6 +162,7 @@ impl FieldLayoutBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn field_offset(mut self, offset: u32) -> Self {
         self.field_offset = Some(offset);
         self
@@ -193,6 +195,7 @@ impl FieldLayoutBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn field(mut self, field: Token) -> Self {
         self.field = Some(field);
         self
@@ -269,7 +272,7 @@ impl FieldLayoutBuilder {
             field: field.row(),
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::FieldLayout,
             TableDataOwned::FieldLayout(field_layout_raw),
         )

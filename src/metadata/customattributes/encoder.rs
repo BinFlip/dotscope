@@ -124,7 +124,7 @@ use crate::{
 ///
 /// # Errors
 ///
-/// Returns [`crate::Error::EncodingFailed`] if the custom attribute contains
+/// Returns [`crate::Error::Error`] if the custom attribute contains
 /// unsupported data types or malformed structures.
 ///
 /// # Examples
@@ -253,7 +253,7 @@ fn encode_named_arguments(
 ///
 /// # Errors
 ///
-/// Returns [`crate::Error::EncodingFailed`] if the argument contains unsupported
+/// Returns [`crate::Error::Error`] if the argument contains unsupported
 /// data types or if encoding operations fail.
 #[allow(clippy::cast_possible_truncation)]
 pub fn encode_custom_attribute_argument(

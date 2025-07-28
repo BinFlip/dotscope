@@ -59,11 +59,7 @@ mod tests {
             assert_eq!(row.name, 0x0303);
             assert_eq!(
                 row.implementation,
-                CodedIndex {
-                    tag: TableId::File,
-                    row: 1,
-                    token: Token::new(1 | 0x26000000),
-                }
+                CodedIndex::new(TableId::File, 1, CodedIndexType::Implementation)
             );
         };
 
@@ -109,11 +105,7 @@ mod tests {
             assert_eq!(row.name, 0x03030303);
             assert_eq!(
                 row.implementation,
-                CodedIndex {
-                    tag: TableId::File,
-                    row: 1,
-                    token: Token::new(1 | 0x26000000),
-                }
+                CodedIndex::new(TableId::File, 1, CodedIndexType::Implementation)
             );
         };
 

@@ -190,7 +190,11 @@ impl<'a> PeWriter<'a> {
     fn update_pe_checksum(&mut self) -> Result<()> {
         let checksum_offset = self.find_checksum_field_offset()?;
 
-        let file_size = self.base.layout_plan.total_size as usize;
+        let file_size = usize::try_from(self.base.layout_plan.total_size).map_err(|_| {
+            Error::WriteLayoutFailed {
+                message: "File size exceeds usize range".to_string(),
+            }
+        })?;
         let checksum = self.calculate_pe_checksum(checksum_offset, file_size)?;
 
         self.base
@@ -256,7 +260,10 @@ impl<'a> PeWriter<'a> {
     /// Returns [`crate::Error`] if file data cannot be accessed during calculation.
     fn calculate_pe_checksum(&mut self, checksum_offset: u64, file_size: usize) -> Result<u32> {
         let mut checksum: u64 = 0;
-        let checksum_start = checksum_offset as usize;
+        let checksum_start =
+            usize::try_from(checksum_offset).map_err(|_| Error::WriteLayoutFailed {
+                message: "Checksum offset exceeds usize range".to_string(),
+            })?;
         let checksum_end = checksum_start + 4;
 
         // Process the file in 16-bit chunks
@@ -271,10 +278,10 @@ impl<'a> PeWriter<'a> {
             // Read 16-bit word (handle odd file sizes)
             let word = if offset + 1 < file_size {
                 let slice = self.base.output.get_mut_slice(offset, 2)?;
-                u16::from_le_bytes([slice[0], slice[1]]) as u64
+                u64::from(u16::from_le_bytes([slice[0], slice[1]]))
             } else if offset < file_size {
                 let slice = self.base.output.get_mut_slice(offset, 1)?;
-                slice[0] as u64
+                u64::from(slice[0])
             } else {
                 break;
             };
@@ -290,12 +297,16 @@ impl<'a> PeWriter<'a> {
         }
 
         // Add file size and handle final carry
-        checksum += file_size as u64;
+        checksum += u64::try_from(file_size).map_err(|_| Error::WriteLayoutFailed {
+            message: "File size exceeds u64 range".to_string(),
+        })?;
         while checksum > 0xFFFF {
             checksum = (checksum & 0xFFFF) + (checksum >> 16);
         }
 
-        Ok(checksum as u32)
+        u32::try_from(checksum).map_err(|_| Error::WriteLayoutFailed {
+            message: "Checksum exceeds u32 range".to_string(),
+        })
     }
 
     /// Clears the PE certificate table directory entry to prevent corruption.
@@ -428,7 +439,11 @@ impl<'a> PeWriter<'a> {
                 // Write Size
                 self.base.output.write_u32_le_at(
                     export_entry_offset + 4,
-                    requirements.export_table_size as u32,
+                    u32::try_from(requirements.export_table_size).map_err(|_| {
+                        Error::WriteLayoutFailed {
+                            message: "Export table size exceeds u32 range".to_string(),
+                        }
+                    })?,
                 )?;
             }
         }
@@ -445,7 +460,11 @@ impl<'a> PeWriter<'a> {
                 // Write Size
                 self.base.output.write_u32_le_at(
                     import_entry_offset + 4,
-                    requirements.import_table_size as u32,
+                    u32::try_from(requirements.import_table_size).map_err(|_| {
+                        Error::WriteLayoutFailed {
+                            message: "Import table size exceeds u32 range".to_string(),
+                        }
+                    })?,
                 )?;
             }
         }
@@ -461,11 +480,16 @@ impl<'a> PeWriter<'a> {
         rva_offset: i64,
         original_section: &goblin::pe::section_table::SectionTable,
     ) -> Result<()> {
-        let entry_offset = data_directory_offset + (entry_index as u64 * 8);
+        let entry_offset = data_directory_offset + (u64::from(entry_index) * 8);
 
         // Read the current RVA and size
         let current_rva = {
-            let slice = self.base.output.get_mut_slice(entry_offset as usize, 4)?;
+            let slice = self.base.output.get_mut_slice(
+                usize::try_from(entry_offset).map_err(|_| Error::WriteLayoutFailed {
+                    message: "Entry offset exceeds usize range".to_string(),
+                })?,
+                4,
+            )?;
             u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]])
         };
 
@@ -476,7 +500,11 @@ impl<'a> PeWriter<'a> {
 
             if current_rva >= section_start && current_rva < section_end {
                 // This entry points into the moved section, update it
-                let new_rva = (current_rva as i64 + rva_offset) as u32;
+                let new_rva = u32::try_from(i64::from(current_rva) + rva_offset).map_err(|_| {
+                    Error::WriteLayoutFailed {
+                        message: "New RVA exceeds u32 range or is negative".to_string(),
+                    }
+                })?;
                 self.base.output.write_u32_le_at(entry_offset, new_rva)?;
             }
         }
@@ -547,12 +575,15 @@ impl<'a> PeWriter<'a> {
         let original_sections: Vec<_> = view.file().sections().collect();
 
         // Calculate PE header offsets using cached information from the file
-        let pe_signature_offset = view.file().header().dos_header.pe_pointer as u64;
+        let pe_signature_offset = u64::from(view.file().header().dos_header.pe_pointer);
         let coff_header_offset = pe_signature_offset + 4; // After PE signature (4 bytes)
         let number_of_sections_offset = coff_header_offset + 2; // After Machine field (2 bytes)
 
         // Calculate new section count (original + 1 for .meta section)
-        let new_section_count = (original_sections.len() + 1) as u16;
+        let new_section_count =
+            u16::try_from(original_sections.len() + 1).map_err(|_| Error::WritePeFailed {
+                message: "Section count exceeds u16 range".to_string(),
+            })?;
 
         // Update NumberOfSections field in COFF header
         self.base
@@ -579,15 +610,22 @@ impl<'a> PeWriter<'a> {
 
         // Apply section updates
         for section_update in &self.base.layout_plan.pe_updates.section_updates {
-            let section_entry_offset =
-                section_table_region.offset + (section_update.section_index * 40) as u64;
+            let section_entry_offset = section_table_region.offset
+                + u64::try_from(section_update.section_index * 40).map_err(|_| {
+                    Error::WriteLayoutFailed {
+                        message: "Section table offset calculation exceeds u64 range".to_string(),
+                    }
+                })?;
 
             // Update file offset if changed
             if let Some(new_file_offset) = section_update.new_file_offset {
                 let offset_field_offset = section_entry_offset + 20; // PointerToRawData field
-                self.base
-                    .output
-                    .write_u32_le_at(offset_field_offset, new_file_offset as u32)?;
+                self.base.output.write_u32_le_at(
+                    offset_field_offset,
+                    u32::try_from(new_file_offset).map_err(|_| Error::WriteLayoutFailed {
+                        message: "New file offset exceeds u32 range".to_string(),
+                    })?,
+                )?;
             }
 
             // Update file size if changed
@@ -636,7 +674,7 @@ impl<'a> PeWriter<'a> {
             })?;
 
         // Calculate COR20 header location within the .meta section
-        let original_cor20_rva = view.file().clr().0 as u32;
+        let original_cor20_rva = view.file().clr().0;
         let original_metadata_rva = view.cor20header().meta_data_rva;
 
         // Find original metadata section to calculate offsets
@@ -653,16 +691,38 @@ impl<'a> PeWriter<'a> {
                 message: "Original metadata section not found".to_string(),
             })?;
 
-        let cor20_offset_in_section =
-            original_cor20_rva - original_metadata_section.virtual_address;
-        let metadata_offset_from_cor20 = original_metadata_rva - original_cor20_rva;
+        let cor20_offset_in_section = original_cor20_rva
+            .checked_sub(
+                usize::try_from(original_metadata_section.virtual_address).map_err(|_| {
+                    Error::WriteLayoutFailed {
+                        message: "Metadata section virtual address exceeds usize range".to_string(),
+                    }
+                })?,
+            )
+            .ok_or_else(|| Error::WriteLayoutFailed {
+                message: "COR20 RVA calculation underflow".to_string(),
+            })?;
+        let metadata_offset_from_cor20 = original_metadata_rva
+            .checked_sub(u32::try_from(original_cor20_rva).map_err(|_| {
+                Error::WriteLayoutFailed {
+                    message: "COR20 RVA exceeds u32 range".to_string(),
+                }
+            })?)
+            .ok_or_else(|| Error::WriteLayoutFailed {
+                message: "Metadata RVA calculation underflow".to_string(),
+            })?;
 
         // Calculate new file offset for COR20 header
-        let cor20_file_offset =
-            metadata_section.file_region.offset + cor20_offset_in_section as u64;
+        let cor20_file_offset = metadata_section.file_region.offset
+            + u64::try_from(cor20_offset_in_section).map_err(|_| Error::WriteLayoutFailed {
+                message: "COR20 offset exceeds u64 range".to_string(),
+            })?;
 
         // Calculate new RVAs
-        let new_cor20_rva = metadata_section.virtual_address + cor20_offset_in_section;
+        let new_cor20_rva = metadata_section.virtual_address
+            + u32::try_from(cor20_offset_in_section).map_err(|_| Error::WriteLayoutFailed {
+                message: "COR20 offset exceeds u32 range".to_string(),
+            })?;
         let new_metadata_rva = new_cor20_rva + metadata_offset_from_cor20;
 
         // Calculate actual metadata size
@@ -680,9 +740,12 @@ impl<'a> PeWriter<'a> {
             .output
             .write_u32_le_at(cor20_file_offset + 8, new_metadata_rva)?;
         // Update metadata size field (offset 12)
-        self.base
-            .output
-            .write_u32_le_at(cor20_file_offset + 12, actual_metadata_size as u32)?;
+        self.base.output.write_u32_le_at(
+            cor20_file_offset + 12,
+            u32::try_from(actual_metadata_size).map_err(|_| Error::WriteLayoutFailed {
+                message: "Metadata size exceeds u32 range".to_string(),
+            })?,
+        )?;
 
         // Update CLR data directory entry (entry 14)
         let data_directory_offset = self.find_data_directory_offset()?;
@@ -769,7 +832,10 @@ mod tests {
             Output::create(temp_path, layout_plan.total_size).expect("Failed to create output");
 
         // Initialize output with original file data
-        let copy_size = std::cmp::min(original_data.len(), layout_plan.total_size as usize);
+        let copy_size = std::cmp::min(
+            original_data.len(),
+            usize::try_from(layout_plan.total_size).unwrap_or(usize::MAX),
+        );
         output
             .write_at(0, &original_data[..copy_size])
             .expect("Failed to copy original data");

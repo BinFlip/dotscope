@@ -146,6 +146,7 @@ impl PropertyMapBuilder {
     /// # use dotscope::prelude::*;
     /// let builder = PropertyMapBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             parent: None,
@@ -180,6 +181,7 @@ impl PropertyMapBuilder {
     ///     .parent(type_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn parent(mut self, parent_token: Token) -> Self {
         self.parent = Some(parent_token);
         self
@@ -202,6 +204,7 @@ impl PropertyMapBuilder {
     /// let builder = PropertyMapBuilder::new()
     ///     .property_list(1); // Start from first property
     /// ```
+    #[must_use]
     pub fn property_list(mut self, property_list_index: u32) -> Self {
         self.property_list = Some(property_list_index);
         self
@@ -295,7 +298,7 @@ impl PropertyMapBuilder {
         };
 
         let table_data = TableDataOwned::PropertyMap(property_map);
-        context.add_table_row(TableId::PropertyMap, table_data)?;
+        context.table_row_add(TableId::PropertyMap, table_data)?;
 
         Ok(token)
     }
@@ -305,16 +308,8 @@ impl PropertyMapBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::CilAssembly,
-        metadata::{cilassemblyview::CilAssemblyView, tables::TableId},
+        metadata::tables::TableId, test::factories::table::assemblyref::get_test_assembly,
     };
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
 
     #[test]
     fn test_property_map_builder_basic() -> Result<()> {

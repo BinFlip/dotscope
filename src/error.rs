@@ -576,6 +576,181 @@ pub enum Error {
         details: String,
     },
 
+    // Unified Validation Framework Errors
+    /// Stage 1 (raw) validation failed, preventing Stage 2 execution.
+    ///
+    /// This error occurs when the first stage of validation (raw metadata validation)
+    /// fails, causing the unified validation engine to terminate early without
+    /// proceeding to Stage 2 (owned validation).
+    #[error("Validation Stage 1 failed: {message}")]
+    ValidationStage1Failed {
+        /// The underlying error that caused Stage 1 to fail
+        #[source]
+        source: Box<Error>,
+        /// Details about the Stage 1 failure
+        message: String,
+    },
+
+    /// Stage 2 (owned) validation failed with multiple errors.
+    ///
+    /// This error occurs when Stage 2 validation (owned metadata validation)
+    /// encounters multiple validation failures during parallel execution.
+    #[error("Validation Stage 2 failed with {error_count} errors: {summary}")]
+    ValidationStage2Failed {
+        /// All validation errors collected during Stage 2
+        errors: Vec<Error>,
+        /// Number of errors for quick reference
+        error_count: usize,
+        /// Summary of the validation failures
+        summary: String,
+    },
+
+    /// Raw validation failed for a specific validator.
+    ///
+    /// This error occurs when a specific raw validator (Stage 1) fails during
+    /// the validation process on CilAssemblyView data.
+    #[error("Raw validation failed in {validator}: {message}")]
+    ValidationRawValidatorFailed {
+        /// Name of the validator that failed
+        validator: String,
+        /// Details about the validation failure
+        message: String,
+        /// The underlying error that caused the failure
+        #[source]
+        source: Option<Box<Error>>,
+    },
+
+    /// Owned validation failed for a specific validator.
+    ///
+    /// This error occurs when a specific owned validator (Stage 2) fails during
+    /// the validation process on CilObject data.
+    #[error("Owned validation failed in {validator}: {message}")]
+    ValidationOwnedValidatorFailed {
+        /// Name of the validator that failed
+        validator: String,
+        /// Details about the validation failure
+        message: String,
+        /// The underlying error that caused the failure
+        #[source]
+        source: Option<Box<Error>>,
+    },
+
+    /// Validation engine initialization failed.
+    ///
+    /// This error occurs when the unified validation engine cannot be properly
+    /// initialized due to invalid configuration or missing dependencies.
+    #[error("Validation engine initialization failed: {message}")]
+    ValidationEngineInitFailed {
+        /// Details about the initialization failure
+        message: String,
+    },
+
+    /// Validation context creation failed.
+    ///
+    /// This error occurs when the validation context cannot be created for
+    /// either raw or owned validation stages.
+    #[error("Validation context creation failed for {stage}: {message}")]
+    ValidationContextCreationFailed {
+        /// The validation stage (Raw or Owned)
+        stage: String,
+        /// Details about the context creation failure
+        message: String,
+    },
+
+    /// Token validation failed.
+    ///
+    /// This error occurs when token format or cross-reference validation fails
+    /// during either raw or owned validation stages.
+    #[error("Token validation failed for {token}: {message}")]
+    ValidationTokenError {
+        /// The token that failed validation
+        token: Token,
+        /// Details about the token validation failure
+        message: String,
+    },
+
+    /// Semantic validation failed.
+    ///
+    /// This error occurs when semantic validation rules fail during owned
+    /// validation, such as inheritance rules or interface constraints.
+    #[error("Semantic validation failed: {message}")]
+    ValidationSemanticError {
+        /// Details about the semantic validation failure
+        message: String,
+        /// Optional token context for the failure
+        token: Option<Token>,
+    },
+
+    /// Method validation failed.
+    ///
+    /// This error occurs when method-specific validation fails, such as
+    /// constructor validation or method signature validation.
+    #[error("Method validation failed for {method_token}: {message}")]
+    ValidationMethodError {
+        /// The method token that failed validation
+        method_token: Token,
+        /// Details about the method validation failure
+        message: String,
+    },
+
+    /// Field validation failed.
+    ///
+    /// This error occurs when field layout validation fails, such as
+    /// field overlap detection or layout validation.
+    #[error("Field validation failed: {message}")]
+    ValidationFieldError {
+        /// Details about the field validation failure
+        message: String,
+        /// Optional field token context
+        field_token: Option<Token>,
+    },
+
+    /// Type system validation failed.
+    ///
+    /// This error occurs when type system consistency validation fails,
+    /// such as layout validation or constraint validation.
+    #[error("Type system validation failed: {message}")]
+    ValidationTypeSystemError {
+        /// Details about the type system validation failure
+        message: String,
+        /// Optional type token context
+        type_token: Option<Token>,
+    },
+
+    /// Nested class validation failed.
+    ///
+    /// This error occurs when nested class hierarchy validation fails,
+    /// such as circular reference detection or nesting depth validation.
+    #[error("Nested class validation failed: {message}")]
+    ValidationNestedClassError {
+        /// Details about the nested class validation failure
+        message: String,
+        /// The nested class token that failed validation
+        nested_class_token: Option<Token>,
+    },
+
+    /// PE structure validation failed.
+    ///
+    /// This error occurs when PE format validation fails during raw validation,
+    /// such as section alignment or RVA validation.
+    #[error("PE structure validation failed: {message}")]
+    ValidationPeStructureError {
+        /// Details about the PE structure validation failure
+        message: String,
+    },
+
+    /// Signature validation failed.
+    ///
+    /// This error occurs when method or field signature validation fails
+    /// during blob signature parsing and validation.
+    #[error("Signature validation failed: {message}")]
+    ValidationSignatureError {
+        /// Details about the signature validation failure
+        message: String,
+        /// Optional signature blob data for debugging
+        signature_data: Option<Vec<u8>>,
+    },
+
     // Binary Writing Errors
     /// Assembly validation failed before writing.
     ///
@@ -688,4 +863,39 @@ pub enum Error {
         /// Details about the internal error
         message: String,
     },
+}
+
+impl Clone for Error {
+    fn clone(&self) -> Self {
+        match self {
+            // Handle non-cloneable variants by converting to string representation
+            Error::FileError(io_err) => Error::Error(io_err.to_string()),
+            Error::GoblinErr(goblin_err) => Error::Error(goblin_err.to_string()),
+            // For validation errors that have Box<Error> sources, clone them recursively
+            Error::ValidationStage1Failed { source, message } => Error::ValidationStage1Failed {
+                source: source.clone(),
+                message: message.clone(),
+            },
+            Error::ValidationRawValidatorFailed {
+                validator,
+                message,
+                source,
+            } => Error::ValidationRawValidatorFailed {
+                validator: validator.clone(),
+                message: message.clone(),
+                source: source.clone(),
+            },
+            Error::ValidationOwnedValidatorFailed {
+                validator,
+                message,
+                source,
+            } => Error::ValidationOwnedValidatorFailed {
+                validator: validator.clone(),
+                message: message.clone(),
+                source: source.clone(),
+            },
+            // For all other variants, convert to their string representation and use GeneralError
+            other => Error::Error(other.to_string()),
+        }
+    }
 }

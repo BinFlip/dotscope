@@ -137,6 +137,7 @@ impl NestedClassBuilder {
     /// # use dotscope::prelude::*;
     /// let builder = NestedClassBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             nested_class: None,
@@ -172,6 +173,7 @@ impl NestedClassBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn nested_class(mut self, nested_class_token: Token) -> Self {
         self.nested_class = Some(nested_class_token);
         self
@@ -205,6 +207,7 @@ impl NestedClassBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn enclosing_class(mut self, enclosing_class_token: Token) -> Self {
         self.enclosing_class = Some(enclosing_class_token);
         self
@@ -314,7 +317,7 @@ impl NestedClassBuilder {
         };
 
         let table_data = TableDataOwned::NestedClass(nested_class);
-        context.add_table_row(TableId::NestedClass, table_data)?;
+        context.table_row_add(TableId::NestedClass, table_data)?;
 
         Ok(token)
     }
@@ -324,19 +327,9 @@ impl NestedClassBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::CilAssembly,
-        metadata::{
-            cilassemblyview::CilAssemblyView,
-            tables::{TableId, TypeAttributes},
-        },
+        metadata::tables::{TableId, TypeAttributes},
+        test::factories::table::assemblyref::get_test_assembly,
     };
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
 
     #[test]
     fn test_nested_class_builder_basic() -> Result<()> {

@@ -63,7 +63,9 @@
 use crate::{
     cilassembly::BuilderContext,
     metadata::{
-        tables::{CodedIndex, ExportedTypeRaw, TableDataOwned, TableId, TypeAttributes},
+        tables::{
+            CodedIndex, CodedIndexType, ExportedTypeRaw, TableDataOwned, TableId, TypeAttributes,
+        },
         token::Token,
     },
     Error, Result,
@@ -151,6 +153,7 @@ impl ExportedTypeBuilder {
     /// # use dotscope::prelude::*;
     /// let builder = ExportedTypeBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             name: None,
@@ -177,6 +180,7 @@ impl ExportedTypeBuilder {
     /// let builder = ExportedTypeBuilder::new()
     ///     .name("Customer");
     /// ```
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -199,6 +203,7 @@ impl ExportedTypeBuilder {
     ///     .name("Customer")
     ///     .namespace("MyApp.Models");
     /// ```
+    #[must_use]
     pub fn namespace(mut self, namespace: impl Into<String>) -> Self {
         self.namespace = Some(namespace.into());
         self
@@ -221,6 +226,7 @@ impl ExportedTypeBuilder {
     /// let builder = ExportedTypeBuilder::new()
     ///     .flags(TypeAttributes::PUBLIC);
     /// ```
+    #[must_use]
     pub fn flags(mut self, flags: u32) -> Self {
         self.flags = flags;
         self
@@ -239,6 +245,7 @@ impl ExportedTypeBuilder {
     ///     .name("PublicService")
     ///     .public();
     /// ```
+    #[must_use]
     pub fn public(mut self) -> Self {
         self.flags = TypeAttributes::PUBLIC;
         self
@@ -257,6 +264,7 @@ impl ExportedTypeBuilder {
     ///     .name("InternalHelper")
     ///     .not_public();
     /// ```
+    #[must_use]
     pub fn not_public(mut self) -> Self {
         self.flags = TypeAttributes::NOT_PUBLIC;
         self
@@ -280,6 +288,7 @@ impl ExportedTypeBuilder {
     ///     .name("Customer")
     ///     .type_def_id(0x02000001); // TypeDef hint
     /// ```
+    #[must_use]
     pub fn type_def_id(mut self, type_def_id: u32) -> Self {
         self.type_def_id = type_def_id;
         self
@@ -311,8 +320,13 @@ impl ExportedTypeBuilder {
     ///     .implementation_file(file_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn implementation_file(mut self, file_token: Token) -> Self {
-        self.implementation = Some(CodedIndex::new(TableId::File, file_token.row()));
+        self.implementation = Some(CodedIndex::new(
+            TableId::File,
+            file_token.row(),
+            CodedIndexType::Implementation,
+        ));
         self
     }
 
@@ -343,10 +357,12 @@ impl ExportedTypeBuilder {
     ///     .implementation_assembly_ref(assembly_ref_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn implementation_assembly_ref(mut self, assembly_ref_token: Token) -> Self {
         self.implementation = Some(CodedIndex::new(
             TableId::AssemblyRef,
             assembly_ref_token.row(),
+            CodedIndexType::Implementation,
         ));
         self
     }
@@ -377,10 +393,12 @@ impl ExportedTypeBuilder {
     ///     .implementation_exported_type(base_export_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn implementation_exported_type(mut self, exported_type_token: Token) -> Self {
         self.implementation = Some(CodedIndex::new(
             TableId::ExportedType,
             exported_type_token.row(),
+            CodedIndexType::Implementation,
         ));
         self
     }
@@ -465,12 +483,12 @@ impl ExportedTypeBuilder {
             }
         }
 
-        let name_index = context.get_or_add_string(&name)?;
+        let name_index = context.string_get_or_add(&name)?;
         let namespace_index = if let Some(namespace) = self.namespace {
             if namespace.is_empty() {
                 0
             } else {
-                context.get_or_add_string(&namespace)?
+                context.string_get_or_add(&namespace)?
             }
         } else {
             0
@@ -491,7 +509,7 @@ impl ExportedTypeBuilder {
         };
 
         let table_data = TableDataOwned::ExportedType(exported_type);
-        context.add_table_row(TableId::ExportedType, table_data)?;
+        context.table_row_add(TableId::ExportedType, table_data)?;
 
         Ok(token)
     }
@@ -501,19 +519,9 @@ impl ExportedTypeBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::CilAssembly,
-        metadata::{
-            cilassemblyview::CilAssemblyView,
-            tables::{TableId, TypeAttributes},
-        },
+        metadata::tables::{TableId, TypeAttributes},
+        test::factories::table::assemblyref::get_test_assembly,
     };
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
 
     #[test]
     fn test_exported_type_builder_basic() -> Result<()> {
@@ -755,7 +763,11 @@ mod tests {
         let mut builder = ExportedTypeBuilder::new().name("InvalidType");
 
         // Manually set an invalid implementation (TypeDef is not valid for Implementation coded index)
-        builder.implementation = Some(CodedIndex::new(TableId::TypeDef, 1));
+        builder.implementation = Some(CodedIndex::new(
+            TableId::TypeDef,
+            1,
+            CodedIndexType::Implementation,
+        ));
 
         let result = builder.build(&mut context);
 
@@ -775,7 +787,11 @@ mod tests {
         let mut builder = ExportedTypeBuilder::new().name("ZeroRowType");
 
         // Manually set an implementation with row 0 (invalid)
-        builder.implementation = Some(CodedIndex::new(TableId::File, 0));
+        builder.implementation = Some(CodedIndex::new(
+            TableId::File,
+            0,
+            CodedIndexType::Implementation,
+        ));
 
         let result = builder.build(&mut context);
 

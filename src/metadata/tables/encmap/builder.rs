@@ -83,6 +83,7 @@ impl EncMapBuilder {
     ///
     /// let builder = EncMapBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             original_token: None,
@@ -115,6 +116,7 @@ impl EncMapBuilder {
     /// let builder = EncMapBuilder::new()
     ///     .original_token_obj(token);
     /// ```
+    #[must_use]
     pub fn original_token(mut self, original_token: u32) -> Self {
         self.original_token = Some(Token::new(original_token));
         self
@@ -140,6 +142,7 @@ impl EncMapBuilder {
     /// let builder = EncMapBuilder::new()
     ///     .original_token_obj(token);
     /// ```
+    #[must_use]
     pub fn original_token_obj(mut self, original_token: Token) -> Self {
         self.original_token = Some(original_token);
         self
@@ -189,7 +192,7 @@ impl EncMapBuilder {
             original_token,
         };
 
-        context.add_table_row(TableId::EncMap, TableDataOwned::EncMap(enc_map))?;
+        context.table_row_add(TableId::EncMap, TableDataOwned::EncMap(enc_map))?;
         Ok(token)
     }
 }
@@ -207,16 +210,8 @@ impl Default for EncMapBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
-        metadata::cilassemblyview::CilAssemblyView,
+        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
     };
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
 
     #[test]
     fn test_encmap_builder_new() {

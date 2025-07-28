@@ -58,7 +58,7 @@ pub struct TableIterator<'a, T> {
     pub current_offset: usize,
 }
 
-impl<'a, T: RowReadable> Iterator for TableIterator<'a, T> {
+impl<T: RowReadable> Iterator for TableIterator<'_, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -164,7 +164,7 @@ impl<'a, T: RowReadable + Send + Sync + 'a> TableParIterator<'a, T> {
     }
 }
 
-impl<'a, T: RowReadable + Send + Sync> ParallelIterator for TableParIterator<'a, T> {
+impl<T: RowReadable + Send + Sync> ParallelIterator for TableParIterator<'_, T> {
     type Item = T;
 
     fn drive_unindexed<C>(self, consumer: C) -> C::Result
@@ -175,7 +175,7 @@ impl<'a, T: RowReadable + Send + Sync> ParallelIterator for TableParIterator<'a,
     }
 }
 
-impl<'a, T: RowReadable + Send + Sync> IndexedParallelIterator for TableParIterator<'a, T> {
+impl<T: RowReadable + Send + Sync> IndexedParallelIterator for TableParIterator<'_, T> {
     fn len(&self) -> usize {
         self.range.len()
     }
@@ -276,7 +276,7 @@ struct TableProducerIterator<'a, T> {
     range: std::ops::Range<u32>,
 }
 
-impl<'a, T: RowReadable + Send + Sync> Iterator for TableProducerIterator<'a, T> {
+impl<T: RowReadable + Send + Sync> Iterator for TableProducerIterator<'_, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -298,10 +298,10 @@ impl<'a, T: RowReadable + Send + Sync> Iterator for TableProducerIterator<'a, T>
     }
 }
 
-impl<'a, T: RowReadable + Send + Sync> ExactSizeIterator for TableProducerIterator<'a, T> {}
+impl<T: RowReadable + Send + Sync> ExactSizeIterator for TableProducerIterator<'_, T> {}
 
 // Implement DoubleEndedIterator for compatibility with Rayon
-impl<'a, T: RowReadable + Send + Sync> DoubleEndedIterator for TableProducerIterator<'a, T> {
+impl<T: RowReadable + Send + Sync> DoubleEndedIterator for TableProducerIterator<'_, T> {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.range.start >= self.range.end {
             return None;

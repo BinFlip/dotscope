@@ -56,7 +56,7 @@ pub use super::GenericParamAttributes;
 /// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create a basic type parameter for a generic class
-/// let generic_class = CodedIndex::new(TableId::TypeDef, 1); // Generic class
+/// let generic_class = CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef); // Generic class
 ///
 /// let type_param = GenericParamBuilder::new()
 ///     .name("T")
@@ -76,7 +76,7 @@ pub use super::GenericParamAttributes;
 ///     .build(&mut context)?;
 ///
 /// // Create a covariant parameter for an interface
-/// let generic_interface = CodedIndex::new(TableId::TypeDef, 2); // Generic interface
+/// let generic_interface = CodedIndex::new(TableId::TypeDef, 2, CodedIndexType::TypeOrMethodDef); // Generic interface
 ///
 /// let covariant_param = GenericParamBuilder::new()
 ///     .name("TResult")
@@ -86,7 +86,7 @@ pub use super::GenericParamAttributes;
 ///     .build(&mut context)?;
 ///
 /// // Create a method-level generic parameter
-/// let generic_method = CodedIndex::new(TableId::MethodDef, 5); // Generic method
+/// let generic_method = CodedIndex::new(TableId::MethodDef, 5, CodedIndexType::TypeOrMethodDef); // Generic method
 ///
 /// let method_param = GenericParamBuilder::new()
 ///     .name("U")
@@ -114,6 +114,7 @@ impl GenericParamBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::genericparam::GenericParamBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             name: None,
@@ -142,6 +143,7 @@ impl GenericParamBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -166,6 +168,7 @@ impl GenericParamBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn number(mut self, number: u32) -> Self {
         self.number = Some(number);
         self
@@ -189,6 +192,7 @@ impl GenericParamBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn flags(mut self, flags: u32) -> Self {
         self.flags = Some(flags);
         self
@@ -212,6 +216,7 @@ impl GenericParamBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn owner(mut self, owner: CodedIndex) -> Self {
         self.owner = Some(owner);
         self
@@ -287,7 +292,7 @@ impl GenericParamBuilder {
             });
         }
 
-        let name_index = context.get_or_add_string(&name)?;
+        let name_index = context.string_get_or_add(&name)?;
         let rid = context.next_rid(TableId::GenericParam);
 
         let token_value = ((TableId::GenericParam as u32) << 24) | rid;
@@ -303,7 +308,7 @@ impl GenericParamBuilder {
             name: name_index,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::GenericParam,
             TableDataOwned::GenericParam(generic_param_raw),
         )
@@ -332,7 +337,8 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Create a basic type parameter
-            let generic_type = CodedIndex::new(TableId::TypeDef, 1);
+            let generic_type =
+                CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef);
 
             let token = GenericParamBuilder::new()
                 .name("T")
@@ -354,7 +360,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let generic_type = CodedIndex::new(TableId::TypeDef, 1);
+            let generic_type =
+                CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef);
             let constraint_flags = GenericParamAttributes::REFERENCE_TYPE_CONSTRAINT
                 | GenericParamAttributes::DEFAULT_CONSTRUCTOR_CONSTRAINT;
 
@@ -378,7 +385,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let generic_interface = CodedIndex::new(TableId::TypeDef, 2);
+            let generic_interface =
+                CodedIndex::new(TableId::TypeDef, 2, CodedIndexType::TypeOrMethodDef);
 
             let token = GenericParamBuilder::new()
                 .name("TResult")
@@ -400,7 +408,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let generic_method = CodedIndex::new(TableId::MethodDef, 1);
+            let generic_method =
+                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::TypeOrMethodDef);
 
             let token = GenericParamBuilder::new()
                 .name("U")
@@ -421,7 +430,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let generic_type = CodedIndex::new(TableId::TypeDef, 1);
+            let generic_type =
+                CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef);
 
             let result = GenericParamBuilder::new()
                 .number(0)
@@ -440,7 +450,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let generic_type = CodedIndex::new(TableId::TypeDef, 1);
+            let generic_type =
+                CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef);
 
             let result = GenericParamBuilder::new()
                 .name("T")
@@ -477,7 +488,7 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Use a table type that's not valid for TypeOrMethodDef
-            let invalid_owner = CodedIndex::new(TableId::Field, 1); // Field not in TypeOrMethodDef
+            let invalid_owner = CodedIndex::new(TableId::Field, 1, CodedIndexType::TypeOrMethodDef); // Field not in TypeOrMethodDef
 
             let result = GenericParamBuilder::new()
                 .name("T")
@@ -497,7 +508,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let generic_type = CodedIndex::new(TableId::TypeDef, 1);
+            let generic_type =
+                CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef);
 
             let result = GenericParamBuilder::new()
                 .name("T")
@@ -517,7 +529,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let generic_type = CodedIndex::new(TableId::TypeDef, 1);
+            let generic_type =
+                CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef);
 
             let result = GenericParamBuilder::new()
                 .name("T")
@@ -538,8 +551,10 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let generic_type = CodedIndex::new(TableId::TypeDef, 1);
-            let generic_method = CodedIndex::new(TableId::MethodDef, 1);
+            let generic_type =
+                CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef);
+            let generic_method =
+                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::TypeOrMethodDef);
 
             // Create multiple generic parameters
             let param1 = GenericParamBuilder::new()
@@ -584,7 +599,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let generic_type = CodedIndex::new(TableId::TypeDef, 1);
+            let generic_type =
+                CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef);
 
             // Test different constraint combinations
             let constraints = [

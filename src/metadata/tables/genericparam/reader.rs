@@ -56,11 +56,7 @@ mod tests {
             assert_eq!(row.flags, 0x0202);
             assert_eq!(
                 row.owner,
-                CodedIndex {
-                    tag: TableId::TypeDef,
-                    row: 1,
-                    token: Token::new(1 | 0x02000000),
-                }
+                CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef)
             );
             assert_eq!(row.name, 0x0404);
         };
@@ -105,11 +101,7 @@ mod tests {
             assert_eq!(row.flags, 0x0202);
             assert_eq!(
                 row.owner,
-                CodedIndex {
-                    tag: TableId::TypeDef,
-                    row: 1,
-                    token: Token::new(1 | 0x02000000),
-                }
+                CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef)
             );
             assert_eq!(row.name, 0x04040404);
         };

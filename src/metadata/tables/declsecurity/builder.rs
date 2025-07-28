@@ -67,7 +67,7 @@ use crate::{
 /// let mut context = BuilderContext::new(assembly);
 ///
 /// // Create a demand for FileIOPermission on a method
-/// let method_ref = CodedIndex::new(TableId::MethodDef, 1); // Target method
+/// let method_ref = CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasDeclSecurity); // Target method
 /// let file_permission = vec![0x01, 0x02, 0x03, 0x04]; // Simple permission blob
 ///
 /// let file_security = DeclSecurityBuilder::new()
@@ -77,7 +77,7 @@ use crate::{
 ///     .build(&mut context)?;
 ///
 /// // Create an assembly-level security request for minimum permissions
-/// let assembly_ref = CodedIndex::new(TableId::Assembly, 1); // Assembly target
+/// let assembly_ref = CodedIndex::new(TableId::Assembly, 1, CodedIndexType::HasDeclSecurity); // Assembly target
 /// let min_permissions = vec![0x01, 0x01, 0x00, 0xFF]; // Minimum permission set
 ///
 /// let assembly_security = DeclSecurityBuilder::new()
@@ -87,7 +87,7 @@ use crate::{
 ///     .build(&mut context)?;
 ///
 /// // Create a type-level link demand for full trust
-/// let type_ref = CodedIndex::new(TableId::TypeDef, 1); // Target type
+/// let type_ref = CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasDeclSecurity); // Target type
 /// let full_trust = vec![0x01, 0x01, 0x00, 0x00]; // Full trust permission set
 ///
 /// let type_security = DeclSecurityBuilder::new()
@@ -97,7 +97,7 @@ use crate::{
 ///     .build(&mut context)?;
 ///
 /// // Create a security assertion for elevated privileges
-/// let trusted_method = CodedIndex::new(TableId::MethodDef, 2); // Trusted method
+/// let trusted_method = CodedIndex::new(TableId::MethodDef, 2, CodedIndexType::HasDeclSecurity); // Trusted method
 ///
 /// let assertion_security = DeclSecurityBuilder::new()
 ///     .action(SecurityAction::Assert)
@@ -124,6 +124,7 @@ impl DeclSecurityBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::declsecurity::DeclSecurityBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             action: None,
@@ -152,6 +153,7 @@ impl DeclSecurityBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn action(mut self, action: SecurityAction) -> Self {
         self.action = Some(action.into());
         self
@@ -170,6 +172,7 @@ impl DeclSecurityBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn action_raw(mut self, action: u16) -> Self {
         self.action = Some(action);
         self
@@ -199,6 +202,7 @@ impl DeclSecurityBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn parent(mut self, parent: CodedIndex) -> Self {
         self.parent = Some(parent);
         self
@@ -231,6 +235,7 @@ impl DeclSecurityBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn permission_set(mut self, permission_set: &[u8]) -> Self {
         self.permission_set = Some(permission_set.to_vec());
         self
@@ -245,6 +250,7 @@ impl DeclSecurityBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    #[must_use]
     pub fn unrestricted_permission_set(mut self) -> Self {
         // Create a minimal unrestricted permission set blob
         // This is a simplified representation - in practice, you'd want to create
@@ -323,7 +329,7 @@ impl DeclSecurityBuilder {
             });
         }
 
-        let permission_set_index = context.add_blob(&permission_set)?;
+        let permission_set_index = context.blob_add(&permission_set)?;
 
         let rid = context.next_rid(TableId::DeclSecurity);
 
@@ -339,7 +345,7 @@ impl DeclSecurityBuilder {
             permission_set: permission_set_index,
         };
 
-        context.add_table_row(
+        context.table_row_add(
             TableId::DeclSecurity,
             TableDataOwned::DeclSecurity(decl_security_raw),
         )
@@ -368,7 +374,8 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Create a basic security declaration
-            let method_ref = CodedIndex::new(TableId::MethodDef, 1); // Method target
+            let method_ref =
+                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasDeclSecurity); // Method target
             let permission_blob = vec![0x01, 0x02, 0x03, 0x04]; // Simple test blob
 
             let token = DeclSecurityBuilder::new()
@@ -405,7 +412,11 @@ mod tests {
             ];
 
             for (i, &action) in actions.iter().enumerate() {
-                let parent = CodedIndex::new(TableId::TypeDef, (i + 1) as u32);
+                let parent = CodedIndex::new(
+                    TableId::TypeDef,
+                    (i + 1) as u32,
+                    CodedIndexType::HasDeclSecurity,
+                );
 
                 let token = DeclSecurityBuilder::new()
                     .action(action)
@@ -430,9 +441,11 @@ mod tests {
             let permission_blob = vec![0x01, 0x02, 0x03, 0x04];
 
             // Test different parent types (HasDeclSecurity coded index)
-            let assembly_parent = CodedIndex::new(TableId::Assembly, 1);
-            let type_parent = CodedIndex::new(TableId::TypeDef, 1);
-            let method_parent = CodedIndex::new(TableId::MethodDef, 1);
+            let assembly_parent =
+                CodedIndex::new(TableId::Assembly, 1, CodedIndexType::HasDeclSecurity);
+            let type_parent = CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasDeclSecurity);
+            let method_parent =
+                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasDeclSecurity);
 
             // Assembly security
             let assembly_security = DeclSecurityBuilder::new()
@@ -475,7 +488,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let parent_ref = CodedIndex::new(TableId::MethodDef, 1);
+            let parent_ref =
+                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasDeclSecurity);
             let permission_blob = vec![0x01, 0x02, 0x03, 0x04];
 
             // Test setting action with raw u16 value
@@ -498,7 +512,7 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let parent_ref = CodedIndex::new(TableId::TypeDef, 1);
+            let parent_ref = CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasDeclSecurity);
 
             // Test unrestricted permission set convenience method
             let token = DeclSecurityBuilder::new()
@@ -520,7 +534,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let parent_ref = CodedIndex::new(TableId::MethodDef, 1);
+            let parent_ref =
+                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasDeclSecurity);
             let permission_blob = vec![0x01, 0x02, 0x03, 0x04];
 
             let result = DeclSecurityBuilder::new()
@@ -561,7 +576,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let parent_ref = CodedIndex::new(TableId::MethodDef, 1);
+            let parent_ref =
+                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasDeclSecurity);
 
             let result = DeclSecurityBuilder::new()
                 .action(SecurityAction::Demand)
@@ -581,7 +597,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let parent_ref = CodedIndex::new(TableId::MethodDef, 1);
+            let parent_ref =
+                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasDeclSecurity);
             let empty_blob = vec![]; // Empty permission set
 
             let result = DeclSecurityBuilder::new()
@@ -603,7 +620,8 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Use a table type that's not valid for HasDeclSecurity
-            let invalid_parent = CodedIndex::new(TableId::Field, 1); // Field not in HasDeclSecurity
+            let invalid_parent =
+                CodedIndex::new(TableId::Field, 1, CodedIndexType::HasDeclSecurity); // Field not in HasDeclSecurity
             let permission_blob = vec![0x01, 0x02, 0x03, 0x04];
 
             let result = DeclSecurityBuilder::new()
@@ -624,7 +642,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let parent_ref = CodedIndex::new(TableId::MethodDef, 1);
+            let parent_ref =
+                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasDeclSecurity);
             let permission_blob = vec![0x01, 0x02, 0x03, 0x04];
 
             let result = DeclSecurityBuilder::new()
@@ -661,7 +680,8 @@ mod tests {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
-            let method_ref = CodedIndex::new(TableId::MethodDef, 1);
+            let method_ref =
+                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasDeclSecurity);
             let permission_blob1 = vec![0x01, 0x02, 0x03, 0x04]; // First permission set
             let permission_blob2 = vec![0x05, 0x06, 0x07, 0x08]; // Second permission set
 
@@ -698,7 +718,8 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             // Realistic scenario: Secure file access method
-            let file_method = CodedIndex::new(TableId::MethodDef, 1);
+            let file_method =
+                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasDeclSecurity);
 
             // Create a realistic permission blob (simplified for testing)
             let file_io_permission = vec![
@@ -718,7 +739,8 @@ mod tests {
                 .unwrap();
 
             // Assembly-level security request
-            let assembly_ref = CodedIndex::new(TableId::Assembly, 1);
+            let assembly_ref =
+                CodedIndex::new(TableId::Assembly, 1, CodedIndexType::HasDeclSecurity);
 
             let assembly_security = DeclSecurityBuilder::new()
                 .action(SecurityAction::RequestMinimum)
@@ -728,7 +750,8 @@ mod tests {
                 .unwrap();
 
             // Privileged method with assertion
-            let privileged_method = CodedIndex::new(TableId::MethodDef, 2);
+            let privileged_method =
+                CodedIndex::new(TableId::MethodDef, 2, CodedIndexType::HasDeclSecurity);
 
             let privilege_security = DeclSecurityBuilder::new()
                 .action(SecurityAction::Assert)

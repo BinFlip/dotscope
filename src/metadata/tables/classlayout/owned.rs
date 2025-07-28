@@ -25,7 +25,7 @@
 //! - [`crate::metadata::token`] - Token-based metadata references
 
 use crate::{
-    metadata::{token::Token, typesystem::CilTypeRc, validation::LayoutValidator},
+    metadata::{token::Token, typesystem::CilTypeRc},
     Result,
 };
 
@@ -146,8 +146,6 @@ impl ClassLayout {
     /// definition. Multiple threads can safely call this method concurrently, though
     /// only one will succeed in setting the layout parameters.
     pub fn apply(&self) -> Result<()> {
-        LayoutValidator::validate_class_layout(self.class_size, self.packing_size, &self.parent)?;
-
         self.parent
             .class_size
             .set(self.class_size)

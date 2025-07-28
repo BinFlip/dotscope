@@ -14,12 +14,12 @@
 //!
 //! # Key Components
 //!
-//! - [`crate::metadata::tables::declsecurity::DeclSecurityRaw`] - Raw table structure with unresolved coded indexes
-//! - [`crate::metadata::tables::declsecurity::DeclSecurity`] - Owned variant with resolved references and parsed permission sets
-//! - [`crate::metadata::tables::declsecurity::DeclSecurityLoader`] - Internal loader for processing `DeclSecurity` table data
-//! - [`crate::metadata::tables::declsecurity::DeclSecurityMap`] - Token-based lookup map
-//! - [`crate::metadata::tables::declsecurity::DeclSecurityList`] - Collection type
-//! - [`crate::metadata::tables::declsecurity::DeclSecurityRc`] - Reference-counted pointer
+//! - [`crate::metadata::tables::DeclSecurityRaw`] - Raw table structure with unresolved coded indexes
+//! - [`crate::metadata::tables::DeclSecurity`] - Owned variant with resolved references and parsed permission sets
+//! - [`crate::metadata::tables::DeclSecurityLoader`] - Internal loader for processing `DeclSecurity` table data
+//! - [`crate::metadata::tables::DeclSecurityMap`] - Token-based lookup map
+//! - [`crate::metadata::tables::DeclSecurityList`] - Collection type
+//! - [`crate::metadata::tables::DeclSecurityRc`] - Reference-counted pointer
 //!
 //! # `DeclSecurity` Table Structure
 //!

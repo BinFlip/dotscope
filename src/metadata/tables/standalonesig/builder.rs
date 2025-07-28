@@ -134,6 +134,7 @@ impl StandAloneSigBuilder {
     /// # Returns
     ///
     /// A new [`crate::metadata::tables::standalonesig::StandAloneSigBuilder`] instance ready for configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self { signature: None }
     }
@@ -160,6 +161,7 @@ impl StandAloneSigBuilder {
     /// let builder = StandAloneSigBuilder::new()
     ///     .signature(&[0x00, 0x01, 0x01]); // Simple void method signature
     /// ```
+    #[must_use]
     pub fn signature(mut self, data: &[u8]) -> Self {
         self.signature = Some(data.to_vec());
         self
@@ -216,7 +218,7 @@ impl StandAloneSigBuilder {
             });
         }
 
-        let signature_index = context.add_blob(&signature_data)?;
+        let signature_index = context.blob_add(&signature_data)?;
         let rid = context.next_rid(TableId::StandAloneSig);
         let token = Token::new((TableId::StandAloneSig as u32) << 24 | rid);
 
@@ -228,7 +230,7 @@ impl StandAloneSigBuilder {
         };
 
         let table_data = TableDataOwned::StandAloneSig(standalonesig_raw);
-        context.add_table_row(TableId::StandAloneSig, table_data)?;
+        context.table_row_add(TableId::StandAloneSig, table_data)?;
 
         Ok(token)
     }
@@ -237,14 +239,7 @@ impl StandAloneSigBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{cilassembly::CilAssembly, metadata::cilassemblyview::CilAssemblyView, prelude::*};
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
+    use crate::{prelude::*, test::factories::table::assemblyref::get_test_assembly};
 
     #[test]
     fn test_standalonesig_builder_basic() -> Result<()> {

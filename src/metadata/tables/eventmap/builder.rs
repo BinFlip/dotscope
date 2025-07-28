@@ -147,6 +147,7 @@ impl EventMapBuilder {
     /// # use dotscope::prelude::*;
     /// let builder = EventMapBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             parent: None,
@@ -181,6 +182,7 @@ impl EventMapBuilder {
     ///     .parent(type_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn parent(mut self, parent_token: Token) -> Self {
         self.parent = Some(parent_token);
         self
@@ -203,6 +205,7 @@ impl EventMapBuilder {
     /// let builder = EventMapBuilder::new()
     ///     .event_list(1); // Start from first event
     /// ```
+    #[must_use]
     pub fn event_list(mut self, event_list_index: u32) -> Self {
         self.event_list = Some(event_list_index);
         self
@@ -296,7 +299,7 @@ impl EventMapBuilder {
         };
 
         let table_data = TableDataOwned::EventMap(event_map);
-        context.add_table_row(TableId::EventMap, table_data)?;
+        context.table_row_add(TableId::EventMap, table_data)?;
 
         Ok(token)
     }
@@ -306,16 +309,8 @@ impl EventMapBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::CilAssembly,
-        metadata::{cilassemblyview::CilAssemblyView, tables::TableId},
+        metadata::tables::TableId, test::factories::table::assemblyref::get_test_assembly,
     };
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
 
     #[test]
     fn test_event_map_builder_basic() -> Result<()> {

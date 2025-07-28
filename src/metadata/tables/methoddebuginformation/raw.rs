@@ -57,7 +57,7 @@
 //! This module integrates with:
 //! - Method debug information owned types - Owned representation for runtime use
 //! - [`crate::metadata::tables::document`] - Document table for source file references
-//! - [`crate::metadata::streams::blob`] - Blob heap for sequence points data resolution
+//! - [`crate::metadata::streams::Blob`] - Blob heap for sequence points data resolution
 //! - [`crate::metadata::method`] - Method definition association and debugging
 
 use crate::{

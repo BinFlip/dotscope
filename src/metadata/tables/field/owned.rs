@@ -67,6 +67,7 @@ pub struct Field {
     /// - `0x0080`: `HasFieldRVA`
     /// - `0x1000`: `HasDefault`
     /// - `0x2000`: `HasFieldMarshal`
+    // ToDo: Make this a proper bitfield for cleaner access
     pub flags: u32,
 
     /// The name of the field.

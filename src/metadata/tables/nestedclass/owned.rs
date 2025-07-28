@@ -4,7 +4,7 @@
 //! references and owned data structures for efficient runtime access.
 
 use crate::{
-    metadata::{token::Token, typesystem::CilTypeRc, validation::NestedClassValidator},
+    metadata::{token::Token, typesystem::CilTypeRc},
     Result,
 };
 
@@ -105,11 +105,6 @@ impl NestedClass {
     /// - Type references are invalid or cannot be resolved
     /// - The relationship violates .NET type system constraints
     pub fn apply(&self) -> Result<()> {
-        NestedClassValidator::validate_nested_relationship(
-            self.nested_class.token,
-            self.enclosing_class.token,
-        )?;
-
         self.enclosing_class
             .nested_types
             .push(self.nested_class.clone().into());
