@@ -171,7 +171,7 @@ impl<'a> NativeTablesWriter<'a> {
                 return Ok(());
             }
 
-            let file_offset = self.rva_to_file_offset(import_rva)?;
+            let file_offset = self.rva_to_file_offset(import_rva);
             self.base.output.write_at(file_offset, &import_table_data)?;
         } else {
             return Err(Error::WriteLayoutFailed {
@@ -215,7 +215,7 @@ impl<'a> NativeTablesWriter<'a> {
                 return Ok(());
             }
 
-            let file_offset = self.rva_to_file_offset(export_rva)?;
+            let file_offset = self.rva_to_file_offset(export_rva);
             self.base.output.write_at(file_offset, &export_table_data)?;
         } else {
             return Err(Error::WriteLayoutFailed {
@@ -236,11 +236,8 @@ impl<'a> NativeTablesWriter<'a> {
     /// * `rva` - The relative virtual address to convert
     ///
     /// # Returns
-    /// Returns the file offset corresponding to the RVA.
-    ///
-    /// # Errors
-    /// Returns [`crate::Error`] if the RVA cannot be converted to a valid file offset.
-    fn rva_to_file_offset(&self, rva: u32) -> Result<u64> {
+    /// Returns the file offset corresponding to the given RVA.
+    fn rva_to_file_offset(&self, rva: u32) -> u64 {
         // First try to use the layout plan's section information (for relocated sections)
         for section_layout in &self.base.layout_plan.file_layout.sections {
             let section_start = section_layout.virtual_address;
@@ -249,7 +246,7 @@ impl<'a> NativeTablesWriter<'a> {
             if rva >= section_start && rva < section_end {
                 let offset_in_section = rva - section_start;
                 let file_offset = section_layout.file_region.offset + u64::from(offset_in_section);
-                return Ok(file_offset);
+                return file_offset;
             }
         }
 
@@ -265,11 +262,11 @@ impl<'a> NativeTablesWriter<'a> {
                 let offset_in_section = rva - section_start;
                 let file_offset =
                     u64::from(section.pointer_to_raw_data) + u64::from(offset_in_section);
-                return Ok(file_offset);
+                return file_offset;
             }
         }
 
-        Ok(u64::from(rva))
+        u64::from(rva)
     }
 
     /// Determines if this is a PE32+ format file.

@@ -54,7 +54,7 @@
 //!
 //! // Find space for a table within existing sections
 //! let allocated_regions = vec![(0x2000, 0x100)]; // Example allocated regions
-//! if let Some(rva) = find_space_in_sections(&assembly, 0x200, &allocated_regions)? {
+//! if let Some(rva) = find_space_in_sections(&assembly, 0x200, &allocated_regions) {
 //!     println!("Found space at RVA: 0x{:X}", rva);
 //! }
 //! # Ok::<(), crate::Error>(())
@@ -302,7 +302,7 @@ pub fn get_padding_space_after_rva(
         return 0;
     };
 
-    let mut padding_count = 0;
+    let mut padding_count = 0u32;
     for &byte in section_data {
         if byte == 0x00 || byte == 0xCC {
             padding_count += 1;
@@ -312,7 +312,7 @@ pub fn get_padding_space_after_rva(
     }
 
     let max_rva_space = section_end_rva.saturating_sub(start_rva);
-    std::cmp::min(padding_count as u32, max_rva_space)
+    std::cmp::min(padding_count, max_rva_space)
 }
 
 /// Finds available space within existing sections for a table.
@@ -331,7 +331,7 @@ pub fn find_space_in_sections(
     assembly: &CilAssembly,
     required_size: u32,
     allocated_regions: &[(u32, u32)],
-) -> Result<Option<u32>> {
+) -> Option<u32> {
     let file = assembly.file();
     let preferred_sections = [".text", ".rdata", ".data"];
 
@@ -343,20 +343,20 @@ pub fn find_space_in_sections(
         let is_preferred = preferred_sections.contains(&section_name);
         if is_preferred {
             if let Some(allocation_rva) =
-                find_padding_space_in_section(assembly, section, required_size)?
+                find_padding_space_in_section(assembly, section, required_size)
             {
                 if !validation::conflicts_with_regions(
                     allocation_rva,
                     required_size,
                     allocated_regions,
                 ) {
-                    return Ok(Some(allocation_rva));
+                    return Some(allocation_rva);
                 }
             }
         }
     }
 
-    Ok(None)
+    None
 }
 
 /// Finds contiguous padding space within a specific section.
@@ -375,26 +375,20 @@ pub fn find_padding_space_in_section(
     assembly: &CilAssembly,
     section: &goblin::pe::section_table::SectionTable,
     required_size: u32,
-) -> Result<Option<u32>> {
+) -> Option<u32> {
     let file = assembly.file();
 
     if section.size_of_raw_data == 0 {
-        return Ok(None);
+        return None;
     }
 
-    let section_file_offset = match file.rva_to_offset(section.virtual_address as usize) {
-        Ok(offset) => offset,
-        Err(_) => {
-            return Ok(None);
-        }
+    let Ok(section_file_offset) = file.rva_to_offset(section.virtual_address as usize) else {
+        return None;
     };
 
-    let section_data = match file.data_slice(section_file_offset, section.size_of_raw_data as usize)
-    {
-        Ok(data) => data,
-        Err(_) => {
-            return Ok(None);
-        }
+    let Ok(section_data) = file.data_slice(section_file_offset, section.size_of_raw_data as usize)
+    else {
+        return None;
     };
 
     let aligned_required_size = ((required_size + 7) & !7) as usize;
@@ -422,7 +416,7 @@ pub fn find_padding_space_in_section(
                     if allocation_rva + required_size
                         <= section.virtual_address + section.virtual_size
                     {
-                        return Ok(Some(allocation_rva));
+                        return Some(allocation_rva);
                     }
                 }
             }
@@ -432,7 +426,7 @@ pub fn find_padding_space_in_section(
         }
     }
 
-    Ok(None)
+    None
 }
 
 /// Allocates space at the end of sections, but only within section boundaries.

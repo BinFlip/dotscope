@@ -221,17 +221,13 @@ pub fn calculate_native_table_requirements(
         let imports = &assembly.changes().native_imports;
         let is_pe32_plus = assembly.file().is_pe32_plus_format()?;
 
-        match imports.native().get_import_table_data(is_pe32_plus) {
-            Ok(import_data) => {
-                requirements.import_table_size = import_data.len() as u64;
-            }
-            Err(_) => {
-                // If table generation fails, estimate conservatively using unified data
-                let dll_count = imports.native().dll_count();
-                let function_count = imports.native().total_function_count();
-                requirements.import_table_size =
-                    (dll_count * 64 + function_count * 32 + 1024) as u64;
-            }
+        if let Ok(import_data) = imports.native().get_import_table_data(is_pe32_plus) {
+            requirements.import_table_size = import_data.len() as u64;
+        } else {
+            // If table generation fails, estimate conservatively using unified data
+            let dll_count = imports.native().dll_count();
+            let function_count = imports.native().total_function_count();
+            requirements.import_table_size = (dll_count * 64 + function_count * 32 + 1024) as u64;
         }
     }
 
@@ -251,15 +247,12 @@ pub fn calculate_native_table_requirements(
         }
 
         let exports = &assembly.changes().native_exports;
-        match exports.native().get_export_table_data() {
-            Ok(export_data) => {
-                requirements.export_table_size = export_data.len() as u64;
-            }
-            Err(_) => {
-                // Conservative estimation using unified data
-                let function_count = exports.native().function_count();
-                requirements.export_table_size = (40 + function_count * 16 + 512) as u64;
-            }
+        if let Ok(export_data) = exports.native().get_export_table_data() {
+            requirements.export_table_size = export_data.len() as u64;
+        } else {
+            // Conservative estimation using unified data
+            let function_count = exports.native().function_count();
+            requirements.export_table_size = (40 + function_count * 16 + 512) as u64;
         }
     }
 
@@ -311,7 +304,17 @@ pub fn allocate_native_table_rvas_with_layout(
 
         // Add the import table region to exclusions
         if let Some(import_rva) = requirements.import_table_rva {
-            allocated_regions.push((import_rva, requirements.import_table_size as u32));
+            allocated_regions.push((
+                import_rva,
+                u32::try_from(requirements.import_table_size).map_err(|_| {
+                    Error::WriteLayoutFailed {
+                        message: format!(
+                            "Import table size exceeds u32 limit: {}",
+                            requirements.import_table_size
+                        ),
+                    }
+                })?,
+            ));
         }
     }
 
@@ -377,7 +380,17 @@ pub fn calculate_native_table_rvas(
 
         // Add the import table region to exclusions
         if let Some(import_rva) = requirements.import_table_rva {
-            allocated_regions.push((import_rva, requirements.import_table_size as u32));
+            allocated_regions.push((
+                import_rva,
+                u32::try_from(requirements.import_table_size).map_err(|_| {
+                    Error::WriteLayoutFailed {
+                        message: format!(
+                            "Import table size exceeds u32 limit: {}",
+                            requirements.import_table_size
+                        ),
+                    }
+                })?,
+            ));
         }
     }
 
@@ -417,7 +430,9 @@ pub fn calculate_table_rva_with_layout(
     required_size: u64,
     allocated_regions: &[(u32, u32)],
 ) -> Result<Option<u32>> {
-    let required_size_u32 = required_size as u32;
+    let required_size_u32 = u32::try_from(required_size).map_err(|_| Error::WriteLayoutFailed {
+        message: format!("Required size exceeds u32 limit: {required_size}"),
+    })?;
 
     // Strategy 1: Try to reuse existing location if space allows and no conflicts
     if let Some(rva) = existing_rva {
@@ -462,7 +477,7 @@ pub fn calculate_table_rva_with_layout(
 
     // Strategy 3: Fall back to original allocation strategy (using original sections)
     if let Some(rva) =
-        memory::find_space_in_sections(assembly, required_size_u32, allocated_regions)?
+        memory::find_space_in_sections(assembly, required_size_u32, allocated_regions)
     {
         return Ok(Some(rva));
     }
@@ -501,7 +516,9 @@ pub fn calculate_table_rva(
     required_size: u64,
     allocated_regions: &[(u32, u32)],
 ) -> Result<Option<u32>> {
-    let required_size_u32 = required_size as u32;
+    let required_size_u32 = u32::try_from(required_size).map_err(|_| Error::WriteLayoutFailed {
+        message: format!("Required size exceeds u32 limit: {required_size}"),
+    })?;
 
     // Strategy 1: Try to reuse existing location if space allows and no conflicts
     if let Some(rva) = existing_rva {
@@ -525,7 +542,7 @@ pub fn calculate_table_rva(
 
     // Strategy 2: Find space within existing sections that doesn't conflict
     if let Some(rva) =
-        memory::find_space_in_sections(assembly, required_size_u32, allocated_regions)?
+        memory::find_space_in_sections(assembly, required_size_u32, allocated_regions)
     {
         return Ok(Some(rva));
     }

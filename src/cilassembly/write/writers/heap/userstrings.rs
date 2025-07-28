@@ -8,7 +8,7 @@ use crate::{
     Error, Result,
 };
 
-impl<'a> super::HeapWriter<'a> {
+impl super::HeapWriter<'_> {
     /// Writes user string heap modifications including additions, modifications, and removals.
     ///
     /// Handles all types of user string heap changes:
@@ -49,7 +49,7 @@ impl<'a> super::HeapWriter<'a> {
             // User strings are UTF-16 encoded with length prefix (ECMA-335 II.24.2.4)
             let utf16_bytes: Vec<u8> = user_string
                 .encode_utf16()
-                .flat_map(|c| c.to_le_bytes())
+                .flat_map(u16::to_le_bytes)
                 .collect();
 
             // Length includes: UTF-16 data + terminator byte (1 byte)
@@ -147,10 +147,10 @@ impl<'a> super::HeapWriter<'a> {
                 .write_and_advance(&mut write_pos, replacement_heap)?;
 
             // Process appended items (additions after replacement)
-            for user_string in userstring_changes.appended_items.iter() {
+            for user_string in &userstring_changes.appended_items {
                 let utf16_bytes: Vec<u8> = user_string
                     .encode_utf16()
-                    .flat_map(|c| c.to_le_bytes())
+                    .flat_map(u16::to_le_bytes)
                     .collect();
 
                 let total_length = utf16_bytes.len() + 1; // +1 for terminator byte
@@ -382,7 +382,7 @@ impl<'a> super::HeapWriter<'a> {
     ) -> Result<()> {
         let utf16_bytes: Vec<u8> = user_string
             .encode_utf16()
-            .flat_map(|c| c.to_le_bytes())
+            .flat_map(u16::to_le_bytes)
             .collect();
 
         let utf16_data_length = utf16_bytes.len();
@@ -431,7 +431,7 @@ impl<'a> super::HeapWriter<'a> {
     ) -> Result<()> {
         let utf16_bytes: Vec<u8> = user_string
             .encode_utf16()
-            .flat_map(|c| c.to_le_bytes())
+            .flat_map(u16::to_le_bytes)
             .collect();
 
         let utf16_data_length = utf16_bytes.len();
@@ -545,7 +545,7 @@ impl<'a> super::HeapWriter<'a> {
     pub(super) fn calculate_userstring_entry_size(userstring: &str) -> Result<u32> {
         let utf16_bytes: Vec<u8> = userstring
             .encode_utf16()
-            .flat_map(|c| c.to_le_bytes())
+            .flat_map(u16::to_le_bytes)
             .collect();
         let utf16_data_length = utf16_bytes.len();
         let total_length = utf16_data_length + 1;

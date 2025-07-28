@@ -348,8 +348,7 @@ impl<'a> WriteContext<'a> {
             .header()
             .optional_header
             .as_ref()
-            .map(|oh| oh.windows_fields.image_base >= 0x0001_0000_0000)
-            .unwrap_or(false);
+            .is_some_and(|oh| oh.windows_fields.image_base >= 0x0001_0000_0000);
         let data_directory_offset = pe_signature_offset + 24 + if is_pe32_plus { 112 } else { 96 };
 
         Ok(WriteContext {
@@ -968,7 +967,7 @@ fn write_streams_with_additions(
 
     // Phase 8b: Apply index remapping to update cross-references
     if !heap_index_mappings.is_empty() {
-        apply_heap_index_remapping(assembly, &heap_index_mappings)?;
+        apply_heap_index_remapping(assembly, &heap_index_mappings);
     }
 
     Ok(())
@@ -986,7 +985,7 @@ fn write_streams_with_additions(
 fn apply_heap_index_remapping(
     assembly: &mut CilAssembly,
     heap_index_mappings: &HashMap<String, HashMap<u32, u32>>,
-) -> Result<()> {
+) {
     // Create an IndexRemapper with the collected heap mappings
     let mut remapper = IndexRemapper {
         string_map: HashMap::new(),
@@ -1000,16 +999,16 @@ fn apply_heap_index_remapping(
     for (heap_name, index_mapping) in heap_index_mappings {
         match heap_name.as_str() {
             "#Strings" => {
-                remapper.string_map = index_mapping.clone();
+                remapper.string_map.clone_from(index_mapping);
             }
             "#Blob" => {
-                remapper.blob_map = index_mapping.clone();
+                remapper.blob_map.clone_from(index_mapping);
             }
             "#GUID" => {
-                remapper.guid_map = index_mapping.clone();
+                remapper.guid_map.clone_from(index_mapping);
             }
             "#US" => {
-                remapper.userstring_map = index_mapping.clone();
+                remapper.userstring_map.clone_from(index_mapping);
             }
             _ => {
                 // Unknown heap type
@@ -1020,8 +1019,6 @@ fn apply_heap_index_remapping(
     // Apply the remapping to update cross-references in the assembly changes
     let changes = &mut assembly.changes;
     remapper.apply_to_assembly(changes);
-
-    Ok(())
 }
 
 /// Writes table modifications.

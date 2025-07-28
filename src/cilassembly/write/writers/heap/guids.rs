@@ -5,7 +5,7 @@
 
 use crate::{cilassembly::write::planner::StreamModification, Error, Result};
 
-impl<'a> super::HeapWriter<'a> {
+impl super::HeapWriter<'_> {
     /// Writes GUID heap modifications including additions, modifications, and removals.
     ///
     /// Handles all types of GUID heap changes:
@@ -80,7 +80,7 @@ impl<'a> super::HeapWriter<'a> {
                 .output
                 .write_and_advance(&mut write_pos, replacement_heap)?;
 
-            for appended_guid in guid_changes.appended_items.iter() {
+            for appended_guid in &guid_changes.appended_items {
                 if write_pos + 16 > stream_end {
                     return Err(Error::WriteLayoutFailed {
                         message: format!(
@@ -183,15 +183,15 @@ impl<'a> super::HeapWriter<'a> {
     ///
     /// # Returns
     ///
-    /// A `Result<Vec<[u8; 16]>>` containing all original GUID data as 16-byte arrays,
+    /// A `Vec<[u8; 16]>` containing all original GUID data as 16-byte arrays,
     /// or an empty vector if no GUID heap exists in the original assembly.
-    pub(super) fn get_original_guids(&self) -> Result<Vec<[u8; 16]>> {
+    pub(super) fn get_original_guids(&self) -> Vec<[u8; 16]> {
         let mut guids = Vec::new();
         if let Some(guid_heap) = self.base.assembly.view().guids() {
             for (_, guid) in guid_heap.iter() {
                 guids.push(guid.to_bytes());
             }
         }
-        Ok(guids)
+        guids
     }
 }

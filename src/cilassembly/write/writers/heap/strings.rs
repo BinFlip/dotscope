@@ -17,7 +17,7 @@ pub struct StringHeapReconstruction {
     pub final_size: usize,
 }
 
-impl<'a> super::HeapWriter<'a> {
+impl super::HeapWriter<'_> {
     /// Reconstructs the complete string heap in memory with all modifications applied.
     ///
     /// This is the correct architectural approach that:
@@ -34,7 +34,7 @@ impl<'a> super::HeapWriter<'a> {
         let mut final_index_position = 1u32; // Start at 1, index 0 is always null
 
         if let Some(replacement_heap) = string_changes.replacement_heap() {
-            final_heap = replacement_heap.clone();
+            final_heap.clone_from(replacement_heap);
 
             // Create basic index mapping for the replacement heap
             // Note: This is a simplified mapping that assumes the replacement heap
@@ -54,7 +54,7 @@ impl<'a> super::HeapWriter<'a> {
                 }
             }
 
-            for original_string in string_changes.appended_items.iter() {
+            for original_string in &string_changes.appended_items {
                 let original_heap_index = {
                     let mut calculated_index = string_changes.next_index;
                     for item in string_changes.appended_items.iter().rev() {
@@ -146,19 +146,25 @@ impl<'a> super::HeapWriter<'a> {
 
             // Only add padding if we haven't reached the original heap boundary yet
             // If we've exactly reached it, new strings can start immediately
-            if final_index_position < original_heap_size {
-                let padding_needed = original_heap_size - final_index_position;
-                final_heap.extend(vec![0xFFu8; padding_needed as usize]);
-                final_index_position += padding_needed;
-            } else if final_index_position == original_heap_size {
-                // Don't add padding when we're exactly at the boundary
-                // This matches the calculation logic
+            match final_index_position.cmp(&original_heap_size) {
+                std::cmp::Ordering::Less => {
+                    let padding_needed = original_heap_size - final_index_position;
+                    final_heap.extend(vec![0xFFu8; padding_needed as usize]);
+                    final_index_position += padding_needed;
+                }
+                std::cmp::Ordering::Equal => {
+                    // Don't add padding when we're exactly at the boundary
+                    // This matches the calculation logic
+                }
+                std::cmp::Ordering::Greater => {
+                    // final_index_position > original_heap_size - no action needed
+                }
             }
         }
 
         // Phase 2: Add all new strings
         // Process in order of appended items to ensure proper sequential placement
-        for original_string in string_changes.appended_items.iter() {
+        for original_string in &string_changes.appended_items {
             // Calculate the original heap index for this item
             let original_heap_index = {
                 let mut calculated_index = string_changes.next_index;

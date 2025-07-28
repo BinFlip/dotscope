@@ -218,7 +218,7 @@ pub fn extract_metadata_layout(
 
     // Calculate stream headers size
     let mut stream_headers_size = 0u32;
-    for stream in streams.iter() {
+    for stream in streams {
         // Each stream header: offset(4) + size(4) + name_length + null terminator + padding to 4-byte boundary
         let name_with_null = stream.name.len() + 1;
         let padded_name_length = u32::try_from(align_to_4_bytes(
@@ -238,7 +238,7 @@ pub fn extract_metadata_layout(
     let mut stream_layouts = Vec::new();
     let mut current_offset = 0u32;
 
-    for stream in streams.iter() {
+    for stream in streams {
         let mut size = stream.size;
 
         // Add expansion size for heap streams and table stream
@@ -253,7 +253,9 @@ pub fn extract_metadata_layout(
                     // Use total reconstructed heap size for any changes
                     let total_heap_size =
                         calculate_string_heap_total_size(string_changes, assembly)?;
-                    size = total_heap_size as u32;
+                    size = u32::try_from(total_heap_size).map_err(|_| {
+                        malformed_error!("String heap size exceeds u32 limit: {}", total_heap_size)
+                    })?;
                 }
             }
             "#Blob" => {
@@ -265,7 +267,9 @@ pub fn extract_metadata_layout(
                 {
                     // Use total reconstructed heap size for any changes
                     let total_heap_size = HeapExpansions::calculate_blob_heap_size(assembly)?;
-                    size = total_heap_size as u32;
+                    size = u32::try_from(total_heap_size).map_err(|_| {
+                        malformed_error!("Blob heap size exceeds u32 limit: {}", total_heap_size)
+                    })?;
                 } else {
                     // No changes, keep original size
                     size = stream.size;
@@ -280,7 +284,9 @@ pub fn extract_metadata_layout(
                 {
                     // Use total reconstructed heap size for any changes
                     let total_heap_size = HeapExpansions::calculate_guid_heap_size(assembly)?;
-                    size = total_heap_size as u32;
+                    size = u32::try_from(total_heap_size).map_err(|_| {
+                        malformed_error!("GUID heap size exceeds u32 limit: {}", total_heap_size)
+                    })?;
                 } else {
                     // No changes, keep original size
                     size = stream.size;
@@ -296,7 +302,12 @@ pub fn extract_metadata_layout(
                     // Use total reconstructed heap size for any changes
                     let total_heap_size =
                         calculate_userstring_heap_total_size(userstring_changes, assembly)?;
-                    size = total_heap_size as u32;
+                    size = u32::try_from(total_heap_size).map_err(|_| {
+                        malformed_error!(
+                            "UserString heap size exceeds u32 limit: {}",
+                            total_heap_size
+                        )
+                    })?;
                 } else {
                     // No changes, keep original size
                     size = stream.size;
@@ -305,7 +316,12 @@ pub fn extract_metadata_layout(
             "#~" | "#-" => {
                 // Add space for additional table rows
                 let table_expansion = calculate_table_stream_expansion(assembly)?;
-                size += table_expansion as u32;
+                size += u32::try_from(table_expansion).map_err(|_| {
+                    malformed_error!(
+                        "Table expansion size exceeds u32 limit: {}",
+                        table_expansion
+                    )
+                })?;
             }
             _ => {} // Other streams remain unchanged
         }
@@ -668,7 +684,7 @@ fn find_stream_size_field_offset(
 
     // Iterate through stream entries to find the target stream
     let mut current_offset = stream_directory_offset;
-    for stream in view.streams().iter() {
+    for stream in view.streams() {
         if stream.name == stream_name {
             // The size field is at current_offset + 4 (after the offset field)
             return Ok(current_offset as u64 + 4);
@@ -695,7 +711,7 @@ fn find_stream_size_field_offset(
 ///
 /// # Returns
 /// Returns the total metadata root header size in bytes.
-pub fn calculate_metadata_root_header_size(assembly: &CilAssembly) -> Result<u64> {
+pub fn calculate_metadata_root_header_size(assembly: &CilAssembly) -> u64 {
     let view = assembly.view();
     let streams = view.streams();
 
@@ -720,7 +736,7 @@ pub fn calculate_metadata_root_header_size(assembly: &CilAssembly) -> Result<u64
         size += name_size;
     }
 
-    Ok(size)
+    size
 }
 
 /// Gets the metadata version string from the original file.
@@ -799,8 +815,7 @@ mod tests {
             .expect("Failed to load test assembly");
         let assembly = view.to_owned();
 
-        let header_size =
-            calculate_metadata_root_header_size(&assembly).expect("Should calculate header size");
+        let header_size = calculate_metadata_root_header_size(&assembly);
 
         assert!(header_size > 20, "Header size should be at least 20 bytes");
         assert!(header_size < 1024, "Header size should be reasonable");

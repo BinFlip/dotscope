@@ -176,12 +176,11 @@ impl<'a> HeapWriter<'a> {
     /// or insufficient output buffer space.
     pub fn write_all_heaps(&mut self) -> Result<HashMap<String, HashMap<u32, u32>>> {
         let mut all_index_mappings = HashMap::new();
-        for stream_mod in self
+        for stream_mod in &self
             .base
             .layout_plan
             .metadata_modifications
             .stream_modifications
-            .iter()
         {
             match stream_mod.name.as_str() {
                 "#Strings" => {

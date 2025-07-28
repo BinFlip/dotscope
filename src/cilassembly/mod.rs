@@ -377,7 +377,7 @@ impl CilAssembly {
         userstring_changes.appended_items.push(value.to_string());
 
         // Calculate size increment for next index (using original string size for API index stability)
-        let utf16_bytes: Vec<u8> = value.encode_utf16().flat_map(|c| c.to_le_bytes()).collect();
+        let utf16_bytes: Vec<u8> = value.encode_utf16().flat_map(u16::to_le_bytes).collect();
         let utf16_length = utf16_bytes.len();
         let total_length = utf16_length + 1; // +1 for terminator byte
 
@@ -801,6 +801,10 @@ impl CilAssembly {
     /// # Returns
     ///
     /// Returns the RID (Row ID) of the newly added row. RIDs are 1-based.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the table cannot be converted to sparse mode.
     pub fn table_row_add(&mut self, table_id: TableId, row: TableDataOwned) -> Result<u32> {
         let original_count = self.original_table_row_count(table_id);
         let table_changes = self
@@ -835,6 +839,10 @@ impl CilAssembly {
     ///
     /// Returns `Ok(())` if all validations pass and conflicts are resolved,
     /// or an error describing the first validation failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if validation fails or conflicts cannot be resolved.
     pub fn validate_and_apply_changes(&mut self) -> Result<()> {
         let remapper = {
             let engine = ValidationEngine::new(&self.view, ValidationConfig::production())?;
@@ -874,6 +882,10 @@ impl CilAssembly {
     /// assembly.validate_and_apply_changes_with_config(ValidationConfig::comprehensive())?;
     /// # Ok::<(), crate::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if validation fails or conflicts cannot be resolved with the specified configuration.
     pub fn validate_and_apply_changes_with_config(
         &mut self,
         config: ValidationConfig,
@@ -1251,6 +1263,11 @@ impl CilAssembly {
     ///
     /// Returns comprehensive heap expansion information including sizes for all heap types
     /// and total expansion requirements.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if heap size calculations exceed platform limits or if there are
+    /// issues accessing the original heap data.
     pub fn calculate_heap_expansions(&self) -> Result<HeapExpansions> {
         HeapExpansions::calculate(self)
     }
@@ -1270,7 +1287,7 @@ impl std::fmt::Debug for CilAssembly {
         f.debug_struct("CilAssembly")
             .field("original_view", &"<CilAssemblyView>")
             .field("has_changes", &self.changes.has_changes())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

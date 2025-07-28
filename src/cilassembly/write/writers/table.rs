@@ -162,9 +162,9 @@ impl<'a> TableWriter<'a> {
     ///
     /// # Returns
     /// Returns the total header size in bytes.
-    fn calculate_tables_header_size(&self) -> Result<usize> {
+    fn calculate_tables_header_size(&self) -> usize {
         let present_table_count = self.tables_header.valid.count_ones() as usize;
-        Ok(24 + (present_table_count * 4))
+        24 + (present_table_count * 4)
     }
 
     /// Helper method to get the row size for a specific table.
@@ -287,7 +287,7 @@ impl<'a> TableWriter<'a> {
     /// and unmodified tables to their correct positions. This eliminates any gaps
     /// or inconsistencies that could occur with selective modification approaches.
     fn write_all_tables_systematically(&mut self, tables_stream_offset: u64) -> Result<()> {
-        let header_size = self.calculate_tables_header_size()?;
+        let header_size = self.calculate_tables_header_size();
         let mut current_offset = tables_stream_offset + header_size as u64;
 
         // Process each table systematically

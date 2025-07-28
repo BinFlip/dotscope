@@ -48,13 +48,13 @@
 //! # let mut file_layout = FileLayout::calculate(&assembly, &heap_expansions, &mut metadata_modifications)?;
 //! # let native_requirements = NativeTableRequirements::default();
 //! // Calculate PE updates needed
-//! let pe_updates = calculate_pe_updates(&assembly, &file_layout)?;
+//! let pe_updates = calculate_pe_updates(&assembly, &file_layout);
 //! if pe_updates.section_table_needs_update {
 //!     println!("PE section table needs updating");
 //! }
 //!
 //! // Update layout for native tables
-//! update_layout_for_native_tables(&mut file_layout, &native_requirements)?;
+//! update_layout_for_native_tables(&mut file_layout, &native_requirements);
 //! # Ok::<(), crate::Error>(())
 //! ```
 //!
@@ -71,12 +71,9 @@
 //! - [`crate::cilassembly::write::planner::PeUpdates`] - PE update tracking
 //! - PE header writing
 
-use crate::{
-    cilassembly::{
-        write::planner::{FileLayout, NativeTableRequirements, PeUpdates, SectionUpdate},
-        CilAssembly,
-    },
-    Result,
+use crate::cilassembly::{
+    write::planner::{FileLayout, NativeTableRequirements, PeUpdates, SectionUpdate},
+    CilAssembly,
 };
 
 /// Calculates PE updates needed after section relocations.
@@ -118,7 +115,7 @@ use crate::{
 /// # let assembly = CilAssembly::new(view);
 /// # let file_layout = FileLayout::calculate(&assembly, &heap_expansions, &mut metadata_modifications)?;
 /// // Calculate PE updates needed
-/// let pe_updates = calculate_pe_updates(&assembly, &file_layout)?;
+/// let pe_updates = calculate_pe_updates(&assembly, &file_layout);
 ///
 /// if pe_updates.section_table_needs_update {
 ///     println!("PE section table needs updating");
@@ -128,7 +125,7 @@ use crate::{
 /// }
 /// # Ok::<(), crate::Error>(())
 /// ```
-pub fn calculate_pe_updates(assembly: &CilAssembly, file_layout: &FileLayout) -> Result<PeUpdates> {
+pub fn calculate_pe_updates(assembly: &CilAssembly, file_layout: &FileLayout) -> PeUpdates {
     let view = assembly.view();
     let original_sections: Vec<_> = view.file().sections().collect();
 
@@ -152,7 +149,9 @@ pub fn calculate_pe_updates(assembly: &CilAssembly, file_layout: &FileLayout) ->
 
             // Check if file size changed
             if new_section.file_region.size != u64::from(original_section.size_of_raw_data) {
-                update.new_file_size = Some(new_section.file_region.size as u32);
+                update.new_file_size = Some(
+                    u32::try_from(new_section.file_region.size).unwrap_or(u32::MAX), // Size exceeds u32 limit - use maximum value
+                );
                 section_table_needs_update = true;
             }
 
@@ -172,11 +171,11 @@ pub fn calculate_pe_updates(assembly: &CilAssembly, file_layout: &FileLayout) ->
         }
     }
 
-    Ok(PeUpdates {
+    PeUpdates {
         section_table_needs_update,
         checksum_needs_update: section_table_needs_update, // Update checksum if sections changed
         section_updates,
-    })
+    }
 }
 
 /// Updates the file layout to accommodate native table allocations.
@@ -190,11 +189,11 @@ pub fn calculate_pe_updates(assembly: &CilAssembly, file_layout: &FileLayout) ->
 /// * `native_requirements` - Native table requirements with RVA allocations
 ///
 /// # Returns
-/// Returns `Ok(())` if the layout was successfully updated.
+/// The layout is updated in place.
 pub fn update_layout_for_native_tables(
     file_layout: &mut FileLayout,
     native_requirements: &NativeTableRequirements,
-) -> Result<()> {
+) {
     // Find the last section (highest virtual address + virtual size)
     let mut last_section_index = None;
     let mut highest_end = 0;
@@ -225,7 +224,8 @@ pub fn update_layout_for_native_tables(
             };
 
             if rva_in_range {
-                let required_end = import_rva + native_requirements.import_table_size as u32;
+                let required_end = import_rva
+                    + u32::try_from(native_requirements.import_table_size).unwrap_or(u32::MAX); // Size exceeds u32 limit - use maximum value
                 if required_end > section_end {
                     section_end = std::cmp::max(section_end, required_end);
                     needs_extension = true;
@@ -245,7 +245,8 @@ pub fn update_layout_for_native_tables(
             };
 
             if rva_in_range {
-                let required_end = export_rva + native_requirements.export_table_size as u32;
+                let required_end = export_rva
+                    + u32::try_from(native_requirements.export_table_size).unwrap_or(u32::MAX); // Size exceeds u32 limit - use maximum value
                 if required_end > section_end {
                     section_end = std::cmp::max(section_end, required_end);
                     needs_extension = true;
@@ -261,6 +262,4 @@ pub fn update_layout_for_native_tables(
             section.file_region.size += u64::from(size_increase);
         }
     }
-
-    Ok(())
 }

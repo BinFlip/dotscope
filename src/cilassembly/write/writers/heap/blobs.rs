@@ -8,7 +8,7 @@ use crate::{
     Error, Result,
 };
 
-impl<'a> super::HeapWriter<'a> {
+impl super::HeapWriter<'_> {
     /// Writes blob heap modifications including additions, modifications, and removals.
     ///
     /// Handles all types of blob heap changes:
@@ -180,22 +180,24 @@ impl<'a> super::HeapWriter<'a> {
                 .output
                 .write_and_advance(&mut write_pos, replacement_heap)?;
 
-            for original_blob in blob_changes.appended_items.iter() {
+            for original_blob in &blob_changes.appended_items {
                 let original_heap_index = {
                     let mut calculated_index = blob_changes.next_index;
                     for item in blob_changes.appended_items.iter().rev() {
                         let item_size = item.len();
                         let prefix_size = if item_size < 128 {
-                            1
+                            1usize
                         } else if item_size < 16384 {
-                            2
+                            2usize
                         } else {
-                            4
+                            4usize
                         };
-                        calculated_index -= u32::try_from(prefix_size as usize + item_size)
-                            .map_err(|_| Error::WriteLayoutFailed {
-                                message: "Combined prefix and item size exceeds u32 range"
-                                    .to_string(),
+                        calculated_index -=
+                            u32::try_from(prefix_size + item_size).map_err(|_| {
+                                Error::WriteLayoutFailed {
+                                    message: "Combined prefix and item size exceeds u32 range"
+                                        .to_string(),
+                                }
                             })?;
                         if std::ptr::eq(item, original_blob) {
                             break;
@@ -226,7 +228,6 @@ impl<'a> super::HeapWriter<'a> {
         }
 
         // Step 1: Rebuild blob heap entry by entry, applying modifications
-        let mut rebuilt_original_count = 0;
         if let Some(blob_heap) = self.base.assembly.view().blobs() {
             // Start with null byte
             self.base.output.write_and_advance(&mut write_pos, &[0])?;
@@ -252,7 +253,6 @@ impl<'a> super::HeapWriter<'a> {
 
                 // Write the blob
                 self.write_single_blob(&blob_data, &mut write_pos)?;
-                rebuilt_original_count += 1;
             }
         } else {
             // No original heap, start with null byte only
@@ -262,7 +262,6 @@ impl<'a> super::HeapWriter<'a> {
         }
 
         // Step 2: Write appended blobs, applying modifications to newly added blobs
-        let mut appended_count = 0;
 
         // Calculate the original heap size to distinguish original vs newly added blobs
         let original_heap_size =
@@ -326,10 +325,9 @@ impl<'a> super::HeapWriter<'a> {
             }
 
             self.write_single_blob(&blob_data, &mut write_pos)?;
-            appended_count += 1;
         }
 
-        let _total_blobs_count = rebuilt_original_count + appended_count;
+        // All blobs have been written to the heap
 
         // Add padding to align to 4-byte boundary (ECMA-335 II.24.2.2)
         // Use a pattern that won't create valid blob entries
@@ -375,16 +373,16 @@ impl<'a> super::HeapWriter<'a> {
     ///
     /// # Returns
     ///
-    /// A `Result<Vec<Vec<u8>>>` containing all original blob data, or an empty
+    /// A `Vec<Vec<u8>>` containing all original blob data, or an empty
     /// vector if no blob heap exists in the original assembly.
-    pub(super) fn get_original_blobs(&self) -> Result<Vec<Vec<u8>>> {
+    pub(super) fn get_original_blobs(&self) -> Vec<Vec<u8>> {
         let mut blobs = Vec::new();
         if let Some(blob_heap) = self.base.assembly.view().blobs() {
             for (_, blob) in blob_heap.iter() {
                 blobs.push(blob.to_vec());
             }
         }
-        Ok(blobs)
+        blobs
     }
 
     /// Calculates the total size of a blob entry including its length prefix.

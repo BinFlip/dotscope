@@ -276,10 +276,10 @@ impl LayoutPlan {
         }
 
         // Update file layout to accommodate native table requirements
-        updates::update_layout_for_native_tables(&mut file_layout, &native_table_requirements)?;
+        updates::update_layout_for_native_tables(&mut file_layout, &native_table_requirements);
 
         // Determine PE updates needed
-        let pe_updates = updates::calculate_pe_updates(assembly, &file_layout)?;
+        let pe_updates = updates::calculate_pe_updates(assembly, &file_layout);
 
         // Calculate total size based on file layout and native table requirements
         let total_size =

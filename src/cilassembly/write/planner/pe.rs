@@ -177,8 +177,10 @@ pub fn extract_pe_layout(assembly: &CilAssembly) -> Result<PeLayout> {
     let section_table_offset = optional_header_offset + u64::from(optional_header_size);
 
     // Extract section layouts from goblin's parsed sections
-    let sections = extract_section_layouts_from_goblin(file)?;
-    let section_count = sections.len() as u16;
+    let sections = extract_section_layouts_from_goblin(file);
+    let section_count = u16::try_from(sections.len()).map_err(|_| Error::WriteLayoutFailed {
+        message: format!("Too many sections: {}", sections.len()),
+    })?;
 
     Ok(PeLayout {
         dos_header_offset: 0,
@@ -201,7 +203,7 @@ pub fn extract_pe_layout(assembly: &CilAssembly) -> Result<PeLayout> {
 ///
 /// # Returns
 /// Returns a vector of [`crate::cilassembly::write::planner::pe::SectionLayout`] structures.
-pub fn extract_section_layouts_from_goblin(file: &File) -> Result<Vec<SectionLayout>> {
+pub fn extract_section_layouts_from_goblin(file: &File) -> Vec<SectionLayout> {
     let mut sections = Vec::new();
 
     for section in file.sections() {
@@ -221,7 +223,7 @@ pub fn extract_section_layouts_from_goblin(file: &File) -> Result<Vec<SectionLay
         });
     }
 
-    Ok(sections)
+    sections
 }
 
 #[cfg(test)]
