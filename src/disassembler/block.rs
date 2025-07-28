@@ -296,27 +296,7 @@ impl BasicBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::disassembler::{FlowType, Instruction, InstructionCategory, Operand, StackBehavior};
-
-    fn create_sample_instruction(flow_type: FlowType) -> Instruction {
-        Instruction {
-            rva: 0x1000,
-            offset: 0,
-            size: 1,
-            opcode: 0x00, // nop
-            prefix: 0,
-            mnemonic: "nop",
-            category: InstructionCategory::Misc,
-            flow_type,
-            operand: Operand::None,
-            stack_behavior: StackBehavior {
-                pops: 0,
-                pushes: 0,
-                net_effect: 0,
-            },
-            branch_targets: Vec::new(),
-        }
-    }
+    use crate::test::factories::general::disassembler::create_sample_instruction;
 
     #[test]
     fn test_basic_block_new() {

@@ -720,19 +720,9 @@ impl ManifestResourceBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::CilAssembly,
-        metadata::{
-            cilassemblyview::CilAssemblyView,
-            tables::{ManifestResourceAttributes, TableId},
-        },
+        metadata::tables::{ManifestResourceAttributes, TableId},
+        test::factories::table::assemblyref::get_test_assembly,
     };
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
 
     #[test]
     fn test_manifest_resource_builder_basic() -> Result<()> {

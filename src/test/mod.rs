@@ -7,6 +7,7 @@
 //! # Module Organization
 //!
 //! - **builders/** - Fluent API builders for creating mock metadata objects
+//! - **factories/** - Migrated test factory methods organized by domain
 //! - **scenarios/** - Pre-built complex scenarios and test data combinations  
 //! - **helpers/** - Legacy helper functions and utilities
 //! - **windowsbase.rs** - Windows-specific test helpers and verification
@@ -78,6 +79,7 @@
 //! - Generic type definitions
 
 pub mod builders;
+pub mod factories;
 mod helpers;
 mod scenarios;
 mod validator;

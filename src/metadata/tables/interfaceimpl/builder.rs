@@ -230,17 +230,12 @@ impl InterfaceImplBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
-        metadata::cilassemblyview::CilAssemblyView,
+        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
     };
-    use std::path::PathBuf;
 
     #[test]
     fn test_interface_impl_builder_basic() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let assembly = CilAssembly::new(view);
-
+        if let Ok(assembly) = get_test_assembly() {
             // Check existing InterfaceImpl table count
             let existing_count = assembly.original_table_row_count(TableId::InterfaceImpl);
             let expected_rid = existing_count + 1;
@@ -266,9 +261,7 @@ mod tests {
 
     #[test]
     fn test_interface_impl_builder_interface_extension() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let assembly = CilAssembly::new(view);
+        if let Ok(assembly) = get_test_assembly() {
             let mut context = BuilderContext::new(assembly);
 
             // Create an interface extending another interface
@@ -288,9 +281,7 @@ mod tests {
 
     #[test]
     fn test_interface_impl_builder_generic_interface() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let assembly = CilAssembly::new(view);
+        if let Ok(assembly) = get_test_assembly() {
             let mut context = BuilderContext::new(assembly);
 
             // Create a generic interface implementation
@@ -311,9 +302,7 @@ mod tests {
 
     #[test]
     fn test_interface_impl_builder_missing_class() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let assembly = CilAssembly::new(view);
+        if let Ok(assembly) = get_test_assembly() {
             let mut context = BuilderContext::new(assembly);
 
             let target_interface =
@@ -330,9 +319,7 @@ mod tests {
 
     #[test]
     fn test_interface_impl_builder_missing_interface() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let assembly = CilAssembly::new(view);
+        if let Ok(assembly) = get_test_assembly() {
             let mut context = BuilderContext::new(assembly);
 
             let implementing_class = 1; // TypeDef RID
@@ -348,9 +335,7 @@ mod tests {
 
     #[test]
     fn test_interface_impl_builder_zero_class_rid() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let assembly = CilAssembly::new(view);
+        if let Ok(assembly) = get_test_assembly() {
             let mut context = BuilderContext::new(assembly);
 
             let target_interface =
@@ -368,9 +353,7 @@ mod tests {
 
     #[test]
     fn test_interface_impl_builder_invalid_interface_type() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let assembly = CilAssembly::new(view);
+        if let Ok(assembly) = get_test_assembly() {
             let mut context = BuilderContext::new(assembly);
 
             let implementing_class = 1; // TypeDef RID
@@ -390,9 +373,7 @@ mod tests {
 
     #[test]
     fn test_interface_impl_builder_multiple_implementations() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let assembly = CilAssembly::new(view);
+        if let Ok(assembly) = get_test_assembly() {
             let mut context = BuilderContext::new(assembly);
 
             let class1 = 1; // TypeDef RID
@@ -446,9 +427,7 @@ mod tests {
 
     #[test]
     fn test_interface_impl_builder_complex_inheritance() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
-            let assembly = CilAssembly::new(view);
+        if let Ok(assembly) = get_test_assembly() {
             let mut context = BuilderContext::new(assembly);
 
             // Create a complex inheritance scenario

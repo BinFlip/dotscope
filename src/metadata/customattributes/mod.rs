@@ -127,19 +127,9 @@ mod tests {
         CustomAttributeNamedArgument, CustomAttributeValue,
     };
     use crate::metadata::typesystem::CilFlavor;
-    use crate::test::MethodBuilder;
-
-    /// Helper to create a method with empty parameters for parsing tests
-    fn create_empty_method() -> std::sync::Arc<crate::metadata::method::Method> {
-        MethodBuilder::new().with_name("TestConstructor").build()
-    }
-
-    /// Helper to create a method with specific parameter types
-    fn create_method_with_params(
-        param_types: Vec<CilFlavor>,
-    ) -> std::sync::Arc<crate::metadata::method::Method> {
-        MethodBuilder::with_param_types("TestConstructor", param_types).build()
-    }
+    use crate::test::factories::metadata::customattributes::{
+        create_empty_method, create_method_with_params,
+    };
 
     #[test]
     fn test_roundtrip_empty_custom_attribute() {

@@ -174,47 +174,16 @@ mod tests {
     use crate::{
         metadata::{
             signatures::TypeSignature,
-            tables::{Field, Param, Property},
             typesystem::{CilPrimitive, CilPrimitiveKind, ELEMENT_TYPE},
         },
-        test::builders::{ConstantBuilder, FieldBuilder, ParamBuilder, PropertyBuilder},
+        test::{
+            builders::ConstantBuilder,
+            factories::table::constant::{
+                create_boolean_field, create_i4_field, create_object_field, create_r4_field,
+                create_string_field, create_test_param, create_test_property,
+            },
+        },
     };
-    use std::sync::Arc;
-
-    // Helper function to create a simple i4 field
-    fn create_i4_field(name: &str) -> Arc<Field> {
-        FieldBuilder::simple_i4_field(name).build()
-    }
-
-    // Helper function to create a simple string field
-    fn create_string_field(name: &str) -> Arc<Field> {
-        FieldBuilder::simple_string_field(name).build()
-    }
-
-    // Helper function to create a simple boolean field
-    fn create_boolean_field(name: &str) -> Arc<Field> {
-        FieldBuilder::simple_boolean_field(name).build()
-    }
-
-    // Helper function to create a simple r4 field
-    fn create_r4_field(name: &str) -> Arc<Field> {
-        FieldBuilder::simple_r4_field(name).build()
-    }
-
-    // Helper function to create a simple object field
-    fn create_object_field(name: &str) -> Arc<Field> {
-        FieldBuilder::simple_object_field(name).build()
-    }
-
-    // Helper function to create a test property with a given type
-    fn create_test_property(name: &str, property_type: TypeSignature) -> Arc<Property> {
-        PropertyBuilder::simple_property(name, property_type).build()
-    }
-
-    // Helper function to create a test parameter
-    fn create_test_param(name: &str) -> Arc<Param> {
-        ParamBuilder::input_param(1, name).build()
-    }
 
     #[test]
     fn test_apply_field_constant_success() {

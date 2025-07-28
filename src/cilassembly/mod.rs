@@ -1296,25 +1296,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::metadata::{
-        tables::{CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeDefRaw},
-        token::Token,
-    };
-
-    /// Helper function to create a minimal TypeDef row for testing
-    fn create_test_typedef_row() -> Result<TableDataOwned> {
-        Ok(TableDataOwned::TypeDef(TypeDefRaw {
-            rid: 0,                        // Will be set by the system
-            token: Token::new(0x02000000), // Will be updated by the system
-            offset: 0,                     // Will be set during binary generation
-            flags: 0,
-            type_name: 1,      // Placeholder string index
-            type_namespace: 0, // Empty namespace
-            extends: CodedIndex::new(TableId::TypeRef, 0, CodedIndexType::TypeDefOrRef), // No base type (0 = null reference)
-            field_list: 1,  // Placeholder field list
-            method_list: 1, // Placeholder method list
-        }))
-    }
+    use crate::test::factories::table::cilassembly::create_test_typedef_row;
 
     #[test]
     fn test_convert_from_view() {

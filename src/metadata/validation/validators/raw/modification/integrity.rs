@@ -644,27 +644,20 @@ mod tests {
         cilassembly::{AssemblyChanges, Operation, TableModifications, TableOperation},
         metadata::{
             cilassemblyview::CilAssemblyView,
-            tables::{
-                CodedIndex, CodedIndexType, FieldRaw, MethodDefRaw, TableDataOwned, TableId,
-                TypeDefRaw,
-            },
+            tables::{CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeDefRaw},
             token::Token,
             validation::ValidationConfig,
         },
-        test::{get_clean_testfile, validator_test, TestAssembly},
+        test::{
+            factories::validation::raw_modification_integrity::{
+                create_dummy_field, create_dummy_method, create_dummy_typedef,
+                raw_change_integrity_validator_file_factory,
+            },
+            get_clean_testfile, validator_test,
+        },
         Error,
     };
     use std::collections::HashSet;
-
-    fn raw_change_integrity_validator_file_factory() -> Result<Vec<TestAssembly>> {
-        let mut assemblies = Vec::new();
-
-        if let Some(clean_path) = get_clean_testfile() {
-            assemblies.push(TestAssembly::new(clean_path, true));
-        }
-
-        Ok(assemblies)
-    }
 
     /// Direct corruption testing for RawChangeIntegrityValidator bypassing file I/O.
     ///
@@ -1006,45 +999,6 @@ mod tests {
         );
 
         validator.validate_raw(&context)
-    }
-
-    fn create_dummy_typedef(rid: u32) -> Result<TypeDefRaw> {
-        Ok(TypeDefRaw {
-            rid,
-            token: Token::new(rid | 0x0200_0000),
-            offset: 0,
-            flags: 0,
-            type_name: 1,
-            type_namespace: 0,
-            extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
-            field_list: 1,
-            method_list: 1,
-        })
-    }
-
-    fn create_dummy_field(rid: u32) -> Result<FieldRaw> {
-        Ok(FieldRaw {
-            rid,
-            token: Token::new(rid | 0x0400_0000),
-            offset: 0,
-            flags: 0,
-            name: 1,
-            signature: 1,
-        })
-    }
-
-    fn create_dummy_method(rid: u32) -> Result<MethodDefRaw> {
-        Ok(MethodDefRaw {
-            rid,
-            token: Token::new(rid | 0x0600_0000),
-            offset: 0,
-            rva: 0,
-            impl_flags: 0,
-            flags: 0,
-            name: 1,
-            signature: 1,
-            param_list: 1,
-        })
     }
 
     #[test]

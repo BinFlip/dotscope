@@ -239,14 +239,7 @@ impl StandAloneSigBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{cilassembly::CilAssembly, metadata::cilassemblyview::CilAssemblyView, prelude::*};
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
+    use crate::{prelude::*, test::factories::table::assemblyref::get_test_assembly};
 
     #[test]
     fn test_standalonesig_builder_basic() -> Result<()> {

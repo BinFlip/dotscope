@@ -406,14 +406,7 @@ fn generate_random_guid() -> [u8; 16] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{cilassembly::CilAssembly, metadata::cilassemblyview::CilAssemblyView};
-    use std::path::PathBuf;
-
-    fn get_test_assembly() -> Result<CilAssembly> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
-        Ok(CilAssembly::new(view))
-    }
+    use crate::test::factories::table::assemblyref::get_test_assembly;
 
     #[test]
     fn test_module_builder_basic() -> Result<()> {

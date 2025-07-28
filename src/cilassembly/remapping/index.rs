@@ -832,26 +832,9 @@ mod tests {
         cilassembly::{
             AssemblyChanges, HeapChanges, Operation, TableModifications, TableOperation,
         },
-        metadata::{
-            cilassemblyview::CilAssemblyView,
-            tables::{CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeDefRaw},
-            token::Token,
-        },
+        metadata::{cilassemblyview::CilAssemblyView, tables::CodedIndexType, token::Token},
+        test::factories::table::cilassembly::create_test_row,
     };
-
-    fn create_test_row() -> TableDataOwned {
-        TableDataOwned::TypeDef(TypeDefRaw {
-            rid: 0,
-            token: Token::new(0x02000000),
-            offset: 0,
-            flags: 0,
-            type_name: 1,
-            type_namespace: 0,
-            extends: CodedIndex::new(TableId::TypeRef, 0, CodedIndexType::TypeDefOrRef),
-            field_list: 1,
-            method_list: 1,
-        })
-    }
 
     #[test]
     fn test_index_remapper_empty_changes() {

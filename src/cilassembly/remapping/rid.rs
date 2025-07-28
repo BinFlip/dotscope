@@ -367,25 +367,10 @@ impl RidRemapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cilassembly::{Operation, TableOperation};
-    use crate::metadata::tables::{
-        CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeDefRaw,
+    use crate::{
+        cilassembly::{Operation, TableOperation},
+        test::factories::table::cilassembly::create_test_row,
     };
-    use crate::metadata::token::Token;
-
-    fn create_test_row() -> TableDataOwned {
-        TableDataOwned::TypeDef(TypeDefRaw {
-            rid: 0,
-            token: Token::new(0x02000000),
-            offset: 0,
-            flags: 0,
-            type_name: 1,
-            type_namespace: 0,
-            extends: CodedIndex::new(TableId::TypeRef, 0, CodedIndexType::TypeDefOrRef),
-            field_list: 1,
-            method_list: 1,
-        })
-    }
 
     #[test]
     fn test_rid_remapper_no_operations() {

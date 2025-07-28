@@ -263,27 +263,7 @@ impl ConflictResolver for LastWriteWinsResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        cilassembly::Operation,
-        metadata::{
-            tables::{CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeDefRaw},
-            token::Token,
-        },
-    };
-
-    fn create_test_row() -> TableDataOwned {
-        TableDataOwned::TypeDef(TypeDefRaw {
-            rid: 0,
-            token: Token::new(0x02000000),
-            offset: 0,
-            flags: 0,
-            type_name: 1,
-            type_namespace: 0,
-            extends: CodedIndex::new(TableId::TypeRef, 0, CodedIndexType::TypeDefOrRef),
-            field_list: 1,
-            method_list: 1,
-        })
-    }
+    use crate::{cilassembly::Operation, test::factories::table::cilassembly::create_test_row};
 
     #[test]
     fn test_last_write_wins_resolver_multiple_operations() {
