@@ -176,6 +176,10 @@ pub struct InstructionEncoder {
     labels: HashMap<String, u32>,
     /// Pending branch fixups awaiting label resolution
     fixups: Vec<LabelFixup>,
+    /// Current stack depth (number of items on evaluation stack)
+    current_stack_depth: i16,
+    /// Maximum stack depth reached during encoding
+    max_stack_depth: u16,
 }
 
 impl InstructionEncoder {
@@ -198,6 +202,8 @@ impl InstructionEncoder {
             bytecode: Vec::new(),
             labels: HashMap::new(),
             fixups: Vec::new(),
+            current_stack_depth: 0,
+            max_stack_depth: 0,
         }
     }
 
@@ -251,6 +257,9 @@ impl InstructionEncoder {
 
         // Emit operand based on expected type
         self.emit_operand(operand, metadata.op_type)?;
+
+        // Update stack tracking
+        self.update_stack_depth(metadata.stack_pops, metadata.stack_pushes)?;
 
         Ok(())
     }
@@ -327,6 +336,9 @@ impl InstructionEncoder {
             self.bytecode.push(0);
         }
 
+        // Update stack tracking for branch instructions
+        self.update_stack_depth(metadata.stack_pops, metadata.stack_pushes)?;
+
         Ok(())
     }
 
@@ -374,13 +386,16 @@ impl InstructionEncoder {
     ///
     /// # Returns
     ///
-    /// The complete CIL bytecode with all labels resolved.
+    /// A tuple containing:
+    /// - The complete CIL bytecode with all labels resolved
+    /// - The maximum stack depth required during execution
     ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - Any referenced labels are undefined
     /// - Branch offsets exceed the allowed range for their instruction type
+    /// - Stack underflow occurred during encoding (negative stack depth)
     ///
     /// # Examples
     ///
@@ -388,14 +403,15 @@ impl InstructionEncoder {
     /// use dotscope::assembly::InstructionEncoder;
     ///
     /// let mut encoder = InstructionEncoder::new();
-    /// encoder.emit_instruction("nop", None)?;
-    /// encoder.emit_instruction("ret", None)?;
+    /// encoder.emit_instruction("ldc.i4.1", None)?; // Pushes 1 item
+    /// encoder.emit_instruction("ret", None)?;     // Returns with 1 item
     ///
-    /// let bytecode = encoder.finalize()?;
-    /// assert_eq!(bytecode, vec![0x00, 0x2A]); // nop, ret
+    /// let (bytecode, max_stack) = encoder.finalize()?;
+    /// assert_eq!(bytecode, vec![0x17, 0x2A]); // ldc.i4.1, ret
+    /// assert_eq!(max_stack, 1); // Maximum stack depth was 1
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn finalize(mut self) -> Result<Vec<u8>> {
+    pub fn finalize(mut self) -> Result<(Vec<u8>, u16)> {
         // ToDo: Avoid the copy
         let fixups = self.fixups.clone();
 
@@ -413,7 +429,7 @@ impl InstructionEncoder {
             self.write_branch_offset(offset, fixup)?;
         }
 
-        Ok(self.bytecode)
+        Ok((self.bytecode, self.max_stack_depth))
     }
 
     /// Emit operand bytes based on the expected operand type.
@@ -580,6 +596,64 @@ impl InstructionEncoder {
         }
         Ok(())
     }
+
+    /// Update stack depth tracking based on instruction stack behavior.
+    ///
+    /// This internal method applies the stack effects of an instruction and validates
+    /// that stack underflow doesn't occur.
+    ///
+    /// # Parameters
+    ///
+    /// * `pops` - Number of items the instruction pops from the stack
+    /// * `pushes` - Number of items the instruction pushes onto the stack
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if stack underflow would occur (negative stack depth).
+    fn update_stack_depth(&mut self, pops: u8, pushes: u8) -> Result<()> {
+        // Apply stack effect
+        let net_effect = (pushes as i16) - (pops as i16);
+        self.current_stack_depth += net_effect;
+
+        // Check for stack underflow
+        if self.current_stack_depth < 0 {
+            return Err(crate::malformed_error!(
+                "Stack underflow: depth became {} after instruction with {} pops, {} pushes",
+                self.current_stack_depth,
+                pops,
+                pushes
+            ));
+        }
+
+        // Update maximum stack depth
+        self.max_stack_depth = self.max_stack_depth.max(self.current_stack_depth as u16);
+
+        Ok(())
+    }
+
+    /// Get the current maximum stack depth without finalizing the encoder.
+    ///
+    /// This method allows checking the maximum stack depth that has been reached
+    /// so far during encoding without consuming the encoder.
+    ///
+    /// # Returns
+    ///
+    /// The maximum stack depth reached so far during instruction encoding.
+    pub fn max_stack_depth(&self) -> u16 {
+        self.max_stack_depth
+    }
+
+    /// Get the current stack depth without finalizing the encoder.
+    ///
+    /// This method returns the current number of items on the evaluation stack.
+    /// Useful for debugging or validation during encoding.
+    ///
+    /// # Returns
+    ///
+    /// The current stack depth (number of items on evaluation stack).
+    pub fn current_stack_depth(&self) -> i16 {
+        self.current_stack_depth
+    }
 }
 
 impl Default for InstructionEncoder {
@@ -608,7 +682,7 @@ mod tests {
         encoder.emit_instruction("nop", None)?;
         encoder.emit_instruction("ret", None)?;
 
-        let bytecode = encoder.finalize()?;
+        let (bytecode, _max_stack) = encoder.finalize()?;
         assert_eq!(bytecode, vec![0x00, 0x2A]); // nop = 0x00, ret = 0x2A
 
         Ok(())
@@ -621,7 +695,7 @@ mod tests {
         encoder.emit_instruction("ldarg.s", Some(Operand::Immediate(Immediate::Int8(1))))?;
         encoder.emit_instruction("ldc.i4.s", Some(Operand::Immediate(Immediate::Int8(42))))?;
 
-        let bytecode = encoder.finalize()?;
+        let (bytecode, _max_stack) = encoder.finalize()?;
         // ldarg.s = 0x0E, ldarg index = 1, ldc.i4.s = 0x1F, immediate = 42
         assert_eq!(bytecode, vec![0x0E, 0x01, 0x1F, 42]);
 
@@ -638,7 +712,7 @@ mod tests {
         encoder.define_label("target")?;
         encoder.emit_instruction("ret", None)?; // 0x2A
 
-        let bytecode = encoder.finalize()?;
+        let (bytecode, _max_stack) = encoder.finalize()?;
         // br.s offset should be 1 (skip the nop instruction)
         assert_eq!(bytecode, vec![0x00, 0x2B, 0x01, 0x00, 0x2A]);
 

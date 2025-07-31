@@ -1137,6 +1137,32 @@ impl BuilderContext {
         };
         self.assembly.table_row_remove(table_id, rid, strategy)
     }
+
+    /// Stores a method body and returns a placeholder RVA.
+    ///
+    /// This follows the same pattern as other BuilderContext APIs for managing
+    /// assembly resources. The method body is stored with a placeholder RVA that
+    /// will be resolved to the actual RVA during PE writing.
+    ///
+    /// # Arguments
+    ///
+    /// * `body_bytes` - The complete method body bytes including header and exception handlers
+    ///
+    /// # Returns
+    ///
+    /// A placeholder RVA that will be resolved during binary writing.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::cilassembly::BuilderContext;
+    /// # let mut context = BuilderContext::new(assembly);
+    /// let method_body = vec![0x02, 0x17, 0x2A]; // Tiny header + ldc.i4.1 + ret
+    /// let placeholder_rva = context.store_method_body(method_body);
+    /// ```
+    pub fn store_method_body(&mut self, body_bytes: Vec<u8>) -> u32 {
+        self.assembly.store_method_body(body_bytes)
+    }
 }
 
 #[cfg(test)]

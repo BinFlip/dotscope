@@ -278,6 +278,9 @@ impl LayoutPlan {
         // Update file layout to accommodate native table requirements
         updates::update_layout_for_native_tables(&mut file_layout, &native_table_requirements);
 
+        // Update file layout to accommodate method body requirements
+        file_layout.update_for_method_bodies(assembly)?;
+
         // Determine PE updates needed
         let pe_updates = updates::calculate_pe_updates(assembly, &file_layout);
 

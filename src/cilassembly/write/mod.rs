@@ -180,8 +180,11 @@ pub fn write_assembly_to_file<P: AsRef<Path>>(
     // Note: The heap writers handle both original data preservation and new additions
     write_streams_with_additions(assembly, &mut mmap_file, &layout_plan)?;
 
-    // Phase 9: Write table modifications
-    write_table_modifications(assembly, &mut mmap_file, &layout_plan)?;
+    // Phase 8.5: Write method bodies and get RVA resolution map
+    let rva_resolution_map = write_method_bodies(assembly, &mut mmap_file, &layout_plan)?;
+
+    // Phase 9: Write table modifications (with RVA resolution applied)
+    write_table_modifications(assembly, &mut mmap_file, &layout_plan, &rva_resolution_map)?;
 
     // Phase 9.1: Write native PE import/export tables
     write_native_tables(assembly, &mut mmap_file, &layout_plan)?;
@@ -1021,22 +1024,123 @@ fn apply_heap_index_remapping(
     remapper.apply_to_assembly(changes);
 }
 
-/// Writes table modifications.
+/// Writes method bodies to the code section and returns RVA resolution map.
 ///
-/// Uses the table writing module to write
-/// modified metadata tables with their changes applied.
+/// This function handles writing all method bodies stored in AssemblyChanges to
+/// the appropriate code section and builds a mapping from placeholder RVAs to
+/// actual RVAs for updating metadata table references.
+///
+/// # Arguments
+/// * `assembly` - Source [`crate::cilassembly::CilAssembly`] with method bodies
+/// * `mmap_file` - Target [`crate::cilassembly::write::output::Output`] file
+/// * `layout_plan` - [`crate::cilassembly::write::planner::LayoutPlan`] with section information
+///
+/// # Returns
+/// Returns a mapping from placeholder RVAs to actual RVAs where method bodies were written.
+fn write_method_bodies(
+    assembly: &CilAssembly,
+    mmap_file: &mut output::Output,
+    layout_plan: &planner::LayoutPlan,
+) -> Result<HashMap<u32, u32>> {
+    let mut method_writer = writers::MethodBodyWriter::new(assembly, mmap_file, layout_plan)?;
+    method_writer.write_all_method_bodies()
+}
+
+/// Applies RVA resolution to MethodDef table modifications.
+///
+/// This function scans through MethodDef table modifications and replaces any placeholder
+/// RVAs (0xF0000000+) with the actual RVAs from the resolution map.
+///
+/// # Arguments
+/// * `assembly` - Mutable assembly containing method table modifications
+/// * `rva_resolution_map` - Map from placeholder RVAs to actual RVAs
+fn apply_rva_resolution_to_method_tables(
+    assembly: &mut CilAssembly,
+    rva_resolution_map: &HashMap<u32, u32>,
+) -> Result<()> {
+    use crate::metadata::tables::TableId;
+
+    if rva_resolution_map.is_empty() {
+        return Ok(());
+    }
+
+    // Get mutable access to the assembly changes
+    let changes = &mut assembly.changes;
+
+    // Check if there are MethodDef table modifications
+    if let Some(method_modifications) = changes.table_changes.get_mut(&TableId::MethodDef) {
+        // Apply RVA resolution to each modified MethodDef entry
+        match method_modifications {
+            crate::cilassembly::TableModifications::Sparse { operations, .. } => {
+                for table_operation in operations {
+                    match &mut table_operation.operation {
+                        crate::cilassembly::Operation::Insert(_, ref mut entry) => {
+                            if let crate::metadata::tables::TableDataOwned::MethodDef(
+                                ref mut method_raw,
+                            ) = entry
+                            {
+                                if let Some(&actual_rva) = rva_resolution_map.get(&method_raw.rva) {
+                                    method_raw.rva = actual_rva;
+                                }
+                            }
+                        }
+                        crate::cilassembly::Operation::Update(_, ref mut entry) => {
+                            if let crate::metadata::tables::TableDataOwned::MethodDef(
+                                ref mut method_raw,
+                            ) = entry
+                            {
+                                if let Some(&actual_rva) = rva_resolution_map.get(&method_raw.rva) {
+                                    method_raw.rva = actual_rva;
+                                }
+                            }
+                        }
+                        crate::cilassembly::Operation::Delete(_) => {
+                            // No RVA to resolve for deleted entries
+                        }
+                    }
+                }
+            }
+            crate::cilassembly::TableModifications::Replaced(rows) => {
+                // Apply RVA resolution to replaced table rows
+                for row in rows {
+                    if let crate::metadata::tables::TableDataOwned::MethodDef(ref mut method_raw) =
+                        row
+                    {
+                        if let Some(&actual_rva) = rva_resolution_map.get(&method_raw.rva) {
+                            method_raw.rva = actual_rva;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Writes table modifications with optional RVA resolution.
+///
+/// Uses the table writing module to write modified metadata tables with their
+/// changes applied. If an RVA resolution map is provided, applies RVA resolution
+/// to update any placeholder RVAs in the method table.
 ///
 /// # Arguments
 /// * `assembly` - Source [`crate::cilassembly::CilAssembly`] with table modifications
 /// * `mmap_file` - Target [`crate::cilassembly::write::output::Output`] file
 /// * `layout_plan` - [`crate::cilassembly::write::planner::LayoutPlan`] with table locations
+/// * `rva_resolution_map` - Mapping from placeholder RVAs to actual RVAs
 fn write_table_modifications(
-    assembly: &CilAssembly,
+    assembly: &mut CilAssembly,
     mmap_file: &mut output::Output,
     layout_plan: &planner::LayoutPlan,
+    rva_resolution_map: &HashMap<u32, u32>,
 ) -> Result<()> {
-    // Use the existing TableWriter for table modifications
-    let mut table_writer = writers::TableWriter::new(assembly, mmap_file, layout_plan)?;
+    // Step 1: Apply RVA resolution to MethodDef table modifications before writing
+    apply_rva_resolution_to_method_tables(assembly, rva_resolution_map)?;
+
+    // Step 2: Use the existing TableWriter for table modifications
+    let mut table_writer =
+        writers::TableWriter::new(assembly, mmap_file, layout_plan, rva_resolution_map)?;
     table_writer.write_all_table_modifications()?;
 
     Ok(())
@@ -1300,7 +1404,7 @@ mod tests {
         write_streams_with_additions(&mut assembly, &mut mmap_file, &layout_plan)
             .expect("Failed to write streams");
 
-        write_table_modifications(&assembly, &mut mmap_file, &layout_plan)
+        write_table_modifications(&mut assembly, &mut mmap_file, &layout_plan, &HashMap::new())
             .expect("Failed to write table modifications");
 
         write_native_tables(&assembly, &mut mmap_file, &layout_plan)

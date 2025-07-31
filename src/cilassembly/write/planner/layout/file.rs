@@ -612,6 +612,55 @@ impl FileLayout {
 
         Ok(stream_layouts)
     }
+
+    /// Updates the file layout to accommodate method body space requirements.
+    ///
+    /// Extends the last section (typically the code section) to provide space
+    /// for newly created method bodies. This ensures the section headers properly
+    /// reflect the extended virtual size needed for method body placement.
+    ///
+    /// # Arguments
+    /// * `assembly` - Assembly containing method body space requirements
+    ///
+    /// # Returns
+    /// Returns `Ok(())` if successful, error if virtual size would exceed limits.
+    ///
+    /// # Examples
+    /// ```rust,ignore
+    /// file_layout.update_for_method_bodies(&assembly)?;
+    /// ```
+    pub fn update_for_method_bodies(&mut self, assembly: &CilAssembly) -> Result<()> {
+        let method_body_space = assembly.changes().method_bodies_total_size() as u64;
+        if method_body_space == 0 {
+            return Ok(()); // No method bodies to accommodate
+        }
+
+        // Find the code section (.text) to extend it for method body space
+        let code_section = self
+            .sections
+            .iter_mut()
+            .find(|section| {
+                // Look for executable sections, typically named .text
+                section.name == ".text" || section.characteristics & 0x20000000 != 0
+                // IMAGE_SCN_MEM_EXECUTE
+            })
+            .ok_or_else(|| Error::WriteLayoutFailed {
+                message: "No executable code section found for method body placement".to_string(),
+            })?;
+
+        // Extend the virtual size to accommodate method bodies
+        code_section.virtual_size = u32::try_from(
+            u64::from(code_section.virtual_size) + method_body_space,
+        )
+        .map_err(|_| Error::WriteLayoutFailed {
+            message: "Method body space would exceed u32 virtual size limit".to_string(),
+        })?;
+
+        // Update the file region size as well
+        code_section.file_region.size += method_body_space;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

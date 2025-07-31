@@ -147,6 +147,7 @@ use crate::{
 };
 
 mod builder;
+mod builders;
 mod changes;
 mod modifications;
 mod operation;
@@ -155,6 +156,7 @@ mod resolver;
 mod write;
 
 pub use builder::*;
+pub use builders::{MethodBodyBuilder, MethodBuilder};
 pub use changes::{AssemblyChanges, HeapChanges, ReferenceHandlingStrategy};
 pub use modifications::TableModifications;
 pub use operation::{Operation, TableOperation};
@@ -1270,6 +1272,38 @@ impl CilAssembly {
     /// issues accessing the original heap data.
     pub fn calculate_heap_expansions(&self) -> Result<HeapExpansions> {
         HeapExpansions::calculate(self)
+    }
+
+    /// Stores a method body and allocates a placeholder RVA for it.
+    ///
+    /// This method stores the method body with a placeholder RVA that will be resolved
+    /// to the actual RVA during PE writing when the code section layout is determined.
+    /// Used by method builders to store compiled method bodies and get placeholder RVAs
+    /// for use in method definition metadata.
+    ///
+    /// # Arguments
+    ///
+    /// * `body_bytes` - The complete method body bytes including header and exception handlers
+    ///
+    /// # Returns
+    ///
+    /// A placeholder RVA that will be resolved to the actual RVA during binary writing.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::{CilAssemblyView, CilAssembly};
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let mut assembly = CilAssembly::new(view);
+    ///
+    /// let method_body = vec![0x02, 0x17, 0x2A]; // Tiny header + ldc.i4.1 + ret
+    /// let placeholder_rva = assembly.store_method_body(method_body);
+    /// // placeholder_rva will be resolved to actual RVA during binary writing
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn store_method_body(&mut self, body_bytes: Vec<u8>) -> u32 {
+        self.changes.store_method_body(body_bytes)
     }
 }
 

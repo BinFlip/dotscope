@@ -87,6 +87,7 @@
 //! - Iterator creation and consumption can happen concurrently
 
 mod body;
+mod encode;
 mod exceptions;
 mod iter;
 mod types;
@@ -95,6 +96,7 @@ use crossbeam_skiplist::SkipMap;
 use std::sync::{atomic::AtomicU32, Arc, OnceLock, Weak};
 
 pub use body::*;
+pub use encode::encode_method_body_header;
 pub use exceptions::*;
 pub use iter::InstructionIterator;
 pub use types::*;

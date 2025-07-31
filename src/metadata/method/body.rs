@@ -236,7 +236,7 @@ impl MethodBody {
                     size_code,
                     size_header: 1,
                     local_var_sig_token: 0,
-                    max_stack: 0,
+                    max_stack: 8,
                     is_fat: false,
                     is_init_local: false,
                     is_exception_data: false,
@@ -417,7 +417,7 @@ mod tests {
         assert!(!method_header.is_fat);
         assert!(!method_header.is_exception_data);
         assert!(!method_header.is_init_local);
-        assert_eq!(method_header.max_stack, 0);
+        assert_eq!(method_header.max_stack, 8);
         assert_eq!(method_header.size_code, 18);
         assert_eq!(method_header.size_header, 1);
         assert_eq!(method_header.size(), 19);

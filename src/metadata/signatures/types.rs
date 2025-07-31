@@ -3403,4 +3403,48 @@ impl TypeSignature {
             _ => false,
         }
     }
+
+    /// Calculate the stack size needed for this type signature.
+    ///
+    /// Returns the number of stack slots this type occupies when pushed onto
+    /// the evaluation stack. This is used for automatic max stack calculation
+    /// in method bodies and follows ECMA-335 stack behavior rules.
+    ///
+    /// # Returns
+    ///
+    /// The number of stack slots (1 or 2) needed for this type:
+    /// - 64-bit types (I8, U8, R8) require 2 slots
+    /// - All other types require 1 slot
+    /// - Void requires 0 slots
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::signatures::TypeSignature;
+    ///
+    /// assert_eq!(TypeSignature::I4.stack_size(), 1);
+    /// assert_eq!(TypeSignature::I8.stack_size(), 2);
+    /// assert_eq!(TypeSignature::String.stack_size(), 1);
+    /// assert_eq!(TypeSignature::Void.stack_size(), 0);
+    /// ```
+    #[must_use]
+    pub fn stack_size(&self) -> u16 {
+        match self {
+            TypeSignature::Void => 0,
+            TypeSignature::Boolean
+            | TypeSignature::Char
+            | TypeSignature::I1
+            | TypeSignature::U1
+            | TypeSignature::I2
+            | TypeSignature::U2
+            | TypeSignature::I4
+            | TypeSignature::U4
+            | TypeSignature::R4 => 1,
+            TypeSignature::I8 | TypeSignature::U8 | TypeSignature::R8 => 2,
+            TypeSignature::I | TypeSignature::U | TypeSignature::Object => 1,
+            TypeSignature::String => 1,
+            // For complex types, assume 1 slot (reference types)
+            _ => 1,
+        }
+    }
 }

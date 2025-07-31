@@ -115,7 +115,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             encoder.emit_instruction("ldarg.2", None).unwrap();
             encoder.emit_instruction("add", None).unwrap();
             encoder.emit_instruction("ret", None).unwrap();
-            encoder.finalize().unwrap()
+            encoder.finalize().unwrap().0
         });
     });
 
@@ -130,7 +130,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             .unwrap()
             .ret()
             .unwrap();
-        asm.finish().unwrap()
+        asm.finish().unwrap().0
     };
 
     c.bench_function("bench_roundtrip_simple", |b| {
@@ -145,7 +145,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 .unwrap()
                 .ret()
                 .unwrap();
-            let bytecode = asm.finish().unwrap();
+            let (bytecode, _max_stack) = asm.finish().unwrap();
 
             // Disassemble
             let mut parser = dotscope::Parser::new(&bytecode);
@@ -191,7 +191,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             .unwrap()
             .ret()
             .unwrap();
-        asm.finish().unwrap()
+        asm.finish().unwrap().0
     };
 
     c.bench_function("bench_roundtrip_complex", |b| {
@@ -234,7 +234,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 .unwrap()
                 .ret()
                 .unwrap();
-            let bytecode = asm.finish().unwrap();
+            let (bytecode, _max_stack) = asm.finish().unwrap();
 
             // Disassemble
             let mut parser = dotscope::Parser::new(&bytecode);

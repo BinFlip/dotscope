@@ -736,6 +736,13 @@ pub use crate::metadata::tables::{
     PropertyBuilder, PropertyMapBuilder, StandAloneSigBuilder,
 };
 
+/// High-level method builders.
+///
+/// Create complete method definitions with implementations, signatures, local variables,
+/// exception handlers, and parameter tables. These builders compose the low-level metadata
+/// builders to provide convenient APIs for creating methods with full implementation details.
+pub use crate::cilassembly::{MethodBodyBuilder, MethodBuilder};
+
 /// Native PE import and export builders.
 ///
 /// Create native PE import and export tables that integrate with the dotscope builder pattern.

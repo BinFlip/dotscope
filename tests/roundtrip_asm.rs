@@ -20,7 +20,7 @@ fn test_arithmetic_instructions_roundtrip() -> Result<()> {
     let mut asm = InstructionAssembler::new();
     asm.ldarg_0()?.ldarg_1()?.add()?.ret()?;
 
-    let bytecode = asm.finish()?;
+    let (bytecode, _max_stack) = asm.finish()?;
 
     // Expected bytecode: [0x02, 0x03, 0x58, 0x2A]
     assert_eq!(bytecode, vec![0x02, 0x03, 0x58, 0x2A]);
@@ -56,7 +56,7 @@ fn test_constant_loading_roundtrip() -> Result<()> {
         .ldc_i4_const(1000)? // Should use ldc.i4
         .ret()?;
 
-    let bytecode = asm.finish()?;
+    let (bytecode, _max_stack) = asm.finish()?;
 
     // Disassemble and verify
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;
@@ -78,7 +78,7 @@ fn test_local_variable_roundtrip() -> Result<()> {
     let mut asm = InstructionAssembler::new();
     asm.ldloc_0()?.stloc_1()?.ldloc_s(5)?.stloc_s(10)?.ret()?;
 
-    let bytecode = asm.finish()?;
+    let (bytecode, _max_stack) = asm.finish()?;
 
     // Disassemble and verify
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;
@@ -106,7 +106,7 @@ fn test_branch_instructions_roundtrip() -> Result<()> {
         .label("end")?
         .ret()?;
 
-    let bytecode = asm.finish()?;
+    let (bytecode, _max_stack) = asm.finish()?;
 
     // Disassemble and verify
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;
@@ -138,7 +138,7 @@ fn test_encoder_operand_types_roundtrip() -> Result<()> {
     )?;
     encoder.emit_instruction("ret", None)?;
 
-    let bytecode = encoder.finalize()?;
+    let (bytecode, _max_stack) = encoder.finalize()?;
 
     // Disassemble and verify
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;
@@ -174,7 +174,7 @@ fn test_complex_control_flow_roundtrip() -> Result<()> {
         .label("end")?
         .ret()?;
 
-    let bytecode = asm.finish()?;
+    let (bytecode, _max_stack) = asm.finish()?;
 
     // Disassemble and verify structure
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;
@@ -211,7 +211,7 @@ fn test_argument_loading_optimizations() -> Result<()> {
         .ldarg_auto(300)? // Should use ldarg
         .ret()?;
 
-    let bytecode = asm.finish()?;
+    let (bytecode, _max_stack) = asm.finish()?;
 
     // Disassemble and verify optimizations were applied correctly
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;
@@ -239,7 +239,7 @@ fn test_stack_operations_roundtrip() -> Result<()> {
         .pop()? // Remove one value
         .ret()?;
 
-    let bytecode = asm.finish()?;
+    let (bytecode, _max_stack) = asm.finish()?;
 
     // Disassemble and verify
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;
@@ -262,7 +262,7 @@ fn test_extended_instructions_roundtrip() -> Result<()> {
     encoder.emit_instruction("ldloc", Some(Operand::Immediate(Immediate::Int16(5))))?;
     encoder.emit_instruction("ret", None)?;
 
-    let bytecode = encoder.finalize()?;
+    let (bytecode, _max_stack) = encoder.finalize()?;
 
     // Extended instructions should start with 0xFE prefix
     assert_eq!(bytecode[0], 0xFE); // First extended instruction prefix
@@ -294,7 +294,7 @@ fn test_method_calls_roundtrip() -> Result<()> {
         .callvirt(method_token)?
         .ret()?;
 
-    let bytecode = asm.finish()?;
+    let (bytecode, _max_stack) = asm.finish()?;
 
     // Disassemble and verify
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;
@@ -324,7 +324,7 @@ fn test_floating_point_constants_roundtrip() -> Result<()> {
     )?;
     encoder.emit_instruction("ret", None)?;
 
-    let bytecode = encoder.finalize()?;
+    let (bytecode, _max_stack) = encoder.finalize()?;
 
     // Disassemble and verify
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;
@@ -350,7 +350,7 @@ fn test_instruction_categories_roundtrip() -> Result<()> {
     encoder.emit_instruction("dup", None)?; // Stack manipulation
     encoder.emit_instruction("ret", None)?; // Return
 
-    let bytecode = encoder.finalize()?;
+    let (bytecode, _max_stack) = encoder.finalize()?;
 
     // Disassemble and verify all instructions are correctly decoded
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;
@@ -408,7 +408,7 @@ fn test_comprehensive_method_roundtrip() -> Result<()> {
         .add()? // Add them
         .ret()?; // Return result
 
-    let bytecode = asm.finish()?;
+    let (bytecode, _max_stack) = asm.finish()?;
 
     // Disassemble and verify the complete method structure
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;
@@ -452,7 +452,7 @@ fn test_bitwise_operations_roundtrip() -> Result<()> {
         .not()? // Bitwise NOT
         .ret()?;
 
-    let bytecode = asm.finish()?;
+    let (bytecode, _max_stack) = asm.finish()?;
 
     // Disassemble and verify
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;
@@ -486,7 +486,7 @@ fn test_shift_operations_roundtrip() -> Result<()> {
         .neg()? // Negate
         .ret()?;
 
-    let bytecode = asm.finish()?;
+    let (bytecode, _max_stack) = asm.finish()?;
 
     // Disassemble and verify
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;
@@ -522,7 +522,7 @@ fn test_conversion_instructions_roundtrip() -> Result<()> {
         .conv_u4()? // Convert to uint32
         .ret()?;
 
-    let bytecode = asm.finish()?;
+    let (bytecode, _max_stack) = asm.finish()?;
 
     // Disassemble and verify
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;
@@ -566,7 +566,7 @@ fn test_comparison_instructions_roundtrip() -> Result<()> {
         .clt()? // Compare less than
         .ret()?;
 
-    let bytecode = asm.finish()?;
+    let (bytecode, _max_stack) = asm.finish()?;
 
     // Disassemble and verify
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;
@@ -600,7 +600,7 @@ fn test_null_reference_operations_roundtrip() -> Result<()> {
         .isinst(type_token)? // Instance check
         .ret()?;
 
-    let bytecode = asm.finish()?;
+    let (bytecode, _max_stack) = asm.finish()?;
 
     // Disassemble and verify
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;
@@ -641,7 +641,7 @@ fn test_object_field_operations_roundtrip() -> Result<()> {
         .add()? // Add values
         .ret()?;
 
-    let bytecode = asm.finish()?;
+    let (bytecode, _max_stack) = asm.finish()?;
 
     // Disassemble and verify
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;
@@ -685,7 +685,7 @@ fn test_array_operations_roundtrip() -> Result<()> {
         .add()? // Add element + length
         .ret()?;
 
-    let bytecode = asm.finish()?;
+    let (bytecode, _max_stack) = asm.finish()?;
 
     // Disassemble and verify
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;
@@ -732,7 +732,7 @@ fn test_long_form_branches_roundtrip() -> Result<()> {
         .label("end")?
         .ret()?;
 
-    let bytecode = asm.finish()?;
+    let (bytecode, _max_stack) = asm.finish()?;
 
     // Disassemble and verify
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;
@@ -770,7 +770,7 @@ fn test_convenience_methods_roundtrip() -> Result<()> {
         .ldc_i4_2()? // Equal case
         .ret()?;
 
-    let bytecode = asm.finish()?;
+    let (bytecode, _max_stack) = asm.finish()?;
 
     // Disassemble and verify structure
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;
@@ -813,7 +813,7 @@ fn test_exception_handling_roundtrip() -> Result<()> {
         .throw()? // Throw exception
         .ret()?; // Unreachable
 
-    let bytecode = asm.finish()?;
+    let (bytecode, _max_stack) = asm.finish()?;
 
     // Disassemble and verify
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;
@@ -856,7 +856,7 @@ fn test_mixed_instruction_types_roundtrip() -> Result<()> {
         .neg()? // Negate result
         .ret()?;
 
-    let bytecode = asm.finish()?;
+    let (bytecode, _max_stack) = asm.finish()?;
 
     // Disassemble and verify comprehensive coverage
     let instructions = decode_stream(&mut Parser::new(&bytecode), 0x1000)?;

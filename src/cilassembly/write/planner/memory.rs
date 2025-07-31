@@ -201,6 +201,16 @@ pub fn calculate_total_size_from_layout(
         max_end = max_end.max(export_end);
     }
 
+    // Account for method body space requirements
+    let method_body_space = assembly.changes().method_bodies_total_size() as u64;
+    if method_body_space > 0 {
+        // Method bodies need to be placed in a code section
+        // For now, allocate space at the end of the file
+        max_end += method_body_space;
+        // Add alignment padding for method bodies (4-byte aligned)
+        max_end = (max_end + 3) & !3;
+    }
+
     // Account for trailing data like certificate tables that exist beyond normal sections
     // Get the original file size to ensure we don't truncate important trailing data
     let original_file_size = assembly.file().file_size();

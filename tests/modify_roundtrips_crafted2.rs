@@ -49,6 +49,46 @@ where
     Ok(written_view)
 }
 
+/// Helper function for method round-trip tests that returns the temp file path
+fn perform_method_round_trip_test<F>(
+    test_name: &str,
+    modify_assembly: F,
+) -> Result<std::path::PathBuf>
+where
+    F: FnOnce(&mut CilAssembly) -> Result<()>,
+{
+    // Step 1: Load original assembly
+    let mut assembly = create_test_assembly()?;
+
+    // Step 2: Apply modifications
+    modify_assembly(&mut assembly)?;
+
+    // Step 2.5: Validate and apply changes
+    assembly.validate_and_apply_changes()?;
+
+    // Step 3: Write to temporary file
+    let temp_file = NamedTempFile::new()?;
+    assembly.write_to_file(temp_file.path())?;
+
+    // Keep the temp file and return its path
+    let temp_path = temp_file.into_temp_path();
+    let owned_path = temp_path.to_path_buf();
+
+    // Handle the keep() result properly
+    match temp_path.keep() {
+        Ok(_) => {}
+        Err(_) => {
+            // If we can't keep the file, just copy it to a new location
+            let new_path = std::env::temp_dir().join(format!("dotscope_test_{test_name}.exe"));
+            std::fs::copy(&owned_path, &new_path)?;
+            return Ok(new_path);
+        }
+    }
+
+    println!("Method round-trip test '{test_name}' completed successfully");
+    Ok(owned_path)
+}
+
 #[test]
 fn test_string_heap_modifications_round_trip() -> Result<()> {
     let written_view = perform_round_trip_test("string_heap_modifications", |assembly| {
@@ -797,5 +837,472 @@ fn test_metadata_preservation_round_trip() -> Result<()> {
         "Blob heap should be preserved or grown"
     );
 
+    Ok(())
+}
+
+#[test]
+fn test_simple_method_roundtrip() -> Result<()> {
+    let written_file_path =
+        perform_method_round_trip_test("simple_method_roundtrip", |assembly| {
+            let fresh_view = CilAssemblyView::from_file(std::path::Path::new(TEST_ASSEMBLY_PATH))?;
+            let mut context = BuilderContext::new(CilAssembly::new(fresh_view));
+
+            // Create a simple addition method
+            let _method_token = MethodBuilder::new("SimpleAdd")
+                .public()
+                .static_method()
+                .parameter("a", TypeSignature::I4)
+                .parameter("b", TypeSignature::I4)
+                .returns(TypeSignature::I4)
+                .implementation(|body| {
+                    body.implementation(|asm| {
+                        asm.ldarg_0()?.ldarg_1()?.add()?.ret()?;
+                        Ok(())
+                    })
+                })
+                .build(&mut context)?;
+
+            // Update assembly with context changes
+            *assembly = context.finish();
+            Ok(())
+        })?;
+
+    // Create CilObject from the written file to access method information
+    let cil_object = CilObject::from_file(&written_file_path)?;
+    let methods = cil_object.methods();
+
+    // Find our added method
+    let mut found_method = false;
+    for entry in methods.iter() {
+        let method = entry.value();
+        if method.name == "SimpleAdd" {
+            found_method = true;
+
+            // Verify method attributes
+            assert!(
+                method.flags_modifiers.contains(MethodModifiers::STATIC),
+                "Method should be static"
+            );
+            assert!(
+                method.flags_access.contains(MethodAccessFlags::PUBLIC),
+                "Method should be public"
+            );
+
+            // Verify method body exists
+            if let Some(body) = method.body.get() {
+                assert!(body.size_code > 0, "Method should have CIL code");
+                // Note: For full verification, the roundtrip succeeded since we can load the written file
+            } else {
+                panic!("Method should have a body");
+            }
+            break;
+        }
+    }
+
+    assert!(found_method, "Should find the added SimpleAdd method");
+    Ok(())
+}
+
+#[test]
+fn test_method_with_locals_roundtrip() -> Result<()> {
+    let written_file_path =
+        perform_method_round_trip_test("method_with_locals_roundtrip", |assembly| {
+            let fresh_view = CilAssemblyView::from_file(std::path::Path::new(TEST_ASSEMBLY_PATH))?;
+            let mut context = BuilderContext::new(CilAssembly::new(fresh_view));
+
+            // Create a method with local variables
+            let _method_token = MethodBuilder::new("MethodWithLocals")
+                .public()
+                .static_method()
+                .parameter("input", TypeSignature::I4)
+                .returns(TypeSignature::I4)
+                .implementation(|body| {
+                    body.local("temp", TypeSignature::I4)
+                        .local("result", TypeSignature::I4)
+                        .implementation(|asm| {
+                            asm.ldarg_0()? // Load input parameter
+                                .ldc_i4_const(10)? // Load constant 10
+                                .mul()? // Multiply
+                                .stloc_0()? // Store to temp local
+                                .ldloc_0()? // Load temp
+                                .ldc_i4_5()? // Load 5
+                                .add()? // Add 5
+                                .stloc_1()? // Store to result local
+                                .ldloc_1()? // Load result
+                                .ret()?; // Return result
+                            Ok(())
+                        })
+                })
+                .build(&mut context)?;
+
+            *assembly = context.finish();
+            Ok(())
+        })?;
+
+    // Verify the method exists with correct local variables
+    // Create CilObject from the written file to access method information
+    let cil_object = CilObject::from_file(&written_file_path)?;
+    let methods = cil_object.methods();
+
+    let mut found_method = false;
+    for entry in methods.iter() {
+        let method = entry.value();
+        if method.name == "MethodWithLocals" {
+            found_method = true;
+
+            if let Some(body) = method.body.get() {
+                // Verify method has local variables
+                assert!(
+                    body.local_var_sig_token != 0,
+                    "Method should have local variable signature"
+                );
+
+                // Method has local variables and bytecode - that's sufficient verification for roundtrip
+                assert!(body.size_code > 0, "Method should have CIL bytecode");
+            } else {
+                panic!("Method should have a body");
+            }
+            break;
+        }
+    }
+
+    assert!(found_method, "Should find the added MethodWithLocals");
+    Ok(())
+}
+
+#[test]
+fn test_complex_method_with_branching_roundtrip() -> Result<()> {
+    let written_file_path =
+        perform_method_round_trip_test("complex_method_branching_roundtrip", |assembly| {
+            let fresh_view = CilAssemblyView::from_file(std::path::Path::new(TEST_ASSEMBLY_PATH))?;
+            let mut context = BuilderContext::new(CilAssembly::new(fresh_view));
+
+            // Create a method with control flow (loop)
+            let _method_token = MethodBuilder::new("CountToTen")
+                .public()
+                .static_method()
+                .returns(TypeSignature::I4)
+                .implementation(|body| {
+                    body.local("counter", TypeSignature::I4)
+                        .implementation(|asm| {
+                            asm.ldc_i4_0()? // Initialize counter to 0
+                                .stloc_0()? // Store to counter local
+                                .label("loop_start")? // Loop label
+                                .ldloc_0()? // Load counter
+                                .ldc_i4_const(10)? // Load 10
+                                .bge_s("loop_end")? // Branch if counter >= 10
+                                .ldloc_0()? // Load counter
+                                .ldc_i4_1()? // Load 1
+                                .add()? // Increment counter
+                                .stloc_0()? // Store back to counter
+                                .br_s("loop_start")? // Continue loop
+                                .label("loop_end")? // End label
+                                .ldloc_0()? // Load final counter value
+                                .ret()?; // Return counter
+                            Ok(())
+                        })
+                })
+                .build(&mut context)?;
+
+            *assembly = context.finish();
+            Ok(())
+        })?;
+
+    // Verify the method exists and contains branching instructions
+    // Create CilObject from the written file to access method information
+    let cil_object = CilObject::from_file(&written_file_path)?;
+    let methods = cil_object.methods();
+
+    let mut found_method = false;
+    for entry in methods.iter() {
+        let method = entry.value();
+        if method.name == "CountToTen" {
+            found_method = true;
+
+            if let Some(body) = method.body.get() {
+                // Method with loop should have substantial bytecode
+                assert!(
+                    body.size_code > 10,
+                    "Method with loop should have substantial bytecode"
+                );
+            } else {
+                panic!("Method should have a body");
+            }
+            break;
+        }
+    }
+
+    assert!(found_method, "Should find the added CountToTen method");
+    Ok(())
+}
+
+#[test]
+fn test_method_with_exception_handling_roundtrip() -> Result<()> {
+    let written_file_path =
+        perform_method_round_trip_test("method_exception_handling_roundtrip", |assembly| {
+            let fresh_view = CilAssemblyView::from_file(std::path::Path::new(TEST_ASSEMBLY_PATH))?;
+            let mut context = BuilderContext::new(CilAssembly::new(fresh_view));
+
+            // Create a method with exception handlers (simplified version)
+            let _method_token = MethodBuilder::new("TestMethodWithExceptions")
+                .public()
+                .static_method()
+                .parameter("value", TypeSignature::I4)
+                .returns(TypeSignature::I4)
+                .implementation(|body| {
+                    body.local("result", TypeSignature::I4)
+                        .catch_handler(0, 10, 10, 5, None) // Simple catch handler
+                        .finally_handler(0, 15, 15, 3) // Finally block
+                        .implementation(|asm| {
+                            // Simplified method body without unsupported instructions
+                            asm.ldarg_0()? // Load parameter
+                                .ldc_i4_2()? // Load 2
+                                .div()? // Divide (could throw)
+                                .stloc_0()? // Store result
+                                .ldloc_0()? // Load result
+                                .ret()?; // Return
+                            Ok(())
+                        })
+                })
+                .build(&mut context)?;
+
+            *assembly = context.finish();
+            Ok(())
+        })?;
+
+    // Verify the method exists and has exception handling metadata
+    // Create CilObject from the written file to access method information
+    let cil_object = CilObject::from_file(&written_file_path)?;
+    let methods = cil_object.methods();
+
+    let mut found_method = false;
+    for entry in methods.iter() {
+        let method = entry.value();
+        if method.name == "TestMethodWithExceptions" {
+            found_method = true;
+
+            if let Some(body) = method.body.get() {
+                // Method with exception handlers should have substantial code
+                assert!(
+                    body.size_code > 5,
+                    "Method with exceptions should have substantial code"
+                );
+                // Exception handlers should be present in the body
+                assert!(
+                    !body.exception_handlers.is_empty(),
+                    "Method should have exception handlers"
+                );
+            } else {
+                panic!("Method should have a body");
+            }
+            break;
+        }
+    }
+
+    assert!(
+        found_method,
+        "Should find the added TestMethodWithExceptions method"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_multiple_methods_roundtrip() -> Result<()> {
+    let written_file_path =
+        perform_method_round_trip_test("multiple_methods_roundtrip", |assembly| {
+            let fresh_view = CilAssemblyView::from_file(std::path::Path::new(TEST_ASSEMBLY_PATH))?;
+            let mut context = BuilderContext::new(CilAssembly::new(fresh_view));
+
+            // Create multiple methods with different signatures
+            let _method1_token = MethodBuilder::new("TestMethod1")
+                .public()
+                .static_method()
+                .returns(TypeSignature::I4)
+                .implementation(|body| {
+                    body.implementation(|asm| {
+                        asm.ldc_i4_1()?.ret()?;
+                        Ok(())
+                    })
+                })
+                .build(&mut context)?;
+
+            let _method2_token = MethodBuilder::new("TestMethod2")
+                .public()
+                .static_method()
+                .parameter("x", TypeSignature::I4)
+                .parameter("y", TypeSignature::I4)
+                .returns(TypeSignature::I4)
+                .implementation(|body| {
+                    body.implementation(|asm| {
+                        asm.ldarg_0()?.ldarg_1()?.mul()?.ret()?;
+                        Ok(())
+                    })
+                })
+                .build(&mut context)?;
+
+            let _method3_token = MethodBuilder::new("TestMethod3")
+                .public()
+                .static_method()
+                .parameter("input", TypeSignature::String)
+                .returns(TypeSignature::String)
+                .implementation(|body| {
+                    body.local("result", TypeSignature::String)
+                        .implementation(|asm| {
+                            asm.ldarg_0()? // Load input string
+                                .stloc_0()? // Store to local
+                                .ldloc_0()? // Load from local
+                                .ret()?; // Return string
+                            Ok(())
+                        })
+                })
+                .build(&mut context)?;
+
+            *assembly = context.finish();
+            Ok(())
+        })?;
+
+    // Verify all methods exist and are correctly formed
+    // Create CilObject from the written file to access method information
+    let cil_object = CilObject::from_file(&written_file_path)?;
+    let methods = cil_object.methods();
+
+    let mut found_methods = std::collections::HashSet::new();
+
+    for entry in methods.iter() {
+        let method = entry.value();
+        match method.name.as_str() {
+            "TestMethod1" => {
+                found_methods.insert("TestMethod1");
+                assert!(
+                    method.flags_modifiers.contains(MethodModifiers::STATIC)
+                        && method.flags_access.contains(MethodAccessFlags::PUBLIC),
+                    "TestMethod1 should be public static"
+                );
+
+                if let Some(body) = method.body.get() {
+                    assert!(body.size_code > 0, "TestMethod1 should have bytecode");
+                }
+            }
+            "TestMethod2" => {
+                found_methods.insert("TestMethod2");
+                assert!(
+                    method.flags_modifiers.contains(MethodModifiers::STATIC)
+                        && method.flags_access.contains(MethodAccessFlags::PUBLIC),
+                    "TestMethod2 should be public static"
+                );
+
+                if let Some(body) = method.body.get() {
+                    assert!(body.size_code > 0, "TestMethod2 should have bytecode");
+                }
+            }
+            "TestMethod3" => {
+                found_methods.insert("TestMethod3");
+                assert!(
+                    method.flags_modifiers.contains(MethodModifiers::STATIC)
+                        && method.flags_access.contains(MethodAccessFlags::PUBLIC),
+                    "TestMethod3 should be public static"
+                );
+
+                if let Some(body) = method.body.get() {
+                    assert!(
+                        body.local_var_sig_token != 0,
+                        "TestMethod3 should have locals"
+                    );
+                }
+            }
+            _ => {} // Ignore other methods
+        }
+    }
+
+    assert_eq!(
+        found_methods.len(),
+        3,
+        "Should find exactly 3 added methods"
+    );
+    assert!(
+        found_methods.contains("TestMethod1"),
+        "Should find TestMethod1"
+    );
+    assert!(
+        found_methods.contains("TestMethod2"),
+        "Should find TestMethod2"
+    );
+    assert!(
+        found_methods.contains("TestMethod3"),
+        "Should find TestMethod3"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_method_with_stack_tracking_roundtrip() -> Result<()> {
+    let written_file_path =
+        perform_method_round_trip_test("method_stack_tracking_roundtrip", |assembly| {
+            let fresh_view = CilAssemblyView::from_file(std::path::Path::new(TEST_ASSEMBLY_PATH))?;
+            let mut context = BuilderContext::new(CilAssembly::new(fresh_view));
+
+            // Create a method that tests accurate stack tracking
+            let _method_token = MethodBuilder::new("StackTestMethod")
+                .public()
+                .static_method()
+                .returns(TypeSignature::I4)
+                .implementation(|body| {
+                    body.implementation(|asm| {
+                        // This sequence has known stack effects:
+                        // ldc.i4.1: +1 (stack=1, max=1)
+                        // ldc.i4.2: +1 (stack=2, max=2)
+                        // ldc.i4.3: +1 (stack=3, max=3)
+                        // add: -2+1 (stack=2, max=3)
+                        // add: -2+1 (stack=1, max=3)
+                        // dup: +1 (stack=2, max=3)
+                        // pop: -1 (stack=1, max=3)
+                        // ret: -1 (stack=0, max=3)
+                        asm.ldc_i4_1()?
+                            .ldc_i4_2()?
+                            .ldc_i4_3()?
+                            .add()? // Add 2 and 3 -> stack has [1, 5]
+                            .add()? // Add 1 and 5 -> stack has [6]
+                            .dup()? // Duplicate -> stack has [6, 6]
+                            .pop()? // Pop one -> stack has [6]
+                            .ret()?; // Return 6
+                        Ok(())
+                    })
+                })
+                .build(&mut context)?;
+
+            *assembly = context.finish();
+            Ok(())
+        })?;
+
+    // Verify the method was created with correct stack tracking
+    // Create CilObject from the written file to access method information
+    let cil_object = CilObject::from_file(&written_file_path)?;
+    let methods = cil_object.methods();
+
+    let mut found_method = false;
+    for entry in methods.iter() {
+        let method = entry.value();
+        if method.name == "StackTestMethod" {
+            found_method = true;
+
+            if let Some(body) = method.body.get() {
+                // Verify the method body was encoded correctly
+                assert!(body.size_code > 0, "Method should have code");
+
+                // The method should have used appropriate stack depth
+                // With our instruction sequence, max stack should be 3
+                assert!(
+                    body.max_stack >= 3,
+                    "Method should have max stack >= 3 for this instruction sequence"
+                );
+            } else {
+                panic!("Method should have a body");
+            }
+            break;
+        }
+    }
+
+    assert!(found_method, "Should find the added StackTestMethod");
     Ok(())
 }

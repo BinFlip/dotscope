@@ -560,7 +560,8 @@ pub use metadata::cilassemblyview::CilAssemblyView;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub use cilassembly::{
-    BuilderContext, CilAssembly, LastWriteWinsResolver, ReferenceHandlingStrategy,
+    BuilderContext, CilAssembly, LastWriteWinsResolver, MethodBodyBuilder, MethodBuilder,
+    ReferenceHandlingStrategy,
 };
 mod cilassembly;
 

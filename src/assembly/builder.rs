@@ -145,7 +145,7 @@ use crate::{
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct InstructionAssembler {
-    /// Core encoder for instruction generation
+    /// Core encoder for instruction generation with built-in stack tracking
     encoder: InstructionEncoder,
 }
 
@@ -170,7 +170,7 @@ impl InstructionAssembler {
         }
     }
 
-    /// Finalize assembly and return the complete bytecode.
+    /// Finalize assembly and return the complete bytecode with stack information.
     ///
     /// This method completes the assembly process by resolving all label references
     /// and generating the final CIL bytecode. After calling this method, the
@@ -178,14 +178,16 @@ impl InstructionAssembler {
     ///
     /// # Returns
     ///
-    /// The complete CIL bytecode with all labels resolved and ready for use in
-    /// a method body or standalone execution.
+    /// A tuple containing:
+    /// - The complete CIL bytecode with all labels resolved
+    /// - The maximum stack depth required during execution
     ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - Any referenced labels are undefined
     /// - Branch offsets exceed the allowed range for their instruction type
+    /// - Stack underflow occurred during assembly (negative stack depth)
     ///
     /// # Examples
     ///
@@ -193,14 +195,72 @@ impl InstructionAssembler {
     /// use dotscope::assembly::InstructionAssembler;
     ///
     /// let mut assembler = InstructionAssembler::new();
-    /// assembler.nop()?.ret()?;
+    /// assembler.ldc_i4_1()?.ret()?; // Pushes 1, then returns
     ///
-    /// let bytecode = assembler.finish()?;
-    /// assert_eq!(bytecode, vec![0x00, 0x2A]); // nop, ret
+    /// let (bytecode, max_stack) = assembler.finish()?;
+    /// assert_eq!(bytecode, vec![0x17, 0x2A]); // ldc.i4.1, ret
+    /// assert_eq!(max_stack, 1); // Maximum stack depth was 1
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn finish(self) -> Result<Vec<u8>> {
+    pub fn finish(self) -> Result<(Vec<u8>, u16)> {
         self.encoder.finalize()
+    }
+
+    /// Get the current maximum stack depth without finalizing the assembly.
+    ///
+    /// This method allows checking the maximum stack depth that has been reached
+    /// so far during assembly without consuming the assembler.
+    ///
+    /// # Returns
+    ///
+    /// The maximum stack depth reached so far during instruction assembly.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::assembly::InstructionAssembler;
+    ///
+    /// let mut assembler = InstructionAssembler::new();
+    /// assembler.ldc_i4_1()?; // Pushes 1 item
+    /// assert_eq!(assembler.max_stack_depth(), 1);
+    ///
+    /// assembler.ldc_i4_2()?; // Pushes another item
+    /// assert_eq!(assembler.max_stack_depth(), 2);
+    ///
+    /// assembler.add()?; // Pops 2, pushes 1 (net: -1)
+    /// assert_eq!(assembler.max_stack_depth(), 2); // Max is still 2
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn max_stack_depth(&self) -> u16 {
+        self.encoder.max_stack_depth()
+    }
+
+    /// Get the current stack depth without finalizing the assembly.
+    ///
+    /// This method returns the current number of items on the evaluation stack.
+    /// Useful for debugging or validation during assembly.
+    ///
+    /// # Returns
+    ///
+    /// The current stack depth (number of items on evaluation stack).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::assembly::InstructionAssembler;
+    ///
+    /// let mut assembler = InstructionAssembler::new();
+    /// assert_eq!(assembler.current_stack_depth(), 0);
+    ///
+    /// assembler.ldc_i4_1()?; // Pushes 1 item
+    /// assert_eq!(assembler.current_stack_depth(), 1);
+    ///
+    /// assembler.ldc_i4_2()?; // Pushes another item
+    /// assert_eq!(assembler.current_stack_depth(), 2);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn current_stack_depth(&self) -> i16 {
+        self.encoder.current_stack_depth()
     }
 
     /// Define a label at the current position.
@@ -1409,7 +1469,7 @@ mod tests {
 
         asm.nop()?.ret()?;
 
-        let bytecode = asm.finish()?;
+        let (bytecode, _max_stack) = asm.finish()?;
         assert_eq!(bytecode, vec![0x00, 0x2A]); // nop, ret
 
         Ok(())
@@ -1422,7 +1482,7 @@ mod tests {
         // Simple addition: return arg0 + arg1
         asm.ldarg_0()?.ldarg_1()?.add()?.ret()?;
 
-        let bytecode = asm.finish()?;
+        let (bytecode, _max_stack) = asm.finish()?;
         assert_eq!(bytecode, vec![0x02, 0x03, 0x58, 0x2A]); // ldarg.0, ldarg.1, add, ret
 
         Ok(())
@@ -1442,7 +1502,7 @@ mod tests {
             .ldc_i4_1()?
             .ret()?;
 
-        let bytecode = asm.finish()?;
+        let (bytecode, _max_stack) = asm.finish()?;
         // ldarg.0 (0x02), ldc.i4.0 (0x16), bgt.s (0x30) + offset, ldc.i4.0 (0x16), ret (0x2A), ldc.i4.1 (0x17), ret (0x2A)
         assert_eq!(bytecode.len(), 8); // Total should be 8 bytes
         assert_eq!(bytecode[0], 0x02); // ldarg.0
@@ -1461,7 +1521,7 @@ mod tests {
             .ldc_i4_const(42)? // ldc.i4.s 42
             .ldc_i4_const(1000)?; // ldc.i4 1000
 
-        let bytecode = asm.finish()?;
+        let (bytecode, _max_stack) = asm.finish()?;
         assert_eq!(bytecode[0], 0x15); // ldc.i4.m1
         assert_eq!(bytecode[1], 0x1B); // ldc.i4.5
         assert_eq!(bytecode[2], 0x1F); // ldc.i4.s
@@ -1480,7 +1540,7 @@ mod tests {
             .ldarg_auto(5)? // ldarg.s 5
             .ldarg_auto(500)?; // ldarg 500
 
-        let bytecode = asm.finish()?;
+        let (bytecode, _max_stack) = asm.finish()?;
         assert_eq!(bytecode[0], 0x02); // ldarg.0
         assert_eq!(bytecode[1], 0x03); // ldarg.1
         assert_eq!(bytecode[2], 0x0E); // ldarg.s
@@ -1502,7 +1562,7 @@ mod tests {
             .ldloc_0()? // Load local 0
             .ret()?;
 
-        let bytecode = asm.finish()?;
+        let (bytecode, _max_stack) = asm.finish()?;
         assert_eq!(bytecode, vec![0x02, 0x0A, 0x06, 0x2A]); // ldarg.0, stloc.0, ldloc.0, ret
 
         Ok(())
@@ -1517,7 +1577,7 @@ mod tests {
             .pop()? // Remove one copy
             .ret()?;
 
-        let bytecode = asm.finish()?;
+        let (bytecode, _max_stack) = asm.finish()?;
         assert_eq!(bytecode, vec![0x02, 0x25, 0x26, 0x2A]); // ldarg.0, dup, pop, ret
 
         Ok(())
@@ -1536,7 +1596,7 @@ mod tests {
             .xor()? // XOR the results
             .ret()?;
 
-        let bytecode = asm.finish()?;
+        let (bytecode, _max_stack) = asm.finish()?;
         // ldarg.0 (0x02), ldarg.1 (0x03), and (0x5F), ldarg.0 (0x02), ldarg.1 (0x03), or (0x60), xor (0x61), ret (0x2A)
         assert_eq!(
             bytecode,
@@ -1555,7 +1615,7 @@ mod tests {
             .ceq()? // Compare equal
             .ret()?;
 
-        let bytecode = asm.finish()?;
+        let (bytecode, _max_stack) = asm.finish()?;
         // ldarg.0 (0x02), ldarg.1 (0x03), ceq (0xFE 0x01), ret (0x2A)
         assert_eq!(bytecode, vec![0x02, 0x03, 0xFE, 0x01, 0x2A]);
 
@@ -1571,7 +1631,7 @@ mod tests {
             .conv_r8()? // Convert to double
             .ret()?;
 
-        let bytecode = asm.finish()?;
+        let (bytecode, _max_stack) = asm.finish()?;
         // ldarg.0 (0x02), conv.i4 (0x69), conv.r8 (0x6C), ret (0x2A)
         assert_eq!(bytecode, vec![0x02, 0x69, 0x6C, 0x2A]);
 
@@ -1586,7 +1646,7 @@ mod tests {
             .ldc_bool(false)? // Should use ldc.i4.0
             .ret()?;
 
-        let bytecode = asm.finish()?;
+        let (bytecode, _max_stack) = asm.finish()?;
         // ldc.i4.1 (0x17), ldc.i4.0 (0x16), ret (0x2A)
         assert_eq!(bytecode, vec![0x17, 0x16, 0x2A]);
 
@@ -1602,7 +1662,7 @@ mod tests {
             .ceq()? // Compare with argument
             .ret()?;
 
-        let bytecode = asm.finish()?;
+        let (bytecode, _max_stack) = asm.finish()?;
         // ldnull (0x14), ldarg.0 (0x02), ceq (0xFE 0x01), ret (0x2A)
         assert_eq!(bytecode, vec![0x14, 0x02, 0xFE, 0x01, 0x2A]);
 
@@ -1619,7 +1679,7 @@ mod tests {
             .label("end")?
             .ret()?;
 
-        let bytecode = asm.finish()?;
+        let (bytecode, _max_stack) = asm.finish()?;
         assert_eq!(bytecode.len(), 8); // Should have correct length with long branch
         assert_eq!(bytecode[0], 0x02); // ldarg.0
         assert_eq!(bytecode[1], 0x39); // brfalse (long form)
@@ -1639,7 +1699,7 @@ mod tests {
             .ldc_i4_1()? // not null case
             .ret()?;
 
-        let bytecode = asm.finish()?;
+        let (bytecode, _max_stack) = asm.finish()?;
         assert_eq!(bytecode[0], 0x02); // ldarg.0
         assert_eq!(bytecode[1], 0x14); // ldnull
         assert_eq!(bytecode[2], 0x33); // bne.un.s
@@ -1658,7 +1718,7 @@ mod tests {
             .ldfld(field_token)? // Load field
             .ret()?;
 
-        let bytecode = asm.finish()?;
+        let (bytecode, _max_stack) = asm.finish()?;
         assert_eq!(bytecode[0], 0x02); // ldarg.0
         assert_eq!(bytecode[1], 0x7B); // ldfld
 

@@ -163,7 +163,7 @@
 
 use bitflags::bitflags;
 
-use crate::metadata::typesystem::CilTypeRc;
+use crate::{metadata::typesystem::CilTypeRc, Result};
 
 bitflags! {
     /// Exception handler type flags defining the kind of exception handling clause.
@@ -510,4 +510,225 @@ pub struct ExceptionHandler {
     /// 2. Executes custom logic to test the exception
     /// 3. Returns true (1) to handle or false (0) to continue unwinding
     pub filter_offset: u32,
+}
+
+/// Encodes exception handlers according to ECMA-335 II.25.4.6.
+///
+/// Exception handler sections are encoded after the method body with the following format:
+/// - Section header (4 bytes for small format, 12 bytes for fat format)
+/// - Exception handler entries (12 bytes each for small, 24 bytes each for fat)
+///
+/// Format selection:
+/// - Small format: if all offsets and lengths fit in 16 bits
+/// - Fat format: if any offset or length requires 32 bits
+///
+/// # Arguments
+///
+/// * `handlers` - The exception handlers to encode
+///
+/// # Returns
+///
+/// The encoded exception handler section bytes, or an empty vector if no handlers.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use dotscope::metadata::method::{ExceptionHandler, ExceptionHandlerFlags, encode_exception_handlers};
+///
+/// let handlers = vec![
+///     ExceptionHandler {
+///         flags: ExceptionHandlerFlags::FINALLY,
+///         try_offset: 0,
+///         try_length: 10,
+///         handler_offset: 10,
+///         handler_length: 5,
+///         handler: None,
+///         filter_offset: 0,
+///     }
+/// ];
+///
+/// let encoded = encode_exception_handlers(&handlers)?;
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+pub fn encode_exception_handlers(handlers: &[ExceptionHandler]) -> Result<Vec<u8>> {
+    if handlers.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Determine if we need fat or small format
+    let needs_fat_format = handlers.iter().any(|eh| {
+        eh.try_offset > 0xFFFF
+            || eh.try_length > 0xFFFF
+            || eh.handler_offset > 0xFFFF
+            || eh.handler_length > 0xFFFF
+    });
+
+    let mut section = Vec::new();
+
+    if needs_fat_format {
+        // Fat format: 4-byte header + 24 bytes per handler
+        let section_size = 4 + (handlers.len() * 24);
+
+        // Section header (fat format)
+        section.extend_from_slice(&[
+            0x41, // Kind = EHTable | FatFormat
+            0x00, 0x00, // Reserved
+        ]);
+        section.extend_from_slice(&(section_size as u32).to_le_bytes()[..3]); // DataSize (3 bytes)
+
+        // Write each exception handler (24 bytes each)
+        for eh in handlers {
+            // Flags (4 bytes)
+            section.extend_from_slice(&(eh.flags.bits() as u32).to_le_bytes());
+
+            // TryOffset (4 bytes)
+            section.extend_from_slice(&eh.try_offset.to_le_bytes());
+
+            // TryLength (4 bytes)
+            section.extend_from_slice(&eh.try_length.to_le_bytes());
+
+            // HandlerOffset (4 bytes)
+            section.extend_from_slice(&eh.handler_offset.to_le_bytes());
+
+            // HandlerLength (4 bytes)
+            section.extend_from_slice(&eh.handler_length.to_le_bytes());
+
+            // ClassToken or FilterOffset (4 bytes)
+            if eh.flags.contains(ExceptionHandlerFlags::FILTER) {
+                section.extend_from_slice(&eh.filter_offset.to_le_bytes());
+            } else if let Some(_handler_type) = &eh.handler {
+                // For typed handlers, we would need the type token
+                // For now, use 0 as placeholder
+                section.extend_from_slice(&0u32.to_le_bytes());
+            } else {
+                // No type token (finally/fault handlers)
+                section.extend_from_slice(&0u32.to_le_bytes());
+            }
+        }
+    } else {
+        // Small format: 4-byte header + 12 bytes per handler
+        let section_size = 4 + (handlers.len() * 12);
+
+        // Section header (small format)
+        section.extend_from_slice(&[
+            0x01,                 // Kind = EHTable (small format)
+            (section_size as u8), // DataSize (1 byte)
+            0x00,
+            0x00, // Reserved
+        ]);
+
+        // Write each exception handler (12 bytes each)
+        for eh in handlers {
+            // Flags (2 bytes)
+            section.extend_from_slice(&eh.flags.bits().to_le_bytes());
+
+            // TryOffset (2 bytes)
+            section.extend_from_slice(&(eh.try_offset as u16).to_le_bytes());
+
+            // TryLength (1 byte)
+            section.push(eh.try_length as u8);
+
+            // HandlerOffset (2 bytes)
+            section.extend_from_slice(&(eh.handler_offset as u16).to_le_bytes());
+
+            // HandlerLength (1 byte)
+            section.push(eh.handler_length as u8);
+
+            // ClassToken or FilterOffset (4 bytes)
+            if eh.flags.contains(ExceptionHandlerFlags::FILTER) {
+                section.extend_from_slice(&eh.filter_offset.to_le_bytes());
+            } else if let Some(_handler_type) = &eh.handler {
+                // For typed handlers, we would need the type token
+                // For now, use 0 as placeholder
+                section.extend_from_slice(&0u32.to_le_bytes());
+            } else {
+                // No type token (finally/fault handlers)
+                section.extend_from_slice(&0u32.to_le_bytes());
+            }
+        }
+    }
+
+    // Align to 4-byte boundary
+    while section.len() % 4 != 0 {
+        section.push(0);
+    }
+
+    Ok(section)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encode_exception_handlers_empty() {
+        let handlers = vec![];
+        let result = encode_exception_handlers(&handlers).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_encode_exception_handlers_small_format() {
+        let handlers = vec![ExceptionHandler {
+            flags: ExceptionHandlerFlags::FINALLY,
+            try_offset: 0,
+            try_length: 10,
+            handler_offset: 10,
+            handler_length: 5,
+            handler: None,
+            filter_offset: 0,
+        }];
+
+        let result = encode_exception_handlers(&handlers).unwrap();
+
+        // Should use small format: 4-byte header + 12 bytes per handler = 16 bytes
+        assert_eq!(result.len(), 16);
+
+        // First byte should be 0x01 (EHTable, small format)
+        assert_eq!(result[0], 0x01);
+
+        // Second byte should be section size (16)
+        assert_eq!(result[1], 16);
+    }
+
+    #[test]
+    fn test_encode_exception_handlers_fat_format() {
+        let handlers = vec![ExceptionHandler {
+            flags: ExceptionHandlerFlags::EXCEPTION,
+            try_offset: 0x10000, // Forces fat format (> 16 bits)
+            try_length: 10,
+            handler_offset: 20,
+            handler_length: 5,
+            handler: None,
+            filter_offset: 0,
+        }];
+
+        let result = encode_exception_handlers(&handlers).unwrap();
+
+        // Should use fat format: 4-byte header + 24 bytes per handler = 28 bytes,
+        // but aligned to 4-byte boundary = 32 bytes
+        assert_eq!(result.len(), 32);
+
+        // First byte should be 0x41 (EHTable | FatFormat)
+        assert_eq!(result[0], 0x41);
+    }
+
+    #[test]
+    fn test_encode_exception_handlers_filter() {
+        let handlers = vec![ExceptionHandler {
+            flags: ExceptionHandlerFlags::FILTER,
+            try_offset: 0,
+            try_length: 10,
+            handler_offset: 20,
+            handler_length: 5,
+            handler: None,
+            filter_offset: 15,
+        }];
+
+        let result = encode_exception_handlers(&handlers).unwrap();
+
+        // Should successfully encode filter handler
+        assert_eq!(result.len(), 16); // Small format
+        assert_eq!(result[0], 0x01); // Small format flag
+    }
 }

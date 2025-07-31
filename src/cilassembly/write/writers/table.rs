@@ -152,6 +152,8 @@ pub struct TableWriter<'a> {
     tables_header: &'a TablesHeader<'a>,
     /// Cached reference to the [`crate::metadata::tables::TableInfoRef`] for proper serialization context
     table_info: &'a TableInfoRef,
+    /// RVA resolution map for resolving placeholder RVAs to actual RVAs
+    rva_resolution_map: &'a HashMap<u32, u32>,
 }
 
 impl<'a> TableWriter<'a> {
@@ -199,6 +201,7 @@ impl<'a> TableWriter<'a> {
         assembly: &'a CilAssembly,
         output: &'a mut Output,
         layout_plan: &'a LayoutPlan,
+        rva_resolution_map: &'a HashMap<u32, u32>,
     ) -> Result<Self> {
         let tables_header = assembly
             .view
@@ -215,6 +218,7 @@ impl<'a> TableWriter<'a> {
             layout_plan,
             tables_header,
             table_info,
+            rva_resolution_map,
         })
     }
 

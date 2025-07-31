@@ -127,6 +127,19 @@ pub struct AssemblyChanges {
     /// These always exist but start empty, following pure copy-on-write semantics.
     pub native_imports: UnifiedImportContainer,
     pub native_exports: UnifiedExportContainer,
+
+    /// Method body storage for new and modified method implementations
+    ///
+    /// Maps placeholder RVAs to method body bytes for methods created through builders.
+    /// The placeholder RVAs are sequential IDs that will be resolved to actual RVAs
+    /// during PE writing when the real code section layout is determined.
+    pub method_bodies: HashMap<u32, Vec<u8>>,
+
+    /// Next available placeholder RVA for method body allocation
+    ///
+    /// Tracks the next sequential placeholder ID for method bodies. These placeholders
+    /// will be resolved to real RVAs during PE writing based on actual section layout.
+    pub next_method_placeholder: u32,
 }
 
 impl AssemblyChanges {
@@ -149,6 +162,8 @@ impl AssemblyChanges {
             userstring_heap_changes: HeapChanges::new(userstring_heap_size),
             native_imports: UnifiedImportContainer::new(),
             native_exports: UnifiedExportContainer::new(),
+            method_bodies: HashMap::new(),
+            next_method_placeholder: 0xF0000000, // Start placeholders at high address range
         }
     }
 
@@ -164,6 +179,8 @@ impl AssemblyChanges {
             userstring_heap_changes: HeapChanges::new(1),
             native_imports: UnifiedImportContainer::new(),
             native_exports: UnifiedExportContainer::new(),
+            method_bodies: HashMap::new(),
+            next_method_placeholder: 0xF0000000,
         }
     }
 
@@ -344,6 +361,94 @@ impl AssemblyChanges {
         let userstring_size = self.userstring_heap_changes.binary_userstring_heap_size();
 
         (string_size, blob_size, guid_size, userstring_size)
+    }
+
+    /// Stores a method body and allocates a placeholder RVA for it.
+    ///
+    /// This method stores the method body with a sequential placeholder RVA that will
+    /// be resolved to the actual RVA during PE writing when the code section layout
+    /// is determined.
+    ///
+    /// # Arguments
+    ///
+    /// * `body_bytes` - The complete method body bytes including header and exception handlers
+    ///
+    /// # Returns
+    ///
+    /// A placeholder RVA that will be resolved to the actual RVA during binary writing.
+    pub fn store_method_body(&mut self, body_bytes: Vec<u8>) -> u32 {
+        let placeholder_rva = self.next_method_placeholder;
+
+        // Store the method body with placeholder RVA
+        self.method_bodies.insert(placeholder_rva, body_bytes);
+
+        // Increment to next placeholder (simple sequential allocation)
+        self.next_method_placeholder += 1;
+
+        placeholder_rva
+    }
+
+    /// Retrieves a stored method body by its placeholder RVA.
+    ///
+    /// # Arguments
+    ///
+    /// * `placeholder_rva` - The placeholder RVA of the method body to retrieve
+    ///
+    /// # Returns
+    ///
+    /// Optional reference to the method body bytes if found.
+    pub fn get_method_body(&self, placeholder_rva: u32) -> Option<&Vec<u8>> {
+        self.method_bodies.get(&placeholder_rva)
+    }
+
+    /// Gets the total size of all stored method bodies.
+    ///
+    /// This is used for calculating the size of the code section during PE writing.
+    /// The size includes proper 4-byte alignment padding between method bodies as
+    /// required by the method body writer.
+    ///
+    /// # Returns
+    ///
+    /// Total size in bytes of all method bodies including alignment padding.
+    pub fn method_bodies_total_size(&self) -> u32 {
+        self.method_bodies
+            .values()
+            .map(|body| {
+                let size = body.len() as u32;
+                // Align each method body to 4-byte boundary
+                (size + 3) & !3
+            })
+            .sum()
+    }
+
+    /// Gets all method bodies with their placeholder RVAs.
+    ///
+    /// This is used during PE writing to layout the code section and resolve
+    /// placeholder RVAs to actual RVAs based on the final section layout.
+    ///
+    /// # Returns
+    ///
+    /// Iterator over (placeholder_rva, method_body_bytes) pairs for all stored method bodies.
+    pub fn method_bodies(&self) -> impl Iterator<Item = (u32, &Vec<u8>)> + '_ {
+        self.method_bodies
+            .iter()
+            .map(|(placeholder_rva, body)| (*placeholder_rva, body))
+    }
+
+    /// Checks if a placeholder RVA represents a method body managed by this system.
+    ///
+    /// This is used during PE writing to identify which RVAs in the metadata tables
+    /// are placeholders that need to be resolved to actual RVAs.
+    ///
+    /// # Arguments
+    ///
+    /// * `rva` - The RVA to check
+    ///
+    /// # Returns
+    ///
+    /// True if this RVA is a placeholder managed by the method body system.
+    pub fn is_method_body_placeholder(&self, rva: u32) -> bool {
+        rva >= 0xF0000000 && self.method_bodies.contains_key(&rva)
     }
 }
 

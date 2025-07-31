@@ -121,12 +121,14 @@ use crate::{
 };
 
 mod heap;
+mod method_body;
 mod native;
 mod pe;
 mod relocation;
 mod table;
 
 pub use heap::*;
+pub use method_body::*;
 pub use native::*;
 pub use pe::*;
 pub use relocation::*;
