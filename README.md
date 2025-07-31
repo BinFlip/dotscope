@@ -6,15 +6,17 @@
 [![Build Status](https://github.com/BinFlip/dotscope/workflows/CI/badge.svg)](https://github.com/BinFlip/dotscope/actions)
 [![Coverage](https://codecov.io/gh/BinFlip/dotscope/branch/main/graph/badge.svg)](https://codecov.io/gh/BinFlip/dotscope)
 
-A high-performance, cross-platform framework for analyzing and reverse engineering .NET PE executables. Built in pure Rust, `dotscope` provides comprehensive tooling for parsing CIL (Common Intermediate Language) bytecode, metadata structures, and disassembling .NET assemblies without requiring Windows or the .NET runtime.
+A high-performance, cross-platform framework for analyzing, reverse engineering, and modifying .NET PE executables. Built in pure Rust, `dotscope` provides comprehensive tooling for parsing CIL (Common Intermediate Language) bytecode, metadata structures, disassembling .NET assemblies, and creating modified assemblies without requiring Windows or the .NET runtime.
 
 ## Features
 
 - **Efficient memory access** - Memory-mapped file access with minimal allocations and reference-based parsing
 - **Complete metadata analysis** - Parse all ECMA-335 metadata tables and streams
+- **Assembly modification** - Edit metadata tables, heaps, and PE structures with validation and integrity checking
 - **High-performance disassembly** - Fast CIL instruction decoding with control flow analysis
+- **Native PE operations** - Manage imports, exports, and native interoperability features
 - **Cross-platform** - Works on Windows, Linux, macOS, and any Rust-supported platform
-- **Memory safe** - Built in Rust with comprehensive error handling
+- **Memory safe** - Built in Rust with comprehensive error handling and fuzzing
 - **Rich type system** - Full support for generics, signatures, and complex .NET types
 - **Extensible architecture** - Modular design for custom analysis and tooling
 
@@ -24,28 +26,54 @@ Add `dotscope` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-dotscope = "0.3.2"
+dotscope = "0.4.0"
 ```
 
-### Basic Usage
+### Raw Access Example
+
+```rust
+use dotscope::prelude::*;
+
+fn main() -> dotscope::Result<()> {
+    // Load assembly for raw access
+    let view = CilAssemblyView::from_file("MyAssembly.dll".as_ref())?;
+    
+    // Direct access to metadata tables
+    if let Some(tables) = view.tables() {
+        let typedef_count = tables.table_row_count(TableId::TypeDef);
+        println!("TypeDef rows: {}", typedef_count);
+    }
+    
+    // Direct heap access
+    if let Some(strings) = view.strings() {
+        for (index, string) in strings.iter().take(5) {
+            println!("String {}: {}", index, string);
+        }
+    }
+    
+    Ok(())
+}
+```
+
+### Analysis Example
 
 ```rust
 use dotscope::prelude::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Load and analyze a .NET assembly  
+    // Load assembly for high-level analysis
     let assembly = CilObject::from_file("MyAssembly.dll".as_ref())?;
     
-    // Access basic information
+    // Access resolved information
     if let Some(module) = assembly.module() {
         println!("Module: {}", module.name);
     }
     
-    // Iterate through methods
+    // Iterate through resolved methods with type information
     let methods = assembly.methods();
     println!("Found {} methods", methods.len());
     
-    // Examine imports and exports
+    // Examine resolved imports and exports
     let imports = assembly.imports();
     let exports = assembly.exports();
     println!("Imports: {}, Exports: {}", imports.len(), exports.len());
@@ -54,18 +82,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### Disassembly Example
+### Assembly Modification Example
 
 ```rust
-use dotscope::{disassembler::decode_instruction, Parser};
+use dotscope::prelude::*;
 
-fn disassemble_method() -> dotscope::Result<()> {
-    let bytecode = &[0x00, 0x2A]; // nop, ret
-    let mut parser = Parser::new(bytecode);
+fn main() -> dotscope::Result<()> {
+    // Load assembly for modification
+    let view = CilAssemblyView::from_file("input.dll".as_ref())?;
+    let mut assembly = CilAssembly::new(view);
     
-    let instruction = decode_instruction(&mut parser, 0x1000)?;
-    println!("Mnemonic: {}", instruction.mnemonic);
-    println!("Flow type: {:?}", instruction.flow_type);
+    // Add strings to metadata heaps
+    let string_index = assembly.string_add("Hello from dotscope!")?;
+    let user_string_index = assembly.userstring_add("Modified assembly")?;
+    
+    // Add native imports
+    assembly.add_native_import_dll("kernel32.dll")?;
+    assembly.add_native_import_function("kernel32.dll", "GetProcessId")?;
+    
+    // Validate and write modified assembly
+    assembly.validate_and_apply_changes()?;
+    assembly.write_to_file("output.dll".as_ref())?;
     
     Ok(())
 }
@@ -86,18 +123,39 @@ fn disassemble_method() -> dotscope::Result<()> {
 
 - **[`prelude`]** - Convenient re-exports of commonly used types
 - **[`metadata`]** - Complete ECMA-335 metadata parsing and type system
+- **[`cilassembly`]** - Assembly modification with copy-on-write semantics
 - **[`disassembler`]** - CIL instruction decoding and control flow analysis
 - **[`Error`] and [`Result`]** - Comprehensive error handling
 
-### Metadata Analysis
+### Raw Access (`CilAssemblyView`)
 
-The [`CilObject`] provides access to:
+Low-level access to assembly structures provides:
 
-- **Streams**: Strings, user strings, GUIDs, and blob heaps
-- **Tables**: All ECMA-335 metadata tables (types, methods, fields, etc.)
-- **Type System**: Rich representation of .NET types and signatures
-- **Resources**: Embedded resources and manifest information
-- **Security**: Code access security and permission sets
+- **Direct PE parsing**: Raw access to PE headers, sections, and data directories
+- **Metadata streams**: Direct heap access without object resolution
+- **Table iteration**: Raw table row access with manual index resolution
+- **Memory-mapped data**: Efficient access to assembly contents
+- **Foundation layer**: Base for both analysis and modification operations
+
+### Analysis (`CilObject`)
+
+High-level analysis with resolved objects provides:
+
+- **Resolved references**: Automatic cross-reference resolution and object graphs
+- **Type system**: Rich representation of .NET types, generics, and inheritance
+- **Method bodies**: Parsed IL instructions with operand resolution
+- **Import/export analysis**: Resolved dependency and export information
+- **Convenience APIs**: Easy-to-use interfaces for common analysis tasks
+
+### Modification (`CilAssembly`)
+
+Mutable assembly editing provides:
+
+- **Heap operations**: Add, update, remove items from all metadata heaps
+- **Table operations**: Add, update, delete metadata table rows with validation
+- **PE operations**: Manage native imports, exports, and forwarders
+- **Builder APIs**: High-level interfaces for complex assembly construction
+- **Validation**: Comprehensive integrity checking and reference resolution
 
 ### Disassembly Engine
 
@@ -113,6 +171,7 @@ The disassembler module provides:
 Check out the [examples](examples/) directory for complete working examples with comprehensive documentation:
 
 - **[Basic Usage](examples/basic.rs)** - Start here! Simple assembly loading and inspection with error handling
+- **[Assembly Modification](examples/modify.rs)** - Complete guide to editing assemblies with heap and table operations
 - **[Metadata Analysis](examples/metadata.rs)** - Deep dive into assembly metadata and dependency tracking  
 - **[Disassembly](examples/disassembly.rs)** - CIL instruction disassembly and method body analysis
 - **[Type System](examples/types.rs)** - Working with .NET types, generics, and inheritance
@@ -136,8 +195,10 @@ See the [examples README](examples/README.md) for a recommended learning path.
 
 - **Reverse Engineering**: Analyze .NET malware and vulnerable software
 - **Security Research**: Find vulnerabilities and security issues
+- **Assembly Patching**: Modify assemblies for instrumentation, hooking, or enhancement
 - **Code Analysis**: Static analysis and quality metrics
 - **Decompilation**: Build decompilers and analysis tools
+- **Development Tools**: Create assembly editors, analyzers, and build tools
 - **Educational**: Learn about .NET internals and PE format
 - **Forensics**: Examine .NET assemblies in digital forensics
 
