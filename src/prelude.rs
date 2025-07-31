@@ -80,6 +80,41 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
+//! ## CIL Instruction Assembly
+//!
+//! ```rust,no_run
+//! use dotscope::prelude::*;
+//!
+//! // High-level fluent API for common instruction patterns
+//! let mut assembler = InstructionAssembler::new();
+//! assembler
+//!     .ldarg_0()?      // Load first argument
+//!     .ldarg_1()?      // Load second argument  
+//!     .add()?          // Add them
+//!     .ret()?;         // Return result
+//! let bytecode = assembler.finish()?;
+//!
+//! // Low-level encoder for any CIL instruction  
+//! let mut encoder = InstructionEncoder::new();
+//! encoder.emit_instruction("ldarg.0", None)?;
+//! encoder.emit_instruction("ldc.i4.s", Some(Operand::Immediate(Immediate::Int8(42))))?;
+//! encoder.emit_instruction("ret", None)?;
+//! let bytecode2 = encoder.finalize()?;
+//!
+//! // Label resolution and control flow
+//! let mut asm = InstructionAssembler::new();
+//! asm.ldarg_0()?
+//!    .brfalse_s("false_case")?
+//!    .ldc_i4_1()?
+//!    .br_s("end")?
+//!    .label("false_case")?
+//!    .ldc_i4_0()?
+//!    .label("end")?
+//!    .ret()?;
+//! let conditional_bytecode = asm.finish()?;
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
 //! ## Metadata Table Access
 //!
 //! ```rust,no_run
@@ -508,9 +543,11 @@ pub use crate::metadata::method::{
 ///
 /// Complete toolkit for CIL instruction processing, including disassembly of bytecode into
 /// structured representations, control flow analysis, and assembly of instructions back to bytecode.
+/// The assembly system provides both high-level fluent APIs and low-level encoding capabilities.
 pub use crate::assembly::{
     decode_blocks, decode_instruction, decode_stream, BasicBlock, FlowType, Immediate, Instruction,
-    InstructionCategory, Operand, OperandType, StackBehavior,
+    InstructionAssembler, InstructionCategory, InstructionEncoder, LabelFixup, Operand,
+    OperandType, StackBehavior,
 };
 
 // ================================================================================================

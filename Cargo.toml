@@ -47,6 +47,10 @@ harness = false
 name = "cilassemblyview"
 harness = false
 
+[[bench]]
+name = "assembly"
+harness = false
+
 [profile.bench]
 debug = true
 lto="fat"

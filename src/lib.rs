@@ -37,21 +37,21 @@
 //!
 //! - **File Layer**: Memory-mapped file access and binary parsing
 //! - **Metadata Layer**: ECMA-335 metadata parsing and type system representation  
-//! - **Assembly Layer**: CIL instruction processing, disassembly, and assembly
+//! - **Assembly Layer**: CIL instruction processing with complete disassembly and assembly capabilities
 //! - **Validation Layer**: Configurable validation and integrity checking
 //!
 //! ## Key Components
 //!
 //! - [`crate::CilObject`] - Main entry point for .NET assembly analysis
 //! - [`crate::metadata`] - Complete ECMA-335 metadata parsing and type system
-//! - [`crate::assembly`] - CIL instruction analysis, disassembly, and assembly
+//! - [`crate::assembly`] - Complete CIL instruction processing: disassembly, analysis, and assembly
 //! - [`crate::prelude`] - Convenient re-exports of commonly used types
 //! - [`crate::Error`] and [`crate::Result`] - Comprehensive error handling
 //!
 //! # Features
 //!
 //! - **🔍 Complete metadata analysis** - Parse all ECMA-335 metadata tables and streams
-//! - **⚡ CIL disassembly** - CIL instruction decoding with control flow analysis
+//! - **⚡ CIL processing** - Complete instruction decoding, encoding, and control flow analysis
 //! - **🔧 Cross-platform** - Works on Windows, Linux, macOS, and any Rust-supported platform
 //! - **🛡️ Memory safe** - Built in Rust with comprehensive error handling
 //! - **📊 Rich type system** - Full support for generics, signatures, and complex .NET types
@@ -140,11 +140,12 @@
 //! }
 //! ```
 //!
-//! ### Disassembly Analysis
+//! ### CIL Instruction Processing
 //!
-//! The disassembler module provides comprehensive CIL instruction decoding and control flow analysis.
-//! See the [`crate::disassembler`] module documentation for detailed usage examples.
+//! The assembly module provides comprehensive CIL instruction processing with both disassembly
+//! (bytecode to instructions) and assembly (instructions to bytecode) capabilities.
 //!
+//! #### Disassembly
 //! ```rust,no_run
 //! use dotscope::{assembly::decode_instruction, Parser};
 //!
@@ -157,10 +158,24 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
+//! #### Assembly
+//! ```rust,no_run
+//! use dotscope::assembly::InstructionAssembler;
+//!
+//! let mut asm = InstructionAssembler::new();
+//! asm.ldarg_0()?      // Load first argument
+//!    .ldarg_1()?      // Load second argument
+//!    .add()?          // Add them together
+//!    .ret()?;         // Return result
+//! let bytecode = asm.finish()?; // Returns [0x02, 0x03, 0x58, 0x2A]
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
 //! # Integration
 //!
-//! The metadata analysis seamlessly integrates with the disassembly engine. The [`crate::CilObject`] provides
-//! access to both metadata and method bodies for comprehensive analysis workflows.
+//! The instruction processing seamlessly integrates with the metadata system. The [`crate::CilObject`] provides
+//! access to both metadata and method bodies for comprehensive analysis workflows, while the assembly
+//! system uses the same instruction metadata to ensure perfect consistency between disassembly and assembly.
 //!
 //! ### Metadata-Driven Disassembly
 //!
@@ -261,32 +276,44 @@ pub(crate) mod test;
 /// All re-exported types maintain their original thread safety guarantees.
 pub mod prelude;
 
-/// CIL instruction decoding and disassembly based on ECMA-335.
+/// CIL instruction processing: disassembly, analysis, and assembly based on ECMA-335.
 ///
-/// This module provides comprehensive CIL (Common Intermediate Language) instruction decoding
-/// and disassembly capabilities. It implements the complete ECMA-335 instruction set with
-/// support for control flow analysis and stack effect tracking.
+/// This module provides comprehensive CIL (Common Intermediate Language) instruction processing
+/// capabilities, including both disassembly (bytecode to instructions) and assembly (instructions
+/// to bytecode). It implements the complete ECMA-335 instruction set with support for control flow
+/// analysis, stack effect tracking, and bidirectional instruction processing.
 ///
 /// # Architecture
 ///
-/// The disassembler is built around several core concepts:
+/// The assembly module is built around several core concepts:
 /// - **Instruction Decoding**: Binary CIL bytecode to structured instruction representation
+/// - **Instruction Encoding**: Structured instructions back to binary CIL bytecode
 /// - **Control Flow Analysis**: Building basic blocks and analyzing program flow
 /// - **Stack Effect Analysis**: Tracking how instructions affect the evaluation stack
-/// - **Exception Handling**: Parsing try/catch/finally regions and exception handlers
+/// - **Label Resolution**: Automatic resolution of branch targets and labels
+/// - **Type Safety**: Compile-time validation of instruction operand types
 ///
 /// # Key Components
 ///
-/// - [`crate::disassembler::Instruction`] - Represents a decoded CIL instruction
-/// - [`crate::disassembler::BasicBlock`] - A sequence of instructions with single entry/exit
-/// - [`crate::disassembler::Operand`] - Instruction operands (immediates, tokens, targets)
-/// - [`crate::disassembler::FlowType`] - How instructions affect control flow
-/// - [`crate::disassembler::decode_instruction`] - Decode a single instruction
-/// - [`crate::disassembler::decode_stream`] - Decode a sequence of instructions  
-/// - [`crate::disassembler::decode_blocks`] - Build basic blocks from instruction stream
+/// ## Disassembly Components
+/// - [`crate::assembly::decode_instruction`] - Decode a single instruction
+/// - [`crate::assembly::decode_stream`] - Decode a sequence of instructions  
+/// - [`crate::assembly::decode_blocks`] - Build basic blocks from instruction stream
+///
+/// ## Assembly Components  
+/// - [`crate::assembly::InstructionEncoder`] - Low-level instruction encoding (supports all 220 CIL instructions)
+/// - [`crate::assembly::InstructionAssembler`] - High-level fluent API for common instruction patterns
+/// - [`crate::assembly::LabelFixup`] - Label resolution system for branch instructions
+///
+/// ## Shared Components
+/// - [`crate::assembly::Instruction`] - Represents a decoded CIL instruction
+/// - [`crate::assembly::BasicBlock`] - A sequence of instructions with single entry/exit
+/// - [`crate::assembly::Operand`] - Instruction operands (immediates, tokens, targets)
+/// - [`crate::assembly::FlowType`] - How instructions affect control flow
 ///
 /// # Usage Examples
 ///
+/// ## Disassembly
 /// ```rust,no_run
 /// use dotscope::{assembly::decode_instruction, Parser};
 ///
@@ -299,14 +326,41 @@ pub mod prelude;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
+/// ## High-Level Assembly
+/// ```rust,no_run
+/// use dotscope::assembly::InstructionAssembler;
+///
+/// let mut asm = InstructionAssembler::new();
+/// asm.ldarg_0()?      // Load first argument
+///    .ldarg_1()?      // Load second argument
+///    .add()?          // Add them together
+///    .ret()?;         // Return result
+/// let bytecode = asm.finish()?;
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+///
+/// ## Low-Level Assembly
+/// ```rust,no_run
+/// use dotscope::assembly::{InstructionEncoder, Operand, Immediate};
+///
+/// let mut encoder = InstructionEncoder::new();
+/// encoder.emit_instruction("nop", None)?;
+/// encoder.emit_instruction("ldarg.s", Some(Operand::Immediate(Immediate::Int8(1))))?;
+/// encoder.emit_instruction("ret", None)?;
+/// let bytecode = encoder.finalize()?;
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+///
 /// # Integration
 ///
-/// The disassembler integrates with the metadata system to resolve tokens and provide
-/// rich semantic information about method calls, field access, and type operations.
+/// The assembly module integrates with the metadata system to resolve tokens and provide
+/// rich semantic information about method calls, field access, and type operations. The
+/// encoder and assembler use the same instruction metadata as the disassembler, ensuring
+/// perfect consistency between assembly and disassembly operations.
 ///
 /// # Thread Safety
 ///
-/// All disassembler types are [`std::marker::Send`] and [`std::marker::Sync`] for safe concurrent processing.
+/// All assembly types are [`std::marker::Send`] and [`std::marker::Sync`] for safe concurrent processing.
 pub mod assembly;
 
 /// .NET metadata parsing, loading, and type system based on ECMA-335.

@@ -845,7 +845,7 @@ mod tests {
 
         let result = decode_instruction(&mut parser, rva).unwrap();
 
-        assert_eq!(result.mnemonic, "ldToken");
+        assert_eq!(result.mnemonic, "ldtoken");
         match &result.operand {
             Operand::Token(token) => assert_eq!(token.value(), 0x02000001),
             _ => panic!("Expected Operand::Token"),

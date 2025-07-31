@@ -863,6 +863,78 @@ pub enum Error {
         /// Details about the internal error
         message: String,
     },
+
+    // Assembly Encoding Errors
+    /// Invalid instruction mnemonic.
+    ///
+    /// This error occurs when attempting to encode an instruction with
+    /// a mnemonic that is not recognized in the CIL instruction set.
+    #[error("Invalid instruction mnemonic: {0}")]
+    InvalidMnemonic(String),
+
+    /// Wrong operand type for instruction.
+    ///
+    /// This error occurs when the provided operand type doesn't match
+    /// the expected operand type for the instruction being encoded.
+    #[error("Wrong operand type for instruction - expected {expected}")]
+    WrongOperandType {
+        /// The expected operand type
+        expected: String,
+    },
+
+    /// Unexpected operand provided.
+    ///
+    /// This error occurs when an operand is provided for an instruction
+    /// that doesn't expect any operand.
+    #[error("Unexpected operand provided for instruction that expects none")]
+    UnexpectedOperand,
+
+    /// Invalid branch instruction.
+    ///
+    /// This error occurs when attempting to use the branch instruction
+    /// encoding method with a non-branch instruction mnemonic.
+    #[error("Invalid branch instruction: {0}")]
+    InvalidBranchInstruction(String),
+
+    /// Invalid branch operand type.
+    ///
+    /// This error occurs when a branch instruction has an operand type
+    /// that is not valid for branch offset encoding.
+    #[error("Invalid branch operand type - must be Int8, Int16, or Int32")]
+    InvalidBranchOperandType,
+
+    /// Undefined label referenced.
+    ///
+    /// This error occurs when attempting to finalize encoding with
+    /// unresolved label references.
+    #[error("Undefined label referenced: {0}")]
+    UndefinedLabel(String),
+
+    /// Duplicate label definition.
+    ///
+    /// This error occurs when attempting to define a label that has
+    /// already been defined in the current encoding context.
+    #[error("Duplicate label definition: {0}")]
+    DuplicateLabel(String),
+
+    /// Branch offset out of range.
+    ///
+    /// This error occurs when a calculated branch offset exceeds the
+    /// maximum range for the instruction's offset size.
+    #[error("Branch offset {offset} out of range for {instruction_size}-byte instruction")]
+    BranchOffsetOutOfRange {
+        /// The calculated offset
+        offset: i32,
+        /// The instruction offset size in bytes
+        instruction_size: u8,
+    },
+
+    /// Invalid branch offset size.
+    ///
+    /// This error occurs when an invalid offset size is specified
+    /// for branch instruction encoding.
+    #[error("Invalid branch offset size: {0} bytes")]
+    InvalidBranchOffsetSize(u8),
 }
 
 impl Clone for Error {

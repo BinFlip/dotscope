@@ -21,8 +21,12 @@
 //! - [`crate::assembly::decode_instruction`] - Core single instruction decoder
 //! - [`crate::assembly::decode_stream`] - Linear instruction sequence decoder
 //! - [`crate::assembly::decode_blocks`] - Complete control flow analysis with basic blocks
+//! - [`crate::assembly::InstructionEncoder`] - Core instruction encoding engine for assembly generation
+//! - [`crate::assembly::InstructionAssembler`] - High-level fluent API for convenient instruction assembly
 //!
 //! # Usage Examples
+//!
+//! ## Disassembly Examples
 //!
 //! ```rust,no_run
 //! use dotscope::assembly::{decode_instruction, decode_stream, decode_blocks};
@@ -47,6 +51,33 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
+//! ## Assembly Examples
+//!
+//! ```rust,no_run
+//! use dotscope::assembly::{InstructionAssembler, InstructionEncoder};
+//! use dotscope::assembly::{Operand, Immediate};
+//!
+//! // High-level fluent API
+//! let mut assembler = InstructionAssembler::new();
+//! assembler
+//!     .ldarg_0()?
+//!     .ldarg_1()?
+//!     .add()?
+//!     .ret()?;
+//! let bytecode = assembler.finish()?;
+//!
+//! // Low-level encoder API
+//! let mut encoder = InstructionEncoder::new();
+//! encoder.emit_instruction("ldarg.0", None)?;
+//! encoder.emit_instruction("ldarg.1", None)?;
+//! encoder.emit_instruction("add", None)?;
+//! encoder.emit_instruction("ret", None)?;
+//! let bytecode2 = encoder.finalize()?;
+//!
+//! assert_eq!(bytecode, bytecode2); // Both produce identical results
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
 //! # Thread Safety
 //!
 //! All public types in this module are designed to be thread-safe where appropriate.
@@ -62,14 +93,18 @@
 //! - [`crate::metadata::token`] - Resolves metadata token references in operands
 
 mod block;
+mod builder;
 mod decoder;
+mod encoder;
 mod instruction;
 mod instructions;
 mod visitedmap;
 
 pub use block::BasicBlock;
+pub use builder::InstructionAssembler;
 pub(crate) use decoder::decode_method;
 pub use decoder::{decode_blocks, decode_instruction, decode_stream};
+pub use encoder::{InstructionEncoder, LabelFixup};
 pub use instruction::{
     FlowType, Immediate, Instruction, InstructionCategory, Operand, OperandType, StackBehavior,
 };
