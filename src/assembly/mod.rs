@@ -1,31 +1,31 @@
-//! CIL (Common Intermediate Language) disassembler and instruction decoding engine.
+//! CIL (Common Intermediate Language) instruction processing engine.
 //!
-//! This module provides comprehensive support for decoding, analyzing, and disassembling CIL bytecode
-//! from .NET assemblies according to ECMA-335 specifications. It implements a complete disassembly
-//! pipeline including instruction parsing, control flow analysis, stack effect tracking, and
-//! basic block construction for advanced static analysis capabilities.
+//! This module provides comprehensive support for processing CIL bytecode from .NET assemblies
+//! according to ECMA-335 specifications. It implements both disassembly and assembly pipelines,
+//! including instruction parsing, encoding, control flow analysis, stack effect tracking, and
+//! basic block construction for advanced static analysis and code generation capabilities.
 //!
 //! # Architecture
 //!
-//! The disassembler is organized into several cooperating components: instruction decoding
-//! transforms raw bytecode into structured instruction objects, control flow analysis builds
+//! The module is organized into several cooperating components: instruction decoding and encoding
+//! transform between raw bytecode and structured instruction objects, control flow analysis builds
 //! basic blocks with predecessor/successor relationships, and metadata integration provides
-//! semantic context for method-level analysis.
+//! semantic context for method-level analysis and code generation.
 //!
 //! # Key Components
 //!
-//! - [`crate::disassembler::Instruction`] - Complete decoded CIL instruction representation
-//! - [`crate::disassembler::BasicBlock`] - Control flow basic block with instruction sequences
-//! - [`crate::disassembler::Operand`] - Type-safe instruction operand representation
-//! - [`crate::disassembler::FlowType`] - Control flow behavior classification
-//! - [`crate::disassembler::decode_instruction`] - Core single instruction decoder
-//! - [`crate::disassembler::decode_stream`] - Linear instruction sequence decoder
-//! - [`crate::disassembler::decode_blocks`] - Complete control flow analysis with basic blocks
+//! - [`crate::assembly::Instruction`] - Complete CIL instruction representation
+//! - [`crate::assembly::BasicBlock`] - Control flow basic block with instruction sequences
+//! - [`crate::assembly::Operand`] - Type-safe instruction operand representation
+//! - [`crate::assembly::FlowType`] - Control flow behavior classification
+//! - [`crate::assembly::decode_instruction`] - Core single instruction decoder
+//! - [`crate::assembly::decode_stream`] - Linear instruction sequence decoder
+//! - [`crate::assembly::decode_blocks`] - Complete control flow analysis with basic blocks
 //!
 //! # Usage Examples
 //!
 //! ```rust,no_run
-//! use dotscope::disassembler::{decode_instruction, decode_stream, decode_blocks};
+//! use dotscope::assembly::{decode_instruction, decode_stream, decode_blocks};
 //! use dotscope::Parser;
 //!
 //! // Decode a single instruction
@@ -50,7 +50,7 @@
 //! # Thread Safety
 //!
 //! All public types in this module are designed to be thread-safe where appropriate.
-//! [`crate::disassembler::Instruction`], [`crate::disassembler::BasicBlock`], and related types
+//! [`crate::assembly::Instruction`], [`crate::assembly::BasicBlock`], and related types
 //! implement [`std::marker::Send`] and [`std::marker::Sync`] as they contain only
 //! thread-safe data. The decoder functions can be called concurrently from different threads
 //! with separate parser instances.

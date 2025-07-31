@@ -37,7 +37,7 @@
 use std::sync::Arc;
 
 use crate::{
-    disassembler::VisitedMap,
+    assembly::VisitedMap,
     metadata::{
         loader::{LoaderContext, MetadataLoader},
         tables::StandAloneSigRaw,

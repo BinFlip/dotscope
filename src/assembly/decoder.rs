@@ -7,22 +7,22 @@
 //!
 //! # Architecture
 //!
-//! The module is organized around a stateful [`crate::disassembler::decoder::Decoder`] that
+//! The module is organized around a stateful [`crate::assembly::decoder::Decoder`] that
 //! maintains disassembly context while processing bytecode. Public functions provide different
 //! levels of abstraction, from single instruction decoding to complete method disassembly
 //! with basic block construction and control flow analysis.
 //!
 //! # Key Components
 //!
-//! - [`crate::disassembler::decoder::decode_instruction`] - Core single instruction decoder
-//! - [`crate::disassembler::decoder::decode_stream`] - Linear instruction sequence decoder
-//! - [`crate::disassembler::decoder::decode_blocks`] - Complete control flow analysis with basic blocks
-//! - [`crate::disassembler::decoder::decode_method`] - Internal method-level disassembly integration
+//! - [`crate::assembly::decoder::decode_instruction`] - Core single instruction decoder
+//! - [`crate::assembly::decoder::decode_stream`] - Linear instruction sequence decoder
+//! - [`crate::assembly::decoder::decode_blocks`] - Complete control flow analysis with basic blocks
+//! - [`crate::assembly::decoder::decode_method`] - Internal method-level disassembly integration
 //!
 //! # Usage Examples
 //!
 //! ```rust,no_run
-//! use dotscope::{Parser, disassembler::{decode_instruction, decode_stream, decode_blocks}};
+//! use dotscope::{Parser, assembly::{decode_instruction, decode_stream, decode_blocks}};
 //!
 //! // Decode a single instruction
 //! let code = [0x2A]; // ret
@@ -46,15 +46,15 @@
 //! # Integration
 //!
 //! This module integrates with:
-//! - [`crate::disassembler::instruction`] - Defines instruction structure and metadata
-//! - [`crate::disassembler::block`] - Provides basic block representation for control flow
+//! - [`crate::assembly::instruction`] - Defines instruction structure and metadata
+//! - [`crate::assembly::block`] - Provides basic block representation for control flow
 //! - [`crate::file::parser`] - Supplies low-level bytecode parsing capabilities
 //! - [`crate::metadata::method`] - Supports method-level disassembly and caching
 
 use std::sync::Arc;
 
 use crate::{
-    disassembler::{
+    assembly::{
         visitedmap::VisitedMap, BasicBlock, FlowType, Immediate, Instruction, Operand, OperandType,
         StackBehavior, INSTRUCTIONS, INSTRUCTIONS_FE,
     },
@@ -106,11 +106,11 @@ impl<'a> Decoder<'a> {
     /// * `offset` - The offset at which the first instruction starts (must be in range of parser)
     /// * `rva` - The relative virtual address of the first instruction
     /// * `exceptions` - Optional information about exception handlers from method metadata
-    /// * `visited` - [`crate::disassembler::visitedmap::VisitedMap`] for tracking disassembly progress
+    /// * `visited` - [`crate::assembly::visitedmap::VisitedMap`] for tracking disassembly progress
     ///
     /// # Returns
     ///
-    /// Returns a new [`crate::disassembler::decoder::Decoder`] instance ready for block decoding,
+    /// Returns a new [`crate::assembly::decoder::Decoder`] instance ready for block decoding,
     /// or an error if the offset is out of bounds.
     ///
     /// # Errors
@@ -150,12 +150,12 @@ impl<'a> Decoder<'a> {
     ///
     /// # Returns
     ///
-    /// A slice containing all decoded [`crate::disassembler::BasicBlock`] instances.
+    /// A slice containing all decoded [`crate::assembly::BasicBlock`] instances.
     ///
     /// # Examples
     ///
     /// ```rust,ignore
-    /// # use dotscope::disassembler::decoder::Decoder;
+    /// # use dotscope::assembly::decoder::Decoder;
     /// # let mut decoder = todo!(); // Decoder instance
     /// let blocks = decoder.blocks();
     /// println!("Decoded {} basic blocks", blocks.len());
@@ -176,7 +176,7 @@ impl<'a> Decoder<'a> {
     ///
     /// # Usage in Method Integration
     ///
-    /// This method is primarily used internally by [`crate::disassembler::decode_method`] to efficiently
+    /// This method is primarily used internally by [`crate::assembly::decode_method`] to efficiently
     /// transfer decoded blocks to the [`crate::metadata::method::Method`]'s `OnceLock<Vec<BasicBlock>>` field:
     ///
     /// ```rust,ignore
@@ -188,7 +188,7 @@ impl<'a> Decoder<'a> {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use dotscope::disassembler::decode_blocks;
+    /// use dotscope::assembly::decode_blocks;
     ///
     /// let bytecode = [0x00, 0x2A]; // nop, ret
     /// let blocks = decode_blocks(&bytecode, 0, 0x1000, None)?;
@@ -198,7 +198,7 @@ impl<'a> Decoder<'a> {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
-    /// Note: [`crate::disassembler::decode_blocks`] function internally uses this method to return ownership
+    /// Note: [`crate::assembly::decode_blocks`] function internally uses this method to return ownership
     /// of the blocks to the caller.
     ///
     /// # Thread Safety
@@ -340,7 +340,7 @@ impl<'a> Decoder<'a> {
 ///
 /// * `method` - The [`crate::metadata::method::Method`] instance to populate with disassembled basic blocks
 /// * `file` - The [`crate::file::File`] containing the raw method bytecode and metadata
-/// * `shared_visited` - Shared [`crate::disassembler::visitedmap::VisitedMap`] for coordinated disassembly across methods
+/// * `shared_visited` - Shared [`crate::assembly::visitedmap::VisitedMap`] for coordinated disassembly across methods
 ///
 /// # Returns
 ///
@@ -444,7 +444,7 @@ pub(crate) fn decode_method(
 ///
 /// # Returns
 ///
-/// Returns a vector of [`crate::disassembler::BasicBlock`] objects representing the control flow structure.
+/// Returns a vector of [`crate::assembly::BasicBlock`] objects representing the control flow structure.
 ///
 /// # Errors
 ///
@@ -457,7 +457,7 @@ pub(crate) fn decode_method(
 /// # Examples
 ///
 /// ```rust,no_run
-/// use dotscope::disassembler::decode_blocks;
+/// use dotscope::assembly::decode_blocks;
 ///
 /// // Simple bytecode sequence: nop, conditional branch, ret
 /// let bytecode = [
@@ -521,7 +521,7 @@ pub fn decode_blocks(
 ///
 /// # Returns
 ///
-/// Returns a `Vec<`[`crate::disassembler::instruction::Instruction`]`>` containing all successfully decoded instructions.
+/// Returns a `Vec<`[`crate::assembly::instruction::Instruction`]`>` containing all successfully decoded instructions.
 ///
 /// # Errors
 ///
@@ -533,7 +533,7 @@ pub fn decode_blocks(
 /// # Examples
 ///
 /// ```rust,no_run
-/// use dotscope::{disassembler::decode_stream, Parser};
+/// use dotscope::{assembly::decode_stream, Parser};
 ///
 /// // Raw CIL bytecode: nop, ldloc.0, ret
 /// let bytecode = [0x00, 0x06, 0x2A];
@@ -565,7 +565,7 @@ pub fn decode_blocks(
 /// - Instructions are decoded in linear order without control flow analysis
 /// - Each instruction's RVA is calculated based on the previous instruction's size
 /// - The function stops when the parser has no more data available
-/// - Use [`crate::disassembler::decode_blocks`] for complete analysis with basic blocks
+/// - Use [`crate::assembly::decode_blocks`] for complete analysis with basic blocks
 pub fn decode_stream(parser: &mut Parser, rva: u64) -> Result<Vec<Instruction>> {
     let mut current_rva = rva;
     let mut instructions = Vec::new();
@@ -601,7 +601,7 @@ pub fn decode_stream(parser: &mut Parser, rva: u64) -> Result<Vec<Instruction>> 
 ///
 /// # Returns
 ///
-/// Returns a fully populated [`crate::disassembler::instruction::Instruction`] struct containing:
+/// Returns a fully populated [`crate::assembly::instruction::Instruction`] struct containing:
 /// - The instruction mnemonic and opcode information
 /// - Decoded operands with proper type information
 /// - Stack behavior and flow control metadata
@@ -617,7 +617,7 @@ pub fn decode_stream(parser: &mut Parser, rva: u64) -> Result<Vec<Instruction>> 
 /// # Examples
 ///
 /// ```rust,no_run
-/// use dotscope::{disassembler::{decode_instruction, Operand}, Parser};
+/// use dotscope::{assembly::{decode_instruction, Operand}, Parser};
 ///
 /// // Simple instruction: ldloc.0 (0x06)
 /// let bytecode = [0x06];
@@ -754,7 +754,7 @@ pub fn decode_instruction(parser: &mut Parser, rva: u64) -> Result<Instruction> 
 #[cfg(test)]
 mod tests {
     use crate::{
-        disassembler::{
+        assembly::{
             decode_blocks, decode_instruction, decode_stream, FlowType, Immediate,
             InstructionCategory, Operand,
         },

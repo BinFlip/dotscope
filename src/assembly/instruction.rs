@@ -7,24 +7,24 @@
 //!
 //! # Architecture
 //!
-//! The module is organized around the central [`crate::disassembler::instruction::Instruction`] struct,
+//! The module is organized around the central [`crate::assembly::instruction::Instruction`] struct,
 //! which aggregates all information about a decoded instruction. Supporting enums provide
 //! type-safe representations for operands, flow control, and instruction classification.
 //! The design emphasizes immutability and comprehensive metadata preservation.
 //!
 //! # Key Components
 //!
-//! - [`crate::disassembler::instruction::Instruction`] - Complete decoded instruction representation
-//! - [`crate::disassembler::instruction::Operand`] - Type-safe operand representation
-//! - [`crate::disassembler::instruction::Immediate`] - Immediate value types with conversions
-//! - [`crate::disassembler::instruction::FlowType`] - Control flow behavior classification
-//! - [`crate::disassembler::instruction::InstructionCategory`] - Functional instruction grouping
-//! - [`crate::disassembler::instruction::StackBehavior`] - Stack effect analysis metadata
+//! - [`crate::assembly::instruction::Instruction`] - Complete decoded instruction representation
+//! - [`crate::assembly::instruction::Operand`] - Type-safe operand representation
+//! - [`crate::assembly::instruction::Immediate`] - Immediate value types with conversions
+//! - [`crate::assembly::instruction::FlowType`] - Control flow behavior classification
+//! - [`crate::assembly::instruction::InstructionCategory`] - Functional instruction grouping
+//! - [`crate::assembly::instruction::StackBehavior`] - Stack effect analysis metadata
 //!
 //! # Usage Examples
 //!
 //! ```rust,no_run
-//! use dotscope::disassembler::{Instruction, OperandType, Immediate, Operand, FlowType};
+//! use dotscope::assembly::{Instruction, OperandType, Immediate, Operand, FlowType};
 //!
 //! // Working with operand types and immediates
 //! let op_type = OperandType::Int32;
@@ -43,8 +43,8 @@
 //! # Integration
 //!
 //! This module integrates with:
-//! - [`crate::disassembler::decoder`] - Consumes these types during instruction decoding
-//! - [`crate::disassembler::block`] - Uses instructions to build basic block sequences
+//! - [`crate::assembly::decoder`] - Consumes these types during instruction decoding
+//! - [`crate::assembly::block`] - Uses instructions to build basic block sequences
 //! - [`crate::metadata::token`] - References metadata tokens in operands
 
 use crate::metadata::token::Token;
@@ -58,7 +58,7 @@ use std::fmt::{self, UpperHex};
 /// # Examples
 ///
 /// ```rust,no_run
-/// use dotscope::disassembler::OperandType;
+/// use dotscope::assembly::OperandType;
 ///
 /// // Different operand types for different instructions
 /// let local_operand = OperandType::UInt8;  // ldloc.s takes a byte
@@ -110,7 +110,7 @@ pub enum OperandType {
 /// # Examples
 ///
 /// ```rust,no_run
-/// use dotscope::disassembler::Immediate;
+/// use dotscope::assembly::Immediate;
 ///
 /// // Different immediate value types
 /// let byte_val = Immediate::UInt8(42);
@@ -199,7 +199,7 @@ impl From<Immediate> for u64 {
 /// # Examples
 ///
 /// ```rust,no_run
-/// use dotscope::disassembler::{Operand, Immediate};
+/// use dotscope::assembly::{Operand, Immediate};
 /// use dotscope::metadata::token::Token;
 ///
 /// // Different operand types
@@ -212,7 +212,7 @@ impl From<Immediate> for u64 {
 /// # Thread Safety
 ///
 /// [`Operand`] is [`std::marker::Send`] and [`std::marker::Sync`] as all variants contain thread-safe types.
-/// This includes primitives, [`crate::disassembler::instruction::Immediate`], [`crate::metadata::token::Token`], and [`std::vec::Vec`].
+/// This includes primitives, [`crate::assembly::instruction::Immediate`], [`crate::metadata::token::Token`], and [`std::vec::Vec`].
 #[derive(Debug, Clone)]
 pub enum Operand {
     /// No operand present
@@ -239,7 +239,7 @@ pub enum Operand {
 /// # Examples
 ///
 /// ```rust,no_run
-/// use dotscope::disassembler::FlowType;
+/// use dotscope::assembly::FlowType;
 ///
 /// // Different flow types
 /// let sequential = FlowType::Sequential;      // Normal instructions like add, ldloc
@@ -283,7 +283,7 @@ pub enum FlowType {
 /// # Examples
 ///
 /// ```rust,no_run
-/// use dotscope::disassembler::StackBehavior;
+/// use dotscope::assembly::StackBehavior;
 ///
 /// // An instruction that pops 2 values and pushes 1 (like 'add')
 /// let add_behavior = StackBehavior {
@@ -323,7 +323,7 @@ pub struct StackBehavior {
 /// # Examples
 ///
 /// ```rust,no_run
-/// use dotscope::disassembler::InstructionCategory;
+/// use dotscope::assembly::InstructionCategory;
 ///
 /// // Different instruction categories
 /// let arithmetic = InstructionCategory::Arithmetic;     // add, sub, mul, div
@@ -375,7 +375,7 @@ pub enum InstructionCategory {
 /// # Examples
 ///
 /// ```rust,no_run
-/// use dotscope::{disassembler::decode_instruction, Parser};
+/// use dotscope::{assembly::decode_instruction, Parser};
 ///
 /// let bytecode = &[0x2A]; // ret instruction
 /// let mut parser = Parser::new(bytecode);
@@ -434,7 +434,7 @@ impl Instruction {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use dotscope::disassembler::{Instruction, FlowType, InstructionCategory, StackBehavior, Operand};
+    /// use dotscope::assembly::{Instruction, FlowType, InstructionCategory, StackBehavior, Operand};
     ///
     /// let mut instruction = Instruction {
     ///     rva: 0x1000,
@@ -474,7 +474,7 @@ impl Instruction {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use dotscope::disassembler::{Instruction, FlowType, InstructionCategory, StackBehavior, Operand};
+    /// use dotscope::assembly::{Instruction, FlowType, InstructionCategory, StackBehavior, Operand};
     ///
     /// let ret_instruction = Instruction {
     ///     rva: 0x1000,
@@ -520,7 +520,7 @@ impl Instruction {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use dotscope::disassembler::{Instruction, FlowType, InstructionCategory, StackBehavior, Operand};
+    /// use dotscope::assembly::{Instruction, FlowType, InstructionCategory, StackBehavior, Operand};
     ///
     /// let branch_instruction = Instruction {
     ///     rva: 0x1000,

@@ -39,7 +39,7 @@
 //!     
 //!     for (i, instruction) in method.instructions().enumerate() {
 //!         let operand_str = match &instruction.operand {
-//!             dotscope::disassembler::Operand::None => String::new(),
+//!             dotscope::assembly::Operand::None => String::new(),
 //!             _ => format!("{:?}", instruction.operand),
 //!         };
 //!         println!("  [{}] {} {}", i, instruction.mnemonic, operand_str);
@@ -82,7 +82,7 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 
-use crate::disassembler::BasicBlock;
+use crate::assembly::BasicBlock;
 
 /// Iterator over all instructions in a method, yielding them in execution order.
 ///
@@ -246,7 +246,7 @@ impl<'a> InstructionIterator<'a> {
 }
 
 impl<'a> Iterator for InstructionIterator<'a> {
-    type Item = &'a crate::disassembler::Instruction;
+    type Item = &'a crate::assembly::Instruction;
 
     /// Advances the iterator and returns the next instruction.
     ///

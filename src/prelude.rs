@@ -496,19 +496,19 @@ pub use crate::metadata::method::{
 };
 
 // ================================================================================================
-// Disassembler
+// Assembly - CIL Instruction Processing
 // ================================================================================================
 //
-// This section provides CIL (Common Intermediate Language) disassembly capabilities.
-// The disassembler can parse method bodies into individual instructions, analyze control
+// This section provides CIL (Common Intermediate Language) instruction processing capabilities.
+// The assembly module can parse method bodies into individual instructions, analyze control
 // flow, and provide detailed instruction-level analysis for reverse engineering and
-// program analysis scenarios.
+// program analysis scenarios, as well as assemble instructions back into bytecode.
 
-/// CIL instruction disassembly and analysis.
+/// CIL instruction analysis, disassembly, and assembly.
 ///
-/// Complete disassembly toolkit for converting CIL bytecode into structured instruction
-/// representations, analyzing control flow, and understanding program behavior at the IL level.
-pub use crate::disassembler::{
+/// Complete toolkit for CIL instruction processing, including disassembly of bytecode into
+/// structured representations, control flow analysis, and assembly of instructions back to bytecode.
+pub use crate::assembly::{
     decode_blocks, decode_instruction, decode_stream, BasicBlock, FlowType, Immediate, Instruction,
     InstructionCategory, Operand, OperandType, StackBehavior,
 };

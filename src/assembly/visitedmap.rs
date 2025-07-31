@@ -7,24 +7,24 @@
 //!
 //! # Architecture
 //!
-//! The module centers around the [`crate::disassembler::visitedmap::VisitedMap`] struct, which
+//! The module centers around the [`crate::assembly::visitedmap::VisitedMap`] struct, which
 //! implements a thread-safe bitfield where each bit represents the visited state of one byte.
 //! The underlying storage uses atomic operations on `usize` chunks for efficient concurrent
 //! access while maintaining an 8:1 compression ratio compared to byte-per-byte tracking.
 //!
 //! # Key Components
 //!
-//! - [`crate::disassembler::visitedmap::VisitedMap`] - Main bitfield structure for tracking visited state
-//! - [`crate::disassembler::visitedmap::VisitedMap::new`] - Constructor for creating tracking maps
-//! - [`crate::disassembler::visitedmap::VisitedMap::get`] - Query visited state of individual bytes
-//! - [`crate::disassembler::visitedmap::VisitedMap::set`] - Mark individual bytes as visited/unvisited
-//! - [`crate::disassembler::visitedmap::VisitedMap::set_range`] - Efficiently mark byte ranges
+//! - [`crate::assembly::visitedmap::VisitedMap`] - Main bitfield structure for tracking visited state
+//! - [`crate::assembly::visitedmap::VisitedMap::new`] - Constructor for creating tracking maps
+//! - [`crate::assembly::visitedmap::VisitedMap::get`] - Query visited state of individual bytes
+//! - [`crate::assembly::visitedmap::VisitedMap::set`] - Mark individual bytes as visited/unvisited
+//! - [`crate::assembly::visitedmap::VisitedMap::set_range`] - Efficiently mark byte ranges
 //!
 //! # Usage Examples
 //!
 //! ```rust,ignore
 //! use std::sync::Arc;
-//! use dotscope::disassembler::VisitedMap;
+//! use dotscope::assembly::VisitedMap;
 //!
 //! // Create a visited map for tracking 1024 bytes
 //! let visited = Arc::new(VisitedMap::new(1024));
@@ -53,8 +53,8 @@
 //! # Integration
 //!
 //! This module integrates with:
-//! - [`crate::disassembler::decoder`] - Uses visited maps to coordinate parallel disassembly
-//! - [`crate::disassembler::block`] - Tracks which instruction regions have been processed
+//! - [`crate::assembly::decoder`] - Uses visited maps to coordinate parallel disassembly
+//! - [`crate::assembly::block`] - Tracks which instruction regions have been processed
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -66,7 +66,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 ///
 /// # Thread Safety
 ///
-/// The [`crate::disassembler::visitedmap::VisitedMap`] is thread-safe and can be shared across multiple threads for parallel
+/// The [`crate::assembly::visitedmap::VisitedMap`] is thread-safe and can be shared across multiple threads for parallel
 /// disassembly operations. It uses atomic operations for thread-safe access to the bitfield data,
 /// making it suitable for concurrent analysis scenarios.
 ///
@@ -74,7 +74,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 ///
 /// ```rust,ignore
 /// use std::sync::Arc;
-/// use dotscope::disassembler::VisitedMap;
+/// use dotscope::assembly::VisitedMap;
 ///
 /// // Create a visited map for tracking 1024 bytes
 /// let visited = Arc::new(VisitedMap::new(1024));
@@ -99,7 +99,7 @@ pub struct VisitedMap {
 }
 
 impl VisitedMap {
-    /// Creates a new [`crate::disassembler::visitedmap::VisitedMap`] for tracking the specified number of bytes.
+    /// Creates a new [`crate::assembly::visitedmap::VisitedMap`] for tracking the specified number of bytes.
     ///
     /// Allocates and initializes a bitfield capable of tracking `elements` number of bytes.
     /// All bytes are initially marked as unvisited.
@@ -111,7 +111,7 @@ impl VisitedMap {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use dotscope::disassembler::VisitedMap;
+    /// use dotscope::assembly::VisitedMap;
     ///
     /// // Create a map for tracking 8192 bytes
     /// let visited_map = VisitedMap::new(8192);
@@ -143,7 +143,7 @@ impl VisitedMap {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use dotscope::disassembler::VisitedMap;
+    /// use dotscope::assembly::VisitedMap;
     ///
     /// let visited_map = VisitedMap::new(1024);
     /// assert_eq!(visited_map.len(), 1024);
@@ -160,7 +160,7 @@ impl VisitedMap {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use dotscope::disassembler::VisitedMap;
+    /// use dotscope::assembly::VisitedMap;
     ///
     /// let empty_map = VisitedMap::new(0);
     /// assert!(empty_map.is_empty());
@@ -189,7 +189,7 @@ impl VisitedMap {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use dotscope::disassembler::VisitedMap;
+    /// use dotscope::assembly::VisitedMap;
     ///
     /// let visited_map = VisitedMap::new(100);
     ///
@@ -235,7 +235,7 @@ impl VisitedMap {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use dotscope::disassembler::VisitedMap;
+    /// use dotscope::assembly::VisitedMap;
     ///
     /// let visited_map = VisitedMap::new(100);
     ///
@@ -293,7 +293,7 @@ impl VisitedMap {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use dotscope::disassembler::VisitedMap;
+    /// use dotscope::assembly::VisitedMap;
     ///
     /// let visited_map = VisitedMap::new(100);
     ///
@@ -358,7 +358,7 @@ impl VisitedMap {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use dotscope::disassembler::VisitedMap;
+    /// use dotscope::assembly::VisitedMap;
     ///
     /// let visited_map = VisitedMap::new(100);
     ///
@@ -393,7 +393,7 @@ impl VisitedMap {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use dotscope::disassembler::VisitedMap;
+    /// use dotscope::assembly::VisitedMap;
     ///
     /// let visited_map = VisitedMap::new(100);
     ///
@@ -457,7 +457,7 @@ impl VisitedMap {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use dotscope::disassembler::VisitedMap;
+    /// use dotscope::assembly::VisitedMap;
     ///
     /// let visited_map = VisitedMap::new(100);
     ///
@@ -482,7 +482,7 @@ impl VisitedMap {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use dotscope::disassembler::VisitedMap;
+    /// use dotscope::assembly::VisitedMap;
     ///
     /// let visited_map = VisitedMap::new(100);
     ///

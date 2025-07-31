@@ -3,7 +3,7 @@
 //! Contains helper methods migrated from disassembler source files
 //! for creating test data related to instruction disassembly and analysis.
 
-use crate::disassembler::{FlowType, Instruction, InstructionCategory, Operand, StackBehavior};
+use crate::assembly::{FlowType, Instruction, InstructionCategory, Operand, StackBehavior};
 
 /// Helper function to create a sample instruction for testing
 ///

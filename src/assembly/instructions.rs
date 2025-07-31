@@ -9,21 +9,21 @@
 //!
 //! The module is organized around two primary lookup tables: one for single-byte opcodes
 //! and another for extended opcodes prefixed with 0xFE. Each table entry contains a
-//! [`crate::disassembler::instructions::CilInstruction`] structure with complete metadata
+//! [`crate::assembly::instructions::CilInstruction`] structure with complete metadata
 //! for fast O(1) instruction decoding during disassembly.
 //!
 //! # Key Components
 //!
-//! - [`crate::disassembler::instructions::CilInstruction`] - Base structure for instruction metadata
-//! - [`crate::disassembler::instructions::INSTRUCTIONS`] - Table of single-byte opcode instructions (0x00-0xE0)
-//! - [`crate::disassembler::instructions::INSTRUCTIONS_FE`] - Table of double-byte instructions prefixed with 0xFE
-//! - [`crate::disassembler::instructions::INSTRUCTIONS_MAX`] - Size constant for single-byte table
-//! - [`crate::disassembler::instructions::INSTRUCTIONS_FE_MAX`] - Size constant for extended table
+//! - [`crate::assembly::instructions::CilInstruction`] - Base structure for instruction metadata
+//! - [`crate::assembly::instructions::INSTRUCTIONS`] - Table of single-byte opcode instructions (0x00-0xE0)
+//! - [`crate::assembly::instructions::INSTRUCTIONS_FE`] - Table of double-byte instructions prefixed with 0xFE
+//! - [`crate::assembly::instructions::INSTRUCTIONS_MAX`] - Size constant for single-byte table
+//! - [`crate::assembly::instructions::INSTRUCTIONS_FE_MAX`] - Size constant for extended table
 //!
 //! # Usage Examples
 //!
 //! ```rust,no_run
-//! use dotscope::disassembler::{INSTRUCTIONS, INSTRUCTIONS_FE};
+//! use dotscope::assembly::{INSTRUCTIONS, INSTRUCTIONS_FE};
 //!
 //! // Look up single-byte instruction metadata
 //! let nop_metadata = &INSTRUCTIONS[0x00]; // nop instruction
@@ -42,11 +42,11 @@
 //! # Integration
 //!
 //! This module integrates with:
-//! - [`crate::disassembler::decoder`] - Uses these tables for instruction metadata lookup
-//! - [`crate::disassembler::instruction`] - Provides the type definitions used in metadata
-//! - [`crate::disassembler::block`] - Instructions from these tables populate basic blocks
+//! - [`crate::assembly::decoder`] - Uses these tables for instruction metadata lookup
+//! - [`crate::assembly::instruction`] - Provides the type definitions used in metadata
+//! - [`crate::assembly::block`] - Instructions from these tables populate basic blocks
 
-use crate::disassembler::{FlowType, InstructionCategory, OperandType};
+use crate::assembly::{FlowType, InstructionCategory, OperandType};
 
 /// Metadata for a CIL instruction definition.
 ///
@@ -63,7 +63,7 @@ use crate::disassembler::{FlowType, InstructionCategory, OperandType};
 /// # Examples
 ///
 /// ```rust,no_run
-/// use dotscope::disassembler::{CilInstruction, OperandType, InstructionCategory, FlowType};
+/// use dotscope::assembly::{CilInstruction, OperandType, InstructionCategory, FlowType};
 ///
 /// // Example instruction definition (simplified)
 /// let nop_instruction = CilInstruction {
@@ -80,20 +80,20 @@ use crate::disassembler::{FlowType, InstructionCategory, OperandType};
 /// # Thread Safety
 ///
 /// [`CilInstruction`] is [`std::marker::Send`] and [`std::marker::Sync`] as all fields contain thread-safe types.
-/// This includes primitives, static string references, and [`crate::disassembler::instruction::OperandType`],
-/// [`crate::disassembler::instruction::InstructionCategory`], and [`crate::disassembler::instruction::FlowType`] enums.
+/// This includes primitives, static string references, and [`crate::assembly::instruction::OperandType`],
+/// [`crate::assembly::instruction::InstructionCategory`], and [`crate::assembly::instruction::FlowType`] enums.
 pub struct CilInstruction<'a> {
-    /// The [`crate::disassembler::OperandType`] that this instruction expects
+    /// The [`crate::assembly::OperandType`] that this instruction expects
     pub op_type: OperandType,
     /// The mnemonic string for this instruction (e.g., "nop", "add", "br.s")
     pub instr: &'a str,
-    /// The functional [`crate::disassembler::InstructionCategory`] of this instruction
+    /// The functional [`crate::assembly::InstructionCategory`] of this instruction
     pub category: InstructionCategory,
     /// Number of items this instruction pops from the evaluation stack
     pub stack_pops: u8,
     /// Number of items this instruction pushes onto the evaluation stack
     pub stack_pushes: u8,
-    /// The [`crate::disassembler::FlowType`] indicating how this instruction affects control flow
+    /// The [`crate::assembly::FlowType`] indicating how this instruction affects control flow
     pub flow: FlowType,
 }
 
@@ -101,19 +101,19 @@ pub struct CilInstruction<'a> {
 ///
 /// This constant defines the upper bound for single-byte opcodes in the CIL instruction set.
 /// Single-byte opcodes range from 0x00 to 0xE0 (224 decimal), making this the array size
-/// for the [`crate::disassembler::instructions::INSTRUCTIONS`] table.
+/// for the [`crate::assembly::instructions::INSTRUCTIONS`] table.
 pub const INSTRUCTIONS_MAX: u8 = 225;
 
 /// Lookup table for single-byte CIL instruction metadata.
 ///
-/// This static array contains [`crate::disassembler::instructions::CilInstruction`] metadata for all single-byte CIL opcodes
+/// This static array contains [`crate::assembly::instructions::CilInstruction`] metadata for all single-byte CIL opcodes
 /// (0x00 through 0xE0). The array is indexed directly by opcode value to provide O(1)
 /// lookup of instruction metadata during decoding.
 ///
 /// # Usage
 ///
 /// ```rust,no_run
-/// use dotscope::disassembler::INSTRUCTIONS;
+/// use dotscope::assembly::INSTRUCTIONS;
 ///
 /// // Look up metadata for opcode 0x00 (nop)
 /// let nop_metadata = &INSTRUCTIONS[0x00];
@@ -123,7 +123,7 @@ pub const INSTRUCTIONS_MAX: u8 = 225;
 ///
 /// # Note
 ///
-/// For extended instructions prefixed with 0xFE, use the [`crate::disassembler::instructions::INSTRUCTIONS_FE`] table instead.
+/// For extended instructions prefixed with 0xFE, use the [`crate::assembly::instructions::INSTRUCTIONS_FE`] table instead.
 pub const INSTRUCTIONS: [CilInstruction; INSTRUCTIONS_MAX as usize] = [
     /* 00 */
     CilInstruction {
@@ -2156,19 +2156,19 @@ pub const INSTRUCTIONS: [CilInstruction; INSTRUCTIONS_MAX as usize] = [
 ///
 /// This constant defines the upper bound for the second byte of double-byte CIL opcodes.
 /// These extended instructions use 0xFE as a prefix, followed by a second byte ranging
-/// from 0x00 to 0x1E (30 decimal), making this the array size for the [`crate::disassembler::instructions::INSTRUCTIONS_FE`] table.
+/// from 0x00 to 0x1E (30 decimal), making this the array size for the [`crate::assembly::instructions::INSTRUCTIONS_FE`] table.
 pub const INSTRUCTIONS_FE_MAX: u8 = 31;
 
 /// Lookup table for double-byte CIL instruction metadata (0xFE prefix).
 ///
-/// This static array contains [`crate::disassembler::instructions::CilInstruction`] metadata for all double-byte CIL opcodes
+/// This static array contains [`crate::assembly::instructions::CilInstruction`] metadata for all double-byte CIL opcodes
 /// that use the 0xFE prefix. The array is indexed by the second byte value (0x00 through 0x1E)
 /// to provide O(1) lookup of extended instruction metadata during decoding.
 ///
 /// # Usage
 ///
 /// ```rust,no_run
-/// use dotscope::disassembler::INSTRUCTIONS_FE;
+/// use dotscope::assembly::INSTRUCTIONS_FE;
 ///
 /// // Look up metadata for opcode 0xFE 0x00 (arglist)
 /// let arglist_metadata = &INSTRUCTIONS_FE[0x00];
@@ -2179,7 +2179,7 @@ pub const INSTRUCTIONS_FE_MAX: u8 = 31;
 /// # Note
 ///
 /// These instructions are always two bytes: 0xFE followed by the actual opcode.
-/// For single-byte instructions, use the [`crate::disassembler::instructions::INSTRUCTIONS`] table instead.
+/// For single-byte instructions, use the [`crate::assembly::instructions::INSTRUCTIONS`] table instead.
 pub const INSTRUCTIONS_FE: [CilInstruction; INSTRUCTIONS_FE_MAX as usize] = [
     /* FE 00 */
     CilInstruction {

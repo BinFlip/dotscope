@@ -6,22 +6,22 @@
 //!
 //! # Architecture
 //!
-//! The module is organized around the central [`crate::disassembler::block::BasicBlock`] type, which
+//! The module is organized around the central [`crate::assembly::block::BasicBlock`] type, which
 //! encapsulates instruction sequences and their control flow relationships. Basic blocks form the
 //! foundation for constructing control flow graphs that enable dead code elimination, reachability
 //! analysis, and other static analysis techniques.
 //!
 //! # Key Components
 //!
-//! - [`crate::disassembler::block::BasicBlock`] - Core basic block representation with instruction sequences
-//! - [`crate::disassembler::block::BasicBlock::new`] - Factory method for creating new basic blocks
-//! - [`crate::disassembler::block::BasicBlock::is_entry`] - Identifies entry points in control flow
-//! - [`crate::disassembler::block::BasicBlock::is_exit`] - Identifies termination points in control flow
+//! - [`crate::assembly::block::BasicBlock`] - Core basic block representation with instruction sequences
+//! - [`crate::assembly::block::BasicBlock::new`] - Factory method for creating new basic blocks
+//! - [`crate::assembly::block::BasicBlock::is_entry`] - Identifies entry points in control flow
+//! - [`crate::assembly::block::BasicBlock::is_exit`] - Identifies termination points in control flow
 //!
 //! # Usage Examples
 //!
 //! ```rust,no_run
-//! use dotscope::disassembler::BasicBlock;
+//! use dotscope::assembly::BasicBlock;
 //!
 //! // Create a basic block at method entry point
 //! let entry_block = BasicBlock::new(0, 0x2000, 0x1000);
@@ -38,11 +38,11 @@
 //! # Integration
 //!
 //! This module integrates with:
-//! - [`crate::disassembler::decoder`] - Provides instructions for basic block construction
-//! - [`crate::disassembler::instruction`] - Defines the instruction types contained in blocks
-//! - [`crate::disassembler::decode_blocks`] - Function that constructs basic blocks from bytecode
+//! - [`crate::assembly::decoder`] - Provides instructions for basic block construction
+//! - [`crate::assembly::instruction`] - Defines the instruction types contained in blocks
+//! - [`crate::assembly::decode_blocks`] - Function that constructs basic blocks from bytecode
 
-use crate::disassembler::{FlowType, Instruction};
+use crate::assembly::{FlowType, Instruction};
 
 /// Represents a basic block in the control flow graph.
 ///
@@ -52,13 +52,13 @@ use crate::disassembler::{FlowType, Instruction};
 /// - No internal control flow changes
 ///
 /// Basic blocks are fundamental units for control flow analysis, optimization,
-/// and program understanding. They are constructed by the [`crate::disassembler::decode_blocks`] function
+/// and program understanding. They are constructed by the [`crate::assembly::decode_blocks`] function
 /// during disassembly and used by various analysis algorithms.
 ///
 /// # Examples
 ///
 /// ```rust,no_run
-/// use dotscope::disassembler::BasicBlock;
+/// use dotscope::assembly::BasicBlock;
 ///
 /// // Create a new basic block
 /// let block = BasicBlock::new(0, 0x1000, 0x500);
@@ -116,7 +116,7 @@ impl BasicBlock {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use dotscope::disassembler::BasicBlock;
+    /// use dotscope::assembly::BasicBlock;
     ///
     /// // Create a block at the beginning of a method
     /// let entry_block = BasicBlock::new(0, 0x2000, 0x1000);
@@ -151,13 +151,13 @@ impl BasicBlock {
     ///
     /// # Returns
     ///
-    /// `Some(&`[`crate::disassembler::Instruction`]`)` if the block contains at least one instruction,
+    /// `Some(&`[`crate::assembly::Instruction`]`)` if the block contains at least one instruction,
     /// `None` if the block is empty.
     ///
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use dotscope::disassembler::BasicBlock;
+    /// use dotscope::assembly::BasicBlock;
     ///
     /// let mut block = BasicBlock::new(0, 0x2000, 0x1000);
     ///
@@ -182,18 +182,18 @@ impl BasicBlock {
     ///
     /// This is particularly important for control flow analysis as the
     /// last instruction determines how control exits the block (branch,
-    /// fall-through, return, etc.). The [`crate::disassembler::FlowType`] of the last
+    /// fall-through, return, etc.). The [`crate::assembly::FlowType`] of the last
     /// instruction determines the block's control flow behavior.
     ///
     /// # Returns
     ///
-    /// `Some(&`[`crate::disassembler::Instruction`]`)` if the block contains at least one instruction,
+    /// `Some(&`[`crate::assembly::Instruction`]`)` if the block contains at least one instruction,
     /// `None` if the block is empty.
     ///
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use dotscope::disassembler::BasicBlock;
+    /// use dotscope::assembly::BasicBlock;
     ///
     /// let mut block = BasicBlock::new(0, 0x2000, 0x1000);
     ///
@@ -229,7 +229,7 @@ impl BasicBlock {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use dotscope::disassembler::BasicBlock;
+    /// use dotscope::assembly::BasicBlock;
     ///
     /// let mut block = BasicBlock::new(0, 0x2000, 0x1000);
     ///
@@ -255,18 +255,18 @@ impl BasicBlock {
     /// Exit blocks end with instructions that don't fall through to
     /// other blocks, such as return statements or throw instructions.
     /// These blocks represent the end of execution paths. The determination
-    /// is based on the [`crate::disassembler::FlowType`] of the last instruction.
+    /// is based on the [`crate::assembly::FlowType`] of the last instruction.
     ///
     /// # Returns
     ///
-    /// `true` if the block's last instruction has [`crate::disassembler::FlowType::Return`] or
-    /// [`crate::disassembler::FlowType::Throw`], `false` if the block can transfer control to
+    /// `true` if the block's last instruction has [`crate::assembly::FlowType::Return`] or
+    /// [`crate::assembly::FlowType::Throw`], `false` if the block can transfer control to
     /// other blocks or is empty.
     ///
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use dotscope::disassembler::BasicBlock;
+    /// use dotscope::assembly::BasicBlock;
     ///
     /// let mut block = BasicBlock::new(0, 0x2000, 0x1000);
     ///

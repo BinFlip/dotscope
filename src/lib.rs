@@ -37,14 +37,14 @@
 //!
 //! - **File Layer**: Memory-mapped file access and binary parsing
 //! - **Metadata Layer**: ECMA-335 metadata parsing and type system representation  
-//! - **Disassembly Layer**: CIL instruction decoding and control flow analysis
+//! - **Assembly Layer**: CIL instruction processing, disassembly, and assembly
 //! - **Validation Layer**: Configurable validation and integrity checking
 //!
 //! ## Key Components
 //!
 //! - [`crate::CilObject`] - Main entry point for .NET assembly analysis
 //! - [`crate::metadata`] - Complete ECMA-335 metadata parsing and type system
-//! - [`crate::disassembler`] - CIL instruction decoding and control flow analysis
+//! - [`crate::assembly`] - CIL instruction analysis, disassembly, and assembly
 //! - [`crate::prelude`] - Convenient re-exports of commonly used types
 //! - [`crate::Error`] and [`crate::Result`] - Comprehensive error handling
 //!
@@ -146,7 +146,7 @@
 //! See the [`crate::disassembler`] module documentation for detailed usage examples.
 //!
 //! ```rust,no_run
-//! use dotscope::{disassembler::decode_instruction, Parser};
+//! use dotscope::{assembly::decode_instruction, Parser};
 //!
 //! let bytecode = &[0x00, 0x2A]; // nop, ret
 //! let mut parser = Parser::new(bytecode);
@@ -288,7 +288,7 @@ pub mod prelude;
 /// # Usage Examples
 ///
 /// ```rust,no_run
-/// use dotscope::{disassembler::decode_instruction, Parser};
+/// use dotscope::{assembly::decode_instruction, Parser};
 ///
 /// let bytecode = &[0x00, 0x2A]; // nop, ret
 /// let mut parser = Parser::new(bytecode);
@@ -307,7 +307,7 @@ pub mod prelude;
 /// # Thread Safety
 ///
 /// All disassembler types are [`std::marker::Send`] and [`std::marker::Sync`] for safe concurrent processing.
-pub mod disassembler;
+pub mod assembly;
 
 /// .NET metadata parsing, loading, and type system based on ECMA-335.
 ///
@@ -587,7 +587,7 @@ pub use metadata::streams::{
 /// # Usage Examples
 ///
 /// ```rust,no_run
-/// use dotscope::{Parser, disassembler::decode_instruction};
+/// use dotscope::{Parser, assembly::decode_instruction};
 /// let code = [0x2A]; // ret
 /// let mut parser = Parser::new(&code);
 /// let instr = decode_instruction(&mut parser, 0x1000)?;

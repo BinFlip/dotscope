@@ -711,17 +711,17 @@ fn print_control_flow_analysis(method: &Method) {
     }
 }
 
-fn format_operand(operand: &dotscope::disassembler::Operand) -> String {
+fn format_operand(operand: &dotscope::assembly::Operand) -> String {
     match operand {
-        dotscope::disassembler::Operand::None => String::new(),
-        dotscope::disassembler::Operand::Immediate(imm) => format!("{imm:?}"),
-        dotscope::disassembler::Operand::Token(token) => format!("token:0x{:08X}", token.value()),
-        dotscope::disassembler::Operand::Target(target) => format!("IL_{target:04X}"),
-        dotscope::disassembler::Operand::Switch(targets) => {
+        dotscope::assembly::Operand::None => String::new(),
+        dotscope::assembly::Operand::Immediate(imm) => format!("{imm:?}"),
+        dotscope::assembly::Operand::Token(token) => format!("token:0x{:08X}", token.value()),
+        dotscope::assembly::Operand::Target(target) => format!("IL_{target:04X}"),
+        dotscope::assembly::Operand::Switch(targets) => {
             format!("switch({} targets)", targets.len())
         }
-        dotscope::disassembler::Operand::Local(idx) => format!("local:{idx}"),
-        dotscope::disassembler::Operand::Argument(idx) => format!("arg:{idx}"),
+        dotscope::assembly::Operand::Local(idx) => format!("local:{idx}"),
+        dotscope::assembly::Operand::Argument(idx) => format!("arg:{idx}"),
     }
 }
 

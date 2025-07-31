@@ -10,7 +10,7 @@
 //! [`crate::metadata::method::Method`] struct with lazy-initialized basic blocks. Key design principles:
 //!
 //! - **Thread-safe lazy initialization**: Basic blocks are computed once and cached
-//!   using `OnceLock<Vec<crate::disassembler::BasicBlock>>` for efficient concurrent access
+//!   using `OnceLock<Vec<crate::assembly::BasicBlock>>` for efficient concurrent access
 //! - **Zero-copy iteration**: The [`crate::metadata::method::InstructionIterator`] yields references to
 //!   instructions without copying, enabling efficient analysis of large methods
 //! - **Unified storage**: All instruction data is stored in basic blocks, eliminating
@@ -100,7 +100,7 @@ pub use iter::InstructionIterator;
 pub use types::*;
 
 use crate::{
-    disassembler::{self, BasicBlock, VisitedMap},
+    assembly::{self, BasicBlock, VisitedMap},
     file::File,
     metadata::{
         customattributes::CustomAttributeValueList,
@@ -1041,7 +1041,7 @@ impl Method {
         }
 
         // Last step, disassemble the whole method and generate analysis
-        disassembler::decode_method(self, file, shared_visited)?;
+        assembly::decode_method(self, file, shared_visited)?;
 
         Ok(())
     }
@@ -1050,7 +1050,7 @@ impl Method {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::disassembler::{
+    use crate::assembly::{
         BasicBlock, FlowType, Instruction, InstructionCategory, Operand, StackBehavior,
     };
     use crate::test::builders::MethodBuilder;
