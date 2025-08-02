@@ -736,12 +736,16 @@ pub use crate::metadata::tables::{
     PropertyBuilder, PropertyMapBuilder, StandAloneSigBuilder,
 };
 
-/// High-level method builders.
+/// High-level builders for .NET constructs.
 ///
-/// Create complete method definitions with implementations, signatures, local variables,
+/// Create complete class, interface, property, event, and method definitions with implementations, signatures, local variables,
 /// exception handlers, and parameter tables. These builders compose the low-level metadata
-/// builders to provide convenient APIs for creating methods with full implementation details.
-pub use crate::cilassembly::{MethodBodyBuilder, MethodBuilder};
+/// builders to provide convenient APIs for creating complete .NET types, interfaces, properties, events, and methods with full
+/// implementation details.
+pub use crate::cilassembly::{
+    ClassBuilder, EnumBuilder, EventBuilder as CilEventBuilder, InterfaceBuilder,
+    MethodBodyBuilder, MethodBuilder, PropertyBuilder as CilPropertyBuilder,
+};
 
 /// Native PE import and export builders.
 ///

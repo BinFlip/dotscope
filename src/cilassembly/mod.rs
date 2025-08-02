@@ -156,7 +156,10 @@ mod resolver;
 mod write;
 
 pub use builder::*;
-pub use builders::{MethodBodyBuilder, MethodBuilder};
+pub use builders::{
+    ClassBuilder, EnumBuilder, EventBuilder, InterfaceBuilder, MethodBodyBuilder, MethodBuilder,
+    PropertyBuilder,
+};
 pub use changes::{AssemblyChanges, HeapChanges, ReferenceHandlingStrategy};
 pub use modifications::TableModifications;
 pub use operation::{Operation, TableOperation};

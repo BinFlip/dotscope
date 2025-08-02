@@ -330,6 +330,56 @@ impl MethodBuilder {
             .parameter("value", value_type)
     }
 
+    /// Create an event add method builder.
+    ///
+    /// This sets up the method with the appropriate name pattern ("add_EventName"),
+    /// flags, and a delegate parameter for an event add accessor.
+    ///
+    /// # Arguments
+    ///
+    /// * `event_name` - The name of the event
+    /// * `delegate_type` - The type of the event delegate
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::MethodBuilder;
+    /// use dotscope::metadata::signatures::TypeSignature;
+    ///
+    /// let add_method = MethodBuilder::event_add("OnClick", TypeSignature::Object);
+    /// ```
+    pub fn event_add(event_name: &str, delegate_type: TypeSignature) -> Self {
+        Self::new(&format!("add_{event_name}"))
+            .public()
+            .special_name()
+            .parameter("value", delegate_type)
+    }
+
+    /// Create an event remove method builder.
+    ///
+    /// This sets up the method with the appropriate name pattern ("remove_EventName"),
+    /// flags, and a delegate parameter for an event remove accessor.
+    ///
+    /// # Arguments
+    ///
+    /// * `event_name` - The name of the event
+    /// * `delegate_type` - The type of the event delegate
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::MethodBuilder;
+    /// use dotscope::metadata::signatures::TypeSignature;
+    ///
+    /// let remove_method = MethodBuilder::event_remove("OnClick", TypeSignature::Object);
+    /// ```
+    pub fn event_remove(event_name: &str, delegate_type: TypeSignature) -> Self {
+        Self::new(&format!("remove_{event_name}"))
+            .public()
+            .special_name()
+            .parameter("value", delegate_type)
+    }
+
     /// Set the method as public.
     ///
     /// # Examples
@@ -1118,6 +1168,52 @@ mod tests {
             .build(&mut context)?;
 
         assert_eq!(method.value() & 0xFF000000, 0x06000000);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_event_add_method() -> Result<()> {
+        let mut context = get_test_context()?;
+
+        let add_method = MethodBuilder::event_add("OnClick", TypeSignature::Object)
+            .implementation(|body| {
+                body.implementation(|asm| {
+                    asm.ldarg_0()? // Load 'this'
+                        .ldfld(Token::new(0x04000001))? // Load current delegate
+                        .ldarg_1()? // Load new delegate
+                        .call(Token::new(0x0A000001))? // Call Delegate.Combine
+                        .stfld(Token::new(0x04000001))? // Store combined delegate
+                        .ret()?;
+                    Ok(())
+                })
+            })
+            .build(&mut context)?;
+
+        assert_eq!(add_method.value() & 0xFF000000, 0x06000000); // MethodDef table
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_event_remove_method() -> Result<()> {
+        let mut context = get_test_context()?;
+
+        let remove_method = MethodBuilder::event_remove("OnClick", TypeSignature::Object)
+            .implementation(|body| {
+                body.implementation(|asm| {
+                    asm.ldarg_0()? // Load 'this'
+                        .ldfld(Token::new(0x04000001))? // Load current delegate
+                        .ldarg_1()? // Load delegate to remove
+                        .call(Token::new(0x0A000002))? // Call Delegate.Remove
+                        .stfld(Token::new(0x04000001))? // Store updated delegate
+                        .ret()?;
+                    Ok(())
+                })
+            })
+            .build(&mut context)?;
+
+        assert_eq!(remove_method.value() & 0xFF000000, 0x06000000); // MethodDef table
 
         Ok(())
     }

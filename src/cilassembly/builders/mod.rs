@@ -15,6 +15,37 @@
 //!
 //! # Examples
 //!
+//! ## Simple Class Creation
+//!
+//! ```rust,no_run
+//! use dotscope::prelude::*;
+//!
+//! # fn example() -> dotscope::Result<()> {
+//! # let view = CilAssemblyView::from_file("test.dll".as_ref())?;
+//! # let assembly = CilAssembly::new(view);
+//! # let mut context = BuilderContext::new(assembly);
+//! // Create a complete class with properties and methods
+//! let class_token = ClassBuilder::new("Person")
+//!     .public()
+//!     .namespace("MyApp.Models")
+//!     .auto_property("Name", TypeSignature::String)
+//!     .auto_property("Age", TypeSignature::I4)
+//!     .method(|_m| MethodBuilder::new("GetInfo")
+//!         .public()
+//!         .returns(TypeSignature::String)
+//!         .implementation(|body| {
+//!             body.implementation(|asm| {
+//!                 asm.ldstr(Token::new(0x70000001))? // "Person info"
+//!                    .ret()?;
+//!                 Ok(())
+//!             })
+//!         }))
+//!     .default_constructor()
+//!     .build(&mut context)?;
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! ## Simple Method Creation
 //!
 //! ```rust,no_run
@@ -45,9 +76,19 @@
 //! # }
 //! ```
 
+mod class;
+mod enums;
+mod event;
+mod interface;
 mod method;
 mod method_body;
+mod property;
 
 // Re-export the main builders for convenience
+pub use class::ClassBuilder;
+pub use enums::EnumBuilder;
+pub use event::EventBuilder;
+pub use interface::InterfaceBuilder;
 pub use method::MethodBuilder;
 pub use method_body::MethodBodyBuilder;
+pub use property::PropertyBuilder;
