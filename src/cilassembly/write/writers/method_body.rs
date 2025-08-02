@@ -190,10 +190,12 @@ impl<'a> MethodBodyWriter<'a> {
 
         // Align to 4-byte boundary for method bodies
         let aligned_rva = (code_section_rva + 3) & !3;
+        let alignment_offset = aligned_rva - code_section_rva;
+        let aligned_file_offset = method_body_file_offset + u64::from(alignment_offset);
 
         Ok(MethodBodyPlacement {
             code_section_rva: aligned_rva,
-            code_section_offset: method_body_file_offset,
+            code_section_offset: aligned_file_offset,
             total_space_needed,
         })
     }

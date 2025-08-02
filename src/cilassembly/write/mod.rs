@@ -92,6 +92,7 @@ use crate::{
         },
         CilAssembly,
     },
+    metadata::cilassemblyview::CilAssemblyView,
     Error, Result,
 };
 
@@ -1167,16 +1168,139 @@ fn write_native_tables(
     Ok(())
 }
 
-/// Zeros out the original metadata location in the copied section.
+/// Calculates the file location and size of a specific metadata stream.
+///
+/// # Arguments
+///
+/// * `view` - The assembly view containing stream information
+/// * `section_layout` - The copied section layout information  
+/// * `metadata_offset_in_section` - Offset of metadata root within the section
+/// * `stream_name` - Name of the stream to locate (e.g., "#Strings", "#Blob")
+///
+/// # Returns
+///
+/// Tuple of (file_offset, size) for the stream, or None if stream not found
+fn calculate_stream_file_location(
+    view: &CilAssemblyView,
+    section_layout: &planner::SectionFileLayout,
+    metadata_offset_in_section: u32,
+    stream_name: &str,
+) -> Option<(u64, u32)> {
+    let metadata_root = view.metadata_root();
+
+    // Find the specific stream
+    let stream = metadata_root
+        .stream_headers
+        .iter()
+        .find(|s| s.name == stream_name)?;
+
+    // Calculate file offset: section start + metadata offset + stream offset within metadata
+    let stream_file_offset = section_layout.file_region.offset
+        + u64::from(metadata_offset_in_section)
+        + u64::from(stream.offset);
+
+    Some((stream_file_offset, stream.size))
+}
+
+/// Calculates the file location and size of the metadata root and stream directory.
+///
+/// # Arguments
+///
+/// * `view` - The assembly view containing metadata information
+/// * `section_layout` - The copied section layout information
+/// * `metadata_offset_in_section` - Offset of metadata root within the section
+///
+/// # Returns
+///
+/// Tuple of (file_offset, size) for the metadata root + stream directory
+fn calculate_metadata_root_location(
+    view: &CilAssemblyView,
+    section_layout: &planner::SectionFileLayout,
+    metadata_offset_in_section: u32,
+) -> (u64, u32) {
+    let metadata_root = view.metadata_root();
+
+    // Calculate metadata root header size
+    let version_length = metadata_root.version.len() as u32;
+    let version_length_padded = version_length.div_ceil(4) * 4; // Round up to 4-byte boundary
+    let root_header_size = 16u32 + version_length_padded + 4u32; // +4 for flags(2) + stream_count(2)
+
+    // Calculate stream directory size
+    let mut stream_directory_size = 0u32;
+    for stream_header in &metadata_root.stream_headers {
+        stream_directory_size += 8; // offset + size
+        stream_directory_size += stream_header.name.len() as u32 + 1; // name + null terminator
+                                                                      // Pad to 4-byte boundary
+        while stream_directory_size % 4 != 0 {
+            stream_directory_size += 1;
+        }
+    }
+
+    let total_size = root_header_size + stream_directory_size;
+    let file_offset = section_layout.file_region.offset + u64::from(metadata_offset_in_section);
+
+    (file_offset, total_size)
+}
+
+/// Zeros a specific region in the output file with bounds checking.
+///
+/// # Arguments
+///
+/// * `mmap_file` - Target output file
+/// * `file_offset` - Starting offset to zero
+/// * `size` - Number of bytes to zero
+/// * `component_name` - Name of component being zeroed (for error messages)
+/// * `section_end` - End boundary of the section (for bounds checking)
+/// * `meta_section` - New .meta section layout (to avoid overlap)
+///
+/// # Returns
+///
+/// Result indicating success or failure
+fn zero_region_safely(
+    mmap_file: &mut output::Output,
+    file_offset: u64,
+    size: u32,
+    component_name: &str,
+    section_end: u64,
+    meta_section: Option<&planner::SectionFileLayout>,
+) -> Result<()> {
+    let end_offset = file_offset + u64::from(size);
+
+    // Check section boundaries
+    if end_offset > section_end {
+        return Ok(()); // Skip if would exceed section boundary
+    }
+
+    // Check for overlap with new .meta section
+    if let Some(meta) = meta_section {
+        let would_overlap = !(end_offset <= meta.file_region.offset
+            || file_offset >= meta.file_region.offset + meta.file_region.size);
+        if would_overlap {
+            return Ok(()); // Skip if would overlap with new .meta section
+        }
+    }
+
+    // Perform the zeroing
+    let zero_buffer = vec![0u8; size as usize];
+    mmap_file
+        .write_at(file_offset, &zero_buffer)
+        .map_err(|e| Error::WriteLayoutFailed {
+            message: format!("Failed to zero {component_name}: {e}"),
+        })
+}
+
+/// Zeroes out original metadata location after relocating to new .meta section.
 ///
 /// Since we're moving all metadata to a new .meta section, we need to overwrite
 /// the original metadata location with zeros to ensure it doesn't interfere.
-/// However, we need to be careful not to zero out any data that might be needed.
+/// However, we need to be careful to only zero the actual metadata components
+/// and not method bodies or other code.
 ///
 /// # Arguments
-/// * `assembly` - Source [`crate::cilassembly::CilAssembly`] for metadata structure
-/// * `mmap_file` - Target [`crate::cilassembly::write::output::Output`] file to update
-/// * `layout_plan` - [`crate::cilassembly::write::planner::LayoutPlan`] with layout information
+///
+/// * `assembly` - Source assembly for metadata structure
+/// * `mmap_file` - Target output file to update  
+/// * `layout_plan` - Layout plan with new section information
 /// * `original_metadata_rva` - Original metadata RVA to calculate the location to zero
 fn zero_original_metadata_location(
     assembly: &CilAssembly,
@@ -1218,10 +1342,7 @@ fn zero_original_metadata_location(
                 section_layout.file_region.offset + u64::from(cor20_offset_in_section);
             let cor20_size = 72u64;
 
-            // Zero out the metadata area
-            let metadata_file_offset =
-                section_layout.file_region.offset + u64::from(metadata_offset_in_section);
-            let original_metadata_size = u64::from(view.cor20header().meta_data_size);
+            // Selective zeroing approach - calculate boundaries for precise component zeroing
 
             // Ensure we don't exceed section boundaries and don't interfere with the new .meta section
             let section_end = section_layout.file_region.offset + section_layout.file_region.size;
@@ -1252,26 +1373,146 @@ fn zero_original_metadata_location(
                 }
             }
 
-            // Check bounds for metadata
-            if metadata_file_offset + original_metadata_size <= section_end {
-                if let Some(meta) = meta_section {
-                    let would_overlap_meta = !(metadata_file_offset + original_metadata_size
-                        <= meta.file_region.offset
-                        || metadata_file_offset >= meta.file_region.offset + meta.file_region.size);
-                    if !would_overlap_meta {
-                        let zero_buffer = vec![
-                            0u8;
-                            usize::try_from(original_metadata_size).map_err(
-                                |_| Error::WriteLayoutFailed {
-                                    message: "Metadata size exceeds usize range for zero buffer"
-                                        .to_string(),
-                                }
-                            )?
-                        ];
-                        mmap_file.write_at(metadata_file_offset, &zero_buffer)?;
-                    }
+            // Selective zeroing - only zero components that are being relocated to .meta section
+
+            // 1. Always zero metadata root + stream directory (always relocated)
+            let (root_offset, root_size) =
+                calculate_metadata_root_location(view, section_layout, metadata_offset_in_section);
+            zero_region_safely(
+                mmap_file,
+                root_offset,
+                root_size,
+                "metadata root + stream directory",
+                section_end,
+                meta_section,
+            )?;
+
+            // 2. Always zero metadata tables stream (always relocated)
+            if let Some((tables_offset, tables_size)) = calculate_stream_file_location(
+                view,
+                section_layout,
+                metadata_offset_in_section,
+                "#~", // Or "#-" for uncompressed
+            ) {
+                zero_region_safely(
+                    mmap_file,
+                    tables_offset,
+                    tables_size,
+                    "#~ metadata tables",
+                    section_end,
+                    meta_section,
+                )?;
+            }
+
+            // Alternative compressed tables stream
+            if let Some((tables_offset, tables_size)) = calculate_stream_file_location(
+                view,
+                section_layout,
+                metadata_offset_in_section,
+                "#-",
+            ) {
+                zero_region_safely(
+                    mmap_file,
+                    tables_offset,
+                    tables_size,
+                    "#- metadata tables",
+                    section_end,
+                    meta_section,
+                )?;
+            }
+
+            // 3. Conditional heap zeroing - only if modified
+            let changes = assembly.changes();
+
+            // Zero string heap only if modified
+            if changes.string_heap_changes.has_additions()
+                || changes.string_heap_changes.has_modifications()
+                || changes.string_heap_changes.has_removals()
+            {
+                if let Some((strings_offset, strings_size)) = calculate_stream_file_location(
+                    view,
+                    section_layout,
+                    metadata_offset_in_section,
+                    "#Strings",
+                ) {
+                    zero_region_safely(
+                        mmap_file,
+                        strings_offset,
+                        strings_size,
+                        "#Strings heap",
+                        section_end,
+                        meta_section,
+                    )?;
                 }
             }
+
+            // Zero blob heap only if modified
+            if changes.blob_heap_changes.has_additions()
+                || changes.blob_heap_changes.has_modifications()
+                || changes.blob_heap_changes.has_removals()
+            {
+                if let Some((blob_offset, blob_size)) = calculate_stream_file_location(
+                    view,
+                    section_layout,
+                    metadata_offset_in_section,
+                    "#Blob",
+                ) {
+                    zero_region_safely(
+                        mmap_file,
+                        blob_offset,
+                        blob_size,
+                        "#Blob heap",
+                        section_end,
+                        meta_section,
+                    )?;
+                }
+            }
+
+            // Zero user string heap only if modified
+            if changes.userstring_heap_changes.has_additions()
+                || changes.userstring_heap_changes.has_modifications()
+                || changes.userstring_heap_changes.has_removals()
+            {
+                if let Some((us_offset, us_size)) = calculate_stream_file_location(
+                    view,
+                    section_layout,
+                    metadata_offset_in_section,
+                    "#US",
+                ) {
+                    zero_region_safely(
+                        mmap_file,
+                        us_offset,
+                        us_size,
+                        "#US user strings heap",
+                        section_end,
+                        meta_section,
+                    )?;
+                }
+            }
+
+            // Zero GUID heap only if modified
+            if changes.guid_heap_changes.has_additions()
+                || changes.guid_heap_changes.has_modifications()
+                || changes.guid_heap_changes.has_removals()
+            {
+                if let Some((guid_offset, guid_size)) = calculate_stream_file_location(
+                    view,
+                    section_layout,
+                    metadata_offset_in_section,
+                    "#GUID",
+                ) {
+                    zero_region_safely(
+                        mmap_file,
+                        guid_offset,
+                        guid_size,
+                        "#GUID heap",
+                        section_end,
+                        meta_section,
+                    )?;
+                }
+            }
+
+            // NOTE: Method bodies are NEVER zeroed - they remain at their original RVAs
         }
     }
 
