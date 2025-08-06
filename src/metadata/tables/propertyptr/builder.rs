@@ -156,7 +156,7 @@ impl PropertyPtrBuilder {
             })?;
 
         let next_rid = context.next_rid(TableId::PropertyPtr);
-        let token = Token::new(((TableId::PropertyPtr as u32) << 24) | next_rid);
+        let token = Token::from_parts(TableId::PropertyPtr, next_rid);
 
         let property_ptr = PropertyPtrRaw {
             rid: next_rid,

@@ -40,7 +40,7 @@
 //! # Reference
 //! - [ECMA-335 II.24.2.4](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf)
 
-use crate::file::io::{read_compressed_int, read_compressed_int_at};
+use crate::utils::{read_compressed_int, read_compressed_int_at};
 use crate::Result;
 
 use widestring::U16Str;

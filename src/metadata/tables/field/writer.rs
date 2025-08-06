@@ -23,11 +23,11 @@
 //! - `0x1000` - `HasDefault`
 
 use crate::{
-    file::io::{write_le_at, write_le_at_dyn},
     metadata::tables::{
         field::FieldRaw,
         types::{RowWritable, TableInfoRef},
     },
+    utils::{write_le_at, write_le_at_dyn},
     Result,
 };
 

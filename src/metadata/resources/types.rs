@@ -66,7 +66,7 @@
 /// The magic number that identifies a .NET resource file (0xBEEFCACE)
 pub const RESOURCE_MAGIC: u32 = 0xBEEF_CACE;
 
-use crate::{file::parser::Parser, Error::TypeError, Result};
+use crate::{file::parser::Parser, utils::compressed_uint_size, Error::TypeError, Result};
 
 /// Represents all data types that can be stored in .NET resource files.
 ///
@@ -409,7 +409,7 @@ impl ResourceType {
                 // UTF-8 byte length (7-bit encoded) + UTF-8 bytes
                 let utf8_byte_count = s.len();
                 let utf8_size = u32::try_from(utf8_byte_count).ok()?;
-                Some(Self::compressed_uint_size(utf8_size) + utf8_size)
+                Some(compressed_uint_size(utf8_size as usize) as u32 + utf8_size)
             }
             ResourceType::Boolean(_) | ResourceType::Byte(_) | ResourceType::SByte(_) => Some(1), // Single byte
             ResourceType::Char(_) | ResourceType::Int16(_) | ResourceType::UInt16(_) => Some(2), // 2 bytes
@@ -418,7 +418,7 @@ impl ResourceType {
             ResourceType::ByteArray(data) => {
                 // Array length (7-bit encoded) + data bytes
                 let data_size = u32::try_from(data.len()).ok()?;
-                Some(Self::compressed_uint_size(data_size) + data_size)
+                Some(compressed_uint_size(data_size as usize) as u32 + data_size)
             }
             // Types without .NET equivalents or not yet implemented
             ResourceType::Null
@@ -427,39 +427,6 @@ impl ResourceType {
             | ResourceType::TimeSpan // TODO: Implement when TimeSpan support is added
             | ResourceType::Stream  // TODO: Implement when Stream support is added
             | ResourceType::StartOfUserTypes => None,
-        }
-    }
-
-    /// Calculates the size a compressed unsigned integer will take when encoded.
-    ///
-    /// Uses the 7-bit encoding format logic to determine the number of bytes
-    /// needed to represent the value according to ECMA-335 specification.
-    ///
-    /// # Arguments
-    ///
-    /// * `value` - The unsigned integer value to calculate size for
-    ///
-    /// # Returns
-    ///
-    /// The number of bytes required to encode this value.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::ResourceType;
-    ///
-    /// assert_eq!(ResourceType::compressed_uint_size(50), 1);    // 0-127: 1 byte
-    /// assert_eq!(ResourceType::compressed_uint_size(200), 2);   // 128-16383: 2 bytes  
-    /// assert_eq!(ResourceType::compressed_uint_size(20000), 4); // 16384+: 4 bytes
-    /// ```
-    #[must_use]
-    pub fn compressed_uint_size(value: u32) -> u32 {
-        if value < 0x80 {
-            1 // Single byte for values 0-127
-        } else if value < 0x4000 {
-            2 // Two bytes for values 128-16383
-        } else {
-            4 // Four bytes for larger values
         }
     }
 
@@ -1207,22 +1174,6 @@ mod tests {
         assert_eq!(ResourceType::TimeSpan.data_size(), None);
         assert_eq!(ResourceType::Stream.data_size(), None);
         assert_eq!(ResourceType::StartOfUserTypes.data_size(), None);
-    }
-
-    #[test]
-    fn test_compressed_uint_size() {
-        // Test 7-bit encoding size calculation
-        assert_eq!(ResourceType::compressed_uint_size(0), 1); // Single byte range
-        assert_eq!(ResourceType::compressed_uint_size(50), 1); // Single byte range
-        assert_eq!(ResourceType::compressed_uint_size(127), 1); // Single byte range max
-
-        assert_eq!(ResourceType::compressed_uint_size(128), 2); // Two byte range start
-        assert_eq!(ResourceType::compressed_uint_size(200), 2); // Two byte range
-        assert_eq!(ResourceType::compressed_uint_size(16383), 2); // Two byte range max
-
-        assert_eq!(ResourceType::compressed_uint_size(16384), 4); // Four byte range start
-        assert_eq!(ResourceType::compressed_uint_size(20000), 4); // Four byte range
-        assert_eq!(ResourceType::compressed_uint_size(0xFFFFFFFF), 4); // Four byte range max
     }
 
     #[test]

@@ -143,13 +143,6 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
-//! # Integration
-//!
-//! The prelude integrates components from across the dotscope ecosystem:
-//! - [`crate::metadata`] - Core metadata parsing and representation
-//! - [`crate::disassembler`] - CIL instruction analysis and control flow
-//! - [`crate::File`] - Low-level PE file parsing and memory management
-//! - [`crate::Error`] - Comprehensive error handling and reporting
 //!
 //! # Import Organization
 //!

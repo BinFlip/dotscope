@@ -20,11 +20,11 @@
 //! - **Performance types**: Cache-line aligned data structures
 
 use crate::{
-    file::io::{write_le_at, write_le_at_dyn},
     metadata::tables::{
         fieldlayout::FieldLayoutRaw,
         types::{RowWritable, TableId, TableInfoRef},
     },
+    utils::{write_le_at, write_le_at_dyn},
     Result,
 };
 

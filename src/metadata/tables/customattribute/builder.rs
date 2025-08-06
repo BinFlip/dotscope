@@ -250,8 +250,7 @@ impl CustomAttributeBuilder {
 
         let rid = context.next_rid(TableId::CustomAttribute);
 
-        let token_value = ((TableId::CustomAttribute as u32) << 24) | rid;
-        let token = Token::new(token_value);
+        let token = Token::from_parts(TableId::CustomAttribute, rid);
 
         let custom_attribute_raw = CustomAttributeRaw {
             rid,

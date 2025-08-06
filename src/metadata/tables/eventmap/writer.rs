@@ -20,11 +20,11 @@
 //! iteration through all events owned by a specific type.
 
 use crate::{
-    file::io::write_le_at_dyn,
     metadata::tables::{
         eventmap::EventMapRaw,
         types::{RowWritable, TableId, TableInfoRef},
     },
+    utils::write_le_at_dyn,
     Result,
 };
 
