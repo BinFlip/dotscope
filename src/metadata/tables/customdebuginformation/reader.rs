@@ -16,7 +16,6 @@
 //! processing of multiple table entries.
 
 use crate::{
-    file::io::read_le_at_dyn,
     metadata::{
         tables::{
             types::{CodedIndex, CodedIndexType, TableInfoRef},
@@ -24,6 +23,7 @@ use crate::{
         },
         token::Token,
     },
+    utils::read_le_at_dyn,
     Result,
 };
 

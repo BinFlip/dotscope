@@ -137,7 +137,7 @@ impl BuilderContext {
     /// Adds a string to the assembly's string heap and returns its index.
     ///
     /// This is a convenience method that delegates to the underlying
-    /// [`crate::cilassembly::CilAssembly::add_string`] method.
+    /// [`crate::cilassembly::CilAssembly::string_add`] method.
     ///
     /// # Arguments
     ///
@@ -199,7 +199,7 @@ impl BuilderContext {
     /// Adds a blob to the assembly's blob heap and returns its index.
     ///
     /// This is a convenience method that delegates to the underlying
-    /// [`crate::cilassembly::CilAssembly::add_blob`] method.
+    /// [`crate::cilassembly::CilAssembly::blob_add`] method.
     ///
     /// # Arguments
     ///
@@ -219,7 +219,7 @@ impl BuilderContext {
     /// Adds a GUID to the assembly's GUID heap and returns its index.
     ///
     /// This is a convenience method that delegates to the underlying
-    /// [`crate::cilassembly::CilAssembly::add_guid`] method.
+    /// [`crate::cilassembly::CilAssembly::guid_add`] method.
     ///
     /// # Arguments
     ///
@@ -239,7 +239,7 @@ impl BuilderContext {
     /// Adds a user string to the assembly's user string heap and returns its index.
     ///
     /// This is a convenience method that delegates to the underlying
-    /// [`crate::cilassembly::CilAssembly::add_userstring`] method.
+    /// [`crate::cilassembly::CilAssembly::userstring_add`] method.
     ///
     /// # Arguments
     ///

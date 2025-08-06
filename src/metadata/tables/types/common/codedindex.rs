@@ -23,11 +23,11 @@
 use strum::{EnumCount, EnumIter};
 
 use crate::{
-    file::io::read_le_at,
     metadata::{
         tables::{TableId, TableInfoRef},
         token::Token,
     },
+    utils::read_le_at,
     Result,
 };
 

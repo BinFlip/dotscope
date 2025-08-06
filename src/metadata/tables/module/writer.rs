@@ -41,11 +41,11 @@
 //! - [ECMA-335 II.22.30](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Module table specification
 
 use crate::{
-    file::io::{write_le_at, write_le_at_dyn},
     metadata::tables::{
         module::ModuleRaw,
         types::{RowWritable, TableInfoRef},
     },
+    utils::{write_le_at, write_le_at_dyn},
     Result,
 };
 

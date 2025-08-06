@@ -134,7 +134,6 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 use crate::{
-    cilassembly::write::{utils::compressed_uint_size, HeapExpansions},
     file::File,
     metadata::{
         cilassemblyview::CilAssemblyView,
@@ -143,6 +142,7 @@ use crate::{
         tables::{TableDataOwned, TableId},
         validation::{ValidationConfig, ValidationEngine},
     },
+    utils::compressed_uint_size,
     Result,
 };
 
@@ -153,7 +153,7 @@ mod modifications;
 mod operation;
 mod remapping;
 mod resolver;
-mod write;
+mod writer;
 
 pub use builder::*;
 pub use builders::{
@@ -921,7 +921,7 @@ impl CilAssembly {
     ///
     /// Returns an error if the file cannot be written or if the assembly is invalid.
     pub fn write_to_file<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<()> {
-        write::write_assembly_to_file(self, path)
+        writer::write_assembly_to_file(self, path)
     }
 
     /// Gets the original row count for a table
@@ -1262,19 +1262,6 @@ impl CilAssembly {
     /// ```
     pub fn native_exports(&self) -> &UnifiedExportContainer {
         self.changes.native_exports()
-    }
-
-    /// Calculate all heap expansions needed for layout planning.
-    ///
-    /// Returns comprehensive heap expansion information including sizes for all heap types
-    /// and total expansion requirements.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if heap size calculations exceed platform limits or if there are
-    /// issues accessing the original heap data.
-    pub fn calculate_heap_expansions(&self) -> Result<HeapExpansions> {
-        HeapExpansions::calculate(self)
     }
 
     /// Stores a method body and allocates a placeholder RVA for it.

@@ -39,8 +39,8 @@
 //! - [ECMA-335 II.24.2.1: Metadata root](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf)
 
 use crate::{
-    file::io::{read_le, read_le_at},
     metadata::streams::StreamHeader,
+    utils::{read_le, read_le_at},
     Result,
 };
 

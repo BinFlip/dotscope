@@ -31,11 +31,11 @@
 //! - **Resource management**: Runtime resource lookup and access control
 
 use crate::{
-    file::io::{write_le_at, write_le_at_dyn},
     metadata::tables::{
         manifestresource::ManifestResourceRaw,
         types::{CodedIndexType, RowWritable, TableInfoRef},
     },
+    utils::{write_le_at, write_le_at_dyn},
     Result,
 };
 

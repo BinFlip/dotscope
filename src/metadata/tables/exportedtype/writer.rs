@@ -41,12 +41,12 @@
 //! - [ECMA-335 II.22.14](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `ExportedType` table specification
 
 use crate::{
-    file::io::{write_le_at, write_le_at_dyn},
     metadata::tables::{
         exportedtype::ExportedTypeRaw,
         types::{RowWritable, TableInfoRef},
         CodedIndexType,
     },
+    utils::{write_le_at, write_le_at_dyn},
     Result,
 };
 

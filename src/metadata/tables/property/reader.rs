@@ -51,11 +51,11 @@
 //! - [`crate::metadata::tables::propertymap`] - Type-property ownership mapping
 
 use crate::{
-    file::io::{read_le_at, read_le_at_dyn},
     metadata::{
         tables::{PropertyRaw, RowReadable, TableInfoRef},
         token::Token,
     },
+    utils::{read_le_at, read_le_at_dyn},
     Result,
 };
 

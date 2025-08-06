@@ -239,6 +239,7 @@ pub(crate) mod macros;
 #[macro_use]
 pub(crate) mod error;
 pub(crate) mod file;
+pub(crate) mod utils;
 
 /// Shared functionality which is used in unit- and integration-tests
 #[cfg(test)]
