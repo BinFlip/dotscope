@@ -350,28 +350,14 @@ pub fn create_assembly_with_unresolved_nested_type() -> Result<TestAssembly> {
         .flags(0x00100000 | 0x00000008) // Public + Nested
         .build(&mut context)?;
 
-    // Create nested class relationship using raw table manipulation
-    let nested_class = NestedClassRaw {
-        nested_class: nested_typedef_token.row(),
-        enclosing_class: containing_typedef_token.row(),
-        rid: 1,
-        token: Token::new(0x29000001), // NestedClass table token
-        offset: 0,
-    };
-
     let mut assembly = context.finish();
 
-    assembly.table_row_add(
-        TableId::NestedClass,
-        TableDataOwned::NestedClass(nested_class),
-    )?;
-
-    // Corrupt the nested type by setting its name to empty (index 0)
-    // This will cause the nested type dependency to appear unresolved
+    // Create the corrupted nested type with empty name to trigger validation error
+    // This simulates a nested type that cannot be resolved during validation
     let corrupted_nested_type = TypeDefRaw {
         flags: 0x00100000 | 0x00000008, // Public + Nested
-        type_name: 0,                   // Empty name - this will trigger the validation error
-        type_namespace: 1,              // Valid namespace
+        type_name: 0, // Empty name at index 0 - this should trigger validation error
+        type_namespace: 1, // Valid namespace
         extends: crate::metadata::tables::CodedIndex::new(
             TableId::TypeDef,
             0,
@@ -388,6 +374,20 @@ pub fn create_assembly_with_unresolved_nested_type() -> Result<TestAssembly> {
         TableId::TypeDef,
         nested_typedef_token.row(),
         TableDataOwned::TypeDef(corrupted_nested_type),
+    )?;
+
+    // Create nested class relationship - this will create a dependency on the corrupted type
+    let nested_class = NestedClassRaw {
+        nested_class: nested_typedef_token.row(),
+        enclosing_class: containing_typedef_token.row(),
+        rid: 1,
+        token: Token::new(0x29000001), // NestedClass table token
+        offset: 0,
+    };
+
+    assembly.table_row_add(
+        TableId::NestedClass,
+        TableDataOwned::NestedClass(nested_class),
     )?;
 
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;

@@ -21,11 +21,11 @@
 //! - Empty ranges are valid and indicate types with no properties
 
 use crate::{
-    file::io::write_le_at_dyn,
     metadata::tables::{
         propertymap::PropertyMapRaw,
         types::{RowWritable, TableId, TableInfoRef},
     },
+    utils::write_le_at_dyn,
     Result,
 };
 

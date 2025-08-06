@@ -37,11 +37,11 @@
 //! module, ensuring that data serialized by this writer can be correctly deserialized.
 
 use crate::{
-    file::io::write_le_at_dyn,
     metadata::tables::{
         customdebuginformation::CustomDebugInformationRaw,
         types::{CodedIndexType, RowWritable, TableInfoRef},
     },
+    utils::write_le_at_dyn,
     Result,
 };
 

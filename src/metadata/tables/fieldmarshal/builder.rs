@@ -566,8 +566,7 @@ impl FieldMarshalBuilder {
 
         let rid = context.next_rid(TableId::FieldMarshal);
 
-        let token_value = ((TableId::FieldMarshal as u32) << 24) | rid;
-        let token = Token::new(token_value);
+        let token = Token::from_parts(TableId::FieldMarshal, rid);
 
         let field_marshal_raw = FieldMarshalRaw {
             rid,

@@ -46,8 +46,8 @@ fn test_native_imports_with_minimal_changes() -> Result<()> {
                 .get_data_directory(goblin::pe::data_directories::DataDirectoryType::ImportTable);
             assert!(import_directory.is_some(), "Should have import directory");
         }
-        Err(_) => {
-            panic!("Should have loaded!")
+        Err(e) => {
+            panic!("Should have loaded! Error: {e:?}")
         }
     }
 

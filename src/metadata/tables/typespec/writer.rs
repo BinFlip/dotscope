@@ -23,11 +23,11 @@
 //! - **Function Pointers**: Method signatures as type specifications
 
 use crate::{
-    file::io::write_le_at_dyn,
     metadata::tables::{
         types::{RowWritable, TableInfoRef},
         typespec::TypeSpecRaw,
     },
+    utils::write_le_at_dyn,
     Result,
 };
 
