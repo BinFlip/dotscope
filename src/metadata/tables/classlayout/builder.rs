@@ -321,8 +321,7 @@ impl ClassLayoutBuilder {
 
         let rid = context.next_rid(TableId::ClassLayout);
 
-        let token_value = ((TableId::ClassLayout as u32) << 24) | rid;
-        let token = Token::new(token_value);
+        let token = Token::from_parts(TableId::ClassLayout, rid);
 
         let class_layout_raw = ClassLayoutRaw {
             rid,

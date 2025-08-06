@@ -295,8 +295,7 @@ impl GenericParamBuilder {
         let name_index = context.string_get_or_add(&name)?;
         let rid = context.next_rid(TableId::GenericParam);
 
-        let token_value = ((TableId::GenericParam as u32) << 24) | rid;
-        let token = Token::new(token_value);
+        let token = Token::from_parts(TableId::GenericParam, rid);
 
         let generic_param_raw = GenericParamRaw {
             rid,

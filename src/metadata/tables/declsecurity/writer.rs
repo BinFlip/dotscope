@@ -30,11 +30,11 @@
 //! - **5 (PermitOnly)**: Allow only specific permissions
 
 use crate::{
-    file::io::{write_le_at, write_le_at_dyn},
     metadata::tables::{
         declsecurity::DeclSecurityRaw,
         types::{CodedIndexType, RowWritable, TableInfoRef},
     },
+    utils::{write_le_at, write_le_at_dyn},
     Result,
 };
 

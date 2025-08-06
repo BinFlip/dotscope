@@ -45,11 +45,12 @@
 use std::collections::HashMap;
 
 use crate::{
-    cilassembly::{write::utils::compressed_uint_size, HeapChanges, TableModifications},
+    cilassembly::{HeapChanges, TableModifications},
     metadata::{
         cilassemblyview::CilAssemblyView, exports::UnifiedExportContainer,
         imports::UnifiedImportContainer, tables::TableId,
     },
+    utils::compressed_uint_size,
 };
 
 /// Internal structure for tracking all modifications to an assembly.

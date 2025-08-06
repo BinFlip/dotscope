@@ -48,11 +48,11 @@
 //! - [`crate::metadata::tables::param`] - Target Param table definitions
 
 use crate::{
-    file::io::read_le_at_dyn,
     metadata::{
         tables::{ParamPtrRaw, RowReadable, TableId, TableInfoRef},
         token::Token,
     },
+    utils::read_le_at_dyn,
     Result,
 };
 

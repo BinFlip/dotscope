@@ -100,8 +100,9 @@
 //! - Microsoft .NET Framework Resource Management Documentation
 
 use crate::{
-    file::io::write_compressed_uint,
     metadata::resources::{ResourceType, RESOURCE_MAGIC},
+    utils::compressed_uint_size,
+    utils::write_compressed_uint,
     Error, Result,
 };
 use std::collections::BTreeMap;
@@ -748,8 +749,7 @@ impl DotNetResourceEncoder {
             let name_utf16: Vec<u16> = name.encode_utf16().collect();
             let byte_count = name_utf16.len() * 2;
             #[allow(clippy::cast_possible_truncation)]
-            let entry_size =
-                ResourceType::compressed_uint_size(byte_count as u32) + byte_count as u32 + 4;
+            let entry_size = compressed_uint_size(byte_count) as u32 + byte_count as u32 + 4;
 
             name_section_layout.push(name_offset);
             name_offset += entry_size;
@@ -770,7 +770,7 @@ impl DotNetResourceEncoder {
 
             // Calculate the actual size this resource will take in the data section
             let type_code_size = if let Some(type_code) = resource_type.type_code() {
-                ResourceType::compressed_uint_size(type_code)
+                compressed_uint_size(type_code as usize) as u32
             } else {
                 return Err(Error::NotSupported);
             };

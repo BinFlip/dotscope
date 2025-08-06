@@ -233,15 +233,19 @@ fn verify_injected_method_instructions(
     blocks: &[(usize, &dotscope::assembly::BasicBlock)],
 ) -> Result<()> {
     // Our injected method should have exactly one basic block
-    assert_eq!(blocks.len(), 1, "Injected method should have exactly one basic block");
-    
+    assert_eq!(
+        blocks.len(),
+        1,
+        "Injected method should have exactly one basic block"
+    );
+
     let (_, block) = &blocks[0];
     let instructions = &block.instructions;
-    
+
     // Our method should have exactly 3 instructions: ldstr, call, ret
     assert_eq!(
-        instructions.len(), 
-        3, 
+        instructions.len(),
+        3,
         "Injected method should have exactly 3 instructions (ldstr, call, ret), found: {}",
         instructions.len()
     );
@@ -250,24 +254,21 @@ fn verify_injected_method_instructions(
     // 1. ldstr (load string)
     // 2. call (call Console.WriteLine)
     // 3. ret (return)
-    
+
     assert_eq!(
-        instructions[0].mnemonic,
-        "ldstr",
+        instructions[0].mnemonic, "ldstr",
         "First instruction should be ldstr, found: {}",
         instructions[0].mnemonic
     );
-    
+
     assert_eq!(
-        instructions[1].mnemonic,
-        "call",
+        instructions[1].mnemonic, "call",
         "Second instruction should be call, found: {}",
         instructions[1].mnemonic
     );
-    
+
     assert_eq!(
-        instructions[2].mnemonic,
-        "ret",
+        instructions[2].mnemonic, "ret",
         "Third instruction should be ret, found: {}",
         instructions[2].mnemonic
     );
@@ -281,7 +282,10 @@ fn verify_injected_method_instructions(
             token.value()
         );
     } else {
-        panic!("ldstr operand should be a token, found: {:?}", &instructions[0].operand);
+        panic!(
+            "ldstr operand should be a token, found: {:?}",
+            &instructions[0].operand
+        );
     }
 
     // Verify call operand is a valid method reference token
@@ -293,19 +297,28 @@ fn verify_injected_method_instructions(
             token.value()
         );
     } else {
-        panic!("call operand should be a token, found: {:?}", &instructions[1].operand);
+        panic!(
+            "call operand should be a token, found: {:?}",
+            &instructions[1].operand
+        );
     }
 
     // ret instruction should have no operand
     if let Operand::None = &instructions[2].operand {
         // This is expected
     } else {
-        panic!("ret instruction should have no operand, found: {:?}", &instructions[2].operand);
+        panic!(
+            "ret instruction should have no operand, found: {:?}",
+            &instructions[2].operand
+        );
     }
 
     println!("✅ Injected method instructions verified successfully:");
     for (i, instruction) in instructions.iter().enumerate() {
-        println!("   {}: {} (operand: {:?})", i, instruction.mnemonic, instruction.operand);
+        println!(
+            "   {}: {} (operand: {:?})",
+            i, instruction.mnemonic, instruction.operand
+        );
     }
 
     Ok(())

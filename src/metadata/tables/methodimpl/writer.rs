@@ -20,11 +20,11 @@
 //! - **Tag 1**: `MemberRef` table (methods referenced from external assemblies)
 
 use crate::{
-    file::io::write_le_at_dyn,
     metadata::tables::{
         methodimpl::MethodImplRaw,
         types::{CodedIndexType, RowWritable, TableId, TableInfoRef},
     },
+    utils::write_le_at_dyn,
     Result,
 };
 

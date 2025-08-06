@@ -14,11 +14,11 @@
 //! See ECMA-335, Partition II, §22.16 for the `FieldLayout` table specification.
 
 use crate::{
-    file::io::{read_le_at, read_le_at_dyn},
     metadata::{
         tables::{FieldLayoutRaw, RowReadable, TableId, TableInfoRef},
         token::Token,
     },
+    utils::{read_le_at, read_le_at_dyn},
     Result,
 };
 

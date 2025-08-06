@@ -41,11 +41,11 @@
 //! - [ECMA-335 II.22.7](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyRefOS` table specification
 
 use crate::{
-    file::io::{read_le_at, read_le_at_dyn},
     metadata::{
         tables::{AssemblyRefOsRaw, RowReadable, TableId, TableInfoRef},
         token::Token,
     },
+    utils::{read_le_at, read_le_at_dyn},
     Result,
 };
 
