@@ -22,11 +22,11 @@
 //! - `TypeSpec` (generic type instantiations)
 
 use crate::{
-    file::io::write_le_at_dyn,
     metadata::tables::{
         memberref::MemberRefRaw,
         types::{CodedIndexType, RowWritable, TableInfoRef},
     },
+    utils::write_le_at_dyn,
     Result,
 };
 

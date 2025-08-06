@@ -64,7 +64,7 @@
 //! - Type loading and assembly isolation
 //! - Cross-assembly type reference resolution
 
-use crate::{file::io::read_le, metadata::tables::AssemblyHashAlgorithm, Result};
+use crate::{metadata::tables::AssemblyHashAlgorithm, utils::read_le, Result};
 
 use md5::{Digest, Md5};
 use sha1::Sha1;

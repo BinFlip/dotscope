@@ -1,5 +1,4 @@
 use crate::{
-    file::io::read_le_at_dyn,
     metadata::{
         tables::{
             CodedIndex, CodedIndexType, GenericParamConstraintRaw, RowReadable, TableId,
@@ -7,6 +6,7 @@ use crate::{
         },
         token::Token,
     },
+    utils::read_le_at_dyn,
     Result,
 };
 

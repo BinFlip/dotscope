@@ -46,7 +46,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::cilassembly::write::utils::compressed_uint_size;
+use crate::utils::compressed_uint_size;
 
 /// Reference handling strategy for heap item removal operations.
 ///

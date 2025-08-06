@@ -7,7 +7,7 @@
 //!
 //! # Architecture
 //!
-//! The module is built around the [`crate::file::io::CilIO`] trait which provides a unified
+//! The module is built around the [`crate::utils::CilIO`] trait which provides a unified
 //! interface for reading and writing binary data in a type-safe manner. The architecture includes:
 //!
 //! - Generic trait-based reading and writing for all primitive types
@@ -18,30 +18,30 @@
 //! # Key Components
 //!
 //! ## Core Trait
-//! - [`crate::file::io::CilIO`] - Trait defining endian-aware reading and writing capabilities for primitive types
+//! - [`crate::utils::CilIO`] - Trait defining endian-aware reading and writing capabilities for primitive types
 //!
 //! ## Little-Endian Reading Functions
-//! - [`crate::file::io::read_le`] - Read values from buffer start in little-endian format
-//! - [`crate::file::io::read_le_at`] - Read values at specific offset with auto-advance in little-endian
-//! - [`crate::file::io::read_le_at_dyn`] - Dynamic size reading (2 or 4 bytes) in little-endian
+//! - [`crate::utils::read_le`] - Read values from buffer start in little-endian format
+//! - [`crate::utils::read_le_at`] - Read values at specific offset with auto-advance in little-endian
+//! - [`crate::utils::read_le_at_dyn`] - Dynamic size reading (2 or 4 bytes) in little-endian
 //!
 //! ## Little-Endian Writing Functions
-//! - [`crate::file::io::write_le`] - Write values to buffer start in little-endian format
-//! - [`crate::file::io::write_le_at`] - Write values at specific offset with auto-advance in little-endian
-//! - [`crate::file::io::write_le_at_dyn`] - Dynamic size writing (2 or 4 bytes) in little-endian
+//! - [`crate::utils::write_le`] - Write values to buffer start in little-endian format
+//! - [`crate::utils::write_le_at`] - Write values at specific offset with auto-advance in little-endian
+//! - [`crate::utils::write_le_at_dyn`] - Dynamic size writing (2 or 4 bytes) in little-endian
 //!
 //! ## Big-Endian Reading Functions
-//! - [`crate::file::io::read_be`] - Read values from buffer start in big-endian format
-//! - [`crate::file::io::read_be_at`] - Read values at specific offset with auto-advance in big-endian
-//! - [`crate::file::io::read_be_at_dyn`] - Dynamic size reading (2 or 4 bytes) in big-endian
+//! - [`crate::utils::read_be`] - Read values from buffer start in big-endian format
+//! - [`crate::utils::read_be_at`] - Read values at specific offset with auto-advance in big-endian
+//! - [`crate::utils::read_be_at_dyn`] - Dynamic size reading (2 or 4 bytes) in big-endian
 //!
 //! ## Big-Endian Writing Functions
-//! - [`crate::file::io::write_be`] - Write values to buffer start in big-endian format
-//! - [`crate::file::io::write_be_at`] - Write values at specific offset with auto-advance in big-endian
-//! - [`crate::file::io::write_be_at_dyn`] - Dynamic size writing (2 or 4 bytes) in big-endian
+//! - [`crate::utils::write_be`] - Write values to buffer start in big-endian format
+//! - [`crate::utils::write_be_at`] - Write values at specific offset with auto-advance in big-endian
+//! - [`crate::utils::write_be_at_dyn`] - Dynamic size writing (2 or 4 bytes) in big-endian
 //!
 //! ## Supported Types
-//! The [`crate::file::io::CilIO`] trait is implemented for:
+//! The [`crate::utils::CilIO`] trait is implemented for:
 //! - **Unsigned integers**: `u8`, `u16`, `u32`, `u64`
 //! - **Signed integers**: `i8`, `i16`, `i32`, `i64`
 //! - **Floating point**: `f32`, `f64`
@@ -51,7 +51,7 @@
 //! ## Basic Value Reading
 //!
 //! ```rust,ignore
-//! use dotscope::file::io::{read_le, read_be};
+//! use dotscope::utils::{read_le, read_be};
 //!
 //! // Little-endian reading (most common for PE files)
 //! let data = [0x01, 0x00, 0x00, 0x00]; // u32 value: 1
@@ -68,7 +68,7 @@
 //! ## Basic Value Writing
 //!
 //! ```rust,ignore
-//! use dotscope::file::io::{write_le, write_be};
+//! use dotscope::utils::{write_le, write_be};
 //!
 //! // Little-endian writing (most common for PE files)
 //! let mut data = [0u8; 4];
@@ -85,7 +85,7 @@
 //! ## Sequential Reading with Offset Tracking
 //!
 //! ```rust,ignore
-//! use dotscope::file::io::read_le_at;
+//! use dotscope::utils::read_le_at;
 //!
 //! let data = [0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x00, 0x00];
 //! let mut offset = 0;
@@ -105,7 +105,7 @@
 //! ## Sequential Writing with Offset Tracking
 //!
 //! ```rust,ignore
-//! use dotscope::file::io::write_le_at;
+//! use dotscope::utils::write_le_at;
 //!
 //! let mut data = [0u8; 8];
 //! let mut offset = 0;
@@ -123,7 +123,7 @@
 //! ## Dynamic Size Reading/Writing
 //!
 //! ```rust,ignore
-//! use dotscope::file::io::{read_le_at_dyn, write_le_at_dyn};
+//! use dotscope::utils::{read_le_at_dyn, write_le_at_dyn};
 //!
 //! let mut data = [0u8; 6];
 //! let mut offset = 0;
@@ -150,21 +150,11 @@
 //!
 //! # Thread Safety
 //!
-//! All functions and types in this module are thread-safe. The [`crate::file::io::CilIO`] trait
+//! All functions and types in this module are thread-safe. The [`crate::utils::CilIO`] trait
 //! implementations are based on primitive types and standard library functions that are inherently
 //! thread-safe. All reading and writing functions are pure operations that don't modify shared state,
 //! making them safe to call concurrently from multiple threads.
 //!
-//! # Integration
-//!
-//! This module integrates with:
-//! - [`crate::file::parser`] - Uses I/O functions for parsing PE file structures
-//! - [`crate::metadata`] - Reads metadata tables and structures from binary data
-//! - [`crate::file::physical`] - Provides low-level file access for reading operations
-//! - [`crate::metadata::tables::types::write`] - Uses writing functions for metadata table generation
-//!
-//! The module is designed to be the foundational layer for all binary data access throughout
-//! the dotscope library, ensuring consistent and safe parsing and generation behavior across all components.
 
 use crate::Result;
 
@@ -189,7 +179,7 @@ use crate::Result;
 /// # Examples
 ///
 /// ```rust,ignore
-/// use dotscope::file::io::CilIO;
+/// use dotscope::utils::CilIO;
 ///
 /// // The trait is used internally by the reading functions
 /// let bytes = [0x01, 0x00, 0x00, 0x00];
@@ -479,7 +469,7 @@ impl CilIO for isize {
 /// Safely reads a value of type `T` in little-endian byte order from a data buffer.
 ///
 /// This function reads from the beginning of the buffer and supports all types that implement
-/// the [`crate::file::io::CilIO`] trait (u8, i8, u16, i16, u32, i32, u64, i64, f32, f64).
+/// the [`crate::utils::CilIO`] trait (u8, i8, u16, i16, u32, i32, u64, i64, f32, f64).
 ///
 /// # Arguments
 ///
@@ -492,7 +482,7 @@ impl CilIO for isize {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use dotscope::file::io::read_le;
+/// use dotscope::utils::read_le;
 ///
 /// let data = [0x01, 0x00, 0x00, 0x00]; // Little-endian u32: 1
 /// let value: u32 = read_le(&data)?;
@@ -511,7 +501,7 @@ pub fn read_le<T: CilIO>(data: &[u8]) -> Result<T> {
 /// Safely reads a value of type `T` in little-endian byte order from a data buffer at a specific offset.
 ///
 /// This function reads from the specified offset and automatically advances the offset by the
-/// number of bytes read. Supports all types that implement the [`crate::file::io::CilIO`] trait.
+/// number of bytes read. Supports all types that implement the [`crate::utils::CilIO`] trait.
 ///
 /// # Arguments
 ///
@@ -525,7 +515,7 @@ pub fn read_le<T: CilIO>(data: &[u8]) -> Result<T> {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use dotscope::file::io::read_le_at;
+/// use dotscope::utils::read_le_at;
 ///
 /// let data = [0x01, 0x00, 0x02, 0x00]; // Two u16 values: 1, 2
 /// let mut offset = 0;
@@ -578,7 +568,7 @@ pub fn read_le_at<T: CilIO>(data: &[u8], offset: &mut usize) -> Result<T> {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use dotscope::file::io::read_le_at_dyn;
+/// use dotscope::utils::read_le_at_dyn;
 ///
 /// let data = [0x01, 0x00, 0x02, 0x00, 0x00, 0x00];
 /// let mut offset = 0;
@@ -612,7 +602,7 @@ pub fn read_le_at_dyn(data: &[u8], offset: &mut usize, is_large: bool) -> Result
 /// Safely reads a value of type `T` in big-endian byte order from a data buffer.
 ///
 /// This function reads from the beginning of the buffer and supports all types that implement
-/// the [`crate::file::io::CilIO`] trait. Note that PE/CIL files typically use little-endian,
+/// the [`crate::utils::CilIO`] trait. Note that PE/CIL files typically use little-endian,
 /// so this function is mainly for completeness and special cases.
 ///
 /// # Arguments
@@ -626,7 +616,7 @@ pub fn read_le_at_dyn(data: &[u8], offset: &mut usize, is_large: bool) -> Result
 /// # Examples
 ///
 /// ```rust,ignore
-/// use dotscope::file::io::read_be;
+/// use dotscope::utils::read_be;
 ///
 /// let data = [0x00, 0x00, 0x00, 0x01]; // Big-endian u32: 1
 /// let value: u32 = read_be(&data)?;
@@ -660,7 +650,7 @@ pub fn read_be<T: CilIO>(data: &[u8]) -> Result<T> {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use dotscope::file::io::read_be_at;
+/// use dotscope::utils::read_be_at;
 ///
 /// let data = [0x00, 0x01, 0x00, 0x02]; // Two big-endian u16 values: 1, 2
 /// let mut offset = 0;
@@ -714,7 +704,7 @@ pub fn read_be_at<T: CilIO>(data: &[u8], offset: &mut usize) -> Result<T> {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use dotscope::file::io::read_be_at_dyn;
+/// use dotscope::utils::read_be_at_dyn;
 ///
 /// let data = [0x00, 0x01, 0x00, 0x00, 0x00, 0x02];
 /// let mut offset = 0;
@@ -748,7 +738,7 @@ pub fn read_be_at_dyn(data: &[u8], offset: &mut usize, is_large: bool) -> Result
 /// Safely writes a value of type `T` in little-endian byte order to a data buffer.
 ///
 /// This function writes to the beginning of the buffer and supports all types that implement
-/// the [`crate::file::io::CilIO`] trait (u8, i8, u16, i16, u32, i32, u64, i64, f32, f64).
+/// the [`crate::utils::CilIO`] trait (u8, i8, u16, i16, u32, i32, u64, i64, f32, f64).
 ///
 /// # Arguments
 ///
@@ -762,7 +752,7 @@ pub fn read_be_at_dyn(data: &[u8], offset: &mut usize, is_large: bool) -> Result
 /// # Examples
 ///
 /// ```rust,ignore
-/// use dotscope::file::io::write_le;
+/// use dotscope::utils::write_le;
 ///
 /// let mut data = [0u8; 4];
 /// let value: u32 = 1;
@@ -782,7 +772,7 @@ pub fn write_le<T: CilIO>(data: &mut [u8], value: T) -> Result<()> {
 /// Safely writes a value of type `T` in little-endian byte order to a data buffer at a specific offset.
 ///
 /// This function writes at the specified offset and automatically advances the offset by the
-/// number of bytes written. Supports all types that implement the [`crate::file::io::CilIO`] trait.
+/// number of bytes written. Supports all types that implement the [`crate::utils::CilIO`] trait.
 ///
 /// # Arguments
 ///
@@ -797,7 +787,7 @@ pub fn write_le<T: CilIO>(data: &mut [u8], value: T) -> Result<()> {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use dotscope::file::io::write_le_at;
+/// use dotscope::utils::write_le_at;
 ///
 /// let mut data = [0u8; 4];
 /// let mut offset = 0;
@@ -853,7 +843,7 @@ pub fn write_le_at<T: CilIO>(data: &mut [u8], offset: &mut usize, value: T) -> R
 /// # Examples
 ///
 /// ```rust,ignore
-/// use dotscope::file::io::write_le_at_dyn;
+/// use dotscope::utils::write_le_at_dyn;
 ///
 /// let mut data = [0u8; 6];
 /// let mut offset = 0;
@@ -892,7 +882,7 @@ pub fn write_le_at_dyn(
 /// Safely writes a value of type `T` in big-endian byte order to a data buffer.
 ///
 /// This function writes to the beginning of the buffer and supports all types that implement
-/// the [`crate::file::io::CilIO`] trait. Note that PE/CIL files typically use little-endian,
+/// the [`crate::utils::CilIO`] trait. Note that PE/CIL files typically use little-endian,
 /// so this function is mainly for completeness and special cases.
 ///
 /// # Arguments
@@ -907,7 +897,7 @@ pub fn write_le_at_dyn(
 /// # Examples
 ///
 /// ```rust,ignore
-/// use dotscope::file::io::write_be;
+/// use dotscope::utils::write_be;
 ///
 /// let mut data = [0u8; 4];
 /// let value: u32 = 1;
@@ -943,7 +933,7 @@ pub fn write_be<T: CilIO>(data: &mut [u8], value: T) -> Result<()> {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use dotscope::file::io::write_be_at;
+/// use dotscope::utils::write_be_at;
 ///
 /// let mut data = [0u8; 4];
 /// let mut offset = 0;
@@ -1000,7 +990,7 @@ pub fn write_be_at<T: CilIO>(data: &mut [u8], offset: &mut usize, value: T) -> R
 /// # Examples
 ///
 /// ```rust,ignore
-/// use dotscope::file::io::write_be_at_dyn;
+/// use dotscope::utils::write_be_at_dyn;
 ///
 /// let mut data = [0u8; 6];
 /// let mut offset = 0;
@@ -1060,7 +1050,7 @@ pub fn write_be_at_dyn(
 /// # Examples
 ///
 /// ```rust,ignore
-/// # use dotscope::file::io::write_compressed_uint;
+/// # use dotscope::utils::write_compressed_uint;
 /// let mut buffer = Vec::new();
 /// write_compressed_uint(127, &mut buffer);
 /// assert_eq!(buffer, vec![127]);
@@ -1098,7 +1088,7 @@ pub fn write_compressed_uint(value: u32, buffer: &mut Vec<u8>) {
 /// # Examples
 ///
 /// ```rust,ignore
-/// # use dotscope::file::io::write_compressed_int;
+/// # use dotscope::utils::write_compressed_int;
 /// let mut buffer = Vec::new();
 /// write_compressed_int(10, &mut buffer);
 /// assert_eq!(buffer, vec![20]); // 10 << 1 | 0
@@ -1130,7 +1120,7 @@ pub fn write_compressed_int(value: i32, buffer: &mut Vec<u8>) {
 /// # Examples
 ///
 /// ```rust,ignore
-/// # use dotscope::file::io::write_7bit_encoded_int;
+/// # use dotscope::utils::write_7bit_encoded_int;
 /// let mut buffer = Vec::new();
 /// write_7bit_encoded_int(127, &mut buffer);
 /// assert_eq!(buffer, vec![0x7F]);
@@ -1160,7 +1150,7 @@ pub fn write_7bit_encoded_int(mut value: u32, buffer: &mut Vec<u8>) {
 /// # Examples
 ///
 /// ```rust,ignore
-/// # use dotscope::file::io::write_string_utf8;
+/// # use dotscope::utils::write_string_utf8;
 /// let mut buffer = Vec::new();
 /// write_string_utf8("Hello", &mut buffer);
 /// assert_eq!(buffer, b"Hello\0");
@@ -1183,7 +1173,7 @@ pub fn write_string_utf8(value: &str, buffer: &mut Vec<u8>) {
 /// # Examples
 ///
 /// ```rust,ignore
-/// # use dotscope::file::io::write_prefixed_string_utf8;
+/// # use dotscope::utils::write_prefixed_string_utf8;
 /// let mut buffer = Vec::new();
 /// write_prefixed_string_utf8("Hello", &mut buffer);
 /// assert_eq!(buffer, vec![5, b'H', b'e', b'l', b'l', b'o']);
@@ -1208,7 +1198,7 @@ pub fn write_prefixed_string_utf8(value: &str, buffer: &mut Vec<u8>) {
 /// # Examples
 ///
 /// ```rust,ignore
-/// # use dotscope::file::io::write_prefixed_string_utf16;
+/// # use dotscope::utils::write_prefixed_string_utf16;
 /// let mut buffer = Vec::new();
 /// write_prefixed_string_utf16("Hello", &mut buffer);
 /// // Length 10 bytes (5 UTF-16 chars), followed by "Hello" in UTF-16 LE
@@ -1246,7 +1236,7 @@ pub fn write_prefixed_string_utf16(value: &str, buffer: &mut Vec<u8>) {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use dotscope::file::io::write_string_at;
+/// use dotscope::utils::write_string_at;
 ///
 /// let mut buffer = [0u8; 10];
 /// let mut offset = 0;
@@ -1302,7 +1292,7 @@ pub fn write_string_at(data: &mut [u8], offset: &mut usize, value: &str) -> Resu
 ///
 /// # Examples
 /// ```rust,ignore
-/// use dotscope::file::io::read_compressed_int;
+/// use dotscope::utils::read_compressed_int;
 ///
 /// let data = [0x7F, 0x80, 0x80, 0xC0, 0x00, 0x00, 0x40];
 /// let mut offset = 0;
@@ -1369,7 +1359,7 @@ pub fn read_compressed_int(data: &[u8], offset: &mut usize) -> Result<(usize, us
 ///
 /// # Examples
 /// ```rust,ignore
-/// use dotscope::file::io::read_compressed_int_at;
+/// use dotscope::utils::read_compressed_int_at;
 ///
 /// let data = [0x7F, 0x80, 0x80];
 ///

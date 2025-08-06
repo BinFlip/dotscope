@@ -273,7 +273,7 @@ impl FieldRVABuilder {
         }
 
         let rid = context.next_rid(TableId::FieldRVA);
-        let token = Token::new(((TableId::FieldRVA as u32) << 24) | rid);
+        let token = Token::from_parts(TableId::FieldRVA, rid);
 
         let field_rva = FieldRvaRaw {
             rid,

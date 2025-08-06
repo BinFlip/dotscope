@@ -186,7 +186,7 @@ impl ModuleRefBuilder {
 
         let name_index = context.string_get_or_add(&name)?;
         let rid = context.next_rid(TableId::ModuleRef);
-        let token = Token::new(((TableId::ModuleRef as u32) << 24) | rid);
+        let token = Token::from_parts(TableId::ModuleRef, rid);
 
         let module_ref = ModuleRefRaw {
             rid,

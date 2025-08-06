@@ -182,8 +182,7 @@ impl ParamBuilder {
 
         let rid = context.next_rid(TableId::Param);
 
-        let token_value = ((TableId::Param as u32) << 24) | rid;
-        let token = Token::new(token_value);
+        let token = Token::from_parts(TableId::Param, rid);
 
         let param_raw = ParamRaw {
             rid,

@@ -281,8 +281,7 @@ impl MethodDefBuilder {
         let signature_index = context.blob_add(&signature)?;
         let rid = context.next_rid(TableId::MethodDef);
 
-        let token_value = ((TableId::MethodDef as u32) << 24) | rid;
-        let token = Token::new(token_value);
+        let token = Token::from_parts(TableId::MethodDef, rid);
 
         let method_raw = MethodDefRaw {
             rid,
@@ -345,8 +344,8 @@ mod tests {
                 .unwrap();
 
             // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x06000000); // MethodDef table prefix
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid); // RID should be existing + 1
+            assert!(token.is_table(TableId::MethodDef)); // MethodDef table
+            assert_eq!(token.row(), expected_rid); // RID should be existing + 1
         }
     }
 
@@ -374,7 +373,7 @@ mod tests {
                 .unwrap();
 
             // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x06000000);
+            assert!(token.is_table(TableId::MethodDef));
         }
     }
 
@@ -401,7 +400,7 @@ mod tests {
                 .unwrap();
 
             // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x06000000);
+            assert!(token.is_table(TableId::MethodDef));
         }
     }
 
@@ -428,7 +427,7 @@ mod tests {
                 .unwrap();
 
             // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x06000000);
+            assert!(token.is_table(TableId::MethodDef));
         }
     }
 
@@ -531,9 +530,9 @@ mod tests {
                 .unwrap();
 
             // Both should succeed and have different RIDs
-            assert_ne!(method1.value() & 0x00FFFFFF, method2.value() & 0x00FFFFFF);
-            assert_eq!(method1.value() & 0xFF000000, 0x06000000);
-            assert_eq!(method2.value() & 0xFF000000, 0x06000000);
+            assert_ne!(method1.row(), method2.row());
+            assert!(method1.is_table(TableId::MethodDef));
+            assert!(method2.is_table(TableId::MethodDef));
         }
     }
 
@@ -555,7 +554,7 @@ mod tests {
                 .unwrap();
 
             // Should succeed with default values
-            assert_eq!(token.value() & 0xFF000000, 0x06000000);
+            assert!(token.is_table(TableId::MethodDef));
         }
     }
 }
