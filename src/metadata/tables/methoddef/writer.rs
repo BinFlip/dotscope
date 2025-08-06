@@ -28,11 +28,11 @@
 //! - `0x0080` - `HideBySig`
 
 use crate::{
-    file::io::{write_le_at, write_le_at_dyn},
     metadata::tables::{
         methoddef::MethodDefRaw,
         types::{RowWritable, TableId, TableInfoRef},
     },
+    utils::{write_le_at, write_le_at_dyn},
     Result,
 };
 

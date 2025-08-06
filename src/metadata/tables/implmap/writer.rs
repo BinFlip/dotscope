@@ -21,11 +21,11 @@
 //! - **Tag 1 (MethodDef)**: References MethodDef table entries (standard case for P/Invoke)
 
 use crate::{
-    file::io::{write_le_at, write_le_at_dyn},
     metadata::tables::{
         implmap::ImplMapRaw,
         types::{CodedIndexType, RowWritable, TableId, TableInfoRef},
     },
+    utils::{write_le_at, write_le_at_dyn},
     Result,
 };
 

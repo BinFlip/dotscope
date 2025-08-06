@@ -40,11 +40,11 @@
 //! - [ECMA-335 II.22.3](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyOS` table specification
 
 use crate::{
-    file::io::read_le_at,
     metadata::{
         tables::{AssemblyOsRaw, RowReadable, TableInfoRef},
         token::Token,
     },
+    utils::read_le_at,
     Result,
 };
 

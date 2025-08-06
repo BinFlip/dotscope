@@ -39,11 +39,11 @@
 //! - [`crate::metadata::tables::statemachinemethod::raw`] - Raw structure definition
 
 use crate::{
-    file::io::read_le_at_dyn,
     metadata::{
         tables::{RowReadable, StateMachineMethodRaw, TableId, TableInfoRef},
         token::Token,
     },
+    utils::read_le_at_dyn,
     Result,
 };
 

@@ -287,7 +287,7 @@ impl PropertyMapBuilder {
         }
 
         let rid = context.next_rid(TableId::PropertyMap);
-        let token = Token::new(((TableId::PropertyMap as u32) << 24) | rid);
+        let token = Token::from_parts(TableId::PropertyMap, rid);
 
         let property_map = PropertyMapRaw {
             rid,

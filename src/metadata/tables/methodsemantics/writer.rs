@@ -19,11 +19,11 @@
 //! - **Event Semantics**: ADD_ON (0x0008), REMOVE_ON (0x0010), FIRE (0x0020), OTHER (0x0004)
 
 use crate::{
-    file::io::{write_le_at, write_le_at_dyn},
     metadata::tables::{
         methodsemantics::MethodSemanticsRaw,
         types::{CodedIndexType, RowWritable, TableId, TableInfoRef},
     },
+    utils::{write_le_at, write_le_at_dyn},
     Result,
 };
 

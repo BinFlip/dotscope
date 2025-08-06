@@ -23,11 +23,11 @@
 //! - `TypeSpec` (tag 2) - Generic or complex base type
 
 use crate::{
-    file::io::{write_le_at, write_le_at_dyn},
     metadata::tables::{
         typedef::TypeDefRaw,
         types::{CodedIndexType, RowWritable, TableId, TableInfoRef},
     },
+    utils::{write_le_at, write_le_at_dyn},
     Result,
 };
 

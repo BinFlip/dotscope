@@ -19,11 +19,11 @@
 //! - **Tag 1 (Param)**: References Param table entries for parameter marshalling
 
 use crate::{
-    file::io::write_le_at_dyn,
     metadata::tables::{
         fieldmarshal::FieldMarshalRaw,
         types::{CodedIndexType, RowWritable, TableInfoRef},
     },
+    utils::write_le_at_dyn,
     Result,
 };
 

@@ -49,11 +49,11 @@
 //! - [`crate::metadata::tables::file`] - File table entries for module file references
 
 use crate::{
-    file::io::read_le_at_dyn,
     metadata::{
         tables::{ModuleRefRaw, RowReadable, TableInfoRef},
         token::Token,
     },
+    utils::read_le_at_dyn,
     Result,
 };
 
