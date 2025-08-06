@@ -110,16 +110,6 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
-//! # Integration
-//!
-//! This module integrates with:
-//! - [`crate::metadata::cilobject`] - Uses file parsing for .NET metadata extraction
-//! - [`crate::disassembler`] - Provides binary data access for instruction analysis
-//! - [`crate::file::parser`] - High-level parsing utilities for metadata streams
-//!
-//! The file module provides low-level PE file parsing capabilities. For high-level assembly
-//! analysis, use the [`CilObject`](crate::CilObject) interface which builds upon these
-//! primitives to provide a rich metadata API.
 //!
 //! # Thread Safety
 //!
@@ -131,7 +121,6 @@
 //! - Microsoft PE/COFF Specification
 //! - ECMA-335 6th Edition, Partition II - PE File Format
 
-pub mod io;
 pub mod parser;
 
 mod memory;
@@ -894,7 +883,7 @@ impl File {
 
                 let rva_u32 = u32::try_from(rva)
                     .map_err(|_| malformed_error!("RVA too large to fit in u32: {}", rva))?;
-                if section.virtual_address < rva_u32 && section_max > rva_u32 {
+                if section.virtual_address <= rva_u32 && section_max > rva_u32 {
                     return Ok((rva - section.virtual_address as usize)
                         + section.pointer_to_raw_data as usize);
                 }

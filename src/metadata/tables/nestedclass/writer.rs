@@ -20,11 +20,11 @@
 //! - **Resolution**: Type names are resolved relative to the enclosing context
 
 use crate::{
-    file::io::write_le_at_dyn,
     metadata::tables::{
         nestedclass::NestedClassRaw,
         types::{RowWritable, TableId, TableInfoRef},
     },
+    utils::write_le_at_dyn,
     Result,
 };
 

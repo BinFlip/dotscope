@@ -23,11 +23,11 @@
 //! - `0x2000` - `HasFieldMarshal` (parameter has marshalling information)
 
 use crate::{
-    file::io::{write_le_at, write_le_at_dyn},
     metadata::tables::{
         param::ParamRaw,
         types::{RowWritable, TableInfoRef},
     },
+    utils::{write_le_at, write_le_at_dyn},
     Result,
 };
 

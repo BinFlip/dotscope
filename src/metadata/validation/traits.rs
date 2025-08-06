@@ -68,11 +68,11 @@ use crate::{
 ///
 /// Raw validators are responsible for validating basic structural integrity,
 /// schema compliance, and modification validity. They work with [`crate::metadata::cilassemblyview::CilAssemblyView`]
-/// and optionally [`crate::cilassembly::AssemblyChanges`] for modification validation.
+/// and optionally assembly changes for modification validation.
 ///
 /// Raw validators support two use cases:
 /// 1. **Loading validation** - Validate [`crate::metadata::cilassemblyview::CilAssemblyView`] structure during loading
-/// 2. **Modification validation** - Validate [`crate::cilassembly::AssemblyChanges`] against original assembly
+/// 2. **Modification validation** - Validate assembly changes against original assembly
 ///
 /// # Thread Safety
 ///

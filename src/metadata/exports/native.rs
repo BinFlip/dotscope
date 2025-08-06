@@ -118,7 +118,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    file::io::{write_le_at, write_string_at},
+    utils::{write_le_at, write_string_at},
     Error, Result,
 };
 

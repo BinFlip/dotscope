@@ -193,8 +193,7 @@ impl FieldBuilder {
         let rid = context.next_rid(TableId::Field);
 
         // Create the token for this field
-        let token_value = ((TableId::Field as u32) << 24) | rid;
-        let token = Token::new(token_value);
+        let token = Token::from_parts(TableId::Field, rid);
 
         // Create the raw field structure
         let field_raw = FieldRaw {
@@ -244,8 +243,8 @@ mod tests {
                 .unwrap();
 
             // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x04000000); // Field table prefix
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid); // RID should be existing + 1
+            assert!(token.is_table(TableId::Field)); // Field table prefix
+            assert_eq!(token.row(), expected_rid); // RID should be existing + 1
         }
     }
 
@@ -270,7 +269,7 @@ mod tests {
                 .unwrap();
 
             // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x04000000);
+            assert!(token.is_table(TableId::Field));
         }
     }
 
@@ -295,7 +294,7 @@ mod tests {
                 .unwrap();
 
             // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x04000000);
+            assert!(token.is_table(TableId::Field));
         }
     }
 
@@ -375,9 +374,9 @@ mod tests {
                 .unwrap();
 
             // Both should succeed and have different RIDs
-            assert_ne!(field1.value() & 0x00FFFFFF, field2.value() & 0x00FFFFFF);
-            assert_eq!(field1.value() & 0xFF000000, 0x04000000);
-            assert_eq!(field2.value() & 0xFF000000, 0x04000000);
+            assert_ne!(field1.row(), field2.row());
+            assert!(field1.is_table(TableId::Field));
+            assert!(field2.is_table(TableId::Field));
         }
     }
 }

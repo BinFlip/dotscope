@@ -21,11 +21,11 @@
 //! - `TypeRef` (tag 3) - Nested type where the parent is also external
 
 use crate::{
-    file::io::write_le_at_dyn,
     metadata::tables::{
         typeref::TypeRefRaw,
         types::{CodedIndexType, RowWritable, TableInfoRef},
     },
+    utils::write_le_at_dyn,
     Result,
 };
 

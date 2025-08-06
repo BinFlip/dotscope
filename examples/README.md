@@ -43,7 +43,20 @@ Follow this recommended order to learn dotscope effectively:
   - Signature parsing
   - Control flow examination
 
-### 4. **Specialized Examples**
+### 4. **Assembly Modification**
+
+- **[`modify.rs`](modify.rs)** - Assembly modification basics
+  - Adding strings, blobs, and metadata
+  - Table row manipulation
+  - Heap content modification
+
+- **[`injectcode.rs`](injectcode.rs)** - Code injection example
+  - Injecting new methods into existing assemblies
+  - Creating external references to BCL types
+  - CIL bytecode generation
+  - Complete modification workflow
+
+### 5. **Specialized Examples**
 
 - **[`lowlevel.rs`](lowlevel.rs)** - Understanding internals
   - Raw PE structure parsing
@@ -62,6 +75,9 @@ All examples follow the same pattern:
 ```bash
 # Run with a sample assembly
 cargo run --example basic tests/samples/WindowsBase.dll
+
+# Code injection example
+cargo run --example injectcode tests/samples/WindowsBase.dll injected_output.dll
 
 # Each example provides usage help
 cargo run --example basic
@@ -125,6 +141,7 @@ The examples cover these practical scenarios:
 - **Security Analysis** - Finding vulnerabilities and security issues
 - **Reverse Engineering** - Understanding assembly structure and behavior
 - **Code Quality** - Static analysis and metrics collection
+- **Assembly Modification** - Injecting code, patching, and instrumentation
 - **Educational** - Learning .NET internals and PE format
 - **Tool Building** - Creating custom analysis and decompilation tools
 
