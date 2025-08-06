@@ -207,8 +207,7 @@ impl PropertyBuilder {
         let signature_index = context.blob_add(&signature)?;
         let rid = context.next_rid(TableId::Property);
 
-        let token_value = ((TableId::Property as u32) << 24) | rid;
-        let token = Token::new(token_value);
+        let token = Token::from_parts(TableId::Property, rid);
 
         let property_raw = PropertyRaw {
             rid,

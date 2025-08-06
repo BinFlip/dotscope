@@ -93,22 +93,10 @@
 //! println!("Parameter count: {}, Type token: {:?}", param_count, type_token);
 //! # Ok::<(), dotscope::Error>(())
 //! ```
-//!
-//! # Integration
-//!
-//! This module integrates with:
-//! - [`crate::metadata`] - Uses parser for reading metadata tables and structures
-//! - [`crate::disassembler`] - Parses CIL instruction streams and method bodies
-//! - [`crate::file::io`] - Leverages low-level I/O utilities for primitive type reading
-//! - [`crate::metadata::signatures`] - Parses complex type and method signatures
-//!
-//! The parser is used internally throughout the dotscope library for all binary data
-//! parsing operations, providing a consistent and safe interface for accessing .NET
-//! assembly structures.
 
 use crate::{
-    file::io::{read_be_at, read_le_at, CilIO},
     metadata::token::Token,
+    utils::{read_be_at, read_le_at, CilIO},
     Result,
 };
 

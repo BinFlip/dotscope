@@ -92,11 +92,11 @@
 //! - [`crate::metadata::typesystem`] - Type system for accurate encoding
 
 use crate::{
-    file::io::write_compressed_uint,
     metadata::customattributes::{
         CustomAttributeArgument, CustomAttributeNamedArgument, CustomAttributeValue,
         SERIALIZATION_TYPE,
     },
+    utils::write_compressed_uint,
     Result,
 };
 

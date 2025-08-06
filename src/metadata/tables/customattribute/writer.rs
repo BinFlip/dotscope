@@ -18,11 +18,11 @@
 //! - **CustomAttributeType**: References the constructor method (`MethodDef` or `MemberRef`)
 
 use crate::{
-    file::io::write_le_at_dyn,
     metadata::tables::{
         customattribute::CustomAttributeRaw,
         types::{CodedIndexType, RowWritable, TableInfoRef},
     },
+    utils::write_le_at_dyn,
     Result,
 };
 

@@ -19,11 +19,11 @@
 //! - **Interface Inheritance**: Interfaces extending other interfaces (compiler quirk)
 
 use crate::{
-    file::io::write_le_at_dyn,
     metadata::tables::{
         interfaceimpl::InterfaceImplRaw,
         types::{CodedIndexType, RowWritable, TableId, TableInfoRef},
     },
+    utils::write_le_at_dyn,
     Result,
 };
 

@@ -93,11 +93,11 @@
 use std::{convert::TryFrom, fmt};
 
 use crate::{
-    file::io::read_le,
     metadata::{
         token::Token,
         typesystem::{CilFlavor, ELEMENT_TYPE},
     },
+    utils::read_le,
     Error::{self, TypeConversionInvalid, TypeNotPrimitive},
     Result,
 };

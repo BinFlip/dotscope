@@ -214,8 +214,7 @@ impl EventBuilder {
 
         let name_index = context.string_get_or_add(&name)?;
         let rid = context.next_rid(TableId::Event);
-        let token_value = ((TableId::Event as u32) << 24) | rid;
-        let token = Token::new(token_value);
+        let token = Token::from_parts(TableId::Event, rid);
 
         let event_raw = EventRaw {
             rid,
@@ -263,8 +262,8 @@ mod tests {
                 .unwrap();
 
             // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x14000000); // Event table prefix
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid); // RID should be existing + 1
+            assert!(token.is_table(TableId::Event)); // Event table prefix
+            assert_eq!(token.row(), expected_rid); // RID should be existing + 1
         }
     }
 
@@ -288,7 +287,7 @@ mod tests {
                 .unwrap();
 
             // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x14000000);
+            assert!(token.is_table(TableId::Event));
         }
     }
 
@@ -312,7 +311,7 @@ mod tests {
                 .unwrap();
 
             // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x14000000);
+            assert!(token.is_table(TableId::Event));
         }
     }
 
@@ -431,14 +430,14 @@ mod tests {
                 .unwrap();
 
             // All should succeed and have different RIDs
-            assert_ne!(event1.value() & 0x00FFFFFF, event2.value() & 0x00FFFFFF);
-            assert_ne!(event1.value() & 0x00FFFFFF, event3.value() & 0x00FFFFFF);
-            assert_ne!(event2.value() & 0x00FFFFFF, event3.value() & 0x00FFFFFF);
+            assert_ne!(event1.row(), event2.row());
+            assert_ne!(event1.row(), event3.row());
+            assert_ne!(event2.row(), event3.row());
 
             // All should have Event table prefix
-            assert_eq!(event1.value() & 0xFF000000, 0x14000000);
-            assert_eq!(event2.value() & 0xFF000000, 0x14000000);
-            assert_eq!(event3.value() & 0xFF000000, 0x14000000);
+            assert!(event1.is_table(TableId::Event));
+            assert!(event2.is_table(TableId::Event));
+            assert!(event3.is_table(TableId::Event));
         }
     }
 }

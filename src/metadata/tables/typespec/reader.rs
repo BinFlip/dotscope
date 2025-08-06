@@ -34,11 +34,11 @@
 //! - [`crate::metadata::signatures`] - Type signature parsing and representation
 
 use crate::{
-    file::io::read_le_at_dyn,
     metadata::{
         tables::{RowReadable, TableInfoRef, TypeSpecRaw},
         token::Token,
     },
+    utils::read_le_at_dyn,
     Result,
 };
 

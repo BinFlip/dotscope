@@ -4,10 +4,10 @@
 //! `NativeType` representations into binary marshalling descriptors as defined in ECMA-335 II.23.2.9.
 
 use crate::{
-    file::io::write_compressed_uint,
     metadata::marshalling::types::{
         MarshallingInfo, NativeType, MAX_RECURSION_DEPTH, NATIVE_TYPE, VARIANT_TYPE,
     },
+    utils::write_compressed_uint,
     Error::RecursionLimit,
     Result,
 };

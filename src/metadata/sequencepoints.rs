@@ -80,10 +80,8 @@
 //! - [PortablePDB Spec](https://github.com/dotnet/runtime/blob/main/docs/design/specs/PortablePdb-Metadata.md#sequence-points)
 
 use crate::{
-    file::{
-        io::{write_compressed_int, write_compressed_uint},
-        parser::Parser,
-    },
+    file::parser::Parser,
+    utils::{write_compressed_int, write_compressed_uint},
     Result,
 };
 

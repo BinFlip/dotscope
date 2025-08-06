@@ -397,8 +397,7 @@ impl ConstantBuilder {
 
         let rid = context.next_rid(TableId::Constant);
 
-        let token_value = ((TableId::Constant as u32) << 24) | rid;
-        let token = Token::new(token_value);
+        let token = Token::from_parts(TableId::Constant, rid);
 
         let constant_raw = ConstantRaw {
             rid,

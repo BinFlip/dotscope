@@ -1,12 +1,12 @@
 //! Memory-mapped file handling for efficient binary output.
 //!
-//! This module provides the [`crate::cilassembly::write::output::Output`] type for managing
+//! This module provides the [`crate::cilassembly::writer::output::Output`] type for managing
 //! memory-mapped files during binary generation. It implements atomic file operations
 //! with proper cleanup and cross-platform compatibility for the dotscope binary writing pipeline.
 //!
 //! # Key Components
 //!
-//! - [`crate::cilassembly::write::output::Output`] - Memory-mapped output file with atomic finalization
+//! - [`crate::cilassembly::writer::output::Output`] - Memory-mapped output file with atomic finalization
 //!
 //! # Architecture
 //!
@@ -27,7 +27,7 @@
 //! # Usage Examples
 //!
 //! ```rust,ignore
-//! use crate::cilassembly::write::output::Output;
+//! use crate::cilassembly::writer::output::Output;
 //! use std::path::Path;
 //!
 //! // Create a memory-mapped output file
@@ -44,23 +44,21 @@
 //!
 //! # Thread Safety
 //!
-//! The [`crate::cilassembly::write::output::Output`] type is not [`Send`] or [`Sync`] as it contains
+//! The [`crate::cilassembly::writer::output::Output`] type is not [`Send`] or [`Sync`] as it contains
 //! memory-mapped file handles and temporary file resources that are tied to the creating thread.
 //!
 //! # Integration
 //!
 //! This module integrates with:
-//! - [`crate::cilassembly::write::planner`] - Layout planning for file size calculation
-//! - [`crate::cilassembly::write::writers`] - Specialized writers that use output files
-//! - [`crate::cilassembly::write`] - Main write pipeline coordination
+//! - [`crate::cilassembly::writer::layout`] - Layout planning for file size calculation
+//! - [`crate::cilassembly::writer::executor`] - Execution engine that uses output files
+//! - [`crate::cilassembly::writer`] - Main write pipeline coordination
 
 use std::path::{Path, PathBuf};
 
 use memmap2::{MmapMut, MmapOptions};
 
-use crate::{
-    cilassembly::write::planner::FileRegion, file::io::write_compressed_uint, Error, Result,
-};
+use crate::{cilassembly::writer::layout::FileRegion, utils::write_compressed_uint, Error, Result};
 
 /// A memory-mapped output file that supports atomic operations.
 ///
@@ -112,7 +110,7 @@ impl Output {
     ///
     /// # Returns
     ///
-    /// Returns a new [`crate::cilassembly::write::output::Output`] ready for writing.
+    /// Returns a new [`crate::cilassembly::writer::output::Output`] ready for writing.
     ///
     /// # Errors
     ///
@@ -243,6 +241,87 @@ impl Output {
         }
 
         self.mmap[start..end].copy_from_slice(data);
+        Ok(())
+    }
+
+    /// Copies data from the source offset to the target offset within the same file.
+    ///
+    /// This method provides efficient in-file copying for relocating existing content.
+    /// It's used extensively during the binary generation process to move sections
+    /// and preserve existing data in new locations.
+    ///
+    /// # Arguments
+    /// * `source_offset` - Source offset to copy from
+    /// * `target_offset` - Target offset to copy to
+    /// * `size` - Number of bytes to copy
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::WriteMmapFailed`] if either range exceeds file bounds
+    /// or if the ranges overlap in a way that would cause data corruption.
+    pub fn copy_range(&mut self, source_offset: u64, target_offset: u64, size: u64) -> Result<()> {
+        let source_start = usize::try_from(source_offset).map_err(|_| Error::WriteMmapFailed {
+            message: format!("Source offset {source_offset} too large for target architecture"),
+        })?;
+        let target_start = usize::try_from(target_offset).map_err(|_| Error::WriteMmapFailed {
+            message: format!("Target offset {target_offset} too large for target architecture"),
+        })?;
+        let copy_size = usize::try_from(size).map_err(|_| Error::WriteMmapFailed {
+            message: format!("Size {size} too large for target architecture"),
+        })?;
+
+        let source_end = source_start + copy_size;
+        let target_end = target_start + copy_size;
+
+        // Validate bounds
+        if source_end > self.mmap.len() {
+            return Err(Error::WriteMmapFailed {
+                message: format!(
+                    "Source range would exceed file size: {}..{} (file size: {})",
+                    source_start,
+                    source_end,
+                    self.mmap.len()
+                ),
+            });
+        }
+
+        if target_end > self.mmap.len() {
+            return Err(Error::WriteMmapFailed {
+                message: format!(
+                    "Target range would exceed file size: {}..{} (file size: {})",
+                    target_start,
+                    target_end,
+                    self.mmap.len()
+                ),
+            });
+        }
+
+        // For safety, use copy_within which handles overlapping ranges correctly
+        self.mmap
+            .copy_within(source_start..source_end, target_start);
+        Ok(())
+    }
+
+    /// Fills a region with zeros.
+    ///
+    /// Efficient method for zeroing out large regions, commonly used for
+    /// clearing old metadata locations after they've been relocated.
+    ///
+    /// # Arguments
+    /// * `offset` - Starting byte offset
+    /// * `size` - Number of bytes to zero
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::WriteMmapFailed`] if the region would exceed file bounds.
+    pub fn zero_range(&mut self, offset: u64, size: u64) -> Result<()> {
+        let start = usize::try_from(offset).map_err(|_| Error::WriteMmapFailed {
+            message: format!("Offset {offset} too large for target architecture"),
+        })?;
+        let zero_size = usize::try_from(size).map_err(|_| Error::WriteMmapFailed {
+            message: format!("Size {size} too large for target architecture"),
+        })?;
+
+        let slice = self.get_mut_slice(start, zero_size)?;
+        slice.fill(0);
         Ok(())
     }
 
@@ -441,14 +520,14 @@ impl Output {
     /// Gets the total size of the file.
     ///
     /// Returns the size in bytes of the memory-mapped file as specified during creation.
-    pub fn size(&self) -> u64 {
-        self.mmap.len() as u64
+    pub fn size(&self) -> Result<u64> {
+        Ok(self.mmap.len() as u64)
     }
 
     /// Flushes any pending writes to disk.
     ///
     /// Forces any cached writes in the memory mapping to be written to the underlying file.
-    /// This does not guarantee durability until [`crate::cilassembly::write::output::Output::finalize`] is called.
+    /// This does not guarantee durability until [`crate::cilassembly::writer::output::Output::finalize`] is called.
     ///
     /// # Errors
     /// Returns [`crate::Error::WriteMmapFailed`] if the flush operation fails.
@@ -465,7 +544,7 @@ impl Output {
     /// 2. Marks the file as finalized to prevent cleanup on drop
     ///
     /// After calling this method, the file is complete and will remain at the target path.
-    /// This method can only be called once per [`crate::cilassembly::write::output::Output`] instance.
+    /// This method can only be called once per [`crate::cilassembly::writer::output::Output`] instance.
     ///
     /// # Errors
     /// Returns [`crate::Error::WriteFinalizationFailed`] in the following cases:
@@ -551,16 +630,28 @@ impl Output {
         self.write_at(region.offset, data)
     }
 
-    /// Validates that a region is within file bounds.
+    /// Validates that a layout-planned file region is completely within file bounds.
     ///
-    /// Utility method to check if a FileRegion is completely within the file bounds.
-    /// This is useful for validation before performing operations on regions.
+    /// This utility method performs pre-operation validation to ensure that a [`FileRegion`]
+    /// calculated during layout planning is completely within the file boundaries. This is
+    /// particularly useful for validation before performing bulk operations on regions or
+    /// when implementing defensive programming practices.
+    ///
+    /// Unlike the error-generating bounds checks in other methods, this method provides
+    /// a simple boolean result that can be used for conditional logic and validation
+    /// workflows without exception handling overhead.
     ///
     /// # Arguments
-    /// * `region` - The file region to validate
+    ///
+    /// * `region` - A [`FileRegion`] to validate against current file bounds.
+    ///   The region's offset and size are checked to ensure the entire region
+    ///   `[offset..offset+size)` is within file boundaries.
     ///
     /// # Returns
-    /// Returns `true` if the region is completely within file bounds.
+    ///
+    /// Returns `true` if the region is completely within file bounds (including the
+    /// case where the region ends exactly at the file size). Returns `false` if any
+    /// part of the region extends beyond the file or if the region has invalid parameters.
     ///
     /// # Examples
     /// ```rust,ignore
@@ -570,7 +661,7 @@ impl Output {
     /// }
     /// ```
     pub fn region_is_valid(&self, region: &FileRegion) -> bool {
-        region.end_offset() <= self.size()
+        region.end_offset() <= self.size().unwrap_or(0)
     }
 }
 
@@ -603,7 +694,7 @@ mod tests {
         let target_path = temp_dir.path().join("test.bin");
 
         let mmap_file = Output::create(&target_path, 1024).unwrap();
-        assert_eq!(mmap_file.size(), 1024);
+        assert_eq!(mmap_file.size().unwrap(), 1024);
         assert!(!mmap_file.finalized);
     }
 
@@ -628,6 +719,44 @@ mod tests {
         assert_eq!(slice[0], 0x42);
         assert_eq!(&slice[4..8], &[0x78, 0x56, 0x34, 0x12]); // Little endian
         assert_eq!(&slice[8..21], b"Hello, World!");
+    }
+
+    #[test]
+    fn test_copy_range() {
+        let temp_dir = tempdir().unwrap();
+        let target_path = temp_dir.path().join("test.bin");
+
+        let mut mmap_file = Output::create(&target_path, 1024).unwrap();
+
+        // Write some data
+        mmap_file.write_at(0, b"Hello, World!").unwrap();
+
+        // Copy it to another location
+        mmap_file.copy_range(0, 100, 13).unwrap();
+
+        // Verify the copy
+        let slice = mmap_file.as_mut_slice();
+        assert_eq!(&slice[100..113], b"Hello, World!");
+    }
+
+    #[test]
+    fn test_zero_range() {
+        let temp_dir = tempdir().unwrap();
+        let target_path = temp_dir.path().join("test.bin");
+
+        let mut mmap_file = Output::create(&target_path, 1024).unwrap();
+
+        // Write some data
+        mmap_file.write_at(0, b"Hello, World!").unwrap();
+
+        // Zero part of it
+        mmap_file.zero_range(5, 5).unwrap();
+
+        // Verify the zeroing
+        let slice = mmap_file.as_mut_slice();
+        assert_eq!(&slice[0..5], b"Hello");
+        assert_eq!(&slice[5..10], &[0, 0, 0, 0, 0]);
+        assert_eq!(&slice[10..13], b"ld!");
     }
 
     #[test]
