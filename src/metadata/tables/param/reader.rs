@@ -61,11 +61,11 @@
 //! - [`crate::metadata::tables::paramptr`] - Parameter indirection support
 
 use crate::{
-    file::io::{read_le_at, read_le_at_dyn},
     metadata::{
         tables::{ParamRaw, RowReadable, TableInfoRef},
         token::Token,
     },
+    utils::{read_le_at, read_le_at_dyn},
     Result,
 };
 

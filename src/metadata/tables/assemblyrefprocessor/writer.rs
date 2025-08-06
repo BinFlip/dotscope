@@ -28,11 +28,11 @@
 //! module, ensuring that data serialized by this writer can be correctly deserialized.
 
 use crate::{
-    file::io::{write_le_at, write_le_at_dyn},
     metadata::tables::{
         assemblyrefprocessor::AssemblyRefProcessorRaw,
         types::{RowWritable, TableId, TableInfoRef},
     },
+    utils::{write_le_at, write_le_at_dyn},
     Result,
 };
 

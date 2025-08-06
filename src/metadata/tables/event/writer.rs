@@ -19,11 +19,11 @@
 //! - `0x0400` - `RTSpecialName` (runtime should verify name encoding)
 
 use crate::{
-    file::io::{write_le_at, write_le_at_dyn},
     metadata::tables::{
         event::EventRaw,
         types::{CodedIndexType, RowWritable, TableInfoRef},
     },
+    utils::{write_le_at, write_le_at_dyn},
     Result,
 };
 

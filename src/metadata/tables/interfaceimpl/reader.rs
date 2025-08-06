@@ -1,11 +1,11 @@
 use crate::{
-    file::io::read_le_at_dyn,
     metadata::{
         tables::{
             CodedIndex, CodedIndexType, InterfaceImplRaw, RowReadable, TableId, TableInfoRef,
         },
         token::Token,
     },
+    utils::read_le_at_dyn,
     Result,
 };
 

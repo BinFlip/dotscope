@@ -22,11 +22,11 @@
 //! - **Tag 2 (Property)**: References Property table entries for property constants
 
 use crate::{
-    file::io::{write_le_at, write_le_at_dyn},
     metadata::tables::{
         constant::ConstantRaw,
         types::{CodedIndexType, RowWritable, TableInfoRef},
     },
+    utils::{write_le_at, write_le_at_dyn},
     Result,
 };
 
