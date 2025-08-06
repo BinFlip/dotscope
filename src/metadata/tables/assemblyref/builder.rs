@@ -432,7 +432,7 @@ impl AssemblyRefBuilder {
         };
 
         let rid = context.next_rid(TableId::AssemblyRef);
-        let token = Token::new(((TableId::AssemblyRef as u32) << 24) | rid);
+        let token = Token::from_parts(TableId::AssemblyRef, rid);
 
         let assembly_ref = AssemblyRefRaw {
             rid,

@@ -50,11 +50,11 @@
 //! - [`crate::metadata::tables::typedef::raw`] - Raw TypeDef structure definition
 
 use crate::{
-    file::io::{read_le_at, read_le_at_dyn},
     metadata::{
         tables::{CodedIndex, CodedIndexType, RowReadable, TableId, TableInfoRef, TypeDefRaw},
         token::Token,
     },
+    utils::{read_le_at, read_le_at_dyn},
     Result,
 };
 

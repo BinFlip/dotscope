@@ -41,11 +41,11 @@
 //! - [`crate::metadata::tables::typeref::raw`] - Raw TypeRef structure definition
 
 use crate::{
-    file::io::read_le_at_dyn,
     metadata::{
         tables::{CodedIndex, CodedIndexType, RowReadable, TableInfoRef, TypeRefRaw},
         token::Token,
     },
+    utils::read_le_at_dyn,
     Result,
 };
 

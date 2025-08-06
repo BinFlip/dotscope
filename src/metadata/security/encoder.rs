@@ -127,10 +127,10 @@
 //! - Microsoft .NET Framework Security Documentation (archived)
 
 use crate::{
-    file::io::{write_compressed_int, write_compressed_uint},
     metadata::security::{
         ArgumentType, ArgumentValue, NamedArgument, Permission, PermissionSetFormat,
     },
+    utils::{write_compressed_int, write_compressed_uint},
     Result,
 };
 use std::{collections::HashMap, io::Write};

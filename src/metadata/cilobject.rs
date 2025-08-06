@@ -156,14 +156,6 @@
 //! caching and lazy loading use appropriate synchronization primitives to ensure
 //! correctness in multi-threaded scenarios. All public APIs are [`std::marker::Send`] and [`std::marker::Sync`].
 //!
-//! # Integration
-//!
-//! This module integrates with:
-//! - [`crate::disassembler`] - Method body disassembly and instruction decoding  
-//! - [`crate::metadata::tables`] - Low-level metadata table access
-//! - [`crate::metadata::typesystem`] - Type resolution and signature parsing
-//! - [`crate::metadata::validation`] - Configurable validation during loading
-//! - Low-level PE file parsing and memory management components
 use std::{path::Path, sync::Arc};
 
 use crate::{

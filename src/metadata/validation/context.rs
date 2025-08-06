@@ -219,13 +219,13 @@ impl<'a> RawValidationContext<'a> {
 
     /// Creates a new raw validation context for modification validation.
     ///
-    /// This constructor is used when validating [`crate::cilassembly::AssemblyChanges`] against
+    /// This constructor is used when validating assembly changes against
     /// an original [`crate::metadata::cilassemblyview::CilAssemblyView`].
     ///
     /// # Arguments
     ///
     /// * `view` - The original [`crate::metadata::cilassemblyview::CilAssemblyView`]
-    /// * `changes` - The [`crate::cilassembly::AssemblyChanges`] to validate
+    /// * `changes` - The assembly changes to validate
     /// * `scanner` - Shared [`crate::metadata::validation::scanner::ReferenceScanner`]
     /// * `config` - [`crate::metadata::validation::config::ValidationConfig`] controlling validation
     ///
@@ -250,7 +250,7 @@ impl<'a> RawValidationContext<'a> {
     ///
     /// # Returns
     ///
-    /// Returns `Some(&`[`crate::cilassembly::AssemblyChanges`]`)` for modification validation,
+    /// Returns `Some(&AssemblyChanges)` for modification validation,
     /// `None` for loading validation contexts.
     #[must_use]
     pub fn changes(&self) -> Option<&AssemblyChanges> {

@@ -28,8 +28,8 @@ use std::sync::Arc;
 use strum::{EnumCount, IntoEnumIterator};
 
 use crate::{
-    file::io::{read_le, read_le_at},
     metadata::tables::types::{CodedIndexType, TableId},
+    utils::{read_le, read_le_at},
     Result,
 };
 

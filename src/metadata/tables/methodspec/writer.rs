@@ -27,11 +27,11 @@
 //! - **Runtime dispatch**: Enabling efficient generic method resolution
 
 use crate::{
-    file::io::write_le_at_dyn,
     metadata::tables::{
         methodspec::MethodSpecRaw,
         types::{CodedIndexType, RowWritable, TableInfoRef},
     },
+    utils::write_le_at_dyn,
     Result,
 };
 

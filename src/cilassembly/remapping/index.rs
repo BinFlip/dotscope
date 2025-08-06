@@ -127,6 +127,7 @@ use crate::{
 ///
 /// This type is not [`Send`] or [`Sync`] as it contains large mutable hash maps
 /// optimized for single-threaded batch processing.
+#[derive(Debug, Clone)]
 pub struct IndexRemapper {
     /// String heap: Original index -> Final index  
     pub string_map: HashMap<u32, u32>,

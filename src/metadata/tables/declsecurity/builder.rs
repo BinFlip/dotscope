@@ -386,8 +386,8 @@ mod tests {
                 .unwrap();
 
             // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x0E000000); // DeclSecurity table prefix
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid); // RID should be existing + 1
+            assert!(token.is_table(TableId::DeclSecurity)); // DeclSecurity table prefix
+            assert_eq!(token.row(), expected_rid); // RID should be existing + 1
         }
     }
 
@@ -426,7 +426,7 @@ mod tests {
                     .unwrap();
 
                 // All should succeed with DeclSecurity table prefix
-                assert_eq!(token.value() & 0xFF000000, 0x0E000000);
+                assert!(token.is_table(TableId::DeclSecurity));
             }
         }
     }
@@ -472,9 +472,9 @@ mod tests {
                 .unwrap();
 
             // All should succeed with different tokens
-            assert_eq!(assembly_security.value() & 0xFF000000, 0x0E000000);
-            assert_eq!(type_security.value() & 0xFF000000, 0x0E000000);
-            assert_eq!(method_security.value() & 0xFF000000, 0x0E000000);
+            assert!(assembly_security.is_table(TableId::DeclSecurity));
+            assert!(type_security.is_table(TableId::DeclSecurity));
+            assert!(method_security.is_table(TableId::DeclSecurity));
             assert_ne!(assembly_security.value(), type_security.value());
             assert_ne!(assembly_security.value(), method_security.value());
             assert_ne!(type_security.value(), method_security.value());
@@ -501,7 +501,7 @@ mod tests {
                 .unwrap();
 
             // Should succeed
-            assert_eq!(token.value() & 0xFF000000, 0x0E000000);
+            assert!(token.is_table(TableId::DeclSecurity));
         }
     }
 
@@ -523,7 +523,7 @@ mod tests {
                 .unwrap();
 
             // Should succeed
-            assert_eq!(token.value() & 0xFF000000, 0x0E000000);
+            assert!(token.is_table(TableId::DeclSecurity));
         }
     }
 
@@ -701,12 +701,9 @@ mod tests {
                 .unwrap();
 
             // Both should succeed and have different RIDs
-            assert_eq!(demand_security.value() & 0xFF000000, 0x0E000000);
-            assert_eq!(assert_security.value() & 0xFF000000, 0x0E000000);
-            assert_ne!(
-                demand_security.value() & 0x00FFFFFF,
-                assert_security.value() & 0x00FFFFFF
-            );
+            assert!(demand_security.is_table(TableId::DeclSecurity));
+            assert!(assert_security.is_table(TableId::DeclSecurity));
+            assert_ne!(demand_security.row(), assert_security.row());
         }
     }
 
@@ -761,23 +758,14 @@ mod tests {
                 .unwrap();
 
             // All should succeed with proper tokens
-            assert_eq!(file_security.value() & 0xFF000000, 0x0E000000);
-            assert_eq!(assembly_security.value() & 0xFF000000, 0x0E000000);
-            assert_eq!(privilege_security.value() & 0xFF000000, 0x0E000000);
+            assert!(file_security.is_table(TableId::DeclSecurity));
+            assert!(assembly_security.is_table(TableId::DeclSecurity));
+            assert!(privilege_security.is_table(TableId::DeclSecurity));
 
             // All should have different RIDs
-            assert_ne!(
-                file_security.value() & 0x00FFFFFF,
-                assembly_security.value() & 0x00FFFFFF
-            );
-            assert_ne!(
-                file_security.value() & 0x00FFFFFF,
-                privilege_security.value() & 0x00FFFFFF
-            );
-            assert_ne!(
-                assembly_security.value() & 0x00FFFFFF,
-                privilege_security.value() & 0x00FFFFFF
-            );
+            assert_ne!(file_security.row(), assembly_security.row());
+            assert_ne!(file_security.row(), privilege_security.row());
+            assert_ne!(assembly_security.row(), privilege_security.row());
         }
     }
 }

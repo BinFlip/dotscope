@@ -29,11 +29,11 @@
 //! - **Security verification**: Hash-based integrity checking
 
 use crate::{
-    file::io::{write_le_at, write_le_at_dyn},
     metadata::tables::{
         file::FileRaw,
         types::{RowWritable, TableInfoRef},
     },
+    utils::{write_le_at, write_le_at_dyn},
     Result,
 };
 

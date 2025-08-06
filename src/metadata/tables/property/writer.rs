@@ -20,11 +20,11 @@
 //! - `0x1000` - `HasDefault` (property has a default value defined)
 
 use crate::{
-    file::io::{write_le_at, write_le_at_dyn},
     metadata::tables::{
         property::PropertyRaw,
         types::{RowWritable, TableInfoRef},
     },
+    utils::{write_le_at, write_le_at_dyn},
     Result,
 };
 

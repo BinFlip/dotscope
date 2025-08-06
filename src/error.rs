@@ -92,16 +92,6 @@
 //! between threads and shared across thread boundaries. This enables proper error
 //! propagation in concurrent parsing and analysis operations.
 //!
-//! # Integration
-//!
-//! This module integrates with:
-//! - [`crate::metadata`] - Uses error types for metadata parsing failures
-//! - [`crate::disassembler`] - Reports disassembly and analysis errors
-//! - [`crate::file`] - Handles file I/O and parsing errors
-//!
-//! The error system supports automatic conversion from external library errors
-//! (like `std::io::Error` and `goblin::error::Error`) through the `From` trait,
-//! enabling seamless error propagation throughout the library.
 
 use thiserror::Error;
 

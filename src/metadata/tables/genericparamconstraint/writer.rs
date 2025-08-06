@@ -28,11 +28,11 @@
 //! - **Generic constraints**: `where T : IComparable<T>` (generic interface constraints)
 
 use crate::{
-    file::io::write_le_at_dyn,
     metadata::tables::{
         genericparamconstraint::GenericParamConstraintRaw,
         types::{CodedIndexType, RowWritable, TableId, TableInfoRef},
     },
+    utils::write_le_at_dyn,
     Result,
 };
 

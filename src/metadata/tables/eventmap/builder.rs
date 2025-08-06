@@ -288,7 +288,7 @@ impl EventMapBuilder {
         }
 
         let rid = context.next_rid(TableId::EventMap);
-        let token = Token::new(((TableId::EventMap as u32) << 24) | rid);
+        let token = Token::from_parts(TableId::EventMap, rid);
 
         let event_map = EventMapRaw {
             rid,

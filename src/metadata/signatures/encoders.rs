@@ -28,6 +28,7 @@ use crate::{
         token::Token,
         typesystem::TypeSignatureEncoder,
     },
+    utils::write_compressed_uint,
     Error, Result,
 };
 
@@ -58,7 +59,7 @@ fn encode_custom_modifier(modifier: &CustomModifier, buffer: &mut Vec<u8>) {
     buffer.push(modifier_type);
 
     let coded_index = encode_type_def_or_ref_coded_index(modifier.modifier_type);
-    TypeSignatureEncoder::encode_compressed_uint(coded_index, buffer);
+    write_compressed_uint(coded_index, buffer);
 }
 
 /// Encodes a token as a TypeDefOrRef coded index according to ECMA-335 §II.24.2.6.
@@ -193,7 +194,7 @@ pub fn encode_method_signature(signature: &SignatureMethod) -> Result<Vec<u8>> {
                 signature.params.len()
             ),
         })?;
-    TypeSignatureEncoder::encode_compressed_uint(param_count, &mut buffer);
+    write_compressed_uint(param_count, &mut buffer);
 
     encode_parameter(&signature.return_type, &mut buffer)?;
     for param in &signature.params {
@@ -279,7 +280,7 @@ pub fn encode_property_signature(signature: &SignatureProperty) -> Result<Vec<u8
                 signature.params.len()
             ),
         })?;
-    TypeSignatureEncoder::encode_compressed_uint(param_count, &mut buffer);
+    write_compressed_uint(param_count, &mut buffer);
 
     // Encode custom modifiers before the property type
     // Property signatures can have custom modifiers on the property type itself
@@ -322,7 +323,7 @@ pub fn encode_local_var_signature(signature: &SignatureLocalVariables) -> Result
 
     buffer.push(0x07); // LOCAL_SIG signature marker
 
-    TypeSignatureEncoder::encode_compressed_uint(
+    write_compressed_uint(
         u32::try_from(signature.locals.len()).map_err(|_| {
             Error::Error(format!(
                 "LocalVar signature has too many locals: {}",

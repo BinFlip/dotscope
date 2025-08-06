@@ -53,11 +53,11 @@
 //! - [`crate::metadata::tables::moduleref`] - External module references
 
 use crate::{
-    file::io::{read_le_at, read_le_at_dyn},
     metadata::{
         tables::{ModuleRaw, RowReadable, TableInfoRef},
         token::Token,
     },
+    utils::{read_le_at, read_le_at_dyn},
     Result,
 };
 
