@@ -1,9 +1,9 @@
 use crate::{
-    file::io::read_le_at,
     metadata::{
         tables::{EncMapRaw, RowReadable, TableInfoRef},
         token::Token,
     },
+    utils::read_le_at,
     Result,
 };
 

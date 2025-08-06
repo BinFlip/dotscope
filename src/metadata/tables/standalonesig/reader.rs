@@ -41,11 +41,11 @@
 //! - [`crate::metadata::tables::standalonesig::raw`] - Raw structure definition
 
 use crate::{
-    file::io::read_le_at_dyn,
     metadata::{
         tables::{RowReadable, StandAloneSigRaw, TableInfoRef},
         token::Token,
     },
+    utils::read_le_at_dyn,
     Result,
 };
 

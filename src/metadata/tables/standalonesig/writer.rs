@@ -22,11 +22,11 @@
 //! - **CIL Instruction References**: Signatures referenced by call/calli instructions
 
 use crate::{
-    file::io::write_le_at_dyn,
     metadata::tables::{
         standalonesig::StandAloneSigRaw,
         types::{RowWritable, TableInfoRef},
     },
+    utils::write_le_at_dyn,
     Result,
 };
 

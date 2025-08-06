@@ -50,11 +50,11 @@
 //! - [`crate::metadata::tables::typedef`] - Type definition entries for nested and enclosing types
 
 use crate::{
-    file::io::read_le_at_dyn,
     metadata::{
         tables::{NestedClassRaw, RowReadable, TableId, TableInfoRef},
         token::Token,
     },
+    utils::read_le_at_dyn,
     Result,
 };
 

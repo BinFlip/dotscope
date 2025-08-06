@@ -159,7 +159,7 @@
 //! - **ECMA-335 II.24.2.2**: Stream header format and directory structure
 //! - **ECMA-335 II.24.2**: Complete metadata stream architecture overview
 
-use crate::{file::io::read_le, Result};
+use crate::{utils::read_le, Result};
 
 /// ECMA-335 compliant stream header providing metadata stream location and identification.
 ///

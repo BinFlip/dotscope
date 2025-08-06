@@ -37,11 +37,11 @@
 //! - [ECMA-335 II.22.26](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `ParamPtr` table specification
 
 use crate::{
-    file::io::write_le_at_dyn,
     metadata::tables::{
         paramptr::ParamPtrRaw,
         types::{RowWritable, TableId, TableInfoRef},
     },
+    utils::write_le_at_dyn,
     Result,
 };
 

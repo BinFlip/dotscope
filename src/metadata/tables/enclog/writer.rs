@@ -36,11 +36,11 @@
 //! module, ensuring that data serialized by this writer can be correctly deserialized.
 
 use crate::{
-    file::io::write_le_at,
     metadata::tables::{
         enclog::EncLogRaw,
         types::{RowWritable, TableInfoRef},
     },
+    utils::write_le_at,
     Result,
 };
 

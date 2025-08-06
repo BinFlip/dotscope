@@ -297,7 +297,6 @@ use std::sync::Arc;
 use strum::IntoEnumIterator;
 
 use crate::{
-    file::io::read_le,
     impl_table_access,
     metadata::tables::{
         AssemblyOsRaw, AssemblyProcessorRaw, AssemblyRaw, AssemblyRefOsRaw,
@@ -312,6 +311,7 @@ use crate::{
         RowReadable, StandAloneSigRaw, StateMachineMethodRaw, TableAccess, TableData, TableId,
         TableInfo, TableInfoRef, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
     },
+    utils::read_le,
     Result,
 };
 

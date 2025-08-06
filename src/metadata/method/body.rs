@@ -104,8 +104,8 @@
 //! - ECMA-335 6th Edition, Partition II, Section 25.4.6 - Exception Handling Data Sections
 
 use crate::{
-    file::io::{read_le, read_le_at},
     metadata::method::{ExceptionHandler, ExceptionHandlerFlags, MethodBodyFlags, SectionFlags},
+    utils::{read_le, read_le_at},
     Result,
 };
 

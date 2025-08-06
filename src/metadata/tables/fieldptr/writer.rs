@@ -37,11 +37,11 @@
 //! - [ECMA-335 II.22.18](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `FieldPtr` table specification
 
 use crate::{
-    file::io::write_le_at_dyn,
     metadata::tables::{
         fieldptr::FieldPtrRaw,
         types::{RowWritable, TableId, TableInfoRef},
     },
+    utils::write_le_at_dyn,
     Result,
 };
 

@@ -42,6 +42,7 @@ use crate::{
         signatures::{CustomModifier, SignatureMethod, TypeSignature},
         token::Token,
     },
+    utils::{write_compressed_int, write_compressed_uint},
     Error, Result,
 };
 
@@ -212,12 +213,12 @@ impl TypeSignatureEncoder {
             // Generic parameters
             TypeSignature::GenericParamType(index) => {
                 buffer.push(0x13); // ELEMENT_TYPE_VAR
-                Self::encode_compressed_uint(*index, buffer);
+                write_compressed_uint(*index, buffer);
             }
 
             TypeSignature::GenericParamMethod(index) => {
                 buffer.push(0x1E); // ELEMENT_TYPE_MVAR
-                Self::encode_compressed_uint(*index, buffer);
+                write_compressed_uint(*index, buffer);
             }
 
             // Reference and pointer types
@@ -249,7 +250,7 @@ impl TypeSignatureEncoder {
             TypeSignature::Array(array) => {
                 buffer.push(0x14); // ELEMENT_TYPE_ARRAY
                 Self::encode_type_signature_internal(&array.base, buffer, depth + 1)?;
-                Self::encode_compressed_uint(array.rank, buffer);
+                write_compressed_uint(array.rank, buffer);
 
                 // Collect sizes and lower bounds from dimensions
                 let mut sizes = Vec::new();
@@ -265,18 +266,18 @@ impl TypeSignatureEncoder {
                 }
 
                 // Encode NumSizes and Sizes
-                Self::encode_compressed_uint(
+                write_compressed_uint(
                     u32::try_from(sizes.len()).map_err(|_| {
                         Error::Error(format!("Array sizes length out of range: {}", sizes.len()))
                     })?,
                     buffer,
                 );
                 for size in sizes {
-                    Self::encode_compressed_uint(size, buffer);
+                    write_compressed_uint(size, buffer);
                 }
 
                 // Encode NumLoBounds and LoBounds
-                Self::encode_compressed_uint(
+                write_compressed_uint(
                     u32::try_from(lower_bounds.len()).map_err(|_| {
                         Error::Error(format!(
                             "Array lower bounds length out of range: {}",
@@ -288,7 +289,7 @@ impl TypeSignatureEncoder {
                 #[allow(clippy::cast_possible_wrap)]
                 // Cast to i32 is correct per ECMA-335 - array lower bounds are signed
                 for lower_bound in lower_bounds {
-                    Self::encode_compressed_int(lower_bound as i32, buffer);
+                    write_compressed_int(lower_bound as i32, buffer);
                 }
             }
 
@@ -296,7 +297,7 @@ impl TypeSignatureEncoder {
             TypeSignature::GenericInst(base_type, type_args) => {
                 buffer.push(0x15); // ELEMENT_TYPE_GENERICINST
                 Self::encode_type_signature_internal(base_type, buffer, depth + 1)?;
-                Self::encode_compressed_uint(
+                write_compressed_uint(
                     u32::try_from(type_args.len()).map_err(|_| {
                         Error::Error(format!(
                             "Generic type arguments length out of range: {}",
@@ -417,7 +418,7 @@ impl TypeSignatureEncoder {
 
         buffer.push(calling_conv);
 
-        Self::encode_compressed_uint(
+        write_compressed_uint(
             u32::try_from(method_sig.params.len()).map_err(|_| {
                 Error::Error(format!(
                     "Method parameters length out of range: {}",
@@ -505,62 +506,8 @@ impl TypeSignatureEncoder {
             }
         };
 
-        Self::encode_compressed_uint(coded_index, buffer);
+        write_compressed_uint(coded_index, buffer);
         Ok(())
-    }
-
-    /// Encodes a compressed unsigned integer.
-    ///
-    /// Encodes an unsigned integer using .NET's compressed integer format.
-    /// This format uses variable-length encoding to minimize space usage
-    /// for small values while supporting the full 32-bit range.
-    ///
-    /// # Encoding Format
-    ///
-    /// - **0x00-0x7F**: Single byte (value & 0x7F)
-    /// - **0x80-0x3FFF**: Two bytes (0x80 | (value >> 8), value & 0xFF)
-    /// - **0x4000-0x1FFFFFFF**: Four bytes (0xC0 | (value >> 24), (value >> 16) & 0xFF, (value >> 8) & 0xFF, value & 0xFF)
-    ///
-    /// # Arguments
-    ///
-    /// * `value` - The unsigned integer to encode
-    /// * `buffer` - The output buffer to write encoded bytes to
-    #[allow(clippy::cast_possible_truncation)] // Range checks ensure safety
-    pub fn encode_compressed_uint(value: u32, buffer: &mut Vec<u8>) {
-        if value < 0x80 {
-            buffer.push(value as u8);
-        } else if value < 0x4000 {
-            buffer.push(0x80 | ((value >> 8) as u8));
-            buffer.push(value as u8);
-        } else {
-            buffer.push(0xC0 | ((value >> 24) as u8));
-            buffer.push((value >> 16) as u8);
-            buffer.push((value >> 8) as u8);
-            buffer.push(value as u8);
-        }
-    }
-
-    /// Encodes a compressed signed integer.
-    ///
-    /// Encodes a signed integer using .NET's compressed integer format.
-    /// This format uses variable-length encoding to minimize space usage
-    /// for small values while supporting the full 32-bit signed range.
-    ///
-    /// # Arguments
-    ///
-    /// * `value` - The signed integer to encode
-    /// * `buffer` - The output buffer to write encoded bytes to
-    #[allow(clippy::cast_possible_truncation)] // Conversion logic ensures safety
-    #[allow(clippy::cast_sign_loss)] // Conversion is safe for encoding algorithm - signed to unsigned is intentional
-    pub fn encode_compressed_int(value: i32, buffer: &mut Vec<u8>) {
-        // Convert signed to unsigned for encoding
-        let unsigned_value = if value >= 0 {
-            (value as u32) << 1
-        } else {
-            (((-value) as u32) << 1) | 1
-        };
-
-        Self::encode_compressed_uint(unsigned_value, buffer);
     }
 }
 
@@ -762,37 +709,6 @@ mod tests {
         assert_eq!(encoded[3], 0x02); // argument count = 2
         assert_eq!(encoded[4], 0x0E); // ELEMENT_TYPE_STRING
         assert_eq!(encoded[5], 0x15); // Start of nested GENERICINST
-    }
-
-    #[test]
-    fn test_encode_compressed_uint() {
-        let mut buffer = Vec::new();
-
-        // Test small values (< 0x80)
-        TypeSignatureEncoder::encode_compressed_uint(0x00, &mut buffer);
-        assert_eq!(buffer, vec![0x00]);
-        buffer.clear();
-
-        TypeSignatureEncoder::encode_compressed_uint(0x7F, &mut buffer);
-        assert_eq!(buffer, vec![0x7F]);
-        buffer.clear();
-
-        // Test medium values (< 0x4000)
-        TypeSignatureEncoder::encode_compressed_uint(0x80, &mut buffer);
-        assert_eq!(buffer, vec![0x80, 0x80]);
-        buffer.clear();
-
-        TypeSignatureEncoder::encode_compressed_uint(0x3FFF, &mut buffer);
-        assert_eq!(buffer, vec![0xBF, 0xFF]);
-        buffer.clear();
-
-        // Test large values
-        TypeSignatureEncoder::encode_compressed_uint(0x4000, &mut buffer);
-        assert_eq!(buffer, vec![0xC0, 0x00, 0x40, 0x00]);
-        buffer.clear();
-
-        TypeSignatureEncoder::encode_compressed_uint(0x1FFFFFFF, &mut buffer);
-        assert_eq!(buffer, vec![0xDF, 0xFF, 0xFF, 0xFF]);
     }
 
     #[test]
