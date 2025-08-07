@@ -228,7 +228,7 @@ impl Exports {
     /// # Thread Safety
     ///
     /// This method is thread-safe and can be called concurrently from multiple threads.
-    pub fn get(&self, token: &Token) -> Option<Entry<Token, ExportedTypeRc>> {
+    pub fn get(&self, token: &Token) -> Option<Entry<'_, Token, ExportedTypeRc>> {
         self.data.get(token)
     }
 
@@ -273,7 +273,7 @@ impl Exports {
     ///     println!("Token: {}, Name: {}", token, exported_type.name);
     /// }
     /// ```
-    pub fn iter(&self) -> crossbeam_skiplist::map::Iter<Token, ExportedTypeRc> {
+    pub fn iter(&self) -> crossbeam_skiplist::map::Iter<'_, Token, ExportedTypeRc> {
         self.data.iter()
     }
 

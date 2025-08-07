@@ -558,7 +558,7 @@ impl Resources {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
-    pub fn iter(&self) -> dashmap::iter::Iter<String, ManifestResourceRc> {
+    pub fn iter(&self) -> dashmap::iter::Iter<'_, String, ManifestResourceRc> {
         self.data.iter()
     }
 }

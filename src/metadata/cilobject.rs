@@ -529,7 +529,7 @@ impl CilObject {
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn tables(&self) -> Option<&TablesHeader> {
+    pub fn tables(&self) -> Option<&TablesHeader<'_>> {
         self.assembly_view.tables()
     }
 
@@ -559,7 +559,7 @@ impl CilObject {
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn strings(&self) -> Option<&Strings> {
+    pub fn strings(&self) -> Option<&Strings<'_>> {
         self.assembly_view.strings()
     }
 
@@ -589,7 +589,7 @@ impl CilObject {
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn userstrings(&self) -> Option<&UserStrings> {
+    pub fn userstrings(&self) -> Option<&UserStrings<'_>> {
         self.assembly_view.userstrings()
     }
 
@@ -619,7 +619,7 @@ impl CilObject {
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn guids(&self) -> Option<&Guid> {
+    pub fn guids(&self) -> Option<&Guid<'_>> {
         self.assembly_view.guids()
     }
 
@@ -649,7 +649,7 @@ impl CilObject {
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn blob(&self) -> Option<&Blob> {
+    pub fn blob(&self) -> Option<&Blob<'_>> {
         self.assembly_view.blobs()
     }
 

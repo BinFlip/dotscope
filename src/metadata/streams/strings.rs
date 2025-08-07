@@ -531,7 +531,7 @@ impl<'a> Strings<'a> {
     /// - [`Strings::get`]: Access individual strings with UTF-8 validation
     /// - [`Strings::iter`]: Sequential iteration over all heap strings
     /// - [ECMA-335 II.24.2.3](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Strings heap format specification
-    pub fn from(data: &[u8]) -> Result<Strings> {
+    pub fn from(data: &[u8]) -> Result<Strings<'_>> {
         if data.is_empty() || data[0] != 0 {
             return Err(malformed_error!("Provided #String heap is empty"));
         }

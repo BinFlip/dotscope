@@ -1139,7 +1139,7 @@ impl TypeRegistry {
     }
 
     /// Returns an iterator over all types in the registry
-    pub fn iter(&self) -> crossbeam_skiplist::map::Iter<Token, CilTypeRc> {
+    pub fn iter(&self) -> crossbeam_skiplist::map::Iter<'_, Token, CilTypeRc> {
         self.types.iter()
     }
 

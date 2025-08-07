@@ -454,7 +454,7 @@ impl File {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
-    pub fn header(&self) -> &Header {
+    pub fn header(&self) -> &Header<'_> {
         self.with_pe(|pe| &pe.header)
     }
 
@@ -684,7 +684,7 @@ impl File {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
-    pub fn imports(&self) -> Option<&Vec<goblin::pe::import::Import>> {
+    pub fn imports(&self) -> Option<&Vec<goblin::pe::import::Import<'_>>> {
         self.with_pe(|pe| {
             if pe.imports.is_empty() {
                 None
@@ -721,7 +721,7 @@ impl File {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
-    pub fn exports(&self) -> Option<&Vec<goblin::pe::export::Export>> {
+    pub fn exports(&self) -> Option<&Vec<goblin::pe::export::Export<'_>>> {
         self.with_pe(|pe| {
             if pe.exports.is_empty() {
                 None

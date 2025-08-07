@@ -877,7 +877,7 @@ impl Imports {
     /// # Thread Safety
     ///
     /// This method is thread-safe and can be called concurrently from multiple threads.
-    pub fn iter(&self) -> crossbeam_skiplist::map::Iter<Token, ImportRc> {
+    pub fn iter(&self) -> crossbeam_skiplist::map::Iter<'_, Token, ImportRc> {
         self.data.iter()
     }
 

@@ -526,7 +526,7 @@ impl ImportsInfo {
     /// # Thread Safety
     ///
     /// This method is thread-safe and can be called concurrently from multiple threads.
-    pub fn iter(&self) -> std::slice::Iter<ImportDeclaration> {
+    pub fn iter(&self) -> std::slice::Iter<'_, ImportDeclaration> {
         self.declarations.iter()
     }
 }

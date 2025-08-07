@@ -536,7 +536,7 @@ impl CilAssemblyView {
     /// - `Some(&TablesHeader)` if metadata tables are present
     /// - `None` if no tables stream exists
     #[must_use]
-    pub fn tables(&self) -> Option<&TablesHeader> {
+    pub fn tables(&self) -> Option<&TablesHeader<'_>> {
         self.with_data(|data| data.metadata_tables.as_ref())
     }
 
@@ -547,7 +547,7 @@ impl CilAssemblyView {
     /// - `Some(&Strings)` if the strings heap is present
     /// - `None` if no #Strings stream exists
     #[must_use]
-    pub fn strings(&self) -> Option<&Strings> {
+    pub fn strings(&self) -> Option<&Strings<'_>> {
         self.with_data(|data| data.strings.as_ref())
     }
 
@@ -558,7 +558,7 @@ impl CilAssemblyView {
     /// - `Some(&UserStrings)` if the user strings heap is present
     /// - `None` if no #US stream exists
     #[must_use]
-    pub fn userstrings(&self) -> Option<&UserStrings> {
+    pub fn userstrings(&self) -> Option<&UserStrings<'_>> {
         self.with_data(|data| data.userstrings.as_ref())
     }
 
@@ -569,7 +569,7 @@ impl CilAssemblyView {
     /// - `Some(&Guid)` if the GUID heap is present
     /// - `None` if no #GUID stream exists
     #[must_use]
-    pub fn guids(&self) -> Option<&Guid> {
+    pub fn guids(&self) -> Option<&Guid<'_>> {
         self.with_data(|data| data.guids.as_ref())
     }
 
@@ -580,7 +580,7 @@ impl CilAssemblyView {
     /// - `Some(&Blob)` if the blob heap is present
     /// - `None` if no #Blob stream exists
     #[must_use]
-    pub fn blobs(&self) -> Option<&Blob> {
+    pub fn blobs(&self) -> Option<&Blob<'_>> {
         self.with_data(|data| data.blobs.as_ref())
     }
 
