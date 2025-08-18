@@ -2021,7 +2021,7 @@ impl<'a> LayoutPlanner<'a> {
         // Stream directory entries
         for stream in &metadata_layout.streams {
             // Ensure stream size is 4-byte aligned
-            let aligned_size = align_to_4_bytes(u64::from(stream.size));
+            let aligned_size = align_to_4_bytes(u64::from(stream.size)) as u32;
             metadata_root_data.extend_from_slice(&stream.offset_from_root.to_le_bytes()); // Offset
             metadata_root_data.extend_from_slice(&aligned_size.to_le_bytes()); // Size (4-byte aligned)
             metadata_root_data.extend_from_slice(stream.name.as_bytes()); // Name
