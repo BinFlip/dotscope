@@ -4,7 +4,8 @@
 //! for creating and verifying test data related to file operations.
 
 use crate::file::File;
-use goblin::pe::{data_directories::DataDirectoryType, header::PE_MAGIC};
+use crate::DataDirectoryType;
+use goblin::pe::header::DOS_MAGIC;
 
 /// Verifies the correctness of a loaded [`crate::file::File`] instance.
 ///
@@ -27,13 +28,11 @@ pub fn verify_file(file: &File) {
 
     assert_eq!(file.offset_to_rva(0x1010).unwrap(), 0x1010);
 
-    let header = file.header();
-    assert_eq!(header.signature, PE_MAGIC);
-
     let header_dos = file.header_dos();
+    assert_eq!(header_dos.signature, DOS_MAGIC);
     assert_eq!(header_dos.checksum, 0);
 
-    let header_optional = file.header_optional().unwrap();
+    let header_optional = file.header_optional().as_ref().unwrap();
     let clr_header = header_optional
         .data_directories
         .get_clr_runtime_header()
@@ -43,7 +42,8 @@ pub fn verify_file(file: &File) {
 
     assert!(
         file.sections()
-            .any(|section| section.name == ".text\0\0\0".as_bytes()),
+            .iter()
+            .any(|section| section.name.as_str() == ".text"),
         "Text section missing!"
     );
     assert!(

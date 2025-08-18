@@ -5,6 +5,7 @@
 //! and ensuring they can be loaded back correctly with the modifications intact.
 
 use dotscope::prelude::*;
+use dotscope::DataDirectoryType;
 use std::path::Path;
 
 #[test]
@@ -43,7 +44,7 @@ fn test_native_imports_with_minimal_changes() -> Result<()> {
             // Verify the import directory exists
             let import_directory = reloaded_view
                 .file()
-                .get_data_directory(goblin::pe::data_directories::DataDirectoryType::ImportTable);
+                .get_data_directory(DataDirectoryType::ImportTable);
             assert!(import_directory.is_some(), "Should have import directory");
         }
         Err(e) => {
@@ -62,7 +63,7 @@ fn add_native_imports_to_crafted_2() -> Result<()> {
     // Check if assembly already has native imports
     let _original_has_imports = view
         .file()
-        .get_data_directory(goblin::pe::data_directories::DataDirectoryType::ImportTable)
+        .get_data_directory(DataDirectoryType::ImportTable)
         .is_some();
 
     let assembly = view.to_owned();
@@ -109,7 +110,7 @@ fn add_native_imports_to_crafted_2() -> Result<()> {
     // Verify the assembly now has an import directory
     let import_directory = modified_view
         .file()
-        .get_data_directory(goblin::pe::data_directories::DataDirectoryType::ImportTable);
+        .get_data_directory(DataDirectoryType::ImportTable);
 
     assert!(
         import_directory.is_some(),
@@ -135,7 +136,7 @@ fn add_native_imports_to_crafted_2() -> Result<()> {
     );
 
     // Verify we have the DLLs we added by checking the import descriptors
-    let dll_names: Vec<&str> = imports.iter().map(|imp| imp.dll).collect();
+    let dll_names: Vec<&str> = imports.iter().map(|imp| imp.dll.as_str()).collect();
     assert!(
         dll_names.contains(&"kernel32.dll"),
         "Should have kernel32.dll in import table"
@@ -149,7 +150,7 @@ fn add_native_imports_to_crafted_2() -> Result<()> {
     let kernel32_functions: Vec<&str> = imports
         .iter()
         .filter(|imp| imp.dll == "kernel32.dll")
-        .map(|imp| imp.name.as_ref())
+        .filter_map(|imp| imp.name.as_deref())
         .collect();
 
     assert_eq!(
@@ -170,7 +171,7 @@ fn add_native_imports_to_crafted_2() -> Result<()> {
     let user32_functions: Vec<&str> = imports
         .iter()
         .filter(|imp| imp.dll == "user32.dll")
-        .map(|imp| imp.name.as_ref())
+        .filter_map(|imp| imp.name.as_deref())
         .collect();
 
     assert_eq!(
@@ -197,7 +198,7 @@ fn add_native_exports_to_crafted_2() -> Result<()> {
     // Check if assembly already has native exports
     let _original_has_exports = view
         .file()
-        .get_data_directory(goblin::pe::data_directories::DataDirectoryType::ExportTable)
+        .get_data_directory(DataDirectoryType::ExportTable)
         .is_some();
 
     let assembly = view.to_owned();
@@ -241,7 +242,7 @@ fn add_native_exports_to_crafted_2() -> Result<()> {
     // Verify the assembly now has an export directory
     let export_directory = modified_view
         .file()
-        .get_data_directory(goblin::pe::data_directories::DataDirectoryType::ExportTable);
+        .get_data_directory(DataDirectoryType::ExportTable);
 
     assert!(
         export_directory.is_some(),
@@ -256,7 +257,7 @@ fn add_native_exports_to_crafted_2() -> Result<()> {
     // Check export directory first
     let export_directory = modified_view
         .file()
-        .get_data_directory(goblin::pe::data_directories::DataDirectoryType::ExportTable);
+        .get_data_directory(DataDirectoryType::ExportTable);
 
     let reloaded_assembly = modified_view.to_owned();
     let parsed_exports = reloaded_assembly.native_exports();
@@ -425,7 +426,7 @@ fn add_both_imports_and_exports_to_crafted_2() -> Result<()> {
     // Verify import directory
     let import_directory = modified_view
         .file()
-        .get_data_directory(goblin::pe::data_directories::DataDirectoryType::ImportTable);
+        .get_data_directory(DataDirectoryType::ImportTable);
     assert!(
         import_directory.is_some(),
         "Modified assembly should have import directory"
@@ -434,7 +435,7 @@ fn add_both_imports_and_exports_to_crafted_2() -> Result<()> {
     // Verify export directory
     let export_directory = modified_view
         .file()
-        .get_data_directory(goblin::pe::data_directories::DataDirectoryType::ExportTable);
+        .get_data_directory(DataDirectoryType::ExportTable);
     assert!(
         export_directory.is_some(),
         "Modified assembly should have export directory"
@@ -467,7 +468,7 @@ fn add_both_imports_and_exports_to_crafted_2() -> Result<()> {
     );
 
     // Verify we have kernel32.dll
-    let dll_names: Vec<&str> = imports.iter().map(|imp| imp.dll).collect();
+    let dll_names: Vec<&str> = imports.iter().map(|imp| imp.dll.as_str()).collect();
     assert!(
         dll_names.contains(&"kernel32.dll"),
         "Should have kernel32.dll in import table"
@@ -476,7 +477,7 @@ fn add_both_imports_and_exports_to_crafted_2() -> Result<()> {
     let kernel32_functions: Vec<&str> = imports
         .iter()
         .filter(|imp| imp.dll == "kernel32.dll")
-        .map(|imp| imp.name.as_ref())
+        .filter_map(|imp| imp.name.as_deref())
         .collect();
 
     assert_eq!(
@@ -517,7 +518,10 @@ fn add_both_imports_and_exports_to_crafted_2() -> Result<()> {
     assert_eq!(exports.len(), 2, "Should have 2 exported functions");
 
     // Find the exported functions by name
-    let exported_names: Vec<&str> = exports.iter().filter_map(|exp| exp.name).collect();
+    let exported_names: Vec<&str> = exports
+        .iter()
+        .filter_map(|exp| exp.name.as_deref())
+        .collect();
 
     assert!(
         exported_names.contains(&"ExportedFunction1"),
@@ -531,20 +535,20 @@ fn add_both_imports_and_exports_to_crafted_2() -> Result<()> {
     // Verify specific function details
     let func1 = exports
         .iter()
-        .find(|exp| exp.name == Some("ExportedFunction1"))
+        .find(|exp| exp.name.as_deref() == Some("ExportedFunction1"))
         .unwrap();
     assert_eq!(
-        func1.name.unwrap(),
+        func1.name.as_ref().unwrap(),
         "ExportedFunction1",
         "ExportedFunction1 should have correct name"
     );
 
     let func2 = exports
         .iter()
-        .find(|exp| exp.name == Some("ExportedFunction2"))
+        .find(|exp| exp.name.as_deref() == Some("ExportedFunction2"))
         .unwrap();
     assert_eq!(
-        func2.name.unwrap(),
+        func2.name.as_ref().unwrap(),
         "ExportedFunction2",
         "ExportedFunction2 should have correct name"
     );
@@ -630,7 +634,7 @@ fn round_trip_preserve_existing_data() -> Result<()> {
     // Verify that an import directory was created (indicating native imports were written)
     let import_directory = modified_view
         .file()
-        .get_data_directory(goblin::pe::data_directories::DataDirectoryType::ImportTable);
+        .get_data_directory(DataDirectoryType::ImportTable);
     assert!(
         import_directory.is_some(),
         "Should have import directory indicating native imports were written"
@@ -666,7 +670,7 @@ fn test_native_imports_parsing_from_existing_pe() -> Result<()> {
     assert!(!imports.is_empty(), "Parsed imports should not be empty");
 
     // Verify the specific import that should exist in crafted_2.exe
-    let dll_names: Vec<&str> = imports.iter().map(|imp| imp.dll).collect();
+    let dll_names: Vec<&str> = imports.iter().map(|imp| imp.dll.as_str()).collect();
     assert!(
         dll_names.contains(&"mscoree.dll"),
         "Should have parsed mscoree.dll"
@@ -675,7 +679,7 @@ fn test_native_imports_parsing_from_existing_pe() -> Result<()> {
     let mscoree_functions: Vec<&str> = imports
         .iter()
         .filter(|imp| imp.dll == "mscoree.dll")
-        .map(|imp| imp.name.as_ref())
+        .filter_map(|imp| imp.name.as_deref())
         .collect();
 
     assert!(
@@ -724,7 +728,7 @@ fn test_import_table_format_validation() -> Result<()> {
     // Verify import directory exists and is valid
     let import_directory = modified_view
         .file()
-        .get_data_directory(goblin::pe::data_directories::DataDirectoryType::ImportTable);
+        .get_data_directory(DataDirectoryType::ImportTable);
 
     assert!(import_directory.is_some(), "Import directory should exist");
 

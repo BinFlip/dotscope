@@ -57,6 +57,7 @@
 /// assert_eq!(align_to_4_bytes(17), 20);
 /// assert_eq!(align_to_4_bytes(100), 100); // Already aligned
 /// ```
+#[inline]
 pub fn align_to_4_bytes(value: u64) -> u64 {
     (value + 3) & !3
 }
@@ -99,6 +100,7 @@ pub fn align_to_4_bytes(value: u64) -> u64 {
 /// assert_eq!(align_to(100, 16), 112);
 /// assert_eq!(align_to(128, 16), 128); // Already aligned
 /// ```
+#[inline]
 pub fn align_to(value: u64, alignment: u64) -> u64 {
     (value + alignment - 1) & !(alignment - 1)
 }
