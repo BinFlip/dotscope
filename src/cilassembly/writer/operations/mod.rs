@@ -406,11 +406,11 @@ pub struct WriteOperation {
 #[derive(Debug, Clone)]
 pub struct OperationSet {
     /// Copy operations to preserve existing content
-    pub copy_operations: Vec<CopyOperation>,
+    pub copy: Vec<CopyOperation>,
     /// Zero operations to clear old locations
-    pub zero_operations: Vec<ZeroOperation>,
+    pub zero: Vec<ZeroOperation>,
     /// Write operations to place new content
-    pub write_operations: Vec<WriteOperation>,
+    pub write: Vec<WriteOperation>,
 }
 
 impl OperationSet {
@@ -439,9 +439,9 @@ impl OperationSet {
     /// independent operation sets for different assemblies.
     pub fn new() -> Self {
         Self {
-            copy_operations: Vec::new(),
-            zero_operations: Vec::new(),
-            write_operations: Vec::new(),
+            copy: Vec::new(),
+            zero: Vec::new(),
+            write: Vec::new(),
         }
     }
 
@@ -480,7 +480,7 @@ impl OperationSet {
     ///
     /// This method is thread-safe as it only reads immutable vector lengths.
     pub fn operation_count(&self) -> usize {
-        self.copy_operations.len() + self.zero_operations.len() + self.write_operations.len()
+        self.copy.len() + self.zero.len() + self.write.len()
     }
 
     /// Returns the total amount of data that will be copied from source to target locations.
@@ -523,7 +523,7 @@ impl OperationSet {
     ///
     /// This method is thread-safe as it only reads immutable operation data.
     pub fn total_copy_size(&self) -> u64 {
-        self.copy_operations.iter().map(|op| op.size).sum()
+        self.copy.iter().map(|op| op.size).sum()
     }
 
     /// Returns the total amount of data that will be cleared by filling with zeros.
@@ -565,7 +565,7 @@ impl OperationSet {
     ///
     /// This method is thread-safe as it only reads immutable operation data.
     pub fn total_zero_size(&self) -> u64 {
-        self.zero_operations.iter().map(|op| op.size).sum()
+        self.zero.iter().map(|op| op.size).sum()
     }
 
     /// Returns the total amount of new data that will be written to the output file.
@@ -607,10 +607,7 @@ impl OperationSet {
     ///
     /// This method is thread-safe as it only reads immutable operation data.
     pub fn total_write_size(&self) -> u64 {
-        self.write_operations
-            .iter()
-            .map(|op| op.data.len() as u64)
-            .sum()
+        self.write.iter().map(|op| op.data.len() as u64).sum()
     }
 
     /// Validates that all operations are conflict-free and can be executed safely.
@@ -700,7 +697,7 @@ impl OperationSet {
     /// validation calculations without modifying the operation set.
     pub fn validate(&self) -> Result<()> {
         let mut target_regions = Vec::new();
-        for op in &self.copy_operations {
+        for op in &self.copy {
             target_regions.push((
                 op.target_offset,
                 op.target_offset + op.size,
@@ -708,11 +705,11 @@ impl OperationSet {
             ));
         }
 
-        for op in &self.zero_operations {
+        for op in &self.zero {
             target_regions.push((op.offset, op.offset + op.size, &op.reason));
         }
 
-        for op in &self.write_operations {
+        for op in &self.write {
             let end_offset = op.offset + op.data.len() as u64;
             target_regions.push((op.offset, end_offset, &op.component));
         }
@@ -787,9 +784,9 @@ impl OperationSet {
         format!(
             "OperationSet: {total_ops} operations ({copy_ops} copy, {zero_ops} zero, {write_ops} write), {total_bytes} total bytes",
             total_ops = self.operation_count(),
-            copy_ops = self.copy_operations.len(),
-            zero_ops = self.zero_operations.len(),
-            write_ops = self.write_operations.len(),
+            copy_ops = self.copy.len(),
+            zero_ops = self.zero.len(),
+            write_ops = self.write.len(),
             total_bytes = self.total_copy_size() + self.total_zero_size() + self.total_write_size()
         )
     }
@@ -837,15 +834,15 @@ impl fmt::Display for OperationSet {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Operation Set ({} operations):", self.operation_count())?;
 
-        for op in &self.copy_operations {
+        for op in &self.copy {
             writeln!(f, "  {op}")?;
         }
 
-        for op in &self.zero_operations {
+        for op in &self.zero {
             writeln!(f, "  {op}")?;
         }
 
-        for op in &self.write_operations {
+        for op in &self.write {
             writeln!(f, "  {op}")?;
         }
 
@@ -870,14 +867,14 @@ mod tests {
     fn test_operation_validation_no_overlap() {
         let mut ops = OperationSet::new();
 
-        ops.copy_operations.push(CopyOperation {
+        ops.copy.push(CopyOperation {
             source_offset: 0,
             target_offset: 1000,
             size: 100,
             description: "Test copy".to_string(),
         });
 
-        ops.write_operations.push(WriteOperation {
+        ops.write.push(WriteOperation {
             offset: 2000,
             data: vec![1, 2, 3, 4],
             component: "Test write".to_string(),
@@ -890,14 +887,14 @@ mod tests {
     fn test_operation_validation_with_overlap() {
         let mut ops = OperationSet::new();
 
-        ops.copy_operations.push(CopyOperation {
+        ops.copy.push(CopyOperation {
             source_offset: 0,
             target_offset: 1000,
             size: 100,
             description: "Test copy".to_string(),
         });
 
-        ops.write_operations.push(WriteOperation {
+        ops.write.push(WriteOperation {
             offset: 1050, // Overlaps with copy operation
             data: vec![1, 2, 3, 4],
             component: "Test write".to_string(),
@@ -910,20 +907,20 @@ mod tests {
     fn test_operation_size_calculations() {
         let mut ops = OperationSet::new();
 
-        ops.copy_operations.push(CopyOperation {
+        ops.copy.push(CopyOperation {
             source_offset: 0,
             target_offset: 1000,
             size: 100,
             description: "Test copy".to_string(),
         });
 
-        ops.zero_operations.push(ZeroOperation {
+        ops.zero.push(ZeroOperation {
             offset: 2000,
             size: 200,
             reason: "Test zero".to_string(),
         });
 
-        ops.write_operations.push(WriteOperation {
+        ops.write.push(WriteOperation {
             offset: 3000,
             data: vec![1; 50], // 50 bytes
             component: "Test write".to_string(),
