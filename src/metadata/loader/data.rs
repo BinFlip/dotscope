@@ -70,8 +70,8 @@ use crossbeam_skiplist::SkipMap;
 use crate::{
     metadata::{
         cilassemblyview::CilAssemblyView,
-        exports::UnifiedExportContainer,
-        imports::UnifiedImportContainer,
+        exports::{NativeExports, UnifiedExportContainer},
+        imports::{NativeImports, UnifiedImportContainer},
         loader::{execute_loaders_in_parallel, LoaderContext},
         method::MethodMap,
         resources::Resources,
@@ -324,18 +324,18 @@ impl CilObjectData {
     /// - Import/export table parsing fails
     /// - Native container population fails
     fn load_native_tables(&mut self, view: &CilAssemblyView) -> Result<()> {
-        if let Some(goblin_imports) = view.file().imports() {
-            if !goblin_imports.is_empty() {
-                self.import_container
-                    .native_mut()
-                    .populate_from_goblin(goblin_imports)?;
+        if let Some(owned_imports) = view.file().imports() {
+            if !owned_imports.is_empty() {
+                let native_imports = NativeImports::from_pe_imports(owned_imports)?;
+                *self.import_container.native_mut() = native_imports;
             }
         }
 
-        if let Some(goblin_exports) = view.file().exports() {
-            self.export_container
-                .native_mut()
-                .populate_from_goblin(goblin_exports)?;
+        if let Some(owned_exports) = view.file().exports() {
+            if !owned_exports.is_empty() {
+                let native_exports = NativeExports::from_pe_exports(owned_exports)?;
+                *self.export_container.native_mut() = native_exports;
+            }
         }
 
         Ok(())

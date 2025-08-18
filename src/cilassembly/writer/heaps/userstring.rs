@@ -65,7 +65,7 @@ impl<'a> UserStringHeapBuilder<'a> {
     }
 }
 
-impl<'a> HeapBuilder for UserStringHeapBuilder<'a> {
+impl HeapBuilder for UserStringHeapBuilder<'_> {
     fn build(&mut self) -> Result<Vec<u8>> {
         let userstring_changes = &self.assembly.changes().userstring_heap_changes;
         let mut final_heap = Vec::new();
@@ -93,16 +93,16 @@ impl<'a> HeapBuilder for UserStringHeapBuilder<'a> {
 
                 if start + len_bytes <= heap_data.len() {
                     let length = match len_bytes {
-                        1 => heap_data[start] as u32,
+                        1 => u32::from(heap_data[start]),
                         2 => {
-                            (((heap_data[start] & 0x7F) as u32) << 8)
-                                | (heap_data[start + 1] as u32)
+                            (u32::from(heap_data[start] & 0x7F) << 8)
+                                | u32::from(heap_data[start + 1])
                         }
                         4 => {
-                            (((heap_data[start] & 0x1F) as u32) << 24)
-                                | ((heap_data[start + 1] as u32) << 16)
-                                | ((heap_data[start + 2] as u32) << 8)
-                                | (heap_data[start + 3] as u32)
+                            (u32::from(heap_data[start] & 0x1F) << 24)
+                                | (u32::from(heap_data[start + 1]) << 16)
+                                | (u32::from(heap_data[start + 2]) << 8)
+                                | u32::from(heap_data[start + 3])
                         }
                         _ => break,
                     };
@@ -153,7 +153,9 @@ impl<'a> HeapBuilder for UserStringHeapBuilder<'a> {
                     let total_length = utf16_bytes.len() + 1; // UTF-16 data + terminator byte
 
                     // Write compressed length prefix
-                    write_compressed_uint(total_length as u32, &mut final_heap);
+                    let total_length_u32 = u32::try_from(total_length)
+                        .map_err(|_| malformed_error!("String length exceeds u32 range"))?;
+                    write_compressed_uint(total_length_u32, &mut final_heap);
                     // Write UTF-16 data
                     final_heap.extend_from_slice(&utf16_bytes);
                     // Write terminator byte
@@ -190,9 +192,8 @@ impl<'a> HeapBuilder for UserStringHeapBuilder<'a> {
                 if userstring_changes.is_removed(original_index) {
                     // UserString is removed - no mapping entry
                     continue;
-                } else if let Some(modified_string) =
-                    userstring_changes.get_modification(original_index)
-                {
+                }
+                if let Some(modified_string) = userstring_changes.get_modification(original_index) {
                     // UserString is modified - add modified version
                     self.index_mappings
                         .insert(original_index, final_index_position);
@@ -204,7 +205,9 @@ impl<'a> HeapBuilder for UserStringHeapBuilder<'a> {
                     let total_length = utf16_bytes.len() + 1; // UTF-16 data + terminator byte
 
                     // Write compressed length prefix
-                    write_compressed_uint(total_length as u32, &mut final_heap);
+                    let total_length_u32 = u32::try_from(total_length)
+                        .map_err(|_| malformed_error!("String length exceeds u32 range"))?;
+                    write_compressed_uint(total_length_u32, &mut final_heap);
                     // Write UTF-16 data
                     final_heap.extend_from_slice(&utf16_bytes);
                     // Write terminator byte
@@ -232,7 +235,9 @@ impl<'a> HeapBuilder for UserStringHeapBuilder<'a> {
                     let total_length = utf16_bytes.len() + 1; // UTF-16 data + terminator byte
 
                     // Write compressed length prefix
-                    write_compressed_uint(total_length as u32, &mut final_heap);
+                    let total_length_u32 = u32::try_from(total_length)
+                        .map_err(|_| malformed_error!("String length exceeds u32 range"))?;
+                    write_compressed_uint(total_length_u32, &mut final_heap);
                     // Write UTF-16 data
                     final_heap.extend_from_slice(&utf16_bytes);
                     // Write terminator byte
@@ -289,7 +294,9 @@ impl<'a> HeapBuilder for UserStringHeapBuilder<'a> {
                 let total_length = utf16_bytes.len() + 1; // UTF-16 data + terminator byte
 
                 // Write compressed length prefix
-                write_compressed_uint(total_length as u32, &mut final_heap);
+                let total_length_u32 = u32::try_from(total_length)
+                    .map_err(|_| malformed_error!("String length exceeds u32 range"))?;
+                write_compressed_uint(total_length_u32, &mut final_heap);
                 // Write UTF-16 data
                 final_heap.extend_from_slice(&utf16_bytes);
                 // Write terminator byte
@@ -312,7 +319,9 @@ impl<'a> HeapBuilder for UserStringHeapBuilder<'a> {
                 let total_length = utf16_bytes.len() + 1; // UTF-16 data + terminator byte
 
                 // Write compressed length prefix
-                write_compressed_uint(total_length as u32, &mut final_heap);
+                let total_length_u32 = u32::try_from(total_length)
+                    .map_err(|_| malformed_error!("String length exceeds u32 range"))?;
+                write_compressed_uint(total_length_u32, &mut final_heap);
                 // Write UTF-16 data
                 final_heap.extend_from_slice(&utf16_bytes);
                 // Write terminator byte
@@ -345,7 +354,7 @@ impl<'a> HeapBuilder for UserStringHeapBuilder<'a> {
         &self.index_mappings
     }
 
-    fn heap_name(&self) -> &str {
+    fn heap_name(&self) -> &'static str {
         "#US"
     }
 }

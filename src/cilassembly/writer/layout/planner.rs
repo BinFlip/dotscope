@@ -189,12 +189,15 @@ use crate::{
         CilAssembly, TableModifications as CilTableModifications,
     },
     dispatch_table_type,
+    file::{
+        pe::{self, constants::*, DosHeader, SectionTable},
+        File,
+    },
     metadata::{
         streams::TablesHeader,
         tables::{CodedIndexType, RowWritable, TableId, TableInfo, TableInfoRef, TableRow},
     },
-    utils::{align_to, align_to_4_bytes, calculate_table_row_size},
-    utils::{read_le_at, write_le_at},
+    utils::{align_to, align_to_4_bytes, calculate_table_row_size, read_le_at, write_le_at},
     Error, Result,
 };
 
@@ -316,6 +319,13 @@ pub struct LayoutPlanner<'a> {
     /// it only reads from it to understand what needs to be done.
     assembly: &'a CilAssembly,
 
+    /// Modified PE structure used throughout the planning process.
+    ///
+    /// This Pe struct is initialized from the source assembly and then modified
+    /// in-place as sections are added, headers updated, and data directories changed.
+    /// This eliminates the need for multiple copies during different planning stages.
+    pe: pe::Pe,
+
     /// Warnings accumulated during the planning process.
     ///
     /// Non-fatal issues discovered during planning are collected here for later
@@ -362,9 +372,11 @@ impl<'a> LayoutPlanner<'a> {
     /// ```
     pub fn new(assembly: &'a CilAssembly) -> Self {
         let original_size = assembly.file().file_size();
+        let pe = assembly.file().pe().clone();
 
         Self {
             assembly,
+            pe,
             warnings: Vec::new(),
             original_size,
         }
@@ -510,10 +522,10 @@ impl<'a> LayoutPlanner<'a> {
             .plan_file_structure_with_native_tables(&component_sizes, &native_table_requirements)?;
 
         // Step 3: Plan detailed metadata layout within .meta section
-        let metadata_layout = self.plan_metadata_layout(&file_structure, &component_sizes)?;
+        let metadata_layout = Self::plan_metadata_layout(&file_structure, &component_sizes)?;
 
         // Step 3.5: Allocate RVAs for native tables
-        self.allocate_native_table_rvas(&file_structure, &mut native_table_requirements)?;
+        Self::allocate_native_table_rvas(&file_structure, &mut native_table_requirements)?;
 
         // Step 4: Generate all copy/zero/write operations
         let operations = self.generate_operations(&file_structure, &metadata_layout)?;
@@ -522,7 +534,7 @@ impl<'a> LayoutPlanner<'a> {
         let (rva_mappings, index_mappings) = self.build_mappings(&metadata_layout)?;
 
         // Step 6: Calculate final file size
-        let total_file_size = self.calculate_total_file_size(&file_structure);
+        let total_file_size = Self::calculate_total_file_size(&file_structure);
 
         // Step 7: Build planning info and size breakdown
         let planning_info =
@@ -592,16 +604,16 @@ impl<'a> LayoutPlanner<'a> {
         let tables_stream_size = self.calculate_tables_stream_size()?;
 
         // Calculate metadata root + stream directory size
-        let metadata_root_size = self.calculate_metadata_root_size()?;
+        let metadata_root_size = Self::calculate_metadata_root_size();
 
         Ok(MetadataComponentSizes {
-            cor20_header_size: 72, // COR20 header is always 72 bytes
-            metadata_root_size,
-            tables_stream_size,
-            strings_heap_size,
-            blob_heap_size,
-            guid_heap_size,
-            userstring_heap_size,
+            cor20_header: 72, // COR20 header is always 72 bytes
+            metadata_root: metadata_root_size,
+            tables_stream: tables_stream_size,
+            strings_heap: strings_heap_size,
+            blob_heap: blob_heap_size,
+            guid_heap: guid_heap_size,
+            userstring_heap: userstring_heap_size,
         })
     }
 
@@ -743,7 +755,6 @@ impl<'a> LayoutPlanner<'a> {
     ///
     /// This enables managed assemblies to interoperate with native code.
     fn allocate_native_table_rvas(
-        &self,
         file_structure: &FileStructureLayout,
         requirements: &mut NativeTableRequirements,
     ) -> Result<()> {
@@ -766,20 +777,28 @@ impl<'a> LayoutPlanner<'a> {
         // Start native table allocation from a safe location after metadata
         // Use the last 1KB of the .meta section for native tables
         current_rva = metadata_end_offset - 1024;
-        current_rva = (current_rva + 3) & !3; // Align to 4-byte boundary
+        current_rva = align_to_4_bytes(u64::from(current_rva)) as u32;
 
         // Allocate import table RVA if needed
         if requirements.needs_import_tables {
             requirements.import_table_rva = Some(current_rva);
-            current_rva += requirements.import_table_size as u32;
-            current_rva = (current_rva + 3) & !3; // Re-align
+            current_rva += u32::try_from(requirements.import_table_size).map_err(|_| {
+                Error::WriteLayoutFailed {
+                    message: "Import table size exceeds u32 range".to_string(),
+                }
+            })?;
+            current_rva = align_to_4_bytes(u64::from(current_rva)) as u32;
         }
 
         // Allocate export table RVA if needed
         if requirements.needs_export_tables {
             requirements.export_table_rva = Some(current_rva);
-            current_rva += requirements.export_table_size as u32;
-            current_rva = (current_rva + 3) & !3; // Re-align
+            current_rva += u32::try_from(requirements.export_table_size).map_err(|_| {
+                Error::WriteLayoutFailed {
+                    message: "Export table size exceeds u32 range".to_string(),
+                }
+            })?;
+            current_rva = align_to_4_bytes(u64::from(current_rva)) as u32;
         }
 
         // Verify allocations fit within the section
@@ -801,31 +820,24 @@ impl<'a> LayoutPlanner<'a> {
         component_sizes: &MetadataComponentSizes,
         native_table_requirements: &NativeTableRequirements,
     ) -> Result<FileStructureLayout> {
-        let view = self.assembly.view();
-        let file = view.file();
-
-        // DOS header remains at original position
+        // Calculate file regions using the planner's Pe struct
         let dos_header = FileRegion {
             offset: 0,
-            size: 64,
+            size: DosHeader::size(),
         };
 
-        // PE headers remain at original position
-        let pe_headers_offset = file.header().dos_header.pe_pointer as u64;
-        let pe_headers_size = self.calculate_pe_headers_size()?;
+        let pe_headers_offset = self.pe.get_pe_headers_offset();
+        let pe_headers_size = self.pe.calculate_headers_size();
         let pe_headers = FileRegion {
             offset: pe_headers_offset,
             size: pe_headers_size,
         };
 
-        // Section table expands to accommodate .meta section
-        let original_section_count = file.sections().count();
-        let new_section_count = original_section_count + 1; // +1 for .meta
-        let section_table_offset = pe_headers.offset + pe_headers.size;
-        let section_table_size = new_section_count * 40; // 40 bytes per section header
+        let total_sections = self.pe.sections.len() + 1; // +1 for .meta section
+        let section_table_size = SectionTable::calculate_table_size(total_sections);
         let section_table = FileRegion {
-            offset: section_table_offset,
-            size: section_table_size as u64,
+            offset: pe_headers.offset + pe_headers.size,
+            size: section_table_size,
         };
 
         // Plan all sections including relocated originals and new .meta
@@ -850,27 +862,22 @@ impl<'a> LayoutPlanner<'a> {
         let mut sections = Vec::new();
 
         // Calculate section table growth to determine relocation offset
-        let original_section_count = file.sections().count();
+        let original_section_count = file.sections().len();
         let section_table_growth = 40; // 40 bytes for new .meta section entry
 
         // Calculate where the new section table will end
-        let pe_header_offset = file.header().dos_header.pe_pointer as u64;
+        let pe_header_offset = u64::from(file.header_dos().pe_header_offset);
         let section_table_start =
-            pe_header_offset + 24 + file.header().coff_header.size_of_optional_header as u64;
+            pe_header_offset + 24 + u64::from(file.header().size_of_optional_header);
         let new_section_table_size = (original_section_count + 1) * 40; // +1 for .meta section
         let new_section_table_end = section_table_start + new_section_table_size as u64;
 
         // Plan relocated original sections
-        for (index, original_section) in file.sections().enumerate() {
-            let section_name = std::str::from_utf8(&original_section.name)
-                .map_err(|_| Error::WriteLayoutFailed {
-                    message: "Invalid section name encoding".to_string(),
-                })?
-                .trim_end_matches('\0')
-                .to_string();
+        for (index, original_section) in file.sections().iter().enumerate() {
+            let section_name = original_section.name.as_str();
 
             // FIXED: Only relocate sections that would overlap with the expanded section table
-            let original_section_start = original_section.pointer_to_raw_data as u64;
+            let original_section_start = u64::from(original_section.pointer_to_raw_data);
             let new_file_offset = if original_section_start < new_section_table_end {
                 // This section overlaps with the expanded section table, need to relocate
                 original_section_start + section_table_growth
@@ -885,14 +892,18 @@ impl<'a> LayoutPlanner<'a> {
 
             // Calculate extended virtual size for code sections that need method bodies
             let extended_virtual_size = if section_name == ".text"
-                || (original_section.characteristics & 0x20000000) != 0
+                || (original_section.characteristics & IMAGE_SCN_MEM_EXECUTE) != 0
             {
                 // This is an executable section - extend it to accommodate method bodies
-                let method_bodies_size = self.assembly.changes().method_bodies_total_size();
+                let method_bodies_size = self.assembly.changes().method_bodies_total_size()?;
                 if method_bodies_size > 0 {
                     // Align the extended size to section alignment
                     let extended_size = original_section.virtual_size + method_bodies_size;
-                    align_to(extended_size as u64, 0x1000) as u32
+                    u32::try_from(align_to(
+                        u64::from(extended_size),
+                        u64::from(file.section_alignment()?),
+                    ))
+                    .map_err(|_| malformed_error!("Aligned virtual size exceeds u32 range"))?
                 } else {
                     original_section.virtual_size
                 }
@@ -902,19 +913,19 @@ impl<'a> LayoutPlanner<'a> {
 
             // Calculate the actual available file space for this section
             // Check if this section would overlap with the next section
-            let mut available_file_size = original_section.size_of_raw_data as u64;
+            let mut available_file_size = u64::from(original_section.size_of_raw_data);
 
             // Check against subsequent sections to avoid overlaps
             let mut next_section_offset = u64::MAX;
-            for (next_index, next_section) in file.sections().enumerate() {
+            for (next_index, next_section) in file.sections().iter().enumerate() {
                 if next_index > index {
                     let next_offset =
-                        if (next_section.pointer_to_raw_data as u64) < new_section_table_end {
+                        if u64::from(next_section.pointer_to_raw_data) < new_section_table_end {
                             // Next section will be relocated
-                            next_section.pointer_to_raw_data as u64 + section_table_growth
+                            u64::from(next_section.pointer_to_raw_data) + section_table_growth
                         } else {
                             // Next section keeps original offset
-                            next_section.pointer_to_raw_data as u64
+                            u64::from(next_section.pointer_to_raw_data)
                         };
                     next_section_offset = std::cmp::min(next_section_offset, next_offset);
                 }
@@ -929,7 +940,7 @@ impl<'a> LayoutPlanner<'a> {
             }
 
             sections.push(SectionLayout {
-                name: section_name,
+                name: section_name.to_string(),
                 virtual_address: new_virtual_address,
                 virtual_size: extended_virtual_size,
                 file_region: FileRegion {
@@ -943,7 +954,7 @@ impl<'a> LayoutPlanner<'a> {
 
         // Plan new .meta section
         let meta_section =
-            self.plan_meta_section(&sections, component_sizes, native_table_requirements)?;
+            Self::plan_meta_section(file, &sections, component_sizes, native_table_requirements)?;
         sections.push(meta_section);
 
         Ok(sections)
@@ -951,19 +962,19 @@ impl<'a> LayoutPlanner<'a> {
 
     /// Plans the new .meta section that will contain all metadata.
     fn plan_meta_section(
-        &mut self,
+        file: &File,
         existing_sections: &[SectionLayout],
         component_sizes: &MetadataComponentSizes,
         native_table_requirements: &NativeTableRequirements,
     ) -> Result<SectionLayout> {
         // Calculate .meta section size including native table space
-        let mut meta_section_size = component_sizes.cor20_header_size
-            + component_sizes.metadata_root_size
-            + component_sizes.tables_stream_size
-            + component_sizes.strings_heap_size
-            + component_sizes.blob_heap_size
-            + component_sizes.guid_heap_size
-            + component_sizes.userstring_heap_size;
+        let mut meta_section_size = component_sizes.cor20_header
+            + component_sizes.metadata_root
+            + component_sizes.tables_stream
+            + component_sizes.strings_heap
+            + component_sizes.blob_heap
+            + component_sizes.guid_heap
+            + component_sizes.userstring_heap;
 
         // Add space for native tables
         if native_table_requirements.needs_import_tables {
@@ -980,8 +991,8 @@ impl<'a> LayoutPlanner<'a> {
             meta_section_size += 256; // Extra padding for RVA alignment
         }
 
-        // Align to file alignment (typically 512 bytes)
-        let aligned_meta_size = align_to(meta_section_size, 0x200);
+        // Align to file alignment from original PE headers
+        let aligned_meta_size = align_to(meta_section_size, u64::from(file.file_alignment()?));
 
         // Calculate position after last existing section
         let last_section = existing_sections
@@ -990,35 +1001,45 @@ impl<'a> LayoutPlanner<'a> {
                 message: "No existing sections found".to_string(),
             })?;
 
-        let meta_file_offset =
-            last_section.file_region.offset + align_to(last_section.file_region.size, 0x200);
+        let meta_file_offset = last_section.file_region.offset
+            + align_to(
+                last_section.file_region.size,
+                u64::from(file.file_alignment()?),
+            );
 
         // FIXED: Calculate .meta section virtual address based on original section layout
         // Find the highest virtual address + size from existing sections
         let mut max_virtual_end = 0u64;
         for section in existing_sections {
-            let section_end =
-                section.virtual_address as u64 + align_to(section.virtual_size as u64, 0x1000);
+            let section_end = u64::from(section.virtual_address)
+                + align_to(
+                    u64::from(section.virtual_size),
+                    u64::from(file.section_alignment()?),
+                );
             max_virtual_end = max_virtual_end.max(section_end);
         }
-        let meta_virtual_address = align_to(max_virtual_end, 0x1000) as u32;
+        let meta_virtual_address = u32::try_from(align_to(
+            max_virtual_end,
+            u64::from(file.section_alignment()?),
+        ))
+        .map_err(|_| malformed_error!("Meta virtual address exceeds u32 range"))?;
 
         Ok(SectionLayout {
             name: ".meta".to_string(),
             virtual_address: meta_virtual_address,
-            virtual_size: meta_section_size as u32,
+            virtual_size: u32::try_from(meta_section_size)
+                .map_err(|_| malformed_error!("Meta section size exceeds u32 range"))?,
             file_region: FileRegion {
                 offset: meta_file_offset,
                 size: aligned_meta_size,
             },
-            characteristics: 0x40000040, // IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ
+            characteristics: IMAGE_SCN_METADATA, // IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ
             contains_metadata: true,
         })
     }
 
     /// Plans detailed metadata layout within the .meta section.
     fn plan_metadata_layout(
-        &mut self,
         file_structure: &FileStructureLayout,
         component_sizes: &MetadataComponentSizes,
     ) -> Result<MetadataLayout> {
@@ -1037,27 +1058,25 @@ impl<'a> LayoutPlanner<'a> {
         // COR20 header at the beginning of .meta section
         let cor20_header = FileRegion {
             offset: current_offset,
-            size: component_sizes.cor20_header_size,
+            size: component_sizes.cor20_header,
         };
-        current_offset += component_sizes.cor20_header_size;
+        current_offset += component_sizes.cor20_header;
 
         // Metadata root + stream directory
         let metadata_root = FileRegion {
             offset: current_offset,
-            size: component_sizes.metadata_root_size,
+            size: component_sizes.metadata_root,
         };
-        current_offset += component_sizes.metadata_root_size;
+        current_offset += component_sizes.metadata_root;
 
         // Calculate stream directory position (part of metadata root calculation)
         let stream_directory = FileRegion {
-            offset: metadata_root.offset + self.calculate_metadata_root_header_size()?,
-            size: component_sizes.metadata_root_size
-                - self.calculate_metadata_root_header_size()?,
+            offset: metadata_root.offset + Self::calculate_metadata_root_header_size(),
+            size: component_sizes.metadata_root - Self::calculate_metadata_root_header_size(),
         };
 
         // Plan individual streams - they start immediately after the metadata root
-        let streams =
-            self.plan_metadata_streams(current_offset, component_sizes, &metadata_root)?;
+        let streams = Self::plan_metadata_streams(current_offset, component_sizes, &metadata_root)?;
 
         Ok(MetadataLayout {
             meta_section: meta_section.clone(),
@@ -1070,7 +1089,6 @@ impl<'a> LayoutPlanner<'a> {
 
     /// Plans individual metadata streams within the .meta section.
     fn plan_metadata_streams(
-        &mut self,
         start_offset: u64,
         component_sizes: &MetadataComponentSizes,
         metadata_root: &FileRegion,
@@ -1080,74 +1098,84 @@ impl<'a> LayoutPlanner<'a> {
         let root_start = metadata_root.offset;
 
         // Tables stream (#~ or #-)
-        if component_sizes.tables_stream_size > 0 {
+        if component_sizes.tables_stream > 0 {
             streams.push(StreamLayout {
                 name: "#~".to_string(), // Use compressed format
-                offset_from_root: (current_offset - root_start) as u32,
-                size: component_sizes.tables_stream_size as u32,
+                offset_from_root: u32::try_from(current_offset - root_start)
+                    .map_err(|_| malformed_error!("Tables stream offset exceeds u32 range"))?,
+                size: u32::try_from(component_sizes.tables_stream)
+                    .map_err(|_| malformed_error!("Tables stream size exceeds u32 range"))?,
                 file_region: FileRegion {
                     offset: current_offset,
-                    size: component_sizes.tables_stream_size,
+                    size: component_sizes.tables_stream,
                 },
             });
-            current_offset += component_sizes.tables_stream_size;
+            current_offset += component_sizes.tables_stream;
             current_offset = align_to_4_bytes(current_offset);
         }
 
         // String heap (#Strings)
-        if component_sizes.strings_heap_size > 0 {
+        if component_sizes.strings_heap > 0 {
             streams.push(StreamLayout {
                 name: "#Strings".to_string(),
-                offset_from_root: (current_offset - root_start) as u32,
-                size: component_sizes.strings_heap_size as u32,
+                offset_from_root: u32::try_from(current_offset - root_start)
+                    .map_err(|_| malformed_error!("Strings heap offset exceeds u32 range"))?,
+                size: u32::try_from(component_sizes.strings_heap)
+                    .map_err(|_| malformed_error!("Strings heap size exceeds u32 range"))?,
                 file_region: FileRegion {
                     offset: current_offset,
-                    size: component_sizes.strings_heap_size,
+                    size: component_sizes.strings_heap,
                 },
             });
-            current_offset += component_sizes.strings_heap_size;
+            current_offset += component_sizes.strings_heap;
             current_offset = align_to_4_bytes(current_offset);
         }
 
         // Blob heap (#Blob)
-        if component_sizes.blob_heap_size > 0 {
+        if component_sizes.blob_heap > 0 {
             streams.push(StreamLayout {
                 name: "#Blob".to_string(),
-                offset_from_root: (current_offset - root_start) as u32,
-                size: component_sizes.blob_heap_size as u32,
+                offset_from_root: u32::try_from(current_offset - root_start)
+                    .map_err(|_| malformed_error!("Blob heap offset exceeds u32 range"))?,
+                size: u32::try_from(component_sizes.blob_heap)
+                    .map_err(|_| malformed_error!("Blob heap size exceeds u32 range"))?,
                 file_region: FileRegion {
                     offset: current_offset,
-                    size: component_sizes.blob_heap_size,
+                    size: component_sizes.blob_heap,
                 },
             });
-            current_offset += component_sizes.blob_heap_size;
+            current_offset += component_sizes.blob_heap;
             current_offset = align_to_4_bytes(current_offset);
         }
 
         // GUID heap (#GUID)
-        if component_sizes.guid_heap_size > 0 {
+        if component_sizes.guid_heap > 0 {
             streams.push(StreamLayout {
                 name: "#GUID".to_string(),
-                offset_from_root: (current_offset - root_start) as u32,
-                size: component_sizes.guid_heap_size as u32,
+                offset_from_root: u32::try_from(current_offset - root_start)
+                    .map_err(|_| malformed_error!("GUID heap offset exceeds u32 range"))?,
+                size: u32::try_from(component_sizes.guid_heap)
+                    .map_err(|_| malformed_error!("GUID heap size exceeds u32 range"))?,
                 file_region: FileRegion {
                     offset: current_offset,
-                    size: component_sizes.guid_heap_size,
+                    size: component_sizes.guid_heap,
                 },
             });
-            current_offset += component_sizes.guid_heap_size;
+            current_offset += component_sizes.guid_heap;
             current_offset = align_to_4_bytes(current_offset);
         }
 
         // User string heap (#US)
-        if component_sizes.userstring_heap_size > 0 {
+        if component_sizes.userstring_heap > 0 {
             streams.push(StreamLayout {
                 name: "#US".to_string(),
-                offset_from_root: (current_offset - root_start) as u32,
-                size: component_sizes.userstring_heap_size as u32,
+                offset_from_root: u32::try_from(current_offset - root_start)
+                    .map_err(|_| malformed_error!("UserString heap offset exceeds u32 range"))?,
+                size: u32::try_from(component_sizes.userstring_heap)
+                    .map_err(|_| malformed_error!("UserString heap size exceeds u32 range"))?,
                 file_region: FileRegion {
                     offset: current_offset,
-                    size: component_sizes.userstring_heap_size,
+                    size: component_sizes.userstring_heap,
                 },
             });
         }
@@ -1167,7 +1195,7 @@ impl<'a> LayoutPlanner<'a> {
         self.generate_copy_operations(&mut operations, file_structure, metadata_layout)?;
 
         // Generate zero operations to clear old metadata locations
-        self.generate_zero_operations(&mut operations, file_structure)?;
+        self.generate_zero_operations(&mut operations, file_structure);
 
         // Generate write operations for new content
         self.generate_write_operations(&mut operations, file_structure, metadata_layout)?;
@@ -1186,7 +1214,7 @@ impl<'a> LayoutPlanner<'a> {
         let file = view.file();
 
         // Copy DOS header
-        operations.copy_operations.push(CopyOperation {
+        operations.copy.push(CopyOperation {
             source_offset: 0,
             target_offset: 0,
             size: 64,
@@ -1201,7 +1229,7 @@ impl<'a> LayoutPlanner<'a> {
         )?;
 
         // Copy original section content to new locations
-        for (index, original_section) in file.sections().enumerate() {
+        for (index, original_section) in file.sections().iter().enumerate() {
             if let Some(new_section) = file_structure.sections.get(index) {
                 if !new_section.contains_metadata {
                     // Check if this section contains metadata in the original file
@@ -1217,10 +1245,10 @@ impl<'a> LayoutPlanner<'a> {
                         )?;
                     } else {
                         // This section doesn't contain metadata - copy it entirely
-                        operations.copy_operations.push(CopyOperation {
-                            source_offset: original_section.pointer_to_raw_data as u64,
+                        operations.copy.push(CopyOperation {
+                            source_offset: u64::from(original_section.pointer_to_raw_data),
                             target_offset: new_section.file_region.offset,
-                            size: original_section.size_of_raw_data as u64,
+                            size: u64::from(original_section.size_of_raw_data),
                             description: format!("Section {} content", new_section.name),
                         });
                     }
@@ -1232,7 +1260,7 @@ impl<'a> LayoutPlanner<'a> {
     }
 
     /// Checks if a section contains metadata in the original file.
-    fn section_contains_metadata(&self, section: &goblin::pe::section_table::SectionTable) -> bool {
+    fn section_contains_metadata(&self, section: &SectionTable) -> bool {
         let view = self.assembly.view();
         let metadata_rva = view.cor20header().meta_data_rva;
 
@@ -1243,10 +1271,7 @@ impl<'a> LayoutPlanner<'a> {
     }
 
     /// Checks if a section contains the COR20 header in the original file.
-    fn section_contains_cor20_header(
-        &self,
-        section: &goblin::pe::section_table::SectionTable,
-    ) -> Result<bool> {
+    fn section_contains_cor20_header(&self, section: &SectionTable) -> Result<bool> {
         let view = self.assembly.view();
         let file = view.file();
 
@@ -1276,7 +1301,7 @@ impl<'a> LayoutPlanner<'a> {
     fn generate_section_copy_excluding_metadata(
         &self,
         operations: &mut OperationSet,
-        original_section: &goblin::pe::section_table::SectionTable,
+        original_section: &SectionTable,
         new_section: &SectionLayout,
     ) -> Result<()> {
         let view = self.assembly.view();
@@ -1289,16 +1314,16 @@ impl<'a> LayoutPlanner<'a> {
                 .map_err(|e| Error::WriteLayoutFailed {
                     message: format!("Failed to resolve metadata RVA to file offset: {e}"),
                 })? as u64;
-        let metadata_size = view.cor20header().meta_data_size as u64;
+        let metadata_size = u64::from(view.cor20header().meta_data_size);
 
-        let section_file_start = original_section.pointer_to_raw_data as u64;
-        let section_file_end = section_file_start + original_section.size_of_raw_data as u64;
+        let section_file_start = u64::from(original_section.pointer_to_raw_data);
+        let section_file_end = section_file_start + u64::from(original_section.size_of_raw_data);
 
         // Check if this is a code section that might have method bodies reserved at the end
-        let is_code_section =
-            new_section.name == ".text" || (original_section.characteristics & 0x20000000) != 0;
+        let is_code_section = new_section.name == ".text"
+            || (original_section.characteristics & IMAGE_SCN_MEM_EXECUTE) != 0;
         let method_bodies_total_size = if is_code_section {
-            self.assembly.changes().method_bodies_total_size() as u64
+            u64::from(self.assembly.changes().method_bodies_total_size()?)
         } else {
             0
         };
@@ -1309,7 +1334,7 @@ impl<'a> LayoutPlanner<'a> {
             // The extended space is reserved for method bodies
             std::cmp::min(
                 new_section.file_region.size,
-                original_section.virtual_size as u64,
+                u64::from(original_section.virtual_size),
             )
         } else {
             new_section.file_region.size
@@ -1318,7 +1343,7 @@ impl<'a> LayoutPlanner<'a> {
         // Copy the part before metadata (if any)
         if metadata_file_offset > section_file_start {
             let before_size = metadata_file_offset - section_file_start;
-            operations.copy_operations.push(CopyOperation {
+            operations.copy.push(CopyOperation {
                 source_offset: section_file_start,
                 target_offset: new_section.file_region.offset,
                 size: before_size,
@@ -1344,7 +1369,7 @@ impl<'a> LayoutPlanner<'a> {
                 std::cmp::min(section_file_end - after_start, remaining_available_space);
 
             if after_size > 0 {
-                operations.copy_operations.push(CopyOperation {
+                operations.copy.push(CopyOperation {
                     source_offset: after_start,
                     target_offset: after_target_offset,
                     size: after_size,
@@ -1364,26 +1389,26 @@ impl<'a> LayoutPlanner<'a> {
         &mut self,
         operations: &mut OperationSet,
         file_structure: &FileStructureLayout,
-    ) -> Result<()> {
+    ) {
         // Find original metadata locations and clear them
         let view = self.assembly.view();
 
         // Clear original metadata root location
         if let Ok(metadata_rva) = view.cor20header().meta_data_rva.try_into() {
             if let Ok(metadata_offset) = view.file().rva_to_offset(metadata_rva) {
-                let metadata_size = view.cor20header().meta_data_size as u64;
+                let metadata_size = u64::from(view.cor20header().meta_data_size);
                 let metadata_start = metadata_offset as u64;
                 let metadata_end = metadata_start + metadata_size;
 
                 // Check if this metadata location overlaps with any section being copied entirely
                 let mut overlaps_with_copied_section = false;
-                for (index, original_section) in view.file().sections().enumerate() {
+                for (index, original_section) in view.file().sections().iter().enumerate() {
                     if let Some(new_section) = file_structure.sections.get(index) {
                         if !new_section.contains_metadata {
                             // This section is being copied entirely
-                            let section_start = original_section.pointer_to_raw_data as u64;
+                            let section_start = u64::from(original_section.pointer_to_raw_data);
                             let section_end =
-                                section_start + original_section.size_of_raw_data as u64;
+                                section_start + u64::from(original_section.size_of_raw_data);
 
                             // Check if metadata overlaps with this section
                             if metadata_start < section_end && metadata_end > section_start {
@@ -1396,7 +1421,7 @@ impl<'a> LayoutPlanner<'a> {
 
                 // Only add zero operation if metadata doesn't overlap with a copied section
                 if !overlaps_with_copied_section {
-                    operations.zero_operations.push(ZeroOperation {
+                    operations.zero.push(ZeroOperation {
                         offset: metadata_start,
                         size: metadata_size,
                         reason: "Clear original metadata location".to_string(),
@@ -1404,8 +1429,6 @@ impl<'a> LayoutPlanner<'a> {
                 }
             }
         }
-
-        Ok(())
     }
 
     /// Generates write operations for new content.
@@ -1422,7 +1445,7 @@ impl<'a> LayoutPlanner<'a> {
         self.generate_cor20_header_write_operation(operations, metadata_layout, file_structure)?;
 
         // Generate metadata root and stream directory
-        self.generate_metadata_root_write_operation(operations, metadata_layout)?;
+        Self::generate_metadata_root_write_operation(operations, metadata_layout)?;
 
         // Generate metadata streams
         self.generate_metadata_streams_write_operations(operations, metadata_layout)?;
@@ -1454,18 +1477,20 @@ impl<'a> LayoutPlanner<'a> {
         let mut rva_mappings = HashMap::new();
 
         // Check if we have any method bodies to map
-        if changes.method_bodies_total_size() == 0 {
+        if changes.method_bodies_total_size()? == 0 {
             return Ok(rva_mappings);
         }
 
         // Find the code section (.text) where method bodies will be placed
         let view = self.assembly.view();
-        let mut sections = view.file().sections();
+        let sections = view.file().sections();
 
         let code_section = sections
+            .iter()
             .find(|section| {
-                section.name().unwrap_or("") == ".text"
-                    || (section.characteristics & 0x20000000) != 0 // IMAGE_SCN_MEM_EXECUTE
+                section.name.as_str() == ".text"
+                    || (section.characteristics & IMAGE_SCN_MEM_EXECUTE) != 0
+                // IMAGE_SCN_MEM_EXECUTE
             })
             .ok_or_else(|| Error::WriteLayoutFailed {
                 message: "No executable code section found for method body placement".to_string(),
@@ -1477,7 +1502,8 @@ impl<'a> LayoutPlanner<'a> {
 
         // Calculate base RVA for method bodies (align to 4-byte boundary within the original section)
         let section_base_rva = code_section.virtual_address;
-        let method_body_base_rva = (section_base_rva + original_virtual_size + 3) & !3;
+        let method_body_base_rva =
+            align_to_4_bytes(u64::from(section_base_rva + original_virtual_size)) as u32;
 
         // Build mapping for each method body
         let mut current_rva = method_body_base_rva;
@@ -1485,8 +1511,9 @@ impl<'a> LayoutPlanner<'a> {
             rva_mappings.insert(placeholder_rva, current_rva);
 
             // Advance to next method body position with proper alignment
-            let method_body_size = method_body_bytes.len() as u32;
-            let aligned_size = (method_body_size + 3) & !3; // 4-byte align
+            let method_body_size = u32::try_from(method_body_bytes.len())
+                .map_err(|_| malformed_error!("Method body size exceeds u32 range"))?;
+            let aligned_size = align_to_4_bytes(u64::from(method_body_size)) as u32;
             current_rva += aligned_size;
         }
 
@@ -1524,7 +1551,7 @@ impl<'a> LayoutPlanner<'a> {
             .iter()
             .find(|s| s.name == "#~" || s.name == "#-")
         {
-            tables_stream.size as u64
+            u64::from(tables_stream.size)
         } else {
             // No original tables stream - calculate minimal size with empty tables
             100 // Basic tables stream header
@@ -1536,14 +1563,14 @@ impl<'a> LayoutPlanner<'a> {
         Ok(original_size + expansion)
     }
 
-    fn calculate_metadata_root_size(&self) -> Result<u64> {
+    fn calculate_metadata_root_size() -> u64 {
         // Calculate metadata root header + stream directory size
-        let header_size = self.calculate_metadata_root_header_size()?;
-        let stream_directory_size = self.calculate_stream_directory_size()?;
-        Ok(header_size + stream_directory_size)
+        let header_size = Self::calculate_metadata_root_header_size();
+        let stream_directory_size = Self::calculate_stream_directory_size();
+        header_size + stream_directory_size
     }
 
-    fn calculate_metadata_root_header_size(&self) -> Result<u64> {
+    fn calculate_metadata_root_header_size() -> u64 {
         // Metadata root header contains:
         // - Signature (4 bytes): "BSJB"
         // - Major version (2 bytes): typically 1
@@ -1558,10 +1585,10 @@ impl<'a> LayoutPlanner<'a> {
         let version_string_padded_length = align_to_4_bytes(version_string.len() as u64);
 
         // 4 + 2 + 2 + 4 + 4 + version_string + 2 + 2 = 20 + version_string_padded
-        Ok(20 + version_string_padded_length)
+        20 + version_string_padded_length
     }
 
-    fn calculate_stream_directory_size(&self) -> Result<u64> {
+    fn calculate_stream_directory_size() -> u64 {
         // Each stream directory entry contains:
         // - Offset (4 bytes): offset from metadata root
         // - Size (4 bytes): size of stream
@@ -1576,19 +1603,10 @@ impl<'a> LayoutPlanner<'a> {
             total_size += 8 + name_padded_length; // offset(4) + size(4) + padded_name
         }
 
-        Ok(total_size)
+        total_size
     }
 
-    fn calculate_pe_headers_size(&self) -> Result<u64> {
-        let view = self.assembly.view();
-        let file = view.file();
-
-        // PE headers include: PE signature (4) + COFF header (20) + Optional header (variable)
-        let optional_header_size = file.header().coff_header.size_of_optional_header as u64;
-        Ok(4 + 20 + optional_header_size)
-    }
-
-    fn calculate_total_file_size(&self, file_structure: &FileStructureLayout) -> u64 {
+    fn calculate_total_file_size(file_structure: &FileStructureLayout) -> u64 {
         // Find the last section and calculate file size from it
         if let Some(last_section) = file_structure.sections.last() {
             last_section.file_region.offset + last_section.file_region.size
@@ -1596,15 +1614,6 @@ impl<'a> LayoutPlanner<'a> {
             // Fallback to section table end if no sections
             file_structure.section_table.offset + file_structure.section_table.size
         }
-    }
-
-    fn calculate_original_sections_size(&self) -> u64 {
-        let view = self.assembly.view();
-        let file = view.file();
-
-        file.sections()
-            .map(|section| section.size_of_raw_data as u64)
-            .sum()
     }
 
     fn build_planning_info(
@@ -1615,21 +1624,20 @@ impl<'a> LayoutPlanner<'a> {
     ) -> PlanningInfo {
         let size_increase = total_file_size.saturating_sub(self.original_size);
 
-        let pe_headers_size = self.calculate_pe_headers_size().unwrap_or(100);
-        let section_table_size = (self.assembly.view().file().sections().count() + 1) * 40; // +1 for .meta section
-        let original_sections_size = self.calculate_original_sections_size();
+        let section_table_size = SectionTable::calculate_table_size(self.pe.sections.len() + 1); // +1 for .meta section
+        let original_sections_size = self.pe.get_sections_total_raw_data_size();
 
         let size_breakdown = SizeBreakdown {
-            headers_size: 64 + pe_headers_size, // DOS header + PE headers
-            section_table_size: section_table_size as u64,
-            original_sections_size,
-            metadata_section_size: component_sizes.cor20_header_size
-                + component_sizes.metadata_root_size
-                + component_sizes.tables_stream_size
-                + component_sizes.strings_heap_size
-                + component_sizes.blob_heap_size
-                + component_sizes.guid_heap_size
-                + component_sizes.userstring_heap_size,
+            headers: self.pe.calculate_total_file_headers_size(), // DOS header + PE headers
+            section_table: section_table_size,
+            original_sections: original_sections_size,
+            metadata_section: component_sizes.cor20_header
+                + component_sizes.metadata_root
+                + component_sizes.tables_stream
+                + component_sizes.strings_heap
+                + component_sizes.blob_heap
+                + component_sizes.guid_heap
+                + component_sizes.userstring_heap,
             metadata_components: component_sizes.clone(),
         };
 
@@ -1648,16 +1656,28 @@ impl<'a> LayoutPlanner<'a> {
         operations: &mut OperationSet,
         file_structure: &FileStructureLayout,
     ) -> Result<()> {
-        // Generate the complete section table including the new .meta section
-        let mut section_table_data = Vec::new();
+        // Update the planner's Pe struct with the new section layout
+        self.pe.sections.clear();
+        self.pe.coff_header.update_section_count(0);
 
-        // Write all sections from file_structure layout
+        // Add all sections from file_structure layout
         for section_layout in &file_structure.sections {
-            // Each section header is 40 bytes
-            section_table_data.extend_from_slice(&self.encode_section_header(section_layout)?);
+            let section_table = SectionTable::from_layout_info(
+                section_layout.name.clone(),
+                section_layout.virtual_address,
+                section_layout.virtual_size,
+                section_layout.file_region.offset,
+                section_layout.file_region.size,
+                section_layout.characteristics,
+            )?;
+            self.pe.add_section(section_table);
         }
 
-        operations.write_operations.push(WriteOperation {
+        // Write the complete section table using the updated Pe struct
+        let mut section_table_data = Vec::new();
+        self.pe.write_section_headers(&mut section_table_data)?;
+
+        operations.write.push(WriteOperation {
             offset: file_structure.section_table.offset,
             data: section_table_data,
             component: "Section table with .meta section".to_string(),
@@ -1666,71 +1686,24 @@ impl<'a> LayoutPlanner<'a> {
         Ok(())
     }
 
-    fn encode_section_header(&self, section: &SectionLayout) -> Result<Vec<u8>> {
-        let mut header = vec![0u8; 40];
-        let mut offset = 0;
-
-        // Name (8 bytes, null-padded)
-        let name_bytes = section.name.as_bytes();
-        let copy_len = name_bytes.len().min(8);
-        header[offset..offset + copy_len].copy_from_slice(&name_bytes[..copy_len]);
-        offset += 8;
-
-        // Virtual size (4 bytes, little-endian)
-        header[offset..offset + 4].copy_from_slice(&section.virtual_size.to_le_bytes());
-        offset += 4;
-
-        // Virtual address (4 bytes, little-endian)
-        header[offset..offset + 4].copy_from_slice(&section.virtual_address.to_le_bytes());
-        offset += 4;
-
-        // Size of raw data (4 bytes, little-endian)
-        header[offset..offset + 4]
-            .copy_from_slice(&(section.file_region.size as u32).to_le_bytes());
-        offset += 4;
-
-        // Pointer to raw data (4 bytes, little-endian)
-        header[offset..offset + 4]
-            .copy_from_slice(&(section.file_region.offset as u32).to_le_bytes());
-        offset += 4;
-
-        // Pointer to relocations (4 bytes) - 0 for .NET assemblies
-        header[offset..offset + 4].copy_from_slice(&0u32.to_le_bytes());
-        offset += 4;
-
-        // Pointer to line numbers (4 bytes) - 0 for .NET assemblies
-        header[offset..offset + 4].copy_from_slice(&0u32.to_le_bytes());
-        offset += 4;
-
-        // Number of relocations (2 bytes) - 0 for .NET assemblies
-        header[offset..offset + 2].copy_from_slice(&0u16.to_le_bytes());
-        offset += 2;
-
-        // Number of line numbers (2 bytes) - 0 for .NET assemblies
-        header[offset..offset + 2].copy_from_slice(&0u16.to_le_bytes());
-        offset += 2;
-
-        // Characteristics (4 bytes, little-endian)
-        header[offset..offset + 4].copy_from_slice(&section.characteristics.to_le_bytes());
-
-        Ok(header)
-    }
-
     fn generate_cor20_header_write_operation(
         &mut self,
         operations: &mut OperationSet,
         metadata_layout: &MetadataLayout,
         file_structure: &FileStructureLayout,
     ) -> Result<()> {
+        // Constants
+        const VALID_COR20_FLAGS: u32 = 0x0000_001F;
+
         // Generate updated COR20 header pointing to new metadata location
         let view = self.assembly.view();
         let original_cor20 = view.cor20header();
 
-        let mut cor20_data = vec![0u8; 72]; // COR20 header is always 72 bytes
+        let mut cor20_data = vec![0u8; COR20_HEADER_SIZE as usize]; // COR20 header is always 72 bytes
         let mut offset = 0;
 
         // Size (4 bytes) - always 72
-        cor20_data[offset..offset + 4].copy_from_slice(&72u32.to_le_bytes());
+        cor20_data[offset..offset + 4].copy_from_slice(&COR20_HEADER_SIZE.to_le_bytes());
         offset += 4;
 
         // Major runtime version (2 bytes)
@@ -1745,7 +1718,7 @@ impl<'a> LayoutPlanner<'a> {
 
         // Metadata directory - point to new .meta section
         let metadata_rva =
-            self.file_offset_to_rva(metadata_layout.metadata_root.offset, file_structure)?;
+            Self::file_offset_to_rva(metadata_layout.metadata_root.offset, file_structure)?;
 
         cor20_data[offset..offset + 4].copy_from_slice(&metadata_rva.to_le_bytes());
         offset += 4;
@@ -1753,11 +1726,12 @@ impl<'a> LayoutPlanner<'a> {
         // Calculate total metadata size (excluding COR20 header)
         let total_metadata_size =
             metadata_layout.meta_section.file_region.size - metadata_layout.cor20_header.size;
-        cor20_data[offset..offset + 4].copy_from_slice(&(total_metadata_size as u32).to_le_bytes());
+        let metadata_size_u32 = u32::try_from(total_metadata_size)
+            .map_err(|_| malformed_error!("Total metadata size exceeds u32 range"))?;
+        cor20_data[offset..offset + 4].copy_from_slice(&metadata_size_u32.to_le_bytes());
         offset += 4;
 
         // Flags (4 bytes) - mask to only include valid flags (0x0000_001F per ECMA-335)
-        const VALID_COR20_FLAGS: u32 = 0x0000_001F;
         let safe_flags = original_cor20.flags & VALID_COR20_FLAGS;
         cor20_data[offset..offset + 4].copy_from_slice(&safe_flags.to_le_bytes());
         offset += 4;
@@ -1793,7 +1767,7 @@ impl<'a> LayoutPlanner<'a> {
 
         // Write COR20 header to the .meta section (as originally designed)
 
-        operations.write_operations.push(WriteOperation {
+        operations.write.push(WriteOperation {
             offset: metadata_layout.cor20_header.offset,
             data: cor20_data,
             component: "Updated COR20 header".to_string(),
@@ -1806,84 +1780,39 @@ impl<'a> LayoutPlanner<'a> {
 
     /// Generates updated PE headers with CLR data directory pointing to new COR20 location.
     fn generate_updated_pe_headers_write_operation(
-        &self,
+        &mut self,
         operations: &mut OperationSet,
         file_structure: &FileStructureLayout,
         metadata_layout: &MetadataLayout,
     ) -> Result<()> {
-        let view = self.assembly.view();
-        let file = view.file();
+        // Update section count to match the new layout
+        let new_section_count = u16::try_from(file_structure.sections.len())
+            .map_err(|_| malformed_error!("Section count exceeds u16 range"))?;
+        self.pe.coff_header.update_section_count(new_section_count);
 
-        // Read the original PE headers
-        let pe_headers_data = file.data_slice(
-            file_structure.pe_headers.offset as usize,
-            file_structure.pe_headers.size as usize,
-        )?;
-
-        let mut updated_headers = pe_headers_data.to_vec();
-
-        // Calculate the position of the CLR data directory entry within the PE headers
-        let optional_header =
-            file.header_optional()
-                .as_ref()
-                .ok_or_else(|| Error::WriteLayoutFailed {
-                    message: "Missing optional header for CLR data directory update".to_string(),
-                })?;
-
-        let is_pe32_plus = optional_header.standard_fields.magic != 0x10b;
-
-        // PE signature (4) + COFF header (20) = 24 bytes before optional header
-        let optional_header_start = 24;
-
-        // Data directory offset depends on PE type:
-        // PE32: 96 bytes from start of optional header
-        // PE32+: 112 bytes from start of optional header
-        let data_directory_offset = if is_pe32_plus {
-            optional_header_start + 112
-        } else {
-            optional_header_start + 96
-        };
-
-        // CLR Runtime Header is directory entry 14, each entry is 8 bytes (RVA + Size)
-        let clr_entry_offset = data_directory_offset + (14 * 8);
-
-        // Calculate the new COR20 header RVA
+        // Calculate the new COR20 header RVA and update CLR data directory
         let new_cor20_rva =
-            self.file_offset_to_rva(metadata_layout.cor20_header.offset, file_structure)?;
-        let cor20_size = 72u32; // COR20 header is always 72 bytes
+            Self::file_offset_to_rva(metadata_layout.cor20_header.offset, file_structure)?;
+        let cor20_size = COR20_HEADER_SIZE; // COR20 header is always 72 bytes
 
-        // Update the NumberOfSections field in the COFF header
-        // COFF header starts at offset 4 (after PE signature), NumberOfSections is at offset 2 within COFF header
-        let number_of_sections_offset = 4 + 2;
-        let original_section_count = file.sections().count() as u16;
-        let new_section_count = original_section_count + 1; // +1 for .meta section
+        self.pe
+            .update_clr_data_directory(new_cor20_rva, cor20_size)?;
 
-        if number_of_sections_offset + 2 <= updated_headers.len() {
-            updated_headers[number_of_sections_offset..number_of_sections_offset + 2]
-                .copy_from_slice(&new_section_count.to_le_bytes());
-        } else {
-            return Err(Error::WriteLayoutFailed {
-                message: "Cannot update NumberOfSections field - offset out of bounds".to_string(),
-            });
+        // Write only the PE headers (not including section table) to match the expected size
+        let mut updated_headers = Vec::new();
+        self.pe.write_headers(&mut updated_headers)?;
+
+        // Ensure the size matches what was allocated in the layout
+        let expected_size = file_structure.pe_headers.size as usize;
+        if updated_headers.len() > expected_size {
+            // Truncate to the expected size to avoid overlap
+            updated_headers.truncate(expected_size);
+        } else if updated_headers.len() < expected_size {
+            // Pad with zeros if needed
+            updated_headers.resize(expected_size, 0);
         }
 
-        // Update the CLR data directory entry in the PE headers data
-        if clr_entry_offset + 8 <= updated_headers.len() {
-            updated_headers[clr_entry_offset..clr_entry_offset + 4]
-                .copy_from_slice(&new_cor20_rva.to_le_bytes());
-            updated_headers[clr_entry_offset + 4..clr_entry_offset + 8]
-                .copy_from_slice(&cor20_size.to_le_bytes());
-        } else {
-            return Err(Error::WriteLayoutFailed {
-                message: format!(
-                    "CLR data directory entry offset {} exceeds PE headers size {}",
-                    clr_entry_offset + 8,
-                    updated_headers.len()
-                ),
-            });
-        }
-
-        operations.write_operations.push(WriteOperation {
+        operations.write.push(WriteOperation {
             offset: file_structure.pe_headers.offset,
             data: updated_headers,
             component: "PE headers with updated CLR data directory".to_string(),
@@ -1932,21 +1861,44 @@ impl<'a> LayoutPlanner<'a> {
 
         // Calculate the new COR20 header RVA
         let new_cor20_rva =
-            self.file_offset_to_rva(metadata_layout.cor20_header.offset, file_structure)?;
-        let cor20_size = 72u32; // COR20 header is always 72 bytes
+            Self::file_offset_to_rva(metadata_layout.cor20_header.offset, file_structure)?;
+        let cor20_size = COR20_HEADER_SIZE; // COR20 header is always 72 bytes
 
         // Create data directory entry update (8 bytes: RVA + Size)
         let mut directory_data = Vec::with_capacity(8);
         directory_data.extend_from_slice(&new_cor20_rva.to_le_bytes());
         directory_data.extend_from_slice(&cor20_size.to_le_bytes());
 
-        operations.write_operations.push(WriteOperation {
+        operations.write.push(WriteOperation {
             offset: clr_entry_offset,
             data: directory_data,
             component: "CLR data directory entry update".to_string(),
         });
 
         Ok(())
+    }
+
+    /// Converts a file offset to RVA using the updated file structure layout.
+    fn file_offset_to_rva(file_offset: u64, file_structure: &FileStructureLayout) -> Result<u32> {
+        // Find which section contains this file offset and calculate the correct RVA
+        for section in &file_structure.sections {
+            let section_file_start = section.file_region.offset;
+            let section_file_end = section_file_start + section.file_region.size;
+
+            if file_offset >= section_file_start && file_offset < section_file_end {
+                // Calculate RVA: section's virtual address + offset within section
+                let offset_within_section = file_offset - section_file_start;
+                let offset_u32 = u32::try_from(offset_within_section)
+                    .map_err(|_| malformed_error!("Offset within section exceeds u32 range"))?;
+                let rva = section.virtual_address + offset_u32;
+                return Ok(rva);
+            }
+        }
+
+        Err(malformed_error!(
+            "Could not find section containing file offset 0x{:X}",
+            file_offset
+        ))
     }
 
     /// Finds the original COR20 header location in the PE file.
@@ -2038,32 +1990,7 @@ impl<'a> LayoutPlanner<'a> {
     /// Since we're generating a new file layout with potentially relocated sections,
     /// we need to use the updated section information rather than the original
     /// assembly's section table for accurate RVA calculations.
-    fn file_offset_to_rva(
-        &self,
-        file_offset: u64,
-        file_structure: &FileStructureLayout,
-    ) -> Result<u32> {
-        // Find which section contains this file offset and calculate the correct RVA
-        for section in &file_structure.sections {
-            let section_file_start = section.file_region.offset;
-            let section_file_end = section_file_start + section.file_region.size;
-
-            if file_offset >= section_file_start && file_offset < section_file_end {
-                // Calculate RVA: section's virtual address + offset within section
-                let offset_within_section = file_offset - section_file_start;
-                let rva = section.virtual_address + offset_within_section as u32;
-
-                return Ok(rva);
-            }
-        }
-
-        Err(Error::WriteLayoutFailed {
-            message: format!("Could not find section containing file offset 0x{file_offset:X}"),
-        })
-    }
-
     fn generate_metadata_root_write_operation(
-        &mut self,
         operations: &mut OperationSet,
         metadata_layout: &MetadataLayout,
     ) -> Result<()> {
@@ -2077,12 +2004,15 @@ impl<'a> LayoutPlanner<'a> {
         metadata_root_data.extend_from_slice(&0u32.to_le_bytes()); // Reserved
 
         let version_string = b"v4.0.30319";
-        metadata_root_data.extend_from_slice(&(version_string.len() as u32).to_le_bytes()); // Length
+        let version_len = u32::try_from(version_string.len())
+            .map_err(|_| malformed_error!("Version string length exceeds u32 range"))?;
+        metadata_root_data.extend_from_slice(&version_len.to_le_bytes()); // Length
         metadata_root_data.extend_from_slice(version_string); // Version string
 
         // Add flags immediately after version string (no padding yet)
         metadata_root_data.extend_from_slice(&0u16.to_le_bytes()); // Flags
-        let stream_count = metadata_layout.streams.len() as u16;
+        let stream_count = u16::try_from(metadata_layout.streams.len())
+            .map_err(|_| malformed_error!("Stream count exceeds u16 range"))?;
         metadata_root_data.extend_from_slice(&stream_count.to_le_bytes()); // Streams count
 
         // Stream directory starts immediately after stream count (no padding here)
@@ -2091,7 +2021,7 @@ impl<'a> LayoutPlanner<'a> {
         // Stream directory entries
         for stream in &metadata_layout.streams {
             // Ensure stream size is 4-byte aligned
-            let aligned_size = (stream.size + 3) & !3; // Round up to next 4-byte boundary
+            let aligned_size = align_to_4_bytes(u64::from(stream.size)) as u32;
             metadata_root_data.extend_from_slice(&stream.offset_from_root.to_le_bytes()); // Offset
             metadata_root_data.extend_from_slice(&aligned_size.to_le_bytes()); // Size (4-byte aligned)
             metadata_root_data.extend_from_slice(stream.name.as_bytes()); // Name
@@ -2099,7 +2029,7 @@ impl<'a> LayoutPlanner<'a> {
 
             // Pad the NAME ONLY (not the entire entry) to 4-byte boundary per ECMA-335
             let name_with_null_len = stream.name.len() + 1; // name + null terminator
-            let name_aligned_len = (name_with_null_len + 3) & !3; // align to 4-byte boundary
+            let name_aligned_len = align_to_4_bytes(name_with_null_len as u64) as usize;
             let padding_needed = name_aligned_len - name_with_null_len;
 
             metadata_root_data.extend(vec![0; padding_needed]);
@@ -2107,7 +2037,7 @@ impl<'a> LayoutPlanner<'a> {
             if padding_needed > 0 {}
         }
 
-        operations.write_operations.push(WriteOperation {
+        operations.write.push(WriteOperation {
             offset: metadata_layout.metadata_root.offset,
             data: metadata_root_data,
             component: "Metadata root and stream directory".to_string(),
@@ -2130,12 +2060,12 @@ impl<'a> LayoutPlanner<'a> {
                     // Tables stream - generate using existing tables data with modifications
                     let mut tables_data = self.generate_tables_stream_data()?;
                     // Pad tables data to match the aligned size declared in stream directory
-                    let aligned_size = (stream.size + 3) & !3; // Same alignment as used in directory
+                    let aligned_size = align_to_4_bytes(u64::from(stream.size));
                     while tables_data.len() < aligned_size as usize {
                         tables_data.push(0); // Pad with zeros
                     }
 
-                    operations.write_operations.push(WriteOperation {
+                    operations.write.push(WriteOperation {
                         offset: stream.file_region.offset,
                         data: tables_data,
                         component: format!("Tables stream ({})", stream.name),
@@ -2152,12 +2082,12 @@ impl<'a> LayoutPlanner<'a> {
                         match string_builder.build() {
                             Ok(mut string_data) => {
                                 // Pad string data to match the aligned size declared in stream directory
-                                let aligned_size = (stream.size + 3) & !3; // Same alignment as used in directory
+                                let aligned_size = align_to_4_bytes(u64::from(stream.size));
                                 while string_data.len() < aligned_size as usize {
                                     string_data.push(0); // Pad with zeros
                                 }
 
-                                operations.write_operations.push(WriteOperation {
+                                operations.write.push(WriteOperation {
                                     offset: stream.file_region.offset,
                                     data: string_data,
                                     component: "String heap (modified)".to_string(),
@@ -2173,12 +2103,12 @@ impl<'a> LayoutPlanner<'a> {
 
                         // Pad to match declared size if needed
                         let mut string_data = original_data;
-                        let aligned_size = (stream.size + 3) & !3;
+                        let aligned_size = align_to_4_bytes(u64::from(stream.size));
                         while string_data.len() < aligned_size as usize {
                             string_data.push(0); // Pad with zeros
                         }
 
-                        operations.write_operations.push(WriteOperation {
+                        operations.write.push(WriteOperation {
                             offset: stream.file_region.offset,
                             data: string_data,
                             component: "String heap (original)".to_string(),
@@ -2195,12 +2125,12 @@ impl<'a> LayoutPlanner<'a> {
                         match blob_builder.build() {
                             Ok(mut blob_data) => {
                                 // Pad blob data to match the aligned size declared in stream directory
-                                let aligned_size = (stream.size + 3) & !3; // Same alignment as used in directory
+                                let aligned_size = align_to_4_bytes(u64::from(stream.size));
                                 while blob_data.len() < aligned_size as usize {
                                     blob_data.push(0); // Pad with zeros
                                 }
 
-                                operations.write_operations.push(WriteOperation {
+                                operations.write.push(WriteOperation {
                                     offset: stream.file_region.offset,
                                     data: blob_data,
                                     component: "Blob heap (modified)".to_string(),
@@ -2216,12 +2146,12 @@ impl<'a> LayoutPlanner<'a> {
 
                         // Pad to match declared size if needed
                         let mut blob_data = original_data;
-                        let aligned_size = (stream.size + 3) & !3;
+                        let aligned_size = align_to_4_bytes(u64::from(stream.size));
                         while blob_data.len() < aligned_size as usize {
                             blob_data.push(0); // Pad with zeros
                         }
 
-                        operations.write_operations.push(WriteOperation {
+                        operations.write.push(WriteOperation {
                             offset: stream.file_region.offset,
                             data: blob_data,
                             component: "Blob heap (original)".to_string(),
@@ -2242,12 +2172,12 @@ impl<'a> LayoutPlanner<'a> {
 
                     // Pad to match declared size if needed
                     let mut final_guid_data = guid_data;
-                    let aligned_size = (stream.size + 3) & !3;
+                    let aligned_size = align_to_4_bytes(u64::from(stream.size));
                     while final_guid_data.len() < aligned_size as usize {
                         final_guid_data.push(0); // Pad with zeros
                     }
 
-                    operations.write_operations.push(WriteOperation {
+                    operations.write.push(WriteOperation {
                         offset: stream.file_region.offset,
                         data: final_guid_data,
                         component: "GUID heap".to_string(),
@@ -2267,12 +2197,12 @@ impl<'a> LayoutPlanner<'a> {
 
                     // Pad to match declared size if needed
                     let mut final_userstring_data = userstring_data;
-                    let aligned_size = (stream.size + 3) & !3;
+                    let aligned_size = align_to_4_bytes(u64::from(stream.size));
                     while final_userstring_data.len() < aligned_size as usize {
                         final_userstring_data.push(0); // Pad with zeros
                     }
 
-                    operations.write_operations.push(WriteOperation {
+                    operations.write.push(WriteOperation {
                         offset: stream.file_region.offset,
                         data: final_userstring_data,
                         component: "User string heap".to_string(),
@@ -2299,7 +2229,7 @@ impl<'a> LayoutPlanner<'a> {
         let changes = self.assembly.changes();
 
         // Check if we have any method bodies to write
-        if changes.method_bodies_total_size() == 0 {
+        if changes.method_bodies_total_size()? == 0 {
             return Ok(());
         }
 
@@ -2309,7 +2239,7 @@ impl<'a> LayoutPlanner<'a> {
         // Find the code section in our planned sections to get the actual file offset
         let mut code_section_info = None;
         for section in &file_structure.sections {
-            if section.name == ".text" || (section.characteristics & 0x20000000) != 0 {
+            if section.name == ".text" || (section.characteristics & IMAGE_SCN_MEM_EXECUTE) != 0 {
                 // Found the code section - use the actual planned file offset (not hardcoded +40)
                 let base_rva = section.virtual_address;
                 let base_file_offset = section.file_region.offset;
@@ -2323,9 +2253,9 @@ impl<'a> LayoutPlanner<'a> {
                 if let Some(&actual_rva) = rva_mappings.get(&placeholder_rva) {
                     // Calculate file offset directly using section base mapping
                     let rva_offset_within_section = actual_rva - base_rva;
-                    let file_offset = base_file_offset + rva_offset_within_section as u64;
+                    let file_offset = base_file_offset + u64::from(rva_offset_within_section);
 
-                    operations.write_operations.push(WriteOperation {
+                    operations.write.push(WriteOperation {
                         offset: file_offset,
                         data: method_body_bytes.clone(),
                         component: format!("Method body at RVA 0x{actual_rva:08X}"),
@@ -2375,9 +2305,8 @@ impl<'a> LayoutPlanner<'a> {
                 let changes = self.assembly.changes();
                 if !changes.table_changes.is_empty() {
                     return self.generate_modified_tables_stream_data(original_stream_data);
-                } else {
-                    return Ok(original_stream_data.to_vec());
                 }
+                return Ok(original_stream_data.to_vec());
             }
         }
 
@@ -2470,7 +2399,7 @@ impl<'a> LayoutPlanner<'a> {
             if let Some(tid) = TableId::from_token_type(table_id) {
                 let original_count = original_header.table_row_count(tid);
                 let new_count = if table_changes.contains_key(&tid) {
-                    self.calculate_new_row_count_full(original_count, &table_changes[&tid])?
+                    Self::calculate_new_row_count_full(original_count, &table_changes[&tid])?
                 } else {
                     original_count
                 };
@@ -2575,7 +2504,7 @@ impl<'a> LayoutPlanner<'a> {
             if let Some(tid) = TableId::from_token_type(table_id) {
                 let original_count = original_header.table_row_count(tid);
                 let new_count = if table_changes.contains_key(&tid) {
-                    self.calculate_new_row_count_full(original_count, &table_changes[&tid])?
+                    Self::calculate_new_row_count_full(original_count, &table_changes[&tid])?
                 } else {
                     original_count
                 };
@@ -2600,7 +2529,6 @@ impl<'a> LayoutPlanner<'a> {
 
     /// Calculates new row count for full table modifications.
     fn calculate_new_row_count_full(
-        &self,
         original_count: u32,
         modifications: &TableModifications,
     ) -> Result<u32> {
@@ -2624,7 +2552,11 @@ impl<'a> LayoutPlanner<'a> {
 
                 Ok(count)
             }
-            TableModifications::Replaced(rows) => Ok(rows.len() as u32),
+            TableModifications::Replaced(rows) => {
+                let row_count = u32::try_from(rows.len())
+                    .map_err(|_| malformed_error!("Row count exceeds u32 range"))?;
+                Ok(row_count)
+            }
         }
     }
 
@@ -2639,14 +2571,14 @@ impl<'a> LayoutPlanner<'a> {
         rva_mappings: &HashMap<u32, u32>,
     ) -> Result<Vec<u8>> {
         // Calculate the total size needed
-        let header_size = self.calculate_tables_header_size_full(new_row_counts)?;
-        let data_size = self.calculate_tables_data_size_full(new_row_counts, table_info)?;
+        let header_size = Self::calculate_tables_header_size_full(new_row_counts);
+        let data_size = Self::calculate_tables_data_size_full(new_row_counts, table_info)?;
         let total_size = header_size + data_size;
 
         let mut stream_data = vec![0u8; total_size];
 
         // Write the header
-        self.write_tables_header_full(&mut stream_data, original_header, new_row_counts)?;
+        Self::write_tables_header_full(&mut stream_data, original_header, new_row_counts)?;
 
         // Write all table data
         self.write_all_tables_data_full(
@@ -2663,7 +2595,7 @@ impl<'a> LayoutPlanner<'a> {
     }
 
     /// Calculates the size needed for the complete tables header.
-    fn calculate_tables_header_size_full(&self, row_counts: &[u32]) -> Result<usize> {
+    fn calculate_tables_header_size_full(row_counts: &[u32]) -> usize {
         let mut size = 24; // Fixed header: reserved(4) + versions(2) + heap_sizes(1) + reserved(1) + valid(8) + sorted(8)
 
         // Add 4 bytes for each present table
@@ -2673,12 +2605,11 @@ impl<'a> LayoutPlanner<'a> {
             }
         }
 
-        Ok(size)
+        size
     }
 
     /// Calculates the size needed for all tables data.
     fn calculate_tables_data_size_full(
-        &self,
         row_counts: &[u32],
         table_info: &TableInfoRef,
     ) -> Result<usize> {
@@ -2686,8 +2617,10 @@ impl<'a> LayoutPlanner<'a> {
 
         for (table_id, &row_count) in row_counts.iter().enumerate() {
             if row_count > 0 {
-                if let Some(tid) = TableId::from_token_type(table_id as u8) {
-                    let row_size = self.get_table_row_size(tid, table_info) as usize;
+                let table_id_u8 = u8::try_from(table_id)
+                    .map_err(|_| malformed_error!("Table ID exceeds u8 range"))?;
+                if let Some(tid) = TableId::from_token_type(table_id_u8) {
+                    let row_size = Self::get_table_row_size(tid, table_info) as usize;
                     total_size += (row_count as usize) * row_size;
                 }
             }
@@ -2698,7 +2631,6 @@ impl<'a> LayoutPlanner<'a> {
 
     /// Writes the complete tables header with proper structure.
     fn write_tables_header_full(
-        &self,
         buffer: &mut [u8],
         original_header: &TablesHeader,
         new_row_counts: &[u32],
@@ -2712,7 +2644,7 @@ impl<'a> LayoutPlanner<'a> {
         write_le_at(
             buffer,
             &mut offset,
-            self.calculate_heap_sizes_byte(&original_header.info),
+            Self::calculate_heap_sizes_byte(&original_header.info),
         )?; // HeapSizes
         write_le_at(buffer, &mut offset, 1u8)?; // Reserved2
 
@@ -2728,7 +2660,7 @@ impl<'a> LayoutPlanner<'a> {
         write_le_at(buffer, &mut offset, original_header.sorted)?;
 
         // Write row counts for present tables
-        for &row_count in new_row_counts.iter() {
+        for &row_count in new_row_counts {
             if row_count > 0 {
                 write_le_at(buffer, &mut offset, row_count)?;
             }
@@ -2757,8 +2689,10 @@ impl<'a> LayoutPlanner<'a> {
                 continue;
             }
 
-            if let Some(tid) = TableId::from_token_type(table_id as u8) {
-                let row_size = self.get_table_row_size(tid, table_info) as usize;
+            let table_id_u8 = u8::try_from(table_id)
+                .map_err(|_| malformed_error!("Table ID exceeds u8 range"))?;
+            if let Some(tid) = TableId::from_token_type(table_id_u8) {
+                let row_size = Self::get_table_row_size(tid, table_info) as usize;
                 let table_size = (row_count as usize) * row_size;
 
                 if table_changes.contains_key(&tid) {
@@ -2827,13 +2761,14 @@ impl<'a> LayoutPlanner<'a> {
             }
             TableModifications::Replaced(rows) => {
                 // Write entirely new table data
-                let row_size = self.get_table_row_size(table_id, table_info) as usize;
+                let row_size = Self::get_table_row_size(table_id, table_info) as usize;
 
                 for (i, row_data) in rows.iter().enumerate() {
                     let row_offset = i * row_size;
                     if row_offset + row_size <= buffer.len() {
                         let mut offset = 0;
-                        let row_id = (row_offset / row_size + 1) as u32;
+                        let row_id = u32::try_from(row_offset / row_size + 1)
+                            .map_err(|_| malformed_error!("Row ID exceeds u32 range"))?;
                         row_data.row_write(
                             &mut buffer[row_offset..row_offset + row_size],
                             &mut offset,
@@ -2879,7 +2814,7 @@ impl<'a> LayoutPlanner<'a> {
         buffer[..original_data.len()].copy_from_slice(&original_data);
 
         // Apply heap index remapping to all rows
-        let row_size = self.get_table_row_size(table_id, table_info) as usize;
+        let row_size = Self::get_table_row_size(table_id, table_info) as usize;
         let row_count = original_data.len() / row_size;
 
         for row_index in 0..row_count {
@@ -2904,7 +2839,7 @@ impl<'a> LayoutPlanner<'a> {
         table_info: &TableInfoRef,
     ) -> Result<Vec<u8>> {
         let row_count = original_header.table_row_count(table_id);
-        let row_size = self.get_table_row_size(table_id, table_info) as usize;
+        let row_size = Self::get_table_row_size(table_id, table_info) as usize;
         let table_size = (row_count as usize) * row_size;
 
         if row_count == 0 {
@@ -2915,8 +2850,9 @@ impl<'a> LayoutPlanner<'a> {
         let original_stream_data = self.copy_original_stream_data("#~")?;
 
         // Calculate the offset to this table's data within the stream
-        let mut table_offset = self
-            .calculate_tables_header_size_full(&self.build_original_row_counts(original_header)?)?;
+        let mut table_offset = Self::calculate_tables_header_size_full(
+            &Self::build_original_row_counts(original_header),
+        );
 
         // Add offsets for all previous tables
         for tid in 0u8..64 {
@@ -2926,7 +2862,7 @@ impl<'a> LayoutPlanner<'a> {
                 }
                 let prev_row_count = original_header.table_row_count(prev_table);
                 if prev_row_count > 0 {
-                    let prev_row_size = self.get_table_row_size(prev_table, table_info) as usize;
+                    let prev_row_size = Self::get_table_row_size(prev_table, table_info) as usize;
                     table_offset += (prev_row_count as usize) * prev_row_size;
                 }
             }
@@ -2996,7 +2932,7 @@ impl<'a> LayoutPlanner<'a> {
         table_info: &TableInfoRef,
         rva_mappings: &HashMap<u32, u32>,
     ) -> Result<()> {
-        let row_size = self.get_table_row_size(table_id, table_info) as usize;
+        let row_size = Self::get_table_row_size(table_id, table_info) as usize;
 
         for operation in operations {
             match &operation.operation {
@@ -3004,7 +2940,8 @@ impl<'a> LayoutPlanner<'a> {
                     let row_offset = ((*rid - 1) as usize) * row_size;
                     if row_offset + row_size <= buffer.len() {
                         let mut offset = 0;
-                        let row_id = (row_offset / row_size + 1) as u32;
+                        let row_id = u32::try_from(row_offset / row_size + 1)
+                            .map_err(|_| malformed_error!("Row ID exceeds u32 range"))?;
                         row_data.row_write(
                             &mut buffer[row_offset..row_offset + row_size],
                             &mut offset,
@@ -3026,7 +2963,8 @@ impl<'a> LayoutPlanner<'a> {
                     let row_offset = ((*rid - 1) as usize) * row_size;
                     if row_offset + row_size <= buffer.len() {
                         let mut offset = 0;
-                        let row_id = (row_offset / row_size + 1) as u32;
+                        let row_id = u32::try_from(row_offset / row_size + 1)
+                            .map_err(|_| malformed_error!("Row ID exceeds u32 range"))?;
                         row_data.row_write(
                             &mut buffer[row_offset..row_offset + row_size],
                             &mut offset,
@@ -3088,12 +3026,6 @@ impl<'a> LayoutPlanner<'a> {
                 let string_size = table_info.str_bytes() as usize;
                 self.remap_string_index_at(row_buffer, 4 + string_size, heap_mappings)?;
                 // TypeNamespace
-            }
-            TableId::Field => {
-                // Field: [Flags(2), Name(StringIndex), Signature(BlobIndex)]
-                // Since we're using identity mappings for both string and blob heaps,
-                // the original indices should remain valid without remapping
-                // Skip remapping to avoid any potential corruption
             }
             TableId::MethodDef => {
                 // MethodDef: [RVA(4), ImplFlags(2), Flags(2), Name(StringIndex), Signature(BlobIndex), ParamList(Param)]
@@ -3246,13 +3178,14 @@ impl<'a> LayoutPlanner<'a> {
                     write_le_at(row_buffer, &mut offset, actual_rva)?;
                 } else {
                     // Validate that the RVA is reasonable (not corrupted)
-                    if current_rva > 0x10000000 {
+                    if current_rva > MAX_REASONABLE_RVA {
                         // RVA validation - suspicious values that weren't remapped
                     }
                 }
             }
             // Tables that don't use heap indices or are rare
-            TableId::FieldPtr
+            TableId::Field
+            | TableId::FieldPtr
             | TableId::MethodPtr
             | TableId::ParamPtr
             | TableId::EventPtr
@@ -3307,7 +3240,7 @@ impl<'a> LayoutPlanner<'a> {
 
         let mut read_offset = offset;
         let original_index = if index_size == 2 {
-            read_le_at::<u16>(row_buffer, &mut read_offset)? as u32
+            u32::from(read_le_at::<u16>(row_buffer, &mut read_offset)?)
         } else {
             read_le_at::<u32>(row_buffer, &mut read_offset)?
         };
@@ -3315,7 +3248,12 @@ impl<'a> LayoutPlanner<'a> {
         if let Some(&new_index) = heap_mappings.string_map.get(&original_index) {
             let mut write_offset = offset;
             if index_size == 2 {
-                write_le_at(row_buffer, &mut write_offset, new_index as u16)?;
+                write_le_at(
+                    row_buffer,
+                    &mut write_offset,
+                    u16::try_from(new_index)
+                        .map_err(|_| malformed_error!("Index exceeds u16 range"))?,
+                )?;
             } else {
                 write_le_at(row_buffer, &mut write_offset, new_index)?;
             }
@@ -3349,7 +3287,7 @@ impl<'a> LayoutPlanner<'a> {
 
         let mut read_offset = offset;
         let original_index = if index_size == 2 {
-            read_le_at::<u16>(row_buffer, &mut read_offset)? as u32
+            u32::from(read_le_at::<u16>(row_buffer, &mut read_offset)?)
         } else {
             read_le_at::<u32>(row_buffer, &mut read_offset)?
         };
@@ -3357,7 +3295,12 @@ impl<'a> LayoutPlanner<'a> {
         if let Some(&new_index) = heap_mappings.blob_map.get(&original_index) {
             let mut write_offset = offset;
             if index_size == 2 {
-                write_le_at(row_buffer, &mut write_offset, new_index as u16)?;
+                write_le_at(
+                    row_buffer,
+                    &mut write_offset,
+                    u16::try_from(new_index)
+                        .map_err(|_| malformed_error!("Index exceeds u16 range"))?,
+                )?;
             } else {
                 write_le_at(row_buffer, &mut write_offset, new_index)?;
             }
@@ -3374,7 +3317,6 @@ impl<'a> LayoutPlanner<'a> {
 
     /// Remaps a field index (table row index) at the specified offset in a row buffer.
     fn remap_field_index_at(
-        &self,
         row_buffer: &mut [u8],
         offset: usize,
         heap_mappings: &IndexRemapper,
@@ -3394,7 +3336,7 @@ impl<'a> LayoutPlanner<'a> {
 
         let mut read_offset = offset;
         let original_index = if index_size == 2 {
-            read_le_at::<u16>(row_buffer, &mut read_offset)? as u32
+            u32::from(read_le_at::<u16>(row_buffer, &mut read_offset)?)
         } else {
             read_le_at::<u32>(row_buffer, &mut read_offset)?
         };
@@ -3404,7 +3346,9 @@ impl<'a> LayoutPlanner<'a> {
             if let Some(Some(new_index)) = field_mappings.mapping.get(&original_index) {
                 let mut write_offset = offset;
                 if index_size == 2 {
-                    write_le_at(row_buffer, &mut write_offset, *new_index as u16)?;
+                    let index_u16 = u16::try_from(*new_index)
+                        .map_err(|_| malformed_error!("Index exceeds u16 range"))?;
+                    write_le_at(row_buffer, &mut write_offset, index_u16)?;
                 } else {
                     write_le_at(row_buffer, &mut write_offset, *new_index)?;
                 }
@@ -3415,7 +3359,7 @@ impl<'a> LayoutPlanner<'a> {
     }
 
     /// Builds the original row counts array from the header.
-    fn build_original_row_counts(&self, header: &TablesHeader) -> Result<Vec<u32>> {
+    fn build_original_row_counts(header: &TablesHeader) -> Vec<u32> {
         let mut row_counts = Vec::with_capacity(64);
         for table_id in 0..64 {
             if let Some(tid) = TableId::from_token_type(table_id) {
@@ -3424,7 +3368,7 @@ impl<'a> LayoutPlanner<'a> {
                 row_counts.push(0);
             }
         }
-        Ok(row_counts)
+        row_counts
     }
 
     /// Copies original stream data from the assembly to preserve indices and structure.
@@ -3561,7 +3505,7 @@ impl<'a> LayoutPlanner<'a> {
         // Minor version (1 byte)
         write_le_at(stream_data, &mut pos, tables_header.minor_version)?;
         // Heap sizes (1 byte) - calculate from table_info directly
-        let heap_sizes = self.calculate_heap_sizes_byte(&tables_header.info);
+        let heap_sizes = Self::calculate_heap_sizes_byte(&tables_header.info);
         write_le_at(stream_data, &mut pos, heap_sizes)?;
         // Reserved (1 byte)
         write_le_at(stream_data, &mut pos, 0x01u8)?;
@@ -3618,7 +3562,7 @@ impl<'a> LayoutPlanner<'a> {
                 match table_mod {
                     CilTableModifications::Replaced(new_rows) => {
                         // Write complete replacement
-                        self.write_replaced_table_data(
+                        Self::write_replaced_table_data(
                             stream_data,
                             current_offset,
                             new_rows,
@@ -3628,7 +3572,7 @@ impl<'a> LayoutPlanner<'a> {
                     }
                     CilTableModifications::Sparse { operations, .. } => {
                         // Apply sparse modifications to original table data
-                        let table_size = self.write_sparse_modified_table_data(
+                        let table_size = Self::write_sparse_modified_table_data(
                             stream_data,
                             current_offset,
                             table_id,
@@ -3644,7 +3588,7 @@ impl<'a> LayoutPlanner<'a> {
                 let table_size = original_row_count * row_size;
 
                 if table_size > 0 {
-                    self.copy_original_table_data(
+                    Self::copy_original_table_data(
                         stream_data,
                         current_offset,
                         table_id,
@@ -3659,7 +3603,7 @@ impl<'a> LayoutPlanner<'a> {
     }
 
     /// Calculates the heap sizes byte based on the table info.
-    fn calculate_heap_sizes_byte(&self, table_info: &TableInfo) -> u8 {
+    fn calculate_heap_sizes_byte(table_info: &TableInfo) -> u8 {
         let mut heap_sizes = 0u8;
 
         if table_info.is_large_str() {
@@ -3678,7 +3622,7 @@ impl<'a> LayoutPlanner<'a> {
     }
 
     /// Gets the row size for a table using the appropriate TableRow implementation.
-    fn get_table_row_size(&self, table_id: TableId, table_info: &TableInfoRef) -> u32 {
+    fn get_table_row_size(table_id: TableId, table_info: &TableInfoRef) -> u32 {
         // For different table types, call the appropriate TableRow::row_size method
         match table_id {
             TableId::Module => crate::metadata::tables::ModuleRaw::row_size(table_info),
@@ -3718,12 +3662,10 @@ impl<'a> LayoutPlanner<'a> {
             TableId::AssemblyProcessor => {
                 crate::metadata::tables::AssemblyProcessorRaw::row_size(table_info)
             }
-            TableId::AssemblyOS => 4, // This table might not be implemented, use default size
             TableId::AssemblyRef => crate::metadata::tables::AssemblyRefRaw::row_size(table_info),
             TableId::AssemblyRefProcessor => {
                 crate::metadata::tables::AssemblyRefProcessorRaw::row_size(table_info)
             }
-            TableId::AssemblyRefOS => 4, // This table might not be implemented, use default size
             TableId::File => crate::metadata::tables::FileRaw::row_size(table_info),
             TableId::ExportedType => crate::metadata::tables::ExportedTypeRaw::row_size(table_info),
             TableId::ManifestResource => {
@@ -3744,7 +3686,6 @@ impl<'a> LayoutPlanner<'a> {
 
     /// Writes replaced table data to the stream.
     fn write_replaced_table_data(
-        &self,
         stream_data: &mut [u8],
         offset: usize,
         new_rows: &[crate::metadata::tables::TableDataOwned],
@@ -3769,7 +3710,6 @@ impl<'a> LayoutPlanner<'a> {
 
     /// Writes table data with sparse modifications applied.
     fn write_sparse_modified_table_data(
-        &self,
         stream_data: &mut [u8],
         offset: usize,
         table_id: TableId,
@@ -3802,7 +3742,9 @@ impl<'a> LayoutPlanner<'a> {
         dispatch_table_type!(table_id, |RawType| {
             let original_table = tables_header.table::<RawType>();
 
-            for final_rid in 1..=final_row_count as u32 {
+            let final_count_u32 = u32::try_from(final_row_count)
+                .map_err(|_| malformed_error!("Final row count exceeds u32 range"))?;
+            for final_rid in 1..=final_count_u32 {
                 if let Some(original_rid) = remapper.reverse_lookup(final_rid) {
                     let row_offset = offset + ((final_rid - 1) as usize * row_size);
                     let row_slice = &mut stream_data[row_offset..row_offset + row_size];
@@ -3842,7 +3784,6 @@ impl<'a> LayoutPlanner<'a> {
 
     /// Copies original table data unchanged.
     fn copy_original_table_data(
-        &self,
         stream_data: &mut [u8],
         offset: usize,
         table_id: TableId,

@@ -522,7 +522,7 @@ impl UnifiedImportContainer {
                             dll_name: dll_name.clone(),
                             function_name: Some(func_name.clone()),
                             ordinal: function.ordinal,
-                            iat_rva: function.iat_rva,
+                            iat_rva: function.rva,
                         }));
                 }
 

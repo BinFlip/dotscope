@@ -51,9 +51,9 @@ pub use compression::compressed_uint_size;
 pub use heap_calc::calculate_table_row_size;
 #[allow(unused_imports)]
 pub use io::{
-    read_be, read_be_at, read_be_at_dyn, read_compressed_int, read_compressed_int_at, read_le,
-    read_le_at, read_le_at_dyn, write_7bit_encoded_int, write_be, write_be_at, write_be_at_dyn,
-    write_compressed_int, write_compressed_uint, write_le, write_le_at, write_le_at_dyn,
-    write_prefixed_string_utf16, write_prefixed_string_utf8, write_string_at, write_string_utf8,
-    CilIO,
+    read_be, read_be_at, read_be_at_dyn, read_compressed_int, read_compressed_int_at,
+    read_compressed_uint, read_compressed_uint_at, read_le, read_le_at, read_le_at_dyn,
+    write_7bit_encoded_int, write_be, write_be_at, write_be_at_dyn, write_compressed_int,
+    write_compressed_uint, write_le, write_le_at, write_le_at_dyn, write_prefixed_string_utf16,
+    write_prefixed_string_utf8, write_string_at, write_string_utf8, CilIO,
 };
