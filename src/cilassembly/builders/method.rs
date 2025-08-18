@@ -224,6 +224,7 @@ impl MethodBuilder {
     ///
     /// let builder = MethodBuilder::new("MyMethod");
     /// ```
+    #[must_use]
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
@@ -256,6 +257,7 @@ impl MethodBuilder {
     ///
     /// let ctor = MethodBuilder::constructor();
     /// ```
+    #[must_use]
     pub fn constructor() -> Self {
         Self::new(".ctor").public().special_name().rtspecial_name()
     }
@@ -272,6 +274,7 @@ impl MethodBuilder {
     ///
     /// let static_ctor = MethodBuilder::static_constructor();
     /// ```
+    #[must_use]
     pub fn static_constructor() -> Self {
         Self::new(".cctor")
             .private()
@@ -298,6 +301,7 @@ impl MethodBuilder {
     ///
     /// let getter = MethodBuilder::property_getter("Name", TypeSignature::String);
     /// ```
+    #[must_use]
     pub fn property_getter(property_name: &str, return_type: TypeSignature) -> Self {
         Self::new(&format!("get_{property_name}"))
             .public()
@@ -323,6 +327,7 @@ impl MethodBuilder {
     ///
     /// let setter = MethodBuilder::property_setter("Name", TypeSignature::String);
     /// ```
+    #[must_use]
     pub fn property_setter(property_name: &str, value_type: TypeSignature) -> Self {
         Self::new(&format!("set_{property_name}"))
             .public()
@@ -348,6 +353,7 @@ impl MethodBuilder {
     ///
     /// let add_method = MethodBuilder::event_add("OnClick", TypeSignature::Object);
     /// ```
+    #[must_use]
     pub fn event_add(event_name: &str, delegate_type: TypeSignature) -> Self {
         Self::new(&format!("add_{event_name}"))
             .public()
@@ -373,6 +379,7 @@ impl MethodBuilder {
     ///
     /// let remove_method = MethodBuilder::event_remove("OnClick", TypeSignature::Object);
     /// ```
+    #[must_use]
     pub fn event_remove(event_name: &str, delegate_type: TypeSignature) -> Self {
         Self::new(&format!("remove_{event_name}"))
             .public()
@@ -389,6 +396,7 @@ impl MethodBuilder {
     ///
     /// let builder = MethodBuilder::new("Test").public();
     /// ```
+    #[must_use]
     pub fn public(mut self) -> Self {
         self.access_flags = MethodAccessFlags::PUBLIC;
         self
@@ -403,6 +411,7 @@ impl MethodBuilder {
     ///
     /// let builder = MethodBuilder::new("Test").private();
     /// ```
+    #[must_use]
     pub fn private(mut self) -> Self {
         self.access_flags = MethodAccessFlags::PRIVATE;
         self
@@ -417,6 +426,7 @@ impl MethodBuilder {
     ///
     /// let builder = MethodBuilder::new("Test").protected();
     /// ```
+    #[must_use]
     pub fn protected(mut self) -> Self {
         self.access_flags = MethodAccessFlags::FAMILY;
         self
@@ -431,6 +441,7 @@ impl MethodBuilder {
     ///
     /// let builder = MethodBuilder::new("Test").internal();
     /// ```
+    #[must_use]
     pub fn internal(mut self) -> Self {
         self.access_flags = MethodAccessFlags::ASSEMBLY;
         self
@@ -448,6 +459,7 @@ impl MethodBuilder {
     ///
     /// let builder = MethodBuilder::new("Test").static_method();
     /// ```
+    #[must_use]
     pub fn static_method(mut self) -> Self {
         self.modifiers |= MethodModifiers::STATIC;
         self.has_this = false;
@@ -465,6 +477,7 @@ impl MethodBuilder {
     ///
     /// let builder = MethodBuilder::new("Test").virtual_method();
     /// ```
+    #[must_use]
     pub fn virtual_method(mut self) -> Self {
         self.modifiers |= MethodModifiers::VIRTUAL;
         self
@@ -481,6 +494,7 @@ impl MethodBuilder {
     ///
     /// let builder = MethodBuilder::new("Test").abstract_method();
     /// ```
+    #[must_use]
     pub fn abstract_method(mut self) -> Self {
         self.modifiers |= MethodModifiers::ABSTRACT;
         self
@@ -497,6 +511,7 @@ impl MethodBuilder {
     ///
     /// let builder = MethodBuilder::new("Test").sealed();
     /// ```
+    #[must_use]
     pub fn sealed(mut self) -> Self {
         self.modifiers |= MethodModifiers::FINAL;
         self
@@ -505,6 +520,7 @@ impl MethodBuilder {
     /// Mark the method as having a special name.
     ///
     /// This is typically used for constructors, property accessors, etc.
+    #[must_use]
     pub fn special_name(mut self) -> Self {
         self.modifiers |= MethodModifiers::SPECIAL_NAME;
         self
@@ -513,6 +529,7 @@ impl MethodBuilder {
     /// Mark the method as having a runtime special name.  
     ///
     /// This is typically used for constructors and other runtime-special methods.
+    #[must_use]
     pub fn rtspecial_name(mut self) -> Self {
         self.modifiers |= MethodModifiers::RTSPECIAL_NAME;
         self
@@ -530,6 +547,7 @@ impl MethodBuilder {
     ///
     /// let builder = MethodBuilder::new("Test").calling_convention_default();
     /// ```
+    #[must_use]
     pub fn calling_convention_default(mut self) -> Self {
         self.clear_calling_conventions();
         self.default_calling_convention = true;
@@ -548,6 +566,7 @@ impl MethodBuilder {
     ///
     /// let builder = MethodBuilder::new("Printf").calling_convention_vararg();
     /// ```
+    #[must_use]
     pub fn calling_convention_vararg(mut self) -> Self {
         self.clear_calling_conventions();
         self.vararg = true;
@@ -566,6 +585,7 @@ impl MethodBuilder {
     ///
     /// let builder = MethodBuilder::new("CFunction").calling_convention_cdecl();
     /// ```
+    #[must_use]
     pub fn calling_convention_cdecl(mut self) -> Self {
         self.clear_calling_conventions();
         self.cdecl = true;
@@ -584,6 +604,7 @@ impl MethodBuilder {
     ///
     /// let builder = MethodBuilder::new("WinAPI").calling_convention_stdcall();
     /// ```
+    #[must_use]
     pub fn calling_convention_stdcall(mut self) -> Self {
         self.clear_calling_conventions();
         self.stdcall = true;
@@ -602,6 +623,7 @@ impl MethodBuilder {
     ///
     /// let builder = MethodBuilder::new("CppMethod").calling_convention_thiscall();
     /// ```
+    #[must_use]
     pub fn calling_convention_thiscall(mut self) -> Self {
         self.clear_calling_conventions();
         self.thiscall = true;
@@ -620,6 +642,7 @@ impl MethodBuilder {
     ///
     /// let builder = MethodBuilder::new("FastMethod").calling_convention_fastcall();
     /// ```
+    #[must_use]
     pub fn calling_convention_fastcall(mut self) -> Self {
         self.clear_calling_conventions();
         self.fastcall = true;
@@ -638,6 +661,7 @@ impl MethodBuilder {
     ///
     /// let builder = MethodBuilder::new("ExplicitThis").explicit_this();
     /// ```
+    #[must_use]
     pub fn explicit_this(mut self) -> Self {
         self.explicit_this = true;
         self
@@ -657,6 +681,7 @@ impl MethodBuilder {
     ///
     /// let builder = MethodBuilder::new("GetValue").returns(TypeSignature::I4);
     /// ```
+    #[must_use]
     pub fn returns(mut self, return_type: TypeSignature) -> Self {
         self.return_type = return_type;
         self
@@ -682,6 +707,7 @@ impl MethodBuilder {
     ///     .parameter("a", TypeSignature::I4)
     ///     .parameter("b", TypeSignature::I4);
     /// ```
+    #[must_use]
     pub fn parameter(mut self, name: &str, param_type: TypeSignature) -> Self {
         self.parameters.push((name.to_string(), param_type));
         self
@@ -720,6 +746,7 @@ impl MethodBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn implementation<F>(mut self, f: F) -> Self
     where
         F: FnOnce(MethodBodyBuilder) -> MethodBodyBuilder,
@@ -741,6 +768,7 @@ impl MethodBuilder {
     ///
     /// let builder = MethodBuilder::new("ExternalMethod").extern_method();
     /// ```
+    #[must_use]
     pub fn extern_method(mut self) -> Self {
         self.body_builder = None; // No IL implementation
         self
@@ -782,7 +810,8 @@ impl MethodBuilder {
             thiscall: self.thiscall,
             fastcall: self.fastcall,
             param_count_generic: 0,
-            param_count: parameters.len() as u32,
+            param_count: u32::try_from(parameters.len())
+                .map_err(|_| malformed_error!("Method parameter count exceeds u32 range"))?,
             return_type: SignatureParameter {
                 modifiers: Vec::new(),
                 by_ref: false,
@@ -839,7 +868,8 @@ impl MethodBuilder {
 
         // Create parameter entries for each method parameter
         for (sequence, (name, _param_type)) in parameters.iter().enumerate() {
-            let param_sequence = (sequence + 1) as u32; // Parameters start at sequence 1
+            let param_sequence = u32::try_from(sequence + 1)
+                .map_err(|_| malformed_error!("Parameter sequence exceeds u32 range"))?; // Parameters start at sequence 1
 
             ParamBuilder::new()
                 .name(name)

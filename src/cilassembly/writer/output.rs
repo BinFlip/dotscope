@@ -520,8 +520,8 @@ impl Output {
     /// Gets the total size of the file.
     ///
     /// Returns the size in bytes of the memory-mapped file as specified during creation.
-    pub fn size(&self) -> Result<u64> {
-        Ok(self.mmap.len() as u64)
+    pub fn size(&self) -> u64 {
+        self.mmap.len() as u64
     }
 
     /// Flushes any pending writes to disk.
@@ -661,7 +661,7 @@ impl Output {
     /// }
     /// ```
     pub fn region_is_valid(&self, region: &FileRegion) -> bool {
-        region.end_offset() <= self.size().unwrap_or(0)
+        region.end_offset() <= self.size()
     }
 }
 
@@ -694,7 +694,7 @@ mod tests {
         let target_path = temp_dir.path().join("test.bin");
 
         let mmap_file = Output::create(&target_path, 1024).unwrap();
-        assert_eq!(mmap_file.size().unwrap(), 1024);
+        assert_eq!(mmap_file.size(), 1024);
         assert!(!mmap_file.finalized);
     }
 

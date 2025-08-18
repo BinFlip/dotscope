@@ -56,6 +56,7 @@
 //! - [`crate::metadata::validation::traits`] - Validators use scanner for reference validation
 
 use crate::{
+    dispatch_table_type,
     metadata::{
         cilassemblyview::CilAssemblyView,
         cilobject::CilObject,
@@ -290,19 +291,24 @@ impl ReferenceScanner {
 
     /// Collects all valid tokens from metadata tables.
     fn collect_valid_tokens(&mut self, tables: &crate::TablesHeader) {
-        for table in tables.present_tables() {
-            let row_count = tables.table_row_count(table);
+        for table_id in tables.present_tables() {
+            let row_count = tables.table_row_count(table_id);
             if row_count == 0 {
                 continue;
             }
 
-            self.table_row_counts.insert(table, row_count);
+            self.table_row_counts.insert(table_id, row_count);
 
-            let table_token_base = u32::from(table.token_type()) << 24;
-            for rid in 1..=row_count {
-                let token = Token::new(table_token_base | rid);
-                self.valid_tokens.insert(token);
-            }
+            let table_token_base = u32::from(table_id.token_type()) << 24;
+
+            dispatch_table_type!(table_id, |RawType| {
+                if let Some(table) = tables.table::<RawType>() {
+                    for row in table {
+                        let token = Token::new(table_token_base | row.rid);
+                        self.valid_tokens.insert(token);
+                    }
+                }
+            });
         }
     }
 
