@@ -1272,16 +1272,16 @@ pub struct PlanningInfo {
 #[derive(Debug, Clone)]
 pub struct SizeBreakdown {
     /// Size of DOS header and PE headers
-    pub headers_size: u64,
+    pub headers: u64,
 
     /// Size of section table
-    pub section_table_size: u64,
+    pub section_table: u64,
 
     /// Size of original sections (relocated)
-    pub original_sections_size: u64,
+    pub original_sections: u64,
 
     /// Size of new .meta section
-    pub metadata_section_size: u64,
+    pub metadata_section: u64,
 
     /// Breakdown of .meta section components
     pub metadata_components: MetadataComponentSizes,
@@ -1291,25 +1291,25 @@ pub struct SizeBreakdown {
 #[derive(Debug, Clone)]
 pub struct MetadataComponentSizes {
     /// COR20 header size (always 72 bytes)
-    pub cor20_header_size: u64,
+    pub cor20_header: u64,
 
     /// Metadata root + stream directory size
-    pub metadata_root_size: u64,
+    pub metadata_root: u64,
 
     /// Tables stream size (#~ or #-)
-    pub tables_stream_size: u64,
+    pub tables_stream: u64,
 
     /// String heap size (#Strings)
-    pub strings_heap_size: u64,
+    pub strings_heap: u64,
 
     /// Blob heap size (#Blob)
-    pub blob_heap_size: u64,
+    pub blob_heap: u64,
 
     /// GUID heap size (#GUID)
-    pub guid_heap_size: u64,
+    pub guid_heap: u64,
 
     /// User string heap size (#US)
-    pub userstring_heap_size: u64,
+    pub userstring_heap: u64,
 }
 
 impl WriteLayout {
@@ -1509,7 +1509,7 @@ impl WriteLayout {
     /// Returns `Ok(())` if output matches planning, error if not.
     pub fn validate_against_output(&self, output: &Output) -> Result<()> {
         // Verify file size matches
-        let actual_size = output.size()?;
+        let actual_size = output.size();
         if actual_size != self.total_file_size {
             return Err(Error::WriteLayoutFailed {
                 message: format!(

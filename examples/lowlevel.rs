@@ -54,14 +54,11 @@ fn main() -> Result<()> {
 
     // Display section information
     println!("  - Sections:");
-    for (i, section) in file.sections().enumerate() {
-        let name = std::str::from_utf8(&section.name).unwrap_or("<invalid>");
+    for (i, section) in file.sections().iter().enumerate() {
+        let name = section.name.as_str();
         println!(
             "    [{}] {} - RVA: 0x{:08X}, Size: 0x{:08X}",
-            i,
-            name.trim_end_matches('\0'),
-            section.virtual_address,
-            section.size_of_raw_data
+            i, name, section.virtual_address, section.size_of_raw_data
         );
     }
 

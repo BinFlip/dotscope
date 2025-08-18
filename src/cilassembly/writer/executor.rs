@@ -296,9 +296,9 @@ impl WriteExecutor {
     ) -> Result<()> {
         Self::validate_execution_compatibility(layout, output)?;
 
-        Self::execute_copy_operations(&layout.operations.copy_operations, output, assembly)?;
-        Self::execute_zero_operations(&layout.operations.zero_operations, output)?;
-        Self::execute_write_operations(&layout.operations.write_operations, output)?;
+        Self::execute_copy_operations(&layout.operations.copy, output, assembly)?;
+        Self::execute_zero_operations(&layout.operations.zero, output)?;
+        Self::execute_write_operations(&layout.operations.write, output)?;
 
         Self::execute_native_table_operations(layout, output, assembly)?;
 
@@ -338,7 +338,7 @@ impl WriteExecutor {
     ) -> Result<()> {
         for (index, operation) in operations.iter().enumerate() {
             Self::execute_copy_operation(operation, output, assembly).map_err(|e| {
-                Self::wrap_operation_error(e, "copy", index, &operation.description)
+                Self::wrap_operation_error(&e, "copy", index, &operation.description)
             })?;
         }
         Ok(())
@@ -370,7 +370,17 @@ impl WriteExecutor {
 
         let source_data = assembly
             .file()
-            .data_slice(operation.source_offset as usize, operation.size as usize)
+            .data_slice(
+                usize::try_from(operation.source_offset).map_err(|_| Error::WriteLayoutFailed {
+                    message: format!(
+                        "Source offset {} exceeds usize range",
+                        operation.source_offset
+                    ),
+                })?,
+                usize::try_from(operation.size).map_err(|_| Error::WriteLayoutFailed {
+                    message: format!("Size {} exceeds usize range", operation.size),
+                })?,
+            )
             .map_err(|e| Error::WriteLayoutFailed {
                 message: format!(
                     "Failed to read source data: {size} bytes from 0x{offset:X}: {e}",
@@ -408,7 +418,7 @@ impl WriteExecutor {
     fn execute_zero_operations(operations: &[ZeroOperation], output: &mut Output) -> Result<()> {
         for (index, operation) in operations.iter().enumerate() {
             Self::execute_zero_operation(operation, output)
-                .map_err(|e| Self::wrap_operation_error(e, "zero", index, &operation.reason))?;
+                .map_err(|e| Self::wrap_operation_error(&e, "zero", index, &operation.reason))?;
         }
         Ok(())
     }
@@ -458,8 +468,9 @@ impl WriteExecutor {
     /// Returns [`crate::Result<()>`] on success or error information if writing fails.
     fn execute_write_operations(operations: &[WriteOperation], output: &mut Output) -> Result<()> {
         for (index, operation) in operations.iter().enumerate() {
-            Self::execute_write_operation(operation, output)
-                .map_err(|e| Self::wrap_operation_error(e, "write", index, &operation.component))?;
+            Self::execute_write_operation(operation, output).map_err(|e| {
+                Self::wrap_operation_error(&e, "write", index, &operation.component)
+            })?;
         }
         Ok(())
     }
@@ -517,7 +528,7 @@ impl WriteExecutor {
     /// - All write operations target valid file ranges
     /// - No operations extend beyond file boundaries
     fn validate_execution_compatibility(layout: &WriteLayout, output: &Output) -> Result<()> {
-        let output_size = output.size()?;
+        let output_size = output.size();
         if output_size != layout.total_file_size {
             return Err(Error::WriteLayoutFailed {
                 message: format!(
@@ -527,7 +538,7 @@ impl WriteExecutor {
             });
         }
 
-        for operation in &layout.operations.copy_operations {
+        for operation in &layout.operations.copy {
             let end_offset = operation.target_offset + operation.size;
             if end_offset > layout.total_file_size {
                 return Err(Error::WriteLayoutFailed {
@@ -539,7 +550,7 @@ impl WriteExecutor {
             }
         }
 
-        for operation in &layout.operations.zero_operations {
+        for operation in &layout.operations.zero {
             let end_offset = operation.offset + operation.size;
             if end_offset > layout.total_file_size {
                 return Err(Error::WriteLayoutFailed {
@@ -551,7 +562,7 @@ impl WriteExecutor {
             }
         }
 
-        for operation in &layout.operations.write_operations {
+        for operation in &layout.operations.write {
             let end_offset = operation.offset + operation.data.len() as u64;
             if end_offset > layout.total_file_size {
                 return Err(Error::WriteLayoutFailed {
@@ -849,7 +860,11 @@ impl WriteExecutor {
                 output.write_u32_le_at(import_entry_offset, import_rva)?;
                 output.write_u32_le_at(
                     import_entry_offset + 4,
-                    requirements.import_table_size as u32,
+                    u32::try_from(requirements.import_table_size).map_err(|_| {
+                        Error::WriteLayoutFailed {
+                            message: "Import table size exceeds u32 range".to_string(),
+                        }
+                    })?,
                 )?;
             }
         }
@@ -860,7 +875,11 @@ impl WriteExecutor {
                 output.write_u32_le_at(export_entry_offset, export_rva)?;
                 output.write_u32_le_at(
                     export_entry_offset + 4,
-                    requirements.export_table_size as u32,
+                    u32::try_from(requirements.export_table_size).map_err(|_| {
+                        Error::WriteLayoutFailed {
+                            message: "Export table size exceeds u32 range".to_string(),
+                        }
+                    })?,
                 )?;
             }
         }
@@ -1002,7 +1021,7 @@ impl WriteExecutor {
     ///
     /// Enhanced [`crate::Error`] with additional context for debugging.
     fn wrap_operation_error(
-        error: Error,
+        error: &Error,
         operation_type: &str,
         operation_index: usize,
         description: &str,
