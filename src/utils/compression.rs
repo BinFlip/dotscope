@@ -71,6 +71,7 @@
 /// write_compressed_uint(300, &mut buffer);
 /// assert_eq!(buffer, vec![0x81, 0x2C]);
 /// ```
+#[allow(clippy::cast_possible_truncation)]
 pub fn write_compressed_uint(value: u32, buffer: &mut Vec<u8>) {
     if value < 0x80 {
         // Single byte: 0xxxxxxx

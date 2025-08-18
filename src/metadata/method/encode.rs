@@ -26,6 +26,10 @@ use crate::Result;
 ///
 /// The encoded method body header bytes (1 byte for tiny, 12 bytes for fat).
 ///
+/// # Errors
+///
+/// Returns an error if encoding parameters are invalid or out of range.
+///
 /// # Examples
 ///
 /// ```rust
@@ -64,7 +68,8 @@ pub fn encode_method_body_header(
     // Use tiny format if possible (code size <= 63, max_stack <= 8, no locals, no exceptions)
     if code_size <= 63 && max_stack <= 8 && local_var_sig_tok == 0 && !has_exceptions {
         // Tiny format: 1 byte header
-        let header = ((code_size << 2) | 0x02) as u8;
+        let header = u8::try_from((code_size << 2) | 0x02)
+            .map_err(|_| crate::malformed_error!("Method body header value exceeds u8 range"))?;
         Ok(vec![header])
     } else {
         // Fat format: 12 byte header

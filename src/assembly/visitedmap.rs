@@ -89,6 +89,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// assert!(!visited.get(101));
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+#[derive(Debug)]
 pub struct VisitedMap {
     /// Atomic bitfield data storing visit status
     data: Vec<AtomicUsize>,

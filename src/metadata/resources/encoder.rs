@@ -770,7 +770,8 @@ impl DotNetResourceEncoder {
 
             // Calculate the actual size this resource will take in the data section
             let type_code_size = if let Some(type_code) = resource_type.type_code() {
-                compressed_uint_size(type_code as usize) as u32
+                u32::try_from(compressed_uint_size(type_code as usize))
+                    .map_err(|_| Error::NotSupported)?
             } else {
                 return Err(Error::NotSupported);
             };

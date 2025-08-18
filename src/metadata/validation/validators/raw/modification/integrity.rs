@@ -464,9 +464,8 @@ impl RawChangeIntegrityValidator {
         table_changes: &HashMap<TableId, TableModifications>,
     ) -> Result<()> {
         // Get TypeDef modifications to access field_list values
-        let typedef_modifications = match table_changes.get(&TableId::TypeDef) {
-            Some(mods) => mods,
-            None => return Ok(()), // No TypeDef modifications, nothing to validate
+        let Some(typedef_modifications) = table_changes.get(&TableId::TypeDef) else {
+            return Ok(()); // No TypeDef modifications, nothing to validate
         };
 
         // Collect all TypeDef entries with their field_list values
@@ -502,7 +501,13 @@ impl RawChangeIntegrityValidator {
             TableModifications::Replaced(rows) => {
                 // For replaced tables, we have all TypeDef data
                 for (i, row_data) in rows.iter().enumerate() {
-                    let rid = (i + 1) as u32;
+                    let rid = u32::try_from(i + 1).map_err(|_| {
+                        crate::Error::ValidationRawValidatorFailed {
+                            validator: "integrity".to_string(),
+                            message: "Table row index exceeds u32 range".to_string(),
+                            source: None,
+                        }
+                    })?;
                     if typedef_rids.contains(&rid) {
                         if let TableDataOwned::TypeDef(typedef_row) = row_data {
                             typedef_field_lists.push((rid, typedef_row.field_list));
@@ -524,7 +529,7 @@ impl RawChangeIntegrityValidator {
                 typedef_field_lists[i + 1].1 // Next type's field_list
             } else {
                 // For the last type, use the maximum field RID + 1
-                field_rids.iter().max().map(|max| max + 1).unwrap_or(1)
+                field_rids.iter().max().map_or(1, |max| max + 1)
             };
 
             // Validate that all fields in this range exist
