@@ -70,7 +70,7 @@
 //!
 //! assembler
 //!     .ldarg_1()? // Load first parameter (a)
-//!     .ldarg_2()? // Load second parameter (b)  
+//!     .ldarg_2()? // Load second parameter (b)
 //!     .add()?     // Add them
 //!     .ret()?;    // Return result
 //!
@@ -164,6 +164,7 @@ impl InstructionAssembler {
     /// // Ready for instruction assembly
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             encoder: InstructionEncoder::new(),
@@ -231,6 +232,7 @@ impl InstructionAssembler {
     /// assert_eq!(assembler.max_stack_depth(), 2); // Max is still 2
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn max_stack_depth(&self) -> u16 {
         self.encoder.max_stack_depth()
     }
@@ -259,6 +261,7 @@ impl InstructionAssembler {
     /// assert_eq!(assembler.current_stack_depth(), 2);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn current_stack_depth(&self) -> i16 {
         self.encoder.current_stack_depth()
     }
@@ -298,8 +301,12 @@ impl InstructionAssembler {
     /// The NOP instruction performs no operation and advances to the next instruction.
     /// It's commonly used for padding, debugging, or placeholder purposes.
     ///
-    /// **Opcode**: `0x00`  
+    /// **Opcode**: `0x00`
     /// **Stack**: `... → ...` (no change)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     ///
     /// # Examples
     ///
@@ -320,8 +327,12 @@ impl InstructionAssembler {
     /// The RET instruction returns from the current method, optionally returning
     /// a value if the method signature specifies a return type.
     ///
-    /// **Opcode**: `0x2A`  
+    /// **Opcode**: `0x2A`
     /// **Stack**: `retVal → ...` (if returning value) or `... → ...` (if void)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     ///
     /// # Examples
     ///
@@ -347,8 +358,12 @@ impl InstructionAssembler {
     /// This is an optimized single-byte instruction for loading the first argument
     /// (typically 'this' in instance methods, or the first parameter in static methods).
     ///
-    /// **Opcode**: `0x02`  
+    /// **Opcode**: `0x02`
     /// **Stack**: `... → ..., arg0`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     ///
     /// # Examples
     ///
@@ -368,8 +383,12 @@ impl InstructionAssembler {
     ///
     /// Optimized single-byte instruction for loading the second argument.
     ///
-    /// **Opcode**: `0x03`  
+    /// **Opcode**: `0x03`
     /// **Stack**: `... → ..., arg1`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldarg_1(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("ldarg.1", None)?;
         Ok(self)
@@ -379,8 +398,12 @@ impl InstructionAssembler {
     ///
     /// Optimized single-byte instruction for loading the third argument.
     ///
-    /// **Opcode**: `0x04`  
+    /// **Opcode**: `0x04`
     /// **Stack**: `... → ..., arg2`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldarg_2(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("ldarg.2", None)?;
         Ok(self)
@@ -390,8 +413,12 @@ impl InstructionAssembler {
     ///
     /// Optimized single-byte instruction for loading the fourth argument.
     ///
-    /// **Opcode**: `0x05`  
+    /// **Opcode**: `0x05`
     /// **Stack**: `... → ..., arg3`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldarg_3(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("ldarg.3", None)?;
         Ok(self)
@@ -402,7 +429,7 @@ impl InstructionAssembler {
     /// Load an argument by its index using the short form instruction, which
     /// uses a single byte for the index (0-127 due to signed byte encoding).
     ///
-    /// **Opcode**: `0x0E`  
+    /// **Opcode**: `0x0E`
     /// **Stack**: `... → ..., argN`
     ///
     /// # Parameters
@@ -418,6 +445,10 @@ impl InstructionAssembler {
     /// asm.ldarg_s(5)?.ret()?; // Load argument 5
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldarg_s(&mut self, index: i8) -> Result<&mut Self> {
         self.encoder
             .emit_instruction("ldarg.s", Some(Operand::Immediate(Immediate::Int8(index))))?;
@@ -429,7 +460,7 @@ impl InstructionAssembler {
     /// Load an argument by its index using the full form instruction, which
     /// supports the complete range of argument indices (0-65535).
     ///
-    /// **Opcode**: `0x09`  
+    /// **Opcode**: `0x09`
     /// **Stack**: `... → ..., argN`
     ///
     /// # Parameters
@@ -445,6 +476,10 @@ impl InstructionAssembler {
     /// asm.ldarg(1000)?.ret()?; // Load argument 1000
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldarg(&mut self, index: i16) -> Result<&mut Self> {
         self.encoder
             .emit_instruction("ldarg", Some(Operand::Immediate(Immediate::Int16(index))))?;
@@ -455,8 +490,12 @@ impl InstructionAssembler {
     ///
     /// Optimized single-byte instruction for loading the first local variable.
     ///
-    /// **Opcode**: `0x06`  
+    /// **Opcode**: `0x06`
     /// **Stack**: `... → ..., local0`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldloc_0(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("ldloc.0", None)?;
         Ok(self)
@@ -464,8 +503,12 @@ impl InstructionAssembler {
 
     /// Load local variable 1 onto the stack.
     ///
-    /// **Opcode**: `0x07`  
+    /// **Opcode**: `0x07`
     /// **Stack**: `... → ..., local1`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldloc_1(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("ldloc.1", None)?;
         Ok(self)
@@ -473,8 +516,12 @@ impl InstructionAssembler {
 
     /// Load local variable 2 onto the stack.
     ///
-    /// **Opcode**: `0x08`  
+    /// **Opcode**: `0x08`
     /// **Stack**: `... → ..., local2`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldloc_2(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("ldloc.2", None)?;
         Ok(self)
@@ -482,8 +529,12 @@ impl InstructionAssembler {
 
     /// Load local variable 3 onto the stack.
     ///
-    /// **Opcode**: `0x09`  
+    /// **Opcode**: `0x09`
     /// **Stack**: `... → ..., local3`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldloc_3(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("ldloc.3", None)?;
         Ok(self)
@@ -491,8 +542,12 @@ impl InstructionAssembler {
 
     /// Load local variable by index (short form).
     ///
-    /// **Opcode**: `0x11`  
+    /// **Opcode**: `0x11`
     /// **Stack**: `... → ..., localN`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldloc_s(&mut self, index: i8) -> Result<&mut Self> {
         self.encoder
             .emit_instruction("ldloc.s", Some(Operand::Immediate(Immediate::Int8(index))))?;
@@ -501,8 +556,12 @@ impl InstructionAssembler {
 
     /// Load local variable by index (full form).
     ///
-    /// **Opcode**: `0x0C`  
+    /// **Opcode**: `0x0C`
     /// **Stack**: `... → ..., localN`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldloc(&mut self, index: i16) -> Result<&mut Self> {
         self.encoder
             .emit_instruction("ldloc", Some(Operand::Immediate(Immediate::Int16(index))))?;
@@ -511,8 +570,12 @@ impl InstructionAssembler {
 
     /// Store value into local variable 0.
     ///
-    /// **Opcode**: `0x0A`  
+    /// **Opcode**: `0x0A`
     /// **Stack**: `..., value → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn stloc_0(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("stloc.0", None)?;
         Ok(self)
@@ -520,8 +583,12 @@ impl InstructionAssembler {
 
     /// Store value into local variable 1.
     ///
-    /// **Opcode**: `0x0B`  
+    /// **Opcode**: `0x0B`
     /// **Stack**: `..., value → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn stloc_1(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("stloc.1", None)?;
         Ok(self)
@@ -529,8 +596,12 @@ impl InstructionAssembler {
 
     /// Store value into local variable 2.
     ///
-    /// **Opcode**: `0x0C`  
+    /// **Opcode**: `0x0C`
     /// **Stack**: `..., value → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn stloc_2(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("stloc.2", None)?;
         Ok(self)
@@ -538,8 +609,12 @@ impl InstructionAssembler {
 
     /// Store value into local variable 3.
     ///
-    /// **Opcode**: `0x0D`  
+    /// **Opcode**: `0x0D`
     /// **Stack**: `..., value → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn stloc_3(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("stloc.3", None)?;
         Ok(self)
@@ -547,8 +622,12 @@ impl InstructionAssembler {
 
     /// Store value into local variable by index (short form).
     ///
-    /// **Opcode**: `0x13`  
+    /// **Opcode**: `0x13`
     /// **Stack**: `..., value → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn stloc_s(&mut self, index: i8) -> Result<&mut Self> {
         self.encoder
             .emit_instruction("stloc.s", Some(Operand::Immediate(Immediate::Int8(index))))?;
@@ -557,8 +636,12 @@ impl InstructionAssembler {
 
     /// Store value into local variable by index (full form).
     ///
-    /// **Opcode**: `0x0E`  
+    /// **Opcode**: `0x0E`
     /// **Stack**: `..., value → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn stloc(&mut self, index: i16) -> Result<&mut Self> {
         self.encoder
             .emit_instruction("stloc", Some(Operand::Immediate(Immediate::Int16(index))))?;
@@ -567,8 +650,12 @@ impl InstructionAssembler {
 
     /// Load constant -1 onto the stack.
     ///
-    /// **Opcode**: `0x15`  
+    /// **Opcode**: `0x15`
     /// **Stack**: `... → ..., -1`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldc_i4_m1(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("ldc.i4.m1", None)?;
         Ok(self)
@@ -576,8 +663,12 @@ impl InstructionAssembler {
 
     /// Load constant 0 onto the stack.
     ///
-    /// **Opcode**: `0x16`  
+    /// **Opcode**: `0x16`
     /// **Stack**: `... → ..., 0`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldc_i4_0(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("ldc.i4.0", None)?;
         Ok(self)
@@ -585,8 +676,12 @@ impl InstructionAssembler {
 
     /// Load constant 1 onto the stack.
     ///
-    /// **Opcode**: `0x17`  
+    /// **Opcode**: `0x17`
     /// **Stack**: `... → ..., 1`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldc_i4_1(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("ldc.i4.1", None)?;
         Ok(self)
@@ -594,8 +689,12 @@ impl InstructionAssembler {
 
     /// Load constant 2 onto the stack.
     ///
-    /// **Opcode**: `0x18`  
+    /// **Opcode**: `0x18`
     /// **Stack**: `... → ..., 2`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldc_i4_2(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("ldc.i4.2", None)?;
         Ok(self)
@@ -603,8 +702,12 @@ impl InstructionAssembler {
 
     /// Load constant 3 onto the stack.
     ///
-    /// **Opcode**: `0x19`  
+    /// **Opcode**: `0x19`
     /// **Stack**: `... → ..., 3`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldc_i4_3(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("ldc.i4.3", None)?;
         Ok(self)
@@ -612,8 +715,12 @@ impl InstructionAssembler {
 
     /// Load constant 4 onto the stack.
     ///
-    /// **Opcode**: `0x1A`  
+    /// **Opcode**: `0x1A`
     /// **Stack**: `... → ..., 4`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldc_i4_4(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("ldc.i4.4", None)?;
         Ok(self)
@@ -621,8 +728,12 @@ impl InstructionAssembler {
 
     /// Load constant 5 onto the stack.
     ///
-    /// **Opcode**: `0x1B`  
+    /// **Opcode**: `0x1B`
     /// **Stack**: `... → ..., 5`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldc_i4_5(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("ldc.i4.5", None)?;
         Ok(self)
@@ -630,8 +741,12 @@ impl InstructionAssembler {
 
     /// Load constant 6 onto the stack.
     ///
-    /// **Opcode**: `0x1C`  
+    /// **Opcode**: `0x1C`
     /// **Stack**: `... → ..., 6`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldc_i4_6(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("ldc.i4.6", None)?;
         Ok(self)
@@ -639,8 +754,12 @@ impl InstructionAssembler {
 
     /// Load constant 7 onto the stack.
     ///
-    /// **Opcode**: `0x1D`  
+    /// **Opcode**: `0x1D`
     /// **Stack**: `... → ..., 7`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldc_i4_7(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("ldc.i4.7", None)?;
         Ok(self)
@@ -648,8 +767,12 @@ impl InstructionAssembler {
 
     /// Load constant 8 onto the stack.
     ///
-    /// **Opcode**: `0x1E`  
+    /// **Opcode**: `0x1E`
     /// **Stack**: `... → ..., 8`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldc_i4_8(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("ldc.i4.8", None)?;
         Ok(self)
@@ -657,8 +780,12 @@ impl InstructionAssembler {
 
     /// Load a small constant using the short form.
     ///
-    /// **Opcode**: `0x1F`  
+    /// **Opcode**: `0x1F`
     /// **Stack**: `... → ..., value`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldc_i4_s(&mut self, value: i8) -> Result<&mut Self> {
         self.encoder
             .emit_instruction("ldc.i4.s", Some(Operand::Immediate(Immediate::Int8(value))))?;
@@ -667,8 +794,12 @@ impl InstructionAssembler {
 
     /// Load a 32-bit integer constant.
     ///
-    /// **Opcode**: `0x20`  
+    /// **Opcode**: `0x20`
     /// **Stack**: `... → ..., value`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldc_i4(&mut self, value: i32) -> Result<&mut Self> {
         self.encoder
             .emit_instruction("ldc.i4", Some(Operand::Immediate(Immediate::Int32(value))))?;
@@ -677,8 +808,12 @@ impl InstructionAssembler {
 
     /// Load a 64-bit integer constant.
     ///
-    /// **Opcode**: `0x21`  
+    /// **Opcode**: `0x21`
     /// **Stack**: `... → ..., value`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldc_i8(&mut self, value: i64) -> Result<&mut Self> {
         self.encoder
             .emit_instruction("ldc.i8", Some(Operand::Immediate(Immediate::Int64(value))))?;
@@ -687,8 +822,12 @@ impl InstructionAssembler {
 
     /// Load a 32-bit floating point constant.
     ///
-    /// **Opcode**: `0x22`  
+    /// **Opcode**: `0x22`
     /// **Stack**: `... → ..., value`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldc_r4(&mut self, value: f32) -> Result<&mut Self> {
         self.encoder.emit_instruction(
             "ldc.r4",
@@ -699,8 +838,12 @@ impl InstructionAssembler {
 
     /// Load a 64-bit floating point constant.
     ///
-    /// **Opcode**: `0x23`  
+    /// **Opcode**: `0x23`
     /// **Stack**: `... → ..., value`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldc_r8(&mut self, value: f64) -> Result<&mut Self> {
         self.encoder.emit_instruction(
             "ldc.r8",
@@ -711,8 +854,12 @@ impl InstructionAssembler {
 
     /// Add two values.
     ///
-    /// **Opcode**: `0x58`  
+    /// **Opcode**: `0x58`
     /// **Stack**: `..., value1, value2 → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn add(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("add", None)?;
         Ok(self)
@@ -720,8 +867,12 @@ impl InstructionAssembler {
 
     /// Subtract value2 from value1.
     ///
-    /// **Opcode**: `0x59`  
+    /// **Opcode**: `0x59`
     /// **Stack**: `..., value1, value2 → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn sub(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("sub", None)?;
         Ok(self)
@@ -729,8 +880,12 @@ impl InstructionAssembler {
 
     /// Multiply two values.
     ///
-    /// **Opcode**: `0x5A`  
+    /// **Opcode**: `0x5A`
     /// **Stack**: `..., value1, value2 → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn mul(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("mul", None)?;
         Ok(self)
@@ -738,8 +893,12 @@ impl InstructionAssembler {
 
     /// Divide value1 by value2.
     ///
-    /// **Opcode**: `0x5B`  
+    /// **Opcode**: `0x5B`
     /// **Stack**: `..., value1, value2 → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn div(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("div", None)?;
         Ok(self)
@@ -747,8 +906,12 @@ impl InstructionAssembler {
 
     /// Compute remainder of value1 divided by value2.
     ///
-    /// **Opcode**: `0x5C`  
+    /// **Opcode**: `0x5C`
     /// **Stack**: `..., value1, value2 → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn rem(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("rem", None)?;
         Ok(self)
@@ -756,8 +919,12 @@ impl InstructionAssembler {
 
     /// Unconditional branch (short form).
     ///
-    /// **Opcode**: `0x2B`  
+    /// **Opcode**: `0x2B`
     /// **Stack**: `... → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn br_s(&mut self, label: &str) -> Result<&mut Self> {
         self.encoder.emit_branch("br.s", label)?;
         Ok(self)
@@ -765,8 +932,12 @@ impl InstructionAssembler {
 
     /// Branch if false (short form).
     ///
-    /// **Opcode**: `0x2C`  
+    /// **Opcode**: `0x2C`
     /// **Stack**: `..., value → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn brfalse_s(&mut self, label: &str) -> Result<&mut Self> {
         self.encoder.emit_branch("brfalse.s", label)?;
         Ok(self)
@@ -774,8 +945,12 @@ impl InstructionAssembler {
 
     /// Branch if true (short form).
     ///
-    /// **Opcode**: `0x2D`  
+    /// **Opcode**: `0x2D`
     /// **Stack**: `..., value → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn brtrue_s(&mut self, label: &str) -> Result<&mut Self> {
         self.encoder.emit_branch("brtrue.s", label)?;
         Ok(self)
@@ -783,8 +958,12 @@ impl InstructionAssembler {
 
     /// Branch if equal (short form).
     ///
-    /// **Opcode**: `0x2E`  
+    /// **Opcode**: `0x2E`
     /// **Stack**: `..., value1, value2 → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn beq_s(&mut self, label: &str) -> Result<&mut Self> {
         self.encoder.emit_branch("beq.s", label)?;
         Ok(self)
@@ -792,8 +971,12 @@ impl InstructionAssembler {
 
     /// Branch if greater or equal (short form).
     ///
-    /// **Opcode**: `0x2F`  
+    /// **Opcode**: `0x2F`
     /// **Stack**: `..., value1, value2 → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn bge_s(&mut self, label: &str) -> Result<&mut Self> {
         self.encoder.emit_branch("bge.s", label)?;
         Ok(self)
@@ -801,8 +984,12 @@ impl InstructionAssembler {
 
     /// Branch if greater than (short form).
     ///
-    /// **Opcode**: `0x30`  
+    /// **Opcode**: `0x30`
     /// **Stack**: `..., value1, value2 → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn bgt_s(&mut self, label: &str) -> Result<&mut Self> {
         self.encoder.emit_branch("bgt.s", label)?;
         Ok(self)
@@ -810,8 +997,12 @@ impl InstructionAssembler {
 
     /// Branch if less or equal (short form).
     ///
-    /// **Opcode**: `0x31`  
+    /// **Opcode**: `0x31`
     /// **Stack**: `..., value1, value2 → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ble_s(&mut self, label: &str) -> Result<&mut Self> {
         self.encoder.emit_branch("ble.s", label)?;
         Ok(self)
@@ -819,8 +1010,12 @@ impl InstructionAssembler {
 
     /// Branch if less than (short form).
     ///
-    /// **Opcode**: `0x32`  
+    /// **Opcode**: `0x32`
     /// **Stack**: `..., value1, value2 → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn blt_s(&mut self, label: &str) -> Result<&mut Self> {
         self.encoder.emit_branch("blt.s", label)?;
         Ok(self)
@@ -828,8 +1023,12 @@ impl InstructionAssembler {
 
     /// Branch if not equal (short form).
     ///
-    /// **Opcode**: `0x33`  
+    /// **Opcode**: `0x33`
     /// **Stack**: `..., value1, value2 → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn bne_un_s(&mut self, label: &str) -> Result<&mut Self> {
         self.encoder.emit_branch("bne.un.s", label)?;
         Ok(self)
@@ -837,8 +1036,12 @@ impl InstructionAssembler {
 
     /// Call a method.
     ///
-    /// **Opcode**: `0x28`  
+    /// **Opcode**: `0x28`
     /// **Stack**: `..., arg1, arg2, ... argN → ..., returnValue` (if not void)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn call(&mut self, method_token: Token) -> Result<&mut Self> {
         self.encoder
             .emit_instruction("call", Some(Operand::Token(method_token)))?;
@@ -847,8 +1050,12 @@ impl InstructionAssembler {
 
     /// Call a virtual method.
     ///
-    /// **Opcode**: `0x6F`  
+    /// **Opcode**: `0x6F`
     /// **Stack**: `..., obj, arg1, arg2, ... argN → ..., returnValue` (if not void)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn callvirt(&mut self, method_token: Token) -> Result<&mut Self> {
         self.encoder
             .emit_instruction("callvirt", Some(Operand::Token(method_token)))?;
@@ -857,8 +1064,12 @@ impl InstructionAssembler {
 
     /// Duplicate the top stack value.
     ///
-    /// **Opcode**: `0x25`  
+    /// **Opcode**: `0x25`
     /// **Stack**: `..., value → ..., value, value`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn dup(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("dup", None)?;
         Ok(self)
@@ -866,8 +1077,12 @@ impl InstructionAssembler {
 
     /// Pop the top stack value.
     ///
-    /// **Opcode**: `0x26`  
+    /// **Opcode**: `0x26`
     /// **Stack**: `..., value → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn pop(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("pop", None)?;
         Ok(self)
@@ -890,6 +1105,10 @@ impl InstructionAssembler {
     /// asm.ldc_i4_const(1000)?; // Uses ldc.i4 (five bytes)
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldc_i4_const(&mut self, value: i32) -> Result<&mut Self> {
         match value {
             -1 => self.ldc_i4_m1(),
@@ -902,7 +1121,9 @@ impl InstructionAssembler {
             6 => self.ldc_i4_6(),
             7 => self.ldc_i4_7(),
             8 => self.ldc_i4_8(),
-            v if v >= i8::MIN as i32 && v <= i8::MAX as i32 => self.ldc_i4_s(v as i8),
+            v if i8::try_from(v).is_ok() => self.ldc_i4_s(
+                i8::try_from(v).map_err(|_| malformed_error!("Constant value too large for i8"))?,
+            ),
             v => self.ldc_i4(v),
         }
     }
@@ -924,14 +1145,23 @@ impl InstructionAssembler {
     /// asm.ldarg_auto(500)?; // Uses ldarg (three bytes)
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldarg_auto(&mut self, index: u16) -> Result<&mut Self> {
         match index {
             0 => self.ldarg_0(),
             1 => self.ldarg_1(),
             2 => self.ldarg_2(),
             3 => self.ldarg_3(),
-            i if i <= 127 => self.ldarg_s(i as i8),
-            i => self.ldarg(i as i16),
+            i if i <= 127 => self.ldarg_s(
+                i8::try_from(i).map_err(|_| malformed_error!("Argument index too large for i8"))?,
+            ),
+            i => self.ldarg(
+                i16::try_from(i)
+                    .map_err(|_| malformed_error!("Argument index too large for i16"))?,
+            ),
         }
     }
 
@@ -940,14 +1170,22 @@ impl InstructionAssembler {
     /// This method automatically selects the most efficient instruction for storing
     /// to the given local variable, choosing between `stloc.0` through `stloc.3`,
     /// `stloc.s`, and `stloc` based on the index.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn stloc_auto(&mut self, index: u16) -> Result<&mut Self> {
         match index {
             0 => self.stloc_0(),
             1 => self.stloc_1(),
             2 => self.stloc_2(),
             3 => self.stloc_3(),
-            i if i <= 127 => self.stloc_s(i as i8),
-            i => self.stloc(i as i16),
+            i if i <= 127 => self.stloc_s(
+                i8::try_from(i).map_err(|_| malformed_error!("Local index too large for i8"))?,
+            ),
+            i => self.stloc(
+                i16::try_from(i).map_err(|_| malformed_error!("Local index too large for i16"))?,
+            ),
         }
     }
 
@@ -956,21 +1194,33 @@ impl InstructionAssembler {
     /// This method automatically selects the most efficient instruction for loading
     /// from the given local variable, choosing between `ldloc.0` through `ldloc.3`,
     /// `ldloc.s`, and `ldloc` based on the index.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldloc_auto(&mut self, index: u16) -> Result<&mut Self> {
         match index {
             0 => self.ldloc_0(),
             1 => self.ldloc_1(),
             2 => self.ldloc_2(),
             3 => self.ldloc_3(),
-            i if i <= 127 => self.ldloc_s(i as i8),
-            i => self.ldloc(i as i16),
+            i if i <= 127 => self.ldloc_s(
+                i8::try_from(i).map_err(|_| malformed_error!("Local index too large for i8"))?,
+            ),
+            i => self.ldloc(
+                i16::try_from(i).map_err(|_| malformed_error!("Local index too large for i16"))?,
+            ),
         }
     }
 
     /// Bitwise AND operation.
     ///
-    /// **Opcode**: `0x5F`  
+    /// **Opcode**: `0x5F`
     /// **Stack**: `..., value1, value2 → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn and(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("and", None)?;
         Ok(self)
@@ -978,8 +1228,12 @@ impl InstructionAssembler {
 
     /// Bitwise OR operation.
     ///
-    /// **Opcode**: `0x60`  
+    /// **Opcode**: `0x60`
     /// **Stack**: `..., value1, value2 → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn or(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("or", None)?;
         Ok(self)
@@ -987,8 +1241,12 @@ impl InstructionAssembler {
 
     /// Bitwise XOR operation.
     ///
-    /// **Opcode**: `0x61`  
+    /// **Opcode**: `0x61`
     /// **Stack**: `..., value1, value2 → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn xor(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("xor", None)?;
         Ok(self)
@@ -996,8 +1254,12 @@ impl InstructionAssembler {
 
     /// Bitwise NOT operation.
     ///
-    /// **Opcode**: `0x66`  
+    /// **Opcode**: `0x66`
     /// **Stack**: `..., value → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn not(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("not", None)?;
         Ok(self)
@@ -1005,8 +1267,12 @@ impl InstructionAssembler {
 
     /// Shift left operation.
     ///
-    /// **Opcode**: `0x62`  
+    /// **Opcode**: `0x62`
     /// **Stack**: `..., value, shiftAmount → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn shl(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("shl", None)?;
         Ok(self)
@@ -1014,8 +1280,12 @@ impl InstructionAssembler {
 
     /// Shift right operation.
     ///
-    /// **Opcode**: `0x63`  
+    /// **Opcode**: `0x63`
     /// **Stack**: `..., value, shiftAmount → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn shr(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("shr", None)?;
         Ok(self)
@@ -1023,8 +1293,12 @@ impl InstructionAssembler {
 
     /// Unsigned shift right operation.
     ///
-    /// **Opcode**: `0x64`  
+    /// **Opcode**: `0x64`
     /// **Stack**: `..., value, shiftAmount → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn shr_un(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("shr.un", None)?;
         Ok(self)
@@ -1032,8 +1306,12 @@ impl InstructionAssembler {
 
     /// Negate value.
     ///
-    /// **Opcode**: `0x65`  
+    /// **Opcode**: `0x65`
     /// **Stack**: `..., value → ..., -value`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn neg(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("neg", None)?;
         Ok(self)
@@ -1041,8 +1319,12 @@ impl InstructionAssembler {
 
     /// Convert to int8, with overflow check.
     ///
-    /// **Opcode**: `0x68`  
+    /// **Opcode**: `0x68`
     /// **Stack**: `..., value → ..., int8`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn conv_i1(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("conv.i1", None)?;
         Ok(self)
@@ -1050,8 +1332,12 @@ impl InstructionAssembler {
 
     /// Convert to int16, with overflow check.
     ///
-    /// **Opcode**: `0x69`  
+    /// **Opcode**: `0x69`
     /// **Stack**: `..., value → ..., int16`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn conv_i2(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("conv.i2", None)?;
         Ok(self)
@@ -1059,8 +1345,12 @@ impl InstructionAssembler {
 
     /// Convert to int32, with overflow check.
     ///
-    /// **Opcode**: `0x69`  
+    /// **Opcode**: `0x69`
     /// **Stack**: `..., value → ..., int32`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn conv_i4(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("conv.i4", None)?;
         Ok(self)
@@ -1068,8 +1358,12 @@ impl InstructionAssembler {
 
     /// Convert to int64, with overflow check.
     ///
-    /// **Opcode**: `0x6B`  
+    /// **Opcode**: `0x6B`
     /// **Stack**: `..., value → ..., int64`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn conv_i8(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("conv.i8", None)?;
         Ok(self)
@@ -1077,8 +1371,12 @@ impl InstructionAssembler {
 
     /// Convert to float32.
     ///
-    /// **Opcode**: `0x6C`  
+    /// **Opcode**: `0x6C`
     /// **Stack**: `..., value → ..., float32`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn conv_r4(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("conv.r4", None)?;
         Ok(self)
@@ -1086,8 +1384,12 @@ impl InstructionAssembler {
 
     /// Convert to float64.
     ///
-    /// **Opcode**: `0x6C`  
+    /// **Opcode**: `0x6C`
     /// **Stack**: `..., value → ..., float64`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn conv_r8(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("conv.r8", None)?;
         Ok(self)
@@ -1095,8 +1397,12 @@ impl InstructionAssembler {
 
     /// Convert to uint8, with overflow check.
     ///
-    /// **Opcode**: `0xD2`  
+    /// **Opcode**: `0xD2`
     /// **Stack**: `..., value → ..., uint8`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn conv_u1(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("conv.u1", None)?;
         Ok(self)
@@ -1104,8 +1410,12 @@ impl InstructionAssembler {
 
     /// Convert to uint16, with overflow check.
     ///
-    /// **Opcode**: `0xD1`  
+    /// **Opcode**: `0xD1`
     /// **Stack**: `..., value → ..., uint16`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn conv_u2(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("conv.u2", None)?;
         Ok(self)
@@ -1113,8 +1423,12 @@ impl InstructionAssembler {
 
     /// Convert to uint32, with overflow check.
     ///
-    /// **Opcode**: `0x6E`  
+    /// **Opcode**: `0x6E`
     /// **Stack**: `..., value → ..., uint32`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn conv_u4(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("conv.u4", None)?;
         Ok(self)
@@ -1122,8 +1436,12 @@ impl InstructionAssembler {
 
     /// Convert to uint64, with overflow check.
     ///
-    /// **Opcode**: `0x6F`  
+    /// **Opcode**: `0x6F`
     /// **Stack**: `..., value → ..., uint64`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn conv_u8(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("conv.u8", None)?;
         Ok(self)
@@ -1131,8 +1449,12 @@ impl InstructionAssembler {
 
     /// Compare equal.
     ///
-    /// **Opcode**: `0xFE01`  
+    /// **Opcode**: `0xFE01`
     /// **Stack**: `..., value1, value2 → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ceq(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("ceq", None)?;
         Ok(self)
@@ -1140,8 +1462,12 @@ impl InstructionAssembler {
 
     /// Compare greater than.
     ///
-    /// **Opcode**: `0xFE02`  
+    /// **Opcode**: `0xFE02`
     /// **Stack**: `..., value1, value2 → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn cgt(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("cgt", None)?;
         Ok(self)
@@ -1149,8 +1475,12 @@ impl InstructionAssembler {
 
     /// Compare greater than (unsigned).
     ///
-    /// **Opcode**: `0xFE03`  
+    /// **Opcode**: `0xFE03`
     /// **Stack**: `..., value1, value2 → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn cgt_un(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("cgt.un", None)?;
         Ok(self)
@@ -1158,8 +1488,12 @@ impl InstructionAssembler {
 
     /// Compare less than.
     ///
-    /// **Opcode**: `0xFE04`  
+    /// **Opcode**: `0xFE04`
     /// **Stack**: `..., value1, value2 → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn clt(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("clt", None)?;
         Ok(self)
@@ -1167,8 +1501,12 @@ impl InstructionAssembler {
 
     /// Compare less than (unsigned).
     ///
-    /// **Opcode**: `0xFE05`  
+    /// **Opcode**: `0xFE05`
     /// **Stack**: `..., value1, value2 → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn clt_un(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("clt.un", None)?;
         Ok(self)
@@ -1176,8 +1514,12 @@ impl InstructionAssembler {
 
     /// Load null reference.
     ///
-    /// **Opcode**: `0x14`  
+    /// **Opcode**: `0x14`
     /// **Stack**: `... → ..., null`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldnull(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("ldnull", None)?;
         Ok(self)
@@ -1185,8 +1527,12 @@ impl InstructionAssembler {
 
     /// Load string literal.
     ///
-    /// **Opcode**: `0x72`  
+    /// **Opcode**: `0x72`
     /// **Stack**: `... → ..., string`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldstr(&mut self, string_token: Token) -> Result<&mut Self> {
         self.encoder
             .emit_instruction("ldstr", Some(Operand::Token(string_token)))?;
@@ -1195,8 +1541,12 @@ impl InstructionAssembler {
 
     /// Create new object instance.
     ///
-    /// **Opcode**: `0x73`  
+    /// **Opcode**: `0x73`
     /// **Stack**: `..., arg1, arg2, ... argN → ..., obj`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn newobj(&mut self, constructor_token: Token) -> Result<&mut Self> {
         self.encoder
             .emit_instruction("newobj", Some(Operand::Token(constructor_token)))?;
@@ -1205,8 +1555,12 @@ impl InstructionAssembler {
 
     /// Cast class check.
     ///
-    /// **Opcode**: `0x74`  
+    /// **Opcode**: `0x74`
     /// **Stack**: `..., obj → ..., obj2`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn castclass(&mut self, type_token: Token) -> Result<&mut Self> {
         self.encoder
             .emit_instruction("castclass", Some(Operand::Token(type_token)))?;
@@ -1215,8 +1569,12 @@ impl InstructionAssembler {
 
     /// Instance of check.
     ///
-    /// **Opcode**: `0x75`  
+    /// **Opcode**: `0x75`
     /// **Stack**: `..., obj → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn isinst(&mut self, type_token: Token) -> Result<&mut Self> {
         self.encoder
             .emit_instruction("isinst", Some(Operand::Token(type_token)))?;
@@ -1225,8 +1583,12 @@ impl InstructionAssembler {
 
     /// Load field.
     ///
-    /// **Opcode**: `0x7B`  
+    /// **Opcode**: `0x7B`
     /// **Stack**: `..., obj → ..., value`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldfld(&mut self, field_token: Token) -> Result<&mut Self> {
         self.encoder
             .emit_instruction("ldfld", Some(Operand::Token(field_token)))?;
@@ -1235,8 +1597,12 @@ impl InstructionAssembler {
 
     /// Store field.
     ///
-    /// **Opcode**: `0x7D`  
+    /// **Opcode**: `0x7D`
     /// **Stack**: `..., obj, value → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn stfld(&mut self, field_token: Token) -> Result<&mut Self> {
         self.encoder
             .emit_instruction("stfld", Some(Operand::Token(field_token)))?;
@@ -1245,8 +1611,12 @@ impl InstructionAssembler {
 
     /// Load static field.
     ///
-    /// **Opcode**: `0x7E`  
+    /// **Opcode**: `0x7E`
     /// **Stack**: `... → ..., value`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldsfld(&mut self, field_token: Token) -> Result<&mut Self> {
         self.encoder
             .emit_instruction("ldsfld", Some(Operand::Token(field_token)))?;
@@ -1255,8 +1625,12 @@ impl InstructionAssembler {
 
     /// Store static field.
     ///
-    /// **Opcode**: `0x80`  
+    /// **Opcode**: `0x80`
     /// **Stack**: `..., value → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn stsfld(&mut self, field_token: Token) -> Result<&mut Self> {
         self.encoder
             .emit_instruction("stsfld", Some(Operand::Token(field_token)))?;
@@ -1265,8 +1639,12 @@ impl InstructionAssembler {
 
     /// Throw exception.
     ///
-    /// **Opcode**: `0x7A`  
+    /// **Opcode**: `0x7A`
     /// **Stack**: `..., obj → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn throw(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("throw", None)?;
         Ok(self)
@@ -1274,8 +1652,12 @@ impl InstructionAssembler {
 
     /// Load element from array.
     ///
-    /// **Opcode**: `0x8F`  
+    /// **Opcode**: `0x8F`
     /// **Stack**: `..., array, index → ..., value`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldelem_i4(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("ldelem.i4", None)?;
         Ok(self)
@@ -1283,8 +1665,12 @@ impl InstructionAssembler {
 
     /// Store element to array.
     ///
-    /// **Opcode**: `0x9C`  
+    /// **Opcode**: `0x9C`
     /// **Stack**: `..., array, index, value → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn stelem_i4(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("stelem.i4", None)?;
         Ok(self)
@@ -1292,8 +1678,12 @@ impl InstructionAssembler {
 
     /// Load array length.
     ///
-    /// **Opcode**: `0x8E`  
+    /// **Opcode**: `0x8E`
     /// **Stack**: `..., array → ..., length`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldlen(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("ldlen", None)?;
         Ok(self)
@@ -1301,8 +1691,12 @@ impl InstructionAssembler {
 
     /// Create new array.
     ///
-    /// **Opcode**: `0x8D`  
+    /// **Opcode**: `0x8D`
     /// **Stack**: `..., numElems → ..., array`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn newarr(&mut self, element_type_token: Token) -> Result<&mut Self> {
         self.encoder
             .emit_instruction("newarr", Some(Operand::Token(element_type_token)))?;
@@ -1311,8 +1705,12 @@ impl InstructionAssembler {
 
     /// Unconditional branch (long form).
     ///
-    /// **Opcode**: `0x38`  
+    /// **Opcode**: `0x38`
     /// **Stack**: `... → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn br(&mut self, label: &str) -> Result<&mut Self> {
         self.encoder.emit_branch("br", label)?;
         Ok(self)
@@ -1320,8 +1718,12 @@ impl InstructionAssembler {
 
     /// Branch if false (long form).
     ///
-    /// **Opcode**: `0x39`  
+    /// **Opcode**: `0x39`
     /// **Stack**: `..., value → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn brfalse(&mut self, label: &str) -> Result<&mut Self> {
         self.encoder.emit_branch("brfalse", label)?;
         Ok(self)
@@ -1329,8 +1731,12 @@ impl InstructionAssembler {
 
     /// Branch if true (long form).
     ///
-    /// **Opcode**: `0x3A`  
+    /// **Opcode**: `0x3A`
     /// **Stack**: `..., value → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn brtrue(&mut self, label: &str) -> Result<&mut Self> {
         self.encoder.emit_branch("brtrue", label)?;
         Ok(self)
@@ -1338,8 +1744,12 @@ impl InstructionAssembler {
 
     /// Branch if equal (long form).
     ///
-    /// **Opcode**: `0x3B`  
+    /// **Opcode**: `0x3B`
     /// **Stack**: `..., value1, value2 → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn beq(&mut self, label: &str) -> Result<&mut Self> {
         self.encoder.emit_branch("beq", label)?;
         Ok(self)
@@ -1347,8 +1757,12 @@ impl InstructionAssembler {
 
     /// Branch if greater or equal (long form).
     ///
-    /// **Opcode**: `0x3C`  
+    /// **Opcode**: `0x3C`
     /// **Stack**: `..., value1, value2 → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn bge(&mut self, label: &str) -> Result<&mut Self> {
         self.encoder.emit_branch("bge", label)?;
         Ok(self)
@@ -1356,8 +1770,12 @@ impl InstructionAssembler {
 
     /// Branch if greater than (long form).
     ///
-    /// **Opcode**: `0x3D`  
+    /// **Opcode**: `0x3D`
     /// **Stack**: `..., value1, value2 → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn bgt(&mut self, label: &str) -> Result<&mut Self> {
         self.encoder.emit_branch("bgt", label)?;
         Ok(self)
@@ -1365,8 +1783,12 @@ impl InstructionAssembler {
 
     /// Branch if less or equal (long form).
     ///
-    /// **Opcode**: `0x3E`  
+    /// **Opcode**: `0x3E`
     /// **Stack**: `..., value1, value2 → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ble(&mut self, label: &str) -> Result<&mut Self> {
         self.encoder.emit_branch("ble", label)?;
         Ok(self)
@@ -1374,8 +1796,12 @@ impl InstructionAssembler {
 
     /// Branch if less than (long form).
     ///
-    /// **Opcode**: `0x3F`  
+    /// **Opcode**: `0x3F`
     /// **Stack**: `..., value1, value2 → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn blt(&mut self, label: &str) -> Result<&mut Self> {
         self.encoder.emit_branch("blt", label)?;
         Ok(self)
@@ -1383,8 +1809,12 @@ impl InstructionAssembler {
 
     /// Branch if not equal (long form).
     ///
-    /// **Opcode**: `0x40`  
+    /// **Opcode**: `0x40`
     /// **Stack**: `..., value1, value2 → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn bne_un(&mut self, label: &str) -> Result<&mut Self> {
         self.encoder.emit_branch("bne.un", label)?;
         Ok(self)
@@ -1404,6 +1834,10 @@ impl InstructionAssembler {
     /// asm.ldc_bool(false)?;  // Uses ldc.i4.0
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn ldc_bool(&mut self, value: bool) -> Result<&mut Self> {
         if value {
             self.ldc_i4_1()
@@ -1416,6 +1850,10 @@ impl InstructionAssembler {
     ///
     /// This is a convenience method that combines three common instructions
     /// used for null checking patterns.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     ///
     /// # Examples
     ///
@@ -1433,6 +1871,10 @@ impl InstructionAssembler {
     /// Common pattern: compare two arguments and branch.
     ///
     /// Loads two arguments and performs an equality comparison with branching.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     ///
     /// # Examples
     ///

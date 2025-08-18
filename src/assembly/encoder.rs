@@ -83,14 +83,18 @@ fn get_mnemonic_lookup(
         // Single-byte instructions (0x00 to 0xE0)
         for (opcode, instr) in INSTRUCTIONS.iter().enumerate() {
             if !instr.instr.is_empty() {
-                map.insert(instr.instr, (opcode as u8, 0, instr));
+                let opcode_u8 = u8::try_from(opcode)
+                    .unwrap_or_else(|_| panic!("Opcode {} exceeds u8 range", opcode));
+                map.insert(instr.instr, (opcode_u8, 0, instr));
             }
         }
 
         // Extended instructions (0xFE prefix)
         for (opcode, instr) in INSTRUCTIONS_FE.iter().enumerate() {
             if !instr.instr.is_empty() {
-                map.insert(instr.instr, (opcode as u8, 0xFE, instr));
+                let opcode_u8 = u8::try_from(opcode)
+                    .unwrap_or_else(|_| panic!("Opcode {} exceeds u8 range", opcode));
+                map.insert(instr.instr, (opcode_u8, 0xFE, instr));
             }
         }
 
@@ -197,6 +201,7 @@ impl InstructionEncoder {
     /// // Ready for instruction emission
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             bytecode: Vec::new(),
@@ -373,8 +378,9 @@ impl InstructionEncoder {
             return Err(Error::DuplicateLabel(name.to_string()));
         }
 
-        self.labels
-            .insert(name.to_string(), self.bytecode.len() as u32);
+        let bytecode_len = u32::try_from(self.bytecode.len())
+            .map_err(|_| malformed_error!("Bytecode length exceeds u32 range"))?;
+        self.labels.insert(name.to_string(), bytecode_len);
         Ok(())
     }
 
@@ -424,7 +430,13 @@ impl InstructionEncoder {
             // Calculate relative offset from end of branch instruction to label
             // The end of the instruction is the fixup position + offset size
             let next_instruction_pos = fixup.fixup_position + fixup.offset_size as usize;
-            let offset = (*label_position as i32) - (next_instruction_pos as i32);
+
+            let label_pos_i32 = i32::try_from(*label_position)
+                .map_err(|_| malformed_error!("Label position exceeds i32 range"))?;
+            let next_instr_pos_i32 = i32::try_from(next_instruction_pos)
+                .map_err(|_| malformed_error!("Instruction position exceeds i32 range"))?;
+
+            let offset = label_pos_i32 - next_instr_pos_i32;
 
             self.write_branch_offset(offset, fixup)?;
         }
@@ -445,7 +457,7 @@ impl InstructionEncoder {
             }
             OperandType::Int8 => {
                 if let Some(Operand::Immediate(Immediate::Int8(val))) = operand {
-                    self.bytecode.push(val as u8);
+                    self.bytecode.push(val.to_le_bytes()[0]);
                 } else {
                     return Err(Error::WrongOperandType {
                         expected: "Int8".to_string(),
@@ -546,8 +558,9 @@ impl InstructionEncoder {
             OperandType::Switch => {
                 if let Some(Operand::Switch(targets)) = operand {
                     // Switch format: count (4 bytes) + targets (4 bytes each)
-                    self.bytecode
-                        .extend_from_slice(&(targets.len() as u32).to_le_bytes());
+                    let targets_len = u32::try_from(targets.len())
+                        .map_err(|_| malformed_error!("Too many switch targets"))?;
+                    self.bytecode.extend_from_slice(&targets_len.to_le_bytes());
                     for target in targets {
                         self.bytecode.extend_from_slice(&target.to_le_bytes());
                     }
@@ -568,22 +581,26 @@ impl InstructionEncoder {
     fn write_branch_offset(&mut self, offset: i32, fixup: &LabelFixup) -> Result<()> {
         match fixup.offset_size {
             1 => {
-                if offset < i8::MIN as i32 || offset > i8::MAX as i32 {
+                if offset < i32::from(i8::MIN) || offset > i32::from(i8::MAX) {
                     return Err(Error::BranchOffsetOutOfRange {
                         offset,
                         instruction_size: 1,
                     });
                 }
-                self.bytecode[fixup.fixup_position] = offset as u8;
+                let offset_i8 = i8::try_from(offset)
+                    .map_err(|_| malformed_error!("Branch offset exceeds i8 range"))?;
+                self.bytecode[fixup.fixup_position] = offset_i8.to_le_bytes()[0];
             }
             2 => {
-                if offset < i16::MIN as i32 || offset > i16::MAX as i32 {
+                if offset < i32::from(i16::MIN) || offset > i32::from(i16::MAX) {
                     return Err(Error::BranchOffsetOutOfRange {
                         offset,
                         instruction_size: 2,
                     });
                 }
-                let bytes = (offset as i16).to_le_bytes();
+                let offset_i16 = i16::try_from(offset)
+                    .map_err(|_| malformed_error!("Branch offset exceeds i16 range"))?;
+                let bytes = offset_i16.to_le_bytes();
                 self.bytecode[fixup.fixup_position..fixup.fixup_position + 2]
                     .copy_from_slice(&bytes);
             }
@@ -612,7 +629,7 @@ impl InstructionEncoder {
     /// Returns an error if stack underflow would occur (negative stack depth).
     fn update_stack_depth(&mut self, pops: u8, pushes: u8) -> Result<()> {
         // Apply stack effect
-        let net_effect = (pushes as i16) - (pops as i16);
+        let net_effect = i16::from(pushes) - i16::from(pops);
         self.current_stack_depth += net_effect;
 
         // Check for stack underflow
@@ -626,7 +643,9 @@ impl InstructionEncoder {
         }
 
         // Update maximum stack depth
-        self.max_stack_depth = self.max_stack_depth.max(self.current_stack_depth as u16);
+        let current_depth_u16 = u16::try_from(self.current_stack_depth)
+            .map_err(|_| malformed_error!("Stack depth exceeds u16 range"))?;
+        self.max_stack_depth = self.max_stack_depth.max(current_depth_u16);
 
         Ok(())
     }
@@ -639,6 +658,7 @@ impl InstructionEncoder {
     /// # Returns
     ///
     /// The maximum stack depth reached so far during instruction encoding.
+    #[must_use]
     pub fn max_stack_depth(&self) -> u16 {
         self.max_stack_depth
     }
@@ -651,6 +671,7 @@ impl InstructionEncoder {
     /// # Returns
     ///
     /// The current stack depth (number of items on evaluation stack).
+    #[must_use]
     pub fn current_stack_depth(&self) -> i16 {
         self.current_stack_depth
     }

@@ -167,7 +167,7 @@
 
 use crate::{
     cilassembly::{CilAssembly, HeapChanges},
-    utils::{align_to, compressed_uint_size},
+    utils::{align_to, align_to_4_bytes, compressed_uint_size},
     Error, Result,
 };
 
@@ -327,7 +327,7 @@ pub fn calculate_string_heap_total_size(
         let appended_size = heap_changes.binary_string_heap_size() as u64;
         // Add padding to align to 4-byte boundary
         let total_size = replacement_size + appended_size;
-        let aligned_size = (total_size + 3) & !3; // Round up to next 4-byte boundary
+        let aligned_size = align_to_4_bytes(total_size);
         return Ok(aligned_size);
     }
 
@@ -555,7 +555,7 @@ pub fn calculate_blob_heap_size(
         let appended_size = heap_changes.binary_blob_heap_size() as u64;
         // Add padding to align to 4-byte boundary
         let total_size = replacement_size + appended_size;
-        let aligned_size = (total_size + 3) & !3; // Round up to next 4-byte boundary
+        let aligned_size = align_to_4_bytes(total_size);
         return Ok(aligned_size);
     }
 
@@ -599,7 +599,8 @@ pub fn calculate_blob_heap_size(
 
         // Add appended blobs (matching the builder's logic exactly)
         let original_heap_size = if let Some(blob_heap) = assembly.view().blobs() {
-            blob_heap.data().len() as u32
+            u32::try_from(blob_heap.data().len())
+                .map_err(|_| malformed_error!("Blob heap size exceeds u32 range"))?
         } else {
             0u32
         };
@@ -621,7 +622,11 @@ pub fn calculate_blob_heap_size(
 
             // Update current index by original blob size (maintains API index stability)
             let prefix_size = compressed_uint_size(original_blob.len());
-            current_index += prefix_size as u32 + original_blob.len() as u32;
+            let prefix_size_u32 = u32::try_from(prefix_size)
+                .map_err(|_| malformed_error!("Compressed uint size exceeds u32 range"))?;
+            let blob_len_u32 = u32::try_from(original_blob.len())
+                .map_err(|_| malformed_error!("Blob length exceeds u32 range"))?;
+            current_index += prefix_size_u32 + blob_len_u32;
         }
     } else {
         // Addition-only scenario - calculate size of additions only
@@ -871,7 +876,7 @@ pub fn calculate_userstring_heap_size(
         let appended_size = heap_changes.binary_userstring_heap_size() as u64;
         // Add padding to align to 4-byte boundary
         let total_size = replacement_size + appended_size;
-        let aligned_size = (total_size + 3) & !3; // Round up to next 4-byte boundary
+        let aligned_size = align_to_4_bytes(total_size);
         return Ok(aligned_size);
     }
 
@@ -1045,7 +1050,7 @@ pub fn calculate_userstring_heap_total_size(
         let appended_size = heap_changes.binary_userstring_heap_size() as u64;
         // Add padding to align to 4-byte boundary
         let total_size = replacement_size + appended_size;
-        let aligned_size = (total_size + 3) & !3; // Round up to next 4-byte boundary
+        let aligned_size = align_to_4_bytes(total_size);
         return Ok(aligned_size);
     }
 

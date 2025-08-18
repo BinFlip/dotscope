@@ -74,7 +74,7 @@ impl<'a> StringHeapBuilder<'a> {
     }
 }
 
-impl<'a> HeapBuilder for StringHeapBuilder<'a> {
+impl HeapBuilder for StringHeapBuilder<'_> {
     fn build(&mut self) -> Result<Vec<u8>> {
         // Reconstruct the complete string heap using the same algorithm as the existing pipeline
         let string_changes = &self.assembly.changes().string_heap_changes;
@@ -150,7 +150,7 @@ impl<'a> HeapBuilder for StringHeapBuilder<'a> {
             // Step 1: Zero-pad any deleted strings in place
             for &deleted_index in &string_changes.removed_indices {
                 if let Some((start_pos, end_pos)) =
-                    self.find_string_boundaries_in_heap(&final_heap, deleted_index as usize)?
+                    Self::find_string_boundaries_in_heap(&final_heap, deleted_index as usize)
                 {
                     // Replace the string content with zeros, keeping the null terminator
                     final_heap[start_pos..end_pos].fill(0);
@@ -160,7 +160,7 @@ impl<'a> HeapBuilder for StringHeapBuilder<'a> {
             // Step 2: Handle modified strings - in-place when possible, remap when necessary
             for (&modified_index, new_string) in &string_changes.modified_items {
                 if let Some((start_pos, end_pos)) =
-                    self.find_string_boundaries_in_heap(&final_heap, modified_index as usize)?
+                    Self::find_string_boundaries_in_heap(&final_heap, modified_index as usize)
                 {
                     let original_space = end_pos - start_pos - 1; // Exclude null terminator
                     let new_size = new_string.len();
@@ -182,7 +182,8 @@ impl<'a> HeapBuilder for StringHeapBuilder<'a> {
                         final_heap[start_pos..end_pos].fill(0);
 
                         // Append at end and create index mapping
-                        let new_index = final_heap.len() as u32;
+                        let new_index = u32::try_from(final_heap.len())
+                            .map_err(|_| malformed_error!("String heap size exceeds u32 range"))?;
                         final_heap.extend_from_slice(new_string.as_bytes());
                         final_heap.push(0);
 
@@ -193,7 +194,8 @@ impl<'a> HeapBuilder for StringHeapBuilder<'a> {
             }
 
             // Step 3: Append new strings at the end, applying any modifications or removals
-            let mut current_append_index = original_heap_data.len() as u32;
+            let mut current_append_index = u32::try_from(original_heap_data.len())
+                .map_err(|_| malformed_error!("Original heap size exceeds u32 range"))?;
             for new_string in &string_changes.appended_items {
                 // Check if this newly added string has been modified or removed
                 if string_changes
@@ -215,12 +217,16 @@ impl<'a> HeapBuilder for StringHeapBuilder<'a> {
                     .modified_items
                     .contains_key(&current_append_index)
                 {
-                    string_changes.modified_items[&current_append_index].len() as u32 + 1
+                    u32::try_from(string_changes.modified_items[&current_append_index].len())
+                        .map_err(|_| malformed_error!("Modified string length exceeds u32 range"))?
+                        + 1
                 } else if !string_changes
                     .removed_indices
                     .contains(&current_append_index)
                 {
-                    new_string.len() as u32 + 1
+                    u32::try_from(new_string.len())
+                        .map_err(|_| malformed_error!("New string length exceeds u32 range"))?
+                        + 1
                 } else {
                     0 // Removed strings don't consume space
                 };
@@ -256,9 +262,8 @@ impl<'a> HeapBuilder for StringHeapBuilder<'a> {
                 if string_changes.is_removed(original_index) {
                     // String is removed - no mapping entry
                     continue;
-                } else if let Some(modified_string) =
-                    string_changes.get_modification(original_index)
-                {
+                }
+                if let Some(modified_string) = string_changes.get_modification(original_index) {
                     // String is modified - add modified version
                     self.index_mappings
                         .insert(original_index, final_index_position);
@@ -335,21 +340,20 @@ impl<'a> HeapBuilder for StringHeapBuilder<'a> {
         &self.index_mappings
     }
 
-    fn heap_name(&self) -> &str {
+    fn heap_name(&self) -> &'static str {
         "#Strings"
     }
 }
 
-impl<'a> StringHeapBuilder<'a> {
+impl StringHeapBuilder<'_> {
     /// Find the byte boundaries of a string at a given index in the heap.
     /// Returns (start_pos, end_pos) where end_pos is exclusive and includes the null terminator.
     fn find_string_boundaries_in_heap(
-        &self,
         heap_data: &[u8],
         string_index: usize,
-    ) -> Result<Option<(usize, usize)>> {
+    ) -> Option<(usize, usize)> {
         if string_index == 0 || string_index >= heap_data.len() {
-            return Ok(None); // Invalid index
+            return None; // Invalid index
         }
 
         let start_pos = string_index;
@@ -357,9 +361,9 @@ impl<'a> StringHeapBuilder<'a> {
         // Find the null terminator
         if let Some(null_pos) = heap_data[start_pos..].iter().position(|&b| b == 0) {
             let end_pos = start_pos + null_pos + 1; // Include the null terminator
-            Ok(Some((start_pos, end_pos)))
+            Some((start_pos, end_pos))
         } else {
-            Ok(None) // No null terminator found
+            None // No null terminator found
         }
     }
 

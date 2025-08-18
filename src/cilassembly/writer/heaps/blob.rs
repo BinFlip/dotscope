@@ -10,7 +10,7 @@ use crate::{
         writer::{heaps::HeapBuilder, layout::calculate_blob_heap_size},
         CilAssembly,
     },
-    utils::{compressed_uint_size, write_compressed_uint},
+    utils::{compressed_uint_size, read_compressed_uint, write_compressed_uint},
     Error, Result,
 };
 
@@ -61,7 +61,7 @@ impl<'a> BlobHeapBuilder<'a> {
     /// # Returns
     ///
     /// Returns a new `BlobHeapBuilder` ready for heap reconstruction.
-    pub fn new(assembly: &'a CilAssembly) -> Self {
+    pub fn new(assembly: &'a CilAssembly) -> BlobHeapBuilder<'a> {
         Self {
             assembly,
             index_mappings: HashMap::new(),
@@ -69,7 +69,7 @@ impl<'a> BlobHeapBuilder<'a> {
     }
 }
 
-impl<'a> HeapBuilder for BlobHeapBuilder<'a> {
+impl HeapBuilder for BlobHeapBuilder<'_> {
     fn build(&mut self) -> Result<Vec<u8>> {
         let blob_changes = &self.assembly.changes().blob_heap_changes;
         let mut final_heap = Vec::new();
@@ -104,7 +104,9 @@ impl<'a> HeapBuilder for BlobHeapBuilder<'a> {
                         .insert(original_heap_index, final_index_position);
 
                     // Write length prefix
-                    write_compressed_uint(final_blob.len() as u32, &mut final_heap);
+                    let blob_len = u32::try_from(final_blob.len())
+                        .map_err(|_| malformed_error!("Blob size exceeds u32 range"))?;
+                    write_compressed_uint(blob_len, &mut final_heap);
                     // Write blob data
                     final_heap.extend_from_slice(&final_blob);
 
@@ -137,7 +139,7 @@ impl<'a> HeapBuilder for BlobHeapBuilder<'a> {
             // Step 1: Zero-pad any deleted blobs in place
             for &deleted_index in &blob_changes.removed_indices {
                 if let Some((start_pos, end_pos)) =
-                    self.find_blob_boundaries_in_heap(&final_heap, deleted_index as usize)?
+                    Self::find_blob_boundaries_in_heap(&final_heap, deleted_index as usize)?
                 {
                     // Replace the blob content with zeros, keeping the length prefix
                     final_heap[start_pos..end_pos].fill(0);
@@ -147,12 +149,11 @@ impl<'a> HeapBuilder for BlobHeapBuilder<'a> {
             // Step 2: Handle modified blobs - in-place when possible, remap when necessary
             for (&modified_index, new_blob) in &blob_changes.modified_items {
                 if let Some((start_pos, end_pos)) =
-                    self.find_blob_boundaries_in_heap(&final_heap, modified_index as usize)?
+                    Self::find_blob_boundaries_in_heap(&final_heap, modified_index as usize)?
                 {
                     // Calculate original blob size (excluding length prefix)
                     let mut temp_offset = start_pos;
-                    let original_length =
-                        self.read_compressed_uint_at(&final_heap, &mut temp_offset)?;
+                    let original_length = read_compressed_uint(&final_heap, &mut temp_offset)?;
                     let original_data_size = original_length as usize;
                     let prefix_size = temp_offset - start_pos;
                     let new_blob_size = new_blob.len();
@@ -166,8 +167,11 @@ impl<'a> HeapBuilder for BlobHeapBuilder<'a> {
                         if new_prefix_size != prefix_size as u64 {
                             // Zero-pad and remap
                             final_heap[start_pos..end_pos].fill(0);
-                            let new_index = final_heap.len() as u32;
-                            write_compressed_uint(new_blob.len() as u32, &mut final_heap);
+                            let new_index = u32::try_from(final_heap.len())
+                                .map_err(|_| malformed_error!("Heap size exceeds u32 range"))?;
+                            let new_blob_len = u32::try_from(new_blob.len())
+                                .map_err(|_| malformed_error!("Blob size exceeds u32 range"))?;
+                            write_compressed_uint(new_blob_len, &mut final_heap);
                             final_heap.extend_from_slice(new_blob);
                             self.index_mappings.insert(modified_index, new_index);
                             continue;
@@ -175,7 +179,9 @@ impl<'a> HeapBuilder for BlobHeapBuilder<'a> {
 
                         // Write new length prefix in place (same size as original)
                         let mut temp_vec = Vec::new();
-                        write_compressed_uint(new_blob_size as u32, &mut temp_vec);
+                        let size_u32 = u32::try_from(new_blob_size)
+                            .map_err(|_| malformed_error!("Blob size exceeds u32 range"))?;
+                        write_compressed_uint(size_u32, &mut temp_vec);
                         final_heap[start_pos..start_pos + prefix_size].copy_from_slice(&temp_vec);
                         let write_pos = start_pos + prefix_size;
 
@@ -190,8 +196,11 @@ impl<'a> HeapBuilder for BlobHeapBuilder<'a> {
                         final_heap[start_pos..end_pos].fill(0);
 
                         // Append at end and create index mapping
-                        let new_index = final_heap.len() as u32;
-                        write_compressed_uint(new_blob.len() as u32, &mut final_heap);
+                        let new_index = u32::try_from(final_heap.len())
+                            .map_err(|_| malformed_error!("Heap size exceeds u32 range"))?;
+                        let new_blob_len = u32::try_from(new_blob.len())
+                            .map_err(|_| malformed_error!("Blob size exceeds u32 range"))?;
+                        write_compressed_uint(new_blob_len, &mut final_heap);
                         final_heap.extend_from_slice(new_blob);
 
                         // CRITICAL: We need to track this remapping for table updates
@@ -201,24 +210,33 @@ impl<'a> HeapBuilder for BlobHeapBuilder<'a> {
             }
 
             // Step 3: Append new blobs at the end, applying any modifications or removals
-            let mut current_append_index = original_heap_data.len() as u32;
+            let mut current_append_index = u32::try_from(original_heap_data.len())
+                .map_err(|_| malformed_error!("Original heap size exceeds u32 range"))?;
             for new_blob in &blob_changes.appended_items {
                 // Check if this newly added blob has been modified or removed
                 if blob_changes.removed_indices.contains(&current_append_index) {
                 } else if let Some(modified_blob) =
                     blob_changes.modified_items.get(&current_append_index)
                 {
-                    write_compressed_uint(modified_blob.len() as u32, &mut final_heap);
+                    let modified_blob_len = u32::try_from(modified_blob.len())
+                        .map_err(|_| malformed_error!("Modified blob size exceeds u32 range"))?;
+                    write_compressed_uint(modified_blob_len, &mut final_heap);
                     final_heap.extend_from_slice(modified_blob);
                 } else {
-                    write_compressed_uint(new_blob.len() as u32, &mut final_heap);
+                    let new_blob_len = u32::try_from(new_blob.len())
+                        .map_err(|_| malformed_error!("New blob size exceeds u32 range"))?;
+                    write_compressed_uint(new_blob_len, &mut final_heap);
                     final_heap.extend_from_slice(new_blob);
                 }
 
                 // Update the current append index for the next blob
                 // Always use the original blob size for index calculation since that's how indices were assigned
                 let prefix_size = compressed_uint_size(new_blob.len());
-                current_append_index += prefix_size as u32 + new_blob.len() as u32;
+                let prefix_size_u32 = u32::try_from(prefix_size)
+                    .map_err(|_| malformed_error!("Compressed uint size exceeds u32 range"))?;
+                let new_blob_len_u32 = u32::try_from(new_blob.len())
+                    .map_err(|_| malformed_error!("New blob size exceeds u32 range"))?;
+                current_append_index += prefix_size_u32 + new_blob_len_u32;
             }
 
             // Apply 4-byte alignment padding
@@ -244,13 +262,16 @@ impl<'a> HeapBuilder for BlobHeapBuilder<'a> {
                 if blob_changes.is_removed(original_index) {
                     // Blob is removed - no mapping entry
                     continue;
-                } else if let Some(modified_blob) = blob_changes.get_modification(original_index) {
+                }
+                if let Some(modified_blob) = blob_changes.get_modification(original_index) {
                     // Blob is modified - add modified version
                     self.index_mappings
                         .insert(original_index, final_index_position);
 
                     // Write length prefix
-                    write_compressed_uint(modified_blob.len() as u32, &mut final_heap);
+                    let modified_blob_len = u32::try_from(modified_blob.len())
+                        .map_err(|_| malformed_error!("Modified blob size exceeds u32 range"))?;
+                    write_compressed_uint(modified_blob_len, &mut final_heap);
                     // Write blob data
                     final_heap.extend_from_slice(modified_blob);
 
@@ -266,7 +287,9 @@ impl<'a> HeapBuilder for BlobHeapBuilder<'a> {
                         .insert(original_index, final_index_position);
 
                     // Write length prefix
-                    write_compressed_uint(original_blob.len() as u32, &mut final_heap);
+                    let original_blob_len = u32::try_from(original_blob.len())
+                        .map_err(|_| malformed_error!("Original blob size exceeds u32 range"))?;
+                    write_compressed_uint(original_blob_len, &mut final_heap);
                     // Write blob data
                     final_heap.extend_from_slice(original_blob);
 
@@ -309,7 +332,9 @@ impl<'a> HeapBuilder for BlobHeapBuilder<'a> {
                     .insert(original_heap_index, final_index_position);
 
                 // Write length prefix
-                write_compressed_uint(final_blob.len() as u32, &mut final_heap);
+                let final_blob_len = u32::try_from(final_blob.len())
+                    .map_err(|_| malformed_error!("Final blob size exceeds u32 range"))?;
+                write_compressed_uint(final_blob_len, &mut final_heap);
                 // Write blob data
                 final_heap.extend_from_slice(&final_blob);
 
@@ -338,16 +363,15 @@ impl<'a> HeapBuilder for BlobHeapBuilder<'a> {
         &self.index_mappings
     }
 
-    fn heap_name(&self) -> &str {
+    fn heap_name(&self) -> &'static str {
         "#Blob"
     }
 }
 
-impl<'a> BlobHeapBuilder<'a> {
+impl BlobHeapBuilder<'_> {
     /// Find the byte boundaries of a blob at a given index in the heap.
     /// Returns (start_pos, end_pos) where end_pos is exclusive and includes the entire blob.
     fn find_blob_boundaries_in_heap(
-        &self,
         heap_data: &[u8],
         blob_index: usize,
     ) -> Result<Option<(usize, usize)>> {
@@ -359,59 +383,13 @@ impl<'a> BlobHeapBuilder<'a> {
 
         // Read the compressed length prefix to determine blob size
         let mut offset = start_pos;
-        let blob_length = self.read_compressed_uint_at(heap_data, &mut offset)?;
+        let blob_length = read_compressed_uint(heap_data, &mut offset)?;
         let end_pos = offset + blob_length as usize;
 
         if end_pos > heap_data.len() {
             Ok(None) // Blob extends beyond heap
         } else {
             Ok(Some((start_pos, end_pos)))
-        }
-    }
-
-    /// Read a compressed unsigned integer at the given offset.
-    fn read_compressed_uint_at(&self, data: &[u8], offset: &mut usize) -> Result<u32> {
-        if *offset >= data.len() {
-            return Err(Error::WriteLayoutFailed {
-                message: "Offset beyond data bounds".to_string(),
-            });
-        }
-
-        let first_byte = data[*offset];
-        *offset += 1;
-
-        if (first_byte & 0x80) == 0 {
-            // Single byte: 0xxxxxxx
-            Ok(first_byte as u32)
-        } else if (first_byte & 0xC0) == 0x80 {
-            // Two bytes: 10xxxxxx xxxxxxxx
-            if *offset >= data.len() {
-                return Err(Error::WriteLayoutFailed {
-                    message: "Incomplete compressed uint".to_string(),
-                });
-            }
-            let second_byte = data[*offset];
-            *offset += 1;
-            Ok((((first_byte & 0x3F) as u32) << 8) | (second_byte as u32))
-        } else if (first_byte & 0xE0) == 0xC0 {
-            // Four bytes: 110xxxxx xxxxxxxx xxxxxxxx xxxxxxxx
-            if *offset + 2 >= data.len() {
-                return Err(Error::WriteLayoutFailed {
-                    message: "Incomplete compressed uint".to_string(),
-                });
-            }
-            let second_byte = data[*offset] as u32;
-            let third_byte = data[*offset + 1] as u32;
-            let fourth_byte = data[*offset + 2] as u32;
-            *offset += 3;
-            Ok((((first_byte & 0x1F) as u32) << 24)
-                | (second_byte << 16)
-                | (third_byte << 8)
-                | fourth_byte)
-        } else {
-            Err(Error::WriteLayoutFailed {
-                message: "Invalid compressed uint format".to_string(),
-            })
         }
     }
 
