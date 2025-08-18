@@ -17,7 +17,7 @@
 //!
 //! - [`NativeImports`] - Main container for PE import table data
 //! - [`ImportDescriptor`] - Per-DLL import descriptor with function lists
-//! - [`ImportFunction`] - Individual function import with name/ordinal information
+//! - [`Import`] - Individual function import with name/ordinal information
 //! - [`ImportAddressEntry`] - IAT entry with RVA and patching information
 //!
 //! # Import Table Structure
@@ -105,6 +105,7 @@
 use std::collections::HashMap;
 
 use crate::{
+    file::pe::Import,
     utils::{write_le_at, write_string_at},
     Error, Result,
 };
@@ -173,41 +174,14 @@ pub struct ImportDescriptor {
     /// RVA of Import Address Table (IAT) - patched by loader
     pub first_thunk: u32,
 
-    /// Functions imported from this DLL
-    pub functions: Vec<ImportFunction>,
+    /// Functions imported from this DLL  
+    pub functions: Vec<Import>,
 
     /// Timestamp for bound imports (usually 0)
     pub timestamp: u32,
 
     /// Forwarder chain for bound imports (usually 0)
     pub forwarder_chain: u32,
-}
-
-/// Individual function import within a DLL.
-///
-/// Represents a single imported function, imported either by name (with optional hint)
-/// or by ordinal. The function can be resolved at load time or bound at link time.
-///
-/// # Import Methods
-/// - **By Name**: Uses function name with optional hint for faster lookup
-/// - **By Ordinal**: Uses ordinal number for direct function table access
-/// - **Bound**: Pre-resolved addresses for performance optimization
-#[derive(Debug, Clone)]
-pub struct ImportFunction {
-    /// Function name if imported by name
-    pub name: Option<String>,
-
-    /// Ordinal number if imported by ordinal
-    pub ordinal: Option<u16>,
-
-    /// Hint for name table lookup optimization
-    pub hint: u16,
-
-    /// RVA in Import Address Table where loader patches the address
-    pub iat_rva: u32,
-
-    /// ILT entry value (RVA of name or ordinal with high bit set)
-    pub ilt_value: u64,
 }
 
 /// Entry in the Import Address Table (IAT).
@@ -255,95 +229,88 @@ impl NativeImports {
         }
     }
 
-    /// Populate from goblin's parsed import data.
-    ///
-    /// This method takes the import data already parsed by goblin and populates
-    /// the NativeImports container. This is much simpler and more reliable than
-    /// manually parsing the PE import table.
+    /// Creates native imports directly from PE import data.
     ///
     /// # Arguments
-    /// * `goblin_imports` - Parsed import data from goblin
+    /// * `pe_imports` - Slice of PE import entries to process
     ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::imports::NativeImports;
-    ///
-    /// let mut imports = NativeImports::new();
-    /// if let Some(goblin_imports) = file.imports() {
-    ///     imports.populate_from_goblin(&goblin_imports)?;
-    /// }
-    ///
-    /// println!("Found {} DLL dependencies", imports.dll_count());
-    /// # Ok::<(), dotscope::Error>(())
-    /// ```
+    /// # Returns
+    /// Returns a configured NativeImports instance with all import descriptors,
+    /// IAT entries, and internal structures properly initialized.
     ///
     /// # Errors
-    /// Returns error if the goblin import data is malformed or contains invalid data.
-    pub fn populate_from_goblin(
-        &mut self,
-        goblin_imports: &[goblin::pe::import::Import],
-    ) -> Result<()> {
-        for import in goblin_imports {
-            let dll_name = import.dll;
+    /// Returns error if:
+    /// - Memory allocation fails during structure creation
+    /// - Import data contains invalid or inconsistent information
+    ///
+    /// # Examples
+    /// ```rust,ignore
+    /// use dotscope::metadata::imports::NativeImports;
+    /// use dotscope::file::pe::Import;
+    ///
+    /// let pe_imports = vec![
+    ///     Import {
+    ///         dll: "kernel32.dll".to_string(),
+    ///         name: "GetCurrentProcessId".to_string(),
+    ///         ordinal: 0,
+    ///         rva: 0x2000,
+    ///     },
+    /// ];
+    ///
+    /// let native_imports = NativeImports::from_pe_imports(&pe_imports)?;
+    /// assert_eq!(native_imports.dll_count(), 1);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn from_pe_imports(pe_imports: &[Import]) -> Result<Self> {
+        let mut scanner = Self::new();
 
-            let function_identifier = if !import.name.is_empty() {
-                import.name.to_string()
-            } else if import.ordinal != 0 {
-                format!("#{}", import.ordinal)
-            } else {
-                "unknown".to_string()
-            };
-
-            let dll_name_str = dll_name.to_string();
-            if !self.descriptors.contains_key(&dll_name_str) {
-                let descriptor = ImportDescriptor {
-                    dll_name: dll_name_str.clone(),
-                    original_first_thunk: 0, // Not available from goblin
-                    #[allow(clippy::cast_possible_truncation)]
-                    first_thunk: import.rva as u32,
-                    functions: Vec::new(),
-                    timestamp: 0,
-                    forwarder_chain: 0,
-                };
-                self.descriptors.insert(dll_name_str.clone(), descriptor);
-            }
-
-            let import_function = ImportFunction {
-                name: if import.name.is_empty() {
-                    None
-                } else {
-                    Some(import.name.to_string())
-                },
-                ordinal: if import.ordinal != 0 {
-                    Some(import.ordinal)
-                } else {
-                    None
-                },
-                #[allow(clippy::cast_possible_truncation)]
-                iat_rva: import.rva as u32,
-                hint: 0, // Not available from goblin
-                ilt_value: import.offset as u64,
-            };
-
-            #[allow(clippy::cast_possible_truncation)]
-            let rva_key = import.rva as u32;
-            self.iat_entries.insert(
-                rva_key,
-                ImportAddressEntry {
-                    rva: rva_key,
-                    dll_name: dll_name_str.clone(),
-                    function_identifier,
-                    original_value: import.offset as u64,
-                },
-            );
-
-            if let Some(descriptor) = self.descriptors.get_mut(&dll_name_str) {
-                descriptor.functions.push(import_function);
-            }
+        let mut imports_by_dll: HashMap<&str, Vec<&Import>> = HashMap::new();
+        for import in pe_imports {
+            imports_by_dll.entry(&import.dll).or_default().push(import);
         }
 
-        Ok(())
+        for (dll_name, dll_imports) in imports_by_dll {
+            let mut descriptor = ImportDescriptor {
+                dll_name: dll_name.to_owned(),
+                original_first_thunk: 0,
+                first_thunk: 0,
+                functions: Vec::with_capacity(dll_imports.len()),
+                timestamp: 0,
+                forwarder_chain: 0,
+            };
+
+            for pe_import in dll_imports {
+                scanner.iat_entries.insert(
+                    pe_import.rva,
+                    ImportAddressEntry {
+                        rva: pe_import.rva,
+                        dll_name: dll_name.to_owned(),
+                        function_identifier: if let Some(ref name) = pe_import.name {
+                            if name.is_empty() {
+                                if let Some(ord) = pe_import.ordinal {
+                                    format!("#{}", ord)
+                                } else {
+                                    "unknown".to_string()
+                                }
+                            } else {
+                                name.clone()
+                            }
+                        } else if let Some(ord) = pe_import.ordinal {
+                            format!("#{}", ord)
+                        } else {
+                            "unknown".to_string()
+                        },
+                        original_value: 0, // Not available from current PE Import
+                    },
+                );
+
+                descriptor.functions.push((*pe_import).clone());
+            }
+
+            scanner.descriptors.insert(dll_name.to_owned(), descriptor);
+        }
+
+        Ok(scanner)
     }
 
     /// Add a DLL to the import table.
@@ -451,12 +418,13 @@ impl NativeImports {
         let iat_rva = self.allocate_iat_rva();
         let descriptor = self.descriptors.get_mut(dll_name).unwrap();
 
-        let function = ImportFunction {
+        let function = Import {
+            dll: dll_name.to_owned(),
             name: Some(function_name.to_owned()),
             ordinal: None,
-            hint: 0, // Will be calculated during table generation
-            iat_rva,
-            ilt_value: 0, // Will be calculated during table generation
+            rva: iat_rva,
+            hint: 0,
+            ilt_value: 0,
         };
 
         let iat_entry = ImportAddressEntry {
@@ -530,12 +498,13 @@ impl NativeImports {
         let iat_rva = self.allocate_iat_rva();
         let descriptor = self.descriptors.get_mut(dll_name).unwrap();
 
-        let function = ImportFunction {
+        let function = Import {
+            dll: dll_name.to_owned(),
             name: None,
             ordinal: Some(ordinal),
+            rva: iat_rva,
             hint: 0,
-            iat_rva,
-            ilt_value: 0x8000_0000_0000_0000u64 | u64::from(ordinal), // Set high bit for ordinal
+            ilt_value: 0x8000_0000_0000_0000u64 | u64::from(ordinal),
         };
 
         let iat_entry = ImportAddressEntry {
@@ -1015,13 +984,13 @@ impl NativeImports {
             for function in &mut descriptor.functions {
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 let new_rva = if rva_delta >= 0 {
-                    function.iat_rva.checked_add(rva_delta as u32)
+                    function.rva.checked_add(rva_delta as u32)
                 } else {
-                    function.iat_rva.checked_sub((-rva_delta) as u32)
+                    function.rva.checked_sub((-rva_delta) as u32)
                 };
 
                 match new_rva {
-                    Some(rva) => function.iat_rva = rva,
+                    Some(rva) => function.rva = rva,
                     None => {
                         return Err(Error::Error("RVA delta would cause overflow".to_string()));
                     }

@@ -1080,7 +1080,7 @@ impl CilObject {
     /// // Access PE headers
     /// let dos_header = file.header_dos();
     /// let nt_headers = file.header();
-    /// println!("PE signature: 0x{:X}", nt_headers.signature);
+    /// println!("Machine type: 0x{:X}", nt_headers.machine);
     ///
     /// // Convert RVA to file offset
     /// let (clr_rva, _) = file.clr();

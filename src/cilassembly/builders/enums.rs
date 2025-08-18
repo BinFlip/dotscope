@@ -133,6 +133,7 @@ impl EnumBuilder {
     ///
     /// let builder = EnumBuilder::new("MyEnum");
     /// ```
+    #[must_use]
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
@@ -158,6 +159,7 @@ impl EnumBuilder {
     /// let builder = EnumBuilder::new("MyEnum")
     ///     .namespace("MyApp.Enums");
     /// ```
+    #[must_use]
     pub fn namespace(mut self, namespace: &str) -> Self {
         self.namespace = Some(namespace.to_string());
         self
@@ -173,6 +175,7 @@ impl EnumBuilder {
     /// let builder = EnumBuilder::new("MyEnum")
     ///     .public();
     /// ```
+    #[must_use]
     pub fn public(mut self) -> Self {
         self.visibility = TypeAttributes::PUBLIC;
         self
@@ -188,6 +191,7 @@ impl EnumBuilder {
     /// let builder = EnumBuilder::new("MyEnum")
     ///     .internal();
     /// ```
+    #[must_use]
     pub fn internal(mut self) -> Self {
         self.visibility = TypeAttributes::NOT_PUBLIC;
         self
@@ -207,6 +211,7 @@ impl EnumBuilder {
     /// let builder = EnumBuilder::new("ByteEnum")
     ///     .underlying_type(TypeSignature::U1); // byte enum
     /// ```
+    #[must_use]
     pub fn underlying_type(mut self, underlying_type: TypeSignature) -> Self {
         self.underlying_type = underlying_type;
         self
@@ -229,6 +234,7 @@ impl EnumBuilder {
     ///     .value("Green", 1)
     ///     .value("Blue", 2);
     /// ```
+    #[must_use]
     pub fn value(mut self, name: &str, value: i64) -> Self {
         self.values.push(EnumValueDefinition {
             name: name.to_string(),
@@ -311,22 +317,40 @@ impl EnumBuilder {
             // Create the constant value for this field
             // We need to convert the i64 value to the appropriate constant type
             let constant_value = match self.underlying_type {
-                TypeSignature::I1 => vec![(enum_value.value as i8) as u8],
-                TypeSignature::U1 => vec![enum_value.value as u8],
+                TypeSignature::I1 => {
+                    let val = i8::try_from(enum_value.value).map_err(|_| {
+                        malformed_error!("Enum value {} exceeds i8 range", enum_value.value)
+                    })?;
+                    vec![val.to_le_bytes()[0]]
+                }
+                TypeSignature::U1 => {
+                    let val = u8::try_from(enum_value.value).map_err(|_| {
+                        malformed_error!("Enum value {} exceeds u8 range", enum_value.value)
+                    })?;
+                    vec![val]
+                }
                 TypeSignature::I2 => {
-                    let val = enum_value.value as i16;
+                    let val = i16::try_from(enum_value.value).map_err(|_| {
+                        malformed_error!("Enum value {} exceeds i16 range", enum_value.value)
+                    })?;
                     val.to_le_bytes().to_vec()
                 }
                 TypeSignature::U2 => {
-                    let val = enum_value.value as u16;
+                    let val = u16::try_from(enum_value.value).map_err(|_| {
+                        malformed_error!("Enum value {} exceeds u16 range", enum_value.value)
+                    })?;
                     val.to_le_bytes().to_vec()
                 }
                 TypeSignature::I4 => {
-                    let val = enum_value.value as i32;
+                    let val = i32::try_from(enum_value.value).map_err(|_| {
+                        malformed_error!("Enum value {} exceeds i32 range", enum_value.value)
+                    })?;
                     val.to_le_bytes().to_vec()
                 }
                 TypeSignature::U4 => {
-                    let val = enum_value.value as u32;
+                    let val = u32::try_from(enum_value.value).map_err(|_| {
+                        malformed_error!("Enum value {} exceeds u32 range", enum_value.value)
+                    })?;
                     val.to_le_bytes().to_vec()
                 }
                 TypeSignature::I8 => {
@@ -334,7 +358,9 @@ impl EnumBuilder {
                     val.to_le_bytes().to_vec()
                 }
                 TypeSignature::U8 => {
-                    let val = enum_value.value as u64;
+                    let val = u64::try_from(enum_value.value).map_err(|_| {
+                        malformed_error!("Enum value {} exceeds u64 range", enum_value.value)
+                    })?;
                     val.to_le_bytes().to_vec()
                 }
                 _ => {

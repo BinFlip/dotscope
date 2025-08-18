@@ -164,7 +164,7 @@ impl AssemblyChanges {
             native_imports: UnifiedImportContainer::new(),
             native_exports: UnifiedExportContainer::new(),
             method_bodies: HashMap::new(),
-            next_method_placeholder: 0xF0000000, // Start placeholders at high address range
+            next_method_placeholder: 0xF000_0000, // Start placeholders at high address range
         }
     }
 
@@ -181,7 +181,7 @@ impl AssemblyChanges {
             native_imports: UnifiedImportContainer::new(),
             native_exports: UnifiedExportContainer::new(),
             method_bodies: HashMap::new(),
-            next_method_placeholder: 0xF0000000,
+            next_method_placeholder: 0xF000_0000,
         }
     }
 
@@ -411,13 +411,14 @@ impl AssemblyChanges {
     /// # Returns
     ///
     /// Total size in bytes of all method bodies including alignment padding.
-    pub fn method_bodies_total_size(&self) -> u32 {
+    pub fn method_bodies_total_size(&self) -> crate::Result<u32> {
         self.method_bodies
             .values()
             .map(|body| {
-                let size = body.len() as u32;
+                let size = u32::try_from(body.len())
+                    .map_err(|_| crate::malformed_error!("Method body size exceeds u32 range"))?;
                 // Align each method body to 4-byte boundary
-                (size + 3) & !3
+                Ok((size + 3) & !3)
             })
             .sum()
     }
@@ -449,7 +450,7 @@ impl AssemblyChanges {
     ///
     /// True if this RVA is a placeholder managed by the method body system.
     pub fn is_method_body_placeholder(&self, rva: u32) -> bool {
-        rva >= 0xF0000000 && self.method_bodies.contains_key(&rva)
+        rva >= 0xF000_0000 && self.method_bodies.contains_key(&rva)
     }
 }
 

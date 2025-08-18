@@ -155,6 +155,7 @@ impl InterfaceBuilder {
     ///
     /// let builder = InterfaceBuilder::new("IMyInterface");
     /// ```
+    #[must_use]
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
@@ -181,6 +182,7 @@ impl InterfaceBuilder {
     /// let builder = InterfaceBuilder::new("IMyInterface")
     ///     .namespace("MyApp.Interfaces");
     /// ```
+    #[must_use]
     pub fn namespace(mut self, namespace: &str) -> Self {
         self.namespace = Some(namespace.to_string());
         self
@@ -196,6 +198,7 @@ impl InterfaceBuilder {
     /// let builder = InterfaceBuilder::new("IMyInterface")
     ///     .public();
     /// ```
+    #[must_use]
     pub fn public(mut self) -> Self {
         self.visibility = TypeAttributes::PUBLIC;
         self
@@ -211,6 +214,7 @@ impl InterfaceBuilder {
     /// let builder = InterfaceBuilder::new("IMyInterface")
     ///     .internal();
     /// ```
+    #[must_use]
     pub fn internal(mut self) -> Self {
         self.visibility = TypeAttributes::NOT_PUBLIC;
         self
@@ -231,6 +235,7 @@ impl InterfaceBuilder {
     /// let builder = InterfaceBuilder::new("IDerived")
     ///     .extends(base_interface);
     /// ```
+    #[must_use]
     pub fn extends(mut self, interface: CodedIndex) -> Self {
         self.extends.push(interface);
         self
@@ -251,6 +256,7 @@ impl InterfaceBuilder {
     /// let builder = InterfaceBuilder::new("IDerived")
     ///     .extends_token(base_token);
     /// ```
+    #[must_use]
     pub fn extends_token(mut self, interface_token: Token) -> Self {
         let coded_index = CodedIndex::new(
             TableId::TypeDef,
@@ -280,6 +286,7 @@ impl InterfaceBuilder {
     ///         ("b".to_string(), TypeSignature::I4)
     ///     ]);
     /// ```
+    #[must_use]
     pub fn method_signature(
         mut self,
         name: &str,
@@ -311,6 +318,7 @@ impl InterfaceBuilder {
     ///     .simple_method("Start", TypeSignature::Void)
     ///     .simple_method("Stop", TypeSignature::Void);
     /// ```
+    #[must_use]
     pub fn simple_method(self, name: &str, return_type: TypeSignature) -> Self {
         self.method_signature(name, return_type, vec![])
     }
@@ -332,6 +340,7 @@ impl InterfaceBuilder {
     /// let builder = InterfaceBuilder::new("IRepository")
     ///     .property("Count", TypeSignature::I4, true, false); // read-only
     /// ```
+    #[must_use]
     pub fn property(
         mut self,
         name: &str,
@@ -363,6 +372,7 @@ impl InterfaceBuilder {
     /// let builder = InterfaceBuilder::new("IRepository")
     ///     .readonly_property("Count", TypeSignature::I4);
     /// ```
+    #[must_use]
     pub fn readonly_property(self, name: &str, property_type: TypeSignature) -> Self {
         self.property(name, property_type, true, false)
     }
@@ -382,6 +392,7 @@ impl InterfaceBuilder {
     /// let builder = InterfaceBuilder::new("IRepository")
     ///     .readwrite_property("IsEnabled", TypeSignature::Boolean);
     /// ```
+    #[must_use]
     pub fn readwrite_property(self, name: &str, property_type: TypeSignature) -> Self {
         self.property(name, property_type, true, true)
     }
@@ -447,7 +458,8 @@ impl InterfaceBuilder {
                 thiscall: false,
                 fastcall: false,
                 param_count_generic: 0,
-                param_count: method_def.parameters.len() as u32,
+                param_count: u32::try_from(method_def.parameters.len())
+                    .map_err(|_| malformed_error!("Method parameter count exceeds u32 range"))?,
                 return_type: SignatureParameter {
                     modifiers: Vec::new(),
                     by_ref: false,

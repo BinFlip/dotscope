@@ -530,6 +530,10 @@ pub struct ExceptionHandler {
 ///
 /// The encoded exception handler section bytes, or an empty vector if no handlers.
 ///
+/// # Errors
+///
+/// Returns an error if encoding fails or values exceed expected ranges.
+///
 /// # Examples
 ///
 /// ```rust,no_run
@@ -574,12 +578,14 @@ pub fn encode_exception_handlers(handlers: &[ExceptionHandler]) -> Result<Vec<u8
             0x41, // Kind = EHTable | FatFormat
             0x00, 0x00, // Reserved
         ]);
-        section.extend_from_slice(&(section_size as u32).to_le_bytes()[..3]); // DataSize (3 bytes)
+        let section_size_u32 = u32::try_from(section_size)
+            .map_err(|_| malformed_error!("Exception section size exceeds u32 range"))?;
+        section.extend_from_slice(&section_size_u32.to_le_bytes()[..3]); // DataSize (3 bytes)
 
         // Write each exception handler (24 bytes each)
         for eh in handlers {
             // Flags (4 bytes)
-            section.extend_from_slice(&(eh.flags.bits() as u32).to_le_bytes());
+            section.extend_from_slice(&u32::from(eh.flags.bits()).to_le_bytes());
 
             // TryOffset (4 bytes)
             section.extend_from_slice(&eh.try_offset.to_le_bytes());
@@ -610,9 +616,12 @@ pub fn encode_exception_handlers(handlers: &[ExceptionHandler]) -> Result<Vec<u8
         let section_size = 4 + (handlers.len() * 12);
 
         // Section header (small format)
+        let section_size_u8 = u8::try_from(section_size).map_err(|_| {
+            malformed_error!("Exception section size exceeds u8 range for small format")
+        })?;
         section.extend_from_slice(&[
-            0x01,                 // Kind = EHTable (small format)
-            (section_size as u8), // DataSize (1 byte)
+            0x01,            // Kind = EHTable (small format)
+            section_size_u8, // DataSize (1 byte)
             0x00,
             0x00, // Reserved
         ]);
@@ -623,16 +632,26 @@ pub fn encode_exception_handlers(handlers: &[ExceptionHandler]) -> Result<Vec<u8
             section.extend_from_slice(&eh.flags.bits().to_le_bytes());
 
             // TryOffset (2 bytes)
-            section.extend_from_slice(&(eh.try_offset as u16).to_le_bytes());
+            let try_offset_u16 = u16::try_from(eh.try_offset)
+                .map_err(|_| malformed_error!("Exception handler try_offset exceeds u16 range"))?;
+            section.extend_from_slice(&try_offset_u16.to_le_bytes());
 
             // TryLength (1 byte)
-            section.push(eh.try_length as u8);
+            let try_length_u8 = u8::try_from(eh.try_length)
+                .map_err(|_| malformed_error!("Exception handler try_length exceeds u8 range"))?;
+            section.push(try_length_u8);
 
             // HandlerOffset (2 bytes)
-            section.extend_from_slice(&(eh.handler_offset as u16).to_le_bytes());
+            let handler_offset_u16 = u16::try_from(eh.handler_offset).map_err(|_| {
+                malformed_error!("Exception handler handler_offset exceeds u16 range")
+            })?;
+            section.extend_from_slice(&handler_offset_u16.to_le_bytes());
 
             // HandlerLength (1 byte)
-            section.push(eh.handler_length as u8);
+            let handler_length_u8 = u8::try_from(eh.handler_length).map_err(|_| {
+                malformed_error!("Exception handler handler_length exceeds u8 range")
+            })?;
+            section.push(handler_length_u8);
 
             // ClassToken or FilterOffset (4 bytes)
             if eh.flags.contains(ExceptionHandlerFlags::FILTER) {

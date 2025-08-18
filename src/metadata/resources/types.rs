@@ -409,7 +409,8 @@ impl ResourceType {
                 // UTF-8 byte length (7-bit encoded) + UTF-8 bytes
                 let utf8_byte_count = s.len();
                 let utf8_size = u32::try_from(utf8_byte_count).ok()?;
-                Some(compressed_uint_size(utf8_size as usize) as u32 + utf8_size)
+                let prefix_size = u32::try_from(compressed_uint_size(utf8_size as usize)).ok()?;
+                Some(prefix_size + utf8_size)
             }
             ResourceType::Boolean(_) | ResourceType::Byte(_) | ResourceType::SByte(_) => Some(1), // Single byte
             ResourceType::Char(_) | ResourceType::Int16(_) | ResourceType::UInt16(_) => Some(2), // 2 bytes
@@ -418,7 +419,8 @@ impl ResourceType {
             ResourceType::ByteArray(data) => {
                 // Array length (7-bit encoded) + data bytes
                 let data_size = u32::try_from(data.len()).ok()?;
-                Some(compressed_uint_size(data_size as usize) as u32 + data_size)
+                let prefix_size = u32::try_from(compressed_uint_size(data_size as usize)).ok()?;
+                Some(prefix_size + data_size)
             }
             // Types without .NET equivalents or not yet implemented
             ResourceType::Null
