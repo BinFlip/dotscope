@@ -777,12 +777,12 @@ mod tests {
     #[test]
     fn test_read_compressed_uint() {
         let test_cases = vec![
-            (vec![0x03], 3),                            // 1-byte format
-            (vec![0x7F], 0x7F),                         // 1-byte format, max value
-            (vec![0x80, 0x80], 0x80),                   // 2-byte format, min value
-            (vec![0xBF, 0xFF], 0x3FFF),                 // 2-byte format, max value
-            (vec![0xC0, 0x00, 0x00, 0x00], 0x00),       // 4-byte format, min value
-            (vec![0xDF, 0xFF, 0xFF, 0xFF], 0x1FFFFFFF), // 4-byte format, max value
+            (vec![0x03], 3),                             // 1-byte format
+            (vec![0x7F], 0x7F),                          // 1-byte format, max value
+            (vec![0x80, 0x80], 0x80),                    // 2-byte format, min value
+            (vec![0xBF, 0xFF], 0x3FFF),                  // 2-byte format, max value
+            (vec![0xC0, 0x00, 0x00, 0x00], 0x00),        // 4-byte format, min value
+            (vec![0xDF, 0xFF, 0xFF, 0xFF], 0x1FFF_FFFF), // 4-byte format, max value
         ];
 
         for (input, expected) in test_cases {
@@ -886,7 +886,7 @@ mod tests {
         {
             let input = &[0xFF, 0xFF, 0x7F]; // Represents 2097151 (max for three bytes)
             let mut parser = Parser::new(input);
-            assert_eq!(parser.read_7bit_encoded_int().unwrap(), 2097151);
+            assert_eq!(parser.read_7bit_encoded_int().unwrap(), 2_097_151);
             assert_eq!(parser.pos(), 3);
         }
     }

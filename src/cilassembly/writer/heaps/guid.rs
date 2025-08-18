@@ -68,7 +68,7 @@ impl<'a> GuidHeapBuilder<'a> {
     }
 }
 
-impl<'a> HeapBuilder for GuidHeapBuilder<'a> {
+impl HeapBuilder for GuidHeapBuilder<'_> {
     fn build(&mut self) -> Result<Vec<u8>> {
         let guid_changes = &self.assembly.changes().guid_heap_changes;
         let mut final_heap = Vec::new();
@@ -80,7 +80,9 @@ impl<'a> HeapBuilder for GuidHeapBuilder<'a> {
 
             // Create basic index mapping for the replacement heap
             let mut current_position = 0u32;
-            while current_position < final_heap.len() as u32 {
+            let final_heap_len = u32::try_from(final_heap.len())
+                .map_err(|_| malformed_error!("GUID heap size exceeds u32 range"))?;
+            while current_position < final_heap_len {
                 self.index_mappings
                     .insert(current_position, current_position);
                 current_position += 16; // Each GUID is 16 bytes
@@ -126,7 +128,8 @@ impl<'a> HeapBuilder for GuidHeapBuilder<'a> {
                 if guid_changes.is_removed(original_index) {
                     // GUID is removed - no mapping entry
                     continue;
-                } else if let Some(modified_guid) = guid_changes.get_modification(original_index) {
+                }
+                if let Some(modified_guid) = guid_changes.get_modification(original_index) {
                     // GUID is modified - add modified version
                     self.index_mappings
                         .insert(original_index, final_index_position);
@@ -146,13 +149,18 @@ impl<'a> HeapBuilder for GuidHeapBuilder<'a> {
 
         // First, calculate the logical index for each appended GUID
         // GUID heap uses 1-based logical indices, not byte offsets
-        let original_heap_size =
-            guid_changes.next_index - (guid_changes.appended_items.len() as u32 * 16);
+        let original_heap_size = guid_changes.next_index
+            - (u32::try_from(guid_changes.appended_items.len())
+                .map_err(|_| malformed_error!("Appended GUIDs count exceeds u32 range"))?
+                * 16);
         let existing_guid_count = original_heap_size / 16;
 
         for (appended_index, original_guid) in guid_changes.appended_items.iter().enumerate() {
             // Calculate the logical GUID index (1-based sequential)
-            let logical_guid_index = existing_guid_count + (appended_index as u32) + 1;
+            let logical_guid_index = existing_guid_count
+                + u32::try_from(appended_index)
+                    .map_err(|_| malformed_error!("Appended GUID index exceeds u32 range"))?
+                + 1;
 
             if guid_changes.removed_indices.contains(&logical_guid_index) {
             } else if let Some(modified_guid) = guid_changes.modified_items.get(&logical_guid_index)
@@ -186,7 +194,7 @@ impl<'a> HeapBuilder for GuidHeapBuilder<'a> {
         &self.index_mappings
     }
 
-    fn heap_name(&self) -> &str {
+    fn heap_name(&self) -> &'static str {
         "#GUID"
     }
 }

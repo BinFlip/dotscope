@@ -118,6 +118,7 @@
 use std::collections::HashMap;
 
 use crate::{
+    file::pe::Export,
     utils::{write_le_at, write_string_at},
     Error, Result,
 };
@@ -286,58 +287,66 @@ impl NativeExports {
         }
     }
 
-    /// Populate from goblin's parsed export data.
-    ///
-    /// This method takes the export data already parsed by goblin and populates
-    /// the NativeExports container. This leverages goblin's reliable PE parsing
-    /// instead of manually parsing the export table.
+    /// Creates native exports from PE export data
     ///
     /// # Arguments
-    /// * `goblin_export` - Parsed export data from goblin
+    /// * `pe_exports` - Slice of PE export entries to process
     ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::exports::NativeExports;
-    ///
-    /// let mut exports = NativeExports::new("example.dll");
-    /// if let Some(goblin_export) = file.exports() {
-    ///     exports.populate_from_goblin(&goblin_export)?;
-    /// }
-    ///
-    /// println!("Found {} exported functions", exports.function_count());
-    /// # Ok::<(), dotscope::Error>(())
-    /// ```
+    /// # Returns
+    /// Returns a configured NativeExports instance with all export functions,
+    /// forwarders, and internal structures properly initialized.
     ///
     /// # Errors
-    /// Returns error if the goblin export data is malformed or contains invalid data.
-    #[allow(clippy::cast_possible_truncation)]
-    pub fn populate_from_goblin(
-        &mut self,
-        goblin_exports: &[goblin::pe::export::Export],
-    ) -> Result<()> {
-        for export in goblin_exports {
-            if let Some(name) = export.name {
-                self.directory.dll_name = name.to_string();
-            }
+    /// Returns error if:
+    /// - Memory allocation fails during structure creation
+    /// - Export data contains invalid or inconsistent information
+    /// - Adding functions or forwarders to the directory fails
+    ///
+    /// # Examples
+    /// ```rust,ignore
+    /// use dotscope::metadata::exports::NativeExports;
+    /// use dotscope::file::pe::Export;
+    ///
+    /// let pe_exports = vec![
+    ///     Export {
+    ///         name: Some("MyFunction".to_string()),
+    ///         rva: 0x1000,
+    ///         offset: Some(1),
+    ///     },
+    /// ];
+    ///
+    /// let native_exports = NativeExports::from_pe_exports(&pe_exports)?;
+    /// assert!(!native_exports.is_empty());
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn from_pe_exports(pe_exports: &[Export]) -> Result<Self> {
+        let mut exports = Self::new(""); // DLL name will be set from first export
 
-            let ordinal = export.offset.unwrap_or(0) as u16;
+        for export in pe_exports {
+            let ordinal = u16::try_from(export.offset.unwrap_or(0))
+                .map_err(|_| malformed_error!("Export ordinal exceeds u16 range"))?;
 
             if export.rva == 0 {
                 continue; // Skip invalid exports
             }
 
-            if export.reexport.is_some() {
-                let name = export.name.unwrap_or("");
-                self.add_forwarder(name, ordinal, "forwarded_function")?;
-            } else if let Some(name) = export.name {
-                self.add_function(name, ordinal, export.rva as u32)?;
+            // Set DLL name from first export if available
+            if exports.directory.dll_name.is_empty() {
+                if let Some(ref name) = export.name {
+                    exports.directory.dll_name.clone_from(name);
+                }
+            }
+
+            if let Some(ref name) = export.name {
+                // Named export
+                exports.add_function(name, ordinal, export.rva)?;
             } else {
-                self.add_function_by_ordinal(ordinal, export.rva as u32)?;
+                // Ordinal-only export
+                exports.add_function_by_ordinal(ordinal, export.rva)?;
             }
         }
 
-        Ok(())
+        Ok(exports)
     }
 
     /// Add a function export with name and ordinal.

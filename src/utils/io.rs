@@ -1379,6 +1379,65 @@ pub fn read_compressed_int_at(data: &[u8], offset: usize) -> Result<(usize, usiz
     read_compressed_int(data, &mut mutable_offset)
 }
 
+/// Reads a compressed unsigned integer from a byte buffer according to ECMA-335 specification.
+///
+/// This function reads a compressed unsigned integer value from the buffer at the current
+/// offset and advances the offset by the number of bytes consumed. The encoding follows
+/// the ECMA-335 standard for compressed unsigned integers used in .NET metadata.
+///
+/// # Arguments
+/// * `data` - The byte buffer to read from
+/// * `offset` - Mutable reference to the offset position (will be advanced after reading)
+///
+/// # Returns
+/// * `Ok(value)` - The decoded u32 value
+/// * `Err(OutOfBounds)` - If there are insufficient bytes in the buffer
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use dotscope::utils::read_compressed_uint;
+///
+/// let data = [0x2A]; // Single byte: 42
+/// let mut offset = 0;
+/// let value = read_compressed_uint(&data, &mut offset)?;
+/// assert_eq!(value, 42);
+/// assert_eq!(offset, 1);
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+pub fn read_compressed_uint(data: &[u8], offset: &mut usize) -> Result<u32> {
+    let (value, _consumed) = read_compressed_int(data, offset)?;
+    u32::try_from(value).map_err(|_| out_of_bounds_error!())
+}
+
+/// Reads a compressed unsigned integer from a specific offset without advancing a mutable offset.
+///
+/// This is a convenience function for reading compressed unsigned integers when you need
+/// to specify an absolute offset rather than using a mutable offset reference.
+///
+/// # Arguments
+/// * `data` - The byte buffer to read from  
+/// * `offset` - The absolute offset to read from
+///
+/// # Returns
+/// * `Ok(value)` - The decoded u32 value
+/// * `Err(OutOfBounds)` - If there are insufficient bytes in the buffer
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use dotscope::utils::read_compressed_uint_at;
+///
+/// let data = [0x81, 0x2C]; // Two bytes: 300
+/// let value = read_compressed_uint_at(&data, 0)?;
+/// assert_eq!(value, 300);
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+pub fn read_compressed_uint_at(data: &[u8], offset: usize) -> Result<u32> {
+    let mut mutable_offset = offset;
+    read_compressed_uint(data, &mut mutable_offset)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

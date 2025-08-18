@@ -650,4 +650,12 @@ pub use metadata::streams::{
 /// assert_eq!(instr.mnemonic, "ret");
 /// # Ok::<(), dotscope::Error>(())
 /// ```
-pub use file::{parser::Parser, File};
+pub use file::{
+    parser::Parser,
+    pe::{
+        CoffHeader, DataDirectories, DataDirectory, DataDirectoryType, DosHeader,
+        Export as PeExport, Import as PeImport, OptionalHeader, Pe, SectionTable, StandardFields,
+        WindowsFields,
+    },
+    File,
+};
