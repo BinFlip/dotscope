@@ -9,7 +9,7 @@ use crate::{
     metadata::{
         method::{MethodAccessFlags, MethodImplCodeType, MethodModifiers},
         signatures::{encode_method_signature, SignatureMethod, SignatureParameter, TypeSignature},
-        tables::{MethodDefBuilder, ParamAttributes, ParamBuilder},
+        tables::{MethodDefBuilder, ParamAttributes, ParamBuilder, TableId},
         token::Token,
     },
     Result,
@@ -848,23 +848,16 @@ impl MethodBuilder {
         // Combine all flags for the method definition
         let combined_flags = self.access_flags.bits() | self.modifiers.bits();
 
-        // Create the method definition
-        let method_token = MethodDefBuilder::new()
-            .name(&self.name)
-            .flags(combined_flags)
-            .impl_flags(self.impl_flags.bits())
-            .signature(&signature_bytes)
-            .rva(rva)
-            .build(context)?;
+        // Get the next parameter table index (where our parameters will start)
+        let param_start_index = context.next_rid(TableId::Param);
 
         // Create parameter table entries
-        // First create a return type parameter (sequence 0) if the method returns something other than void
-        if return_type != TypeSignature::Void {
-            ParamBuilder::new()
-                .flags(0) // No special flags for return type
-                .sequence(0) // Return type is always sequence 0
-                .build(context)?;
-        }
+        // Always create a return type parameter (sequence 0) for every method,
+        // even if it returns void. This is required by ECMA-335 and expected by mono runtime.
+        ParamBuilder::new()
+            .flags(0) // No special flags for return type
+            .sequence(0) // Return type is always sequence 0
+            .build(context)?;
 
         // Create parameter entries for each method parameter
         for (sequence, (name, _param_type)) in parameters.iter().enumerate() {
@@ -877,6 +870,16 @@ impl MethodBuilder {
                 .sequence(param_sequence)
                 .build(context)?;
         }
+
+        // Create the method definition with the correct parameter list index
+        let method_token = MethodDefBuilder::new()
+            .name(&self.name)
+            .flags(combined_flags)
+            .impl_flags(self.impl_flags.bits())
+            .signature(&signature_bytes)
+            .rva(rva)
+            .param_list(param_start_index) // Point to our parameter table entries
+            .build(context)?;
 
         Ok(method_token)
     }
