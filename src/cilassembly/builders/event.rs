@@ -140,6 +140,7 @@ impl EventBuilder {
     ///
     /// let builder = CilEventBuilder::new("OnClick", TypeSignature::Object);
     /// ```
+    #[must_use]
     pub fn new(name: &str, event_type: TypeSignature) -> Self {
         Self {
             name: name.to_string(),
@@ -166,6 +167,7 @@ impl EventBuilder {
     /// let builder = CilEventBuilder::new("OnClick", TypeSignature::Object)
     ///     .auto_event();
     /// ```
+    #[must_use]
     pub fn auto_event(mut self) -> Self {
         self.implementation = EventImplementation::Auto {
             backing_field_name: None,
@@ -187,6 +189,7 @@ impl EventBuilder {
     /// let builder = CilEventBuilder::new("OnDataChanged", TypeSignature::Object)
     ///     .custom();
     /// ```
+    #[must_use]
     pub fn custom(mut self) -> Self {
         self.implementation = EventImplementation::Custom {
             add_method: None,
@@ -207,6 +210,7 @@ impl EventBuilder {
     /// let builder = CilEventBuilder::new("ComplexEvent", TypeSignature::Object)
     ///     .manual();
     /// ```
+    #[must_use]
     pub fn manual(mut self) -> Self {
         self.implementation = EventImplementation::Manual;
         self
@@ -226,6 +230,7 @@ impl EventBuilder {
     /// let builder = CilEventBuilder::new("OnClick", TypeSignature::Object)
     ///     .backing_field("_onClick");
     /// ```
+    #[must_use]
     pub fn backing_field(mut self, field_name: &str) -> Self {
         if let EventImplementation::Auto {
             backing_field_name, ..
@@ -246,6 +251,7 @@ impl EventBuilder {
     /// let builder = CilEventBuilder::new("OnClick", TypeSignature::Object)
     ///     .private_backing_field();
     /// ```
+    #[must_use]
     pub fn private_backing_field(mut self) -> Self {
         if let EventImplementation::Auto {
             backing_field_attributes,
@@ -267,6 +273,7 @@ impl EventBuilder {
     /// let builder = CilEventBuilder::new("OnClick", TypeSignature::Object)
     ///     .protected_backing_field();
     /// ```
+    #[must_use]
     pub fn protected_backing_field(mut self) -> Self {
         if let EventImplementation::Auto {
             backing_field_attributes,
@@ -288,6 +295,7 @@ impl EventBuilder {
     /// let builder = CilEventBuilder::new("OnClick", TypeSignature::Object)
     ///     .public_accessors();
     /// ```
+    #[must_use]
     pub fn public_accessors(mut self) -> Self {
         self.add_attributes = 0x0006; // PUBLIC
         self.remove_attributes = 0x0006; // PUBLIC
@@ -304,6 +312,7 @@ impl EventBuilder {
     /// let builder = CilEventBuilder::new("OnClick", TypeSignature::Object)
     ///     .private_accessors();
     /// ```
+    #[must_use]
     pub fn private_accessors(mut self) -> Self {
         self.add_attributes = 0x0001; // PRIVATE
         self.remove_attributes = 0x0001; // PRIVATE
@@ -324,6 +333,7 @@ impl EventBuilder {
     /// let builder = CilEventBuilder::new("OnClick", TypeSignature::Object)
     ///     .add_visibility(0x0006); // PUBLIC
     /// ```
+    #[must_use]
     pub fn add_visibility(mut self, attributes: u32) -> Self {
         self.add_attributes = attributes;
         self
@@ -343,6 +353,7 @@ impl EventBuilder {
     /// let builder = CilEventBuilder::new("OnClick", TypeSignature::Object)
     ///     .remove_visibility(0x0001); // PRIVATE
     /// ```
+    #[must_use]
     pub fn remove_visibility(mut self, attributes: u32) -> Self {
         self.remove_attributes = attributes;
         self
@@ -375,6 +386,7 @@ impl EventBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn add_method<F>(mut self, implementation: F) -> Self
     where
         F: FnOnce(MethodBuilder) -> MethodBuilder + Send + 'static,
@@ -412,6 +424,7 @@ impl EventBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn remove_method<F>(mut self, implementation: F) -> Self
     where
         F: FnOnce(MethodBuilder) -> MethodBuilder + Send + 'static,
@@ -436,6 +449,7 @@ impl EventBuilder {
     /// let builder = CilEventBuilder::new("OnClick", TypeSignature::Object)
     ///     .attributes(0x0200); // SPECIAL_NAME
     /// ```
+    #[must_use]
     pub fn attributes(mut self, attributes: u32) -> Self {
         self.attributes = attributes;
         self
@@ -512,7 +526,7 @@ impl EventBuilder {
                             asm.ldarg_0()? // Load 'this'
                                 .ldfld(add_field_token)? // Load current delegate
                                 .ldarg_1()? // Load new delegate
-                                .call(Token::new(0x0A000001))? // Call Delegate.Combine
+                                .call(Token::new(0x0A00_0001))? // Call Delegate.Combine
                                 .stfld(add_field_token)? // Store combined delegate
                                 .ret()?;
                             Ok(())
@@ -538,7 +552,7 @@ impl EventBuilder {
                             asm.ldarg_0()? // Load 'this'
                                 .ldfld(remove_field_token)? // Load current delegate
                                 .ldarg_1()? // Load delegate to remove
-                                .call(Token::new(0x0A000002))? // Call Delegate.Remove
+                                .call(Token::new(0x0A00_0002))? // Call Delegate.Remove
                                 .stfld(remove_field_token)? // Store updated delegate
                                 .ret()?;
                             Ok(())

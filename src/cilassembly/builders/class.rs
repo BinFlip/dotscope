@@ -171,11 +171,12 @@ impl ClassBuilder {
     ///
     /// let builder = ClassBuilder::new("MyClass");
     /// ```
+    #[must_use]
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
             namespace: None,
-            flags: 0x00100001, // CLASS | AUTO_LAYOUT | ANSI_CLASS
+            flags: 0x0010_0001, // CLASS | AUTO_LAYOUT | ANSI_CLASS
             extends: None,
             implements: Vec::new(),
             fields: Vec::new(),
@@ -200,6 +201,7 @@ impl ClassBuilder {
     /// let builder = ClassBuilder::new("MyClass")
     ///     .namespace("MyCompany.MyProduct");
     /// ```
+    #[must_use]
     pub fn namespace(mut self, namespace: &str) -> Self {
         self.namespace = Some(namespace.to_string());
         self
@@ -214,8 +216,9 @@ impl ClassBuilder {
     ///
     /// let builder = ClassBuilder::new("PublicClass").public();
     /// ```
+    #[must_use]
     pub fn public(mut self) -> Self {
-        self.flags = (self.flags & !0x00000007) | 0x00000001; // Clear visibility bits, set PUBLIC
+        self.flags = (self.flags & !0x0000_0007) | 0x0000_0001; // Clear visibility bits, set PUBLIC
         self
     }
 
@@ -228,8 +231,9 @@ impl ClassBuilder {
     ///
     /// let builder = ClassBuilder::new("InternalClass").internal();
     /// ```
+    #[must_use]
     pub fn internal(mut self) -> Self {
-        self.flags &= !0x00000007; // Clear visibility bits, set NOT_PUBLIC (0)
+        self.flags &= !0x0000_0007; // Clear visibility bits, set NOT_PUBLIC (0)
         self
     }
 
@@ -242,8 +246,9 @@ impl ClassBuilder {
     ///
     /// let builder = ClassBuilder::new("SealedClass").sealed();
     /// ```
+    #[must_use]
     pub fn sealed(mut self) -> Self {
-        self.flags |= 0x00000100; // SEALED
+        self.flags |= 0x0000_0100; // SEALED
         self
     }
 
@@ -256,8 +261,9 @@ impl ClassBuilder {
     ///
     /// let builder = ClassBuilder::new("AbstractClass").abstract_class();
     /// ```
+    #[must_use]
     pub fn abstract_class(mut self) -> Self {
-        self.flags |= 0x00000080; // ABSTRACT
+        self.flags |= 0x0000_0080; // ABSTRACT
         self
     }
 
@@ -276,6 +282,7 @@ impl ClassBuilder {
     /// let builder = ClassBuilder::new("DerivedClass")
     ///     .inherits(CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef)); // Base class coded index
     /// ```
+    #[must_use]
     pub fn inherits(mut self, base_class: CodedIndex) -> Self {
         self.extends = Some(base_class);
         self
@@ -297,6 +304,7 @@ impl ClassBuilder {
     ///     .implements(CodedIndex::new(TableId::TypeRef, 2, CodedIndexType::TypeDefOrRef)) // IDisposable
     ///     .implements(CodedIndex::new(TableId::TypeRef, 3, CodedIndexType::TypeDefOrRef)); // IEnumerable
     /// ```
+    #[must_use]
     pub fn implements(mut self, interface: CodedIndex) -> Self {
         self.implements.push(interface);
         self
@@ -319,6 +327,7 @@ impl ClassBuilder {
     ///     .field("name", TypeSignature::String)
     ///     .field("age", TypeSignature::I4);
     /// ```
+    #[must_use]
     pub fn field(mut self, name: &str, field_type: TypeSignature) -> Self {
         self.fields.push(FieldDefinition {
             name: name.to_string(),
@@ -345,6 +354,7 @@ impl ClassBuilder {
     ///     .public_field("X", TypeSignature::I4)
     ///     .public_field("Y", TypeSignature::I4);
     /// ```
+    #[must_use]
     pub fn public_field(mut self, name: &str, field_type: TypeSignature) -> Self {
         self.fields.push(FieldDefinition {
             name: name.to_string(),
@@ -370,6 +380,7 @@ impl ClassBuilder {
     /// let builder = ClassBuilder::new("Settings")
     ///     .static_field("instance", TypeSignature::Object);
     /// ```
+    #[must_use]
     pub fn static_field(mut self, name: &str, field_type: TypeSignature) -> Self {
         self.fields.push(FieldDefinition {
             name: name.to_string(),
@@ -411,6 +422,7 @@ impl ClassBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn method<F>(mut self, builder_fn: F) -> Self
     where
         F: FnOnce(MethodBuilder) -> MethodBuilder,
@@ -439,6 +451,7 @@ impl ClassBuilder {
     ///     .auto_property("Name", TypeSignature::String)
     ///     .auto_property("Age", TypeSignature::I4);
     /// ```
+    #[must_use]
     pub fn auto_property(mut self, name: &str, property_type: TypeSignature) -> Self {
         let backing_field_name = format!("<{name}>k__BackingField");
 
@@ -478,6 +491,7 @@ impl ClassBuilder {
     ///     .field("radius", TypeSignature::R8)
     ///     .readonly_property("Area", TypeSignature::R8);
     /// ```
+    #[must_use]
     pub fn readonly_property(mut self, name: &str, property_type: TypeSignature) -> Self {
         let backing_field_name = format!("<{name}>k__BackingField");
 
@@ -510,6 +524,7 @@ impl ClassBuilder {
     /// let builder = ClassBuilder::new("MyClass")
     ///     .default_constructor();
     /// ```
+    #[must_use]
     pub fn default_constructor(mut self) -> Self {
         self.generate_default_ctor = true;
         self
@@ -574,7 +589,7 @@ impl ClassBuilder {
 
         // Generate default constructor if requested
         if self.generate_default_ctor {
-            let base_ctor_token = Token::new(0x0A000001); // Placeholder for Object::.ctor
+            let base_ctor_token = Token::new(0x0A00_0001); // Placeholder for Object::.ctor
 
             MethodBuilder::constructor()
                 .implementation(move |body| {

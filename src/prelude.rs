@@ -753,3 +753,21 @@ pub use crate::metadata::{exports::NativeExportsBuilder, imports::NativeImportsB
 /// and events. Used with MethodSemanticsBuilder to specify getter, setter, add, remove,
 /// fire, and other semantic relationships.
 pub use crate::metadata::tables::MethodSemanticsAttributes;
+
+// ================================================================================================
+// PE File Structures
+// ================================================================================================
+//
+// Complete set of owned PE (Portable Executable) file structures for direct manipulation
+// and analysis of Windows executables and .NET assemblies. These structures provide owned
+// representations that don't borrow from the underlying file data, enabling flexible
+// analysis and modification workflows.
+
+/// Complete PE file representation and core structures.
+///
+/// Owned PE file structures including headers, sections, and import/export tables.
+/// These provide direct access to PE file components without borrowing from source data.
+pub use crate::file::pe::{
+    CoffHeader, DataDirectories, DataDirectory, DataDirectoryType, DosHeader, Export as PeExport,
+    Import as PeImport, OptionalHeader, Pe, SectionTable, StandardFields, WindowsFields,
+};

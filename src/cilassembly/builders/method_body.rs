@@ -116,6 +116,7 @@ impl MethodBodyBuilder {
     ///
     /// let builder = MethodBodyBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             max_stack: None,
@@ -143,6 +144,7 @@ impl MethodBodyBuilder {
     ///
     /// let builder = MethodBodyBuilder::new().max_stack(4);
     /// ```
+    #[must_use]
     pub fn max_stack(mut self, stack_size: u16) -> Self {
         self.max_stack = Some(stack_size);
         self
@@ -169,6 +171,7 @@ impl MethodBodyBuilder {
     ///     .local("counter", TypeSignature::I4)
     ///     .local("result", TypeSignature::String);
     /// ```
+    #[must_use]
     pub fn local(mut self, name: &str, local_type: TypeSignature) -> Self {
         self.locals.push((name.to_string(), local_type));
         self
@@ -190,6 +193,7 @@ impl MethodBodyBuilder {
     ///
     /// let builder = MethodBodyBuilder::new().init_locals(false);
     /// ```
+    #[must_use]
     pub fn init_locals(mut self, init: bool) -> Self {
         self.init_locals = init;
         self
@@ -222,6 +226,7 @@ impl MethodBodyBuilder {
     ///         filter_offset: 0,
     ///     });
     /// ```
+    #[must_use]
     pub fn exception_handler(mut self, handler: ExceptionHandler) -> Self {
         self.exception_handlers.push(handler);
         self
@@ -248,6 +253,7 @@ impl MethodBodyBuilder {
     /// let body_builder = MethodBodyBuilder::new()
     ///     .catch_handler(0, 10, 10, 5, None); // Catch any exception
     /// ```
+    #[must_use]
     pub fn catch_handler(
         mut self,
         try_offset: u32,
@@ -295,6 +301,7 @@ impl MethodBodyBuilder {
     /// let body_builder = MethodBodyBuilder::new()
     ///     .finally_handler(0, 10, 15, 8);
     /// ```
+    #[must_use]
     pub fn finally_handler(
         mut self,
         try_offset: u32,
@@ -344,6 +351,7 @@ impl MethodBodyBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn implementation<F>(mut self, f: F) -> Self
     where
         F: FnOnce(&mut InstructionAssembler) -> Result<()> + 'static,
@@ -424,7 +432,9 @@ impl MethodBodyBuilder {
         let max_stack = max_stack.unwrap_or(calculated_max_stack);
 
         // Generate local variable signature token if we have locals
-        let local_var_sig_token = if !locals.is_empty() {
+        let local_var_sig_token = if locals.is_empty() {
+            Token::new(0)
+        } else {
             // Create proper SignatureLocalVariable entries from the simple type pairs
             let signature_locals: Vec<SignatureLocalVariable> = locals
                 .iter()
@@ -446,16 +456,16 @@ impl MethodBodyBuilder {
             StandAloneSigBuilder::new()
                 .signature(&sig_bytes)
                 .build(context)?
-        } else {
-            Token::new(0)
         };
 
         // Determine if we have exception handlers
         let has_exceptions = !exception_handlers.is_empty();
 
         // Generate method body header
+        let code_size = u32::try_from(code_bytes.len())
+            .map_err(|_| malformed_error!("Method body size exceeds u32 range"))?;
         let header = encode_method_body_header(
-            code_bytes.len() as u32,
+            code_size,
             max_stack,
             local_var_sig_token.value(),
             has_exceptions,
