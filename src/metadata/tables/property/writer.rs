@@ -58,8 +58,11 @@ impl RowWritable for PropertyRaw {
         _rid: u32,
         sizes: &TableInfoRef,
     ) -> Result<()> {
-        // Write flags (2 bytes) - truncate from u32 to u16
-        write_le_at(data, offset, self.flags as u16)?;
+        // Write flags (2 bytes) - convert from u32 to u16 with range check
+        let flags_u16 = u16::try_from(self.flags).map_err(|_| crate::Error::WriteLayoutFailed {
+            message: "Property flags value exceeds u16 range".to_string(),
+        })?;
+        write_le_at(data, offset, flags_u16)?;
 
         // Write name string heap index (2 or 4 bytes)
         write_le_at_dyn(data, offset, self.name, sizes.is_large_str())?;
@@ -302,13 +305,13 @@ mod tests {
     }
 
     #[test]
-    fn test_flags_truncation() {
-        // Test that large flag values are properly truncated to u16
+    fn test_flags_range_validation() {
+        // Test that large flag values are properly rejected
         let large_flags_row = PropertyRaw {
             rid: 1,
             token: Token::new(0x17000001),
             offset: 0,
-            flags: 0x12345678, // Large value that should truncate to 0x5678
+            flags: 0x12345678, // Large value that exceeds u16 range
             name: 0x100,
             signature: 0x200,
         };
@@ -319,16 +322,13 @@ mod tests {
         let mut buffer = vec![0u8; row_size];
         let mut offset = 0;
 
-        large_flags_row
-            .row_write(&mut buffer, &mut offset, 1, &table_info)
-            .expect("Serialization with large flags should succeed");
-
-        // Verify that flags are truncated to u16
-        let mut read_offset = 0;
-        let deserialized_row = PropertyRaw::row_read(&buffer, &mut read_offset, 1, &table_info)
-            .expect("Deserialization should succeed");
-
-        assert_eq!(deserialized_row.flags, 0x5678); // Truncated value
+        // Should fail with range error
+        let result = large_flags_row.row_write(&mut buffer, &mut offset, 1, &table_info);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Property flags value exceeds u16 range"));
     }
 
     #[test]

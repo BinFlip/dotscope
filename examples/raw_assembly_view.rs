@@ -213,17 +213,11 @@ fn display_file_info(view: &CilAssemblyView) {
 
     // Show some PE header info
     let pe_header = file.header();
-    println!("• Machine Type: 0x{:04X}", pe_header.coff_header.machine);
-    println!(
-        "• Section Count: {}",
-        pe_header.coff_header.number_of_sections
-    );
-    println!(
-        "• Time Stamp: 0x{:08X}",
-        pe_header.coff_header.time_date_stamp
-    );
+    println!("• Machine Type: 0x{:04X}", pe_header.machine);
+    println!("• Section Count: {}", pe_header.number_of_sections);
+    println!("• Time Stamp: 0x{:08X}", pe_header.time_date_stamp);
 
-    if pe_header.optional_header.is_some() {
+    if file.header_optional().is_some() {
         println!("• Optional Header: Present");
     }
 }

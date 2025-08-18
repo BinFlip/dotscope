@@ -3431,19 +3431,8 @@ impl TypeSignature {
     pub fn stack_size(&self) -> u16 {
         match self {
             TypeSignature::Void => 0,
-            TypeSignature::Boolean
-            | TypeSignature::Char
-            | TypeSignature::I1
-            | TypeSignature::U1
-            | TypeSignature::I2
-            | TypeSignature::U2
-            | TypeSignature::I4
-            | TypeSignature::U4
-            | TypeSignature::R4 => 1,
             TypeSignature::I8 | TypeSignature::U8 | TypeSignature::R8 => 2,
-            TypeSignature::I | TypeSignature::U | TypeSignature::Object => 1,
-            TypeSignature::String => 1,
-            // For complex types, assume 1 slot (reference types)
+            // All other types use 1 stack slot (primitives and reference types)
             _ => 1,
         }
     }

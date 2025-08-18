@@ -172,6 +172,7 @@ impl PropertyBuilder {
     ///
     /// let builder = CilPropertyBuilder::new("Name", TypeSignature::String);
     /// ```
+    #[must_use]
     pub fn new(name: &str, property_type: TypeSignature) -> Self {
         Self {
             name: name.to_string(),
@@ -201,6 +202,7 @@ impl PropertyBuilder {
     /// let builder = CilPropertyBuilder::new("Name", TypeSignature::String)
     ///     .auto_property();
     /// ```
+    #[must_use]
     pub fn auto_property(mut self) -> Self {
         self.implementation = PropertyImplementation::Auto {
             backing_field_name: None,
@@ -221,6 +223,7 @@ impl PropertyBuilder {
     /// let builder = CilPropertyBuilder::new("Area", TypeSignature::R8)
     ///     .computed();
     /// ```
+    #[must_use]
     pub fn computed(mut self) -> Self {
         self.implementation = PropertyImplementation::Computed {
             getter: None,
@@ -241,6 +244,7 @@ impl PropertyBuilder {
     /// let builder = CilPropertyBuilder::new("Complex", TypeSignature::Object)
     ///     .manual();
     /// ```
+    #[must_use]
     pub fn manual(mut self) -> Self {
         self.implementation = PropertyImplementation::Manual;
         self
@@ -260,6 +264,7 @@ impl PropertyBuilder {
     /// let builder = CilPropertyBuilder::new("Value", TypeSignature::I4)
     ///     .backing_field("_value");
     /// ```
+    #[must_use]
     pub fn backing_field(mut self, field_name: &str) -> Self {
         if let PropertyImplementation::Auto {
             backing_field_name, ..
@@ -280,6 +285,7 @@ impl PropertyBuilder {
     /// let builder = CilPropertyBuilder::new("Value", TypeSignature::I4)
     ///     .private_backing_field();
     /// ```
+    #[must_use]
     pub fn private_backing_field(mut self) -> Self {
         if let PropertyImplementation::Auto {
             backing_field_attributes,
@@ -301,6 +307,7 @@ impl PropertyBuilder {
     /// let builder = CilPropertyBuilder::new("Value", TypeSignature::I4)
     ///     .public_backing_field();
     /// ```
+    #[must_use]
     pub fn public_backing_field(mut self) -> Self {
         if let PropertyImplementation::Auto {
             backing_field_attributes,
@@ -322,6 +329,7 @@ impl PropertyBuilder {
     /// let builder = CilPropertyBuilder::new("ReadOnlyValue", TypeSignature::I4)
     ///     .readonly();
     /// ```
+    #[must_use]
     pub fn readonly(mut self) -> Self {
         self.accessors = PropertyAccessors::GetterOnly;
         self
@@ -337,6 +345,7 @@ impl PropertyBuilder {
     /// let builder = CilPropertyBuilder::new("WriteOnlyValue", TypeSignature::I4)
     ///     .writeonly();
     /// ```
+    #[must_use]
     pub fn writeonly(mut self) -> Self {
         self.accessors = PropertyAccessors::SetterOnly;
         self
@@ -352,6 +361,7 @@ impl PropertyBuilder {
     /// let builder = CilPropertyBuilder::new("Value", TypeSignature::I4)
     ///     .getter_and_setter();
     /// ```
+    #[must_use]
     pub fn getter_and_setter(mut self) -> Self {
         self.accessors = PropertyAccessors::GetterAndSetter;
         self
@@ -367,6 +377,7 @@ impl PropertyBuilder {
     /// let builder = CilPropertyBuilder::new("Value", TypeSignature::I4)
     ///     .public_accessors();
     /// ```
+    #[must_use]
     pub fn public_accessors(mut self) -> Self {
         self.getter_attributes = 0x0006; // PUBLIC
         self.setter_attributes = 0x0006; // PUBLIC
@@ -383,6 +394,7 @@ impl PropertyBuilder {
     /// let builder = CilPropertyBuilder::new("Value", TypeSignature::I4)
     ///     .private_accessors();
     /// ```
+    #[must_use]
     pub fn private_accessors(mut self) -> Self {
         self.getter_attributes = 0x0001; // PRIVATE
         self.setter_attributes = 0x0001; // PRIVATE
@@ -403,6 +415,7 @@ impl PropertyBuilder {
     /// let builder = CilPropertyBuilder::new("Value", TypeSignature::I4)
     ///     .getter_visibility(0x0006); // PUBLIC
     /// ```
+    #[must_use]
     pub fn getter_visibility(mut self, attributes: u32) -> Self {
         self.getter_attributes = attributes;
         self
@@ -422,6 +435,7 @@ impl PropertyBuilder {
     /// let builder = CilPropertyBuilder::new("Value", TypeSignature::I4)
     ///     .setter_visibility(0x0001); // PRIVATE
     /// ```
+    #[must_use]
     pub fn setter_visibility(mut self, attributes: u32) -> Self {
         self.setter_attributes = attributes;
         self
@@ -454,6 +468,7 @@ impl PropertyBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn getter<F>(mut self, implementation: F) -> Self
     where
         F: FnOnce(MethodBuilder) -> MethodBuilder + Send + 'static,
@@ -492,6 +507,7 @@ impl PropertyBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn setter<F>(mut self, implementation: F) -> Self
     where
         F: FnOnce(MethodBuilder) -> MethodBuilder + Send + 'static,
@@ -519,6 +535,7 @@ impl PropertyBuilder {
     /// let builder = CilPropertyBuilder::new("Item", TypeSignature::String)
     ///     .indexed("index", TypeSignature::I4);
     /// ```
+    #[must_use]
     pub fn indexed(mut self, param_name: &str, param_type: TypeSignature) -> Self {
         self.is_indexed = true;
         self.parameters.push((param_name.to_string(), param_type));
@@ -541,6 +558,7 @@ impl PropertyBuilder {
     ///     .indexed("row", TypeSignature::I4)
     ///     .parameter("column", TypeSignature::I4);
     /// ```
+    #[must_use]
     pub fn parameter(mut self, param_name: &str, param_type: TypeSignature) -> Self {
         self.parameters.push((param_name.to_string(), param_type));
         self
@@ -560,6 +578,7 @@ impl PropertyBuilder {
     /// let builder = CilPropertyBuilder::new("Value", TypeSignature::I4)
     ///     .attributes(0x0200); // SPECIAL_NAME
     /// ```
+    #[must_use]
     pub fn attributes(mut self, attributes: u32) -> Self {
         self.attributes = attributes;
         self
