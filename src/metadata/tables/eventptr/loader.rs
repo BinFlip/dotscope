@@ -78,8 +78,8 @@ impl MetadataLoader for EventPtrLoader {
     /// # Returns
     ///
     /// Returns [`TableId::EventPtr`] (0x13) identifying this as the `EventPtr` table loader.
-    fn table_id(&self) -> TableId {
-        TableId::EventPtr
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::EventPtr)
     }
 
     /// Returns the table dependencies required before loading `EventPtr` entries

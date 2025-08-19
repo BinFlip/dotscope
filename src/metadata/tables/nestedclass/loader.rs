@@ -77,8 +77,8 @@ impl MetadataLoader for NestedClassLoader {
     ///
     /// ## Returns
     /// [`crate::metadata::tables::TableId::NestedClass`] (0x29)
-    fn table_id(&self) -> TableId {
-        TableId::NestedClass
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::NestedClass)
     }
 
     /// Returns the table dependencies for `NestedClass` loading.

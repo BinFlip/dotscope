@@ -161,8 +161,8 @@ impl MetadataLoader for MethodImplLoader {
     /// # Returns
     ///
     /// The [`crate::metadata::tables::TableId::MethodImpl`] identifier (0x19) for this table type.
-    fn table_id(&self) -> TableId {
-        TableId::MethodImpl
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::MethodImpl)
     }
 
     /// Returns the dependencies required for loading `MethodImpl` entries.

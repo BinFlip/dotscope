@@ -65,8 +65,8 @@ impl MetadataLoader for ParamPtrLoader {
     /// ## Returns
     ///
     /// * [`TableId::ParamPtr`] - The table identifier (0x04)
-    fn table_id(&self) -> TableId {
-        TableId::ParamPtr
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::ParamPtr)
     }
 
     /// Returns the table dependencies for the `ParamPtr` table.

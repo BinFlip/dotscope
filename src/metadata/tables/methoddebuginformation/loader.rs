@@ -66,8 +66,8 @@ impl MetadataLoader for MethodDebugInformationLoader {
         Ok(())
     }
 
-    fn table_id(&self) -> TableId {
-        TableId::MethodDebugInformation
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::MethodDebugInformation)
     }
 
     fn dependencies(&self) -> &'static [TableId] {

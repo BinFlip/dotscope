@@ -57,8 +57,8 @@ impl MetadataLoader for LocalScopeLoader {
         Ok(())
     }
 
-    fn table_id(&self) -> TableId {
-        TableId::LocalScope
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::LocalScope)
     }
 
     fn dependencies(&self) -> &'static [TableId] {

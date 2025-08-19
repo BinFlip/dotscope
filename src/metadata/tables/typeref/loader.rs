@@ -73,8 +73,8 @@ impl MetadataLoader for TypeRefLoader {
     ///
     /// ## Returns
     /// [`crate::metadata::tables::TableId::TypeRef`] (0x01) - The metadata table identifier for external type references
-    fn table_id(&self) -> TableId {
-        TableId::TypeRef
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::TypeRef)
     }
 
     /// Returns the dependency list for `TypeRef` table loading.

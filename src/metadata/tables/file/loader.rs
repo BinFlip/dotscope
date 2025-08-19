@@ -96,8 +96,8 @@ impl MetadataLoader for FileLoader {
     /// Returns [`TableId::File`] indicating this loader handles the File table.
     ///
     /// [`TableId::File`]: crate::prelude::TableId::File
-    fn table_id(&self) -> TableId {
-        TableId::File
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::File)
     }
 
     /// Returns the table dependencies for File loading.

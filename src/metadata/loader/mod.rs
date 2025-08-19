@@ -41,6 +41,7 @@
 mod context;
 mod data;
 mod graph;
+mod inheritance;
 
 pub(crate) use context::LoaderContext;
 pub(crate) use data::CilObjectData;
@@ -83,7 +84,7 @@ pub(crate) use data::CilObjectData;
 /// 2. Add the loader to this array
 /// 3. Update any loaders that depend on the new table
 /// 4. Test that the dependency graph remains acyclic
-static LOADERS: [&'static dyn MetadataLoader; 53] = [
+static LOADERS: [&'static dyn MetadataLoader; 54] = [
     &crate::metadata::tables::AssemblyLoader,
     &crate::metadata::tables::AssemblyOsLoader,
     &crate::metadata::tables::AssemblyProcessorLoader,
@@ -137,6 +138,7 @@ static LOADERS: [&'static dyn MetadataLoader; 53] = [
     &crate::metadata::tables::TypeDefLoader,
     &crate::metadata::tables::TypeRefLoader,
     &crate::metadata::tables::TypeSpecLoader,
+    &inheritance::InheritanceResolver,
 ];
 
 use crate::{metadata::tables::TableId, Result};
@@ -274,33 +276,49 @@ pub(crate) trait MetadataLoader: Send + Sync {
     /// ```
     fn load(&self, context: &LoaderContext) -> Result<()>;
 
-    /// Get the ID of the table this loader processes.
+    /// Get the ID of the table this loader processes, if any.
     ///
     /// Returns the unique identifier for the metadata table that this loader is responsible
-    /// for processing. This ID is used by the dependency graph system to:
+    /// for processing, or `None` for special loaders that operate across multiple tables.
+    /// This ID is used by the dependency graph system to:
     /// - **Track Dependencies**: Identify which loaders depend on this table
     /// - **Resolve Conflicts**: Ensure only one loader exists per table type
     /// - **Generate Execution Plan**: Create the topological ordering for parallel execution
+    /// - **Priority Insertion**: Special loaders (`None`) run immediately when dependencies are satisfied
     ///
     /// # Returns
     ///
-    /// The [`crate::metadata::tables::TableId`] enum variant corresponding to this loader's table type.
+    /// - `Some(TableId)` - For loaders that process a specific metadata table
+    /// - `None` - For special loaders that operate across multiple tables (e.g., cross-table resolvers)
     ///
     /// # Examples
     ///
     /// ```rust,ignore
     /// use dotscope::metadata::tables::TableId;
     ///
-    /// fn table_id(&self) -> TableId {
-    ///     TableId::Assembly  // This loader processes the Assembly table
+    /// // Regular table loader
+    /// fn table_id(&self) -> Option<TableId> {
+    ///     Some(TableId::Assembly)  // This loader processes the Assembly table
+    /// }
+    ///
+    /// // Special cross-table loader
+    /// fn table_id(&self) -> Option<TableId> {
+    ///     None  // This loader operates across multiple tables
     /// }
     /// ```
+    ///
+    /// # Special Loaders
+    ///
+    /// Special loaders (`table_id() = None`) have unique behavior:
+    /// - **Cannot be dependencies**: Other loaders cannot depend on them
+    /// - **Priority execution**: Run immediately when their dependencies are satisfied
+    /// - **Cross-table operation**: Can access and modify multiple table types
     ///
     /// # Consistency
     ///
     /// This method must always return the same value for a given loader instance.
-    /// The returned ID should match the actual table type processed by [`MetadataLoader::load`].
-    fn table_id(&self) -> TableId;
+    /// For regular loaders, the returned ID should match the actual table type processed by [`MetadataLoader::load`].
+    fn table_id(&self) -> Option<TableId>;
 
     /// Get dependencies this loader needs to be satisfied before loading.
     ///

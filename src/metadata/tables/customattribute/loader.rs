@@ -135,8 +135,8 @@ impl MetadataLoader for CustomAttributeLoader {
     ///
     /// Provides the [`crate::prelude::TableId::CustomAttribute`] constant used to identify this table
     /// type within the metadata loading framework.
-    fn table_id(&self) -> TableId {
-        TableId::CustomAttribute
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::CustomAttribute)
     }
 
     /// Returns the table dependencies for `CustomAttribute` loading

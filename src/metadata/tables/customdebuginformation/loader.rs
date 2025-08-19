@@ -140,8 +140,8 @@ impl MetadataLoader for CustomDebugInformationLoader {
     ///
     /// Provides the [`crate::prelude::TableId::CustomDebugInformation`] constant used to identify this table
     /// type within the metadata loading framework.
-    fn table_id(&self) -> TableId {
-        TableId::CustomDebugInformation
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::CustomDebugInformation)
     }
 
     /// Returns the table dependencies for `CustomDebugInformation` loading

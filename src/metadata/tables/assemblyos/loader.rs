@@ -69,8 +69,8 @@ impl MetadataLoader for AssemblyOsLoader {
     ///
     /// # Returns
     /// [`crate::metadata::tables::TableId::AssemblyOS`] (0x22)
-    fn table_id(&self) -> TableId {
-        TableId::AssemblyOS
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::AssemblyOS)
     }
 
     /// Returns the list of table dependencies

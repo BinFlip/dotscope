@@ -68,8 +68,8 @@ impl MetadataLoader for DocumentLoader {
     ///
     /// # Returns
     /// [`crate::metadata::tables::types::TableId::Document`] (0x30)
-    fn table_id(&self) -> TableId {
-        TableId::Document
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::Document)
     }
 
     /// Returns the list of table dependencies for Document loading.

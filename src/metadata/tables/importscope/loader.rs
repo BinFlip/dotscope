@@ -52,8 +52,8 @@ impl MetadataLoader for ImportScopeLoader {
         Ok(())
     }
 
-    fn table_id(&self) -> TableId {
-        TableId::ImportScope
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::ImportScope)
     }
 
     fn dependencies(&self) -> &'static [TableId] {

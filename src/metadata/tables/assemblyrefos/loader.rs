@@ -109,8 +109,8 @@ impl MetadataLoader for AssemblyRefOsLoader {
     ///
     /// Provides the [`TableId::AssemblyRefOS`] constant used to identify this table
     /// type within the metadata loading framework.
-    fn table_id(&self) -> TableId {
-        TableId::AssemblyRefOS
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::AssemblyRefOS)
     }
 
     /// Returns the table dependencies for `AssemblyRefOS` loading

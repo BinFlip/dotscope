@@ -75,8 +75,8 @@ impl MetadataLoader for MethodSemanticsLoader {
     ///
     /// ## Returns
     /// [`crate::metadata::tables::TableId::MethodSemantics`] (0x18)
-    fn table_id(&self) -> TableId {
-        TableId::MethodSemantics
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::MethodSemantics)
     }
 
     /// Returns the table dependencies for `MethodSemantics` loading.

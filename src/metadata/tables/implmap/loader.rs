@@ -84,8 +84,8 @@ impl MetadataLoader for ImplMapLoader {
     ///
     /// # Returns
     /// The [`TableId::ImplMap`] identifier for this table type.
-    fn table_id(&self) -> TableId {
-        TableId::ImplMap
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::ImplMap)
     }
 
     /// Returns the dependencies required for loading `ImplMap` entries.

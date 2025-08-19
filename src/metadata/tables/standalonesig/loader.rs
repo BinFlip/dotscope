@@ -116,8 +116,8 @@ impl MetadataLoader for StandAloneSigLoader {
     /// ## Returns
     ///
     /// [`TableId::StandAloneSig`] (0x11) - The metadata table identifier
-    fn table_id(&self) -> TableId {
-        TableId::StandAloneSig
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::StandAloneSig)
     }
 
     /// Returns the dependency list for `StandAloneSig` table loading.

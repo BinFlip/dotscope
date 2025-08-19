@@ -75,8 +75,8 @@ impl MetadataLoader for InterfaceImplLoader {
     ///
     /// # Returns
     /// The [`TableId::InterfaceImpl`] identifier for this table type.
-    fn table_id(&self) -> TableId {
-        TableId::InterfaceImpl
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::InterfaceImpl)
     }
 
     /// Returns the dependencies required for loading `InterfaceImpl` entries.

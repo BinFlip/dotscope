@@ -87,8 +87,8 @@ impl MetadataLoader for FieldRvaLoader {
     ///
     /// # Returns
     /// Returns [`crate::prelude::TableId::FieldRVA`] indicating this loader handles the `FieldRva` table.
-    fn table_id(&self) -> TableId {
-        TableId::FieldRVA
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::FieldRVA)
     }
 
     /// Returns the table dependencies for `FieldRva` loading.

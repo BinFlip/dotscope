@@ -518,8 +518,9 @@ impl OwnedInheritanceValidator {
 
         match (derived_flavor, base_flavor) {
             (CilFlavor::ValueType, CilFlavor::ValueType) |
-            (CilFlavor::Class, CilFlavor::Class | CilFlavor::Object) |
-            (CilFlavor::Interface, CilFlavor::Interface) => Ok(()),
+            (CilFlavor::Class, CilFlavor::Class | CilFlavor::Object | CilFlavor::GenericInstance) |
+            (CilFlavor::Interface, CilFlavor::Interface) |
+            (CilFlavor::GenericInstance, _) => Ok(()), // Generic instances can inherit from any type
             (CilFlavor::ValueType, CilFlavor::Object) => {
                 if base_type.fullname() == "System.Object" {
                     Ok(())

@@ -75,8 +75,8 @@ impl MetadataLoader for FieldLoader {
     /// # Returns
     ///
     /// Returns [`TableId::Field`] (0x04) identifying this as the Field table loader.
-    fn table_id(&self) -> TableId {
-        TableId::Field
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::Field)
     }
 
     /// Returns the table dependencies required before loading Field entries

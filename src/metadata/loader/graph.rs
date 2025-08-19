@@ -167,17 +167,40 @@ use crate::{
     Result,
 };
 
+/// Unique identifier for loaders in the dependency graph.
+///
+/// This enum distinguishes between regular table loaders and special cross-table loaders,
+/// enabling the dependency graph to handle both types appropriately while maintaining
+/// correct execution order and dependency relationships.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum LoaderKey {
+    /// Regular loader that processes a specific metadata table
+    Table(TableId),
+
+    /// Special loader that operates across multiple tables
+    ///
+    /// Special loaders have unique properties:
+    /// - Cannot be depended upon by other loaders
+    /// - Run immediately when their dependencies are satisfied  
+    /// - Execute before other loaders at the same dependency level
+    Special {
+        /// Sequence number for ordering multiple special loaders with same dependencies
+        sequence: usize,
+    },
+}
+
 /// A directed graph representing the dependencies between metadata loaders.
 ///
-/// The `LoaderGraph` manages the relationships between all metadata table loaders, allowing for dependency analysis,
-/// cycle detection, and parallel execution planning. Each loader is associated with a [`crate::metadata::tables::TableId`],
-/// and dependencies are tracked to ensure correct loading order.
+/// The `LoaderGraph` manages the relationships between all metadata table loaders and special cross-table loaders,
+/// allowing for dependency analysis, cycle detection, and parallel execution planning. Each loader is associated
+/// with a [`LoaderKey`] that distinguishes between regular table loaders and special cross-table loaders.
 ///
 /// # Fields
 ///
-/// - `loaders`: Maps each [`crate::metadata::tables::TableId`] to its corresponding [`crate::metadata::loader::MetadataLoader`]
-/// - `dependents`: Maps each table to the set of tables that depend on it (reverse dependencies)
-/// - `dependencies`: Maps each table to the set of tables it depends on (forward dependencies)
+/// - `loaders`: Maps each [`LoaderKey`] to its corresponding [`crate::metadata::loader::MetadataLoader`]
+/// - `dependents`: Maps each table to the set of loader keys that depend on it (reverse dependencies)
+/// - `dependencies`: Maps each loader key to the set of tables it depends on (forward dependencies)
+/// - `special_counter`: Sequence counter for generating unique special loader keys
 ///
 /// # Lifecycle
 ///
@@ -262,12 +285,14 @@ use crate::{
 // ]
 /// ```
 pub(crate) struct LoaderGraph<'a> {
-    /// Maps a `TableId` to its loader
-    loaders: HashMap<TableId, &'a dyn MetadataLoader>,
-    /// Maps a `TableId` to the set of `TableIds` that depend on it
-    dependents: HashMap<TableId, HashSet<TableId>>,
-    /// Maps a `TableId` to the set of `TableIds` it depends on
-    dependencies: HashMap<TableId, HashSet<TableId>>,
+    /// Maps a `LoaderKey` to its loader
+    loaders: HashMap<LoaderKey, &'a dyn MetadataLoader>,
+    /// Maps a `TableId` to the set of `LoaderKeys` that depend on it (reverse dependencies)
+    dependents: HashMap<TableId, HashSet<LoaderKey>>,
+    /// Maps a `LoaderKey` to the set of `TableIds` it depends on (forward dependencies)
+    dependencies: HashMap<LoaderKey, HashSet<TableId>>,
+    /// Counter for generating unique sequence numbers for special loaders
+    special_counter: usize,
 }
 
 impl<'a> LoaderGraph<'a> {
@@ -294,13 +319,15 @@ impl<'a> LoaderGraph<'a> {
             loaders: HashMap::new(),
             dependents: HashMap::new(),
             dependencies: HashMap::new(),
+            special_counter: 0,
         }
     }
 
     /// Add a loader to the graph.
     ///
     /// Registers a metadata loader in the graph and initializes its dependency tracking structures.
-    /// The loader's [`crate::metadata::tables::TableId`] is extracted and used as its identifier.
+    /// The loader's [`LoaderKey`] is determined by its `table_id()` method - regular table loaders
+    /// get `LoaderKey::Table` keys, while special cross-table loaders get `LoaderKey::Special` keys.
     ///
     /// # Arguments
     ///
@@ -312,8 +339,10 @@ impl<'a> LoaderGraph<'a> {
     /// use dotscope::metadata::loader::graph::LoaderGraph;
     ///
     /// let mut graph = LoaderGraph::new();
-    /// // Add a loader instance that implements MetadataLoader
-    /// graph.add_loader(&some_loader);
+    /// // Add a table loader
+    /// graph.add_loader(&table_loader);
+    /// // Add a special cross-table loader  
+    /// graph.add_loader(&special_loader);
     /// ```
     ///
     /// # Notes
@@ -321,16 +350,30 @@ impl<'a> LoaderGraph<'a> {
     /// - The loader must remain valid for the lifetime of the graph
     /// - Adding the same loader multiple times will overwrite the previous entry
     /// - Dependencies are not resolved until `LoaderGraph::build_relationships()` is called
+    /// - Special loaders are assigned unique sequence numbers automatically
     ///
     /// # Thread Safety
     ///
     /// This method is not thread-safe and must be called from a single thread during graph construction.
     pub fn add_loader(&mut self, loader: &'a dyn MetadataLoader) {
-        let table_id = loader.table_id();
-        self.loaders.insert(table_id, loader);
+        let loader_key = match loader.table_id() {
+            Some(table_id) => LoaderKey::Table(table_id),
+            None => {
+                let key = LoaderKey::Special {
+                    sequence: self.special_counter,
+                };
+                self.special_counter += 1;
+                key
+            }
+        };
 
-        self.dependents.entry(table_id).or_default();
-        self.dependencies.entry(table_id).or_default();
+        self.loaders.insert(loader_key.clone(), loader);
+        self.dependencies.entry(loader_key.clone()).or_default();
+
+        // Only table loaders can be depended upon
+        if let LoaderKey::Table(table_id) = loader_key {
+            self.dependents.entry(table_id).or_default();
+        }
     }
 
     /// Build the dependency relationships after all loaders have been added.
@@ -386,15 +429,31 @@ impl<'a> LoaderGraph<'a> {
             .values_mut()
             .for_each(std::collections::HashSet::clear);
 
-        for (table_id, loader) in &self.loaders {
-            for dep_id in loader.dependencies() {
-                if !self.loaders.contains_key(dep_id) {
-                    return Err(GraphError(format!("Loader for table {table_id:?} depends on table {dep_id:?}, but no loader for that table exists"
+        for (loader_key, loader) in &self.loaders {
+            for dep_table_id in loader.dependencies() {
+                // Check if dependency is satisfied by any table loader
+                let has_table_loader = self.loaders.keys().any(
+                    |key| matches!(key, LoaderKey::Table(table_id) if table_id == dep_table_id),
+                );
+
+                if !has_table_loader {
+                    return Err(GraphError(format!(
+                        "Loader {:?} depends on table {:?}, but no loader for that table exists",
+                        loader_key, dep_table_id
                     )));
                 }
 
-                self.dependencies.get_mut(table_id).unwrap().insert(*dep_id);
-                self.dependents.get_mut(dep_id).unwrap().insert(*table_id);
+                // Add forward dependency (loader depends on table)
+                self.dependencies
+                    .get_mut(loader_key)
+                    .unwrap()
+                    .insert(*dep_table_id);
+
+                // Add reverse dependency (table has loader depending on it)
+                self.dependents
+                    .get_mut(dep_table_id)
+                    .unwrap()
+                    .insert(loader_key.clone());
             }
         }
 
@@ -442,12 +501,16 @@ impl<'a> LoaderGraph<'a> {
     /// }
     /// ```
     fn check_circular_dependencies(&self) -> Result<()> {
+        // Note: Only need to check table loaders for cycles since special loaders
+        // can only depend on tables but cannot be depended upon
         let mut visited = HashSet::new();
         let mut stack = HashSet::new();
 
-        for &table_id in self.loaders.keys() {
-            if !visited.contains(&table_id) {
-                self.detect_cycle(table_id, &mut visited, &mut stack)?;
+        for loader_key in self.loaders.keys() {
+            if let LoaderKey::Table(table_id) = loader_key {
+                if !visited.contains(table_id) {
+                    self.detect_cycle(*table_id, &mut visited, &mut stack)?;
+                }
             }
         }
 
@@ -492,7 +555,9 @@ impl<'a> LoaderGraph<'a> {
         visited.insert(table_id);
         stack.insert(table_id);
 
-        if let Some(deps) = self.dependencies.get(&table_id) {
+        // Check dependencies of this table's loader
+        let loader_key = LoaderKey::Table(table_id);
+        if let Some(deps) = self.dependencies.get(&loader_key) {
             for &dep_id in deps {
                 if !visited.contains(&dep_id) {
                     self.detect_cycle(dep_id, visited, stack)?;
@@ -568,34 +633,90 @@ impl<'a> LoaderGraph<'a> {
     /// can be safely used to coordinate parallel loader execution across multiple threads.
     pub fn topological_levels(&self) -> Result<Vec<Vec<&'a dyn MetadataLoader>>> {
         let mut result = Vec::new();
-        let mut remaining = self.loaders.keys().copied().collect::<HashSet<_>>();
+        let mut remaining_loaders = self.loaders.keys().cloned().collect::<HashSet<_>>();
+        let mut completed_tables = HashSet::new();
 
-        while !remaining.is_empty() {
+        while !remaining_loaders.is_empty() {
             let mut current_level = Vec::new();
 
-            // Find all nodes with no dependencies within remaining set
-            let ready_nodes = remaining
+            // Phase 1: Find table loaders that are ready (dependencies satisfied)
+            let ready_table_loaders = remaining_loaders
                 .iter()
-                .filter(|&table_id| {
-                    if let Some(deps) = self.dependencies.get(table_id) {
-                        deps.iter().all(|dep_id| !remaining.contains(dep_id))
+                .filter(|loader_key| {
+                    // Only consider table loaders in regular dependency resolution
+                    if let LoaderKey::Table(_table_id) = loader_key {
+                        if let Some(deps) = self.dependencies.get(loader_key) {
+                            // All dependencies must be completed
+                            deps.iter()
+                                .all(|dep_table_id| completed_tables.contains(dep_table_id))
+                        } else {
+                            true // No dependencies
+                        }
                     } else {
-                        true // No dependencies
+                        false // Special loaders handled separately
                     }
                 })
-                .copied()
+                .cloned()
                 .collect::<Vec<_>>();
 
-            for table_id in &ready_nodes {
-                if let Some(loader) = self.loaders.get(table_id) {
+            // Add ready table loaders to current level
+            for loader_key in &ready_table_loaders {
+                if let Some(loader) = self.loaders.get(loader_key) {
                     current_level.push(*loader);
                 }
-                remaining.remove(table_id);
+                remaining_loaders.remove(loader_key);
+
+                // Mark this table as completed
+                if let LoaderKey::Table(table_id) = loader_key {
+                    completed_tables.insert(*table_id);
+                }
             }
 
-            if !current_level.is_empty() {
+            // Track if we made progress in this iteration
+            let table_progress = !current_level.is_empty();
+
+            // Add the table loader level if it has any loaders
+            if table_progress {
                 result.push(current_level);
-            } else if !remaining.is_empty() {
+            }
+
+            // Phase 2: Check for special loaders that are now ready after this level
+            let ready_special_loaders = remaining_loaders
+                .iter()
+                .filter(|loader_key| {
+                    if let LoaderKey::Special { .. } = loader_key {
+                        if let Some(deps) = self.dependencies.get(loader_key) {
+                            // All dependencies must be completed
+                            deps.iter()
+                                .all(|dep_table_id| completed_tables.contains(dep_table_id))
+                        } else {
+                            true // No dependencies
+                        }
+                    } else {
+                        false // Only special loaders in this phase
+                    }
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+
+            // Track if we made progress with special loaders
+            let special_progress = !ready_special_loaders.is_empty();
+
+            // Create a separate level for special loaders if any are ready
+            if special_progress {
+                let mut special_level = Vec::new();
+                for loader_key in &ready_special_loaders {
+                    if let Some(loader) = self.loaders.get(loader_key) {
+                        special_level.push(*loader);
+                    }
+                    remaining_loaders.remove(loader_key);
+                    // Note: Special loaders don't mark any tables as completed since they can't be depended upon
+                }
+                result.push(special_level);
+            }
+
+            // Check for deadlock: if we have remaining loaders but made no progress
+            if !remaining_loaders.is_empty() && !table_progress && !special_progress {
                 return Err(GraphError(
                     "Unable to resolve dependency order, possible circular dependency".to_string(),
                 ));
@@ -666,8 +787,15 @@ impl<'a> LoaderGraph<'a> {
             result.push_str(&level_idx.to_string());
             result.push_str(": [\n");
             for loader in level {
-                let table_id = loader.table_id();
-                let deps = self.dependencies.get(&table_id).map_or_else(
+                // Find the LoaderKey for this loader
+                let loader_key = self
+                    .loaders
+                    .iter()
+                    .find(|(_, &l)| std::ptr::eq(*loader, l))
+                    .map(|(key, _)| key)
+                    .expect("Loader not found in graph");
+
+                let deps = self.dependencies.get(loader_key).map_or_else(
                     || "None".to_string(),
                     |d| {
                         d.iter()
@@ -678,7 +806,7 @@ impl<'a> LoaderGraph<'a> {
                 );
 
                 result.push_str("  ");
-                write!(result, "{table_id:?}").unwrap();
+                write!(result, "{loader_key:?}").unwrap();
                 result.push_str(" (depends on: ");
                 result.push_str(&deps);
                 result.push_str(")\n");
