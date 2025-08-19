@@ -493,13 +493,13 @@ impl Pe {
     ///
     /// # Returns
     /// Total size in bytes of all PE headers
+    #[must_use]
     pub fn calculate_headers_size(&self) -> u64 {
         // PE signature (4 bytes) + COFF header (20 bytes) + optional header size
         let optional_header_size = self
             .optional_header
             .as_ref()
-            .map(|_| u64::from(self.coff_header.size_of_optional_header))
-            .unwrap_or(0);
+            .map_or(0, |_| u64::from(self.coff_header.size_of_optional_header));
 
         4 + CoffHeader::SIZE as u64 + optional_header_size
     }
@@ -511,6 +511,7 @@ impl Pe {
     ///
     /// # Returns
     /// Total size in bytes of DOS header + PE headers
+    #[must_use]
     pub fn calculate_total_file_headers_size(&self) -> u64 {
         DosHeader::size() + self.calculate_headers_size()
     }
@@ -522,6 +523,7 @@ impl Pe {
     ///
     /// # Returns
     /// Total size in bytes of all section raw data
+    #[must_use]
     pub fn get_sections_total_raw_data_size(&self) -> u64 {
         self.sections
             .iter()
@@ -533,6 +535,7 @@ impl Pe {
     ///
     /// # Returns
     /// Offset where PE headers start in the file
+    #[must_use]
     pub fn get_pe_headers_offset(&self) -> u64 {
         u64::from(self.dos_header.pe_header_offset)
     }
@@ -541,22 +544,23 @@ impl Pe {
     ///
     /// # Returns
     /// File alignment in bytes from the original PE headers
+    #[must_use]
     pub fn get_file_alignment(&self) -> u64 {
         self.optional_header
             .as_ref()
-            .map(|oh| u64::from(oh.windows_fields.file_alignment))
-            .unwrap_or(0x200) // Fallback to common default
+            .map_or(0x200, |oh| u64::from(oh.windows_fields.file_alignment)) // Fallback to common default
     }
 
     /// Gets the section alignment from the original PE headers.
     ///
     /// # Returns
     /// Section alignment in bytes from the original PE headers
+    #[must_use]
     pub fn get_section_alignment(&self) -> u64 {
         self.optional_header
             .as_ref()
-            .map(|oh| u64::from(oh.windows_fields.section_alignment))
-            .unwrap_or(0x1000) // Fallback to common default
+            .map_or(0x1000, |oh| u64::from(oh.windows_fields.section_alignment))
+        // Fallback to common default
     }
 
     /// Adds a new section to the PE file.
@@ -568,8 +572,9 @@ impl Pe {
     /// * `section` - The section to add
     pub fn add_section(&mut self, section: SectionTable) {
         self.sections.push(section);
-        self.coff_header
-            .update_section_count(self.sections.len() as u16);
+        if let Ok(section_count) = u16::try_from(self.sections.len()) {
+            self.coff_header.update_section_count(section_count);
+        }
     }
 
     /// Removes a section by name from the PE file.
@@ -585,8 +590,9 @@ impl Pe {
     pub fn remove_section(&mut self, name: &str) -> bool {
         if let Some(index) = self.sections.iter().position(|s| s.name == name) {
             self.sections.remove(index);
-            self.coff_header
-                .update_section_count(self.sections.len() as u16);
+            if let Ok(section_count) = u16::try_from(self.sections.len()) {
+                self.coff_header.update_section_count(section_count);
+            }
             true
         } else {
             false
@@ -614,6 +620,7 @@ impl Pe {
     ///
     /// # Returns
     /// Returns a reference to the section if found, None otherwise
+    #[must_use]
     pub fn get_section(&self, name: &str) -> Option<&SectionTable> {
         self.sections.iter().find(|s| s.name == name)
     }
@@ -949,7 +956,11 @@ impl WindowsFields {
         if is_pe32_plus {
             writer.write_all(&self.image_base.to_le_bytes())?;
         } else {
-            writer.write_all(&(self.image_base as u32).to_le_bytes())?;
+            writer.write_all(
+                &u32::try_from(self.image_base)
+                    .map_err(|_| Error::Error("Image base exceeds u32 range".to_string()))?
+                    .to_le_bytes(),
+            )?;
         }
 
         writer.write_all(&self.section_alignment.to_le_bytes())?;
@@ -976,10 +987,26 @@ impl WindowsFields {
             writer.write_all(&self.size_of_heap_commit.to_le_bytes())?;
         } else {
             // PE32: 4-byte fields
-            writer.write_all(&(self.size_of_stack_reserve as u32).to_le_bytes())?;
-            writer.write_all(&(self.size_of_stack_commit as u32).to_le_bytes())?;
-            writer.write_all(&(self.size_of_heap_reserve as u32).to_le_bytes())?;
-            writer.write_all(&(self.size_of_heap_commit as u32).to_le_bytes())?;
+            writer.write_all(
+                &u32::try_from(self.size_of_stack_reserve)
+                    .map_err(|_| Error::Error("Stack reserve size exceeds u32 range".to_string()))?
+                    .to_le_bytes(),
+            )?;
+            writer.write_all(
+                &u32::try_from(self.size_of_stack_commit)
+                    .map_err(|_| Error::Error("Stack commit size exceeds u32 range".to_string()))?
+                    .to_le_bytes(),
+            )?;
+            writer.write_all(
+                &u32::try_from(self.size_of_heap_reserve)
+                    .map_err(|_| Error::Error("Heap reserve size exceeds u32 range".to_string()))?
+                    .to_le_bytes(),
+            )?;
+            writer.write_all(
+                &u32::try_from(self.size_of_heap_commit)
+                    .map_err(|_| Error::Error("Heap commit size exceeds u32 range".to_string()))?
+                    .to_le_bytes(),
+            )?;
         }
 
         writer.write_all(&self.loader_flags.to_le_bytes())?;
@@ -1168,6 +1195,7 @@ impl SectionTable {
     ///
     /// # Returns
     /// Total size in bytes for the section table
+    #[must_use]
     pub fn calculate_table_size(section_count: usize) -> u64 {
         (section_count * Self::HEADER_SIZE) as u64
     }

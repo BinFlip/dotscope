@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use crate::{
     cilassembly::{
-        writer::{heaps::HeapBuilder, layout::calculate_string_heap_total_size},
+        writer::{heaps::HeapBuilder, layout::calculate_string_heap_size},
         CilAssembly,
     },
     Error, Result,
@@ -333,7 +333,7 @@ impl HeapBuilder for StringHeapBuilder<'_> {
 
     fn calculate_size(&self) -> Result<u64> {
         let string_changes = &self.assembly.changes().string_heap_changes;
-        calculate_string_heap_total_size(string_changes, self.assembly)
+        calculate_string_heap_size(string_changes, self.assembly)
     }
 
     fn get_index_mappings(&self) -> &HashMap<u32, u32> {

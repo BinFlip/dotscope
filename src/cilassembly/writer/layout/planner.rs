@@ -178,11 +178,11 @@ use crate::{
                 UserStringHeapBuilder,
             },
             layout::{
-                calculate_blob_heap_size, calculate_guid_heap_size,
-                calculate_string_heap_total_size, calculate_table_stream_expansion,
-                calculate_userstring_heap_total_size, FileRegion, FileStructureLayout,
-                MetadataComponentSizes, MetadataLayout, NativeTableRequirements, PlanningInfo,
-                SectionLayout, SizeBreakdown, StreamLayout, WriteLayout,
+                calculate_blob_heap_size, calculate_guid_heap_size, calculate_string_heap_size,
+                calculate_table_stream_expansion, calculate_userstring_heap_size, FileRegion,
+                FileStructureLayout, MetadataComponentSizes, MetadataLayout,
+                NativeTableRequirements, PlanningInfo, SectionLayout, SizeBreakdown, StreamLayout,
+                WriteLayout,
             },
             operations::{CopyOperation, OperationSet, WriteOperation, ZeroOperation},
         },
@@ -190,12 +190,27 @@ use crate::{
     },
     dispatch_table_type,
     file::{
-        pe::{self, constants::*, DosHeader, SectionTable},
+        pe::{
+            self,
+            constants::{
+                COR20_HEADER_SIZE, IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_METADATA, MAX_REASONABLE_RVA,
+            },
+            DosHeader, SectionTable,
+        },
         File,
     },
     metadata::{
         streams::TablesHeader,
-        tables::{CodedIndexType, RowWritable, TableId, TableInfo, TableInfoRef, TableRow},
+        tables::{
+            AssemblyProcessorRaw, AssemblyRaw, AssemblyRefProcessorRaw, AssemblyRefRaw,
+            ClassLayoutRaw, CodedIndexType, ConstantRaw, CustomAttributeRaw, DeclSecurityRaw,
+            EventMapRaw, EventRaw, ExportedTypeRaw, FieldLayoutRaw, FieldMarshalRaw, FieldRaw,
+            FieldRvaRaw, FileRaw, GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw,
+            InterfaceImplRaw, ManifestResourceRaw, MemberRefRaw, MethodDefRaw, MethodImplRaw,
+            MethodSemanticsRaw, MethodSpecRaw, ModuleRaw, ModuleRefRaw, NestedClassRaw, ParamRaw,
+            PropertyMapRaw, PropertyRaw, RowWritable, StandAloneSigRaw, TableDataOwned, TableId,
+            TableInfo, TableInfoRef, TableRow, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
+        },
     },
     utils::{align_to, align_to_4_bytes, calculate_table_row_size, read_le_at, write_le_at},
     Error, Result,
@@ -593,12 +608,12 @@ impl<'a> LayoutPlanner<'a> {
     /// - Table analysis fails due to invalid table modifications
     /// - Metadata root analysis encounters structural issues
     /// - Size calculations overflow or produce invalid results
-    fn calculate_metadata_component_sizes(&mut self) -> Result<MetadataComponentSizes> {
+    fn calculate_metadata_component_sizes(&self) -> Result<MetadataComponentSizes> {
         // Calculate heap sizes using existing proven algorithms
         let strings_heap_size = self.calculate_string_heap_total_size()?;
         let blob_heap_size = self.calculate_blob_heap_total_size()?;
         let guid_heap_size = self.calculate_guid_heap_total_size()?;
-        let userstring_heap_size = self.calculate_userstring_heap_total_size()?;
+        let userstring_heap_size = self.calculate_userstring_heap_total_size();
 
         // Calculate tables stream size
         let tables_stream_size = self.calculate_tables_stream_size()?;
@@ -777,7 +792,11 @@ impl<'a> LayoutPlanner<'a> {
         // Start native table allocation from a safe location after metadata
         // Use the last 1KB of the .meta section for native tables
         current_rva = metadata_end_offset - 1024;
-        current_rva = align_to_4_bytes(u64::from(current_rva)) as u32;
+        current_rva = u32::try_from(align_to_4_bytes(u64::from(current_rva))).map_err(|_| {
+            Error::WriteLayoutFailed {
+                message: "RVA alignment result exceeds u32 range".to_string(),
+            }
+        })?;
 
         // Allocate import table RVA if needed
         if requirements.needs_import_tables {
@@ -787,7 +806,12 @@ impl<'a> LayoutPlanner<'a> {
                     message: "Import table size exceeds u32 range".to_string(),
                 }
             })?;
-            current_rva = align_to_4_bytes(u64::from(current_rva)) as u32;
+            current_rva =
+                u32::try_from(align_to_4_bytes(u64::from(current_rva))).map_err(|_| {
+                    Error::WriteLayoutFailed {
+                        message: "RVA alignment result exceeds u32 range".to_string(),
+                    }
+                })?;
         }
 
         // Allocate export table RVA if needed
@@ -798,7 +822,12 @@ impl<'a> LayoutPlanner<'a> {
                     message: "Export table size exceeds u32 range".to_string(),
                 }
             })?;
-            current_rva = align_to_4_bytes(u64::from(current_rva)) as u32;
+            current_rva =
+                u32::try_from(align_to_4_bytes(u64::from(current_rva))).map_err(|_| {
+                    Error::WriteLayoutFailed {
+                        message: "RVA alignment result exceeds u32 range".to_string(),
+                    }
+                })?;
         }
 
         // Verify allocations fit within the section
@@ -890,26 +919,8 @@ impl<'a> LayoutPlanner<'a> {
             // This ensures that resource section data is interpreted correctly
             let new_virtual_address = original_section.virtual_address;
 
-            // Calculate extended virtual size for code sections that need method bodies
-            let extended_virtual_size = if section_name == ".text"
-                || (original_section.characteristics & IMAGE_SCN_MEM_EXECUTE) != 0
-            {
-                // This is an executable section - extend it to accommodate method bodies
-                let method_bodies_size = self.assembly.changes().method_bodies_total_size()?;
-                if method_bodies_size > 0 {
-                    // Align the extended size to section alignment
-                    let extended_size = original_section.virtual_size + method_bodies_size;
-                    u32::try_from(align_to(
-                        u64::from(extended_size),
-                        u64::from(file.section_alignment()?),
-                    ))
-                    .map_err(|_| malformed_error!("Aligned virtual size exceeds u32 range"))?
-                } else {
-                    original_section.virtual_size
-                }
-            } else {
-                original_section.virtual_size
-            };
+            // No need to extend sections - method bodies go in .meta section
+            let extended_virtual_size = original_section.virtual_size;
 
             // Calculate the actual available file space for this section
             // Check if this section would overlap with the next section
@@ -962,8 +973,13 @@ impl<'a> LayoutPlanner<'a> {
         }
 
         // Plan new .meta section
-        let meta_section =
-            Self::plan_meta_section(file, &sections, component_sizes, native_table_requirements)?;
+        let meta_section = Self::plan_meta_section(
+            file,
+            &sections,
+            component_sizes,
+            native_table_requirements,
+            self.assembly.changes().method_bodies_total_size()?,
+        )?;
         sections.push(meta_section);
 
         Ok(sections)
@@ -975,6 +991,7 @@ impl<'a> LayoutPlanner<'a> {
         existing_sections: &[SectionLayout],
         component_sizes: &MetadataComponentSizes,
         native_table_requirements: &NativeTableRequirements,
+        method_bodies_size: u32,
     ) -> Result<SectionLayout> {
         // Calculate .meta section size including native table space
         let mut meta_section_size = component_sizes.cor20_header
@@ -1003,6 +1020,13 @@ impl<'a> LayoutPlanner<'a> {
             stream_count += 1;
         }
         meta_section_size += stream_count * 4; // 4 bytes padding per stream
+
+        // Add space for method bodies - place them after metadata streams
+        if method_bodies_size > 0 {
+            meta_section_size += u64::from(method_bodies_size);
+            // Add alignment padding after method bodies
+            meta_section_size += 128; // Padding between method bodies and native tables
+        }
 
         // Add space for native tables
         if native_table_requirements.needs_import_tables {
@@ -1254,7 +1278,7 @@ impl<'a> LayoutPlanner<'a> {
 
         // Copy DOS stub (from end of DOS header to start of PE headers)
         // PE headers start at offset specified in DOS header e_lfanew field (typically 0x80 = 128)
-        let pe_headers_start = u64::from(file_structure.pe_headers.offset);
+        let pe_headers_start = file_structure.pe_headers.offset;
         if pe_headers_start > 64 {
             operations.copy.push(CopyOperation {
                 source_offset: 64,
@@ -1517,6 +1541,7 @@ impl<'a> LayoutPlanner<'a> {
     }
 
     /// Builds RVA mappings from placeholder RVAs (0xF0000000+) to actual RVAs.
+    /// Method bodies are now placed in the .meta section for better isolation.
     fn build_method_body_rva_mappings(&self) -> Result<HashMap<u32, u32>> {
         let changes = self.assembly.changes();
         let mut rva_mappings = HashMap::new();
@@ -1526,29 +1551,41 @@ impl<'a> LayoutPlanner<'a> {
             return Ok(rva_mappings);
         }
 
-        // Find the code section (.text) where method bodies will be placed
-        let view = self.assembly.view();
-        let sections = view.file().sections();
+        // Method bodies are now placed in the .meta section instead of extending existing sections
+        // This avoids overlap issues and provides better isolation
+        let meta_section_virtual_address = self.meta_section_virtual_address()?;
 
-        let code_section = sections
-            .iter()
-            .find(|section| {
-                section.name.as_str() == ".text"
-                    || (section.characteristics & IMAGE_SCN_MEM_EXECUTE) != 0
-                // IMAGE_SCN_MEM_EXECUTE
-            })
-            .ok_or_else(|| Error::WriteLayoutFailed {
-                message: "No executable code section found for method body placement".to_string(),
-            })?;
+        // Calculate where method bodies will be placed within .meta section
+        // Place them after all metadata streams but before native tables
+        let component_sizes = self.calculate_metadata_component_sizes()?;
+        let metadata_streams_size = component_sizes.cor20_header
+            + component_sizes.metadata_root
+            + component_sizes.tables_stream
+            + component_sizes.strings_heap
+            + component_sizes.blob_heap
+            + component_sizes.guid_heap
+            + component_sizes.userstring_heap;
 
-        // Calculate where method bodies will be placed
-        // They go at the end of the original code section content, but within the extended section
-        let original_virtual_size = code_section.virtual_size;
+        // Each non-zero stream gets 4 bytes of padding
+        let stream_count = [
+            component_sizes.tables_stream,
+            component_sizes.strings_heap,
+            component_sizes.blob_heap,
+            component_sizes.guid_heap,
+            component_sizes.userstring_heap,
+        ]
+        .iter()
+        .filter(|&&size| size > 0)
+        .count();
 
-        // Calculate base RVA for method bodies (align to 4-byte boundary within the original section)
-        let section_base_rva = code_section.virtual_address;
-        let method_body_base_rva =
-            align_to_4_bytes(u64::from(section_base_rva + original_virtual_size)) as u32;
+        let streams_padding = stream_count * 4;
+        let metadata_end_offset = metadata_streams_size + streams_padding as u64;
+
+        // Place method bodies after metadata, aligned to 4-byte boundary
+        let method_body_base_rva = u32::try_from(align_to_4_bytes(
+            u64::from(meta_section_virtual_address) + metadata_end_offset,
+        ))
+        .map_err(|_| malformed_error!("Method body base RVA exceeds u32 range"))?;
 
         // Build mapping for each method body
         let mut current_rva = method_body_base_rva;
@@ -1556,20 +1593,53 @@ impl<'a> LayoutPlanner<'a> {
             rva_mappings.insert(placeholder_rva, current_rva);
 
             // Advance to next method body position with proper alignment
+            // method_body_bytes already contains the complete method body including:
+            // - Method header (tiny 1 byte or fat 12 bytes)
+            // - IL instruction bytes
+            // - 4-byte padding before exception handlers (if present)
+            // - Exception handler section (if present)
             let method_body_size = u32::try_from(method_body_bytes.len())
                 .map_err(|_| malformed_error!("Method body size exceeds u32 range"))?;
-            let aligned_size = align_to_4_bytes(u64::from(method_body_size)) as u32;
+            let aligned_size = u32::try_from(align_to_4_bytes(u64::from(method_body_size)))
+                .map_err(|_| malformed_error!("Method body aligned size exceeds u32 range"))?;
+
+            // No additional padding needed - method_body_bytes is already complete and accurate
             current_rva += aligned_size;
         }
 
         Ok(rva_mappings)
     }
 
+    /// Gets the virtual address where the .meta section will be placed.
+    fn meta_section_virtual_address(&self) -> Result<u32> {
+        let view = self.assembly.view();
+        let sections = view.file().sections();
+
+        // Find the last section to determine where .meta section will be placed
+        let last_section = sections
+            .iter()
+            .max_by_key(|section| section.virtual_address)
+            .ok_or_else(|| Error::WriteLayoutFailed {
+                message: "No sections found in PE file".to_string(),
+            })?;
+
+        // .meta section will be placed after the last existing section
+        let last_section_end = last_section.virtual_address + last_section.virtual_size;
+
+        // Align to section alignment
+        let section_alignment = view.file().section_alignment()?;
+        u32::try_from(align_to(
+            u64::from(last_section_end),
+            u64::from(section_alignment),
+        ))
+        .map_err(|_| malformed_error!("Virtual size calculation exceeds u32 range"))
+    }
+
     // Helper methods for size calculations (using existing algorithms)
 
     fn calculate_string_heap_total_size(&self) -> Result<u64> {
         let string_changes = &self.assembly.changes().string_heap_changes;
-        calculate_string_heap_total_size(string_changes, self.assembly)
+        calculate_string_heap_size(string_changes, self.assembly)
     }
 
     fn calculate_blob_heap_total_size(&self) -> Result<u64> {
@@ -1582,9 +1652,9 @@ impl<'a> LayoutPlanner<'a> {
         calculate_guid_heap_size(guid_changes, self.assembly)
     }
 
-    fn calculate_userstring_heap_total_size(&self) -> Result<u64> {
+    fn calculate_userstring_heap_total_size(&self) -> u64 {
         let userstring_changes = &self.assembly.changes().userstring_heap_changes;
-        calculate_userstring_heap_total_size(userstring_changes, self.assembly)
+        calculate_userstring_heap_size(userstring_changes, self.assembly)
     }
 
     fn calculate_tables_stream_size(&self) -> Result<u64> {
@@ -1853,7 +1923,8 @@ impl<'a> LayoutPlanner<'a> {
         self.pe.write_headers(&mut updated_headers)?;
 
         // Ensure the size matches what was allocated in the layout
-        let expected_size = file_structure.pe_headers.size as usize;
+        let expected_size = usize::try_from(file_structure.pe_headers.size)
+            .map_err(|_| malformed_error!("PE headers size exceeds usize range"))?;
         if updated_headers.len() > expected_size {
             // Truncate to the expected size to avoid overlap
             updated_headers.truncate(expected_size);
@@ -1892,7 +1963,8 @@ impl<'a> LayoutPlanner<'a> {
         self.pe.write_headers(&mut updated_headers)?;
 
         // Ensure the size matches what was allocated in the layout
-        let expected_size = file_structure.pe_headers.size as usize;
+        let expected_size = usize::try_from(file_structure.pe_headers.size)
+            .map_err(|_| malformed_error!("PE headers size exceeds usize range"))?;
         if updated_headers.len() > expected_size {
             // Truncate to the expected size to avoid overlap
             updated_headers.truncate(expected_size);
@@ -2094,7 +2166,8 @@ impl<'a> LayoutPlanner<'a> {
 
         let version_string = b"v4.0.30319";
         // Pad version string to 4-byte boundary per ECMA-335
-        let padded_version_len = align_to_4_bytes(version_string.len() as u64) as u32;
+        let padded_version_len = u32::try_from(align_to_4_bytes(version_string.len() as u64))
+            .map_err(|_| malformed_error!("Version string length exceeds u32 range"))?;
         metadata_root_data.extend_from_slice(&padded_version_len.to_le_bytes()); // Padded length
         metadata_root_data.extend_from_slice(version_string); // Version string
                                                               // Add padding to reach the declared padded length
@@ -2113,7 +2186,8 @@ impl<'a> LayoutPlanner<'a> {
         // Stream directory entries
         for stream in &metadata_layout.streams {
             // Ensure stream size is 4-byte aligned
-            let aligned_size = align_to_4_bytes(u64::from(stream.size)) as u32;
+            let aligned_size = u32::try_from(align_to_4_bytes(u64::from(stream.size)))
+                .map_err(|_| malformed_error!("Stream size exceeds u32 range"))?;
             metadata_root_data.extend_from_slice(&stream.offset_from_root.to_le_bytes()); // Offset
             metadata_root_data.extend_from_slice(&aligned_size.to_le_bytes()); // Size (4-byte aligned)
             metadata_root_data.extend_from_slice(stream.name.as_bytes()); // Name
@@ -2121,7 +2195,8 @@ impl<'a> LayoutPlanner<'a> {
 
             // Pad the NAME ONLY (not the entire entry) to 4-byte boundary per ECMA-335
             let name_with_null_len = stream.name.len() + 1; // name + null terminator
-            let name_aligned_len = align_to_4_bytes(name_with_null_len as u64) as usize;
+            let name_aligned_len = usize::try_from(align_to_4_bytes(name_with_null_len as u64))
+                .map_err(|_| malformed_error!("Stream name length exceeds usize range"))?;
             let padding_needed = name_aligned_len - name_with_null_len;
 
             metadata_root_data.extend(vec![0; padding_needed]);
@@ -2153,7 +2228,9 @@ impl<'a> LayoutPlanner<'a> {
                     let mut tables_data = self.generate_tables_stream_data()?;
                     // Pad tables data to match the aligned size declared in stream directory
                     let aligned_size = align_to_4_bytes(u64::from(stream.size));
-                    while tables_data.len() < aligned_size as usize {
+                    let target_size = usize::try_from(aligned_size)
+                        .map_err(|_| malformed_error!("Aligned size exceeds usize range"))?;
+                    while tables_data.len() < target_size {
                         tables_data.push(0); // Pad with zeros
                     }
 
@@ -2175,7 +2252,10 @@ impl<'a> LayoutPlanner<'a> {
                             Ok(mut string_data) => {
                                 // Pad string data to match the aligned size declared in stream directory
                                 let aligned_size = align_to_4_bytes(u64::from(stream.size));
-                                while string_data.len() < aligned_size as usize {
+                                let target_size = usize::try_from(aligned_size).map_err(|_| {
+                                    malformed_error!("Aligned size exceeds usize range")
+                                })?;
+                                while string_data.len() < target_size {
                                     string_data.push(0); // Pad with zeros
                                 }
 
@@ -2196,7 +2276,9 @@ impl<'a> LayoutPlanner<'a> {
                         // Pad to match declared size if needed
                         let mut string_data = original_data;
                         let aligned_size = align_to_4_bytes(u64::from(stream.size));
-                        while string_data.len() < aligned_size as usize {
+                        let target_size = usize::try_from(aligned_size)
+                            .map_err(|_| malformed_error!("Aligned size exceeds usize range"))?;
+                        while string_data.len() < target_size {
                             string_data.push(0); // Pad with zeros
                         }
 
@@ -2218,7 +2300,10 @@ impl<'a> LayoutPlanner<'a> {
                             Ok(mut blob_data) => {
                                 // Pad blob data to match the aligned size declared in stream directory
                                 let aligned_size = align_to_4_bytes(u64::from(stream.size));
-                                while blob_data.len() < aligned_size as usize {
+                                let target_size = usize::try_from(aligned_size).map_err(|_| {
+                                    malformed_error!("Aligned size exceeds usize range")
+                                })?;
+                                while blob_data.len() < target_size {
                                     blob_data.push(0); // Pad with zeros
                                 }
 
@@ -2239,7 +2324,9 @@ impl<'a> LayoutPlanner<'a> {
                         // Pad to match declared size if needed
                         let mut blob_data = original_data;
                         let aligned_size = align_to_4_bytes(u64::from(stream.size));
-                        while blob_data.len() < aligned_size as usize {
+                        let target_size = usize::try_from(aligned_size)
+                            .map_err(|_| malformed_error!("Aligned size exceeds usize range"))?;
+                        while blob_data.len() < target_size {
                             blob_data.push(0); // Pad with zeros
                         }
 
@@ -2265,7 +2352,9 @@ impl<'a> LayoutPlanner<'a> {
                     // Pad to match declared size if needed
                     let mut final_guid_data = guid_data;
                     let aligned_size = align_to_4_bytes(u64::from(stream.size));
-                    while final_guid_data.len() < aligned_size as usize {
+                    let target_size = usize::try_from(aligned_size)
+                        .map_err(|_| malformed_error!("Aligned size exceeds usize range"))?;
+                    while final_guid_data.len() < target_size {
                         final_guid_data.push(0); // Pad with zeros
                     }
 
@@ -2278,19 +2367,28 @@ impl<'a> LayoutPlanner<'a> {
                 "#US" => {
                     // User string heap - check for any changes (replacement, additions, modifications)
                     let userstring_changes = &self.assembly.changes().userstring_heap_changes;
-                    let userstring_data = if userstring_changes.has_changes() {
-                        // Generate modified heap (handles replacement, additions, modifications)
-                        let mut builder = UserStringHeapBuilder::new(self.assembly);
-                        builder.build()?
+                    let (userstring_data, calculated_size) = if userstring_changes.has_changes() {
+                        // Calculate size first, then build the heap data
+                        let size_builder = UserStringHeapBuilder::new(self.assembly);
+                        let calculated_size = size_builder.calculate_size()?;
+
+                        let mut data_builder = UserStringHeapBuilder::new(self.assembly);
+                        let data = data_builder.build()?;
+
+                        (data, calculated_size)
                     } else {
                         // Fall back to original heap preservation
-                        self.copy_original_stream_data("#US")?
+                        let data = self.copy_original_stream_data("#US")?;
+                        let size = u64::from(stream.size);
+                        (data, size)
                     };
 
-                    // Pad to match declared size if needed
+                    // Use the calculated size instead of the original stream size for sparse heaps
                     let mut final_userstring_data = userstring_data;
-                    let aligned_size = align_to_4_bytes(u64::from(stream.size));
-                    while final_userstring_data.len() < aligned_size as usize {
+                    let aligned_size = align_to_4_bytes(calculated_size);
+                    let target_size = usize::try_from(aligned_size)
+                        .map_err(|_| malformed_error!("Aligned size exceeds usize range"))?;
+                    while final_userstring_data.len() < target_size {
                         final_userstring_data.push(0); // Pad with zeros
                     }
 
@@ -2328,32 +2426,40 @@ impl<'a> LayoutPlanner<'a> {
         // Build RVA mappings to know where to write each method body
         let rva_mappings = self.build_method_body_rva_mappings()?;
 
-        // Find the code section in our planned sections to get the actual file offset
-        let mut code_section_info = None;
+        // Find the .meta section in our planned sections to get the actual file offset
+        let mut meta_section_info = None;
         for section in &file_structure.sections {
-            if section.name == ".text" || (section.characteristics & IMAGE_SCN_MEM_EXECUTE) != 0 {
-                // Found the code section - use the actual planned file offset (not hardcoded +40)
+            if section.name == ".meta" {
+                // Found the .meta section - use the actual planned file offset
                 let base_rva = section.virtual_address;
                 let base_file_offset = section.file_region.offset;
-                code_section_info = Some((base_rva, base_file_offset));
+                meta_section_info = Some((base_rva, base_file_offset));
                 break;
             }
         }
 
-        if let Some((base_rva, base_file_offset)) = code_section_info {
+        if let Some((base_rva, base_file_offset)) = meta_section_info {
             for (placeholder_rva, method_body_bytes) in changes.method_bodies() {
                 if let Some(&actual_rva) = rva_mappings.get(&placeholder_rva) {
-                    // Calculate file offset directly using section base mapping
+                    // Calculate file offset directly using .meta section base mapping
                     let rva_offset_within_section = actual_rva - base_rva;
                     let file_offset = base_file_offset + u64::from(rva_offset_within_section);
 
+                    // Update userstring tokens in method body bytes using heap mappings
+                    let updated_method_body_bytes =
+                        self.update_userstring_tokens_in_method_body(method_body_bytes)?;
+
                     operations.write.push(WriteOperation {
                         offset: file_offset,
-                        data: method_body_bytes.clone(),
+                        data: updated_method_body_bytes,
                         component: format!("Method body at RVA 0x{actual_rva:08X}"),
                     });
                 }
             }
+        } else {
+            return Err(Error::WriteLayoutFailed {
+                message: ".meta section not found for method body placement".to_string(),
+            });
         }
 
         Ok(())
@@ -3585,7 +3691,7 @@ impl<'a> LayoutPlanner<'a> {
     fn write_modified_tables_header(
         &self,
         stream_data: &mut [u8],
-        tables_header: &crate::metadata::streams::TablesHeader,
+        tables_header: &TablesHeader,
     ) -> Result<usize> {
         let mut pos = 0;
 
@@ -3640,7 +3746,7 @@ impl<'a> LayoutPlanner<'a> {
         &self,
         stream_data: &mut [u8],
         header_size: usize,
-        tables_header: &crate::metadata::streams::TablesHeader,
+        tables_header: &TablesHeader,
     ) -> Result<()> {
         let mut current_offset = header_size;
 
@@ -3717,58 +3823,42 @@ impl<'a> LayoutPlanner<'a> {
     fn get_table_row_size(table_id: TableId, table_info: &TableInfoRef) -> u32 {
         // For different table types, call the appropriate TableRow::row_size method
         match table_id {
-            TableId::Module => crate::metadata::tables::ModuleRaw::row_size(table_info),
-            TableId::TypeRef => crate::metadata::tables::TypeRefRaw::row_size(table_info),
-            TableId::TypeDef => crate::metadata::tables::TypeDefRaw::row_size(table_info),
-            TableId::Field => crate::metadata::tables::FieldRaw::row_size(table_info),
-            TableId::MethodDef => crate::metadata::tables::MethodDefRaw::row_size(table_info),
-            TableId::Param => crate::metadata::tables::ParamRaw::row_size(table_info),
-            TableId::InterfaceImpl => {
-                crate::metadata::tables::InterfaceImplRaw::row_size(table_info)
-            }
-            TableId::MemberRef => crate::metadata::tables::MemberRefRaw::row_size(table_info),
-            TableId::Constant => crate::metadata::tables::ConstantRaw::row_size(table_info),
-            TableId::CustomAttribute => {
-                crate::metadata::tables::CustomAttributeRaw::row_size(table_info)
-            }
-            TableId::FieldMarshal => crate::metadata::tables::FieldMarshalRaw::row_size(table_info),
-            TableId::DeclSecurity => crate::metadata::tables::DeclSecurityRaw::row_size(table_info),
-            TableId::ClassLayout => crate::metadata::tables::ClassLayoutRaw::row_size(table_info),
-            TableId::FieldLayout => crate::metadata::tables::FieldLayoutRaw::row_size(table_info),
-            TableId::StandAloneSig => {
-                crate::metadata::tables::StandAloneSigRaw::row_size(table_info)
-            }
-            TableId::EventMap => crate::metadata::tables::EventMapRaw::row_size(table_info),
-            TableId::Event => crate::metadata::tables::EventRaw::row_size(table_info),
-            TableId::PropertyMap => crate::metadata::tables::PropertyMapRaw::row_size(table_info),
-            TableId::Property => crate::metadata::tables::PropertyRaw::row_size(table_info),
-            TableId::MethodSemantics => {
-                crate::metadata::tables::MethodSemanticsRaw::row_size(table_info)
-            }
-            TableId::MethodImpl => crate::metadata::tables::MethodImplRaw::row_size(table_info),
-            TableId::ModuleRef => crate::metadata::tables::ModuleRefRaw::row_size(table_info),
-            TableId::TypeSpec => crate::metadata::tables::TypeSpecRaw::row_size(table_info),
-            TableId::ImplMap => crate::metadata::tables::ImplMapRaw::row_size(table_info),
-            TableId::FieldRVA => crate::metadata::tables::FieldRvaRaw::row_size(table_info),
-            TableId::Assembly => crate::metadata::tables::AssemblyRaw::row_size(table_info),
-            TableId::AssemblyProcessor => {
-                crate::metadata::tables::AssemblyProcessorRaw::row_size(table_info)
-            }
-            TableId::AssemblyRef => crate::metadata::tables::AssemblyRefRaw::row_size(table_info),
-            TableId::AssemblyRefProcessor => {
-                crate::metadata::tables::AssemblyRefProcessorRaw::row_size(table_info)
-            }
-            TableId::File => crate::metadata::tables::FileRaw::row_size(table_info),
-            TableId::ExportedType => crate::metadata::tables::ExportedTypeRaw::row_size(table_info),
-            TableId::ManifestResource => {
-                crate::metadata::tables::ManifestResourceRaw::row_size(table_info)
-            }
-            TableId::NestedClass => crate::metadata::tables::NestedClassRaw::row_size(table_info),
-            TableId::GenericParam => crate::metadata::tables::GenericParamRaw::row_size(table_info),
-            TableId::MethodSpec => crate::metadata::tables::MethodSpecRaw::row_size(table_info),
-            TableId::GenericParamConstraint => {
-                crate::metadata::tables::GenericParamConstraintRaw::row_size(table_info)
-            }
+            TableId::Module => ModuleRaw::row_size(table_info),
+            TableId::TypeRef => TypeRefRaw::row_size(table_info),
+            TableId::TypeDef => TypeDefRaw::row_size(table_info),
+            TableId::Field => FieldRaw::row_size(table_info),
+            TableId::MethodDef => MethodDefRaw::row_size(table_info),
+            TableId::Param => ParamRaw::row_size(table_info),
+            TableId::InterfaceImpl => InterfaceImplRaw::row_size(table_info),
+            TableId::MemberRef => MemberRefRaw::row_size(table_info),
+            TableId::Constant => ConstantRaw::row_size(table_info),
+            TableId::CustomAttribute => CustomAttributeRaw::row_size(table_info),
+            TableId::FieldMarshal => FieldMarshalRaw::row_size(table_info),
+            TableId::DeclSecurity => DeclSecurityRaw::row_size(table_info),
+            TableId::ClassLayout => ClassLayoutRaw::row_size(table_info),
+            TableId::FieldLayout => FieldLayoutRaw::row_size(table_info),
+            TableId::StandAloneSig => StandAloneSigRaw::row_size(table_info),
+            TableId::EventMap => EventMapRaw::row_size(table_info),
+            TableId::Event => EventRaw::row_size(table_info),
+            TableId::PropertyMap => PropertyMapRaw::row_size(table_info),
+            TableId::Property => PropertyRaw::row_size(table_info),
+            TableId::MethodSemantics => MethodSemanticsRaw::row_size(table_info),
+            TableId::MethodImpl => MethodImplRaw::row_size(table_info),
+            TableId::ModuleRef => ModuleRefRaw::row_size(table_info),
+            TableId::TypeSpec => TypeSpecRaw::row_size(table_info),
+            TableId::ImplMap => ImplMapRaw::row_size(table_info),
+            TableId::FieldRVA => FieldRvaRaw::row_size(table_info),
+            TableId::Assembly => AssemblyRaw::row_size(table_info),
+            TableId::AssemblyProcessor => AssemblyProcessorRaw::row_size(table_info),
+            TableId::AssemblyRef => AssemblyRefRaw::row_size(table_info),
+            TableId::AssemblyRefProcessor => AssemblyRefProcessorRaw::row_size(table_info),
+            TableId::File => FileRaw::row_size(table_info),
+            TableId::ExportedType => ExportedTypeRaw::row_size(table_info),
+            TableId::ManifestResource => ManifestResourceRaw::row_size(table_info),
+            TableId::NestedClass => NestedClassRaw::row_size(table_info),
+            TableId::GenericParam => GenericParamRaw::row_size(table_info),
+            TableId::MethodSpec => MethodSpecRaw::row_size(table_info),
+            TableId::GenericParamConstraint => GenericParamConstraintRaw::row_size(table_info),
             _ => {
                 // For debug tables or unknown tables, return a default size
                 4
@@ -3780,7 +3870,7 @@ impl<'a> LayoutPlanner<'a> {
     fn write_replaced_table_data(
         stream_data: &mut [u8],
         offset: usize,
-        new_rows: &[crate::metadata::tables::TableDataOwned],
+        new_rows: &[TableDataOwned],
         table_info: &TableInfoRef,
     ) -> Result<()> {
         let mut current_offset = offset;
@@ -3805,27 +3895,22 @@ impl<'a> LayoutPlanner<'a> {
         stream_data: &mut [u8],
         offset: usize,
         table_id: TableId,
-        operations: &[crate::cilassembly::TableOperation],
-        tables_header: &crate::metadata::streams::TablesHeader,
+        operations: &[TableOperation],
+        tables_header: &TablesHeader,
     ) -> Result<usize> {
         let original_row_count = tables_header.table_row_count(table_id);
         let row_size = calculate_table_row_size(table_id, &tables_header.info) as usize;
-        let remapper = crate::cilassembly::remapping::RidRemapper::build_from_operations(
-            operations,
-            original_row_count,
-        );
+        let remapper = RidRemapper::build_from_operations(operations, original_row_count);
         let final_row_count = remapper.final_row_count() as usize;
 
         // Create operation data map for quick lookup
-        let mut operation_data: HashMap<u32, crate::metadata::tables::TableDataOwned> =
-            HashMap::new();
+        let mut operation_data: HashMap<u32, TableDataOwned> = HashMap::new();
         for operation in operations {
             match &operation.operation {
-                crate::cilassembly::Operation::Insert(rid, row_data)
-                | crate::cilassembly::Operation::Update(rid, row_data) => {
+                Operation::Insert(rid, row_data) | Operation::Update(rid, row_data) => {
                     operation_data.insert(*rid, row_data.clone());
                 }
-                crate::cilassembly::Operation::Delete(_) => {
+                Operation::Delete(_) => {
                     // Deletions are handled by the remapper
                 }
             }
@@ -3879,7 +3964,7 @@ impl<'a> LayoutPlanner<'a> {
         stream_data: &mut [u8],
         offset: usize,
         table_id: TableId,
-        tables_header: &crate::metadata::streams::TablesHeader,
+        tables_header: &TablesHeader,
     ) -> Result<()> {
         dispatch_table_type!(table_id, |RawType| {
             if let Some(original_table) = tables_header.table::<RawType>() {
@@ -3899,5 +3984,73 @@ impl<'a> LayoutPlanner<'a> {
             }
             Ok(())
         })
+    }
+
+    /// Updates userstring tokens in method body bytecode using heap builder mappings.
+    ///
+    /// This function scans the method body bytes for ldstr instructions (opcode 0x72)
+    /// and updates the userstring tokens using the actual mappings from the heap builder.
+    fn update_userstring_tokens_in_method_body(&self, method_body_bytes: &[u8]) -> Result<Vec<u8>> {
+        // Get userstring heap mappings by building the heap
+        let mut userstring_builder = UserStringHeapBuilder::new(self.assembly);
+        let _ = userstring_builder.build()?; // Build to populate mappings
+        let userstring_mappings = userstring_builder.get_index_mappings();
+
+        // If no userstring mappings, return original bytes
+        if userstring_mappings.is_empty() {
+            return Ok(method_body_bytes.to_vec());
+        }
+
+        let mut updated_bytes = method_body_bytes.to_vec();
+
+        // Skip method header and scan IL instructions for ldstr (0x72)
+        let header_size = if updated_bytes.is_empty() {
+            0
+        } else if updated_bytes[0] & 0x03 == 0x02 {
+            1 // Tiny header
+        } else {
+            12 // Fat header
+        };
+
+        if header_size >= updated_bytes.len() {
+            return Ok(updated_bytes);
+        }
+
+        // Scan IL bytecode starting after the header
+        let il_bytes = &mut updated_bytes[header_size..];
+        let mut pos = 0;
+
+        while pos < il_bytes.len() {
+            if il_bytes[pos] == 0x72 && pos + 4 < il_bytes.len() {
+                // Found ldstr instruction, check if it's a userstring token
+                let token_bytes = &il_bytes[pos + 1..pos + 5];
+                let token = u32::from_le_bytes([
+                    token_bytes[0],
+                    token_bytes[1],
+                    token_bytes[2],
+                    token_bytes[3],
+                ]);
+
+                // Check if it's a userstring token (0x70000000 prefix)
+                if token & 0xFF00_0000 == 0x7000_0000 {
+                    let original_index = token & 0x00FF_FFFF;
+
+                    // Look up the new index in the mappings
+                    if let Some(&new_index) = userstring_mappings.get(&original_index) {
+                        let new_token = 0x7000_0000 | new_index;
+                        let new_token_bytes = new_token.to_le_bytes();
+
+                        // Update the token in the bytecode
+                        il_bytes[pos + 1..pos + 5].copy_from_slice(&new_token_bytes);
+                    }
+                }
+
+                pos += 5; // Move past ldstr + 4-byte token
+            } else {
+                pos += 1; // Move to next instruction
+            }
+        }
+
+        Ok(updated_bytes)
     }
 }

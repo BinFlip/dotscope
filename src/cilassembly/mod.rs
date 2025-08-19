@@ -379,7 +379,8 @@ impl CilAssembly {
     pub fn userstring_add(&mut self, value: &str) -> Result<u32> {
         let userstring_changes = &mut self.changes.userstring_heap_changes;
         let index = userstring_changes.next_index;
-        userstring_changes.appended_items.push(value.to_string());
+
+        userstring_changes.append_item_with_index(value.to_string(), index);
 
         // Calculate size increment for next index (using original string size for API index stability)
         let utf16_bytes: Vec<u8> = value.encode_utf16().flat_map(u16::to_le_bytes).collect();

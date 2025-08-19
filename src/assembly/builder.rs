@@ -266,6 +266,37 @@ impl InstructionAssembler {
         self.encoder.current_stack_depth()
     }
 
+    /// Get the position of a defined label.
+    ///
+    /// This method allows accessing label positions before finalization,
+    /// which is useful for exception handler offset calculation.
+    ///
+    /// # Parameters
+    ///
+    /// * `label_name` - The name of the label to look up
+    ///
+    /// # Returns
+    ///
+    /// The byte position of the label if it exists, otherwise None.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::assembly::InstructionAssembler;
+    ///
+    /// let mut asm = InstructionAssembler::new();
+    /// asm.nop()?.label("test_label")?;
+    ///
+    /// if let Some(position) = asm.get_label_position("test_label") {
+    ///     println!("Label 'test_label' is at byte position {}", position);
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn get_label_position(&self, label_name: &str) -> Option<u32> {
+        self.encoder.get_label_position(label_name)
+    }
+
     /// Define a label at the current position.
     ///
     /// Labels mark positions in the bytecode that can be referenced by branch
@@ -1650,6 +1681,19 @@ impl InstructionAssembler {
         Ok(self)
     }
 
+    /// End of finally block.
+    ///
+    /// **Opcode**: `0xDC`
+    /// **Stack**: `... → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
+    pub fn endfinally(&mut self) -> Result<&mut Self> {
+        self.encoder.emit_instruction("endfinally", None)?;
+        Ok(self)
+    }
+
     /// Load element from array.
     ///
     /// **Opcode**: `0x8F`
@@ -1739,6 +1783,40 @@ impl InstructionAssembler {
     /// Returns an error if instruction encoding fails.
     pub fn brtrue(&mut self, label: &str) -> Result<&mut Self> {
         self.encoder.emit_branch("brtrue", label)?;
+        Ok(self)
+    }
+
+    /// Leave protected region for exception handling (short form).
+    ///
+    /// **Opcode**: `0xDE`
+    /// **Stack**: `... → ...`
+    ///
+    /// Exits a protected region of code, unconditionally transferring control
+    /// to a specific target instruction (typically at the end of a finally clause).
+    /// This is used in structured exception handling.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
+    pub fn leave_s(&mut self, label: &str) -> Result<&mut Self> {
+        self.encoder.emit_branch("leave.s", label)?;
+        Ok(self)
+    }
+
+    /// Leave protected region for exception handling (long form).
+    ///
+    /// **Opcode**: `0xDD`
+    /// **Stack**: `... → ...`
+    ///
+    /// Exits a protected region of code, unconditionally transferring control
+    /// to a specific target instruction (typically at the end of a finally clause).
+    /// This is used in structured exception handling.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
+    pub fn leave(&mut self, label: &str) -> Result<&mut Self> {
+        self.encoder.emit_branch("leave", label)?;
         Ok(self)
     }
 

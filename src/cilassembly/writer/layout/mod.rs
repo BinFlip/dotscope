@@ -190,8 +190,8 @@ mod region;
 mod tables;
 
 pub(crate) use heaps::{
-    calculate_blob_heap_size, calculate_guid_heap_size, calculate_string_heap_total_size,
-    calculate_userstring_heap_size, calculate_userstring_heap_total_size,
+    calculate_blob_heap_size, calculate_guid_heap_size, calculate_string_heap_size,
+    calculate_userstring_heap_size,
 };
 pub(crate) use planner::LayoutPlanner;
 pub(crate) use region::FileRegion;

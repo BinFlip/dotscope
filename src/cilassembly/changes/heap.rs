@@ -112,6 +112,13 @@ pub struct HeapChanges<T> {
     /// index assignments.
     pub appended_items: Vec<T>,
 
+    /// Original heap indices for appended items
+    ///
+    /// Maps each appended item (by Vec index) to its original heap index that was
+    /// assigned during userstring_add(). This eliminates the need for backwards
+    /// calculation and ensures correct placement during heap building.
+    pub appended_item_indices: Vec<u32>,
+
     /// Items modified in the original heap
     ///
     /// Maps heap index to new value. These modifications override the
@@ -164,6 +171,7 @@ impl<T> HeapChanges<T> {
     pub fn new(original_byte_size: u32) -> Self {
         Self {
             appended_items: Vec::new(),
+            appended_item_indices: Vec::new(),
             modified_items: HashMap::new(),
             removed_indices: HashSet::new(),
             removal_strategies: HashMap::new(),
@@ -237,6 +245,7 @@ impl<T> HeapChanges<T> {
         // which is now being replaced. Any future operations will apply to
         // the replacement heap.
         self.appended_items.clear();
+        self.appended_item_indices.clear();
         self.modified_items.clear();
         self.removed_indices.clear();
         self.removal_strategies.clear();
@@ -287,6 +296,33 @@ impl<T> HeapChanges<T> {
     /// Gets the removal strategy for the specified index, if it's been removed.
     pub fn get_removal_strategy(&self, index: u32) -> Option<ReferenceHandlingStrategy> {
         self.removal_strategies.get(&index).copied()
+    }
+
+    /// Appends an item with its original heap index.
+    ///
+    /// This method should be used instead of directly pushing to appended_items
+    /// to ensure the index tracking remains consistent.
+    ///
+    /// # Arguments
+    ///
+    /// * `item` - The item to append
+    /// * `original_index` - The original heap index assigned to this item
+    pub fn append_item_with_index(&mut self, item: T, original_index: u32) {
+        self.appended_items.push(item);
+        self.appended_item_indices.push(original_index);
+    }
+
+    /// Gets the original heap index for an appended item by its vector index.
+    ///
+    /// # Arguments
+    ///
+    /// * `vec_index` - The index in the appended_items vector
+    ///
+    /// # Returns
+    ///
+    /// The original heap index if the vector index is valid.
+    pub fn get_appended_item_index(&self, vec_index: usize) -> Option<u32> {
+        self.appended_item_indices.get(vec_index).copied()
     }
 
     /// Returns an iterator over all modified items and their indices.

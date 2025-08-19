@@ -304,7 +304,7 @@ impl InstructionEncoder {
         // Verify this is actually a branch instruction
         if !matches!(
             metadata.flow,
-            FlowType::ConditionalBranch | FlowType::UnconditionalBranch
+            FlowType::ConditionalBranch | FlowType::UnconditionalBranch | FlowType::Leave
         ) {
             return Err(Error::InvalidBranchInstruction(mnemonic.to_string()));
         }
@@ -674,6 +674,23 @@ impl InstructionEncoder {
     #[must_use]
     pub fn current_stack_depth(&self) -> i16 {
         self.current_stack_depth
+    }
+
+    /// Get the position of a defined label.
+    ///
+    /// This method allows accessing label positions before finalization,
+    /// which is useful for exception handler offset calculation.
+    ///
+    /// # Parameters
+    ///
+    /// * `label_name` - The name of the label to look up
+    ///
+    /// # Returns
+    ///
+    /// The byte position of the label if it exists, otherwise None.
+    #[must_use]
+    pub fn get_label_position(&self, label_name: &str) -> Option<u32> {
+        self.labels.get(label_name).copied()
     }
 }
 

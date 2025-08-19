@@ -21,10 +21,106 @@ use crate::{
     Error, Result,
 };
 
+/// Exception handler defined with labels for automatic offset calculation.
+#[derive(Clone)]
+struct LabeledExceptionHandler {
+    /// Exception handler flags (finally, catch, fault, filter)
+    flags: ExceptionHandlerFlags,
+    /// Label marking the start of the protected try block
+    try_start_label: String,
+    /// Label marking the end of the protected try block  
+    try_end_label: String,
+    /// Label marking the start of the handler block
+    handler_start_label: String,
+    /// Label marking the end of the handler block
+    handler_end_label: String,
+    /// The exception type for typed handlers
+    handler_type: Option<CilTypeRc>,
+}
+
 /// Type alias for method body implementation closures
 type ImplementationFn = Box<dyn FnOnce(&mut InstructionAssembler) -> Result<()>>;
 
 use crate::metadata::method::encode_method_body_header;
+
+/// Resolve a labeled exception handler to a regular exception handler with calculated byte offsets.
+///
+/// This function takes an assembler (after implementation but before finalization) and a labeled
+/// exception handler, and converts it to a regular exception handler by looking up the label
+/// positions and calculating the byte offsets and lengths.
+///
+/// # Parameters
+///
+/// * `assembler` - The instruction assembler with defined labels
+/// * `labeled_handler` - The labeled exception handler to resolve
+///
+/// # Returns
+///
+/// A regular [`ExceptionHandler`] with calculated byte offsets.
+///
+/// # Errors
+///
+/// Returns an error if any of the referenced labels are not defined in the assembler.
+fn resolve_labeled_exception_handler(
+    assembler: &InstructionAssembler,
+    labeled_handler: &LabeledExceptionHandler,
+) -> Result<ExceptionHandler> {
+    // Look up all label positions
+    let try_start_offset = assembler
+        .get_label_position(&labeled_handler.try_start_label)
+        .ok_or_else(|| Error::UndefinedLabel(labeled_handler.try_start_label.clone()))?;
+
+    let try_end_offset = assembler
+        .get_label_position(&labeled_handler.try_end_label)
+        .ok_or_else(|| Error::UndefinedLabel(labeled_handler.try_end_label.clone()))?;
+
+    let handler_start_offset = assembler
+        .get_label_position(&labeled_handler.handler_start_label)
+        .ok_or_else(|| Error::UndefinedLabel(labeled_handler.handler_start_label.clone()))?;
+
+    let handler_end_offset = assembler
+        .get_label_position(&labeled_handler.handler_end_label)
+        .ok_or_else(|| Error::UndefinedLabel(labeled_handler.handler_end_label.clone()))?;
+
+    // Calculate lengths
+    if try_end_offset < try_start_offset {
+        return Err(Error::ModificationInvalidOperation {
+            details: format!(
+                "Try end label '{}' (at {}) is before try start label '{}' (at {})",
+                labeled_handler.try_end_label,
+                try_end_offset,
+                labeled_handler.try_start_label,
+                try_start_offset
+            ),
+        });
+    }
+
+    if handler_end_offset < handler_start_offset {
+        return Err(Error::ModificationInvalidOperation {
+            details: format!(
+                "Handler end label '{}' (at {}) is before handler start label '{}' (at {})",
+                labeled_handler.handler_end_label,
+                handler_end_offset,
+                labeled_handler.handler_start_label,
+                handler_start_offset
+            ),
+        });
+    }
+
+    let try_length = try_end_offset - try_start_offset;
+    let handler_length = handler_end_offset - handler_start_offset;
+
+    // Create the regular exception handler
+    Ok(ExceptionHandler {
+        flags: labeled_handler.flags,
+        try_offset: try_start_offset,
+        try_length,
+        handler_offset: handler_start_offset,
+        handler_length,
+        handler: labeled_handler.handler_type.clone(),
+        filter_offset: 0, // Filter handlers not implemented yet
+    })
+}
 
 /// Builder for creating method body implementations.
 ///
@@ -102,8 +198,11 @@ pub struct MethodBodyBuilder {
     /// The implementation closure
     implementation: Option<ImplementationFn>,
 
-    /// Exception handlers for try/catch/finally blocks
+    /// Exception handlers for try/catch/finally blocks (manual byte offsets)
     exception_handlers: Vec<ExceptionHandler>,
+
+    /// Exception handlers defined with labels (automatic offset calculation)
+    labeled_exception_handlers: Vec<LabeledExceptionHandler>,
 }
 
 impl MethodBodyBuilder {
@@ -124,6 +223,7 @@ impl MethodBodyBuilder {
             locals: Vec::new(),
             implementation: None,
             exception_handlers: Vec::new(),
+            labeled_exception_handlers: Vec::new(),
         }
     }
 
@@ -322,6 +422,94 @@ impl MethodBodyBuilder {
         self
     }
 
+    /// Add a finally handler using labels for automatic offset calculation.
+    ///
+    /// This is a higher-level API that calculates byte offsets automatically from labels
+    /// placed in the instruction sequence. The labels are resolved during method body
+    /// compilation to determine the exact byte positions.
+    ///
+    /// # Arguments
+    ///
+    /// * `try_start_label` - Label marking the start of the protected try block
+    /// * `try_end_label` - Label marking the end of the protected try block
+    /// * `handler_start_label` - Label marking the start of the finally handler
+    /// * `handler_end_label` - Label marking the end of the finally handler
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::MethodBodyBuilder;
+    ///
+    /// let body_builder = MethodBodyBuilder::new()
+    ///     .finally_handler_with_labels("try_start", "try_end", "finally_start", "finally_end");
+    /// ```
+    #[must_use]
+    pub fn finally_handler_with_labels(
+        mut self,
+        try_start_label: &str,
+        try_end_label: &str,
+        handler_start_label: &str,
+        handler_end_label: &str,
+    ) -> Self {
+        // Store label names - they will be resolved during build()
+        let handler = LabeledExceptionHandler {
+            flags: ExceptionHandlerFlags::FINALLY,
+            try_start_label: try_start_label.to_string(),
+            try_end_label: try_end_label.to_string(),
+            handler_start_label: handler_start_label.to_string(),
+            handler_end_label: handler_end_label.to_string(),
+            handler_type: None,
+        };
+        self.labeled_exception_handlers.push(handler);
+        self
+    }
+
+    /// Add a catch handler using labels for automatic offset calculation.
+    ///
+    /// This is a higher-level API that calculates byte offsets automatically from labels
+    /// placed in the instruction sequence.
+    ///
+    /// # Arguments
+    ///
+    /// * `try_start_label` - Label marking the start of the protected try block
+    /// * `try_end_label` - Label marking the end of the protected try block
+    /// * `handler_start_label` - Label marking the start of the catch handler
+    /// * `handler_end_label` - Label marking the end of the catch handler
+    /// * `exception_type` - The exception type to catch (optional for catch-all)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::MethodBodyBuilder;
+    ///
+    /// let body_builder = MethodBodyBuilder::new()
+    ///     .catch_handler_with_labels("try_start", "try_end", "catch_start", "catch_end", None);
+    /// ```
+    #[must_use]
+    pub fn catch_handler_with_labels(
+        mut self,
+        try_start_label: &str,
+        try_end_label: &str,
+        handler_start_label: &str,
+        handler_end_label: &str,
+        exception_type: Option<CilTypeRc>,
+    ) -> Self {
+        let handler = LabeledExceptionHandler {
+            flags: if exception_type.is_some() {
+                ExceptionHandlerFlags::EXCEPTION
+            } else {
+                ExceptionHandlerFlags::FAULT
+            },
+            try_start_label: try_start_label.to_string(),
+            try_end_label: try_end_label.to_string(),
+            handler_start_label: handler_start_label.to_string(),
+            handler_end_label: handler_end_label.to_string(),
+            handler_type: exception_type,
+        };
+        self.labeled_exception_handlers.push(handler);
+        self
+    }
+
     /// Set the method implementation using the instruction assembler.
     ///
     /// This is where you define what the method actually does using the fluent
@@ -415,6 +603,7 @@ impl MethodBodyBuilder {
             locals,
             implementation,
             exception_handlers,
+            labeled_exception_handlers,
         } = self;
 
         // Must have an implementation
@@ -425,6 +614,15 @@ impl MethodBodyBuilder {
         // Generate the CIL bytecode with automatic stack tracking
         let mut assembler = InstructionAssembler::new();
         implementation(&mut assembler)?;
+
+        // Resolve labeled exception handlers to regular exception handlers
+        // This must be done after the implementation runs but before assembler.finish()
+        let mut all_exception_handlers = exception_handlers;
+        for labeled_handler in labeled_exception_handlers {
+            let resolved_handler = resolve_labeled_exception_handler(&assembler, &labeled_handler)?;
+            all_exception_handlers.push(resolved_handler);
+        }
+
         let (code_bytes, calculated_max_stack) = assembler.finish()?;
 
         // Use calculated max stack from assembler if not explicitly set
@@ -459,7 +657,7 @@ impl MethodBodyBuilder {
         };
 
         // Determine if we have exception handlers
-        let has_exceptions = !exception_handlers.is_empty();
+        let has_exceptions = !all_exception_handlers.is_empty();
 
         // Generate method body header
         let code_size = u32::try_from(code_bytes.len())
@@ -483,7 +681,7 @@ impl MethodBodyBuilder {
             }
 
             // Exception handlers are encoded after the method body according to ECMA-335
-            let eh_section = encode_exception_handlers(&exception_handlers)?;
+            let eh_section = encode_exception_handlers(&all_exception_handlers)?;
             body.extend_from_slice(&eh_section);
         }
 

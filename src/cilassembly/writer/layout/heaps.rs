@@ -171,139 +171,6 @@ use crate::{
     Error, Result,
 };
 
-/// Calculates the actual byte size needed for string heap modifications with ECMA-335 compliance.
-///
-/// This function performs precise size calculation for the #Strings heap, handling both
-/// simple addition-only scenarios and complex heap rebuilding scenarios. It implements
-/// exact ECMA-335 specification requirements for string storage and alignment.
-///
-/// # Calculation Strategy
-///
-/// ## Addition-Only Scenario
-/// When only new strings are added (most common and efficient case):
-/// - Calculates size of new strings only
-/// - Each string: UTF-8 bytes + null terminator (0x00)
-/// - Applies 4-byte alignment with 0xFF padding
-///
-/// ## Modification/Removal Scenario
-/// When existing strings are modified or removed (requires heap rebuilding):
-/// - Calculates total size after reconstruction
-/// - Preserves original layout where possible for offset consistency
-/// - Appends oversized modifications at the end
-/// - Accounts for remapping of large modifications
-///
-/// # ECMA-335 String Heap Format
-///
-/// ```text
-/// Offset  Content
-/// ------  -------
-/// 0x00    Null byte (mandatory empty string at index 0)
-/// 0x01    "Hello\\0"     (UTF-8 + null terminator)
-/// 0x07    "World\\0"     (UTF-8 + null terminator)
-/// 0x0D    "Test\\0"      (UTF-8 + null terminator)
-/// 0x12    0xFF 0xFF      (Padding to 4-byte boundary)
-/// ```
-///
-/// # Arguments
-///
-/// * `heap_changes` - The [`crate::cilassembly::HeapChanges<String>`] containing all string
-///   modifications, additions, and removals to be applied
-/// * `assembly` - The [`crate::cilassembly::CilAssembly`] for accessing original heap data
-///   and determining the current state
-///
-/// # Returns
-///
-/// Returns the total aligned byte size needed for the string heap after all changes
-/// are applied. This size includes:
-/// - Original strings (excluding removed ones)
-/// - Modified strings (using their new sizes)
-/// - Newly added strings
-/// - Required alignment padding to 4-byte boundary
-///
-/// # Errors
-///
-/// Returns [`crate::Error::WriteLayoutFailed`] if:
-/// - String heap offset calculations exceed u32 range
-/// - String size calculations result in overflow
-/// - Original heap data is corrupted or inaccessible
-///
-/// # Examples
-///
-/// ## Addition-Only Calculation
-///
-/// ```rust,ignore
-/// use dotscope::cilassembly::writer::layout::heaps::calculate_string_heap_size;
-/// use dotscope::prelude::*;
-/// use std::path::Path;
-///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
-/// # let mut assembly = view.to_owned();
-/// // Add new strings
-/// assembly.changes_mut().strings.add_string("Hello".to_string());
-/// assembly.changes_mut().strings.add_string("World".to_string());
-///
-/// let size = calculate_string_heap_size(&assembly.changes().strings, &assembly)?;
-/// // Size includes: "Hello\0" (6) + "World\0" (6) + padding = 12 bytes aligned to 4
-/// assert_eq!(size, 12);
-/// # Ok::<(), dotscope::Error>(())
-/// ```
-///
-/// ## Modification Scenario
-///
-/// ```rust,ignore
-/// use dotscope::cilassembly::writer::layout::heaps::calculate_string_heap_size;
-/// use dotscope::prelude::*;
-/// use std::path::Path;
-///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
-/// # let mut assembly = view.to_owned();
-/// // Modify existing string at index 1
-/// assembly.changes_mut().strings.modify_string(1, "Modified String".to_string());
-///
-/// let total_size = calculate_string_heap_size(&assembly.changes().strings, &assembly)?;
-/// // Calculates total reconstructed heap size with modifications
-/// println!("Total string heap size: {} bytes", total_size);
-/// # Ok::<(), dotscope::Error>(())
-/// ```
-pub fn calculate_string_heap_size(
-    heap_changes: &HeapChanges<String>,
-    assembly: &CilAssembly,
-) -> Result<u64> {
-    let mut total_size = 0u64;
-
-    if heap_changes.has_modifications() || heap_changes.has_removals() {
-        // When there are modifications or removals, we need to calculate the total size
-        // using the same logic as calculate_string_heap_total_size to ensure consistency
-        let total_size = calculate_string_heap_total_size(heap_changes, assembly)?;
-
-        // But we need to subtract the existing heap size since calculate_string_heap_size
-        // is supposed to return only the ADDITIONAL size needed
-        let existing_heap_size = if let Some(_strings_heap) = assembly.view().strings() {
-            assembly
-                .view()
-                .streams()
-                .iter()
-                .find(|stream| stream.name == "#Strings")
-                .map_or(1, |stream| u64::from(stream.size))
-        } else {
-            1u64
-        };
-
-        return Ok(total_size - existing_heap_size);
-    }
-    // Addition-only scenario - calculate size of additions only
-    for string in &heap_changes.appended_items {
-        // Each string is null-terminated in the heap
-        total_size += string.len() as u64 + 1; // +1 for null terminator
-    }
-
-    // Align to 4-byte boundary (ECMA-335 II.24.2.2)
-    // Note: String heap padding uses 0xFF bytes to avoid creating empty string entries
-    let aligned_size = align_to(total_size, 4);
-
-    Ok(aligned_size)
-}
-
 /// Calculates the complete reconstructed string heap size.
 ///
 /// This function calculates the total size of the reconstructed string heap,
@@ -317,7 +184,7 @@ pub fn calculate_string_heap_size(
 ///
 /// # Returns
 /// Returns the total aligned byte size of the complete reconstructed heap.
-pub fn calculate_string_heap_total_size(
+pub fn calculate_string_heap_size(
     heap_changes: &HeapChanges<String>,
     assembly: &CilAssembly,
 ) -> Result<u64> {
@@ -843,190 +710,6 @@ pub fn calculate_guid_heap_size(
     Ok(total_size)
 }
 
-/// Calculates the actual byte size needed for userstring heap modifications.
-///
-/// This function handles both addition-only scenarios and heap rebuilding scenarios.
-/// When modifications or removals are present, it calculates the total size of the
-/// rebuilt heap rather than just additions.
-///
-/// # Arguments
-///
-/// * `heap_changes` - The [`crate::cilassembly::HeapChanges<String>`] containing user string changes
-/// * `assembly` - The [`crate::cilassembly::CilAssembly`] for accessing original heap data
-///
-/// # Returns
-///
-/// Returns the total aligned byte size needed for the userstring heap after all changes.
-///
-/// # Errors
-///
-/// Returns [`crate::Error`] if there are issues accessing the original userstring heap data.
-///
-/// # Format
-///
-/// Each user string is stored as: compressed_length + UTF-16_bytes + terminator, where the length
-/// indicates the total size including the terminator byte according to ECMA-335 specification.
-pub fn calculate_userstring_heap_size(
-    heap_changes: &HeapChanges<String>,
-    assembly: &CilAssembly,
-) -> Result<u64> {
-    // If there's a heap replacement, use its size plus any appended items
-    if let Some(replacement_heap) = heap_changes.replacement_heap() {
-        let replacement_size = replacement_heap.len() as u64;
-        let appended_size = heap_changes.binary_userstring_heap_size() as u64;
-        // Add padding to align to 4-byte boundary
-        let total_size = replacement_size + appended_size;
-        let aligned_size = align_to_4_bytes(total_size);
-        return Ok(aligned_size);
-    }
-
-    let mut total_size = 0u64;
-
-    if heap_changes.has_modifications() || heap_changes.has_removals() {
-        total_size += 1;
-
-        // Build sets for efficient lookup of removed and modified indices
-        let removed_indices = &heap_changes.removed_indices;
-        let modified_indices: std::collections::HashSet<u32> =
-            heap_changes.modified_items.keys().copied().collect();
-
-        // Calculate size of original user strings that are neither removed nor modified
-        if let Some(userstring_heap) = assembly.view().userstrings() {
-            for (offset, original_userstring) in userstring_heap.iter() {
-                if offset == 0 {
-                    continue;
-                } // Skip the mandatory null byte at offset 0
-
-                // The heap changes system uses byte offsets as indices
-                let offset_u32 = u32::try_from(offset).map_err(|_| Error::WriteLayoutFailed {
-                    message: "Blob heap offset exceeds u32 range".to_string(),
-                })?;
-                if !removed_indices.contains(&offset_u32) && !modified_indices.contains(&offset_u32)
-                {
-                    // Convert to string and calculate UTF-16 length
-                    if let Ok(string_value) = original_userstring.to_string() {
-                        let utf16_length = string_value.encode_utf16().count() * 2; // 2 bytes per UTF-16 code unit
-                        let total_entry_length = utf16_length + 1; // UTF-16 data + terminator byte
-
-                        // Length prefix (compressed integer)
-                        let length_prefix_size = compressed_uint_size(total_entry_length);
-
-                        total_size += length_prefix_size + total_entry_length as u64;
-                    }
-                }
-            }
-        }
-
-        // Calculate total size by rebuilding exactly what the writer will write
-        // The writer creates a sorted list of all final userstrings and writes continuously
-
-        // Reset total_size since we'll calculate from scratch
-        total_size = 1; // Start with mandatory null byte
-
-        // Calculate the starting index for appended items (same logic as add_userstring)
-        let starting_next_index = if let Some(_userstring_heap) = assembly.view().userstrings() {
-            // Use the actual heap size, not max offset (same as HeapChanges::new)
-            let heap_stream = assembly.view().streams().iter().find(|s| s.name == "#US");
-            heap_stream.map_or(0, |s| s.size)
-        } else {
-            0
-        };
-
-        // Build the complete final userstring list (matching the writer's logic exactly)
-        let mut all_userstrings: Vec<(u32, String)> = Vec::new();
-        if let Some(userstring_heap) = assembly.view().userstrings() {
-            for (offset, original_userstring) in userstring_heap.iter() {
-                let heap_index = u32::try_from(offset).map_err(|_| Error::WriteLayoutFailed {
-                    message: "Userstring heap offset exceeds u32 range".to_string(),
-                })?;
-                if !removed_indices.contains(&heap_index) {
-                    let final_string = if let Some(modified_string) =
-                        heap_changes.modified_items.get(&heap_index)
-                    {
-                        modified_string.clone()
-                    } else {
-                        original_userstring.to_string_lossy().to_string()
-                    };
-                    all_userstrings.push((heap_index, final_string));
-                }
-            }
-        }
-
-        // Add appended userstrings with their final content (accounting for modifications)
-        let mut current_api_index = starting_next_index;
-        for original_appended_string in &heap_changes.appended_items {
-            if !removed_indices.contains(&current_api_index) {
-                // Check if this appended string is modified
-                let final_string = if let Some(modified_string) =
-                    heap_changes.modified_items.get(&current_api_index)
-                {
-                    modified_string.clone()
-                } else {
-                    original_appended_string.clone()
-                };
-                all_userstrings.push((current_api_index, final_string));
-            }
-
-            // Advance API index by original string size (maintains API index stability)
-            let orig_utf16_len = original_appended_string.encode_utf16().count() * 2;
-            let orig_total_len = orig_utf16_len + 1;
-            let orig_compressed_len_size = compressed_uint_size(orig_total_len);
-            current_api_index += u32::try_from(
-                usize::try_from(orig_compressed_len_size).map_err(|_| {
-                    Error::WriteLayoutFailed {
-                        message: "Compressed length size exceeds usize range".to_string(),
-                    }
-                })? + orig_total_len,
-            )
-            .map_err(|_| Error::WriteLayoutFailed {
-                message: "Combined userstring size exceeds u32 range".to_string(),
-            })?;
-        }
-
-        // Sort by API index (same as writer)
-        all_userstrings.sort_by_key(|(index, _)| *index);
-
-        // Calculate total size from final strings (exactly what the writer will write)
-        for (_, final_string) in &all_userstrings {
-            let utf16_length = final_string.encode_utf16().count() * 2;
-            let total_entry_length = utf16_length + 1;
-            let length_prefix_size = compressed_uint_size(total_entry_length);
-            total_size += length_prefix_size + total_entry_length as u64;
-        }
-    } else {
-        // Addition-only scenario - calculate size of additions only
-        for string in &heap_changes.appended_items {
-            // User strings are UTF-16 encoded with length prefix
-            let utf16_length = string.encode_utf16().count() * 2; // 2 bytes per UTF-16 code unit
-            let total_entry_length = utf16_length + 1; // UTF-16 data + terminator byte
-
-            // Length prefix (compressed integer)
-            let length_prefix_size = compressed_uint_size(total_entry_length);
-
-            total_size += length_prefix_size + total_entry_length as u64;
-        }
-
-        // CRITICAL FIX: If there are no changes AND no additions, we still need to preserve
-        // the original user string heap size for zero-modification roundtrips
-        if heap_changes.appended_items.is_empty() {
-            if let Some(_userstring_heap) = assembly.view().userstrings() {
-                // Get the original user string heap size from the stream directory
-                let original_size = assembly
-                    .view()
-                    .streams()
-                    .iter()
-                    .find(|stream| stream.name == "#US")
-                    .map_or(0, |stream| u64::from(stream.size));
-                total_size = original_size;
-            }
-        }
-    }
-
-    // Stream size must be 4-byte aligned for ECMA-335 compliance
-    let aligned_size = align_to(total_size, 4);
-    Ok(aligned_size)
-}
-
 /// Calculates the complete reconstructed userstring heap size.
 ///
 /// This function calculates the total size of the reconstructed userstring heap,
@@ -1040,121 +723,88 @@ pub fn calculate_userstring_heap_size(
 ///
 /// # Returns
 /// Returns the total aligned byte size of the complete reconstructed heap.
-pub fn calculate_userstring_heap_total_size(
+pub fn calculate_userstring_heap_size(
     heap_changes: &HeapChanges<String>,
     assembly: &CilAssembly,
-) -> Result<u64> {
-    // If there's a heap replacement, use its size plus any appended items
-    if let Some(replacement_heap) = heap_changes.replacement_heap() {
-        let replacement_size = replacement_heap.len() as u64;
-        let appended_size = heap_changes.binary_userstring_heap_size() as u64;
-        // Add padding to align to 4-byte boundary
-        let total_size = replacement_size + appended_size;
-        let aligned_size = align_to_4_bytes(total_size);
-        return Ok(aligned_size);
+) -> u64 {
+    // For append-only strategy: start with original heap size, then add appended items contiguously
+    let mut total_size = if let Some(replacement_heap) = heap_changes.replacement_heap() {
+        u64::try_from(replacement_heap.len()).unwrap_or(0)
+    } else if assembly.view().userstrings().is_some() {
+        // Copy original heap size - need to get the actual stream size
+        let view = assembly.view();
+        let metadata_root = view.metadata_root();
+
+        // Find the userstrings stream in the original metadata
+        let mut original_size = 0u64;
+        for stream_header in &metadata_root.stream_headers {
+            if stream_header.name == "#US" {
+                original_size = u64::from(stream_header.size);
+                break;
+            }
+        }
+        original_size
+    } else {
+        1u64 // Just null byte for empty heap
+    };
+
+    // Add size of appended items (they are placed contiguously at the end)
+    for original_string in &heap_changes.appended_items {
+        let original_heap_index = {
+            let mut calculated_index = heap_changes.next_index;
+            for item in heap_changes.appended_items.iter().rev() {
+                let utf16_len = item.encode_utf16().count() * 2;
+                let total_len = utf16_len + 1; // +1 for terminator
+                let prefix_size = compressed_uint_size(total_len);
+                calculated_index -=
+                    u32::try_from(prefix_size).unwrap_or(0) + u32::try_from(total_len).unwrap_or(0);
+                if std::ptr::eq(item, original_string) {
+                    break;
+                }
+            }
+            calculated_index
+        };
+
+        if !heap_changes.removed_indices.contains(&original_heap_index) {
+            let final_string = heap_changes
+                .modified_items
+                .get(&original_heap_index)
+                .cloned()
+                .unwrap_or_else(|| original_string.clone());
+
+            let utf16_len = final_string.encode_utf16().count() * 2;
+            let total_len = utf16_len + 1; // +1 for terminator
+            let prefix_size = compressed_uint_size(total_len);
+            total_size += prefix_size + total_len as u64;
+        }
     }
 
-    let mut total_size = 1u64; // Start with mandatory null byte at index 0
+    if let Some(userstrings_heap) = assembly.view().userstrings() {
+        for (&modified_index, new_string) in &heap_changes.modified_items {
+            // Find the original userstring to determine if remapping is needed
+            if let Some((_offset, original_string)) = userstrings_heap
+                .iter()
+                .find(|(offset, _)| *offset == modified_index as usize)
+            {
+                let original_utf16_len = original_string.len() * 2; // U16Str len() gives UTF-16 code units
+                let original_total_len = original_utf16_len + 1; // +1 for terminator
+                let original_prefix_size = compressed_uint_size(original_total_len);
+                let original_entry_size =
+                    original_prefix_size + u64::try_from(original_total_len).unwrap_or(0);
 
-    if heap_changes.has_modifications() || heap_changes.has_removals() {
-        // Build sets for efficient lookup of removed and modified indices
-        let removed_indices = &heap_changes.removed_indices;
-        let modified_indices: std::collections::HashSet<u32> =
-            heap_changes.modified_items.keys().copied().collect();
+                let new_utf16_len = new_string.encode_utf16().count() * 2;
+                let new_total_len = new_utf16_len + 1; // +1 for terminator
+                let new_prefix_size = compressed_uint_size(new_total_len);
+                let new_entry_size = new_prefix_size + u64::try_from(new_total_len).unwrap_or(0);
 
-        // Calculate size of original user strings that are neither removed nor modified
-        if let Some(userstring_heap) = assembly.view().userstrings() {
-            for (offset, original_userstring) in userstring_heap.iter() {
-                if offset == 0 {
-                    continue;
-                } // Skip the mandatory null byte at offset 0
-
-                // The heap changes system uses byte offsets as indices
-                let offset_u32 = u32::try_from(offset).map_err(|_| Error::WriteLayoutFailed {
-                    message: "Blob heap offset exceeds u32 range".to_string(),
-                })?;
-                if !removed_indices.contains(&offset_u32) && !modified_indices.contains(&offset_u32)
-                {
-                    // Convert to string and calculate UTF-16 length
-                    if let Ok(string_value) = original_userstring.to_string() {
-                        let utf16_length = string_value.encode_utf16().count() * 2; // 2 bytes per UTF-16 code unit
-                        let total_entry_length = utf16_length + 1; // UTF-16 data + terminator byte
-
-                        // Length prefix (compressed integer)
-                        let length_prefix_size = compressed_uint_size(total_entry_length);
-
-                        total_size += length_prefix_size + total_entry_length as u64;
-                    }
+                if new_entry_size > original_entry_size {
+                    // This modification will be remapped to the end - add its size
+                    total_size += new_entry_size;
                 }
             }
         }
-
-        // Add size of modified userstrings (use the new values)
-        for new_userstring in heap_changes.modified_items.values() {
-            let utf16_length = new_userstring.encode_utf16().count() * 2;
-            let total_entry_length = utf16_length + 1;
-            let length_prefix_size = compressed_uint_size(total_entry_length);
-            total_size += length_prefix_size + total_entry_length as u64;
-        }
-
-        // Add size of appended userstrings that haven't been modified
-        let original_heap_size = if let Some(userstring_heap) = assembly.view().userstrings() {
-            u32::try_from(userstring_heap.data().len()).map_err(|_| Error::WriteLayoutFailed {
-                message: "Userstring heap data length exceeds u32 range".to_string(),
-            })?
-        } else {
-            0
-        };
-
-        let mut current_index = original_heap_size;
-        for userstring in &heap_changes.appended_items {
-            // Only count this appended userstring if it hasn't been modified or removed
-            if !heap_changes.modified_items.contains_key(&current_index)
-                && !heap_changes.removed_indices.contains(&current_index)
-            {
-                let utf16_length = userstring.encode_utf16().count() * 2;
-                let total_entry_length = utf16_length + 1;
-                let length_prefix_size = compressed_uint_size(total_entry_length);
-                total_size += length_prefix_size + total_entry_length as u64;
-            }
-
-            // Calculate the index for the next userstring (prefix + data)
-            let length = userstring.encode_utf16().count() * 2;
-            let total_length = length + 1;
-            let prefix_size = compressed_uint_size(total_length);
-            current_index +=
-                u32::try_from(prefix_size).map_err(|_| Error::WriteLayoutFailed {
-                    message: "Prefix size exceeds u32 range (userstring rebuild)".to_string(),
-                })? + u32::try_from(total_length).map_err(|_| Error::WriteLayoutFailed {
-                    message: "Total length exceeds u32 range (userstring rebuild)".to_string(),
-                })?;
-        }
-    } else {
-        // Addition-only scenario - calculate total size including original heap
-        if let Some(userstring_heap) = assembly.view().userstrings() {
-            // Calculate actual end of original content
-            let mut actual_end = 1u64; // Start after mandatory null byte at index 0
-            for (offset, userstring) in userstring_heap.iter() {
-                let string_val = userstring.to_string_lossy();
-                let utf16_bytes = string_val.encode_utf16().count() * 2;
-                let total_length = utf16_bytes + 1; // +1 for terminator
-                let compressed_length_size = compressed_uint_size(total_length);
-                let entry_end = offset as u64 + compressed_length_size + total_length as u64;
-                actual_end = actual_end.max(entry_end);
-            }
-            total_size = actual_end;
-        }
-
-        // Add size of new userstrings
-        for string in &heap_changes.appended_items {
-            let utf16_length = string.encode_utf16().count() * 2;
-            let total_entry_length = utf16_length + 1;
-            let length_prefix_size = compressed_uint_size(total_entry_length);
-            total_size += length_prefix_size + total_entry_length as u64;
-        }
     }
 
-    // Stream size must be 4-byte aligned for ECMA-335 compliance
-    let aligned_size = align_to(total_size, 4);
-    Ok(aligned_size)
+    // Align to 4-byte boundary
+    (total_size + 3) & !3
 }

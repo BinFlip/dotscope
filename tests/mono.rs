@@ -539,16 +539,16 @@ fn verify_method_disassembly(disassembly_output: &str, arch_name: &str) -> Resul
         if line.contains("DotScopeAddedMethod")
             && (line.contains("int32") || line.contains("(int32,int32)"))
         {
-            for j in i..lines.len() {
-                if lines[j].trim().starts_with("{") {
+            for (j, line) in lines.iter().enumerate().skip(i) {
+                if line.trim().starts_with("{") {
                     method_start = Some(j + 1);
                     break;
                 }
             }
 
             if let Some(start) = method_start {
-                for j in start..lines.len() {
-                    if lines[j].trim().starts_with("}") {
+                for (j, line) in lines.iter().enumerate().skip(start) {
+                    if line.trim().starts_with("}") {
                         method_end = Some(j);
                         break;
                     }
@@ -597,7 +597,7 @@ fn verify_method_disassembly(disassembly_output: &str, arch_name: &str) -> Resul
         println!("                  {}: {}", i, instruction);
     }
 
-    let expected_instructions = vec!["ldarg.0", "ldarg.1", "add", "ret"];
+    let expected_instructions = ["ldarg.0", "ldarg.1", "add", "ret"];
 
     if il_instructions.len() != expected_instructions.len() {
         return Err(Error::Error(format!(
