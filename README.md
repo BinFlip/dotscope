@@ -13,7 +13,9 @@ A high-performance, cross-platform framework for analyzing, reverse engineering,
 - **Efficient memory access** - Memory-mapped file access with minimal allocations and reference-based parsing
 - **Complete metadata analysis** - Parse all ECMA-335 metadata tables and streams
 - **Assembly modification** - Edit metadata tables, heaps, and PE structures with validation and integrity checking
+- **Method injection** - Add new methods, classes, and metadata to existing assemblies with high-level builders
 - **High-performance disassembly** - Fast CIL instruction decoding with control flow analysis
+- **CIL encoding** - Generate CIL bytecode with label-based exception handling for method modification
 - **Native PE operations** - Manage imports, exports, and native interoperability features
 - **Cross-platform** - Works on Windows, Linux, macOS, and any Rust-supported platform
 - **Memory safe** - Built in Rust with comprehensive error handling and fuzzing
@@ -108,6 +110,43 @@ fn main() -> dotscope::Result<()> {
 }
 ```
 
+### Method Builder Example
+
+```rust
+use dotscope::prelude::*;
+
+fn main() -> dotscope::Result<()> {
+    // Load assembly and create builder context
+    let view = CilAssemblyView::from_file("input.dll".as_ref())?;
+    let assembly = CilAssembly::new(view);
+    let mut context = BuilderContext::new(assembly);
+    
+    // Add a user string
+    let msg_index = context.userstring_add("Hello World!")?;
+    let msg_token = Token::new(0x70000000 | msg_index);
+    
+    // Create method with CIL instructions
+    let method_token = MethodBuilder::new("MyNewMethod")
+        .public()
+        .static_method()
+        .returns(TypeSignature::Void)
+        .implementation(|body| {
+            body.implementation(|asm| {
+                asm.ldstr(msg_token)?
+                    .pop()?  // Simple example: load string then pop it
+                    .ret()
+            })
+        })
+        .build(&mut context)?;
+    
+    // Save the modified assembly
+    let mut assembly = context.finish();
+    assembly.write_to_file("output.dll".as_ref())?;
+    
+    Ok(())
+}
+```
+
 ## Documentation
 
 - **[API Documentation](https://docs.rs/dotscope)** - Complete API reference
@@ -123,8 +162,8 @@ fn main() -> dotscope::Result<()> {
 
 - **[`prelude`]** - Convenient re-exports of commonly used types
 - **[`metadata`]** - Complete ECMA-335 metadata parsing and type system
-- **[`cilassembly`]** - Assembly modification with copy-on-write semantics
-- **[`disassembler`]** - CIL instruction decoding and control flow analysis
+- **[`cilassembly`]** - Assembly modification with copy-on-write semantics and high-level builders
+- **[`assembly`]** - CIL instruction encoding/decoding, control flow analysis, and method body construction
 - **[`Error`] and [`Result`]** - Comprehensive error handling
 
 ### Raw Access (`CilAssemblyView`)
@@ -154,17 +193,27 @@ Mutable assembly editing provides:
 - **Heap operations**: Add, update, remove items from all metadata heaps
 - **Table operations**: Add, update, delete metadata table rows with validation
 - **PE operations**: Manage native imports, exports, and forwarders
-- **Builder APIs**: High-level interfaces for complex assembly construction
+- **Builder APIs**: High-level builders for adding classes, methods, properties, events, and enums to existing assemblies
+- **CIL Generation**: Full CIL instruction encoding with label resolution and exception handling for method modification
 - **Validation**: Comprehensive integrity checking and reference resolution
 
-### Disassembly Engine
+### Assembly Engine
 
-The disassembler module provides:
+The assembly module provides comprehensive CIL processing:
+
+**Decoding & Analysis:**
 
 - **Instruction Decoding**: Parse individual CIL opcodes with full operand support
 - **Control Flow Analysis**: Build basic blocks and control flow graphs
 - **Stack Analysis**: Track stack effects and type flow
 - **Exception Handling**: Parse and analyze try/catch/finally regions
+
+**Encoding & Generation:**
+
+- **Instruction Encoding**: Generate CIL bytecode from high-level instructions
+- **Label Resolution**: Automatic branch target and exception handler resolution
+- **Method Body Construction**: Build complete method bodies with local variables and exception handling
+- **Assembly Modification**: Fluent API for adding new components to existing .NET assemblies
 
 ## Examples
 
@@ -286,12 +335,6 @@ We're continuously working to improve `dotscope` and add new capabilities. Here 
 - Project-wide analysis capabilities
 - Assembly linking and merging
 - Store and load full Assembly to/from JSON
-
-### Assembly Modification
-
-- Assembly modification and generation capabilities
-- Instruction patching and injection
-- Metadata table manipulation
 
 ### Advanced Analysis
 
