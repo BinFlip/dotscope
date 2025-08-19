@@ -27,6 +27,11 @@ jobs:
       with:
         components: rustfmt, clippy
         
+    - name: Setup .NET SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+        
     - name: Setup Rust cache
       uses: Swatinem/rust-cache@v2
       

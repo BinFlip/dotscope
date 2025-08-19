@@ -28,6 +28,65 @@ jobs:
       with:
         components: rustfmt, clippy
         
+    - name: Setup .NET SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+        
+    - name: Verify .NET installation and make csc available
+      shell: bash
+      run: |
+        dotnet --version
+        dotnet --list-runtimes
+        
+        # Find the .NET SDK path and make csc available
+        SDK_PATH=$(dotnet --list-sdks | head -1 | cut -d' ' -f2 | tr -d '[]')
+        echo "SDK Path: $SDK_PATH"
+        
+        # Different paths for different platforms
+        if [[ "$RUNNER_OS" == "Windows" ]]; then
+          CSC_PATH="$SDK_PATH/Roslyn/bincore"
+          if [[ -f "$CSC_PATH/csc.exe" ]]; then
+            echo "Adding $CSC_PATH to PATH"
+            echo "$CSC_PATH" >> $GITHUB_PATH
+          fi
+        else
+          # For Unix systems, look for csc in the SDK
+          CSC_PATH="$SDK_PATH/Roslyn/bincore"
+          if [[ -f "$CSC_PATH/csc.dll" ]]; then
+            echo "Found csc.dll, creating wrapper script"
+            mkdir -p "$HOME/.local/bin"
+            cat > "$HOME/.local/bin/csc" << EOF
+        #!/bin/bash
+        exec dotnet "$SDK_PATH/Roslyn/bincore/csc.dll" "\$@"
+        EOF
+            chmod +x "$HOME/.local/bin/csc"
+            echo "$HOME/.local/bin" >> $GITHUB_PATH
+          else
+            echo "Installing Mono as fallback for mcs compiler"
+            if [[ "$RUNNER_OS" == "Linux" ]]; then
+              sudo apt-get update && sudo apt-get install -y mono-complete
+            elif [[ "$RUNNER_OS" == "macOS" ]]; then
+              brew install mono
+            fi
+          fi
+        fi
+        
+    - name: Test C# compiler availability
+      shell: bash
+      run: |
+        echo "Testing C# compiler..."
+        if command -v csc &> /dev/null; then
+          echo "✅ csc command is available"
+          csc /help 2>&1 | head -3 || true
+        elif command -v mcs &> /dev/null; then
+          echo "✅ mcs (Mono C#) compiler is available"  
+          mcs --help 2>&1 | head -3 || true
+        else
+          echo "❌ No C# compiler found!"
+          exit 1
+        fi
+        
     - name: Setup Rust cache
       uses: Swatinem/rust-cache@v2
       with:
@@ -118,6 +177,65 @@ jobs:
       with:
         components: llvm-tools-preview
         
+    - name: Setup .NET SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+        
+    - name: Verify .NET installation and make csc available
+      shell: bash
+      run: |
+        dotnet --version
+        dotnet --list-runtimes
+        
+        # Find the .NET SDK path and make csc available
+        SDK_PATH=$(dotnet --list-sdks | head -1 | cut -d' ' -f2 | tr -d '[]')
+        echo "SDK Path: $SDK_PATH"
+        
+        # Different paths for different platforms
+        if [[ "$RUNNER_OS" == "Windows" ]]; then
+          CSC_PATH="$SDK_PATH/Roslyn/bincore"
+          if [[ -f "$CSC_PATH/csc.exe" ]]; then
+            echo "Adding $CSC_PATH to PATH"
+            echo "$CSC_PATH" >> $GITHUB_PATH
+          fi
+        else
+          # For Unix systems, look for csc in the SDK
+          CSC_PATH="$SDK_PATH/Roslyn/bincore"
+          if [[ -f "$CSC_PATH/csc.dll" ]]; then
+            echo "Found csc.dll, creating wrapper script"
+            mkdir -p "$HOME/.local/bin"
+            cat > "$HOME/.local/bin/csc" << EOF
+        #!/bin/bash
+        exec dotnet "$SDK_PATH/Roslyn/bincore/csc.dll" "\$@"
+        EOF
+            chmod +x "$HOME/.local/bin/csc"
+            echo "$HOME/.local/bin" >> $GITHUB_PATH
+          else
+            echo "Installing Mono as fallback for mcs compiler"
+            if [[ "$RUNNER_OS" == "Linux" ]]; then
+              sudo apt-get update && sudo apt-get install -y mono-complete
+            elif [[ "$RUNNER_OS" == "macOS" ]]; then
+              brew install mono
+            fi
+          fi
+        fi
+        
+    - name: Test C# compiler availability
+      shell: bash
+      run: |
+        echo "Testing C# compiler..."
+        if command -v csc &> /dev/null; then
+          echo "✅ csc command is available"
+          csc /help 2>&1 | head -3 || true
+        elif command -v mcs &> /dev/null; then
+          echo "✅ mcs (Mono C#) compiler is available"  
+          mcs --help 2>&1 | head -3 || true
+        else
+          echo "❌ No C# compiler found!"
+          exit 1
+        fi
+        
     - name: Setup Rust cache
       uses: Swatinem/rust-cache@v2
       with:
@@ -132,6 +250,6 @@ jobs:
     - name: Upload to codecov.io
       uses: codecov/codecov-action@v5
       with:
-        file: lcov.info
+        files: lcov.info
         fail_ci_if_error: true
         token: ${{ secrets.CODECOV_TOKEN }}
