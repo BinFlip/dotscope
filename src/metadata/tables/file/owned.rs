@@ -42,8 +42,8 @@ use crate::metadata::{
 ///
 /// # File Attributes
 /// The flags field indicates file characteristics:
-/// - **CONTAINS_META_DATA**: File contains .NET metadata (executable modules)
-/// - **CONTAINS_NO_META_DATA**: Resource files without metadata
+/// - **`CONTAINS_META_DATA`**: File contains .NET metadata (executable modules)
+/// - **`CONTAINS_NO_META_DATA`**: Resource files without metadata
 ///
 /// # Hash Verification
 /// Each file includes a cryptographic hash for security:
@@ -70,10 +70,10 @@ pub struct File {
 
     /// The metadata token for this file.
     ///
-    /// A [`Token`] that uniquely identifies this file across the entire assembly.
+    /// A [`crate::metadata::token::Token`] that uniquely identifies this file across the entire assembly.
     /// The token encodes both the table type (File) and the row ID.
     ///
-    /// [`Token`]: crate::metadata::token::Token
+    /// [`crate::metadata::token::Token`]: crate::metadata::token::Token
     pub token: Token,
 
     /// The byte offset of this file in the metadata tables stream.
@@ -89,8 +89,8 @@ pub struct File {
     /// resource file.
     ///
     /// # Common Values
-    /// - **CONTAINS_META_DATA (0x0000)**: File contains .NET metadata
-    /// - **CONTAINS_NO_META_DATA (0x0001)**: Resource file without metadata
+    /// - **`CONTAINS_META_DATA` (0x0000)**: File contains .NET metadata
+    /// - **`CONTAINS_NO_META_DATA` (0x0001)**: Resource file without metadata
     ///
     /// [`FileAttributes`]: crate::metadata::tables::file::FileAttributes
     pub flags: u32,

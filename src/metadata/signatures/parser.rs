@@ -21,8 +21,8 @@
 //!
 //! # Supported Signature Types
 //!
-//! ## Method Signatures (MethodDefSig, MethodRefSig, StandAloneMethodSig)
-//! - Standard managed calling conventions (DEFAULT, HASTHIS, EXPLICIT_THIS)
+//! ## Method Signatures (`MethodDefSig`, `MethodRefSig`, `StandAloneMethodSig`)
+//! - Standard managed calling conventions (DEFAULT, HASTHIS, `EXPLICIT_THIS`)
 //! - Platform invoke calling conventions (C, STDCALL, THISCALL, FASTCALL)
 //! - Variable argument signatures (VARARG with sentinel markers)
 //! - Generic method signatures with type parameter counts
@@ -41,8 +41,8 @@
 //! ## Local Variable Signatures
 //! - Method local variable type lists
 //! - Pinned variables for unsafe code and interop
-//! - ByRef locals for reference semantics
-//! - TypedByRef for reflection scenarios
+//! - `ByRef` locals for reference semantics
+//! - `TypedByRef` for reflection scenarios
 //!
 //! ## Type Specification Signatures
 //! - Generic type instantiations (List&lt;T&gt;, Dictionary&lt;K,V&gt;)
@@ -109,18 +109,18 @@
 //!
 //! - **ECMA-335, Partition II, Section 23.2**: Blobs and signature formats
 //! - **ECMA-335, Partition II, Section 23.1**: Metadata validation rules
-//! - **CoreCLR sigparse.cpp**: Reference implementation patterns
+//! - **`CoreCLR` sigparse.cpp**: Reference implementation patterns
 //! - **.NET Runtime Documentation**: Implementation notes and edge cases
 
 use crate::{
     file::parser::Parser,
     metadata::{
         signatures::{
-            SignatureArray, SignatureField, SignatureLocalVariable, SignatureLocalVariables,
-            SignatureMethod, SignatureMethodSpec, SignatureParameter, SignaturePointer,
-            SignatureProperty, SignatureSzArray, SignatureTypeSpec, TypeSignature,
+            CustomModifier, SignatureArray, SignatureField, SignatureLocalVariable,
+            SignatureLocalVariables, SignatureMethod, SignatureMethodSpec, SignatureParameter,
+            SignaturePointer, SignatureProperty, SignatureSzArray, SignatureTypeSpec,
+            TypeSignature,
         },
-        token::Token,
         typesystem::{ArrayDimensions, ELEMENT_TYPE},
     },
     Error::RecursionLimit,
@@ -262,7 +262,7 @@ const MAX_RECURSION_DEPTH: usize = 50;
 /// - **Partition II, Section 23.2**: Binary blob and signature formats
 /// - **Partition II, Section 7**: Type system fundamentals
 /// - **Partition I, Section 8**: Common Type System (CTS) integration
-/// - **All signature types**: Method, Field, Property, LocalVar, TypeSpec, MethodSpec
+/// - **All signature types**: Method, Field, Property, `LocalVar`, `TypeSpec`, `MethodSpec`
 pub struct SignatureParser<'a> {
     /// Binary data parser for reading signature bytes
     parser: Parser<'a>,
@@ -316,7 +316,7 @@ impl<'a> SignatureParser<'a> {
     /// # Type Categories Supported
     ///
     /// ## Primitive Types
-    /// - **Void**: `void` (ELEMENT_TYPE_VOID)
+    /// - **Void**: `void` (`ELEMENT_TYPE_VOID`)
     /// - **Integers**: `bool`, `char`, `sbyte`, `byte`, `short`, `ushort`, `int`, `uint`, `long`, `ulong`
     /// - **Floating Point**: `float`, `double`
     /// - **Reference Types**: `string`, `object`
@@ -341,7 +341,7 @@ impl<'a> SignatureParser<'a> {
     /// signatures. The maximum depth is [`MAX_RECURSION_DEPTH`] levels.
     ///
     /// # Returns
-    /// A [`TypeSignature`] representing the parsed type information.
+    /// A [`crate::metadata::signatures::TypeSignature`] representing the parsed type information.
     ///
     /// # Errors
     /// - [`crate::error::Error::RecursionLimit`]: Maximum recursion depth exceeded
@@ -472,12 +472,12 @@ impl<'a> SignatureParser<'a> {
     /// # Modifier Types
     ///
     /// ## Required Modifiers (modreq)
-    /// - **CMOD_REQD (0x1F)**: Required for type identity and compatibility
+    /// - **`CMOD_REQD` (0x1F)**: Required for type identity and compatibility
     /// - **Usage**: Platform interop, const fields, security annotations
     /// - **Impact**: Affects type identity for assignment and method resolution
     ///
     /// ## Optional Modifiers (modopt)  
-    /// - **CMOD_OPT (0x20)**: Optional hints that don't affect type identity
+    /// - **`CMOD_OPT` (0x20)**: Optional hints that don't affect type identity
     /// - **Usage**: Optimization hints, debugging information, tool annotations
     /// - **Impact**: Preserved for metadata consumers but don't affect runtime behavior
     ///
@@ -511,18 +511,23 @@ impl<'a> SignatureParser<'a> {
     /// - Modifiers are relatively uncommon in most .NET code
     /// - Vector allocation is avoided when no modifiers are present
     /// - Parsing cost is linear in the number of modifiers
-    fn parse_custom_mods(&mut self) -> Result<Vec<Token>> {
+    fn parse_custom_mods(&mut self) -> Result<Vec<CustomModifier>> {
         let mut mods = Vec::new();
 
         while self.parser.has_more_data() {
-            let next_byte = self.parser.peek_byte()?;
-            if next_byte != 0x20 && next_byte != 0x1F {
-                break;
-            }
+            let is_required = match self.parser.peek_byte()? {
+                0x20 => false,
+                0x1F => true,
+                _ => break,
+            };
 
             self.parser.advance()?;
 
-            mods.push(self.parser.read_compressed_token()?);
+            let modifier_token = self.parser.read_compressed_token()?;
+            mods.push(CustomModifier {
+                is_required,
+                modifier_type: modifier_token,
+            });
         }
 
         Ok(mods)
@@ -545,11 +550,11 @@ impl<'a> SignatureParser<'a> {
     /// Zero or more custom modifiers (modreq/modopt) that apply to the parameter type.
     /// These provide additional type information for interop and advanced scenarios.
     ///
-    /// ## ByRef Semantics
+    /// ## `ByRef` Semantics
     /// - **BYREF (0x10)**: Indicates reference parameter semantics (`ref`, `out`, `in`)
     /// - **Reference Types**: Creates a reference to the reference (double indirection)
     /// - **Value Types**: Passes by reference instead of by value
-    /// - **Null References**: ByRef parameters cannot be null references
+    /// - **Null References**: `ByRef` parameters cannot be null references
     ///
     /// ## Parameter Types
     /// Any valid .NET type including primitives, classes, value types, arrays,
@@ -578,7 +583,7 @@ impl<'a> SignatureParser<'a> {
     /// # Returns
     /// A [`crate::metadata::signatures::SignatureParameter`] containing:
     /// - Custom modifier tokens
-    /// - ByRef flag for reference semantics
+    /// - `ByRef` flag for reference semantics
     /// - Complete type signature information
     ///
     /// # Errors
@@ -720,9 +725,9 @@ impl<'a> SignatureParser<'a> {
     /// - Generic parameter count is only parsed when GENERIC flag is set
     ///
     /// # ECMA-335 References
-    /// - **Partition II, Section 23.2.1**: MethodDefSig
-    /// - **Partition II, Section 23.2.2**: MethodRefSig  
-    /// - **Partition II, Section 23.2.3**: StandAloneMethodSig
+    /// - **Partition II, Section 23.2.1**: `MethodDefSig`
+    /// - **Partition II, Section 23.2.2**: `MethodRefSig`  
+    /// - **Partition II, Section 23.2.3**: `StandAloneMethodSig`
     /// - **Partition I, Section 14.3**: Calling conventions
     pub fn parse_method_signature(&mut self) -> Result<SignatureMethod> {
         let convention_byte = self.parser.read_le::<u8>()?;
@@ -1095,7 +1100,7 @@ impl<'a> SignatureParser<'a> {
     /// ```
     ///
     /// ## Local Variable Signature Header
-    /// - **LOCAL_SIG (0x07)**: Required signature type marker
+    /// - **`LOCAL_SIG` (0x07)**: Required signature type marker
     /// - **Count**: Compressed integer specifying number of local variables
     /// - **Validation**: Parser verifies signature starts with 0x07
     ///
@@ -1144,7 +1149,7 @@ impl<'a> SignatureParser<'a> {
     /// }
     /// ```
     ///
-    /// ## TypedByRef Locals
+    /// ## `TypedByRef` Locals
     /// Special locals for advanced reflection scenarios:
     /// ```csharp
     /// __makeref(variable);                  // TYPEDBYREF local
@@ -1217,7 +1222,7 @@ impl<'a> SignatureParser<'a> {
     ///
     /// # Performance Considerations
     /// - **Pinned Locals**: Can impact GC performance due to memory fragmentation
-    /// - **ByRef Locals**: Minimal overhead, similar to pointer operations
+    /// - **`ByRef` Locals**: Minimal overhead, similar to pointer operations
     /// - **Parsing Speed**: Linear in the number of local variables
     /// - **Memory Usage**: Efficient parsing with pre-allocated vectors
     ///
@@ -1265,8 +1270,13 @@ impl<'a> SignatureParser<'a> {
             while self.parser.has_more_data() {
                 match self.parser.peek_byte()? {
                     0x1F | 0x20 => {
+                        let is_required = self.parser.peek_byte()? == 0x1F;
                         self.parser.advance()?;
-                        custom_mods.push(self.parser.read_compressed_token()?);
+                        let modifier_token = self.parser.read_compressed_token()?;
+                        custom_mods.push(CustomModifier {
+                            is_required,
+                            modifier_type: modifier_token,
+                        });
                     }
                     0x45 => {
                         // PINNED constraint (ELEMENT_TYPE_PINNED) - II.23.2.9
@@ -1375,7 +1385,7 @@ impl<'a> SignatureParser<'a> {
     /// # Usage Context
     ///
     /// Type specifications are referenced from:
-    /// - **TypeSpec Table**: Metadata table entries for constructed types
+    /// - **`TypeSpec` Table**: Metadata table entries for constructed types
     /// - **Signature Blobs**: Complex type references in other signatures
     /// - **Custom Attributes**: Type arguments in attribute instantiations
     /// - **Generic Constraints**: Where clauses and type parameter bounds
@@ -1399,8 +1409,8 @@ impl<'a> SignatureParser<'a> {
     /// This method is not thread-safe. Use separate parser instances for concurrent operations.
     ///
     /// # ECMA-335 References
-    /// - **Partition II, Section 23.2.14**: TypeSpec signature format
-    /// - **Partition II, Section 22.39**: TypeSpec metadata table
+    /// - **Partition II, Section 23.2.14**: `TypeSpec` signature format
+    /// - **Partition II, Section 22.39**: `TypeSpec` metadata table
     /// - **Partition I, Section 8**: Type system and constructed types
     /// - **Partition II, Section 23.1.16**: Generic type instantiation validation
     pub fn parse_type_spec_signature(&mut self) -> Result<SignatureTypeSpec> {
@@ -1527,9 +1537,9 @@ impl<'a> SignatureParser<'a> {
     /// defined on the target method:
     /// - **where T : class**: Reference type constraints
     /// - **where T : struct**: Value type constraints  
-    /// - **where T : new()**: Default constructor constraints
-    /// - **where T : BaseClass**: Base class constraints
-    /// - **where T : IInterface**: Interface implementation constraints
+    /// - **where T : `new()`**: Default constructor constraints
+    /// - **where T : `BaseClass`**: Base class constraints
+    /// - **where T : `IInterface`**: Interface implementation constraints
     ///
     /// # Returns
     /// A [`crate::metadata::signatures::SignatureMethodSpec`] containing:
@@ -1553,8 +1563,8 @@ impl<'a> SignatureParser<'a> {
     /// This method is not thread-safe. Use separate parser instances for concurrent operations.
     ///
     /// # ECMA-335 References
-    /// - **Partition II, Section 23.2.15**: MethodSpec signature format
-    /// - **Partition II, Section 22.26**: MethodSpec metadata table
+    /// - **Partition II, Section 23.2.15**: `MethodSpec` signature format
+    /// - **Partition II, Section 22.26**: `MethodSpec` metadata table
     /// - **Partition II, Section 9.4**: Generic method instantiation
     /// - **Partition I, Section 9.5.1**: Generic method constraints and validation
     pub fn parse_method_spec_signature(&mut self) -> Result<SignatureMethodSpec> {
@@ -1578,6 +1588,8 @@ impl<'a> SignatureParser<'a> {
 
 #[cfg(test)]
 mod tests {
+    use crate::prelude::Token;
+
     use super::*;
 
     #[test]
@@ -1757,7 +1769,19 @@ mod tests {
         ]);
 
         let mods = parser.parse_custom_mods().unwrap();
-        assert_eq!(mods, vec![Token::new(0x1B000010), Token::new(0x01000012)]);
+        assert_eq!(
+            mods,
+            vec![
+                CustomModifier {
+                    is_required: false,
+                    modifier_type: Token::new(0x1B000010)
+                },
+                CustomModifier {
+                    is_required: true,
+                    modifier_type: Token::new(0x01000012)
+                }
+            ]
+        );
 
         // Verify we can still parse the type after the modifiers
         let type_sig = parser.parse_type().unwrap();
@@ -1828,7 +1852,7 @@ mod tests {
         let mut parser = SignatureParser::new(&[0xFF, 0x01]);
         assert!(matches!(
             parser.parse_method_signature(),
-            Err(crate::Error::OutOfBounds)
+            Err(crate::Error::OutOfBounds { .. })
         ));
 
         // Test invalid field signature format

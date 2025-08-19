@@ -1,11 +1,11 @@
-//! File metadata table implementation.
+//! `File` metadata table implementation.
 //!
-//! This module provides structures and utilities for working with the File metadata table,
+//! This module provides structures and utilities for working with the `File` metadata table,
 //! which lists files in a multi-file assembly. Each entry contains metadata about files
 //! that are part of the assembly but stored separately from the main manifest.
 //!
 //! # Overview
-//! The File table enables multi-file assembly scenarios:
+//! The `File` table enables multi-file assembly scenarios:
 //! - **Multi-module assemblies**: Additional .netmodule files containing code
 //! - **Resource files**: Binary data files (.resources, images, data)
 //! - **Native libraries**: Unmanaged DLLs for P/Invoke operations
@@ -21,10 +21,10 @@
 //! - [`FileRc`]: Reference-counted file for shared ownership
 //!
 //! # Table Structure
-//! Each File entry contains:
+//! Each `File` entry contains:
 //! - **Flags**: File attributes indicating type and characteristics
 //! - **Name**: String reference to the file name
-//! - **HashValue**: Cryptographic hash for integrity verification
+//! - **`HashValue`**: Cryptographic hash for integrity verification
 //!
 //! # File Types
 //! Files can be categorized by their purpose:
@@ -43,8 +43,8 @@
 //!
 //! # File Attributes
 //! The [`FileAttributes`] module defines flags for file classification:
-//! - **CONTAINS_META_DATA**: File contains .NET metadata (executable modules)
-//! - **CONTAINS_NO_META_DATA**: Resource files without metadata
+//! - **`CONTAINS_META_DATA`**: File contains .NET metadata (executable modules)
+//! - **`CONTAINS_NO_META_DATA`**: Resource files without metadata
 //!
 //! # Hash Verification
 //! Each file includes a cryptographic hash for security:
@@ -54,7 +54,7 @@
 //! - **Security assurance**: Prevents malicious file substitution
 //!
 //! # Import Integration
-//! Files can participate in import resolution through [`ImportContainer`]:
+//! Files can participate in import resolution through [`crate::metadata::imports::UnifiedImportContainer`]:
 //! - Module files can export types and members
 //! - Import analysis traverses file dependencies
 //! - Cross-file reference resolution
@@ -69,10 +69,14 @@ use crate::metadata::{
 use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
 
+mod builder;
 mod loader;
 mod owned;
 mod raw;
+mod reader;
+mod writer;
 
+pub use builder::*;
 pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;
@@ -97,7 +101,7 @@ pub type FileList = Arc<boxcar::Vec<FileRc>>;
 pub type FileRc = Arc<File>;
 
 #[allow(non_snake_case)]
-/// File attribute flags for the FileAttributes field.
+/// File attribute flags for the `FileAttributes` field.
 ///
 /// These constants define the possible values for the `Flags` field in File table entries,
 /// indicating the type and characteristics of files in multi-file assemblies.

@@ -17,10 +17,8 @@
 #![doc(html_no_source)]
 #![deny(missing_docs)]
 #![allow(dead_code)]
-#![allow(clippy::too_many_arguments)]
 //#![deny(unsafe_code)]
 // - 'userstring.rs' uses a transmute for converting a &[u8] to &[u16]
-// - 'tableheader.rs' uses a transmute for type conversion
 // - 'file/physical.rs' uses mmap to map a file into memory
 
 //! # dotscope
@@ -39,21 +37,21 @@
 //!
 //! - **File Layer**: Memory-mapped file access and binary parsing
 //! - **Metadata Layer**: ECMA-335 metadata parsing and type system representation  
-//! - **Disassembly Layer**: CIL instruction decoding and control flow analysis
+//! - **Assembly Layer**: CIL instruction processing with complete disassembly and assembly capabilities
 //! - **Validation Layer**: Configurable validation and integrity checking
 //!
 //! ## Key Components
 //!
 //! - [`crate::CilObject`] - Main entry point for .NET assembly analysis
 //! - [`crate::metadata`] - Complete ECMA-335 metadata parsing and type system
-//! - [`crate::disassembler`] - CIL instruction decoding and control flow analysis
+//! - [`crate::assembly`] - Complete CIL instruction processing: disassembly, analysis, and assembly
 //! - [`crate::prelude`] - Convenient re-exports of commonly used types
 //! - [`crate::Error`] and [`crate::Result`] - Comprehensive error handling
 //!
 //! # Features
 //!
 //! - **🔍 Complete metadata analysis** - Parse all ECMA-335 metadata tables and streams
-//! - **⚡ CIL disassembly** - CIL instruction decoding with control flow analysis
+//! - **⚡ CIL processing** - Complete instruction decoding, encoding, and control flow analysis
 //! - **🔧 Cross-platform** - Works on Windows, Linux, macOS, and any Rust-supported platform
 //! - **🛡️ Memory safe** - Built in Rust with comprehensive error handling
 //! - **📊 Rich type system** - Full support for generics, signatures, and complex .NET types
@@ -135,20 +133,21 @@
 //!     let imports = assembly.imports();
 //!     let exports = assembly.exports();
 //!     
-//!     println!("Imports: {} items", imports.len());
-//!     println!("Exports: {} items", exports.len());
+//!     println!("Imports: {} items", imports.total_count());
+//!     println!("Exports: {} items", exports.total_count());
 //!     
 //!     Ok(())
 //! }
 //! ```
 //!
-//! ### Disassembly Analysis
+//! ### CIL Instruction Processing
 //!
-//! The disassembler module provides comprehensive CIL instruction decoding and control flow analysis.
-//! See the [`crate::disassembler`] module documentation for detailed usage examples.
+//! The assembly module provides comprehensive CIL instruction processing with both disassembly
+//! (bytecode to instructions) and assembly (instructions to bytecode) capabilities.
 //!
+//! #### Disassembly
 //! ```rust,no_run
-//! use dotscope::{disassembler::decode_instruction, Parser};
+//! use dotscope::{assembly::decode_instruction, Parser};
 //!
 //! let bytecode = &[0x00, 0x2A]; // nop, ret
 //! let mut parser = Parser::new(bytecode);
@@ -159,10 +158,24 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
+//! #### Assembly
+//! ```rust,no_run
+//! use dotscope::assembly::InstructionAssembler;
+//!
+//! let mut asm = InstructionAssembler::new();
+//! asm.ldarg_0()?      // Load first argument
+//!    .ldarg_1()?      // Load second argument
+//!    .add()?          // Add them together
+//!    .ret()?;         // Return result
+//! let bytecode = asm.finish()?; // Returns [0x02, 0x03, 0x58, 0x2A]
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
 //! # Integration
 //!
-//! The metadata analysis seamlessly integrates with the disassembly engine. The [`crate::CilObject`] provides
-//! access to both metadata and method bodies for comprehensive analysis workflows.
+//! The instruction processing seamlessly integrates with the metadata system. The [`crate::CilObject`] provides
+//! access to both metadata and method bodies for comprehensive analysis workflows, while the assembly
+//! system uses the same instruction metadata to ensure perfect consistency between disassembly and assembly.
 //!
 //! ### Metadata-Driven Disassembly
 //!
@@ -181,11 +194,8 @@
 //!     let name = strings.get(1)?; // Indexed access
 //!     
 //!     // Iterate through all entries
-//!     for result in strings.iter() {
-//!         match result {
-//!             Ok((offset, string)) => println!("String at {}: '{}'", offset, string),
-//!             Err(e) => eprintln!("Error: {}", e),
-//!         }
+//!     for (offset, string) in strings.iter() {
+//!         println!("String at {}: '{}'", offset, string);
 //!     }
 //! }
 //! # Ok::<(), dotscope::Error>(())
@@ -218,7 +228,7 @@
 //!
 //! # Thread Safety
 //!
-//! All public types are [`Send`] and [`Sync`] unless explicitly documented otherwise. The library
+//! All public types are [`std::marker::Send`] and [`std::marker::Sync`] unless explicitly documented otherwise. The library
 //! is designed for safe concurrent access across multiple threads.
 //!
 //! # Development and Testing
@@ -229,6 +239,7 @@ pub(crate) mod macros;
 #[macro_use]
 pub(crate) mod error;
 pub(crate) mod file;
+pub(crate) mod utils;
 
 /// Shared functionality which is used in unit- and integration-tests
 #[cfg(test)]
@@ -266,34 +277,46 @@ pub(crate) mod test;
 /// All re-exported types maintain their original thread safety guarantees.
 pub mod prelude;
 
-/// CIL instruction decoding and disassembly based on ECMA-335.
+/// CIL instruction processing: disassembly, analysis, and assembly based on ECMA-335.
 ///
-/// This module provides comprehensive CIL (Common Intermediate Language) instruction decoding
-/// and disassembly capabilities. It implements the complete ECMA-335 instruction set with
-/// support for control flow analysis and stack effect tracking.
+/// This module provides comprehensive CIL (Common Intermediate Language) instruction processing
+/// capabilities, including both disassembly (bytecode to instructions) and assembly (instructions
+/// to bytecode). It implements the complete ECMA-335 instruction set with support for control flow
+/// analysis, stack effect tracking, and bidirectional instruction processing.
 ///
 /// # Architecture
 ///
-/// The disassembler is built around several core concepts:
+/// The assembly module is built around several core concepts:
 /// - **Instruction Decoding**: Binary CIL bytecode to structured instruction representation
+/// - **Instruction Encoding**: Structured instructions back to binary CIL bytecode
 /// - **Control Flow Analysis**: Building basic blocks and analyzing program flow
 /// - **Stack Effect Analysis**: Tracking how instructions affect the evaluation stack
-/// - **Exception Handling**: Parsing try/catch/finally regions and exception handlers
+/// - **Label Resolution**: Automatic resolution of branch targets and labels
+/// - **Type Safety**: Compile-time validation of instruction operand types
 ///
 /// # Key Components
 ///
-/// - [`crate::disassembler::Instruction`] - Represents a decoded CIL instruction
-/// - [`crate::disassembler::BasicBlock`] - A sequence of instructions with single entry/exit
-/// - [`crate::disassembler::Operand`] - Instruction operands (immediates, tokens, targets)
-/// - [`crate::disassembler::FlowType`] - How instructions affect control flow
-/// - [`crate::disassembler::decode_instruction`] - Decode a single instruction
-/// - [`crate::disassembler::decode_stream`] - Decode a sequence of instructions  
-/// - [`crate::disassembler::decode_blocks`] - Build basic blocks from instruction stream
+/// ## Disassembly Components
+/// - [`crate::assembly::decode_instruction`] - Decode a single instruction
+/// - [`crate::assembly::decode_stream`] - Decode a sequence of instructions  
+/// - [`crate::assembly::decode_blocks`] - Build basic blocks from instruction stream
+///
+/// ## Assembly Components  
+/// - [`crate::assembly::InstructionEncoder`] - Low-level instruction encoding (supports all 220 CIL instructions)
+/// - [`crate::assembly::InstructionAssembler`] - High-level fluent API for common instruction patterns
+/// - [`crate::assembly::LabelFixup`] - Label resolution system for branch instructions
+///
+/// ## Shared Components
+/// - [`crate::assembly::Instruction`] - Represents a decoded CIL instruction
+/// - [`crate::assembly::BasicBlock`] - A sequence of instructions with single entry/exit
+/// - [`crate::assembly::Operand`] - Instruction operands (immediates, tokens, targets)
+/// - [`crate::assembly::FlowType`] - How instructions affect control flow
 ///
 /// # Usage Examples
 ///
+/// ## Disassembly
 /// ```rust,no_run
-/// use dotscope::{disassembler::decode_instruction, Parser};
+/// use dotscope::{assembly::decode_instruction, Parser};
 ///
 /// let bytecode = &[0x00, 0x2A]; // nop, ret
 /// let mut parser = Parser::new(bytecode);
@@ -304,15 +327,42 @@ pub mod prelude;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
+/// ## High-Level Assembly
+/// ```rust,no_run
+/// use dotscope::assembly::InstructionAssembler;
+///
+/// let mut asm = InstructionAssembler::new();
+/// asm.ldarg_0()?      // Load first argument
+///    .ldarg_1()?      // Load second argument
+///    .add()?          // Add them together
+///    .ret()?;         // Return result
+/// let bytecode = asm.finish()?;
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+///
+/// ## Low-Level Assembly
+/// ```rust,no_run
+/// use dotscope::assembly::{InstructionEncoder, Operand, Immediate};
+///
+/// let mut encoder = InstructionEncoder::new();
+/// encoder.emit_instruction("nop", None)?;
+/// encoder.emit_instruction("ldarg.s", Some(Operand::Immediate(Immediate::Int8(1))))?;
+/// encoder.emit_instruction("ret", None)?;
+/// let bytecode = encoder.finalize()?;
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+///
 /// # Integration
 ///
-/// The disassembler integrates with the metadata system to resolve tokens and provide
-/// rich semantic information about method calls, field access, and type operations.
+/// The assembly module integrates with the metadata system to resolve tokens and provide
+/// rich semantic information about method calls, field access, and type operations. The
+/// encoder and assembler use the same instruction metadata as the disassembler, ensuring
+/// perfect consistency between assembly and disassembly operations.
 ///
 /// # Thread Safety
 ///
-/// All disassembler types are [`Send`] and [`Sync`] for safe concurrent processing.
-pub mod disassembler;
+/// All assembly types are [`std::marker::Send`] and [`std::marker::Sync`] for safe concurrent processing.
+pub mod assembly;
 
 /// .NET metadata parsing, loading, and type system based on ECMA-335.
 ///
@@ -393,12 +443,12 @@ pub mod disassembler;
 ///
 /// # Thread Safety
 ///
-/// All metadata types are [`Send`] and [`Sync`] for safe concurrent access.
+/// All metadata types are [`std::marker::Send`] and [`std::marker::Sync`] for safe concurrent access.
 pub mod metadata;
 
 /// `dotscope` Result type.
 ///
-/// A type alias for [`std::result::Result<T, Error>`] where the error type is always [`crate::Error`].
+/// A type alias for `std::result::Result<T, Error>` where the error type is always [`crate::Error`].
 /// This is used consistently throughout the crate for all fallible operations.
 ///
 /// # Usage Examples
@@ -431,6 +481,91 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// ```
 pub use error::Error;
 
+/// Raw assembly view for editing and modification operations.
+///
+/// `CilAssemblyView` provides direct access to .NET assembly metadata structures
+/// while maintaining a 1:1 mapping with the underlying file format. Unlike [`CilObject`]
+/// which provides processed and resolved metadata optimized for analysis, `CilAssemblyView`
+/// preserves the raw structure to enable future editing capabilities.
+///
+/// # Key Features
+///
+/// - **Raw Structure Access**: Direct access to metadata tables and streams as they appear in the file
+/// - **No Validation**: Pure parsing without format validation or compliance checks
+/// - **Memory Efficient**: Self-referencing pattern avoids data duplication
+/// - **Thread Safe**: Immutable design enables safe concurrent access
+///
+/// # Usage Examples
+///
+/// ```rust,no_run
+/// use dotscope::CilAssemblyView;
+/// use std::path::Path;
+///
+/// // Load assembly for raw metadata access
+/// let view = CilAssemblyView::from_file(Path::new("assembly.dll"))?;
+///
+/// // Access raw metadata tables
+/// if let Some(tables) = view.tables() {
+///     println!("Schema version: {}.{}", tables.major_version, tables.minor_version);
+/// }
+///
+/// // Access string heaps directly
+/// if let Some(strings) = view.strings() {
+///     if let Ok(name) = strings.get(0x123) {
+///         println!("Raw string: {}", name);
+///     }
+/// }
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+///
+/// # Converting to Mutable Assembly
+///
+/// `CilAssemblyView` can be converted to a mutable [`CilAssembly`] for editing operations:
+///
+/// ```rust,no_run
+/// use dotscope::{CilAssemblyView, CilAssembly};
+/// let view = CilAssemblyView::from_file(std::path::Path::new("assembly.dll"))?;
+/// let mut assembly = view.to_owned(); // Convert to mutable CilAssembly
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+pub use metadata::cilassemblyview::CilAssemblyView;
+
+/// Mutable assembly for editing and modification operations.
+///
+/// `CilAssembly` provides a mutable layer on top of [`CilAssemblyView`] that enables
+/// editing of .NET assembly metadata while tracking changes efficiently. It uses a
+/// copy-on-write strategy to minimize memory usage and provides high-level APIs
+/// for adding, modifying, and deleting metadata elements.
+///
+/// # Key Features
+///
+/// - **Change Tracking**: Efficiently tracks modifications without duplicating unchanged data
+/// - **High-level APIs**: Builder patterns for creating types, methods, fields, etc.
+/// - **Binary Generation**: Write modified assemblies back to disk
+/// - **Validation**: Optional validation of metadata consistency
+///
+/// # Usage Examples
+///
+/// ```rust,no_run
+/// use dotscope::{CilAssemblyView, CilAssembly};
+///
+/// // Load and convert to mutable assembly
+/// let view = CilAssemblyView::from_file(std::path::Path::new("assembly.dll"))?;
+/// let mut assembly = view.to_owned();
+///
+/// // Add a new string to the heap
+/// let string_index = assembly.string_add("Hello, World!")?;
+///
+/// // Write changes back to file
+/// assembly.write_to_file("modified_assembly.dll")?;
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+pub use cilassembly::{
+    BuilderContext, CilAssembly, LastWriteWinsResolver, MethodBodyBuilder, MethodBuilder,
+    ReferenceHandlingStrategy,
+};
+mod cilassembly;
+
 /// Main entry point for working with .NET assemblies.
 ///
 /// See [`crate::metadata::cilobject::CilObject`] for high-level analysis and metadata access.
@@ -462,7 +597,7 @@ pub use metadata::cilobject::CilObject;
 /// )?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
-pub use metadata::validation::ValidationConfig;
+pub use metadata::validation::{ValidationConfig, ValidationEngine};
 
 /// Metadata streams and heaps for direct access to ECMA-335 data structures.
 ///
@@ -488,11 +623,8 @@ pub use metadata::validation::ValidationConfig;
 ///     let name = strings.get(1)?; // Indexed access
 ///     
 ///     // Iterate through all entries
-///     for result in strings.iter() {
-///         match result {
-///             Ok((offset, string)) => println!("String at {}: '{}'", offset, string),
-///             Err(e) => eprintln!("Error: {}", e),
-///         }
+///     for (offset, string) in strings.iter() {
+///         println!("String at {}: '{}'", offset, string);
 ///     }
 /// }
 /// # Ok::<(), dotscope::Error>(())
@@ -511,11 +643,19 @@ pub use metadata::streams::{
 /// # Usage Examples
 ///
 /// ```rust,no_run
-/// use dotscope::{Parser, disassembler::decode_instruction};
+/// use dotscope::{Parser, assembly::decode_instruction};
 /// let code = [0x2A]; // ret
 /// let mut parser = Parser::new(&code);
 /// let instr = decode_instruction(&mut parser, 0x1000)?;
 /// assert_eq!(instr.mnemonic, "ret");
 /// # Ok::<(), dotscope::Error>(())
 /// ```
-pub use file::{parser::Parser, File};
+pub use file::{
+    parser::Parser,
+    pe::{
+        CoffHeader, DataDirectories, DataDirectory, DataDirectoryType, DosHeader,
+        Export as PeExport, Import as PeImport, OptionalHeader, Pe, SectionTable, StandardFields,
+        WindowsFields,
+    },
+    File,
+};

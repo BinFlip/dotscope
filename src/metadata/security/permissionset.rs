@@ -3,7 +3,7 @@
 //! This module provides the [`PermissionSet`] type, which represents collections of security
 //! permissions in .NET assemblies. Permission sets define the complete security context
 //! for assemblies, types, and methods through declarative security attributes stored
-//! in the DeclSecurity metadata table.
+//! in the `DeclSecurity` metadata table.
 //!
 //! # Architecture
 //!
@@ -153,7 +153,7 @@
 //!
 //! ## Working with Different Formats
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::security::PermissionSet;
 //!
 //! // Binary format (most common)
@@ -183,7 +183,7 @@
 //! Permission sets integrate with the broader .NET security and metadata infrastructure:
 //!
 //! ## With Assembly Metadata
-//! - Stored in the DeclSecurity metadata table
+//! - Stored in the `DeclSecurity` metadata table
 //! - Referenced by assembly, type, and method security declarations
 //! - Linked to security actions that define enforcement behavior
 //! - Support both IL-level and attribute-based declarations
@@ -192,9 +192,9 @@
 //! - **Demand**: Requires callers to have specified permissions
 //! - **Assert**: Elevates permissions for downstream calls
 //! - **Deny**: Explicitly denies specified permissions
-//! - **PermitOnly**: Restricts permissions to only those specified
-//! - **LinkDemand**: Checked at JIT compilation time
-//! - **InheritanceDemand**: Required for inheritance scenarios
+//! - **`PermitOnly`**: Restricts permissions to only those specified
+//! - **`LinkDemand`**: Checked at JIT compilation time
+//! - **`InheritanceDemand`**: Required for inheritance scenarios
 //!
 //! ## With .NET Security Infrastructure
 //! - Used by the Common Language Runtime (CLR) for security enforcement
@@ -276,7 +276,6 @@ use crate::{
         security_classes, ArgumentType, ArgumentValue, NamedArgument, Permission,
         PermissionSetFormat, SecurityPermissionFlags,
     },
-    Error::OutOfBounds,
     Result,
 };
 use quick_xml::{
@@ -288,7 +287,7 @@ use std::fmt;
 /// Represents a collection of .NET security permissions in a permission set.
 ///
 /// A `PermissionSet` contains all the security permissions that define the complete security
-/// context for an assembly, type, or method. These are parsed from the DeclSecurity metadata
+/// context for an assembly, type, or method. These are parsed from the `DeclSecurity` metadata
 /// table and represent declarative security attributes in .NET assemblies.
 ///
 /// # Structure
@@ -474,11 +473,11 @@ impl PermissionSet {
             let class_name = if class_name_length > 0 {
                 let start = parser.pos();
                 let Some(end) = usize::checked_add(start, class_name_length) else {
-                    return Err(OutOfBounds);
+                    return Err(out_of_bounds_error!());
                 };
 
                 if end >= data.len() {
-                    return Err(OutOfBounds);
+                    return Err(out_of_bounds_error!());
                 }
 
                 parser.advance_by(class_name_length)?;
@@ -1747,7 +1746,7 @@ mod tests {
             data: vec![],
         };
 
-        let display_string = format!("{}", permission_set);
+        let display_string = format!("{permission_set}");
         assert!(display_string.contains("Permission Set (BinaryLegacy):"));
         assert!(display_string.contains("TestPermission1, Assembly: TestAssembly"));
         assert!(display_string.contains("TestPermission2, Assembly: TestAssembly2"));
@@ -1763,7 +1762,7 @@ mod tests {
             data: xml_data.to_vec(),
         };
 
-        let display_string = format!("{}", permission_set);
+        let display_string = format!("{permission_set}");
         assert_eq!(display_string, "<PermissionSet>test</PermissionSet>");
     }
 

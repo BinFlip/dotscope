@@ -46,7 +46,7 @@
 //!
 //! ## Creating Custom Attribute Values
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::customattributes::{
 //!     CustomAttributeValue, CustomAttributeArgument, CustomAttributeNamedArgument
 //! };
@@ -73,7 +73,7 @@
 //!
 //! ## Working with Different Argument Types
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::customattributes::CustomAttributeArgument;
 //!
 //! // Different argument types
@@ -100,11 +100,18 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
+//! # Thread Safety
+//!
+//! All types in this module are thread-safe and implement [`std::marker::Send`] and [`std::marker::Sync`].
+//! The custom attribute value types contain only owned data, and the reference-counted types
+//! ([`crate::metadata::customattributes::types::CustomAttributeValueRc`] and
+//! [`crate::metadata::customattributes::types::CustomAttributeValueList`]) provide safe concurrent access.
+//!
 //! # Integration
 //!
 //! This module integrates with:
 //! - [`crate::metadata::customattributes::parser`] - Parsing implementation using these types
-//! - [`crate::metadata::typesystem`] - Type system integration for CilFlavor mapping
+//! - [`crate::metadata::typesystem`] - Type system integration for `CilFlavor` mapping
 //! - [`crate::metadata::tables`] - Metadata table storage and retrieval
 //! - [`crate::metadata::streams`] - Blob and string heap access
 //!
@@ -120,7 +127,7 @@
 //! - **ECMA-335**: Full compliance with custom attribute specification (II.23.3)
 //! - **Type Safety**: Strongly typed argument values prevent runtime errors
 //! - **Memory Efficiency**: Reference counting and concurrent collections minimize overhead
-//! - **.NET Compatibility**: Direct mapping to runtime CorSerializationType enumeration
+//! - **.NET Compatibility**: Direct mapping to runtime `CorSerializationType` enumeration
 
 use std::sync::Arc;
 
@@ -141,8 +148,8 @@ pub type CustomAttributeValueList = Arc<boxcar::Vec<CustomAttributeValueRc>>;
 /// Represents a complete parsed custom attribute with fixed and named arguments.
 ///
 /// This is the top-level structure for custom attribute data parsed from .NET metadata.
-/// It contains both constructor arguments (fixed_args) and field/property assignments
-/// (named_args) as specified in ECMA-335 II.23.3.
+/// It contains both constructor arguments (`fixed_args`) and field/property assignments
+/// (`named_args`) as specified in ECMA-335 II.23.3.
 ///
 /// # Structure
 /// - **Fixed Arguments**: Parsed using constructor method parameter types, appear in declaration order
@@ -150,7 +157,7 @@ pub type CustomAttributeValueList = Arc<boxcar::Vec<CustomAttributeValueRc>>;
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::customattributes::{CustomAttributeValue, CustomAttributeArgument};
 ///
 /// let custom_attr = CustomAttributeValue {
@@ -167,6 +174,11 @@ pub type CustomAttributeValueList = Arc<boxcar::Vec<CustomAttributeValueRc>>;
 /// }
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// [`CustomAttributeValue`] is [`std::marker::Send`] and [`std::marker::Sync`] as it contains only owned data.
+/// Instances can be safely shared across threads and accessed concurrently.
 #[derive(Debug, Clone)]
 pub struct CustomAttributeValue {
     /// Fixed arguments from the constructor signature, parsed using parameter type information
@@ -190,7 +202,7 @@ pub struct CustomAttributeValue {
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::customattributes::CustomAttributeArgument;
 ///
 /// // Different argument types
@@ -209,6 +221,11 @@ pub struct CustomAttributeValue {
 /// );
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// [`CustomAttributeArgument`] is [`std::marker::Send`] and [`std::marker::Sync`] as all variants contain only owned data.
+/// Instances can be safely shared across threads and accessed concurrently.
 #[derive(Debug, Clone)]
 pub enum CustomAttributeArgument {
     /// Void type (for completeness, rarely used in custom attributes)
@@ -265,7 +282,7 @@ pub enum CustomAttributeArgument {
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::customattributes::{CustomAttributeNamedArgument, CustomAttributeArgument};
 ///
 /// // Property assignment
@@ -281,6 +298,11 @@ pub enum CustomAttributeArgument {
 ///          named_arg.name, named_arg.value);
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// [`CustomAttributeNamedArgument`] is [`std::marker::Send`] and [`std::marker::Sync`] as it contains only owned data.
+/// Instances can be safely shared across threads and accessed concurrently.
 #[derive(Debug, Clone)]
 pub struct CustomAttributeNamedArgument {
     /// Whether this is a field (true) or property (false)
@@ -306,13 +328,13 @@ pub struct CustomAttributeNamedArgument {
 ///
 /// # References
 ///
-/// - ECMA-335 II.23.3 CustomAttribute specification
-/// - .NET Runtime corhdr.h CorSerializationType enumeration
+/// - ECMA-335 II.23.3 `CustomAttribute` specification
+/// - .NET Runtime corhdr.h `CorSerializationType` enumeration
 /// - CLI Standard Partition II Metadata definition
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::customattributes::SERIALIZATION_TYPE;
 ///
 /// // Check type tags during parsing

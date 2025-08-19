@@ -1,11 +1,11 @@
-//! GenericParamConstraint table loader implementation.
+//! `GenericParamConstraint` table loader implementation.
 //!
 //! This module provides the [`GenericParamConstraintLoader`] responsible for loading and processing
-//! GenericParamConstraint metadata table entries. The GenericParamConstraint table defines constraints
+//! `GenericParamConstraint` metadata table entries. The `GenericParamConstraint` table defines constraints
 //! that apply to generic parameters, specifying base classes and interfaces that type arguments must satisfy.
 //!
 //! # Purpose
-//! The GenericParamConstraint table is used for generic constraint enforcement:
+//! The `GenericParamConstraint` table is used for generic constraint enforcement:
 //! - **Base class constraints**: Specifying required base classes for type arguments
 //! - **Interface constraints**: Requiring type arguments to implement specific interfaces
 //! - **Type safety**: Compile-time verification of constraint satisfaction
@@ -21,15 +21,15 @@
 //! - **Circular constraints**: `where T : IComparable<T>` (self-referential)
 //!
 //! # Table Dependencies
-//! - **GenericParam**: Required for resolving generic parameter owners
-//! - **TypeDef**: Required for internal type references in constraints
-//! - **TypeSpec**: Required for type specifications in constraints
-//! - **TypeRef**: Required for external type references in constraints
-//! - **MethodDef**: Required for method-level generic parameter resolution
-//! - **MemberRef**: Required for member references in constraints
+//! - **`GenericParam`**: Required for resolving generic parameter owners
+//! - **`TypeDef`**: Required for internal type references in constraints
+//! - **`TypeSpec`**: Required for type specifications in constraints
+//! - **`TypeRef`**: Required for external type references in constraints
+//! - **`MethodDef`**: Required for method-level generic parameter resolution
+//! - **`MemberRef`**: Required for member references in constraints
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.21 for the GenericParamConstraint table specification.
+//! See ECMA-335, Partition II, §22.21 for the `GenericParamConstraint` table specification.
 
 use crate::{
     metadata::{
@@ -40,9 +40,9 @@ use crate::{
     Result,
 };
 
-/// Loader implementation for the GenericParamConstraint metadata table.
+/// Loader implementation for the `GenericParamConstraint` metadata table.
 ///
-/// This loader processes GenericParamConstraint table entries which define constraints
+/// This loader processes `GenericParamConstraint` table entries which define constraints
 /// that apply to generic parameters. Each entry specifies a type that serves as a
 /// constraint for a generic parameter, enabling type-safe generic programming.
 ///
@@ -53,7 +53,7 @@ use crate::{
 /// - **Collection Storage**: Stores processed entries in the metadata loader context
 ///
 /// # Constraint Context
-/// GenericParamConstraint entries are used for:
+/// `GenericParamConstraint` entries are used for:
 /// - **Base class constraints**: Inheritance requirements for type arguments
 /// - **Interface constraints**: Implementation requirements for type arguments
 /// - **Type safety**: Compile-time verification of generic usage
@@ -67,13 +67,13 @@ use crate::{
 /// - Concurrent access conflicts occur
 /// - Constraint application to parameters fails
 ///   /// # ECMA-335 Reference
-///   See ECMA-335, Partition II, §22.21 for complete GenericParamConstraint table specification.
+///   See ECMA-335, Partition II, §22.21 for complete `GenericParamConstraint` table specification.
 pub(crate) struct GenericParamConstraintLoader;
 
 impl MetadataLoader for GenericParamConstraintLoader {
-    /// Load and process all GenericParamConstraint table entries.
+    /// Load and process all `GenericParamConstraint` table entries.
     ///
-    /// This method iterates through the GenericParamConstraint table, resolving parameter
+    /// This method iterates through the `GenericParamConstraint` table, resolving parameter
     /// and type references to build complete constraint structures. Each entry defines
     /// a constraint that applies to a specific generic parameter.
     ///
@@ -87,9 +87,7 @@ impl MetadataLoader for GenericParamConstraintLoader {
     /// - Parallel processing encounters errors
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) =
-                header.table::<GenericParamConstraintRaw>(TableId::GenericParamConstraint)
-            {
+            if let Some(table) = header.table::<GenericParamConstraintRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let res = row.to_owned(&context.generic_param, context.types)?;
                     res.apply()?;
@@ -102,20 +100,20 @@ impl MetadataLoader for GenericParamConstraintLoader {
         Ok(())
     }
 
-    /// Returns the table identifier for the GenericParamConstraint table.
+    /// Returns the table identifier for the `GenericParamConstraint` table.
     ///
     /// # Returns
     /// Returns [`TableId::GenericParamConstraint`] indicating this loader handles
-    /// the GenericParamConstraint table.
+    /// the `GenericParamConstraint` table.
     ///
     /// [`TableId::GenericParamConstraint`]: crate::prelude::TableId::GenericParamConstraint
     fn table_id(&self) -> TableId {
         TableId::GenericParamConstraint
     }
 
-    /// Returns the table dependencies for GenericParamConstraint loading.
+    /// Returns the table dependencies for `GenericParamConstraint` loading.
     ///
-    /// The GenericParamConstraint table depends on multiple tables since constraints
+    /// The `GenericParamConstraint` table depends on multiple tables since constraints
     /// can reference various types and must be associated with generic parameters.
     ///
     /// # Returns
@@ -123,12 +121,12 @@ impl MetadataLoader for GenericParamConstraintLoader {
     /// constraint resolution and parameter association.
     ///
     /// # Dependency Chain
-    /// - **GenericParam**: Required for resolving constraint target parameters
-    /// - **TypeDef**: Required for internal type references in constraints
-    /// - **TypeSpec**: Required for complex type specifications in constraints
-    /// - **TypeRef**: Required for external type references in constraints
-    /// - **MethodDef**: Required for method-level generic parameter resolution
-    /// - **MemberRef**: Required for member references in constraint contexts
+    /// - **`GenericParam`**: Required for resolving constraint target parameters
+    /// - **`TypeDef`**: Required for internal type references in constraints
+    /// - **`TypeSpec`**: Required for complex type specifications in constraints
+    /// - **`TypeRef`**: Required for external type references in constraints
+    /// - **`MethodDef`**: Required for method-level generic parameter resolution
+    /// - **`MemberRef`**: Required for member references in constraint contexts
     ///
     /// [`TableId::GenericParam`]: crate::prelude::TableId::GenericParam
     /// [`TableId::TypeDef`]: crate::prelude::TableId::TypeDef

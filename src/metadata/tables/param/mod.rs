@@ -39,7 +39,7 @@
 //!
 //! ## Parameter Attributes
 //!
-//! The [`ParamAttributes`] module defines all possible parameter flags:
+//! The [`crate::metadata::tables::ParamAttributes`] module defines all possible parameter flags:
 //!
 //! ### Direction Attributes
 //! - [`IN`](ParamAttributes::IN) - Parameter is input (passed to method)
@@ -64,10 +64,14 @@ use crate::metadata::token::Token;
 use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
 
+mod builder;
 mod loader;
 mod owned;
 mod raw;
+mod reader;
+mod writer;
 
+pub use builder::*;
 pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;
@@ -125,7 +129,7 @@ pub mod ParamAttributes {
     /// Parameter has marshalling information defined.
     ///
     /// This flag indicates that the parameter has custom marshalling information
-    /// defined in the FieldMarshal table for interop scenarios.
+    /// defined in the `FieldMarshal` table for interop scenarios.
     pub const HAS_FIELD_MARSHAL: u32 = 0x2000;
 
     /// Reserved bits that shall be zero in conforming implementations.

@@ -41,12 +41,12 @@ pub struct Event {
     /// Row identifier within the Event metadata table
     ///
     /// The 1-based index of this event row. Used for metadata token generation
-    /// and cross-referencing with other metadata structures like MethodSemantics.
+    /// and cross-referencing with other metadata structures like `MethodSemantics`.
     pub rid: u32,
 
     /// Metadata token for this event
     ///
-    /// Combines the table identifier (0x14 for Event) with the row ID to create
+    /// Combines the table identifier (0x14 for `Event`) with the row ID to create
     /// a unique token that can be used to reference this event from other metadata.
     pub token: Token,
 
@@ -66,14 +66,14 @@ pub struct Event {
     /// Event name identifier
     ///
     /// The name of the event as it appears in source code. Event names typically
-    /// follow C# conventions (PascalCase) and should be descriptive of the notification
+    /// follow C# conventions (`PascalCase`) and should be descriptive of the notification
     /// being provided. This name is used for reflection and debugging.
     pub name: String,
 
     /// Type reference for the event handler delegate
     ///
     /// References the delegate type that defines the event handler signature through
-    /// a TypeDef, TypeRef, or TypeSpec. This enforces type safety for event subscribers
+    /// a `TypeDef`, `TypeRef`, or `TypeSpec`. This enforces type safety for event subscribers
     /// and determines the method signature that event handlers must implement.
     pub event_type: CilTypeRef,
 

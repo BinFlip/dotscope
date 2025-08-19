@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2025-08-19
+
+### Added
+
+- **Assembly Encoder and Builder System**: Complete CIL assembly encoder and builder implementation with high-performance benchmarks
+- **High-Level Builders**: Added builders for classes, enums, events, interfaces, properties, and methods with full CIL method body support
+- **Binary Modification Capabilities**: Full binary modification support with method injection and exception handler support using label-based targeting
+- **PortablePDB Support**: Complete PortablePDB parsing implementation for enhanced debugging information
+- **EnC (Edit and Continue) Tables**: Support for Edit and Continue metadata tables
+- **Validation System**: Comprehensive validation framework to ensure modified binaries remain valid and loadable
+- **Binary Serialization**: Capability to write modified assemblies back to disk
+
+### Changed
+
+- **Module Organization**: Renamed `disassembler` module to `assembly` in preparation for encoder implementation
+- **File Structure**: Removed `self_reflecting` from File structure, storing PE information locally for improved performance
+
+### Fixed
+
+- Fixed regression in size field length calculation
+- Fixed multiple issues causing modified binaries to be invalid
+- Fixed clippy warnings for latest Rust versions
+- Various binary modification stability improvements
+
+### Improved
+
+- Enhanced integration testing with Mono runtime verification
+- Improved PE file handling and structure
+- Better separation between parsing and encoding functionality
+- Updated examples and documentation
+
 ## [0.3.2] - 2025-06-17
 
 ### Fixed

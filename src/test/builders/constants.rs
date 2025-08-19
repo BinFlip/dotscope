@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use crate::metadata::{
     tables::{
-        CodedIndex, Constant, ConstantRaw, ConstantRc, FieldRc, ParamRc, PropertyRc, TableId,
+        CodedIndex, CodedIndexType, Constant, ConstantRaw, ConstantRc, FieldRc, ParamRc,
+        PropertyRc, TableId,
     },
     token::Token,
     typesystem::{CilPrimitive, CilTypeReference, ELEMENT_TYPE},
@@ -139,6 +140,7 @@ impl ConstantRawBuilder {
                 tag: TableId::Field,
                 row: field_rid,
                 token: Token::new(0x04000000 + field_rid),
+                ci_type: CodedIndexType::HasConstant,
             },
             blob_offset,
         )
@@ -153,6 +155,7 @@ impl ConstantRawBuilder {
                 tag: TableId::Param,
                 row: param_rid,
                 token: Token::new(0x08000000 + param_rid),
+                ci_type: CodedIndexType::HasConstant,
             },
             blob_offset,
         )
@@ -167,6 +170,7 @@ impl ConstantRawBuilder {
                 tag: TableId::Property,
                 row: property_rid,
                 token: Token::new(0x17000000 + property_rid),
+                ci_type: CodedIndexType::HasConstant,
             },
             blob_offset,
         )
@@ -181,6 +185,7 @@ impl ConstantRawBuilder {
                 tag: TableId::TypeDef, // Invalid for constants
                 row: 1,
                 token: Token::new(0x02000001),
+                ci_type: CodedIndexType::HasConstant,
             },
             blob_offset,
         )

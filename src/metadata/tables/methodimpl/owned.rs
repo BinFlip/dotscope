@@ -1,4 +1,4 @@
-//! Owned MethodImpl table structure with resolved references and implementation mappings.
+//! Owned `MethodImpl` table structure with resolved references and implementation mappings.
 //!
 //! This module provides the [`MethodImpl`] struct, which represents method implementation
 //! mappings with all coded indexes resolved and type references established. Unlike
@@ -16,7 +16,7 @@ use crate::{
     Result,
 };
 
-/// Owned MethodImpl table entry with resolved references and implementation mappings.
+/// Owned `MethodImpl` table entry with resolved references and implementation mappings.
 ///
 /// This structure represents a method implementation mapping with all coded indexes resolved
 /// to their target structures and type references established. It provides complete
@@ -24,19 +24,19 @@ use crate::{
 /// and virtual dispatch support in object-oriented programming.
 ///
 /// # Implementation Mapping Types
-/// MethodImpl entries support various implementation scenarios:
+/// `MethodImpl` entries support various implementation scenarios:
 /// - **Interface implementation**: Maps interface method declarations to concrete class implementations
 /// - **Virtual method override**: Specifies derived class methods that override base class methods
 /// - **Explicit interface implementation**: Handles explicit implementation of interface members
 /// - **Abstract method implementation**: Connects abstract declarations to concrete implementations
 pub struct MethodImpl {
-    /// Row identifier within the MethodImpl table.
+    /// Row identifier within the `MethodImpl` table.
     ///
     /// Unique identifier for this method implementation mapping entry, used for internal
     /// table management and cross-references.
     pub rid: u32,
 
-    /// Metadata token identifying this MethodImpl entry.
+    /// Metadata token identifying this `MethodImpl` entry.
     ///
     /// The token enables efficient lookup and reference to this implementation mapping
     /// from other metadata structures and runtime systems.
@@ -93,6 +93,10 @@ impl MethodImpl {
     /// # Returns
     /// * `Ok(())` - If the implementation mapping was applied successfully
     /// * `Err(_)` - If updating type system relationships fails (currently infallible)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if updating type system relationships fails (currently infallible).
     pub fn apply(&self) -> Result<()> {
         self.class.overwrites.push(self.method_body.clone());
 

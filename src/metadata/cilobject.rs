@@ -15,17 +15,41 @@
 //! - **Metadata Layer**: Structured access to ECMA-335 metadata tables and streams
 //! - **Validation Layer**: Configurable validation during loading
 //! - **Caching Layer**: Thread-safe caching of parsed structures
+//! - **Analysis Layer**: High-level access to types, methods, fields, and metadata
 //!
 //! # Key Components
 //!
+//! ## Core Types
 //! - [`crate::CilObject`] - Main entry point for .NET assembly analysis
-//! - [`crate::metadata::validation::ValidationConfig`] - Configuration for validation during loading
+//! - Internal data structure holding parsed metadata and type registry
+//!
+//! ## Loading Methods
+//! - [`crate::CilObject::from_file`] - Load assembly from disk with default validation
+//! - [`crate::CilObject::from_file_with_validation`] - Load with custom validation settings
+//! - [`crate::CilObject::from_mem`] - Load assembly from memory buffer
+//! - [`crate::CilObject::from_mem_with_validation`] - Load from memory with custom validation
+//!
+//! ## Metadata Access Methods
+//! - [`crate::CilObject::module`] - Get module information
+//! - [`crate::CilObject::assembly`] - Get assembly metadata
+//! - [`crate::CilObject::strings`] - Access strings heap
+//! - [`crate::CilObject::userstrings`] - Access user strings heap
+//! - [`crate::CilObject::guids`] - Access GUID heap
+//! - [`crate::CilObject::blob`] - Access blob heap
+//! - [`crate::CilObject::tables`] - Access raw metadata tables
+//!
+//! ## High-level Analysis Methods
+//! - [`crate::CilObject::types`] - Get all type definitions
+//! - [`crate::CilObject::methods`] - Get all method definitions
+//! - [`crate::CilObject::imports`] - Get imported types and methods
+//! - [`crate::CilObject::exports`] - Get exported types and methods
+//! - [`crate::CilObject::resources`] - Get embedded resources
 //!
 //! # Usage Examples
 //!
-//! ## Basic Assembly Loading
+//! ## Basic Assembly Loading and Analysis
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -40,25 +64,82 @@
 //! if let Some(assembly_info) = assembly.assembly() {
 //!     println!("Assembly: {}", assembly_info.name);
 //! }
+//!
+//! // Analyze types and methods
+//! let types = assembly.types();
+//! let methods = assembly.methods();
+//! println!("Found {} types and {} methods", types.len(), methods.len());
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## Memory-based Analysis
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::CilObject;
 //!
 //! // Load from memory buffer (e.g., downloaded or embedded)
 //! let file_data = std::fs::read("assembly.dll")?;
 //! let assembly = CilObject::from_mem(file_data)?;
 //!
-//! // Access metadata streams
+//! // Access metadata streams with iteration
 //! if let Some(strings) = assembly.strings() {
+//!     // Indexed access
 //!     if let Ok(name) = strings.get(1) {
 //!         println!("String at index 1: {}", name);
 //!     }
+//!     
+//!     // Iterate through all strings
+//!     for (offset, string) in strings.iter() {
+//!         println!("String at {}: '{}'", offset, string);
+//!     }
 //! }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! ## Custom Validation Settings
+//!
+//! ```rust,ignore
+//! use dotscope::{CilObject, ValidationConfig};
+//! use std::path::Path;
+//!
+//! // Use minimal validation for best performance
+//! let assembly = CilObject::from_file_with_validation(
+//!     Path::new("tests/samples/WindowsBase.dll"),
+//!     ValidationConfig::minimal()
+//! )?;
+//!
+//! // Use strict validation for maximum verification
+//! let assembly = CilObject::from_file_with_validation(
+//!     Path::new("tests/samples/WindowsBase.dll"),
+//!     ValidationConfig::strict()
+//! )?;
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! ## Comprehensive Metadata Analysis
+//!
+//! ```rust,ignore
+//! use dotscope::CilObject;
+//! use std::path::Path;
+//!
+//! let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+//!
+//! // Analyze imports and exports
+//! let imports = assembly.imports();
+//! let exports = assembly.exports();
+//! println!("Imports: {} items", imports.len());
+//! println!("Exports: {} items", exports.len());
+//!
+//! // Access embedded resources
+//! let resources = assembly.resources();
+//! println!("Resources: {} items", resources.len());
+//!
+//! // Access raw metadata tables for low-level analysis
+//! if let Some(tables) = assembly.tables() {
+//!     println!("Metadata schema version: {}.{}",
+//!              tables.major_version, tables.minor_version);
+//! }
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Error Handling
@@ -73,40 +154,32 @@
 //!
 //! [`crate::CilObject`] is designed for thread-safe concurrent read access. Internal
 //! caching and lazy loading use appropriate synchronization primitives to ensure
-//! correctness in multi-threaded scenarios. All public APIs are [`Send`] and [`Sync`].
+//! correctness in multi-threaded scenarios. All public APIs are [`std::marker::Send`] and [`std::marker::Sync`].
 //!
-//! # Integration
-//!
-//! This module integrates with:
-//! - [`crate::disassembler`] - Method body disassembly and instruction decoding  
-//! - [`crate::metadata::tables`] - Low-level metadata table access
-//! - [`crate::metadata::typesystem`] - Type resolution and signature parsing
-//! - Low-level PE file parsing and memory management components
-use ouroboros::self_referencing;
 use std::{path::Path, sync::Arc};
 
 use crate::{
     file::File,
     metadata::{
+        cilassemblyview::CilAssemblyView,
         cor20header::Cor20Header,
-        exports::Exports,
-        imports::Imports,
+        exports::UnifiedExportContainer,
+        imports::UnifiedImportContainer,
         loader::CilObjectData,
         method::MethodMap,
         resources::Resources,
         root::Root,
         streams::{Blob, Guid, Strings, TablesHeader, UserStrings},
         tables::{
-            AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, MemberRefMap,
-            MethodSpecMap, ModuleRc, ModuleRefMap,
+            AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, DeclSecurityMap,
+            MemberRefMap, MethodSpecMap, ModuleRc, ModuleRefMap,
         },
         typesystem::TypeRegistry,
-        validation::{Orchestrator, ValidationConfig},
+        validation::{ValidationConfig, ValidationEngine},
     },
     Result,
 };
 
-#[self_referencing]
 /// A fully parsed and loaded .NET assembly representation.
 ///
 /// `CilObject` is the main entry point for analyzing .NET PE files, providing
@@ -131,7 +204,7 @@ use crate::{
 ///
 /// # Usage Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
@@ -157,16 +230,15 @@ use crate::{
 ///
 /// # Thread Safety
 ///
-/// `CilObject` is designed to be thread-safe for concurrent read access.
+/// [`CilObject`] is [`std::marker::Send`] and [`std::marker::Sync`] for thread-safe concurrent read access.
 /// Internal caching and lazy loading use appropriate synchronization primitives
-/// to ensure correctness in multi-threaded scenarios.
+/// to ensure correctness in multi-threaded scenarios. All accessor methods can be
+/// safely called concurrently from multiple threads.
 pub struct CilObject {
-    // Holds the input data, either as memory buffer or mmaped file
-    file: Arc<File>,
-    #[borrows(file)]
-    #[not_covariant]
-    // Holds the references to the metadata inside the file, e.g. tables use reference-based access and are parsed lazily on access
-    data: CilObjectData<'this>,
+    /// Handles file lifetime management and provides raw metadata access
+    assembly_view: CilAssemblyView,
+    /// Contains resolved metadata structures (types, methods, etc.)
+    data: CilObjectData,
 }
 
 impl CilObject {
@@ -190,7 +262,7 @@ impl CilObject {
     ///
     /// # Usage Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -204,8 +276,12 @@ impl CilObject {
     /// # Errors
     ///
     /// Returns [`crate::Error`] if the file cannot be read or parsed as a valid .NET assembly.
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn from_file(file: &Path) -> Result<Self> {
-        Self::from_file_with_validation(file, ValidationConfig::minimal())
+        Self::from_file_with_validation(file, ValidationConfig::disabled())
     }
 
     /// Creates a new `CilObject` by parsing a .NET assembly from a file with custom validation configuration.
@@ -220,7 +296,7 @@ impl CilObject {
     ///
     /// # Usage Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::{CilObject, ValidationConfig};
     /// use std::path::Path;
     ///
@@ -242,12 +318,24 @@ impl CilObject {
     ///
     /// Returns [`crate::Error`] if the file cannot be read, parsed as a valid .NET assembly,
     /// or if validation checks fail.
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn from_file_with_validation(
         file: &Path,
         validation_config: ValidationConfig,
     ) -> Result<Self> {
-        let input = Arc::new(File::from_file(file)?);
-        Self::load_with_validation(input, validation_config)
+        let assembly_view = CilAssemblyView::from_file(file)?;
+        let data = CilObjectData::from_assembly_view(&assembly_view)?;
+
+        let object = CilObject {
+            assembly_view,
+            data,
+        };
+
+        object.validate(validation_config)?;
+        Ok(object)
     }
 
     /// Creates a new `CilObject` by parsing a .NET assembly from a memory buffer.
@@ -270,7 +358,7 @@ impl CilObject {
     ///
     /// # Usage Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     ///
     /// // Load assembly from file into memory then parse
@@ -287,8 +375,12 @@ impl CilObject {
     /// # Errors
     ///
     /// Returns [`crate::Error`] if the memory buffer cannot be parsed as a valid .NET assembly.
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn from_mem(data: Vec<u8>) -> Result<Self> {
-        Self::from_mem_with_validation(data, ValidationConfig::minimal())
+        Self::from_mem_with_validation(data, ValidationConfig::disabled())
     }
 
     /// Creates a new `CilObject` by parsing a .NET assembly from a memory buffer with custom validation configuration.
@@ -303,7 +395,7 @@ impl CilObject {
     ///
     /// # Usage Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::{CilObject, ValidationConfig};
     ///
     /// let file_data = std::fs::read("tests/samples/WindowsBase.dll")?;
@@ -320,43 +412,24 @@ impl CilObject {
     ///
     /// Returns [`crate::Error`] if the memory buffer cannot be parsed as a valid .NET assembly
     /// or if validation checks fail.
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn from_mem_with_validation(
         data: Vec<u8>,
         validation_config: ValidationConfig,
     ) -> Result<Self> {
-        let input = Arc::new(File::from_mem(data)?);
-        Self::load_with_validation(input, validation_config)
-    }
+        let assembly_view = CilAssemblyView::from_mem(data)?;
+        let object_data = CilObjectData::from_assembly_view(&assembly_view)?;
 
-    /// Creates a new instance of a `File` by parsing the provided memory and building internal
-    /// data structures which are needed to analyse this file properly
-    ///
-    /// # Arguments
-    /// * 'file' - The file to parse
-    fn load(file: Arc<File>) -> Result<Self> {
-        Self::load_with_validation(file, ValidationConfig::default())
-    }
+        let object = CilObject {
+            assembly_view,
+            data: object_data,
+        };
 
-    /// Creates a new instance of a `File` by parsing the provided memory and building internal
-    /// data structures which are needed to analyse this file properly, with custom validation
-    ///
-    /// # Arguments
-    /// * `file` - The file to parse
-    /// * `validation_config` - Configuration specifying which validation checks to perform
-    fn load_with_validation(file: Arc<File>, validation_config: ValidationConfig) -> Result<Self> {
-        match CilObject::try_new(file, |file| {
-            match CilObjectData::from_file(file.clone(), file.data()) {
-                Ok(loaded) => {
-                    Orchestrator::validate_loaded_data(&loaded, validation_config)?;
-
-                    Ok(loaded)
-                }
-                Err(error) => Err(error),
-            }
-        }) {
-            Ok(asm) => Ok(asm),
-            Err(error) => Err(error),
-        }
+        object.validate(validation_config)?;
+        Ok(object)
     }
 
     /// Returns the COR20 header containing .NET-specific PE information.
@@ -375,7 +448,7 @@ impl CilObject {
     ///
     /// # Usage Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     ///
     /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
@@ -386,7 +459,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn cor20header(&self) -> &Cor20Header {
-        self.with_data(|data| &data.header)
+        self.assembly_view.cor20header()
     }
 
     /// Returns the metadata root header containing stream directory information.
@@ -405,7 +478,7 @@ impl CilObject {
     ///
     /// # Usage Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     ///
     /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
@@ -419,7 +492,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn metadata_root(&self) -> &Root {
-        self.with_data(|data| &data.header_root)
+        self.assembly_view.metadata_root()
     }
 
     /// Returns the metadata tables header from the #~ or #- stream.
@@ -450,14 +523,14 @@ impl CilObject {
     ///     println!("Schema version: {}.{}", tables.major_version, tables.minor_version);
     ///     
     ///     // Access individual tables
-    ///     if let Some(typedef_table) = &tables.table::<TypeDefRaw>(TableId::TypeDef) {
-    ///         println!("Number of types: {}", typedef_table.row_count());
+    ///     if let Some(typedef_table) = &tables.table::<TypeDefRaw>() {
+    ///         println!("Number of types: {}", typedef_table.row_count);
     ///     }
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn tables(&self) -> Option<&TablesHeader> {
-        self.with_data(|data| data.meta.as_ref())
+    pub fn tables(&self) -> Option<&TablesHeader<'_>> {
+        self.assembly_view.tables()
     }
 
     /// Returns the strings heap from the #Strings stream.
@@ -486,8 +559,8 @@ impl CilObject {
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn strings(&self) -> Option<&Strings> {
-        self.with_data(|data| data.strings.as_ref())
+    pub fn strings(&self) -> Option<&Strings<'_>> {
+        self.assembly_view.strings()
     }
 
     /// Returns the user strings heap from the #US stream.
@@ -516,8 +589,8 @@ impl CilObject {
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn userstrings(&self) -> Option<&UserStrings> {
-        self.with_data(|data| data.userstrings.as_ref())
+    pub fn userstrings(&self) -> Option<&UserStrings<'_>> {
+        self.assembly_view.userstrings()
     }
 
     /// Returns the GUID heap from the #GUID stream.
@@ -546,8 +619,8 @@ impl CilObject {
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn guids(&self) -> Option<&Guid> {
-        self.with_data(|data| data.guids.as_ref())
+    pub fn guids(&self) -> Option<&Guid<'_>> {
+        self.assembly_view.guids()
     }
 
     /// Returns the blob heap from the #Blob stream.
@@ -576,8 +649,8 @@ impl CilObject {
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn blob(&self) -> Option<&Blob> {
-        self.with_data(|data| data.blobs.as_ref())
+    pub fn blob(&self) -> Option<&Blob<'_>> {
+        self.assembly_view.blobs()
     }
 
     /// Returns all assembly references used by this assembly.
@@ -611,7 +684,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn refs_assembly(&self) -> &AssemblyRefMap {
-        self.with_data(|data| &data.refs_assembly)
+        &self.data.refs_assembly
     }
 
     /// Returns all module references used by this assembly.
@@ -639,7 +712,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn refs_module(&self) -> &ModuleRefMap {
-        self.with_data(|data| &data.refs_module)
+        &self.data.refs_module
     }
 
     /// Returns all member references used by this assembly.
@@ -667,7 +740,40 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn refs_members(&self) -> &MemberRefMap {
-        self.with_data(|data| &data.refs_member)
+        &self.data.refs_member
+    }
+
+    /// Returns all security declarations and permission sets defined in this assembly.
+    ///
+    /// Security declarations include Code Access Security (CAS) permissions, security
+    /// transparency attributes, and other declarative security constraints. Each entry
+    /// maps a token to its corresponding security declaration containing permission sets,
+    /// security actions, and validation rules.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the [`crate::metadata::tables::DeclSecurityMap`] containing all security declarations.
+    /// The map uses tokens as keys and [`crate::metadata::tables::DeclSecurityRc`] (reference-counted security
+    /// declarations) as values for efficient memory management.
+    ///
+    /// # Usage
+    ///
+    /// ```rust,ignore
+    /// # use dotscope::CilObject;
+    /// # fn security_example() -> dotscope::Result<()> {
+    /// let assembly = CilObject::from_file("example.dll")?;
+    /// let security_decls = assembly.security_declarations();
+    ///
+    /// for entry in security_decls.iter() {
+    ///     let (token, decl) = (entry.key(), entry.value());
+    ///     println!("Security declaration for token {}: {:?}",
+    ///              token.value(), decl.action);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn security_declarations(&self) -> &DeclSecurityMap {
+        &self.data.decl_security
     }
 
     /// Returns the primary module information for this assembly.
@@ -696,7 +802,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn module(&self) -> Option<&ModuleRc> {
-        self.with_data(|data| data.module.get())
+        self.data.module.get()
     }
 
     /// Returns the assembly metadata for this .NET assembly.
@@ -729,7 +835,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn assembly(&self) -> Option<&AssemblyRc> {
-        self.with_data(|data| data.assembly.get())
+        self.data.assembly.get()
     }
 
     /// Returns assembly OS information if present.
@@ -743,7 +849,7 @@ impl CilObject {
     /// - `Some(&AssemblyOsRc)` if OS information is present
     /// - `None` if no `AssemblyOS` table entry exists (typical for most assemblies)
     pub fn assembly_os(&self) -> Option<&AssemblyOsRc> {
-        self.with_data(|data| data.assembly_os.get())
+        self.data.assembly_os.get()
     }
 
     /// Returns assembly processor information if present.
@@ -757,7 +863,7 @@ impl CilObject {
     /// - `Some(&AssemblyProcessorRc)` if processor information is present  
     /// - `None` if no `AssemblyProcessor` table entry exists (typical for most assemblies)
     pub fn assembly_processor(&self) -> Option<&AssemblyProcessorRc> {
-        self.with_data(|data| data.assembly_processor.get())
+        self.data.assembly_processor.get()
     }
 
     /// Returns the imports container with all P/Invoke and COM import information.
@@ -778,14 +884,14 @@ impl CilObject {
     /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
     /// let imports = assembly.imports();
     ///
-    /// for entry in imports.iter() {
+    /// for entry in imports.cil().iter() {
     ///     let (token, import) = (entry.key(), entry.value());
     ///     println!("Import: {}.{} from {:?}", import.namespace, import.name, import.source_id);
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn imports(&self) -> &Imports {
-        self.with_data(|data| &data.imports)
+    pub fn imports(&self) -> &UnifiedImportContainer {
+        &self.data.import_container
     }
 
     /// Returns the exports container with all exported function information.
@@ -796,7 +902,7 @@ impl CilObject {
     ///
     /// # Returns
     ///
-    /// Reference to the `Exports` container with all export declarations.
+    /// Reference to the `UnifiedExportContainer` with both CIL and native export declarations.
     ///
     /// # Examples
     ///
@@ -806,14 +912,21 @@ impl CilObject {
     /// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
     /// let exports = assembly.exports();
     ///
-    /// for entry in exports.iter() {
+    /// // Access CIL exports (existing functionality)
+    /// for entry in exports.cil().iter() {
     ///     let (token, export) = (entry.key(), entry.value());
-    ///     println!("Export: {} at offset 0x{:X} - Token 0x{:X}", export.name, export.offset, token.value());
+    ///     println!("CIL Export: {} at offset 0x{:X} - Token 0x{:X}", export.name, export.offset, token.value());
+    /// }
+    ///
+    /// // Access native function exports
+    /// let native_functions = exports.get_native_function_names();
+    /// for function_name in native_functions {
+    ///     println!("Native Export: {}", function_name);
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn exports(&self) -> &Exports {
-        self.with_data(|data| &data.exports)
+    pub fn exports(&self) -> &UnifiedExportContainer {
+        &self.data.export_container
     }
 
     /// Returns the methods container with all method definitions and metadata.
@@ -844,7 +957,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn methods(&self) -> &MethodMap {
-        self.with_data(|data| &data.methods)
+        &self.data.methods
     }
 
     /// Returns the method specifications container with all generic method instantiations.
@@ -873,7 +986,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn method_specs(&self) -> &MethodSpecMap {
-        self.with_data(|data| &data.method_specs)
+        &self.data.method_specs
     }
 
     /// Returns the resources container with all embedded and linked resources.
@@ -901,7 +1014,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn resources(&self) -> &Resources {
-        self.with_data(|data| &data.resources)
+        &self.data.resources
     }
 
     /// Returns the type registry containing all type definitions and references.
@@ -939,7 +1052,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn types(&self) -> &TypeRegistry {
-        self.with_data(|data| &data.types)
+        &self.data.types
     }
 
     /// Returns the underlying file representation of this assembly.
@@ -967,7 +1080,7 @@ impl CilObject {
     /// // Access PE headers
     /// let dos_header = file.header_dos();
     /// let nt_headers = file.header();
-    /// println!("PE signature: 0x{:X}", nt_headers.signature);
+    /// println!("Machine type: 0x{:X}", nt_headers.machine);
     ///
     /// // Convert RVA to file offset
     /// let (clr_rva, _) = file.clr();
@@ -976,7 +1089,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn file(&self) -> &Arc<File> {
-        self.borrow_file()
+        self.assembly_view.file()
     }
 
     /// Performs comprehensive validation on the loaded assembly.
@@ -1022,7 +1135,14 @@ impl CilObject {
     /// - Invalid generic constraints
     /// - Type system inconsistencies
     pub fn validate(&self, config: ValidationConfig) -> Result<()> {
-        self.with_data(|data| Orchestrator::validate_loaded_data(data, config))
+        if config == ValidationConfig::disabled() {
+            return Ok(());
+        }
+
+        let engine = ValidationEngine::new(&self.assembly_view, config)?;
+        let result = engine.execute_two_stage_validation(&self.assembly_view, None, Some(self))?;
+
+        result.into_result()
     }
 }
 

@@ -56,7 +56,7 @@ impl MetadataLoader for ModuleLoader {
         if let (Some(tables_header), Some(strings), Some(guids)) =
             (context.meta, context.strings, context.guids)
         {
-            if let Some(table) = tables_header.table::<ModuleRaw>(TableId::Module) {
+            if let Some(table) = tables_header.table::<ModuleRaw>() {
                 if let Some(row) = table.get(1) {
                     let owned = row.to_owned(strings, guids)?;
 

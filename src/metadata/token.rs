@@ -36,7 +36,7 @@
 //!
 //! ## Creating and Inspecting Tokens
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::token::Token;
 //!
 //! // Create a MethodDef token (table 0x06, row 1)
@@ -54,7 +54,7 @@
 //!
 //! ## Working with Different Token Types
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::token::Token;
 //!
 //! // Common .NET metadata token types
@@ -85,13 +85,6 @@
 //! | 0x1B     | TypeSpec       | Type specifications            | 0x1B000001  |
 //! | 0x2B     | MethodSpec     | Generic method instantiations  | 0x2B000001  |
 //!
-//! # Integration
-//!
-//! This module integrates with:
-//! - [`crate::metadata::tables`] - Metadata table implementations using tokens for addressing
-//! - [`crate::disassembler`] - IL instruction analysis requiring token resolution
-//! - [`crate::metadata::typesystem`] - Type resolution through token-based references
-//! - [`crate::metadata::method`] - Method analysis using MethodDef and MemberRef tokens
 //!
 //! # Usage in .NET Metadata
 //!
@@ -114,8 +107,12 @@
 //! - [ECMA-335 §II.22 - Metadata Logical Format](https://www.ecma-international.org/publications-and-standards/standards/ecma-335/)
 //! - [ECMA-335 §II.24.2.6 - Token](https://www.ecma-international.org/publications-and-standards/standards/ecma-335/)
 
-use std::fmt;
-use std::hash::{Hash, Hasher};
+use std::{
+    fmt,
+    hash::{Hash, Hasher},
+};
+
+use crate::metadata::tables::TableId;
 
 /// A metadata token representing a reference to a specific entry within a metadata table.
 ///
@@ -138,11 +135,11 @@ use std::hash::{Hash, Hasher};
 /// ## Table Identification
 ///
 /// The high byte identifies the metadata table type according to ECMA-335:
-/// - 0x01: TypeRef - References to external types
-/// - 0x02: TypeDef - Type definitions within this assembly
-/// - 0x04: FieldDef - Field definitions
-/// - 0x06: MethodDef - Method definitions
-/// - 0x0A: MemberRef - References to external members
+/// - 0x01: `TypeRef` - References to external types
+/// - 0x02: `TypeDef` - Type definitions within this assembly
+/// - 0x04: `FieldDef` - Field definitions
+/// - 0x06: `MethodDef` - Method definitions
+/// - 0x0A: `MemberRef` - References to external members
 /// - And many others...
 ///
 /// ## Row Addressing
@@ -205,13 +202,13 @@ impl Token {
     ///
     /// ## Common Table IDs
     ///
-    /// - 0x01: TypeRef
-    /// - 0x02: TypeDef  
-    /// - 0x04: FieldDef
-    /// - 0x06: MethodDef
-    /// - 0x0A: MemberRef
-    /// - 0x1B: TypeSpec
-    /// - 0x2B: MethodSpec
+    /// - 0x01: `TypeRef`
+    /// - 0x02: `TypeDef`  
+    /// - 0x04: `FieldDef`
+    /// - 0x06: `MethodDef`
+    /// - 0x0A: `MemberRef`
+    /// - 0x1B: `TypeSpec`
+    /// - 0x2B: `MethodSpec`
     #[must_use]
     pub fn table(&self) -> u8 {
         (self.0 >> 24) as u8
@@ -257,6 +254,71 @@ impl Token {
     #[must_use]
     pub fn is_null(&self) -> bool {
         self.0 == 0
+    }
+
+    /// Creates a new token with the specified table ID and row index.
+    ///
+    /// This constructor builds a token from its constituent parts, providing a
+    /// more explicit alternative to creating tokens from raw values. The table ID
+    /// and row index are combined according to the ECMA-335 token format.
+    ///
+    /// ## Arguments
+    ///
+    /// * `table_id` - The table identifier from the TableId enum
+    /// * `row` - The 24-bit row index (0-16,777,215), must be 1-based for valid references
+    ///
+    /// ## Returns
+    ///
+    /// A new `Token` with the specified table and row.
+    ///
+    /// ## Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::token::Token;
+    /// use dotscope::metadata::tables::TableId;
+    ///
+    /// // Create a MethodDef token (table MethodDef, row 1)
+    /// let method_token = Token::from_parts(TableId::MethodDef, 1);
+    /// assert_eq!(method_token.value(), 0x06000001);
+    /// assert_eq!(method_token.table(), 0x06);
+    /// assert_eq!(method_token.row(), 1);
+    /// ```
+    #[must_use]
+    pub fn from_parts(table_id: TableId, row: u32) -> Self {
+        Token(((table_id as u32) << 24) | (row & 0x00FF_FFFF))
+    }
+
+    /// Validates that this token belongs to the expected metadata table.
+    ///
+    /// This method checks if the token's table identifier matches the expected
+    /// table ID, providing a type-safe way to validate token usage in contexts
+    /// where only specific table types are valid.
+    ///
+    /// ## Arguments
+    ///
+    /// * `expected_table` - The expected table identifier from the TableId enum
+    ///
+    /// ## Returns
+    ///
+    /// `true` if the token's table matches the expected table, `false` otherwise.
+    /// Null tokens (value 0) return `false` unless the expected table is Module (0).
+    ///
+    /// ## Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::token::Token;
+    /// use dotscope::metadata::tables::TableId;
+    ///
+    /// let method_token = Token::new(0x06000001);
+    /// assert!(method_token.is_table(TableId::MethodDef));  // MethodDef
+    /// assert!(!method_token.is_table(TableId::TypeDef)); // Not TypeDef
+    ///
+    /// let null_token = Token::new(0);
+    /// assert!(!null_token.is_table(TableId::MethodDef));   // Null token
+    /// ```
+    #[must_use]
+    pub fn is_table(&self, expected_table: TableId) -> bool {
+        self.table() == (expected_table as u8)
     }
 }
 
@@ -390,16 +452,16 @@ mod tests {
     #[test]
     fn test_token_display() {
         let token = Token(0x06000001);
-        assert_eq!(format!("{}", token), "0x06000001");
+        assert_eq!(format!("{token}"), "0x06000001");
 
         let token2 = Token(0x00000000);
-        assert_eq!(format!("{}", token2), "0x00000000");
+        assert_eq!(format!("{token2}"), "0x00000000");
     }
 
     #[test]
     fn test_token_debug() {
         let token = Token(0x06000001);
-        let debug_str = format!("{:?}", token);
+        let debug_str = format!("{token:?}");
         assert!(debug_str.contains("Token(0x06000001"));
         assert!(debug_str.contains("table: 0x06"));
         assert!(debug_str.contains("row: 1"));
@@ -497,5 +559,42 @@ mod tests {
         let memberref_token = Token(0x0A000001);
         assert_eq!(memberref_token.table(), 0x0A);
         assert_eq!(memberref_token.row(), 1);
+    }
+
+    #[test]
+    fn test_token_from_parts() {
+        // Test creating tokens from constituent parts
+        let token = Token::from_parts(TableId::MethodDef, 1);
+        assert_eq!(token.value(), 0x06000001);
+        assert_eq!(token.table(), 0x06);
+        assert_eq!(token.row(), 1);
+
+        // Test with maximum row value (using a high table ID)
+        let max_row_token = Token::from_parts(TableId::MethodSpec, 0x00FFFFFF);
+        assert_eq!(max_row_token.value(), 0x2BFFFFFF);
+        assert_eq!(max_row_token.table(), 0x2B);
+        assert_eq!(max_row_token.row(), 0x00FFFFFF);
+
+        // Test null token creation
+        let null_token = Token::from_parts(TableId::Module, 0);
+        assert_eq!(null_token.value(), 0x00000000);
+        assert!(null_token.is_null());
+    }
+
+    #[test]
+    fn test_token_is_table() {
+        let method_token = Token::new(0x06000001);
+        assert!(method_token.is_table(TableId::MethodDef)); // MethodDef
+        assert!(!method_token.is_table(TableId::TypeDef)); // Not TypeDef
+        assert!(!method_token.is_table(TableId::TypeRef)); // Not TypeRef
+
+        let typedef_token = Token::new(0x02000001);
+        assert!(typedef_token.is_table(TableId::TypeDef)); // TypeDef
+        assert!(!typedef_token.is_table(TableId::MethodDef)); // Not MethodDef
+
+        // Test null token
+        let null_token = Token::new(0);
+        assert!(!null_token.is_table(TableId::MethodDef)); // Null token
+        assert!(null_token.is_table(TableId::Module)); // Null token matches table 0
     }
 }

@@ -1,12 +1,12 @@
-//! # ParamPtr Table Loader
+//! # `ParamPtr` Table Loader
 //!
-//! This module provides loading functionality for the ParamPtr metadata table (ID 0x04).
-//! The ParamPtr table is an indirection table used in optimized metadata to reference
+//! This module provides loading functionality for the `ParamPtr` metadata table (ID 0x04).
+//! The `ParamPtr` table is an indirection table used in optimized metadata to reference
 //! parameter definitions when parameter table entries are reordered or compressed.
 //!
 //! ## Purpose
 //!
-//! The ParamPtr table serves as an indirection layer for parameter access:
+//! The `ParamPtr` table serves as an indirection layer for parameter access:
 //! - Maps logical parameter indexes to physical parameter table positions
 //! - Enables metadata optimization by allowing parameter table compression
 //! - Maintains parameter ordering independence from physical storage layout
@@ -14,7 +14,7 @@
 //!
 //! ## References
 //!
-//! - ECMA-335, Partition II, §22.26 - ParamPtr table specification
+//! - ECMA-335, Partition II, §22.26 - `ParamPtr` table specification
 //! - [`crate::metadata::tables::ParamPtrRaw`] - Raw table entry structure
 //! - [`crate::metadata::tables::ParamPtr`] - Owned table entry type
 use crate::{
@@ -25,18 +25,18 @@ use crate::{
     Result,
 };
 
-/// Loader for ParamPtr metadata table entries.
+/// Loader for `ParamPtr` metadata table entries.
 ///
-/// This loader handles the loading and processing of the ParamPtr table (0x04),
+/// This loader handles the loading and processing of the `ParamPtr` table (0x04),
 /// which provides indirection for parameter table access in optimized metadata.
 /// It converts raw table entries to owned representations and stores them
 /// for efficient lookup by metadata token.
 pub(crate) struct ParamPtrLoader;
 
 impl MetadataLoader for ParamPtrLoader {
-    /// Loads all ParamPtr table entries from the metadata.
+    /// Loads all `ParamPtr` table entries from the metadata.
     ///
-    /// This method processes the ParamPtr table if present in the metadata header,
+    /// This method processes the `ParamPtr` table if present in the metadata header,
     /// converting each raw entry to its owned representation and storing it in
     /// the loader context for subsequent access.
     ///
@@ -50,7 +50,7 @@ impl MetadataLoader for ParamPtrLoader {
     /// * `Err(Error)` - Conversion or storage error occurred
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) = header.table::<ParamPtrRaw>(TableId::ParamPtr) {
+            if let Some(table) = header.table::<ParamPtrRaw>() {
                 for row in table {
                     let owned = row.to_owned()?;
                     context.param_ptr.insert(row.token, owned);
@@ -60,7 +60,7 @@ impl MetadataLoader for ParamPtrLoader {
         Ok(())
     }
 
-    /// Returns the table identifier for the ParamPtr table.
+    /// Returns the table identifier for the `ParamPtr` table.
     ///
     /// ## Returns
     ///
@@ -69,9 +69,9 @@ impl MetadataLoader for ParamPtrLoader {
         TableId::ParamPtr
     }
 
-    /// Returns the table dependencies for the ParamPtr table.
+    /// Returns the table dependencies for the `ParamPtr` table.
     ///
-    /// The ParamPtr table has no dependencies on other tables as it provides
+    /// The `ParamPtr` table has no dependencies on other tables as it provides
     /// indirection for parameter access rather than containing references.
     ///
     /// ## Returns

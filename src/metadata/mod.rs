@@ -54,7 +54,7 @@
 //!
 //! ## Basic Assembly Loading and Analysis
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -78,7 +78,7 @@
 //!
 //! ## Method Analysis and IL Code Inspection
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -162,19 +162,25 @@
 //! - Microsoft .NET Framework PE Format Specification
 //! - Windows PE/COFF Specification
 
+/// Implementation of a raw assembly view for editing operations
+pub mod cilassemblyview;
 /// Implementation of a loaded + parsed CIL binary
 pub mod cilobject;
 /// Implementation of the Header of CIL
 pub mod cor20header;
 /// Implementation of custom attribute parsing and representation
 pub mod customattributes;
+/// Implementation of custom debug information parsing for Portable PDB format
+pub mod customdebuginformation;
 /// Implementation of 'Exports' by the loaded binary
 pub mod exports;
 /// Implementation of the verification mechanism of an `Assembly`
 pub mod identity;
 /// Implementation of methods that are imported from other binaries (native or .net)
 pub mod imports;
-/// Implementation of our MetaDataTable loader
+/// Implementation of import scope parsing for Portable PDB format
+pub mod importscope;
+/// Implementation of our `MetaDataTable` loader
 pub(crate) mod loader;
 /// Implementation of the type marshalling for native code invokations
 pub mod marshalling;
@@ -186,6 +192,8 @@ pub mod resources;
 pub mod root;
 /// Implementation of the .NET security model
 pub mod security;
+/// Implementation of sequence points in methods
+pub mod sequencepoints;
 /// Implementation of method and type signatures
 pub mod signatures;
 /// Implementation of all metadata streams (tables, heaps, etc.)

@@ -1,15 +1,162 @@
-//! Loader Dependency Graph Module
+//! Dependency graph management for parallel metadata table loading.
 //!
-//! This module defines the [`crate::metadata::loader::graph::LoaderGraph`] struct, which models the dependencies between metadata table loaders as a directed graph.
-//! It provides methods for adding loaders, building dependency relationships, checking for cycles, and producing a topological execution plan for parallel loading.
+//! This module provides sophisticated dependency tracking and execution planning for .NET metadata
+//! table loaders. The internal dependency graph enables efficient parallel
+//! loading by analyzing inter-table dependencies, detecting cycles, and generating optimal
+//! execution plans that maximize concurrency while respecting load order constraints.
 //!
 //! # Architecture
 //!
-//! The dependency graph system enables efficient parallel loading of .NET metadata tables by:
-//! - **Dependency Tracking**: Maintaining bidirectional dependency relationships between [`crate::metadata::tables::TableId`] entries
-//! - **Cycle Detection**: Preventing circular dependencies that would cause loading deadlocks
-//! - **Parallel Execution**: Organizing loaders into execution levels where all loaders in the same level can run concurrently
-//! - **Memory Efficiency**: Using [`std::collections::HashMap`] and [`std::collections::HashSet`] for O(1) lookups
+//! The dependency graph system implements a multi-stage approach to parallel loading coordination:
+//!
+//! ## Core Components
+//!
+//! - **Dependency Analysis**: Bidirectional relationship tracking between metadata tables
+//! - **Cycle Detection**: Comprehensive validation using depth-first search algorithms
+//! - **Topological Ordering**: Level-based execution planning for maximum parallelism
+//! - **Load Coordination**: Safe execution plan generation for multi-threaded loading
+//!
+//! ## Graph Structure
+//!
+//! The dependency graph maintains three core data structures:
+//! - **Loaders Map**: Associates [`crate::metadata::tables::TableId`] with loader implementations
+//! - **Dependencies Map**: Forward dependency tracking (what each table depends on)
+//! - **Dependents Map**: Reverse dependency tracking (what depends on each table)
+//!
+//! # Key Components
+//!
+//! - Internal dependency graph - Main dependency graph implementation
+//! - Bidirectional dependency relationship management
+//! - Kahn's algorithm-based topological sorting for execution planning
+//! - Comprehensive cycle detection with detailed error reporting
+//!
+//! # Dependency Management
+//!
+//! The loader dependency system manages complex relationships between .NET metadata tables:
+//!
+//! ## Loading Phases
+//!
+//! 1. **Independent Tables**: Assembly, Module, basic reference tables (Level 0)
+//! 2. **Simple Dependencies**: TypeRef, basic field/method tables (Level 1)
+//! 3. **Complex Types**: TypeDef with method/field relationships (Level 2)
+//! 4. **Advanced Structures**: Generic parameters, interfaces, nested types (Level 3+)
+//! 5. **Cross-References**: Custom attributes, security attributes (Final Levels)
+//!
+//! ## Parallel Execution Strategy
+//!
+//! The graph enables efficient parallel loading through level-based execution:
+//! - **Intra-Level Parallelism**: All loaders within the same level execute concurrently
+//! - **Inter-Level Synchronization**: Complete all level N loaders before starting level N+1
+//! - **Dependency Satisfaction**: Ensures all dependencies are resolved before dependent loading
+//! - **Deadlock Prevention**: Cycle detection prevents circular dependency deadlocks
+//!
+//! # Usage Examples
+//!
+//! ## Basic Graph Construction
+//!
+//! ```rust,ignore
+//! use dotscope::metadata::loader::graph::LoaderGraph;
+//! use dotscope::metadata::loader::MetadataLoader;
+//!
+//! // Create dependency graph
+//! let mut graph = LoaderGraph::new();
+//!
+//! # fn get_loaders() -> Vec<Box<dyn MetadataLoader>> { vec![] }
+//! let loaders = get_loaders();
+//!
+//! // Register all metadata loaders
+//! for loader in &loaders {
+//!     graph.add_loader(loader.as_ref());
+//! }
+//!
+//! // Build dependency relationships and validate
+//! graph.build_relationships()?;
+//!
+//! // Generate execution plan for parallel loading
+//! let execution_levels = graph.topological_levels()?;
+//! println!("Execution plan has {} levels", execution_levels.len());
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
+//! ## Parallel Execution Planning
+//!
+//! ```rust,ignore
+//! use dotscope::metadata::loader::graph::LoaderGraph;
+//!
+//! # fn example_execution_planning(graph: LoaderGraph) -> dotscope::Result<()> {
+//! // Generate optimal execution plan
+//! let levels = graph.topological_levels()?;
+//!
+//! // Execute each level in parallel
+//! for (level_num, level_loaders) in levels.iter().enumerate() {
+//!     println!("Level {}: {} loaders can run in parallel",
+//!              level_num, level_loaders.len());
+//!     
+//!     // All loaders in this level can execute concurrently
+//!     for loader in level_loaders {
+//!         println!("  - {:?} (ready to execute)", loader.table_id());
+//!     }
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Debug Visualization
+//!
+//! ```rust,ignore
+//! use dotscope::metadata::loader::graph::LoaderGraph;
+//!
+//! # fn debug_example(graph: LoaderGraph) {
+//! // Generate detailed execution plan for debugging
+//! let execution_plan = graph.dump_execution_plan();
+//! println!("Complete Execution Plan:\n{}", execution_plan);
+//!
+//! // Example output:
+//! // Level 0: [
+//! //   Assembly (depends on: )
+//! //   Module (depends on: )
+//! // ]
+//! // Level 1: [
+//! //   TypeRef (depends on: Assembly, Module)
+//! //   MethodDef (depends on: Module)
+//! // ]
+//! # }
+//! ```
+//!
+//! # Error Handling
+//!
+//! The graph system provides comprehensive error detection and reporting:
+//!
+//! ## Validation Errors
+//! - **Missing Dependencies**: Loaders reference tables without corresponding loaders
+//! - **Circular Dependencies**: Dependency cycles that would cause deadlocks
+//! - **Graph Inconsistencies**: Internal state corruption or invalid configurations
+//!
+//! ## Debug Features
+//! - Detailed cycle detection with specific table identification
+//! - Execution plan validation in debug builds
+//! - Comprehensive error messages for troubleshooting
+//!
+//!
+//! # Thread Safety
+//!
+//! The internal dependency graph has specific thread safety characteristics:
+//! - **Construction Phase**: Not thread-safe, must be built from single thread
+//! - **Execution Phase**: Generated plans are thread-safe for coordination
+//! - **Read-Only Operations**: Safe concurrent access after relationship building
+//! - **Loader References**: Maintains safe references throughout execution lifecycle
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::loader`] - MetadataLoader trait and parallel execution coordination
+//! - [`crate::metadata::tables::TableId`] - Table identification for dependency relationships
+//! - Internal loader context - Execution context for parallel loading
+//! - [`crate::Error`] - Comprehensive error handling for graph validation failures
+//!
+//! # Standards Compliance
+//!
+//! - **ECMA-335**: Respects .NET metadata table interdependency requirements
 //!
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
@@ -34,69 +181,85 @@ use crate::{
 ///
 /// # Lifecycle
 ///
-/// 1. **Construction**: Create empty graph with [`crate::metadata::loader::graph::LoaderGraph::new`]
-/// 2. **Population**: Add loaders with [`crate::metadata::loader::graph::LoaderGraph::add_loader`]
-/// 3. **Validation**: Build relationships and detect cycles with [`crate::metadata::loader::graph::LoaderGraph::build_relationships`]
-/// 4. **Execution**: Generate execution plan with [`crate::metadata::loader::graph::LoaderGraph::topological_levels`]
+/// 1. **Construction**: Create empty graph with `LoaderGraph::new()`
+/// 2. **Population**: Add loaders with `LoaderGraph::add_loader()`
+/// 3. **Validation**: Build relationships and detect cycles with `LoaderGraph::build_relationships()`
+/// 4. **Execution**: Generate execution plan with `LoaderGraph::topological_levels()`
 ///
 /// # Thread Safety
 ///
-/// This struct is not thread-safe. All graph modifications must be performed from a single thread.
-/// However, the execution plan it generates can be used to coordinate parallel loader execution.
+/// [`LoaderGraph`] is not [`std::marker::Send`] or [`std::marker::Sync`] due to containing trait object references.
+/// All graph modifications must be performed from a single thread during the setup phase.
+/// However, the execution plans it generates can safely coordinate parallel loader execution.
 ///
 /// ```rust, ignore
-/// Level 0: [
-///   Property (depends on: )
-///   Field (depends on: )
-///   AssemblyProcessor (depends on: )
-///   AssemblyRef (depends on: )
-///   Module (depends on: )
-///   Param (depends on: )
-///   Assembly (depends on: )
-///   File (depends on: )
-///   AssemblyOS (depends on: )
-///   ModuleRef (depends on: )
-/// ]
-/// Level 1: [
-///   TypeRef (depends on: AssemblyRef, ModuleRef)
-///   FieldRVA (depends on: Field)
-///   Constant (depends on: Property, Field, Param)
-///   AssemblyRefProcessor (depends on: AssemblyRef)
-///   AssemblyRefOS (depends on: AssemblyRef)
-///   ExportedType (depends on: File, AssemblyRef)
-///   ManifestResource (depends on: File, AssemblyRef)
-///   FieldLayout (depends on: Field)
-///   MethodDef (depends on: Param)
-///   FieldMarshal (depends on: Param, Field)
-/// ]
-/// Level 2: [
-///   TypeDef (depends on: MethodDef, Field)
-/// ]
-/// Level 3: [
-///   ClassLayout (depends on: TypeDef)
-///   TypeSpec (depends on: TypeRef, TypeDef)
-///   DeclSecurity (depends on: TypeDef, MethodDef, Assembly)
-/// ]
-/// Level 4: [
-///   Event (depends on: TypeRef, TypeSpec, TypeDef)
-///   NestedClass (depends on: TypeSpec, TypeRef, TypeDef)
-///   StandAloneSig (depends on: TypeDef, TypeSpec, MethodDef, TypeRef)
-///   InterfaceImpl (depends on: TypeRef, TypeSpec, TypeDef)
-///   PropertyMap (depends on: Property, TypeDef, TypeRef, TypeSpec)
-///   MemberRef (depends on: TypeDef, MethodDef, TypeRef, TypeSpec, ModuleRef)
-///   GenericParam (depends on: TypeSpec, MethodDef, TypeRef, TypeDef)
-/// ]
-/// Level 5: [
-///   MethodImpl (depends on: MemberRef, TypeRef, TypeDef, MethodDef)
-///   GenericParamConstraint (depends on: MemberRef, TypeRef, TypeSpec, MethodDef, GenericParam, TypeDef)
-///   ImplMap (depends on: ModuleRef, Module, MemberRef, MethodDef)
-///   MethodSpec (depends on: MemberRef, TypeDef, TypeSpec, MethodDef, TypeRef)
-///   EventMap (depends on: Event)
-/// ]
-/// Level 6: [
-///   CustomAttribute (depends on: TypeRef, Field, TypeDef, MemberRef, Param, InterfaceImpl, DeclSecurity, Property, TypeSpec, ExportedType, ManifestResource, AssemblyRef, MethodSpec, File, Event, ModuleRef, StandAloneSig, MethodDef, Module, GenericParamConstraint, GenericParam, Assembly)
-///   MethodSemantics (depends on: PropertyMap, EventMap, Event, Property)
-/// ]
+// Level 0: [
+//   ModuleRef (depends on: )
+//   LocalConstant (depends on: )
+//   Param (depends on: )
+//   AssemblyRef (depends on: )
+//   Document (depends on: )
+//   Assembly (depends on: )
+//   StateMachineMethod (depends on: )
+//   EncLog (depends on: )
+//   Field (depends on: )
+//   AssemblyOS (depends on: )
+//   LocalVariable (depends on: )
+//   MethodDebugInformation (depends on: )
+//   ImportScope (depends on: )
+//   PropertyPtr (depends on: )
+//   Property (depends on: )
+//   MethodPtr (depends on: )
+//   File (depends on: )
+//   Module (depends on: )
+//   ParamPtr (depends on: )
+//   FieldPtr (depends on: )
+//   AssemblyProcessor (depends on: )
+//   EventPtr (depends on: )
+//   EncMap (depends on: )
+// ]
+// Level 1: [
+//   Constant (depends on: Property, Param, Field)
+//   FieldRVA (depends on: Field)
+//   MethodDef (depends on: Param, ParamPtr)
+//   ManifestResource (depends on: File, AssemblyRef)
+//   FieldMarshal (depends on: Param, Field)
+//   FieldLayout (depends on: Field)
+//   AssemblyRefOS (depends on: AssemblyRef)
+//   ExportedType (depends on: AssemblyRef, File)
+//   AssemblyRefProcessor (depends on: AssemblyRef)
+//   TypeRef (depends on: ModuleRef, AssemblyRef)
+// ]
+// Level 2: [
+//   LocalScope (depends on: ImportScope, LocalConstant, MethodDef, LocalVariable)
+//   TypeDef (depends on: FieldPtr, Field, MethodPtr, TypeRef, MethodDef)
+// ]
+// Level 3: [
+//   DeclSecurity (depends on: TypeDef, Assembly, MethodDef)
+//   ClassLayout (depends on: TypeDef)
+//   TypeSpec (depends on: TypeDef, TypeRef)
+// ]
+// Level 4: [
+//   GenericParam (depends on: TypeDef, TypeRef, TypeSpec, MethodDef)
+//   PropertyMap (depends on: TypeSpec, PropertyPtr, TypeDef, TypeRef, Property)
+//   NestedClass (depends on: TypeRef, TypeSpec, TypeDef)
+//   InterfaceImpl (depends on: TypeDef, TypeRef, TypeSpec)
+//   MemberRef (depends on: TypeRef, MethodDef, TypeSpec, ModuleRef, TypeDef)
+//   StandAloneSig (depends on: MethodDef, TypeSpec, TypeDef, TypeRef)
+//   Event (depends on: TypeDef, TypeSpec, TypeRef)
+// ]
+// Level 5: [
+//   GenericParamConstraint (depends on: TypeRef, TypeSpec, GenericParam, MethodDef, MemberRef, TypeDef)
+//   EventMap (depends on: Event, EventPtr)
+//   MethodSpec (depends on: TypeDef, MemberRef, TypeSpec, TypeRef, MethodDef)
+//   ImplMap (depends on: ModuleRef, MemberRef, Module, MethodDef)
+//   MethodImpl (depends on: TypeRef, MemberRef, TypeDef, MethodDef)
+// ]
+// Level 6: [
+//   CustomAttribute (depends on: MethodSpec, Module, File, ExportedType, TypeRef, TypeSpec, MethodDef, StandAloneSig, ModuleRef, Assembly, Field, InterfaceImpl, Param, ManifestResource, TypeDef, MemberRef, Property, DeclSecurity, Event, AssemblyRef, GenericParam, GenericParamConstraint)
+//   CustomDebugInformation (depends on: Property, MethodSpec, Field, InterfaceImpl, MemberRef, LocalScope, AssemblyRef, LocalConstant, File, LocalVariable, StandAloneSig, TypeSpec, Event, MethodDef, ModuleRef, Param, Assembly, ImportScope, DeclSecurity, TypeDef, TypeRef, Module, ManifestResource, ExportedType, GenericParam, GenericParamConstraint, Document)
+//   MethodSemantics (depends on: PropertyMap, EventMap, Event, Property)
+// ]
 /// ```
 pub(crate) struct LoaderGraph<'a> {
     /// Maps a `TableId` to its loader
@@ -112,7 +275,7 @@ impl<'a> LoaderGraph<'a> {
     ///
     /// # Returns
     ///
-    /// A new [`crate::metadata::loader::graph::LoaderGraph`] with empty dependency mappings, ready for loader registration.
+    /// A new `LoaderGraph` with empty dependency mappings, ready for loader registration.
     ///
     /// # Examples
     ///
@@ -122,6 +285,10 @@ impl<'a> LoaderGraph<'a> {
     /// let mut graph = LoaderGraph::new();
     /// // Add loaders and build relationships...
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called from any thread.
     pub fn new() -> Self {
         LoaderGraph {
             loaders: HashMap::new(),
@@ -153,7 +320,11 @@ impl<'a> LoaderGraph<'a> {
     ///
     /// - The loader must remain valid for the lifetime of the graph
     /// - Adding the same loader multiple times will overwrite the previous entry
-    /// - Dependencies are not resolved until [`crate::metadata::loader::graph::LoaderGraph::build_relationships`] is called
+    /// - Dependencies are not resolved until `LoaderGraph::build_relationships()` is called
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is not thread-safe and must be called from a single thread during graph construction.
     pub fn add_loader(&mut self, loader: &'a dyn MetadataLoader) {
         let table_id = loader.table_id();
         self.loaders.insert(table_id, loader);
@@ -203,6 +374,10 @@ impl<'a> LoaderGraph<'a> {
     /// - Comprehensive cycle detection using depth-first search
     /// - Execution plan generation and validation
     /// - Detailed error reporting for dependency issues
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is not thread-safe and must be called from a single thread during graph construction.
     pub fn build_relationships(&mut self) -> Result<()> {
         self.dependencies
             .values_mut()
@@ -214,9 +389,7 @@ impl<'a> LoaderGraph<'a> {
         for (table_id, loader) in &self.loaders {
             for dep_id in loader.dependencies() {
                 if !self.loaders.contains_key(dep_id) {
-                    return Err(GraphError(format!("Loader for table {:?} depends on table {:?}, but no loader for that table exists",
-                        table_id,
-                        dep_id
+                    return Err(GraphError(format!("Loader for table {table_id:?} depends on table {dep_id:?}, but no loader for that table exists"
                     )));
                 }
 
@@ -325,8 +498,7 @@ impl<'a> LoaderGraph<'a> {
                     self.detect_cycle(dep_id, visited, stack)?;
                 } else if stack.contains(&dep_id) {
                     return Err(GraphError(format!(
-                        "Circular dependency detected involving table {:?}",
-                        dep_id
+                        "Circular dependency detected involving table {dep_id:?}"
                     )));
                 }
             }
@@ -389,6 +561,11 @@ impl<'a> LoaderGraph<'a> {
     /// - **Level N**: Loaders that depend only on loaders from levels 0 through N-1
     /// - **Parallelism**: All loaders within a single level can execute concurrently
     /// - **Synchronization**: Complete all loaders in level N before starting level N+1
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently. The returned execution plan
+    /// can be safely used to coordinate parallel loader execution across multiple threads.
     pub fn topological_levels(&self) -> Result<Vec<Vec<&'a dyn MetadataLoader>>> {
         let mut result = Vec::new();
         let mut remaining = self.loaders.keys().copied().collect::<HashSet<_>>();
@@ -457,7 +634,7 @@ impl<'a> LoaderGraph<'a> {
     ///
     /// # Panics
     ///
-    /// This method panics if [`crate::metadata::loader::graph::LoaderGraph::topological_levels`] returns an error,
+    /// This method panics if `LoaderGraph::topological_levels()` returns an error,
     /// which should only occur if the graph is in an invalid state. In production
     /// code, this should not happen as the graph is validated during construction.
     ///
@@ -494,7 +671,7 @@ impl<'a> LoaderGraph<'a> {
                     || "None".to_string(),
                     |d| {
                         d.iter()
-                            .map(|id| format!("{:?}", id))
+                            .map(|id| format!("{id:?}"))
                             .collect::<Vec<_>>()
                             .join(", ")
                     },

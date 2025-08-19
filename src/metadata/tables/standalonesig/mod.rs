@@ -1,13 +1,13 @@
-//! # StandAloneSig Table Module
+//! # `StandAloneSig` Table Module
 //!
-//! This module provides comprehensive access to the StandAloneSig metadata table (ID 0x11),
+//! This module provides comprehensive access to the `StandAloneSig` metadata table (ID 0x11),
 //! which contains standalone signatures that are not directly associated with specific
 //! methods, fields, or properties. These signatures support complex scenarios including
 //! method pointers, local variables, and dynamic signature generation in .NET assemblies.
 //!
 //! ## Table Purpose
 //!
-//! The StandAloneSig table provides:
+//! The `StandAloneSig` table provides:
 //! - **Method Signatures**: Standalone method pointer and delegate signatures
 //! - **Local Variable Signatures**: Local variable type declarations for methods
 //! - **Dynamic Signatures**: Runtime signature generation and manipulation support
@@ -31,7 +31,7 @@
 //!
 //! ## Signature Types and Architecture
 //!
-//! StandAloneSig entries can contain various signature types:
+//! `StandAloneSig` entries can contain various signature types:
 //! - **Method Signatures**: Function pointer signatures with calling conventions
 //! - **Local Variable Signatures**: Method local variable type declarations
 //! - **Field Signatures**: Standalone field type specifications
@@ -39,7 +39,7 @@
 //!
 //! ## Signature Parsing and Validation
 //!
-//! StandAloneSig entries undergo comprehensive parsing:
+//! `StandAloneSig` entries undergo comprehensive parsing:
 //! - **Blob Validation**: Ensures signature blob format compliance
 //! - **Type Resolution**: Resolves all type references within signatures
 //! - **Generic Validation**: Validates generic parameter constraints
@@ -47,7 +47,7 @@
 //!
 //! ## References
 //!
-//! - ECMA-335, Partition II, §22.39 - StandAloneSig table specification
+//! - ECMA-335, Partition II, §22.39 - `StandAloneSig` table specification
 //! - [`crate::metadata::signatures`] - Signature parsing and types
 //! - [`crate::metadata::streams::Blob`] - Blob stream access for signature data
 
@@ -55,10 +55,14 @@ use crate::metadata::token::Token;
 use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
 
+mod builder;
 mod loader;
 mod owned;
 mod raw;
+mod reader;
+mod writer;
 
+pub use builder::*;
 pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;

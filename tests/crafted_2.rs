@@ -492,6 +492,7 @@ public struct BufferStruct
 
 use dotscope::metadata::marshalling::{parse_marshalling_descriptor, NativeType};
 use dotscope::metadata::security::{ArgumentValue, PermissionSet, PermissionSetFormat};
+use dotscope::metadata::tables::CodedIndexType;
 use dotscope::prelude::*;
 use std::path::PathBuf;
 
@@ -527,6 +528,7 @@ fn crafted_2() {
     test_table_count_validation(&asm);
     test_custom_attribute_validation(&asm);
     test_xml_permission_set_parsing(&asm);
+    //    test_portable_pdb_features(&asm);
 }
 
 /// Verify the cor20 header matches the values of '`crafted_2.exe`' on disk
@@ -611,9 +613,9 @@ fn verify_tableheader(asm: &CilObject) {
     assert_eq!(tables_header.sorted, 0x16003301FA00);
     assert_eq!(tables_header.table_count(), 31);
 
-    match tables_header.table::<ModuleRaw>(TableId::Module) {
+    match tables_header.table::<ModuleRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 1);
+            assert_eq!(table.row_count, 1);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
@@ -632,16 +634,16 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<TypeRefRaw>(TableId::TypeRef) {
+    match tables_header.table::<TypeRefRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 65);
+            assert_eq!(table.row_count, 65);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.token.value(), 0x01000001);
             assert_eq!(
                 row.resolution_scope,
-                CodedIndex::new(TableId::AssemblyRef, 1)
+                CodedIndex::new(TableId::AssemblyRef, 1, CodedIndexType::ResolutionScope)
             );
             assert_eq!(row.type_name, 0x80D);
             assert_eq!(row.type_namespace, 0xBE8);
@@ -651,16 +653,19 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<TypeDefRaw>(TableId::TypeDef) {
+    match tables_header.table::<TypeDefRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 36);
+            assert_eq!(table.row_count, 36);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.flags, 0);
             assert_eq!(row.type_name, 0x1FD);
             assert_eq!(row.type_namespace, 0);
-            assert_eq!(row.extends, CodedIndex::new(TableId::TypeDef, 0));
+            assert_eq!(
+                row.extends,
+                CodedIndex::new(TableId::TypeDef, 0, CodedIndexType::TypeDefOrRef)
+            );
             assert_eq!(row.field_list, 1);
             assert_eq!(row.method_list, 1);
         }
@@ -669,9 +674,9 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<FieldRaw>(TableId::Field) {
+    match tables_header.table::<FieldRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 48);
+            assert_eq!(table.row_count, 48);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
@@ -684,9 +689,9 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<MethodDefRaw>(TableId::MethodDef) {
+    match tables_header.table::<MethodDefRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 97);
+            assert_eq!(table.row_count, 97);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
@@ -702,9 +707,9 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<ParamRaw>(TableId::Param) {
+    match tables_header.table::<ParamRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 72);
+            assert_eq!(table.row_count, 72);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
@@ -717,27 +722,33 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<InterfaceImplRaw>(TableId::InterfaceImpl) {
+    match tables_header.table::<InterfaceImplRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 5);
+            assert_eq!(table.row_count, 5);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.class, 7);
-            assert_eq!(row.interface, CodedIndex::new(TableId::TypeDef, 6));
+            assert_eq!(
+                row.interface,
+                CodedIndex::new(TableId::TypeDef, 6, CodedIndexType::TypeDefOrRef)
+            );
         }
         None => {
             panic!("This table should be there");
         }
     }
 
-    match tables_header.table::<MemberRefRaw>(TableId::MemberRef) {
+    match tables_header.table::<MemberRefRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 67);
+            assert_eq!(table.row_count, 67);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
-            assert_eq!(row.class, CodedIndex::new(TableId::TypeRef, 1));
+            assert_eq!(
+                row.class,
+                CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::MemberRefParent)
+            );
             assert_eq!(row.name, 0xBA5);
             assert_eq!(row.signature, 1);
         }
@@ -746,14 +757,17 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<ConstantRaw>(TableId::Constant) {
+    match tables_header.table::<ConstantRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 7);
+            assert_eq!(table.row_count, 7);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.base, 0xA);
-            assert_eq!(row.parent, CodedIndex::new(TableId::Field, 7));
+            assert_eq!(
+                row.parent,
+                CodedIndex::new(TableId::Field, 7, CodedIndexType::HasConstant)
+            );
             assert_eq!(row.value, 0x265);
         }
 
@@ -762,14 +776,20 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<CustomAttributeRaw>(TableId::CustomAttribute) {
+    match tables_header.table::<CustomAttributeRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 88);
+            assert_eq!(table.row_count, 88);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
-            assert_eq!(row.parent, CodedIndex::new(TableId::Module, 1));
-            assert_eq!(row.constructor, CodedIndex::new(TableId::MemberRef, 10));
+            assert_eq!(
+                row.parent,
+                CodedIndex::new(TableId::Module, 1, CodedIndexType::HasCustomAttribute)
+            );
+            assert_eq!(
+                row.constructor,
+                CodedIndex::new(TableId::MemberRef, 10, CodedIndexType::CustomAttributeType)
+            );
             assert_eq!(row.value, 0x297);
         }
         None => {
@@ -777,13 +797,16 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<FieldMarshalRaw>(TableId::FieldMarshal) {
+    match tables_header.table::<FieldMarshalRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 1);
+            assert_eq!(table.row_count, 1);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
-            assert_eq!(row.parent, CodedIndex::new(TableId::Field, 18));
+            assert_eq!(
+                row.parent,
+                CodedIndex::new(TableId::Field, 18, CodedIndexType::HasFieldMarshal)
+            );
             assert_eq!(row.native_type, 0x503);
         }
         None => {
@@ -791,14 +814,17 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<DeclSecurityRaw>(TableId::DeclSecurity) {
+    match tables_header.table::<DeclSecurityRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 2);
+            assert_eq!(table.row_count, 2);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.action, 8);
-            assert_eq!(row.parent, CodedIndex::new(TableId::Assembly, 1));
+            assert_eq!(
+                row.parent,
+                CodedIndex::new(TableId::Assembly, 1, CodedIndexType::HasDeclSecurity)
+            );
             assert_eq!(row.permission_set, 0x29C);
         }
         None => {
@@ -806,9 +832,9 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<ClassLayoutRaw>(TableId::ClassLayout) {
+    match tables_header.table::<ClassLayoutRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 3);
+            assert_eq!(table.row_count, 3);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
@@ -821,9 +847,9 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<FieldLayoutRaw>(TableId::FieldLayout) {
+    match tables_header.table::<FieldLayoutRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 3);
+            assert_eq!(table.row_count, 3);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
@@ -835,9 +861,9 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<StandAloneSigRaw>(TableId::StandAloneSig) {
+    match tables_header.table::<StandAloneSigRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 11);
+            assert_eq!(table.row_count, 11);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
@@ -848,9 +874,9 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<EventMapRaw>(TableId::EventMap) {
+    match tables_header.table::<EventMapRaw>() {
         Some(module) => {
-            assert_eq!(module.row_count(), 2);
+            assert_eq!(module.row_count, 2);
 
             let row = module.get(1).unwrap();
             assert_eq!(row.rid, 1);
@@ -862,24 +888,27 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<EventRaw>(TableId::Event) {
+    match tables_header.table::<EventRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 3);
+            assert_eq!(table.row_count, 3);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.flags, 0);
             assert_eq!(row.name, 0x102);
-            assert_eq!(row.event_type, CodedIndex::new(TableId::TypeRef, 23));
+            assert_eq!(
+                row.event_type,
+                CodedIndex::new(TableId::TypeRef, 23, CodedIndexType::TypeDefOrRef)
+            );
         }
         None => {
             panic!("This table should be there");
         }
     }
 
-    match tables_header.table::<PropertyMapRaw>(TableId::PropertyMap) {
+    match tables_header.table::<PropertyMapRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 8);
+            assert_eq!(table.row_count, 8);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
@@ -891,9 +920,9 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<PropertyRaw>(TableId::Property) {
+    match tables_header.table::<PropertyRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 13);
+            assert_eq!(table.row_count, 13);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
@@ -906,32 +935,17 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<MethodSemanticsRaw>(TableId::MethodSemantics) {
+    match tables_header.table::<MethodSemanticsRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 31);
+            assert_eq!(table.row_count, 31);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.semantics, 8);
             assert_eq!(row.method, 0xE);
-            assert_eq!(row.association, CodedIndex::new(TableId::Event, 1));
-        }
-        None => {
-            panic!("This table should be there");
-        }
-    }
-
-    match tables_header.table::<MethodImplRaw>(TableId::MethodImpl) {
-        Some(table) => {
-            assert_eq!(table.row_count(), 4);
-
-            let row = table.get(1).unwrap();
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.class, 0xE);
-            assert_eq!(row.method_body, CodedIndex::new(TableId::MethodDef, 39));
             assert_eq!(
-                row.method_declaration,
-                CodedIndex::new(TableId::MethodDef, 13)
+                row.association,
+                CodedIndex::new(TableId::Event, 1, CodedIndexType::HasSemantics)
             );
         }
         None => {
@@ -939,9 +953,30 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<ModuleRefRaw>(TableId::ModuleRef) {
+    match tables_header.table::<MethodImplRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 2);
+            assert_eq!(table.row_count, 4);
+
+            let row = table.get(1).unwrap();
+            assert_eq!(row.rid, 1);
+            assert_eq!(row.class, 0xE);
+            assert_eq!(
+                row.method_body,
+                CodedIndex::new(TableId::MethodDef, 39, CodedIndexType::MethodDefOrRef)
+            );
+            assert_eq!(
+                row.method_declaration,
+                CodedIndex::new(TableId::MethodDef, 13, CodedIndexType::MethodDefOrRef)
+            );
+        }
+        None => {
+            panic!("This table should be there");
+        }
+    }
+
+    match tables_header.table::<ModuleRefRaw>() {
+        Some(table) => {
+            assert_eq!(table.row_count, 2);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
@@ -952,9 +987,9 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<TypeSpecRaw>(TableId::TypeSpec) {
+    match tables_header.table::<TypeSpecRaw>() {
         Some(module) => {
-            assert_eq!(module.row_count(), 16);
+            assert_eq!(module.row_count, 16);
 
             let row = module.get(1).unwrap();
             assert_eq!(row.rid, 1);
@@ -965,14 +1000,17 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<ImplMapRaw>(TableId::ImplMap) {
+    match tables_header.table::<ImplMapRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 2);
+            assert_eq!(table.row_count, 2);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.mapping_flags, 0x104);
-            assert_eq!(row.member_forwarded, CodedIndex::new(TableId::MethodDef, 8));
+            assert_eq!(
+                row.member_forwarded,
+                CodedIndex::new(TableId::MethodDef, 8, CodedIndexType::MemberForwarded)
+            );
             assert_eq!(row.import_name, 0xE86);
             assert_eq!(row.import_scope, 0x1);
         }
@@ -981,9 +1019,9 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<FieldRvaRaw>(TableId::FieldRVA) {
+    match tables_header.table::<FieldRvaRaw>() {
         Some(module) => {
-            assert_eq!(module.row_count(), 1);
+            assert_eq!(module.row_count, 1);
 
             let row = module.get(1).unwrap();
             assert_eq!(row.rva, 0x5410);
@@ -994,9 +1032,9 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<AssemblyRaw>(TableId::Assembly) {
+    match tables_header.table::<AssemblyRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 1);
+            assert_eq!(table.row_count, 1);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
@@ -1014,9 +1052,9 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<AssemblyRefRaw>(TableId::AssemblyRef) {
+    match tables_header.table::<AssemblyRefRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 2);
+            assert_eq!(table.row_count, 2);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
@@ -1034,9 +1072,9 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<NestedClassRaw>(TableId::NestedClass) {
+    match tables_header.table::<NestedClassRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 10);
+            assert_eq!(table.row_count, 10);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
@@ -1048,15 +1086,18 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<GenericParamRaw>(TableId::GenericParam) {
+    match tables_header.table::<GenericParamRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 19);
+            assert_eq!(table.row_count, 19);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.number, 0);
             assert_eq!(row.flags, 4);
-            assert_eq!(row.owner, CodedIndex::new(TableId::TypeDef, 9));
+            assert_eq!(
+                row.owner,
+                CodedIndex::new(TableId::TypeDef, 9, CodedIndexType::TypeOrMethodDef)
+            );
             assert_eq!(row.name, 0x22F);
         }
         None => {
@@ -1064,13 +1105,16 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<MethodSpecRaw>(TableId::MethodSpec) {
+    match tables_header.table::<MethodSpecRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 7);
+            assert_eq!(table.row_count, 7);
 
             let row = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
-            assert_eq!(row.method, CodedIndex::new(TableId::MemberRef, 33));
+            assert_eq!(
+                row.method,
+                CodedIndex::new(TableId::MemberRef, 33, CodedIndexType::MethodDefOrRef)
+            );
             assert_eq!(row.instantiation, 0x88);
         }
         None => {
@@ -1078,14 +1122,17 @@ fn verify_tableheader(asm: &CilObject) {
         }
     }
 
-    match tables_header.table::<GenericParamConstraintRaw>(TableId::GenericParamConstraint) {
+    match tables_header.table::<GenericParamConstraintRaw>() {
         Some(table) => {
-            assert_eq!(table.row_count(), 16);
+            assert_eq!(table.row_count, 16);
 
             let row: GenericParamConstraintRaw = table.get(1).unwrap();
             assert_eq!(row.rid, 1);
             assert_eq!(row.owner, 0x3);
-            assert_eq!(row.constraint, CodedIndex::new(TableId::TypeRef, 24));
+            assert_eq!(
+                row.constraint,
+                CodedIndex::new(TableId::TypeRef, 24, CodedIndexType::TypeDefOrRef)
+            );
         }
         None => {
             panic!("This table should be there");
@@ -1096,14 +1143,9 @@ fn verify_tableheader(asm: &CilObject) {
 /// Verify custom attributes match the expected values from the crafted_2.exe source code
 fn verify_custom_attributes(asm: &CilObject) {
     // Verify we have the expected number of custom attributes in total
-    let custom_attr_table = asm
-        .tables()
-        .unwrap()
-        .table::<CustomAttributeRaw>(TableId::CustomAttribute)
-        .unwrap();
+    let custom_attr_table = asm.tables().unwrap().table::<CustomAttributeRaw>().unwrap();
     assert_eq!(
-        custom_attr_table.row_count(),
-        88,
+        custom_attr_table.row_count, 88,
         "Expected 88 custom attributes total"
     );
 
@@ -1126,11 +1168,7 @@ fn verify_custom_attributes(asm: &CilObject) {
 /// Verify assembly-level custom attributes
 fn verify_assembly_custom_attributes(asm: &CilObject) {
     // Count assembly-level custom attributes by iterating through the custom attribute table
-    let custom_attr_table = asm
-        .tables()
-        .unwrap()
-        .table::<CustomAttributeRaw>(TableId::CustomAttribute)
-        .unwrap();
+    let custom_attr_table = asm.tables().unwrap().table::<CustomAttributeRaw>().unwrap();
     let mut assembly_attr_count = 0;
 
     for attr_row in custom_attr_table.iter() {
@@ -1145,18 +1183,13 @@ fn verify_assembly_custom_attributes(asm: &CilObject) {
     // - SecurityPermission, FileIOPermission, MetadataTestAttribute
     assert!(
         assembly_attr_count >= 8,
-        "Expected at least 8 assembly-level custom attributes, found {}",
-        assembly_attr_count
+        "Expected at least 8 assembly-level custom attributes, found {assembly_attr_count}"
     );
 }
 
 /// Verify module-level custom attributes  
 fn verify_module_custom_attributes(asm: &CilObject) {
-    let custom_attr_table = asm
-        .tables()
-        .unwrap()
-        .table::<CustomAttributeRaw>(TableId::CustomAttribute)
-        .unwrap();
+    let custom_attr_table = asm.tables().unwrap().table::<CustomAttributeRaw>().unwrap();
     let mut module_attr_count = 0;
 
     for attr_row in custom_attr_table.iter() {
@@ -1169,8 +1202,7 @@ fn verify_module_custom_attributes(asm: &CilObject) {
     // Expected: DefaultCharSet attribute
     assert!(
         module_attr_count >= 1,
-        "Expected at least 1 module-level custom attribute, found {}",
-        module_attr_count
+        "Expected at least 1 module-level custom attribute, found {module_attr_count}"
     );
 }
 
@@ -1241,8 +1273,7 @@ fn verify_type_custom_attributes(asm: &CilObject) {
     // Don't require all specific types as some attributes might be stored differently
     assert!(
         specific_types_found >= 2,
-        "Expected to find at least 2 specific types with attributes, found {}",
-        specific_types_found
+        "Expected to find at least 2 specific types with attributes, found {specific_types_found}"
     );
 }
 
@@ -1305,8 +1336,7 @@ fn verify_method_custom_attributes(asm: &CilObject) {
     );
     assert!(
         specific_methods_found >= 4,
-        "Expected to find at least 4 specific methods with attributes, found {}",
-        specific_methods_found
+        "Expected to find at least 4 specific methods with attributes, found {specific_methods_found}"
     );
 }
 
@@ -1315,8 +1345,8 @@ fn verify_specialized_attribute_tables(asm: &CilObject) {
     let tables = asm.tables().unwrap();
 
     // Test FieldLayout table (stores FieldOffset attributes)
-    if let Some(field_layout_table) = tables.table::<FieldLayoutRaw>(TableId::FieldLayout) {
-        let layout_count = field_layout_table.row_count();
+    if let Some(field_layout_table) = tables.table::<FieldLayoutRaw>() {
+        let layout_count = field_layout_table.row_count;
         assert!(
             layout_count > 0,
             "Expected FieldLayout entries for explicit layout fields"
@@ -1330,8 +1360,8 @@ fn verify_specialized_attribute_tables(asm: &CilObject) {
     }
 
     // Test FieldMarshal table (stores MarshalAs attributes)
-    if let Some(field_marshal_table) = tables.table::<FieldMarshalRaw>(TableId::FieldMarshal) {
-        let marshal_count = field_marshal_table.row_count();
+    if let Some(field_marshal_table) = tables.table::<FieldMarshalRaw>() {
+        let marshal_count = field_marshal_table.row_count;
         assert!(
             marshal_count > 0,
             "Expected FieldMarshal entries for marshaled fields"
@@ -1360,10 +1390,7 @@ fn verify_specialized_attribute_tables(asm: &CilObject) {
                     size_param_index, &None,
                     "Expected no size parameter for simple LPWStr"
                 );
-                println!(
-                    "✓ Marshalling descriptor parsed successfully: {:?}",
-                    marshalling_info
-                );
+                println!("✓ Marshalling descriptor parsed successfully: {marshalling_info:?}");
             }
             _ => panic!(
                 "Expected LPWStr marshalling for _marshaledField, got {:?}",
@@ -1373,8 +1400,8 @@ fn verify_specialized_attribute_tables(asm: &CilObject) {
     }
 
     // Test DeclSecurity table (stores security attributes)
-    if let Some(decl_security_table) = tables.table::<DeclSecurityRaw>(TableId::DeclSecurity) {
-        let security_count = decl_security_table.row_count();
+    if let Some(decl_security_table) = tables.table::<DeclSecurityRaw>() {
+        let security_count = decl_security_table.row_count;
         assert!(
             security_count > 0,
             "Expected DeclSecurity entries for security attributes"
@@ -1392,7 +1419,7 @@ fn verify_specialized_attribute_tables(asm: &CilObject) {
 fn _verify_imports(asm: &CilObject) {
     let imports = asm.imports();
 
-    let set_state_machine_class = imports.by_name("SetStateMachine").unwrap();
+    let set_state_machine_class = imports.cil().by_name("SetStateMachine").unwrap();
 
     assert_eq!(set_state_machine_class.token.value(), 0x0A000018);
     assert_eq!(set_state_machine_class.name, "SetStateMachine");
@@ -1519,7 +1546,7 @@ fn test_generic_struct_type(asm: &CilObject) {
 
     // Debug: Check what flavor it actually has
     let actual_flavor = generic_struct.flavor();
-    println!("GenericStruct`2 flavor: {:?}", actual_flavor);
+    println!("GenericStruct`2 flavor: {actual_flavor:?}");
 
     // Verify it exists and has the right name
     assert!(matches!(*generic_struct.flavor(), CilFlavor::ValueType));
@@ -1542,7 +1569,7 @@ fn test_generic_struct_type(asm: &CilObject) {
         param_names.contains(&"U"),
         "Should have generic parameter U"
     );
-    println!("GenericStruct`2 generic parameters: {:?}", param_names);
+    println!("GenericStruct`2 generic parameters: {param_names:?}");
 }
 
 /// Test the GenericDelegate<T, TResult> delegate type
@@ -1560,7 +1587,7 @@ fn test_generic_delegate_type(asm: &CilObject) {
 
     // Debug: Check what flavor it actually has
     let actual_delegate_flavor = generic_delegate.flavor();
-    println!("GenericDelegate`2 flavor: {:?}", actual_delegate_flavor);
+    println!("GenericDelegate`2 flavor: {actual_delegate_flavor:?}");
 
     // Verify it exists and has the right name
     assert!(matches!(*generic_delegate.flavor(), CilFlavor::Class));
@@ -1605,7 +1632,7 @@ fn test_generic_method_specs(asm: &CilObject) {
             // Check each resolved type argument
             for (i, resolved_type) in method_spec.generic_args.iter().enumerate() {
                 if let Some(type_name) = resolved_type.1.name() {
-                    println!("  Arg[{}]: {}", i, type_name);
+                    println!("  Arg[{i}]: {type_name}");
 
                     // Verify the resolved type has a valid name
                     assert!(
@@ -1613,7 +1640,7 @@ fn test_generic_method_specs(asm: &CilObject) {
                         "Resolved type should have a non-empty name"
                     );
                 } else {
-                    println!("  Arg[{}]: <Unknown type>", i);
+                    println!("  Arg[{i}]: <Unknown type>");
                 }
             }
         }
@@ -1670,7 +1697,7 @@ fn test_extension_method_generic(asm: &CilObject) {
             // Check the resolved types in this instantiation
             for (j, resolved_type) in method_spec.1.generic_args.iter().enumerate() {
                 if let Some(type_name) = resolved_type.1.name() {
-                    println!("    Type[{}]: {}", j, type_name);
+                    println!("    Type[{j}]: {type_name}");
                 }
             }
         }
@@ -1786,8 +1813,8 @@ fn test_interface_implementations(asm: &CilObject) {
     let base_interface_flavor = base_interface.flavor();
     let derived_interface_flavor = derived_interface.flavor();
 
-    println!("IBaseInterface flavor: {:?}", base_interface_flavor);
-    println!("IDerivedInterface flavor: {:?}", derived_interface_flavor);
+    println!("IBaseInterface flavor: {base_interface_flavor:?}");
+    println!("IDerivedInterface flavor: {derived_interface_flavor:?}");
 
     // Test interface inheritance - this should work now due to our interface inheritance fix
     let base_type = derived_interface
@@ -1835,18 +1862,18 @@ fn test_type_flavor_classification(asm: &CilObject) {
 
     for type_def in all_types.iter() {
         let flavor = type_def.flavor();
-        classification_results.push((type_def.name.clone(), format!("{:?}", flavor)));
+        classification_results.push((type_def.name.clone(), format!("{flavor:?}")));
 
         match type_def.name.as_str() {
             "GenericStruct`2" => {
-                println!("GenericStruct`2 flavor: {:?}", flavor);
+                println!("GenericStruct`2 flavor: {flavor:?}");
                 assert!(
                     matches!(flavor, CilFlavor::ValueType),
                     "GenericStruct should be ValueType"
                 );
             }
             "GenericDelegate`2" => {
-                println!("GenericDelegate`2 flavor: {:?}", flavor);
+                println!("GenericDelegate`2 flavor: {flavor:?}");
                 assert!(
                     matches!(flavor, CilFlavor::Class),
                     "GenericDelegate should be Class"
@@ -1860,14 +1887,14 @@ fn test_type_flavor_classification(asm: &CilObject) {
                 );
             }
             "TestEnum" => {
-                println!("TestEnum flavor: {:?}", flavor);
+                println!("TestEnum flavor: {flavor:?}");
                 assert!(
                     matches!(flavor, CilFlavor::ValueType),
                     "Enums should be ValueType"
                 );
             }
             "StructWithExplicitLayout" => {
-                println!("StructWithExplicitLayout flavor: {:?}", flavor);
+                println!("StructWithExplicitLayout flavor: {flavor:?}");
                 assert!(
                     matches!(flavor, CilFlavor::ValueType),
                     "Structs should be ValueType"
@@ -1897,7 +1924,7 @@ fn test_type_flavor_classification(asm: &CilObject) {
     for (name, flavor) in &classification_results {
         if !name.starts_with('<') && !name.is_empty() {
             // Skip compiler-generated types
-            println!("  {}: {}", name, flavor);
+            println!("  {name}: {flavor}");
         }
     }
 
@@ -1917,7 +1944,7 @@ fn test_method_associations(asm: &CilObject) {
         .expect("Should find ComplexGeneric`3");
 
     let method_count = complex_generic.methods.iter().count();
-    println!("ComplexGeneric`3 has {} associated methods", method_count);
+    println!("ComplexGeneric`3 has {method_count} associated methods");
 
     // List all methods associated with ComplexGeneric
     for (i, (_, method_ref)) in complex_generic.methods.iter().enumerate() {
@@ -1985,7 +2012,7 @@ fn test_event_and_property_semantics(asm: &CilObject) {
 
     // Test events - should have exactly 2 events: Event1 and CustomEvent
     let events_count = derived_class.events.iter().count();
-    println!("DerivedClass has {} events", events_count);
+    println!("DerivedClass has {events_count} events");
     assert_eq!(
         events_count, 2,
         "DerivedClass should have exactly 2 events (Event1 and CustomEvent)"
@@ -2030,25 +2057,18 @@ fn test_event_and_property_semantics(asm: &CilObject) {
             event.name, remove_method_name
         );
 
-        println!(
-            "    Has add method ({}): {}",
-            add_method_name, has_add_method
-        );
-        println!(
-            "    Has remove method ({}): {}",
-            remove_method_name, has_remove_method
-        );
+        println!("    Has add method ({add_method_name}): {has_add_method}");
+        println!("    Has remove method ({remove_method_name}): {has_remove_method}");
     }
 
     assert!(
         expected_events.is_empty(),
-        "Missing expected events: {:?}",
-        expected_events
+        "Missing expected events: {expected_events:?}"
     );
 
     // Test properties - should have exactly 1 property: Property1
     let properties_count = derived_class.properties.iter().count();
-    println!("DerivedClass has {} properties", properties_count);
+    println!("DerivedClass has {properties_count} properties");
     assert_eq!(
         properties_count, 1,
         "DerivedClass should have exactly 1 property (Property1)"
@@ -2090,14 +2110,8 @@ fn test_event_and_property_semantics(asm: &CilObject) {
             property.name, set_method_name
         );
 
-        println!(
-            "    Has get method ({}): {}",
-            get_method_name, has_get_method
-        );
-        println!(
-            "    Has set method ({}): {}",
-            set_method_name, has_set_method
-        );
+        println!("    Has get method ({get_method_name}): {has_get_method}");
+        println!("    Has set method ({set_method_name}): {has_set_method}");
     }
 
     println!("✓ Event and property semantics tested");
@@ -2153,7 +2167,7 @@ fn test_nested_type_relationships(asm: &CilObject) {
         }
     }
 
-    println!("Found {} nested types total", nested_types_found);
+    println!("Found {nested_types_found} nested types total");
 
     // Expected nested types from the C# source:
     // - DerivedClass+NestedClass
@@ -2172,22 +2186,20 @@ fn test_nested_type_relationships(asm: &CilObject) {
 
         assert!(
             found_nested.is_some(),
-            "Expected nested type not found: {}",
-            nested_name
+            "Expected nested type not found: {nested_name}"
         );
-        println!("✓ Found expected nested type: {}", nested_name);
+        println!("✓ Found expected nested type: {nested_name}");
 
         // Check if any enclosing type has this as a nested type
         if let Some(enclosing_name) = enclosing_types.get(nested_name) {
-            println!("  ✓ Correctly enclosed by: {}", enclosing_name);
+            println!("  ✓ Correctly enclosed by: {enclosing_name}");
 
             // Verify the expected enclosing relationships
             match nested_name {
                 "NestedClass" | "NestedEnum" | "NestedGeneric`1" => {
                     assert_eq!(
                         enclosing_name, "DerivedClass",
-                        "{} should be enclosed by DerivedClass",
-                        nested_name
+                        "{nested_name} should be enclosed by DerivedClass"
                     );
                 }
                 "NestedStruct" => {
@@ -2206,14 +2218,10 @@ fn test_nested_type_relationships(asm: &CilObject) {
 
     // Also check the raw NestedClass table to see if relationships are stored there
     let tables = asm.tables().unwrap();
-    if let Some(nested_table) = tables.table::<NestedClassRaw>(TableId::NestedClass) {
-        println!(
-            "NestedClass table has {} entries:",
-            nested_table.row_count()
-        );
+    if let Some(nested_table) = tables.table::<NestedClassRaw>() {
+        println!("NestedClass table has {} entries:", nested_table.row_count);
         assert_eq!(
-            nested_table.row_count(),
-            10,
+            nested_table.row_count, 10,
             "Expected exactly 10 nested class entries"
         );
 
@@ -2245,7 +2253,7 @@ fn test_enum_and_constant_validation(asm: &CilObject) {
 
     // Test enum fields (values) - should have 6 fields including value__
     let fields_count = test_enum.fields.iter().count();
-    println!("  Has {} fields", fields_count);
+    println!("  Has {fields_count} fields");
     assert_eq!(
         fields_count, 6,
         "TestEnum should have 6 fields (value__ + 5 enum values)"
@@ -2267,19 +2275,17 @@ fn test_enum_and_constant_validation(asm: &CilObject) {
 
         assert!(
             found_field.is_some(),
-            "Expected enum field not found: {}",
-            expected_field
+            "Expected enum field not found: {expected_field}"
         );
-        println!("  ✓ Found expected enum field: {}", expected_field);
+        println!("  ✓ Found expected enum field: {expected_field}");
     }
 
     // Test constant table validation - should have exact number of constants
     let tables = asm.tables().unwrap();
-    if let Some(constant_table) = tables.table::<ConstantRaw>(TableId::Constant) {
-        println!("Constant table has {} entries", constant_table.row_count());
+    if let Some(constant_table) = tables.table::<ConstantRaw>() {
+        println!("Constant table has {} entries", constant_table.row_count);
         assert_eq!(
-            constant_table.row_count(),
-            7,
+            constant_table.row_count, 7,
             "Expected exactly 7 constant entries"
         );
 
@@ -2329,7 +2335,7 @@ fn test_generic_constraint_validation(asm: &CilObject) {
 
         // Check constraints for this parameter
         let constraints_count = param.constraints.iter().count();
-        println!("    Has {} constraints", constraints_count);
+        println!("    Has {constraints_count} constraints");
 
         let constraint_names: Vec<String> = param
             .constraints
@@ -2338,7 +2344,7 @@ fn test_generic_constraint_validation(asm: &CilObject) {
             .collect();
 
         for constraint_name in &constraint_names {
-            println!("      Constraint: {}", constraint_name);
+            println!("      Constraint: {constraint_name}");
         }
 
         // Expected constraints from C# source:
@@ -2427,7 +2433,7 @@ fn test_generic_constraint_validation(asm: &CilObject) {
             );
 
             let constraints_count = param.constraints.iter().count();
-            println!("    Has {} constraints", constraints_count);
+            println!("    Has {constraints_count} constraints");
 
             let constraint_names: Vec<String> = param
                 .constraints
@@ -2436,7 +2442,7 @@ fn test_generic_constraint_validation(asm: &CilObject) {
                 .collect();
 
             for constraint_name in &constraint_names {
-                println!("      Constraint: {}", constraint_name);
+                println!("      Constraint: {constraint_name}");
             }
 
             method_params.insert(param.name.clone(), constraint_names);
@@ -2502,8 +2508,7 @@ fn test_pinvoke_and_security_validation(asm: &CilObject) {
     for expected in &expected_pinvoke {
         assert!(
             found_pinvoke.contains(*expected),
-            "Expected P/Invoke method not found: {}",
-            expected
+            "Expected P/Invoke method not found: {expected}"
         );
     }
     assert_eq!(
@@ -2514,11 +2519,10 @@ fn test_pinvoke_and_security_validation(asm: &CilObject) {
 
     // Test ImplMap table (stores P/Invoke information)
     let tables = asm.tables().unwrap();
-    if let Some(implmap_table) = tables.table::<ImplMapRaw>(TableId::ImplMap) {
-        println!("ImplMap table has {} entries", implmap_table.row_count());
+    if let Some(implmap_table) = tables.table::<ImplMapRaw>() {
+        println!("ImplMap table has {} entries", implmap_table.row_count);
         assert_eq!(
-            implmap_table.row_count(),
-            2,
+            implmap_table.row_count, 2,
             "Expected exactly 2 ImplMap entries"
         );
 
@@ -2536,14 +2540,13 @@ fn test_pinvoke_and_security_validation(asm: &CilObject) {
     // Test security attributes - expected from C# source:
     // - Assembly level: SecurityPermission, FileIOPermission
     // - Method level: SecureMethod with SecurityCritical + FileIOPermission
-    if let Some(declsecurity_table) = tables.table::<DeclSecurityRaw>(TableId::DeclSecurity) {
+    if let Some(declsecurity_table) = tables.table::<DeclSecurityRaw>() {
         println!(
             "DeclSecurity table has {} entries",
-            declsecurity_table.row_count()
+            declsecurity_table.row_count
         );
         assert_eq!(
-            declsecurity_table.row_count(),
-            2,
+            declsecurity_table.row_count, 2,
             "Expected exactly 2 DeclSecurity entries"
         );
 
@@ -2572,7 +2575,7 @@ fn test_pinvoke_and_security_validation(asm: &CilObject) {
 
         // Check custom attributes for security-related attributes
         let attr_count = method.custom_attributes.iter().count();
-        println!("  Has {} custom attributes", attr_count);
+        println!("  Has {attr_count} custom attributes");
         assert!(
             attr_count >= 1,
             "SecureMethod should have at least 1 custom attribute (SecurityCritical)"
@@ -2603,7 +2606,7 @@ fn test_method_signature_validation(asm: &CilObject) {
 
         // Should have 5 input parameters based on C# source
         let param_count = method.params.iter().count();
-        println!("  Parameter count: {}", param_count);
+        println!("  Parameter count: {param_count}");
         assert_eq!(
             param_count, 5,
             "ComplexMethod should have exactly 5 input parameters"
@@ -2616,7 +2619,7 @@ fn test_method_signature_validation(asm: &CilObject) {
             .filter_map(|(_, param)| param.name.clone())
             .collect();
 
-        println!("  Parameter names: {:?}", param_names);
+        println!("  Parameter names: {param_names:?}");
         let expected_params = vec![
             "normalParam",
             "refParam",
@@ -2634,7 +2637,7 @@ fn test_method_signature_validation(asm: &CilObject) {
         // Check for some expected parameter names
         for expected_param in &expected_params {
             if param_names.iter().any(|name| name == expected_param) {
-                println!("    ✓ Found expected parameter: {}", expected_param);
+                println!("    ✓ Found expected parameter: {expected_param}");
             }
         }
 
@@ -2656,7 +2659,7 @@ fn test_method_signature_validation(asm: &CilObject) {
 
         // Should have parameters: return + t + u
         let param_count = method.params.iter().count();
-        println!("  Parameter count: {}", param_count);
+        println!("  Parameter count: {param_count}");
         assert!(
             param_count >= 2,
             "ConstrainedMethod should have at least 2 parameters (excluding return)"
@@ -2669,7 +2672,7 @@ fn test_method_signature_validation(asm: &CilObject) {
             .filter_map(|(_, param)| param.name.clone())
             .collect();
 
-        println!("  ✓ Generic method parameters validated: {:?}", param_names);
+        println!("  ✓ Generic method parameters validated: {param_names:?}");
     }
 
     // Test P/Invoke method signatures
@@ -2683,7 +2686,7 @@ fn test_method_signature_validation(asm: &CilObject) {
 
         // Should have return parameter + 1 input parameter
         let param_count = method.params.iter().count();
-        println!("  Parameter count: {}", param_count);
+        println!("  Parameter count: {param_count}");
         assert!(
             param_count >= 1,
             "LoadLibrary should have at least 1 parameter"
@@ -2709,7 +2712,7 @@ fn test_field_validation(asm: &CilObject) {
     if let Some(struct_type) = explicit_struct {
         println!("StructWithExplicitLayout field validation:");
         let field_count = struct_type.fields.iter().count();
-        println!("  Field count: {}", field_count);
+        println!("  Field count: {field_count}");
         assert_eq!(
             field_count, 3,
             "StructWithExplicitLayout should have exactly 3 fields"
@@ -2725,11 +2728,10 @@ fn test_field_validation(asm: &CilObject) {
         for expected_field in expected_fields {
             assert!(
                 field_names.iter().any(|name| name == expected_field),
-                "Should find field: {}",
-                expected_field
+                "Should find field: {expected_field}"
             );
         }
-        println!("  ✓ All expected fields found: {:?}", field_names);
+        println!("  ✓ All expected fields found: {field_names:?}");
     }
 
     // Test GenericStruct`2 fields
@@ -2738,7 +2740,7 @@ fn test_field_validation(asm: &CilObject) {
     if let Some(struct_type) = generic_struct {
         println!("GenericStruct`2 field validation:");
         let field_count = struct_type.fields.iter().count();
-        println!("  Field count: {}", field_count);
+        println!("  Field count: {field_count}");
         assert_eq!(
             field_count, 2,
             "GenericStruct`2 should have exactly 2 fields"
@@ -2754,11 +2756,10 @@ fn test_field_validation(asm: &CilObject) {
         for expected_field in expected_fields {
             assert!(
                 field_names.iter().any(|name| name == expected_field),
-                "Should find field: {}",
-                expected_field
+                "Should find field: {expected_field}"
             );
         }
-        println!("  ✓ Generic struct fields validated: {:?}", field_names);
+        println!("  ✓ Generic struct fields validated: {field_names:?}");
     }
 
     // Test BaseClass fields (should include StaticData)
@@ -2767,7 +2768,7 @@ fn test_field_validation(asm: &CilObject) {
     if let Some(class_type) = base_class {
         println!("BaseClass field validation:");
         let field_count = class_type.fields.iter().count();
-        println!("  Field count: {}", field_count);
+        println!("  Field count: {field_count}");
 
         let field_names: Vec<String> = class_type
             .fields
@@ -2780,7 +2781,7 @@ fn test_field_validation(asm: &CilObject) {
             field_names.iter().any(|name| name == "StaticData"),
             "BaseClass should have StaticData field"
         );
-        println!("  ✓ BaseClass fields include: {:?}", field_names);
+        println!("  ✓ BaseClass fields include: {field_names:?}");
     }
 
     // Test DerivedClass fields - should include _marshaledField and _customEvent
@@ -2789,7 +2790,7 @@ fn test_field_validation(asm: &CilObject) {
     if let Some(class_type) = derived_class {
         println!("DerivedClass field validation:");
         let field_count = class_type.fields.iter().count();
-        println!("  Field count: {}", field_count);
+        println!("  Field count: {field_count}");
 
         let field_names: Vec<String> = class_type
             .fields
@@ -2798,7 +2799,7 @@ fn test_field_validation(asm: &CilObject) {
             .collect();
 
         // Should have backing fields for events and properties
-        println!("  DerivedClass fields: {:?}", field_names);
+        println!("  DerivedClass fields: {field_names:?}");
 
         // We expect to find some compiler-generated or backing fields
         assert!(field_count > 0, "DerivedClass should have fields");
@@ -2814,9 +2815,9 @@ fn test_table_count_validation(asm: &CilObject) {
     let tables = asm.tables().unwrap();
 
     // Test TypeDef table count
-    if let Some(typedef_table) = tables.table::<TypeDefRaw>(TableId::TypeDef) {
-        let typedef_count = typedef_table.row_count();
-        println!("TypeDef table has {} entries", typedef_count);
+    if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
+        let typedef_count = typedef_table.row_count;
+        println!("TypeDef table has {typedef_count} entries");
         assert!(
             typedef_count >= 10,
             "Should have at least 10 type definitions"
@@ -2824,9 +2825,9 @@ fn test_table_count_validation(asm: &CilObject) {
     }
 
     // Test MethodDef table count
-    if let Some(methoddef_table) = tables.table::<MethodDefRaw>(TableId::MethodDef) {
-        let methoddef_count = methoddef_table.row_count();
-        println!("MethodDef table has {} entries", methoddef_count);
+    if let Some(methoddef_table) = tables.table::<MethodDefRaw>() {
+        let methoddef_count = methoddef_table.row_count;
+        println!("MethodDef table has {methoddef_count} entries");
         assert!(
             methoddef_count >= 20,
             "Should have at least 20 method definitions"
@@ -2834,9 +2835,9 @@ fn test_table_count_validation(asm: &CilObject) {
     }
 
     // Test Field table count
-    if let Some(field_table) = tables.table::<FieldRaw>(TableId::Field) {
-        let field_count = field_table.row_count();
-        println!("Field table has {} entries", field_count);
+    if let Some(field_table) = tables.table::<FieldRaw>() {
+        let field_count = field_table.row_count;
+        println!("Field table has {field_count} entries");
         assert!(
             field_count >= 10,
             "Should have at least 10 field definitions"
@@ -2844,9 +2845,9 @@ fn test_table_count_validation(asm: &CilObject) {
     }
 
     // Test Param table count
-    if let Some(param_table) = tables.table::<ParamRaw>(TableId::Param) {
-        let param_count = param_table.row_count();
-        println!("Param table has {} entries", param_count);
+    if let Some(param_table) = tables.table::<ParamRaw>() {
+        let param_count = param_table.row_count;
+        println!("Param table has {param_count} entries");
         assert!(
             param_count >= 15,
             "Should have at least 15 parameter definitions"
@@ -2854,9 +2855,9 @@ fn test_table_count_validation(asm: &CilObject) {
     }
 
     // Test GenericParam table count
-    if let Some(generic_param_table) = tables.table::<GenericParamRaw>(TableId::GenericParam) {
-        let generic_param_count = generic_param_table.row_count();
-        println!("GenericParam table has {} entries", generic_param_count);
+    if let Some(generic_param_table) = tables.table::<GenericParamRaw>() {
+        let generic_param_count = generic_param_table.row_count;
+        println!("GenericParam table has {generic_param_count} entries");
         assert!(
             generic_param_count >= 5,
             "Should have at least 5 generic parameters"
@@ -2864,9 +2865,9 @@ fn test_table_count_validation(asm: &CilObject) {
     }
 
     // Test MemberRef table count
-    if let Some(memberref_table) = tables.table::<MemberRefRaw>(TableId::MemberRef) {
-        let memberref_count = memberref_table.row_count();
-        println!("MemberRef table has {} entries", memberref_count);
+    if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
+        let memberref_count = memberref_table.row_count;
+        println!("MemberRef table has {memberref_count} entries");
         assert!(
             memberref_count >= 20,
             "Should have at least 20 member references"
@@ -2874,9 +2875,9 @@ fn test_table_count_validation(asm: &CilObject) {
     }
 
     // Test TypeRef table count
-    if let Some(typeref_table) = tables.table::<TypeRefRaw>(TableId::TypeRef) {
-        let typeref_count = typeref_table.row_count();
-        println!("TypeRef table has {} entries", typeref_count);
+    if let Some(typeref_table) = tables.table::<TypeRefRaw>() {
+        let typeref_count = typeref_table.row_count;
+        println!("TypeRef table has {typeref_count} entries");
         assert!(
             typeref_count >= 30,
             "Should have at least 30 type references"
@@ -2901,7 +2902,7 @@ fn test_custom_attribute_validation(asm: &CilObject) {
         println!("SecureMethod custom attribute validation:");
 
         let attr_count = method.custom_attributes.iter().count();
-        println!("  Custom attribute count: {}", attr_count);
+        println!("  Custom attribute count: {attr_count}");
         assert!(
             attr_count >= 1,
             "SecureMethod should have at least 1 custom attribute"
@@ -2923,7 +2924,7 @@ fn test_custom_attribute_validation(asm: &CilObject) {
         println!("ComplexMethod custom attribute validation:");
 
         let attr_count = method.custom_attributes.iter().count();
-        println!("  Custom attribute count: {}", attr_count);
+        println!("  Custom attribute count: {attr_count}");
         assert!(
             attr_count >= 1,
             "ComplexMethod should have at least 1 custom attribute (Obsolete)"
@@ -2940,7 +2941,7 @@ fn test_custom_attribute_validation(asm: &CilObject) {
     if let Some(class_type) = derived_class {
         println!("DerivedClass custom attribute validation:");
         let attr_count = class_type.custom_attributes.iter().count();
-        println!("  Custom attribute count: {}", attr_count);
+        println!("  Custom attribute count: {attr_count}");
         // DerivedClass should have MetadataTest attribute
         assert!(
             attr_count >= 1,
@@ -2958,9 +2959,9 @@ fn test_assembly_metadata_validation(asm: &CilObject) {
 
     // Test basic assembly information
     let tables = asm.tables().unwrap();
-    if let Some(assembly_table) = tables.table::<AssemblyRaw>(TableId::Assembly) {
-        let assembly_count = assembly_table.row_count();
-        println!("Assembly table has {} entries", assembly_count);
+    if let Some(assembly_table) = tables.table::<AssemblyRaw>() {
+        let assembly_count = assembly_table.row_count;
+        println!("Assembly table has {assembly_count} entries");
         assert_eq!(assembly_count, 1, "Should have exactly 1 assembly entry");
 
         if let Some(assembly_row) = assembly_table.get(1) {
@@ -2988,9 +2989,9 @@ fn test_assembly_metadata_validation(asm: &CilObject) {
     }
 
     // Test module information
-    if let Some(module_table) = tables.table::<ModuleRaw>(TableId::Module) {
-        let module_count = module_table.row_count();
-        println!("Module table has {} entries", module_count);
+    if let Some(module_table) = tables.table::<ModuleRaw>() {
+        let module_count = module_table.row_count;
+        println!("Module table has {module_count} entries");
         assert!(module_count >= 1, "Should have at least 1 module");
 
         if let Some(module_row) = module_table.get(1) {
@@ -3012,10 +3013,7 @@ fn test_assembly_metadata_validation(asm: &CilObject) {
             }
         }
 
-        println!(
-            "String heap validation: {} test accesses successful",
-            found_strings
-        );
+        println!("String heap validation: {found_strings} test accesses successful");
         assert!(found_strings > 0, "Should be able to access string heap");
         println!("  ✓ String heap accessible");
     }
@@ -3037,15 +3035,10 @@ fn test_assembly_metadata_validation(asm: &CilObject) {
 
         // Try to iterate through a few entries to validate structure
         let mut found_entries = 0;
-        for result in us_heap.iter().take(5) {
-            if result.is_ok() {
-                found_entries += 1;
-            }
+        for (_offset, _string) in us_heap.iter().take(5) {
+            found_entries += 1;
         }
-        println!(
-            "UserStrings heap validation: {} test accesses successful",
-            found_entries
-        );
+        println!("UserStrings heap validation: {found_entries} test accesses successful");
         println!("  ✓ UserStrings heap accessible");
     }
 
@@ -3053,8 +3046,8 @@ fn test_assembly_metadata_validation(asm: &CilObject) {
     let metadata_rva = asm.cor20header().meta_data_rva;
     let metadata_size = asm.cor20header().meta_data_size;
 
-    println!("Metadata directory RVA: 0x{:X}", metadata_rva);
-    println!("Metadata directory size: {} bytes", metadata_size);
+    println!("Metadata directory RVA: 0x{metadata_rva:X}");
+    println!("Metadata directory size: {metadata_size} bytes");
     assert!(metadata_rva > 0, "Metadata directory should have valid RVA");
     assert!(
         metadata_size > 0,
@@ -3072,7 +3065,7 @@ fn test_xml_permission_set_parsing(asm: &CilObject) {
     // Look for DeclSecurity entries with XML permission sets
     let tables = asm.tables().unwrap();
 
-    if let Some(decl_security_table) = tables.table::<DeclSecurityRaw>(TableId::DeclSecurity) {
+    if let Some(decl_security_table) = tables.table::<DeclSecurityRaw>() {
         let mut found_xml_permission_set = false;
 
         // Iterate through DeclSecurity entries
@@ -3133,7 +3126,7 @@ fn test_xml_permission_set_parsing(asm: &CilObject) {
                                                 match &arg.value {
                                                     ArgumentValue::String(s) => {
                                                         assert!(s.contains("TestData"));
-                                                        println!("Verified Read path contains TestData: {}", s);
+                                                        println!("Verified Read path contains TestData: {s}");
                                                     }
                                                     _ => panic!("Expected string value for Read"),
                                                 }
@@ -3144,7 +3137,7 @@ fn test_xml_permission_set_parsing(asm: &CilObject) {
                             }
                             other_format => {
                                 // If it's not XML, let's see what format it is
-                                println!("Permission set format detected as: {:?}", other_format);
+                                println!("Permission set format detected as: {other_format:?}");
 
                                 // Still test that we can parse it regardless of format
                                 assert!(
@@ -3168,7 +3161,7 @@ fn test_xml_permission_set_parsing(asm: &CilObject) {
         // For this test to be meaningful, we should find at least one permission set
         // (it might be binary format instead of XML, which is also fine)
         assert!(
-            decl_security_table.row_count() > 0,
+            decl_security_table.row_count > 0,
             "Should have DeclSecurity entries from crafted_2.exe"
         );
 
@@ -3204,3 +3197,148 @@ fn test_xml_permission_set_parsing(asm: &CilObject) {
 
     println!("✓ XML permission set parsing tested");
 }
+
+// fn test_portable_pdb_features(asm: &CilObject) {
+//     println!("=== Testing Portable PDB Features ===");
+
+//     if let Some(tables_header) = asm.tables() {
+//         // Test Document table (if present)
+//         if tables_header.has_table(TableId::Document) {
+//             println!(
+//                 "✓ Found Document table with {} entries",
+//                 tables_header.table_row_count(TableId::Document)
+//             );
+//         } else {
+//             println!("ℹ Document table not present (expected for regular .exe files)");
+//         }
+
+//         // Test MethodDebugInformation table (if present)
+//         if tables_header.has_table(TableId::MethodDebugInformation) {
+//             println!(
+//                 "✓ Found MethodDebugInformation table with {} entries",
+//                 tables_header.table_row_count(TableId::MethodDebugInformation)
+//             );
+//         } else {
+//             println!(
+//                 "ℹ MethodDebugInformation table not present (expected for regular .exe files)"
+//             );
+//         }
+
+//         // Test LocalScope table (if present)
+//         if tables_header.has_table(TableId::LocalScope) {
+//             println!(
+//                 "✓ Found LocalScope table with {} entries",
+//                 tables_header.table_row_count(TableId::LocalScope)
+//             );
+//         } else {
+//             println!("ℹ LocalScope table not present (expected for regular .exe files)");
+//         }
+
+//         // Test LocalVariable table (if present)
+//         if tables_header.has_table(TableId::LocalVariable) {
+//             println!(
+//                 "✓ Found LocalVariable table with {} entries",
+//                 tables_header.table_row_count(TableId::LocalVariable)
+//             );
+//         } else {
+//             println!("ℹ LocalVariable table not present (expected for regular .exe files)");
+//         }
+
+//         // Test LocalConstant table (if present)
+//         if tables_header.has_table(TableId::LocalConstant) {
+//             println!(
+//                 "✓ Found LocalConstant table with {} entries",
+//                 tables_header.table_row_count(TableId::LocalConstant)
+//             );
+//         } else {
+//             println!("ℹ LocalConstant table not present (expected for regular .exe files)");
+//         }
+
+//         // Test ImportScope table (if present)
+//         if tables_header.has_table(TableId::ImportScope) {
+//             println!(
+//                 "✓ Found ImportScope table with {} entries",
+//                 tables_header.table_row_count(TableId::ImportScope)
+//             );
+//         } else {
+//             println!("ℹ ImportScope table not present (expected for regular .exe files)");
+//         }
+
+//         // Test StateMachineMethod table (if present)
+//         if tables_header.has_table(TableId::StateMachineMethod) {
+//             println!(
+//                 "✓ Found StateMachineMethod table with {} entries",
+//                 tables_header.table_row_count(TableId::StateMachineMethod)
+//             );
+//         } else {
+//             println!("ℹ StateMachineMethod table not present (expected for regular .exe files)");
+//         }
+
+//         // Test CustomDebugInformation table (if present)
+//         if tables_header.has_table(TableId::CustomDebugInformation) {
+//             println!(
+//                 "✓ Found CustomDebugInformation table with {} entries",
+//                 tables_header.table_row_count(TableId::CustomDebugInformation)
+//             );
+
+//             // Try to access the table and verify we can read entries
+//             use dotscope::metadata::tables::CustomDebugInformationRaw;
+//             if let Some(custom_debug_table) =
+//                 tables_header.table::<CustomDebugInformationRaw>()
+//             {
+//                 println!("✓ Successfully accessed CustomDebugInformation table");
+
+//                 // Test iterating over entries (if any)
+//                 for (index, entry) in custom_debug_table.iter().enumerate().take(5) {
+//                     println!(
+//                         "  Custom debug info {}: parent={:?}, kind={}, value={}",
+//                         index + 1,
+//                         entry.parent,
+//                         entry.kind,
+//                         entry.value
+//                     );
+//                 }
+
+//                 // Test random access
+//                 if let Some(first_entry) = custom_debug_table.get(1) {
+//                     println!(
+//                         "✓ Random access to first entry successful: token={:?}",
+//                         first_entry.token
+//                     );
+//                 }
+//             }
+//         } else {
+//             println!(
+//                 "ℹ CustomDebugInformation table not present (expected for regular .exe files)"
+//             );
+//         }
+
+//         // Test that all tables can be loaded without panicking
+//         let pdb_table_ids = [
+//             TableId::Document,
+//             TableId::MethodDebugInformation,
+//             TableId::LocalScope,
+//             TableId::LocalVariable,
+//             TableId::LocalConstant,
+//             TableId::ImportScope,
+//             TableId::StateMachineMethod,
+//             TableId::CustomDebugInformation,
+//         ];
+
+//         for table_id in &pdb_table_ids {
+//             if tables_header.has_table(*table_id) {
+//                 let row_count = tables_header.table_row_count(*table_id);
+//                 println!(
+//                     "✓ Table {:?} is properly loaded with {} rows",
+//                     table_id, row_count
+//                 );
+//             }
+//         }
+
+//         println!("✓ All Portable PDB table implementations are functioning");
+//     } else {
+//         println!("⚠ No metadata tables header found");
+//     }
+
+//     println!("✓ Portable PDB features test completed");
+// }

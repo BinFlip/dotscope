@@ -1,7 +1,7 @@
-//! ManifestResource table implementation for assembly resource management.
+//! `ManifestResource` table implementation for assembly resource management.
 //!
-//! This module provides complete support for the ManifestResource metadata table, which defines
-//! resources embedded in or linked to .NET assemblies. The ManifestResource table is essential
+//! This module provides complete support for the `ManifestResource` metadata table, which defines
+//! resources embedded in or linked to .NET assemblies. The `ManifestResource` table is essential
 //! for resource management, globalization, and access to non-code assets in .NET applications.
 //!
 //! # Module Components
@@ -17,13 +17,13 @@
 //! | Offset | 4-byte offset | Location within resource data (0 for external) |
 //! | Flags | 4-byte flags | Resource visibility attributes |
 //! | Name | String heap index | Resource identifier name |
-//! | Implementation | Implementation coded index | Location reference (null, File, or AssemblyRef) |
+//! | Implementation | Implementation coded index | Location reference (null, File, or `AssemblyRef`) |
 //!
 //! # Resource Storage Models
-//! The ManifestResource table supports multiple resource storage and access patterns:
+//! The `ManifestResource` table supports multiple resource storage and access patterns:
 //! - **Embedded resources**: Binary data stored directly in the assembly PE file
 //! - **File-based resources**: External files referenced through the File table
-//! - **Assembly-based resources**: Resources located in external assemblies via AssemblyRef
+//! - **Assembly-based resources**: Resources located in external assemblies via `AssemblyRef`
 //! - **Satellite assemblies**: Culture-specific resources for internationalization
 //! - **Streaming access**: Large resources accessed through streaming interfaces
 //!
@@ -34,7 +34,7 @@
 //! - **Assembly security**: Controlled access based on assembly trust levels
 //!
 //! # ECMA-335 References
-//! - ECMA-335, Partition II, §22.24: ManifestResource table specification
+//! - ECMA-335, Partition II, §22.24: `ManifestResource` table specification
 //! - ECMA-335, Partition II, §23.2.7: Implementation coded index encoding
 //! - ECMA-335, Partition II, §6.2.2: Resources and resource management
 use bitflags::bitflags;
@@ -43,21 +43,25 @@ use std::sync::Arc;
 
 use crate::metadata::token::Token;
 
+mod builder;
 mod loader;
 mod owned;
 mod raw;
+mod reader;
+mod writer;
 
+pub use builder::*;
 pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;
 
-/// Concurrent map for storing ManifestResource entries indexed by [`Token`].
+/// Concurrent map for storing `ManifestResource` entries indexed by [`crate::metadata::token::Token`].
 ///
 /// This thread-safe map enables efficient lookup of resources by their
 /// associated tokens during metadata processing and runtime resource access.
 pub type ManifestResourceMap = SkipMap<Token, ManifestResourceRc>;
 
-/// Thread-safe list for storing collections of ManifestResource entries.
+/// Thread-safe list for storing collections of `ManifestResource` entries.
 ///
 /// Used for maintaining ordered sequences of resources during metadata
 /// loading and for iteration over all resources in an assembly.

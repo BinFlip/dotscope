@@ -44,7 +44,7 @@ fn main() -> Result<()> {
             assembly
         }
         Err(e) => {
-            eprintln!("❌ Failed to load assembly: {}", e);
+            eprintln!("❌ Failed to load assembly: {e}");
             eprintln!();
             eprintln!("Common causes:");
             eprintln!("  • File is not a valid .NET assembly");
@@ -116,7 +116,7 @@ fn main() -> Result<()> {
 
         // Show culture information if available
         if let Some(ref culture) = assembly_info.culture {
-            println!("  - Culture: {}", culture);
+            println!("  - Culture: {culture}");
         } else {
             println!("  - Culture: neutral");
         }

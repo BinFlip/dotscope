@@ -149,6 +149,52 @@
 
 use crate::metadata::{token::Token, typesystem::ArrayDimensions};
 
+/// Represents a custom modifier with its required/optional flag and type reference.
+///
+/// Custom modifiers in .NET metadata can be either required (modreq) or optional (modopt):
+/// - **Required modifiers**: Must be understood by all consumers of the type
+/// - **Optional modifiers**: May be ignored by consumers that don't understand them
+///
+/// According to ECMA-335 §II.23.2.7, custom modifiers are encoded as:
+/// - Required: `0x1F (ELEMENT_TYPE_CMOD_REQD) + TypeDefOrRef coded index`
+/// - Optional: `0x20 (ELEMENT_TYPE_CMOD_OPT) + TypeDefOrRef coded index`
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use dotscope::metadata::signatures::CustomModifier;
+/// use dotscope::metadata::token::Token;
+///
+/// // Required modifier (modreq)
+/// let const_modifier = CustomModifier {
+///     is_required: true,
+///     modifier_type: Token::new(0x01000001), // Reference to IsConst type
+/// };
+///
+/// // Optional modifier (modopt)  
+/// let volatile_modifier = CustomModifier {
+///     is_required: false,
+///     modifier_type: Token::new(0x01000002), // Reference to IsVolatile type
+/// };
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomModifier {
+    /// Whether this is a required modifier (modreq) or optional modifier (modopt).
+    /// - `true`: Required modifier (ELEMENT_TYPE_CMOD_REQD = 0x1F)
+    /// - `false`: Optional modifier (ELEMENT_TYPE_CMOD_OPT = 0x20)
+    pub is_required: bool,
+
+    /// Token referencing the modifier type (TypeDef, TypeRef, or TypeSpec).
+    /// This token points to the type that defines the modifier semantics.
+    pub modifier_type: Token,
+}
+
+/// A collection of custom modifiers applied to a type or type component.
+///
+/// Custom modifiers are applied in sequence and evaluated right-to-left according
+/// to ECMA-335. Multiple modifiers can be applied to the same type component.
+pub type CustomModifiers = Vec<CustomModifier>;
+
 /// Complete .NET type signature representation supporting all ECMA-335 type encodings.
 ///
 /// `TypeSignature` represents any type that can appear in .NET metadata signatures,
@@ -157,62 +203,62 @@ use crate::metadata::{token::Token, typesystem::ArrayDimensions};
 ///
 /// # Type Categories
 ///
-/// ## Primitive Types (ELEMENT_TYPE_*)
+/// ## Primitive Types (`ELEMENT_TYPE_*`)
 /// Direct mappings from ECMA-335 element type constants:
-/// - [`Void`](TypeSignature::Void): `void` type (ELEMENT_TYPE_VOID = 0x01)
-/// - [`Boolean`](TypeSignature::Boolean): `bool` type (ELEMENT_TYPE_BOOLEAN = 0x02)
-/// - [`Char`](TypeSignature::Char): `char` type (ELEMENT_TYPE_CHAR = 0x03)
-/// - [`I1`](TypeSignature::I1): `sbyte` type (ELEMENT_TYPE_I1 = 0x04)
-/// - [`U1`](TypeSignature::U1): `byte` type (ELEMENT_TYPE_U1 = 0x05)
-/// - [`I2`](TypeSignature::I2): `short` type (ELEMENT_TYPE_I2 = 0x06)
-/// - [`U2`](TypeSignature::U2): `ushort` type (ELEMENT_TYPE_U2 = 0x07)
-/// - [`I4`](TypeSignature::I4): `int` type (ELEMENT_TYPE_I4 = 0x08)
-/// - [`U4`](TypeSignature::U4): `uint` type (ELEMENT_TYPE_U4 = 0x09)
-/// - [`I8`](TypeSignature::I8): `long` type (ELEMENT_TYPE_I8 = 0x0A)
-/// - [`U8`](TypeSignature::U8): `ulong` type (ELEMENT_TYPE_U8 = 0x0B)
-/// - [`R4`](TypeSignature::R4): `float` type (ELEMENT_TYPE_R4 = 0x0C)
-/// - [`R8`](TypeSignature::R8): `double` type (ELEMENT_TYPE_R8 = 0x0D)
-/// - [`String`](TypeSignature::String): `string` type (ELEMENT_TYPE_STRING = 0x0E)
-/// - [`Object`](TypeSignature::Object): `object` type (ELEMENT_TYPE_OBJECT = 0x1C)
-/// - [`I`](TypeSignature::I): `IntPtr` type (ELEMENT_TYPE_I = 0x18)
-/// - [`U`](TypeSignature::U): `UIntPtr` type (ELEMENT_TYPE_U = 0x19)
+/// - [`Void`](TypeSignature::Void): `void` type (`ELEMENT_TYPE_VOID` = 0x01)
+/// - [`Boolean`](TypeSignature::Boolean): `bool` type (`ELEMENT_TYPE_BOOLEAN` = 0x02)
+/// - [`Char`](TypeSignature::Char): `char` type (`ELEMENT_TYPE_CHAR` = 0x03)
+/// - [`I1`](TypeSignature::I1): `sbyte` type (`ELEMENT_TYPE_I1` = 0x04)
+/// - [`U1`](TypeSignature::U1): `byte` type (`ELEMENT_TYPE_U1` = 0x05)
+/// - [`I2`](TypeSignature::I2): `short` type (`ELEMENT_TYPE_I2` = 0x06)
+/// - [`U2`](TypeSignature::U2): `ushort` type (`ELEMENT_TYPE_U2` = 0x07)
+/// - [`I4`](TypeSignature::I4): `int` type (`ELEMENT_TYPE_I4` = 0x08)
+/// - [`U4`](TypeSignature::U4): `uint` type (`ELEMENT_TYPE_U4` = 0x09)
+/// - [`I8`](TypeSignature::I8): `long` type (`ELEMENT_TYPE_I8` = 0x0A)
+/// - [`U8`](TypeSignature::U8): `ulong` type (`ELEMENT_TYPE_U8` = 0x0B)
+/// - [`R4`](TypeSignature::R4): `float` type (`ELEMENT_TYPE_R4` = 0x0C)
+/// - [`R8`](TypeSignature::R8): `double` type (`ELEMENT_TYPE_R8` = 0x0D)
+/// - [`String`](TypeSignature::String): `string` type (`ELEMENT_TYPE_STRING` = 0x0E)
+/// - [`Object`](TypeSignature::Object): `object` type (`ELEMENT_TYPE_OBJECT` = 0x1C)
+/// - [`I`](TypeSignature::I): `IntPtr` type (`ELEMENT_TYPE_I` = 0x18)
+/// - [`U`](TypeSignature::U): `UIntPtr` type (`ELEMENT_TYPE_U` = 0x19)
 ///
 /// ## Reference and Pointer Types
 /// Types providing memory indirection:
-/// - [`Ptr`](TypeSignature::Ptr): Unmanaged pointer (T*) (ELEMENT_TYPE_PTR = 0x0F)
-/// - [`ByRef`](TypeSignature::ByRef): Managed reference (ref T) (ELEMENT_TYPE_BYREF = 0x10)
-/// - [`Pinned`](TypeSignature::Pinned): Pinned reference for interop (ELEMENT_TYPE_PINNED = 0x45)
+/// - [`Ptr`](TypeSignature::Ptr): Unmanaged pointer (T*) (`ELEMENT_TYPE_PTR` = 0x0F)
+/// - [`ByRef`](TypeSignature::ByRef): Managed reference (ref T) (`ELEMENT_TYPE_BYREF` = 0x10)
+/// - [`Pinned`](TypeSignature::Pinned): Pinned reference for interop (`ELEMENT_TYPE_PINNED` = 0x45)
 ///
 /// ## Object-Oriented Types
 /// Class and value type representations:
-/// - [`Class`](TypeSignature::Class): Reference types (ELEMENT_TYPE_CLASS = 0x12)
-/// - [`ValueType`](TypeSignature::ValueType): Value types (ELEMENT_TYPE_VALUETYPE = 0x11)
+/// - [`Class`](TypeSignature::Class): Reference types (`ELEMENT_TYPE_CLASS` = 0x12)
+/// - [`ValueType`](TypeSignature::ValueType): Value types (`ELEMENT_TYPE_VALUETYPE` = 0x11)
 ///
 /// ## Array Types
 /// Single and multi-dimensional array support:
-/// - [`Array`](TypeSignature::Array): Multi-dimensional arrays (ELEMENT_TYPE_ARRAY = 0x14)
-/// - [`SzArray`](TypeSignature::SzArray): Single-dimensional arrays (ELEMENT_TYPE_SZARRAY = 0x1D)
+/// - [`Array`](TypeSignature::Array): Multi-dimensional arrays (`ELEMENT_TYPE_ARRAY` = 0x14)
+/// - [`SzArray`](TypeSignature::SzArray): Single-dimensional arrays (`ELEMENT_TYPE_SZARRAY` = 0x1D)
 ///
 /// ## Generic Types
 /// Support for .NET generics:
-/// - [`GenericInst`](TypeSignature::GenericInst): Generic instantiation (`List<T>`) (ELEMENT_TYPE_GENERICINST = 0x15)
-/// - [`GenericParamType`](TypeSignature::GenericParamType): Type parameter (T) (ELEMENT_TYPE_VAR = 0x13)
-/// - [`GenericParamMethod`](TypeSignature::GenericParamMethod): Method parameter (M) (ELEMENT_TYPE_MVAR = 0x1E)
+/// - [`GenericInst`](TypeSignature::GenericInst): Generic instantiation (`List<T>`) (`ELEMENT_TYPE_GENERICINST` = 0x15)
+/// - [`GenericParamType`](TypeSignature::GenericParamType): Type parameter (T) (`ELEMENT_TYPE_VAR` = 0x13)
+/// - [`GenericParamMethod`](TypeSignature::GenericParamMethod): Method parameter (M) (`ELEMENT_TYPE_MVAR` = 0x1E)
 ///
 /// ## Function Types
 /// Callable type representations:
-/// - [`FnPtr`](TypeSignature::FnPtr): Function pointer (ELEMENT_TYPE_FNPTR = 0x1B)
+/// - [`FnPtr`](TypeSignature::FnPtr): Function pointer (`ELEMENT_TYPE_FNPTR` = 0x1B)
 ///
 /// ## Custom Modifiers
 /// Type annotation system:
-/// - [`ModifiedRequired`](TypeSignature::ModifiedRequired): Required modifiers (ELEMENT_TYPE_CMOD_REQD = 0x1F)
-/// - [`ModifiedOptional`](TypeSignature::ModifiedOptional): Optional modifiers (ELEMENT_TYPE_CMOD_OPT = 0x20)
+/// - [`ModifiedRequired`](TypeSignature::ModifiedRequired): Required modifiers (`ELEMENT_TYPE_CMOD_REQD` = 0x1F)
+/// - [`ModifiedOptional`](TypeSignature::ModifiedOptional): Optional modifiers (`ELEMENT_TYPE_CMOD_OPT` = 0x20)
 ///
 /// ## Special Types
 /// Runtime and metadata-specific types:
-/// - [`TypedByRef`](TypeSignature::TypedByRef): Typed references (ELEMENT_TYPE_TYPEDBYREF = 0x16)
-/// - [`Internal`](TypeSignature::Internal): CLI-internal type (ELEMENT_TYPE_INTERNAL = 0x21)
-/// - [`Sentinel`](TypeSignature::Sentinel): Vararg separator (ELEMENT_TYPE_SENTINEL = 0x41)
+/// - [`TypedByRef`](TypeSignature::TypedByRef): Typed references (`ELEMENT_TYPE_TYPEDBYREF` = 0x16)
+/// - [`Internal`](TypeSignature::Internal): CLI-internal type (`ELEMENT_TYPE_INTERNAL` = 0x21)
+/// - [`Sentinel`](TypeSignature::Sentinel): Vararg separator (`ELEMENT_TYPE_SENTINEL` = 0x41)
 /// - [`Unknown`](TypeSignature::Unknown): Unresolved or invalid type
 ///
 /// ## Custom Attribute Types
@@ -301,7 +347,7 @@ pub enum TypeSignature {
     /// - Used as a safe default during signature construction
     Unknown,
 
-    /// The `void` type (ELEMENT_TYPE_VOID = 0x01).
+    /// The `void` type (`ELEMENT_TYPE_VOID` = 0x01).
     ///
     /// Represents the absence of a value, typically used as:
     /// - Method return types for procedures that don't return values
@@ -315,10 +361,10 @@ pub enum TypeSignature {
     /// ```
     ///
     /// # ECMA-335 Reference
-    /// Partition II, Section 23.1.16: ELEMENT_TYPE_VOID
+    /// Partition II, Section 23.1.16: `ELEMENT_TYPE_VOID`
     Void,
 
-    /// The `bool` type (ELEMENT_TYPE_BOOLEAN = 0x02).
+    /// The `bool` type (`ELEMENT_TYPE_BOOLEAN` = 0x02).
     ///
     /// Represents a boolean value that can be either `true` or `false`.
     /// Stored as a single byte in memory with 0 = false, non-zero = true.
@@ -335,7 +381,7 @@ pub enum TypeSignature {
     /// - CLI verification ensures only 0 or 1 values in verifiable code
     Boolean,
 
-    /// The `char` type (ELEMENT_TYPE_CHAR = 0x03).
+    /// The `char` type (`ELEMENT_TYPE_CHAR` = 0x03).
     ///
     /// Represents a Unicode UTF-16 character value. Always unsigned 16-bit.
     /// Part of the .NET character and string system with full Unicode support.
@@ -353,7 +399,7 @@ pub enum TypeSignature {
     /// - Surrogate pairs handled at string level
     Char,
 
-    /// Signed 8-bit integer type `sbyte` (ELEMENT_TYPE_I1 = 0x04).
+    /// Signed 8-bit integer type `sbyte` (`ELEMENT_TYPE_I1` = 0x04).
     ///
     /// Represents signed byte values from -128 to 127.
     /// Commonly used for small numeric values and interop scenarios.
@@ -370,7 +416,7 @@ pub enum TypeSignature {
     /// - Two's complement representation
     I1,
 
-    /// Unsigned 8-bit integer type `byte` (ELEMENT_TYPE_U1 = 0x05).
+    /// Unsigned 8-bit integer type `byte` (`ELEMENT_TYPE_U1` = 0x05).
     ///
     /// Represents unsigned byte values from 0 to 255.
     /// Most commonly used numeric type for binary data and byte arrays.
@@ -387,7 +433,7 @@ pub enum TypeSignature {
     /// - Common use: Binary data, small positive integers
     U1,
 
-    /// Signed 16-bit integer type `short` (ELEMENT_TYPE_I2 = 0x06).
+    /// Signed 16-bit integer type `short` (`ELEMENT_TYPE_I2` = 0x06).
     ///
     /// Represents signed 16-bit values from -32,768 to 32,767.
     /// Used for moderate-range integer values and interop scenarios.
@@ -405,7 +451,7 @@ pub enum TypeSignature {
     /// - Little-endian byte order in memory
     I2,
 
-    /// Unsigned 16-bit integer type `ushort` (ELEMENT_TYPE_U2 = 0x07).
+    /// Unsigned 16-bit integer type `ushort` (`ELEMENT_TYPE_U2` = 0x07).
     ///
     /// Represents unsigned 16-bit values from 0 to 65,535.
     /// Commonly used for port numbers, small identifiers, and Unicode code points.
@@ -422,7 +468,7 @@ pub enum TypeSignature {
     /// - Little-endian byte order in memory
     U2,
 
-    /// Signed 32-bit integer type `int` (ELEMENT_TYPE_I4 = 0x08).
+    /// Signed 32-bit integer type `int` (`ELEMENT_TYPE_I4` = 0x08).
     ///
     /// The most commonly used integer type in .NET applications.
     /// Default integer type for literals and general-purpose numeric values.
@@ -440,7 +486,7 @@ pub enum TypeSignature {
     /// - Most efficient integer type on 32-bit and 64-bit platforms
     I4,
 
-    /// Unsigned 32-bit integer type `uint` (ELEMENT_TYPE_U4 = 0x09).
+    /// Unsigned 32-bit integer type `uint` (`ELEMENT_TYPE_U4` = 0x09).
     ///
     /// Represents unsigned 32-bit values from 0 to 4,294,967,295.
     /// Used for large positive values, bit manipulation, and interop.
@@ -457,7 +503,7 @@ pub enum TypeSignature {
     /// - Common use: Bit flags, large counts, memory addresses
     U4,
 
-    /// Signed 64-bit integer type `long` (ELEMENT_TYPE_I8 = 0x0A).
+    /// Signed 64-bit integer type `long` (`ELEMENT_TYPE_I8` = 0x0A).
     ///
     /// Represents large signed integer values. Used for file sizes,
     /// timestamps, large counters, and high-precision calculations.
@@ -474,7 +520,7 @@ pub enum TypeSignature {
     /// - Two's complement representation
     I8,
 
-    /// Unsigned 64-bit integer type `ulong` (ELEMENT_TYPE_U8 = 0x0B).
+    /// Unsigned 64-bit integer type `ulong` (`ELEMENT_TYPE_U8` = 0x0B).
     ///
     /// Represents the largest standard unsigned integer type in .NET.
     /// Used for very large positive values, memory sizes, and bit manipulation.
@@ -491,7 +537,7 @@ pub enum TypeSignature {
     /// - Common use: Large memory sizes, 64-bit bit manipulation
     U8,
 
-    /// Single-precision 32-bit floating-point type `float` (ELEMENT_TYPE_R4 = 0x0C).
+    /// Single-precision 32-bit floating-point type `float` (`ELEMENT_TYPE_R4` = 0x0C).
     ///
     /// IEEE 754 single-precision floating-point number with ~7 decimal digits
     /// of precision. Used for graphics, scientific calculations, and scenarios
@@ -510,7 +556,7 @@ pub enum TypeSignature {
     /// - IEEE 754 single-precision format
     R4,
 
-    /// Double-precision 64-bit floating-point type `double` (ELEMENT_TYPE_R8 = 0x0D).
+    /// Double-precision 64-bit floating-point type `double` (`ELEMENT_TYPE_R8` = 0x0D).
     ///
     /// IEEE 754 double-precision floating-point number with ~15-17 decimal digits
     /// of precision. Default floating-point type for most calculations.
@@ -528,7 +574,7 @@ pub enum TypeSignature {
     /// - IEEE 754 double-precision format
     R8,
 
-    /// The `string` type (ELEMENT_TYPE_STRING = 0x0E).
+    /// The `string` type (`ELEMENT_TYPE_STRING` = 0x0E).
     ///
     /// Represents immutable Unicode text strings. Reference type with
     /// automatic memory management and comprehensive Unicode support.
@@ -547,7 +593,7 @@ pub enum TypeSignature {
     /// - Length-prefixed with automatic bounds checking
     String,
 
-    /// Unmanaged pointer type `T*` (ELEMENT_TYPE_PTR = 0x0F).
+    /// Unmanaged pointer type `T*` (`ELEMENT_TYPE_PTR` = 0x0F).
     ///
     /// Represents a pointer to unmanaged memory containing the specified type.
     /// Used in unsafe code and interop scenarios. Requires unsafe context.
@@ -569,7 +615,7 @@ pub enum TypeSignature {
     /// - [`TypeSignature::ByRef`]: For managed references
     Ptr(SignaturePointer),
 
-    /// Managed reference type `ref T` (ELEMENT_TYPE_BYREF = 0x10).
+    /// Managed reference type `ref T` (`ELEMENT_TYPE_BYREF` = 0x10).
     ///
     /// Represents a managed reference to a value of the specified type.
     /// Used for `ref`, `out`, and `in` parameters and return values.
@@ -593,7 +639,7 @@ pub enum TypeSignature {
     /// - [`TypeSignature::Ptr`]: For unmanaged pointers
     ByRef(Box<TypeSignature>),
 
-    /// Value type reference (ELEMENT_TYPE_VALUETYPE = 0x11).
+    /// Value type reference (`ELEMENT_TYPE_VALUETYPE` = 0x11).
     ///
     /// Represents a value type (struct, enum, or primitive type) defined in metadata.
     /// Value types are stored by value rather than reference, with direct memory layout.
@@ -613,14 +659,14 @@ pub enum TypeSignature {
     /// - Supports custom constructors and methods
     ///
     /// # Token Reference
-    /// The contained [`Token`] references the TypeDef or TypeRef metadata table
+    /// The contained [`crate::metadata::token::Token`] references the `TypeDef` or `TypeRef` metadata table
     /// entry that defines this value type.
     ///
     /// # See Also
     /// - [`TypeSignature::Class`]: For reference types
     ValueType(Token),
 
-    /// Reference type (class) definition (ELEMENT_TYPE_CLASS = 0x12).
+    /// Reference type (class) definition (`ELEMENT_TYPE_CLASS` = 0x12).
     ///
     /// Represents a reference type (class or interface) defined in metadata.
     /// Reference types are allocated on the managed heap with automatic garbage collection.
@@ -641,7 +687,7 @@ pub enum TypeSignature {
     /// - Can contain virtual methods and properties
     ///
     /// # Token Reference
-    /// The contained [`Token`] references the TypeDef or TypeRef metadata table
+    /// The contained [`crate::metadata::token::Token`] references the `TypeDef` or `TypeRef` metadata table
     /// entry that defines this class type.
     ///
     /// # See Also
@@ -649,7 +695,7 @@ pub enum TypeSignature {
     /// - [`TypeSignature::GenericInst`]: For generic instantiations
     Class(Token),
 
-    /// Generic type parameter `T` (ELEMENT_TYPE_VAR = 0x13).
+    /// Generic type parameter `T` (`ELEMENT_TYPE_VAR` = 0x13).
     ///
     /// Represents a generic type parameter defined on a type (class, struct, or interface).
     /// The parameter is identified by its zero-based index in the generic parameter list.
@@ -677,7 +723,7 @@ pub enum TypeSignature {
     /// - [`TypeSignature::GenericInst`]: For generic instantiations
     GenericParamType(u32),
 
-    /// Multi-dimensional array type `T[,]` (ELEMENT_TYPE_ARRAY = 0x14).
+    /// Multi-dimensional array type `T[,]` (`ELEMENT_TYPE_ARRAY` = 0x14).
     ///
     /// Represents arrays with one or more dimensions, including size and bound information.
     /// Supports jagged arrays, rectangular arrays, and arrays with non-zero lower bounds.
@@ -701,7 +747,7 @@ pub enum TypeSignature {
     /// - [`TypeSignature::SzArray`]: For single-dimensional arrays
     Array(SignatureArray),
 
-    /// Generic type instantiation `List<T>` (ELEMENT_TYPE_GENERICINST = 0x15).
+    /// Generic type instantiation `List<T>` (`ELEMENT_TYPE_GENERICINST` = 0x15).
     ///
     /// Represents a generic type with specific type arguments provided.
     /// The first element is the generic type definition, followed by type arguments.
@@ -729,7 +775,7 @@ pub enum TypeSignature {
     /// defined on the generic type definition.
     GenericInst(Box<TypeSignature>, Vec<TypeSignature>),
 
-    /// Typed reference type (ELEMENT_TYPE_TYPEDBYREF = 0x16).
+    /// Typed reference type (`ELEMENT_TYPE_TYPEDBYREF` = 0x16).
     ///
     /// Special type that combines a managed reference with its runtime type information.
     /// Primarily used for advanced reflection scenarios and variable argument lists.
@@ -754,7 +800,7 @@ pub enum TypeSignature {
     /// - Supported mainly for completeness and interop
     TypedByRef,
 
-    /// Platform-sized signed integer `IntPtr` (ELEMENT_TYPE_I = 0x18).
+    /// Platform-sized signed integer `IntPtr` (`ELEMENT_TYPE_I` = 0x18).
     ///
     /// Represents a signed integer whose size matches the platform pointer size.
     /// 32-bit on 32-bit platforms, 64-bit on 64-bit platforms.
@@ -778,7 +824,7 @@ pub enum TypeSignature {
     /// - File handles and other OS resources
     I,
 
-    /// Platform-sized unsigned integer `UIntPtr` (ELEMENT_TYPE_U = 0x19).
+    /// Platform-sized unsigned integer `UIntPtr` (`ELEMENT_TYPE_U` = 0x19).
     ///
     /// Represents an unsigned integer whose size matches the platform pointer size.
     /// 32-bit on 32-bit platforms, 64-bit on 64-bit platforms.
@@ -802,7 +848,7 @@ pub enum TypeSignature {
     /// - Bit manipulation with platform-sized values
     U,
 
-    /// Function pointer type (ELEMENT_TYPE_FNPTR = 0x1B).
+    /// Function pointer type (`ELEMENT_TYPE_FNPTR` = 0x1B).
     ///
     /// Represents a pointer to a function with a specific signature.
     /// Used for delegates, callbacks, and function pointer interop.
@@ -828,7 +874,7 @@ pub enum TypeSignature {
     /// - [`SignatureMethod`]: Contains the function signature details
     FnPtr(Box<SignatureMethod>),
 
-    /// The `object` type (ELEMENT_TYPE_OBJECT = 0x1C).
+    /// The `object` type (`ELEMENT_TYPE_OBJECT` = 0x1C).
     ///
     /// Represents the root of the .NET type hierarchy. All reference and value types
     /// derive from `object` (System.Object). Can hold any .NET type.
@@ -852,7 +898,7 @@ pub enum TypeSignature {
     /// - Base for all virtual method dispatch
     Object,
 
-    /// Single-dimensional array type `T[]` (ELEMENT_TYPE_SZARRAY = 0x1D).
+    /// Single-dimensional array type `T[]` (`ELEMENT_TYPE_SZARRAY` = 0x1D).
     ///
     /// Represents zero-indexed, single-dimensional arrays. The most common array type
     /// in .NET applications with optimized runtime support.
@@ -882,7 +928,7 @@ pub enum TypeSignature {
     /// - [`TypeSignature::Array`]: For multi-dimensional arrays
     SzArray(SignatureSzArray),
 
-    /// Generic method parameter `M` (ELEMENT_TYPE_MVAR = 0x1E).
+    /// Generic method parameter `M` (`ELEMENT_TYPE_MVAR` = 0x1E).
     ///
     /// Represents a generic type parameter defined on a method.
     /// The parameter is identified by its zero-based index in the method's generic parameter list.
@@ -909,7 +955,7 @@ pub enum TypeSignature {
     /// - [`TypeSignature::GenericParamType`]: For type generic parameters
     GenericParamMethod(u32),
 
-    /// Required custom modifier (ELEMENT_TYPE_CMOD_REQD = 0x1F).
+    /// Required custom modifier (`ELEMENT_TYPE_CMOD_REQD` = 0x1F).
     ///
     /// Represents required custom modifiers that are part of the type's identity.
     /// These modifiers affect type compatibility and must be understood by the runtime.
@@ -935,9 +981,9 @@ pub enum TypeSignature {
     ///
     /// # See Also
     /// - [`TypeSignature::ModifiedOptional`]: For optional modifiers
-    ModifiedRequired(Vec<Token>),
+    ModifiedRequired(Vec<CustomModifier>),
 
-    /// Optional custom modifier (ELEMENT_TYPE_CMOD_OPT = 0x20).
+    /// Optional custom modifier (`ELEMENT_TYPE_CMOD_OPT` = 0x20).
     ///
     /// Represents optional custom modifiers that provide additional information
     /// but don't affect type identity or compatibility. Safe to ignore if not understood.
@@ -962,9 +1008,9 @@ pub enum TypeSignature {
     ///
     /// # See Also
     /// - [`TypeSignature::ModifiedRequired`]: For required modifiers
-    ModifiedOptional(Vec<Token>),
+    ModifiedOptional(Vec<CustomModifier>),
 
-    /// CLI-internal type (ELEMENT_TYPE_INTERNAL = 0x21).
+    /// CLI-internal type (`ELEMENT_TYPE_INTERNAL` = 0x21).
     ///
     /// Represents types that are internal to the CLI implementation and not
     /// directly accessible to user code. Used for runtime implementation details.
@@ -982,7 +1028,7 @@ pub enum TypeSignature {
     /// - Used for performance optimizations
     Internal,
 
-    /// Modifier sentinel (ELEMENT_TYPE_MODIFIER = 0x22).
+    /// Modifier sentinel (`ELEMENT_TYPE_MODIFIER` = 0x22).
     ///
     /// Special marker used in signature encoding to indicate modified types.
     /// Part of the internal signature encoding mechanism.
@@ -998,7 +1044,7 @@ pub enum TypeSignature {
     /// format and rarely appears in fully parsed signatures.
     Modifier,
 
-    /// Variable argument sentinel (ELEMENT_TYPE_SENTINEL = 0x41).
+    /// Variable argument sentinel (`ELEMENT_TYPE_SENTINEL` = 0x41).
     ///
     /// Special marker that separates fixed parameters from variable arguments
     /// in `vararg` method signatures. Indicates the start of optional parameters.
@@ -1023,7 +1069,7 @@ pub enum TypeSignature {
     /// - Legacy COM interop scenarios
     Sentinel,
 
-    /// Pinned reference type (ELEMENT_TYPE_PINNED = 0x45).
+    /// Pinned reference type (`ELEMENT_TYPE_PINNED` = 0x45).
     ///
     /// Represents a reference that is pinned in memory, preventing the garbage
     /// collector from moving the referenced object. Used for unsafe code and interop.
@@ -1365,13 +1411,16 @@ pub struct SignatureArray {
 ///
 /// ## Array with Custom Modifiers
 /// ```rust
-/// use dotscope::metadata::signatures::{SignatureSzArray, TypeSignature};
+/// use dotscope::metadata::signatures::{CustomModifier, SignatureSzArray, TypeSignature};
 /// use dotscope::metadata::token::Token;
 ///
 /// # fn create_modified_array() {
 /// let modified_array = SignatureSzArray {
 ///     modifiers: vec![
-///         Token::new(0x02000001),  // Custom modifier token
+///         CustomModifier {
+///             is_required: false,
+///             modifier_type: Token::new(0x02000001),  // Custom modifier token
+///         },
 ///     ],
 ///     base: Box::new(TypeSignature::String),  // string[] with modifier
 /// };
@@ -1429,22 +1478,20 @@ pub struct SignatureArray {
 pub struct SignatureSzArray {
     /// Custom modifiers that apply to the array type.
     ///
-    /// A vector of metadata tokens referencing TypeDef or TypeRef entries
-    /// that specify additional type constraints or annotations. Most arrays
-    /// have no custom modifiers (empty vector).
+    /// A collection of custom modifiers specifying additional type constraints or annotations.
+    /// Most arrays have no custom modifiers (empty vector).
     ///
-    /// # Modifier Types
+    /// Each modifier can be either required (modreq) or optional (modopt):
     /// - **Required Modifiers**: Must be understood for type compatibility
     /// - **Optional Modifiers**: Can be safely ignored if not recognized
-    /// - **Platform Modifiers**: OS or architecture-specific constraints
-    /// - **Tool Modifiers**: Compiler or analyzer metadata
     ///
     /// # Common Scenarios
     /// - Interop with native arrays requiring specific memory layout
-    /// - Volatile arrays for multithreaded scenarios
-    /// - Const arrays for immutable data
+    /// - Volatile arrays for multithreaded scenarios (`modopt(IsVolatile)`)
+    /// - Const arrays for immutable data (`modreq(IsConst)`)
     /// - Security attributes for trusted/untrusted data
-    pub modifiers: Vec<Token>,
+    /// - Platform-specific constraints for P/Invoke scenarios
+    pub modifiers: CustomModifiers,
 
     /// The type of elements stored in the array.
     ///
@@ -1586,13 +1633,16 @@ pub struct SignatureSzArray {
 ///
 /// ## Pointer with Custom Modifiers
 /// ```rust
-/// use dotscope::metadata::signatures::{SignaturePointer, TypeSignature};
+/// use dotscope::metadata::signatures::{CustomModifier, SignaturePointer, TypeSignature};
 /// use dotscope::metadata::token::Token;
 ///
 /// # fn create_modified_pointer() {
 /// let const_pointer = SignaturePointer {
 ///     modifiers: vec![
-///         Token::new(0x02000001),  // const modifier token
+///         CustomModifier {
+///             is_required: true,
+///             modifier_type: Token::new(0x02000001),  // const modifier token
+///         },
 ///     ],
 ///     base: Box::new(TypeSignature::Char),  // const char* pointer
 /// };
@@ -1632,12 +1682,15 @@ pub struct SignatureSzArray {
 pub struct SignaturePointer {
     /// Custom modifiers that apply to the pointer type.
     ///
-    /// A vector of metadata tokens referencing TypeDef or TypeRef entries
-    /// that specify additional constraints or annotations for the pointer.
+    /// A collection of custom modifiers specifying additional constraints or annotations for the pointer.
     /// Most pointers have no custom modifiers (empty vector).
     ///
+    /// Each modifier can be either required (modreq) or optional (modopt):
+    /// - **Required Modifiers**: Must be understood for type compatibility
+    /// - **Optional Modifiers**: Can be safely ignored if not recognized
+    ///
     /// # Modifier Applications
-    /// - **Memory Semantics**: `const`, `volatile`, `restrict` equivalents
+    /// - **Memory Semantics**: `modopt(IsConst)`, `modopt(IsVolatile)`, `restrict` equivalents
     /// - **Platform Constraints**: OS-specific pointer requirements
     /// - **Calling Conventions**: Function pointer calling conventions
     /// - **Safety Annotations**: Tool-specific safety metadata
@@ -1645,7 +1698,7 @@ pub struct SignaturePointer {
     /// # Interop Scenarios
     /// Custom modifiers are particularly important for P/Invoke and COM interop
     /// where native calling conventions and memory semantics must be preserved.
-    pub modifiers: Vec<Token>,
+    pub modifiers: CustomModifiers,
 
     /// The type that this pointer references.
     ///
@@ -1781,13 +1834,16 @@ pub struct SignaturePointer {
 ///
 /// ## Parameter with Custom Modifiers
 /// ```rust
-/// use dotscope::metadata::signatures::{SignatureParameter, TypeSignature};
+/// use dotscope::metadata::signatures::{CustomModifier, SignatureParameter, TypeSignature};
 /// use dotscope::metadata::token::Token;
 ///
 /// # fn create_modified_parameter() {
 /// let marshalled_param = SignatureParameter {
 ///     modifiers: vec![
-///         Token::new(0x02000001),  // Marshalling modifier
+///         CustomModifier {
+///             is_required: false,
+///             modifier_type: Token::new(0x02000001),  // Marshalling modifier
+///         },
 ///     ],
 ///     by_ref: false,
 ///     base: TypeSignature::String,         // String with marshalling info
@@ -1834,13 +1890,16 @@ pub struct SignaturePointer {
 pub struct SignatureParameter {
     /// Custom modifiers that apply to this parameter.
     ///
-    /// A vector of metadata tokens referencing TypeDef or TypeRef entries
-    /// that specify additional constraints or annotations. Most parameters
-    /// have no custom modifiers (empty vector).
+    /// A collection of custom modifiers specifying additional constraints or annotations for the parameter.
+    /// Most parameters have no custom modifiers (empty vector).
+    ///
+    /// Each modifier can be either required (modreq) or optional (modopt):
+    /// - **Required Modifiers**: Must be understood for type compatibility
+    /// - **Optional Modifiers**: Can be safely ignored if not recognized
     ///
     /// # Modifier Types
-    /// - **Marshalling**: How to convert between managed and native types
-    /// - **Validation**: Parameter validation requirements
+    /// - **Marshalling**: How to convert between managed and native types (`modopt(In)`, `modopt(Out)`)
+    /// - **Validation**: Parameter validation requirements (`modreq(NotNull)`)
     /// - **Optimization**: Hints for compiler optimizations
     /// - **Platform**: OS or architecture-specific constraints
     ///
@@ -1849,7 +1908,7 @@ pub struct SignatureParameter {
     /// - COM interop calling convention requirements
     /// - Security annotations for parameter validation
     /// - Tool-specific metadata for static analysis
-    pub modifiers: Vec<Token>,
+    pub modifiers: CustomModifiers,
 
     /// Whether this parameter uses reference semantics.
     ///
@@ -2022,12 +2081,12 @@ pub struct SignatureParameter {
 ///
 /// # ECMA-335 Compliance
 ///
-/// This structure implements ECMA-335 Partition II, Section 23.2.1 (MethodDefSig)
+/// This structure implements ECMA-335 Partition II, Section 23.2.1 (`MethodDefSig`)
 /// and supports all standard method signature scenarios defined in the specification.
 ///
 /// # See Also
 /// - [`SignatureParameter`]: For individual parameter definitions
-/// - [`TypeSignature`]: For supported type representations
+/// - [`crate::metadata::signatures::TypeSignature`]: For supported type representations
 /// - [`crate::metadata::method::Method`]: For complete method metadata
 /// - [`crate::metadata::token::Token`]: For metadata token references
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -2068,7 +2127,7 @@ pub struct SignatureMethod {
     /// Both `has_this` and `explicit_this` can be true simultaneously:
     /// - `has_this = true, explicit_this = false`: Normal instance method
     /// - `has_this = true, explicit_this = true`: Explicit `this` instance method
-    /// - `has_this = false`: Static method (explicit_this must be false)
+    /// - `has_this = false`: Static method (`explicit_this` must be false)
     pub explicit_this: bool,
     /// Whether this method uses the default managed calling convention.
     ///
@@ -2372,13 +2431,16 @@ pub struct SignatureMethod {
 ///
 /// ## Field with Custom Modifiers
 /// ```rust
-/// use dotscope::metadata::signatures::{SignatureField, TypeSignature};
+/// use dotscope::metadata::signatures::{CustomModifier, SignatureField, TypeSignature};
 /// use dotscope::metadata::token::Token;
 ///
 /// # fn create_modified_field() {
 /// let volatile_field = SignatureField {
 ///     modifiers: vec![
-///         Token::new(0x1B000001), // Hypothetical volatile modifier token
+///         CustomModifier {
+///             is_required: false,
+///             modifier_type: Token::new(0x1B000001), // Hypothetical volatile modifier token
+///         },
 ///     ],
 ///     base: TypeSignature::I4,
 /// };
@@ -2404,26 +2466,30 @@ pub struct SignatureMethod {
 ///
 /// # ECMA-335 Compliance
 ///
-/// This structure implements ECMA-335 Partition II, Section 23.2.4 (FieldSig)
+/// This structure implements ECMA-335 Partition II, Section 23.2.4 (`FieldSig`)
 /// and supports all standard field signature scenarios.
 ///
 /// # See Also
-/// - [`TypeSignature`]: For supported field types
+/// - [`crate::metadata::signatures::TypeSignature`]: For supported field types
 /// - [`crate::metadata::token::Token`]: For custom modifier references
 /// - Field metadata types in [`crate::metadata::typesystem`] module
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SignatureField {
     /// Custom modifiers that apply to this field.
     ///
-    /// A vector of metadata tokens referencing TypeDef or TypeRef entries
-    /// that specify additional constraints, attributes, or behaviors for
+    /// A collection of custom modifiers specifying additional constraints, attributes, or behaviors for
     /// the field. Most fields have no custom modifiers (empty vector).
+    ///
+    /// Each modifier can be either required (modreq) or optional (modopt):
+    /// - **Required Modifiers**: Must be understood for type compatibility
+    /// - **Optional Modifiers**: Can be safely ignored if not recognized
     ///
     /// # Modifier Categories
     /// - **Layout Modifiers**: Control field alignment and packing
-    /// - **Threading Modifiers**: `volatile` for thread-safe access patterns
+    /// - **Threading Modifiers**: `modopt(IsVolatile)` for thread-safe access patterns
     /// - **Marshalling Modifiers**: Control interop type conversions
     /// - **Security Modifiers**: Access control and validation requirements
+    /// - **Const Modifiers**: `modreq(IsConst)` for immutable fields
     /// - **Tool Modifiers**: Compiler or analyzer-specific metadata
     ///
     /// # Common Scenarios
@@ -2431,13 +2497,7 @@ pub struct SignatureField {
     /// - Precise memory layout for interop structures
     /// - Thread-safe field access patterns
     /// - Platform-specific field requirements
-    ///
-    /// # Token References
-    /// Each token typically references:
-    /// - TypeDef: For custom modifier types defined in the same assembly
-    /// - TypeRef: For external modifier types (from other assemblies)
-    /// - TypeSpec: For complex generic modifier instantiations
-    pub modifiers: Vec<Token>,
+    pub modifiers: CustomModifiers,
     /// The type of data stored in this field.
     ///
     /// Specifies the .NET type that this field can hold. The type determines:
@@ -2581,12 +2641,12 @@ pub struct SignatureField {
 ///
 /// # ECMA-335 Compliance
 ///
-/// This structure implements ECMA-335 Partition II, Section 23.2.5 (PropertySig)
+/// This structure implements ECMA-335 Partition II, Section 23.2.5 (`PropertySig`)
 /// and supports all standard property signature scenarios.
 ///
 /// # See Also
 /// - [`SignatureParameter`]: For indexer parameter definitions
-/// - [`TypeSignature`]: For supported property types
+/// - [`crate::metadata::signatures::TypeSignature`]: For supported property types
 /// - [`crate::metadata::token::Token`]: For custom modifier references
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SignatureProperty {
@@ -2611,13 +2671,16 @@ pub struct SignatureProperty {
 
     /// Custom modifiers that apply to this property.
     ///
-    /// A vector of metadata tokens referencing TypeDef or TypeRef entries
-    /// that specify additional constraints, attributes, or behaviors for
+    /// A collection of custom modifiers specifying additional constraints, attributes, or behaviors for
     /// the property. Most properties have no custom modifiers (empty vector).
     ///
+    /// Each modifier can be either required (modreq) or optional (modopt):
+    /// - **Required Modifiers**: Must be understood for type compatibility
+    /// - **Optional Modifiers**: Can be safely ignored if not recognized
+    ///
     /// # Modifier Applications
-    /// - **Threading**: Synchronization and thread-safety attributes
-    /// - **Validation**: Property value validation requirements
+    /// - **Threading**: Synchronization and thread-safety attributes (`modopt(IsVolatile)`)
+    /// - **Validation**: Property value validation requirements (`modreq(NotNull)`)
     /// - **Serialization**: Custom serialization behavior
     /// - **Interop**: Platform-specific property requirements
     /// - **Security**: Access control and permission requirements
@@ -2627,7 +2690,7 @@ pub struct SignatureProperty {
     /// - Thread-safe property access patterns
     /// - Properties with custom validation logic
     /// - Tool-specific metadata for static analysis
-    pub modifiers: Vec<Token>,
+    pub modifiers: CustomModifiers,
 
     /// The type of value this property represents.
     ///
@@ -2760,12 +2823,12 @@ pub struct SignatureProperty {
 ///
 /// # ECMA-335 Compliance
 ///
-/// This structure implements ECMA-335 Partition II, Section 23.2.6 (LocalVarSig)
+/// This structure implements ECMA-335 Partition II, Section 23.2.6 (`LocalVarSig`)
 /// and supports all standard local variable signature scenarios.
 ///
 /// # See Also
 /// - [`SignatureLocalVariable`]: For individual local variable definitions
-/// - [`TypeSignature`]: For supported local variable types
+/// - [`crate::metadata::signatures::TypeSignature`]: For supported local variable types
 /// - [`crate::metadata::method::MethodBody`]: For method body context
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SignatureLocalVariables {
@@ -2887,18 +2950,21 @@ pub struct SignatureLocalVariables {
 ///
 /// # See Also
 /// - [`SignatureLocalVariables`]: For complete local variable collections
-/// - [`TypeSignature`]: For supported variable types
+/// - [`crate::metadata::signatures::TypeSignature`]: For supported variable types
 /// - [`crate::metadata::token::Token`]: For custom modifier references
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SignatureLocalVariable {
     /// Custom modifiers that apply to this local variable.
     ///
-    /// A vector of metadata tokens referencing TypeDef or TypeRef entries
-    /// that specify additional constraints, attributes, or behaviors for
+    /// A collection of custom modifiers specifying additional constraints, attributes, or behaviors for
     /// the local variable. Most variables have no custom modifiers (empty vector).
     ///
+    /// Each modifier can be either required (modreq) or optional (modopt):
+    /// - **Required Modifiers**: Must be understood for type compatibility
+    /// - **Optional Modifiers**: Can be safely ignored if not recognized
+    ///
     /// # Modifier Applications
-    /// - **Type Constraints**: Additional type safety requirements
+    /// - **Type Constraints**: Additional type safety requirements (`modreq(NotNull)`)
     /// - **Memory Layout**: Specific alignment or packing requirements
     /// - **Tool Metadata**: Debugger or profiler annotations
     /// - **Security**: Access control or validation attributes
@@ -2908,7 +2974,7 @@ pub struct SignatureLocalVariable {
     /// - Variables with debugging metadata
     /// - Variables with custom lifetime semantics
     /// - Tool-specific analysis annotations
-    pub modifiers: Vec<Token>,
+    pub modifiers: CustomModifiers,
 
     /// Whether this variable uses reference semantics.
     ///
@@ -3072,11 +3138,11 @@ pub struct SignatureLocalVariable {
 ///
 /// # ECMA-335 Compliance
 ///
-/// This structure implements ECMA-335 Partition II, Section 23.2.14 (TypeSpec)
+/// This structure implements ECMA-335 Partition II, Section 23.2.14 (`TypeSpec`)
 /// and supports all standard type specification scenarios.
 ///
 /// # See Also
-/// - [`TypeSignature`]: For the underlying type representation
+/// - [`crate::metadata::signatures::TypeSignature`]: For the underlying type representation
 /// - [`SignatureMethodSpec`]: For method specification signatures
 /// - [`crate::metadata::token::Token`]: For metadata token references
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -3213,11 +3279,11 @@ pub struct SignatureTypeSpec {
 ///
 /// # ECMA-335 Compliance
 ///
-/// This structure implements ECMA-335 Partition II, Section 23.2.15 (MethodSpec)
+/// This structure implements ECMA-335 Partition II, Section 23.2.15 (`MethodSpec`)
 /// and supports all standard method specification scenarios.
 ///
 /// # See Also
-/// - [`TypeSignature`]: For generic argument type representations
+/// - [`crate::metadata::signatures::TypeSignature`]: For generic argument type representations
 /// - [`SignatureMethod`]: For the underlying generic method signatures
 /// - [`crate::metadata::method::Method`]: For complete method metadata
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -3335,6 +3401,39 @@ impl TypeSignature {
 
             // All other combinations are incompatible
             _ => false,
+        }
+    }
+
+    /// Calculate the stack size needed for this type signature.
+    ///
+    /// Returns the number of stack slots this type occupies when pushed onto
+    /// the evaluation stack. This is used for automatic max stack calculation
+    /// in method bodies and follows ECMA-335 stack behavior rules.
+    ///
+    /// # Returns
+    ///
+    /// The number of stack slots (1 or 2) needed for this type:
+    /// - 64-bit types (I8, U8, R8) require 2 slots
+    /// - All other types require 1 slot
+    /// - Void requires 0 slots
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::signatures::TypeSignature;
+    ///
+    /// assert_eq!(TypeSignature::I4.stack_size(), 1);
+    /// assert_eq!(TypeSignature::I8.stack_size(), 2);
+    /// assert_eq!(TypeSignature::String.stack_size(), 1);
+    /// assert_eq!(TypeSignature::Void.stack_size(), 0);
+    /// ```
+    #[must_use]
+    pub fn stack_size(&self) -> u16 {
+        match self {
+            TypeSignature::Void => 0,
+            TypeSignature::I8 | TypeSignature::U8 | TypeSignature::R8 => 2,
+            // All other types use 1 stack slot (primitives and reference types)
+            _ => 1,
         }
     }
 }

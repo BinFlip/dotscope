@@ -7,6 +7,7 @@
 //! # Module Organization
 //!
 //! - **builders/** - Fluent API builders for creating mock metadata objects
+//! - **factories/** - Migrated test factory methods organized by domain
 //! - **scenarios/** - Pre-built complex scenarios and test data combinations  
 //! - **helpers/** - Legacy helper functions and utilities
 //! - **windowsbase.rs** - Windows-specific test helpers and verification
@@ -77,17 +78,15 @@
 //! - Custom attribute scenarios
 //! - Generic type definitions
 
+pub mod builders;
+pub mod factories;
+mod helpers;
+mod scenarios;
+mod validator;
 mod windowsbase;
 
-// Sub-modules
-pub mod builders;
-mod helpers;
-pub mod scenarios;
-
-// Re-export the windowsbase module
-pub use windowsbase::*;
-
-// Re-export builder modules for convenience
 pub use builders::*;
 pub use helpers::*;
-pub use scenarios::*;
+pub use validator::*;
+pub use windowsbase::*;
+//pub use scenarios::*;

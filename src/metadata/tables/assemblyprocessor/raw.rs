@@ -1,13 +1,13 @@
-//! Raw AssemblyProcessor table representation.
+//! Raw `AssemblyProcessor` table representation.
 //!
-//! This module provides low-level access to AssemblyProcessor metadata table data through the
+//! This module provides low-level access to `AssemblyProcessor` metadata table data through the
 //! [`crate::metadata::tables::assemblyprocessor::raw::AssemblyProcessorRaw`] structure. The
-//! AssemblyProcessor table contains CPU architecture targeting information for .NET assemblies,
+//! `AssemblyProcessor` table contains CPU architecture targeting information for .NET assemblies,
 //! though it is rarely used in modern applications.
 //!
 //! # Architecture
 //!
-//! Like [`crate::metadata::tables::assemblyos::AssemblyOsRaw`], AssemblyProcessor contains only primitive
+//! Like [`crate::metadata::tables::assemblyos::AssemblyOsRaw`], `AssemblyProcessor` contains only primitive
 //! values and requires no heap resolution, making the "raw" and "owned" representations
 //! functionally identical. This simplifies the dual variant pattern used throughout the
 //! metadata system.
@@ -16,24 +16,24 @@
 //!
 //! - [`crate::metadata::tables::assemblyprocessor::raw::AssemblyProcessorRaw`] - Raw table row structure
 //! - [`crate::metadata::tables::assemblyprocessor::AssemblyProcessorRc`] - Reference-counted owned representation
-//! - [`crate::metadata::tables::RowDefinition`] - Table parsing interface implementation
+//! - [`crate::metadata::tables::types::RowReadable`] - Table parsing interface implementation
 //!
-//! # AssemblyProcessor Table Format
+//! # `AssemblyProcessor` Table Format
 //!
-//! The AssemblyProcessor table (0x21) contains CPU architecture targeting information:
+//! The `AssemblyProcessor` table (0x21) contains CPU architecture targeting information:
 //! - **Processor** (4 bytes): Processor architecture identifier
 //!
 //! # Historical Context
 //!
 //! This table was designed for early .NET Framework scenarios where assemblies might need
-//! explicit CPU architecture declarations. Modern .NET applications typically use AnyCPU
+//! explicit CPU architecture declarations. Modern .NET applications typically use `AnyCPU`
 //! compilation and rely on runtime JIT optimization for architecture-specific code generation.
 //!
 //! # Architecture Evolution
 //!
 //! - **Early .NET**: Explicit x86, x64, IA64 targeting in metadata
 //! - **Framework Era**: Platform-specific compilation with runtime detection
-//! - **Modern .NET**: AnyCPU with runtime JIT optimization and cross-platform support
+//! - **Modern .NET**: `AnyCPU` with runtime JIT optimization and cross-platform support
 //!
 //! # Integration
 //!
@@ -44,28 +44,28 @@
 //!
 //! # References
 //!
-//! - [ECMA-335 II.22.4](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyProcessor table specification
+//! - [ECMA-335 II.22.4](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyProcessor` table specification
 
 use std::sync::Arc;
 
 use crate::{
-    file::io::read_le_at,
     metadata::{
-        tables::{AssemblyProcessorRc, RowDefinition, TableInfoRef},
+        tables::{AssemblyProcessorRc, TableRow},
         token::Token,
     },
+    prelude::TableInfoRef,
     Result,
 };
 
 #[derive(Clone, Debug)]
-/// Raw AssemblyProcessor table row representing CPU architecture targeting information
+/// Raw `AssemblyProcessor` table row representing CPU architecture targeting information
 ///
 /// Contains processor architecture identification data for assemblies that specify explicit CPU targeting.
 /// Like [`crate::metadata::tables::AssemblyOsRaw`], this structure contains only
 /// primitive integer values and requires no heap resolution, making it immediately usable.
 ///
-/// The AssemblyProcessor table (0x21) is optional and rarely present in modern .NET assemblies,
-/// which typically use AnyCPU compilation and rely on runtime JIT optimization for architecture-specific
+/// The `AssemblyProcessor` table (0x21) is optional and rarely present in modern .NET assemblies,
+/// which typically use `AnyCPU` compilation and rely on runtime JIT optimization for architecture-specific
 /// code generation rather than compile-time CPU targeting.
 ///
 /// # Data Model
@@ -83,23 +83,23 @@ use crate::{
 /// - IA64 architectures (Intel Itanium, deprecated)
 ///
 /// # Reference
-/// - [ECMA-335 II.22.4](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyProcessor table specification
+/// - [ECMA-335 II.22.4](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyProcessor` table specification
 pub struct AssemblyProcessorRaw {
-    /// Row identifier within the AssemblyProcessor metadata table
+    /// Row identifier within the `AssemblyProcessor` metadata table
     ///
-    /// The 1-based index of this AssemblyProcessor row. Multiple processor targets can be specified,
+    /// The 1-based index of this `AssemblyProcessor` row. Multiple processor targets can be specified,
     /// though this is rarely used in modern .NET assemblies.
     pub rid: u32,
 
-    /// Metadata token for this AssemblyProcessor row
+    /// Metadata token for this `AssemblyProcessor` row
     ///
-    /// Combines the table identifier (0x21 for AssemblyProcessor) with the row ID to create
+    /// Combines the table identifier (0x21 for `AssemblyProcessor`) with the row ID to create
     /// a unique token. Format: `0x21000000 | rid`
     pub token: Token,
 
     /// Byte offset of this row within the metadata tables stream
     ///
-    /// Physical location of the raw AssemblyProcessor data within the metadata binary format.
+    /// Physical location of the raw `AssemblyProcessor` data within the metadata binary format.
     /// Used for debugging and low-level metadata analysis.
     pub offset: usize,
 
@@ -107,7 +107,7 @@ pub struct AssemblyProcessorRaw {
     ///
     /// 4-byte value identifying the target CPU architecture. The specific values are not
     /// standardized in ECMA-335, but historically included identifiers for x86, x64, and IA64.
-    /// Modern assemblies typically avoid explicit processor targeting in favor of AnyCPU compilation.
+    /// Modern assemblies typically avoid explicit processor targeting in favor of `AnyCPU` compilation.
     pub processor: u32,
 }
 
@@ -136,90 +136,22 @@ impl AssemblyProcessorRaw {
     }
 }
 
-impl<'a> RowDefinition<'a> for AssemblyProcessorRaw {
-    /// Calculate the byte size of an AssemblyProcessor table row
+impl TableRow for AssemblyProcessorRaw {
+    /// Calculate the byte size of an `AssemblyProcessor` table row
     ///
-    /// Returns the fixed size since AssemblyProcessor contains only a single primitive integer field.
+    /// Returns the fixed size since `AssemblyProcessor` contains only a single primitive integer field.
     /// Total size is always 4 bytes (1 × 4-byte integer).
     ///
     /// # Row Layout
     /// - processor: 4 bytes (fixed)
     ///
     /// # Arguments
-    /// * `_sizes` - Unused for AssemblyProcessor since no heap indexes are present
+    /// * `_sizes` - Unused for `AssemblyProcessor` since no heap indexes are present
     ///
     /// # Returns
-    /// Fixed size of 4 bytes for all AssemblyProcessor rows
+    /// Fixed size of 4 bytes for all `AssemblyProcessor` rows
     #[rustfmt::skip]
     fn row_size(_sizes: &TableInfoRef) -> u32 {
         /* processor */ 4
-    }
-
-    /// Read and parse an AssemblyProcessor table row from binary data
-    ///
-    /// Deserializes one AssemblyProcessor table entry from the metadata tables stream.
-    /// AssemblyProcessor has a fixed 4-byte layout with one integer field for the processor
-    /// architecture identifier.
-    ///
-    /// # Arguments
-    /// * `data` - Binary metadata tables stream data
-    /// * `offset` - Current read position (updated after reading)
-    /// * `rid` - Row identifier for this AssemblyProcessor entry
-    /// * `_sizes` - Unused since AssemblyProcessor has no heap indexes
-    ///
-    /// # Returns
-    /// * `Ok(AssemblyProcessorRaw)` - Successfully parsed AssemblyProcessor row
-    /// * `Err(`[`crate::Error`]`)` - If data is malformed or insufficient
-    fn read_row(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        _sizes: &TableInfoRef,
-    ) -> Result<Self> {
-        Ok(AssemblyProcessorRaw {
-            rid,
-            token: Token::new(0x2100_0000 + rid),
-            offset: *offset,
-            processor: read_le_at::<u32>(data, offset)?,
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::metadata::tables::{MetadataTable, TableId, TableInfo};
-
-    use super::*;
-
-    #[test]
-    fn crafted_short() {
-        let data = vec![
-            0x01, 0x01, 0x01, 0x01, // processor
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[(TableId::AssemblyProcessor, 1)],
-            false,
-            false,
-            false,
-        ));
-        let table = MetadataTable::<AssemblyProcessorRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: AssemblyProcessorRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x21000001);
-            assert_eq!(row.processor, 0x01010101);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
     }
 }

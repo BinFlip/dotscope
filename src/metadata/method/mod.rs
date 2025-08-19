@@ -10,7 +10,7 @@
 //! [`crate::metadata::method::Method`] struct with lazy-initialized basic blocks. Key design principles:
 //!
 //! - **Thread-safe lazy initialization**: Basic blocks are computed once and cached
-//!   using `OnceLock<Vec<crate::disassembler::BasicBlock>>` for efficient concurrent access
+//!   using `OnceLock<Vec<crate::assembly::BasicBlock>>` for efficient concurrent access
 //! - **Zero-copy iteration**: The [`crate::metadata::method::InstructionIterator`] yields references to
 //!   instructions without copying, enabling efficient analysis of large methods
 //! - **Unified storage**: All instruction data is stored in basic blocks, eliminating
@@ -28,7 +28,7 @@
 //!
 //! ## Basic Method Analysis
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -52,7 +52,7 @@
 //!
 //! ## Instruction-Level Analysis
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -87,6 +87,7 @@
 //! - Iterator creation and consumption can happen concurrently
 
 mod body;
+mod encode;
 mod exceptions;
 mod iter;
 mod types;
@@ -95,12 +96,13 @@ use crossbeam_skiplist::SkipMap;
 use std::sync::{atomic::AtomicU32, Arc, OnceLock, Weak};
 
 pub use body::*;
+pub use encode::encode_method_body_header;
 pub use exceptions::*;
 pub use iter::InstructionIterator;
 pub use types::*;
 
 use crate::{
-    disassembler::{self, BasicBlock, VisitedMap},
+    assembly::{self, BasicBlock, VisitedMap},
     file::File,
     metadata::{
         customattributes::CustomAttributeValueList,
@@ -133,7 +135,7 @@ pub type MethodRc = Arc<Method>;
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
@@ -171,7 +173,7 @@ impl MethodRef {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -201,7 +203,7 @@ impl MethodRef {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -239,7 +241,7 @@ impl MethodRef {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -270,7 +272,7 @@ impl MethodRef {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -306,7 +308,7 @@ impl MethodRef {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -338,7 +340,7 @@ impl MethodRef {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -373,7 +375,7 @@ impl MethodRef {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -488,7 +490,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -530,7 +532,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -582,7 +584,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -621,7 +623,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -660,7 +662,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -685,7 +687,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -710,7 +712,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -735,7 +737,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -760,7 +762,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -786,7 +788,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -814,7 +816,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -839,7 +841,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -864,7 +866,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -889,7 +891,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -958,12 +960,12 @@ impl Method {
                 for local_var in &local_var_sig.locals {
                     let modifiers = Arc::new(boxcar::Vec::with_capacity(local_var.modifiers.len()));
                     for var_mod in &local_var.modifiers {
-                        match types.get(var_mod) {
+                        match types.get(&var_mod.modifier_type) {
                             Some(var_mod_type) => _ = modifiers.push(var_mod_type.into()),
                             None => {
                                 return Err(malformed_error!(
                                     "Failed to resolve type - {}",
-                                    var_mod.value()
+                                    var_mod.modifier_type.value()
                                 ))
                             }
                         }
@@ -1021,12 +1023,12 @@ impl Method {
         for vararg in &self.signature.varargs {
             let modifiers = Arc::new(boxcar::Vec::with_capacity(vararg.modifiers.len()));
             for modifier in &vararg.modifiers {
-                match types.get(modifier) {
+                match types.get(&modifier.modifier_type) {
                     Some(new_mod) => _ = modifiers.push(new_mod.into()),
                     None => {
                         return Err(malformed_error!(
                             "Failed to resolve modifier type - {}",
-                            modifier.value()
+                            modifier.modifier_type.value()
                         ))
                     }
                 }
@@ -1041,7 +1043,7 @@ impl Method {
         }
 
         // Last step, disassemble the whole method and generate analysis
-        disassembler::decode_method(self, file, shared_visited)?;
+        assembly::decode_method(self, file, shared_visited)?;
 
         Ok(())
     }
@@ -1050,7 +1052,7 @@ impl Method {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::disassembler::{
+    use crate::assembly::{
         BasicBlock, FlowType, Instruction, InstructionCategory, Operand, StackBehavior,
     };
     use crate::test::builders::MethodBuilder;

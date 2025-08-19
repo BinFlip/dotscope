@@ -54,24 +54,18 @@ fn main() -> Result<()> {
 
     // Display section information
     println!("  - Sections:");
-    for (i, section) in file.sections().enumerate() {
-        let name = std::str::from_utf8(&section.name).unwrap_or("<invalid>");
+    for (i, section) in file.sections().iter().enumerate() {
+        let name = section.name.as_str();
         println!(
             "    [{}] {} - RVA: 0x{:08X}, Size: 0x{:08X}",
-            i,
-            name.trim_end_matches('\0'),
-            section.virtual_address,
-            section.size_of_raw_data
+            i, name, section.virtual_address, section.size_of_raw_data
         );
     }
 
     // Step 3: Parse CLR metadata using low-level Cor20Header struct
     println!("\n=== Step 3: Parsing CLR Header using Cor20Header ===");
     let (clr_rva, clr_size) = file.clr();
-    println!(
-        "CLR Runtime Header: RVA=0x{:08X}, Size={} bytes",
-        clr_rva, clr_size
-    );
+    println!("CLR Runtime Header: RVA=0x{clr_rva:08X}, Size={clr_size} bytes");
 
     // Convert RVA to file offset and read CLR header
     let clr_offset = file.rva_to_offset(clr_rva)?;
@@ -148,12 +142,12 @@ fn main() -> Result<()> {
                 for i in &[1, 10, 50, 100] {
                     if let Ok(s) = strings.get(*i) {
                         if !s.is_empty() && s.len() < 50 {
-                            println!("  [{}]: '{}'", i, s);
+                            println!("  [{i}]: '{s}'");
                         }
                     }
                 }
             }
-            Err(e) => println!("Failed to parse #Strings: {}", e),
+            Err(e) => println!("Failed to parse #Strings: {e}"),
         }
     }
 
@@ -181,7 +175,7 @@ fn main() -> Result<()> {
                     }
                 }
             }
-            Err(e) => println!("Failed to parse #Blob: {}", e),
+            Err(e) => println!("Failed to parse #Blob: {e}"),
         }
     }
 
@@ -209,7 +203,7 @@ fn main() -> Result<()> {
                     }
                 }
             }
-            Err(e) => println!("Failed to parse #US: {}", e),
+            Err(e) => println!("Failed to parse #US: {e}"),
         }
     }
 
@@ -249,7 +243,7 @@ fn main() -> Result<()> {
                     println!("    ... and {} more tables", summaries.len() - 10);
                 }
             }
-            Err(e) => println!("Failed to parse TablesHeader: {}", e),
+            Err(e) => println!("Failed to parse TablesHeader: {e}"),
         }
     }
 
@@ -273,10 +267,10 @@ fn main() -> Result<()> {
     let string = sample_parser.read_string_utf8()?;
 
     println!("Parsed from raw binary data:");
-    println!("  - u32 value: {}", value1);
-    println!("  - u16 value: {}", value2);
-    println!("  - Compressed uint: {}", compressed);
-    println!("  - String: '{}'", string);
+    println!("  - u32 value: {value1}");
+    println!("  - u16 value: {value2}");
+    println!("  - Compressed uint: {compressed}");
+    println!("  - String: '{string}'");
 
     println!("\n✅ Low-level analysis complete!");
     println!("This example showed how to use the low-level structs (Root, Cor20Header,");

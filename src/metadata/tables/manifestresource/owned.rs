@@ -1,4 +1,4 @@
-//! Owned ManifestResource table structure with resolved references and resource access.
+//! Owned `ManifestResource` table structure with resolved references and resource access.
 //!
 //! This module provides the [`ManifestResource`] struct, which represents resource entries
 //! with all references resolved and resource data access established. Unlike [`ManifestResourceRaw`],
@@ -11,26 +11,26 @@ use crate::metadata::{
     tables::ManifestResourceAttributes, token::Token, typesystem::CilTypeReference,
 };
 
-/// Owned ManifestResource table entry with resolved references and resource access.
+/// Owned `ManifestResource` table entry with resolved references and resource access.
 ///
 /// This structure represents an assembly resource entry with all coded indexes resolved
 /// to their target structures and resource data access established. It provides complete
 /// resource metadata and enables runtime resource loading and access operations.
 ///
 /// # Resource Storage Models
-/// ManifestResource entries support different resource storage patterns:
+/// `ManifestResource` entries support different resource storage patterns:
 /// - **Embedded resources**: Data stored directly in the current assembly PE file
 /// - **File-based resources**: External files referenced through the File table
 /// - **Assembly-based resources**: Resources located in external assemblies
 /// - **Satellite resources**: Culture-specific resources for localization
 pub struct ManifestResource {
-    /// Row identifier within the ManifestResource table.
+    /// Row identifier within the `ManifestResource` table.
     ///
     /// Unique identifier for this resource entry, used for internal
     /// table management and cross-references.
     pub rid: u32,
 
-    /// Metadata token identifying this ManifestResource entry.
+    /// Metadata token identifying this `ManifestResource` entry.
     ///
     /// The token enables efficient lookup and reference to this resource
     /// from other metadata structures and runtime systems.

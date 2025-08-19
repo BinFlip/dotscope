@@ -6,11 +6,10 @@
 use std::sync::{Arc, OnceLock};
 
 use crate::{
-    file::io::{read_le_at, read_le_at_dyn},
     metadata::{
         signatures::parse_property_signature,
         streams::{Blob, Strings},
-        tables::{Property, PropertyRc, RowDefinition, TableInfoRef},
+        tables::{Property, PropertyRc, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -28,7 +27,7 @@ use crate::{
 /// The Property table provides the foundation for .NET property system:
 /// - **Property Definition**: Defines property names, types, and characteristics
 /// - **Type Integration**: Associates properties with their declaring types
-/// - **Method Binding**: Links properties to getter/setter methods via MethodSemantics
+/// - **Method Binding**: Links properties to getter/setter methods via `MethodSemantics`
 /// - **Reflection Foundation**: Enables property-based reflection and metadata queries
 ///
 /// ## Raw vs Owned
@@ -42,9 +41,9 @@ use crate::{
 /// ## Property Attributes
 ///
 /// Properties can have various attributes that control their behavior:
-/// - **SpecialName**: Property has special naming conventions (0x0200)
-/// - **RTSpecialName**: Runtime should verify name encoding (0x0400)
-/// - **HasDefault**: Property has a default value defined (0x1000)
+/// - **`SpecialName`**: Property has special naming conventions (0x0200)
+/// - **`RTSpecialName`**: Runtime should verify name encoding (0x0400)
+/// - **`HasDefault`**: Property has a default value defined (0x1000)
 ///
 /// ## References
 ///
@@ -74,7 +73,7 @@ pub struct PropertyRaw {
 
     /// Property attribute flags defining characteristics and behavior.
     ///
-    /// A 2-byte bitmask of PropertyAttributes (ECMA-335 §II.23.1.14) that controls
+    /// A 2-byte bitmask of `PropertyAttributes` (ECMA-335 §II.23.1.14) that controls
     /// various aspects of the property including special naming, default values,
     /// and runtime behavior. See [`super::PropertyAttributes`] for flag definitions.
     pub flags: u32,
@@ -134,7 +133,7 @@ impl PropertyRaw {
     /// Property entries define properties that types can expose but do not directly
     /// modify other metadata structures during the loading process. Property method
     /// associations (getter, setter, other) are resolved separately through the
-    /// MethodSemantics table during higher-level metadata resolution.
+    /// `MethodSemantics` table during higher-level metadata resolution.
     ///
     /// This method is provided for consistency with the table loading framework
     /// but performs no operations for Property entries.
@@ -142,16 +141,19 @@ impl PropertyRaw {
     /// ## Returns
     ///
     /// * `Ok(())` - Always succeeds as no processing is required
+    ///
+    /// # Errors
+    /// This function does not return errors. It always returns `Ok(())`.
     pub fn apply(&self) -> Result<()> {
         Ok(())
     }
 }
 
-impl<'a> RowDefinition<'a> for PropertyRaw {
+impl TableRow for PropertyRaw {
     /// Calculates the byte size of a single Property table row.
     ///
     /// The size depends on the metadata heap size configuration:
-    /// - **flags**: 2 bytes (PropertyAttributes bitmask)
+    /// - **flags**: 2 bytes (`PropertyAttributes` bitmask)
     /// - **name**: String heap index size (2 or 4 bytes)
     /// - **signature**: Blob heap index size (2 or 4 bytes)
     ///
@@ -169,121 +171,5 @@ impl<'a> RowDefinition<'a> for PropertyRaw {
             /* name */           sizes.str_bytes() +
             /* type_signature */ sizes.blob_bytes()
         )
-    }
-
-    /// Reads a single Property table row from metadata bytes.
-    ///
-    /// This method parses a Property entry from the metadata stream, extracting
-    /// the property flags, name index, and signature index to construct the
-    /// complete row structure with metadata context.
-    ///
-    /// ## Arguments
-    ///
-    /// * `data` - The metadata bytes to read from
-    /// * `offset` - Current position in the data (updated after reading)
-    /// * `rid` - Row identifier for this entry (1-based)
-    /// * `sizes` - Table size configuration for index resolution
-    ///
-    /// ## Returns
-    ///
-    /// * `Ok(PropertyRaw)` - Successfully parsed Property entry
-    /// * `Err(Error)` - Failed to read or parse the entry
-    ///
-    /// ## Errors
-    ///
-    /// * [`crate::error::Error::OutOfBounds`] - Insufficient data for complete entry
-    /// * [`crate::error::Error::Malformed`] - Malformed table entry structure
-    fn read_row(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
-        Ok(PropertyRaw {
-            rid,
-            token: Token::new(0x1700_0000 + rid),
-            offset: *offset,
-            flags: u32::from(read_le_at::<u16>(data, offset)?),
-            name: read_le_at_dyn(data, offset, sizes.is_large_str())?,
-            signature: read_le_at_dyn(data, offset, sizes.is_large_blob())?,
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::metadata::tables::{MetadataTable, TableId, TableInfo};
-
-    #[test]
-    fn crafted_short() {
-        let data = vec![
-            0x01, 0x01, // flags
-            0x02, 0x02, // name
-            0x03, 0x03, // type_signature
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[(TableId::Property, 1)],
-            false,
-            false,
-            false,
-        ));
-        let table = MetadataTable::<PropertyRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: PropertyRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x17000001);
-            assert_eq!(row.flags, 0x0101);
-            assert_eq!(row.name, 0x0202);
-            assert_eq!(row.signature, 0x0303);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
-    }
-
-    #[test]
-    fn crafted_long() {
-        let data = vec![
-            0x01, 0x01, // flags
-            0x02, 0x02, 0x02, 0x02, // name
-            0x03, 0x03, 0x03, 0x03, // type_signature
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[(TableId::Property, 1)],
-            true,
-            true,
-            true,
-        ));
-        let table = MetadataTable::<PropertyRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: PropertyRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x17000001);
-            assert_eq!(row.flags, 0x0101);
-            assert_eq!(row.name, 0x02020202);
-            assert_eq!(row.signature, 0x03030303);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
     }
 }

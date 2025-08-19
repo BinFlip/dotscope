@@ -1,13 +1,13 @@
-//! AssemblyRef table module.
+//! `AssemblyRef` table module.
 //!
-//! This module provides complete support for the ECMA-335 AssemblyRef metadata table (0x23),
+//! This module provides complete support for the ECMA-335 `AssemblyRef` metadata table (0x23),
 //! which contains references to external assemblies required by the current assembly. It includes
 //! raw table access, resolved data structures, collection types, and cryptographic hash support
 //! for dependency analysis and verification.
 //!
 //! # Architecture
 //!
-//! The AssemblyRef module follows the standard dual variant pattern with raw and owned
+//! The `AssemblyRef` module follows the standard dual variant pattern with raw and owned
 //! representations. Raw entries contain unresolved heap indexes, while owned entries
 //! provide fully resolved strings and blob data for immediate use.
 //!
@@ -21,19 +21,19 @@
 //! - [`crate::metadata::tables::assemblyref::AssemblyRefList`] - Collection type for assembly references
 //! - [`crate::metadata::tables::assemblyref::AssemblyRefRc`] - Reference-counted pointer
 //!
-//! # AssemblyRef Table Structure
+//! # `AssemblyRef` Table Structure
 //!
-//! The AssemblyRef table contains dependency information with these fields:
+//! The `AssemblyRef` table contains dependency information with these fields:
 //! - **Version**: Four-part version number (Major.Minor.Build.Revision)
 //! - **Flags**: Assembly attributes (see [`crate::metadata::tables::assembly::AssemblyFlags`])
-//! - **PublicKeyOrToken**: Strong name verification data
+//! - **`PublicKeyOrToken`**: Strong name verification data
 //! - **Name**: Simple assembly name (e.g., "mscorlib")
 //! - **Culture**: Localization culture (empty for culture-neutral assemblies)
-//! - **HashValue**: Optional hash of the referenced assembly
+//! - **`HashValue`**: Optional hash of the referenced assembly
 //!
 //! # Dependency Resolution
 //!
-//! AssemblyRef entries are fundamental for understanding assembly dependencies and are used
+//! `AssemblyRef` entries are fundamental for understanding assembly dependencies and are used
 //! during runtime assembly loading. Each entry provides the minimum information needed for
 //! the .NET runtime to locate and verify external assemblies.
 //!
@@ -47,7 +47,7 @@
 //!
 //! # References
 //!
-//! - [ECMA-335 II.22.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyRef table specification
+//! - [ECMA-335 II.22.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyRef` table specification
 use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
 
@@ -57,11 +57,15 @@ use crate::metadata::{
 };
 
 mod assemblyrefhash;
+mod builder;
 mod loader;
 mod owned;
 mod raw;
+mod reader;
+mod writer;
 
 pub use assemblyrefhash::*;
+pub use builder::*;
 pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;

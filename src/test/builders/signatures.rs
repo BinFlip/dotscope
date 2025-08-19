@@ -4,7 +4,7 @@
 //! conventions, parameter types, return types, and generic constraints.
 
 use crate::metadata::{
-    signatures::{SignatureMethod, SignatureParameter, TypeSignature},
+    signatures::{CustomModifier, SignatureMethod, SignatureParameter, TypeSignature},
     token::Token,
 };
 
@@ -54,7 +54,7 @@ pub struct MethodParameter {
     /// Default value (if optional)
     pub default_value: Option<String>,
     /// Custom modifiers
-    pub modifiers: Vec<Token>,
+    pub modifiers: Vec<CustomModifier>,
 }
 
 impl MethodParameter {
@@ -80,7 +80,7 @@ impl MethodParameter {
         self
     }
 
-    pub fn with_modifiers(mut self, modifiers: Vec<Token>) -> Self {
+    pub fn with_modifiers(mut self, modifiers: Vec<CustomModifier>) -> Self {
         self.modifiers = modifiers;
         self
     }

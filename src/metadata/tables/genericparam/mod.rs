@@ -1,11 +1,11 @@
-//! GenericParam metadata table implementation.
+//! `GenericParam` metadata table implementation.
 //!
-//! This module provides structures and utilities for working with the GenericParam metadata table,
+//! This module provides structures and utilities for working with the `GenericParam` metadata table,
 //! which defines generic type and method parameters. This enables generic programming support
 //! in .NET assemblies with type-safe parameterized types and methods.
 //!
 //! # Overview
-//! The GenericParam table enables generic programming scenarios:
+//! The `GenericParam` table enables generic programming scenarios:
 //! - **Generic types**: Class and interface type parameters (`List<T>`, `Dictionary<TKey, TValue>`)
 //! - **Generic methods**: Method-level type parameters (`Method<U>()`)
 //! - **Constraint specification**: Base class and interface constraints
@@ -21,7 +21,7 @@
 //! - [`GenericParamRc`]: Reference-counted parameter for shared ownership
 //!
 //! # Table Structure
-//! Each GenericParam entry contains:
+//! Each `GenericParam` entry contains:
 //! - **Number**: Ordinal position within the parameter list (0-based)
 //! - **Flags**: Variance and constraint attributes
 //! - **Owner**: Reference to the owning type or method (coded index)
@@ -57,21 +57,25 @@
 //!
 //! # Owner Resolution
 //! Generic parameters are owned by either types or methods:
-//! - **Type parameters**: Owned by TypeDef entries (classes, interfaces)
-//! - **Method parameters**: Owned by MethodDef entries (generic methods)
-//! - **Coded index**: Uses TypeOrMethodDef coded index for owner resolution
+//! - **Type parameters**: Owned by `TypeDef` entries (classes, interfaces)
+//! - **Method parameters**: Owned by `MethodDef` entries (generic methods)
+//! - **Coded index**: Uses `TypeOrMethodDef` coded index for owner resolution
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.20 for the complete GenericParam table specification.
+//! See ECMA-335, Partition II, §22.20 for the complete `GenericParam` table specification.
 
 use crate::metadata::token::Token;
 use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
 
+mod builder;
 mod loader;
 mod owned;
 mod raw;
+mod reader;
+mod writer;
 
+pub use builder::*;
 pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;
@@ -97,13 +101,13 @@ pub type GenericParamList = Arc<boxcar::Vec<GenericParamRc>>;
 pub type GenericParamRc = Arc<GenericParam>;
 
 #[allow(non_snake_case)]
-/// Generic parameter attribute flags for the GenericParamAttributes field.
+/// Generic parameter attribute flags for the `GenericParamAttributes` field.
 ///
-/// These constants define the possible values for the `Flags` field in GenericParam table entries,
+/// These constants define the possible values for the `Flags` field in `GenericParam` table entries,
 /// specifying variance, constraints, and other characteristics of generic type and method parameters.
 ///
 /// # ECMA-335 Reference
-/// See ECMA-335, Partition II, §22.20 for GenericParam table flag specifications.
+/// See ECMA-335, Partition II, §22.20 for `GenericParam` table flag specifications.
 pub mod GenericParamAttributes {
     /// Mask for extracting variance information.
     ///
@@ -148,4 +152,10 @@ pub mod GenericParamAttributes {
     /// This constraint requires the type argument to have a public parameterless constructor.
     /// Corresponds to `where T : new()` constraint in C#.
     pub const DEFAULT_CONSTRUCTOR_CONSTRAINT: u32 = 0x0010;
+
+    /// Mask for reserved bits that should not be set.
+    ///
+    /// Reserved bits in the flags field that are not currently defined by the ECMA-335
+    /// specification. These bits should be zero in valid metadata.
+    pub const RESERVED_MASK: u32 = 0xFFE0;
 }

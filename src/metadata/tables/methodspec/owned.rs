@@ -1,6 +1,6 @@
-//! # MethodSpec Owned Implementation
+//! # `MethodSpec` Owned Implementation
 //!
-//! This module provides the owned variant of MethodSpec table entries with resolved
+//! This module provides the owned variant of `MethodSpec` table entries with resolved
 //! references and owned data structures for efficient runtime access.
 
 use crate::metadata::{
@@ -10,16 +10,16 @@ use crate::metadata::{
     typesystem::{CilTypeRefList, CilTypeReference},
 };
 
-/// Owned representation of a MethodSpec table entry with resolved references.
+/// Owned representation of a `MethodSpec` table entry with resolved references.
 ///
-/// This structure represents a processed entry from the MethodSpec metadata table,
+/// This structure represents a processed entry from the `MethodSpec` metadata table,
 /// which defines instantiations of generic methods with concrete type arguments.
 /// Unlike [`MethodSpecRaw`](crate::metadata::tables::MethodSpecRaw), this version contains resolved references
 /// to actual method and type objects for efficient runtime access.
 ///
 /// ## Purpose
 ///
-/// MethodSpec entries enable generic method instantiation by:
+/// `MethodSpec` entries enable generic method instantiation by:
 /// - Linking to the generic method definition or member reference
 /// - Specifying concrete type arguments for generic parameters
 /// - Providing parsed instantiation signatures for runtime use
@@ -33,13 +33,13 @@ use crate::metadata::{
 /// 3. **Type Resolution**: Resolving each generic argument using the type registry
 /// 4. **Application**: Applying the instantiation to the target method
 pub struct MethodSpec {
-    /// Row identifier within the MethodSpec table.
+    /// Row identifier within the `MethodSpec` table.
     ///
     /// This 1-based index uniquely identifies this entry within the table.
     /// Combined with the table ID, it forms the complete metadata token.
     pub rid: u32,
 
-    /// Metadata token for this MethodSpec entry.
+    /// Metadata token for this `MethodSpec` entry.
     ///
     /// Format: 0x2BXXXXXX where XXXXXX is the row ID.
     /// This token uniquely identifies this entry across the entire metadata.

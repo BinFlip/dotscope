@@ -1,11 +1,11 @@
-//! GenericParamConstraint metadata table implementation.
+//! `GenericParamConstraint` metadata table implementation.
 //!
-//! This module provides structures and utilities for working with the GenericParamConstraint metadata table,
+//! This module provides structures and utilities for working with the `GenericParamConstraint` metadata table,
 //! which defines constraints that apply to generic parameters. These constraints specify base classes
 //! and interfaces that type arguments must satisfy, enabling type-safe generic programming.
 //!
 //! # Overview
-//! The GenericParamConstraint table enables constraint-based generic programming:
+//! The `GenericParamConstraint` table enables constraint-based generic programming:
 //! - **Base class constraints**: Inheritance requirements for type arguments
 //! - **Interface constraints**: Implementation requirements for type arguments
 //! - **Multiple constraints**: Complex constraint combinations for parameters
@@ -21,7 +21,7 @@
 //! - [`GenericParamConstraintRc`]: Reference-counted constraint for shared ownership
 //!
 //! # Table Structure
-//! Each GenericParamConstraint entry contains:
+//! Each `GenericParamConstraint` entry contains:
 //! - **Owner**: Reference to the generic parameter being constrained
 //! - **Constraint**: Reference to the type that serves as the constraint
 //!
@@ -62,17 +62,21 @@
 //! - **Performance optimization**: Generate specialized code for constrained types
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.21 for the complete GenericParamConstraint table specification.
+//! See ECMA-335, Partition II, §22.21 for the complete `GenericParamConstraint` table specification.
 
 use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
 
 use crate::metadata::token::Token;
 
+mod builder;
 mod loader;
 mod owned;
 mod raw;
+mod reader;
+mod writer;
 
+pub use builder::*;
 pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;

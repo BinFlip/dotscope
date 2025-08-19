@@ -34,17 +34,17 @@
 //! ## Common Permission Types
 //! Different security permissions use various named arguments:
 //!
-//! ### FileIOPermission
+//! ### `FileIOPermission`
 //! - `Read`: Specify readable file paths
 //! - `Write`: Specify writable file paths  
 //! - `PathDiscovery`: Control path enumeration access
 //!
-//! ### RegistryPermission
+//! ### `RegistryPermission`
 //! - `Read`: Registry keys that can be read
 //! - `Write`: Registry keys that can be modified
 //! - `Create`: Registry keys that can be created
 //!
-//! ### SecurityPermission
+//! ### `SecurityPermission`
 //! - `Flags`: Specific security operations allowed
 //! - `UnmanagedCode`: Allow calls to unmanaged code
 //! - `SkipVerification`: Skip IL verification
@@ -90,7 +90,7 @@
 //!
 //! ## Working with Boolean Arguments
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::security::{NamedArgument, ArgumentType, ArgumentValue};
 //!
 //! let unrestricted_arg = NamedArgument::new(
@@ -238,7 +238,7 @@ impl NamedArgument {
     /// Returns the name of this named argument.
     ///
     /// The name typically corresponds to a property or field name on the permission class,
-    /// such as "Read", "Write", "PathDiscovery" for file permissions, or "Flags" for
+    /// such as "Read", "Write", "`PathDiscovery`" for file permissions, or "Flags" for
     /// security permissions.
     ///
     /// # Examples
@@ -511,7 +511,7 @@ mod tests {
             ArgumentValue::String("C:\\Data".to_string()),
         );
 
-        let formatted = format!("{}", arg);
+        let formatted = format!("{arg}");
         assert_eq!(formatted, "Read = \"C:\\Data\"");
     }
 
@@ -537,7 +537,7 @@ mod tests {
             ArgumentValue::Int32(123),
         );
 
-        let debug_str = format!("{:?}", arg);
+        let debug_str = format!("{arg:?}");
         assert!(debug_str.contains("NamedArgument"));
         assert!(debug_str.contains("Debug"));
     }

@@ -1,11 +1,11 @@
-//! Owned GenericParam structures for the GenericParam metadata table.
+//! Owned `GenericParam` structures for the `GenericParam` metadata table.
 //!
 //! This module provides the [`GenericParam`] struct which represents generic parameter
 //! definitions with resolved references and owned data. Generic parameters enable
 //! type-safe generic programming in .NET assemblies.
 //!
 //! # Purpose
-//! The GenericParam table enables generic programming support:
+//! The `GenericParam` table enables generic programming support:
 //! - **Generic types**: Type parameters for classes and interfaces (`List<T>`)
 //! - **Generic methods**: Method-level type parameters (`Method<U>()`)
 //! - **Constraint specification**: Base class and interface constraints
@@ -21,7 +21,7 @@
 //! - **Constraint enforcement**: Compile-time constraint checking
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.20 for the GenericParam table specification.
+//! See ECMA-335, Partition II, §22.20 for the `GenericParam` table specification.
 
 use std::sync::{Arc, OnceLock};
 
@@ -79,23 +79,23 @@ use crate::{
 /// - **Type ownership**: Parameters declared on generic types
 /// - **Method ownership**: Parameters declared on generic methods
 /// - **Lazy resolution**: Owner is resolved when first accessed
-/// - **Type reference**: Uses CilTypeReference for unified handling
+/// - **Type reference**: Uses `CilTypeReference` for unified handling
 ///
 /// # ECMA-335 Reference
-/// See ECMA-335, Partition II, §22.20 for the complete GenericParam table specification.
+/// See ECMA-335, Partition II, §22.20 for the complete `GenericParam` table specification.
 pub struct GenericParam {
-    /// The row identifier in the GenericParam table.
+    /// The row identifier in the `GenericParam` table.
     ///
-    /// This 1-based index uniquely identifies this generic parameter within the GenericParam table.
+    /// This 1-based index uniquely identifies this generic parameter within the `GenericParam` table.
     /// Combined with the table type, it forms the parameter's unique identity.
     pub rid: u32,
 
     /// The metadata token for this generic parameter.
     ///
-    /// A [`Token`] that uniquely identifies this generic parameter across the entire assembly.
-    /// The token encodes both the table type (GenericParam) and the row ID.
+    /// A [`crate::metadata::token::Token`] that uniquely identifies this generic parameter across the entire assembly.
+    /// The token encodes both the table type (`GenericParam`) and the row ID.
     ///
-    /// [`Token`]: crate::metadata::token::Token
+    /// [`crate::metadata::token::Token`]: crate::metadata::token::Token
     pub token: Token,
 
     /// The byte offset of this generic parameter in the metadata tables stream.
@@ -124,8 +124,8 @@ pub struct GenericParam {
     /// Reference to the owner of this generic parameter.
     ///
     /// A lazily-initialized [`CilTypeReference`] that points to either:
-    /// - **TypeDef**: For type-level generic parameters
-    /// - **MethodDef**: For method-level generic parameters
+    /// - **`TypeDef`**: For type-level generic parameters
+    /// - **`MethodDef`**: For method-level generic parameters
     ///
     /// Uses [`OnceLock`] for thread-safe lazy initialization during owner resolution.
     ///
@@ -160,17 +160,17 @@ impl GenericParam {
     ///
     /// This method associates the generic parameter with its owner by adding it to
     /// the owner's parameter collection. The owner can be either a generic type
-    /// (TypeDef) or a generic method (MethodDef).
+    /// (`TypeDef`) or a generic method (`MethodDef`).
     ///
     /// # Owner Types
     /// The owner can be one of two types:
-    /// - **TypeDef**: Generic types with type parameters (`List<T>`)
-    /// - **MethodDef**: Generic methods with method parameters (`Method<U>()`)
+    /// - **`TypeDef`**: Generic types with type parameters (`List<T>`)
+    /// - **`MethodDef`**: Generic methods with method parameters (`Method<U>()`)
     ///
     /// # Returns
     /// Returns `Ok(())` on successful application, or an error if:
     /// - Owner reference is not set or invalid
-    /// - Owner type is not TypeDef or MethodDef
+    /// - Owner type is not `TypeDef` or `MethodDef`
     /// - Method reference is weak and has been dropped
     /// - Parameter collection operations fail
     ///

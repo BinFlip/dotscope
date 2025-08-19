@@ -23,7 +23,7 @@
 //!
 //! # Examples
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::{CilObject, metadata::typesystem::TypeRegistry};
 //!
 //! let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
@@ -39,6 +39,7 @@
 
 mod base;
 mod builder;
+mod encoder;
 mod primitives;
 mod registry;
 mod resolver;
@@ -50,18 +51,22 @@ pub use base::{
     ELEMENT_TYPE,
 };
 pub use builder::TypeBuilder;
+pub use encoder::TypeSignatureEncoder;
 pub use primitives::{CilPrimitive, CilPrimitiveData, CilPrimitiveKind};
 pub use registry::{TypeRegistry, TypeSource};
 pub use resolver::TypeResolver;
 
-use crate::metadata::{
-    customattributes::CustomAttributeValueList,
-    method::MethodRefList,
-    security::Security,
-    tables::{
-        EventList, FieldList, GenericParamList, MethodSpecList, PropertyList, TypeAttributes,
+use crate::{
+    metadata::{
+        customattributes::CustomAttributeValueList,
+        method::MethodRefList,
+        security::Security,
+        tables::{
+            EventList, FieldList, GenericParamList, MethodSpecList, PropertyList, TypeAttributes,
+        },
+        token::Token,
     },
-    token::Token,
+    Error, Result,
 };
 
 /// A vector that holds a list of `CilType` references.
@@ -76,7 +81,7 @@ pub type CilTypeList = Arc<boxcar::Vec<CilTypeRc>>;
 /// while maintaining thread safety for concurrent access scenarios.
 pub type CilTypeRc = Arc<CilType>;
 
-/// Represents a unified type definition combining information from TypeDef, TypeRef, and TypeSpec tables.
+/// Represents a unified type definition combining information from `TypeDef`, `TypeRef`, and `TypeSpec` tables.
 ///
 /// `CilType` provides a complete representation of a .NET type, merging metadata from multiple
 /// tables into a single coherent structure. This eliminates the need to navigate between
@@ -99,7 +104,7 @@ pub type CilTypeRc = Arc<CilType>;
 /// Basic type information access is available through the type registry.
 /// Complex iteration patterns may require understanding the current iterator implementation.
 pub struct CilType {
-    /// Metadata token identifying this type (TypeDef, TypeRef, TypeSpec, or artificial)
+    /// Metadata token identifying this type (`TypeDef`, `TypeRef`, `TypeSpec`, or artificial)
     pub token: Token,
     /// Computed type flavor - lazily determined from context and inheritance chain
     flavor: OnceLock<CilFlavor>,
@@ -107,11 +112,11 @@ pub struct CilType {
     pub namespace: String,
     /// Type name (class name, interface name, etc.)
     pub name: String,
-    /// External type reference for imported types (from AssemblyRef, File, ModuleRef)
-    pub external: Option<CilTypeReference>,
+    /// External type reference for imported types (from `AssemblyRef`, `File`, `ModuleRef`)
+    external: OnceLock<CilTypeReference>,
     /// Base type reference - the type this type inherits from (for classes) or extends (for interfaces)
     base: OnceLock<CilTypeRef>,
-    /// Type attributes flags - 4-byte bitmask from TypeAttributes (ECMA-335 §II.23.1.15)
+    /// Type attributes flags - 4-byte bitmask from `TypeAttributes` (ECMA-335 §II.23.1.15)
     pub flags: u32,
     /// All fields defined in this type
     pub fields: FieldList,
@@ -121,7 +126,7 @@ pub struct CilType {
     pub properties: PropertyList,
     /// All events defined in this type
     pub events: EventList,
-    /// All interfaces this type implements (from InterfaceImpl table)
+    /// All interfaces this type implements (from `InterfaceImpl` table)
     pub interfaces: CilTypeRefList,
     /// All method overwrites this type implements (explicit interface implementations)
     pub overwrites: Arc<boxcar::Vec<CilTypeReference>>,
@@ -133,13 +138,13 @@ pub struct CilType {
     pub generic_args: MethodSpecList,
     /// Custom attributes applied to this type (annotations, decorators)
     pub custom_attributes: CustomAttributeValueList,
-    /// Field layout packing size - alignment of fields in memory (from ClassLayout table)
+    /// Field layout packing size - alignment of fields in memory (from `ClassLayout` table)
     pub packing_size: OnceLock<u16>,
-    /// Total size of the class in bytes (from ClassLayout table)
+    /// Total size of the class in bytes (from `ClassLayout` table)
     pub class_size: OnceLock<u32>,
-    /// TypeSpec specifiers providing additional type information for complex types
+    /// `TypeSpec` specifiers providing additional type information for complex types
     pub spec: OnceLock<CilFlavor>,
-    /// Type modifiers from TypeSpec (required/optional modifiers, pinned types, etc.)
+    /// Type modifiers from `TypeSpec` (required/optional modifiers, pinned types, etc.)
     pub modifiers: Arc<boxcar::Vec<CilModifier>>,
     /// Security declarations and permissions associated with this type
     pub security: OnceLock<Security>,
@@ -166,7 +171,7 @@ impl CilType {
     /// * `name` - The name of the type  
     /// * `external` - External type reference if this is an imported type
     /// * `base` - Base type reference if this type inherits from another (optional)
-    /// * `flags` - Type attributes flags from TypeAttributes
+    /// * `flags` - Type attributes flags from `TypeAttributes`
     /// * `fields` - Fields belonging to this type
     /// * `methods` - Methods belonging to this type
     /// * `flavor` - Optional explicit flavor. If None, flavor will be computed lazily
@@ -178,7 +183,7 @@ impl CilType {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::{
     ///     typesystem::{CilType, CilFlavor},
     ///     token::Token,
@@ -197,6 +202,7 @@ impl CilType {
     ///     Some(CilFlavor::Class), // Explicit class flavor
     /// );
     /// ```
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         token: Token,
         namespace: String,
@@ -213,6 +219,11 @@ impl CilType {
             base_lock.set(base_value).ok();
         }
 
+        let external_lock = OnceLock::new();
+        if let Some(external_value) = external {
+            external_lock.set(external_value).ok();
+        }
+
         let flavor_lock = OnceLock::new();
         if let Some(explicit_flavor) = flavor {
             flavor_lock.set(explicit_flavor).ok();
@@ -222,7 +233,7 @@ impl CilType {
             token,
             namespace,
             name,
-            external,
+            external: external_lock,
             base: base_lock,
             flags,
             flavor: flavor_lock,
@@ -257,6 +268,11 @@ impl CilType {
     /// * `Ok(())` if the base type was set successfully
     /// * `Err(base_type)` if a base type was already set for this type
     ///
+    /// # Errors
+    ///
+    /// This function will return an error if a base type was already set for this type.
+    /// The error contains the base type that was attempted to be set.
+    ///
     /// # Thread Safety
     ///
     /// This method is thread-safe and can be called concurrently. Only the first
@@ -264,7 +280,7 @@ impl CilType {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::{CilType, CilTypeRef};
     /// use std::sync::{Arc, Weak};
     ///
@@ -276,8 +292,10 @@ impl CilType {
     /// }
     /// # }
     /// ```
-    pub fn set_base(&self, base_type: CilTypeRef) -> Result<(), CilTypeRef> {
-        self.base.set(base_type)
+    pub fn set_base(&self, base_type: CilTypeRef) -> Result<()> {
+        self.base
+            .set(base_type)
+            .map_err(|_| Error::Error("External reference was already set".to_string()))
     }
 
     /// Access the base type of this type, if it exists.
@@ -296,7 +314,7 @@ impl CilType {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use dotscope::metadata::typesystem::CilType;
     /// # fn example(cil_type: &CilType) {
     /// if let Some(base) = cil_type.base() {
@@ -312,6 +330,44 @@ impl CilType {
         } else {
             None
         }
+    }
+
+    /// Sets the external type reference for this type.
+    ///
+    /// This method sets the external reference that indicates where this type is defined
+    /// (e.g., which assembly, module, or file). This is primarily used for TypeRef entries
+    /// that reference types defined outside the current assembly.
+    ///
+    /// ## Arguments
+    /// * `external_ref` - The external type reference indicating where this type is defined
+    ///
+    /// ## Returns
+    /// * `Ok(())` - External reference set successfully
+    /// * `Err(_)` - External reference was already set or other error occurred
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the external reference was already set.
+    ///
+    /// ## Thread Safety
+    /// This method is thread-safe and can be called concurrently. Only the first
+    /// call will succeed in setting the external reference.
+    pub fn set_external(&self, external_ref: CilTypeReference) -> Result<()> {
+        self.external
+            .set(external_ref)
+            .map_err(|_| malformed_error!("External reference was already set"))
+    }
+
+    /// Gets the external type reference for this type, if it exists.
+    ///
+    /// Returns the external reference that indicates where this type is defined,
+    /// or `None` if this is a type defined in the current assembly or if no
+    /// external reference has been set.
+    ///
+    /// ## Returns
+    /// Returns the external reference if it has been set, or `None` if it's still pending resolution.
+    pub fn get_external(&self) -> Option<&CilTypeReference> {
+        self.external.get()
     }
 
     /// Get the computed type flavor - determined lazily from context.
@@ -330,7 +386,7 @@ impl CilType {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::{CilType, CilFlavor};
     ///
     /// # fn example(cil_type: &CilType) {

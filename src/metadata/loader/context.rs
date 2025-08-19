@@ -8,7 +8,7 @@
 //! # Loading Architecture
 //!
 //! The context follows a specific lifecycle:
-//! 1. **Creation**: Built in [`crate::metadata::loader::data::CilObjectData::from_file`]
+//! 1. **Creation**: Built in internal data structures from file
 //! 2. **Population**: Passed to parallel loaders via `execute_loaders_in_parallel`
 //! 3. **Resolution**: Provides coded index resolution and cross-table lookups
 //! 4. **Cleanup**: Automatically dropped after loading completes
@@ -57,6 +57,21 @@
 //! - **Reference Counting**: Shared data uses Arc for safe concurrent access
 //! - **Lazy Initialization**: Some tables use OnceLock for deferred loading
 //! - **Scoped Lifetime**: Context is dropped immediately after loading
+//!
+//! # Thread Safety
+//!
+//! All components in this module are designed for safe concurrent access during parallel loading.
+//! The internal loader context contains thread-safe data structures and
+//! is [`std::marker::Send`] and [`std::marker::Sync`], enabling efficient parallel processing
+//! of metadata tables across multiple threads.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::loader::data`] - Assembly data loading and context creation
+//! - [`crate::metadata::typesystem`] - Type registry and reference resolution
+//! - [`crate::metadata::tables`] - All metadata table types and coded index resolution
+//! - [`crate::metadata::streams`] - Metadata stream access and heap operations
 
 use std::sync::{Arc, OnceLock};
 
@@ -73,12 +88,14 @@ use crate::{
         tables::{
             AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, AssemblyRefOsMap,
             AssemblyRefProcessorMap, ClassLayoutMap, CodedIndex, ConstantMap, CustomAttributeMap,
-            DeclSecurityMap, EventMap, EventMapEntryMap, EventPtrMap, FieldLayoutMap, FieldMap,
-            FieldMarshalMap, FieldPtrMap, FieldRVAMap, FileMap, GenericParamConstraintMap,
-            GenericParamMap, InterfaceImplMap, MemberRefMap, MethodImplMap, MethodPtrMap,
+            CustomDebugInformationMap, DeclSecurityMap, DocumentMap, EncLogMap, EncMapMap,
+            EventMap, EventMapEntryMap, EventPtrMap, FieldLayoutMap, FieldMap, FieldMarshalMap,
+            FieldPtrMap, FieldRVAMap, FileMap, GenericParamConstraintMap, GenericParamMap,
+            ImportScopeMap, InterfaceImplMap, LocalConstantMap, LocalScopeMap, LocalVariableMap,
+            MemberRefMap, MethodDebugInformationMap, MethodImplMap, MethodPtrMap,
             MethodSemanticsMap, MethodSpecMap, ModuleRc, ModuleRefMap, NestedClassMap, ParamMap,
             ParamPtrMap, PropertyMap, PropertyMapEntryMap, PropertyPtrMap, StandAloneSigMap,
-            TableId, TypeSpecMap,
+            StateMachineMethodMap, TableId, TypeSpecMap,
         },
         typesystem::{CilTypeReference, TypeRegistry},
     },
@@ -109,11 +126,12 @@ use crate::{
 ///
 /// # Thread Safety
 ///
-/// Designed for safe concurrent access during parallel loading:
+/// [`LoaderContext`] is [`std::marker::Send`] and [`std::marker::Sync`], designed for safe concurrent access:
 /// - All maps use thread-safe data structures ([`crossbeam_skiplist::SkipMap`], [`dashmap::DashMap`])
 /// - Metadata streams are immutable references
 /// - Registries provide atomic operations
-/// - Critical sections use `Arc<OnceLock>` for coordination
+/// - Critical sections use [`std::sync::Arc`]<[`std::sync::OnceLock`]> for coordination
+/// - Reference-counted data enables safe sharing across parallel loaders
 ///
 /// # Examples
 ///
@@ -153,15 +171,15 @@ pub(crate) struct LoaderContext<'a> {
 
     // === Metadata Streams ===
     /// Tables stream containing all metadata table definitions.
-    pub meta: &'a Option<TablesHeader<'a>>,
+    pub meta: Option<&'a TablesHeader<'a>>,
     /// String heap containing UTF-8 encoded names and identifiers.
-    pub strings: &'a Option<Strings<'a>>,
+    pub strings: Option<&'a Strings<'a>>,
     /// User string heap containing literal string constants.
-    pub userstrings: &'a Option<UserStrings<'a>>,
+    pub userstrings: Option<&'a UserStrings<'a>>,
     /// GUID heap containing unique identifiers for types and assemblies.
-    pub guids: &'a Option<Guid<'a>>,
+    pub guids: Option<&'a Guid<'a>>,
     /// Blob heap containing binary data (signatures, custom attributes, etc.).
-    pub blobs: &'a Option<Blob<'a>>,
+    pub blobs: Option<&'a Blob<'a>>,
 
     // === Assembly and Module Tables ===
     /// Assembly definition (single entry per assembly).
@@ -207,6 +225,30 @@ pub(crate) struct LoaderContext<'a> {
     /// Field relative virtual addresses for initialized data.
     pub field_rva: FieldRVAMap,
 
+    // === Edit-and-Continue Tables ===
+    /// Edit-and-Continue log entries tracking debugging modifications.
+    pub enc_log: EncLogMap,
+    /// Edit-and-Continue token mapping for debugging scenarios.
+    pub enc_map: EncMapMap,
+
+    // === Portable PDB Debug Tables ===
+    /// Document information for source file mapping in Portable PDB format.
+    pub document: DocumentMap,
+    /// Method debugging information including sequence points.
+    pub method_debug_information: MethodDebugInformationMap,
+    /// Local variable scope information for debugging.
+    pub local_scope: LocalScopeMap,
+    /// Local variable information for debugging.
+    pub local_variable: LocalVariableMap,
+    /// Local constant information for debugging.
+    pub local_constant: LocalConstantMap,
+    /// Import scope information for debugging.
+    pub import_scope: ImportScopeMap,
+    /// State machine method mapping for async/iterator debugging.
+    pub state_machine_method: StateMachineMethodMap,
+    /// Custom debug information for extensible debugging metadata.
+    pub custom_debug_information: CustomDebugInformationMap,
+
     // === Parameter and Generic Tables ===
     /// Parameter definitions for methods.
     pub param: ParamMap,
@@ -247,7 +289,7 @@ pub(crate) struct LoaderContext<'a> {
     /// Custom attribute definitions.
     pub custom_attribute: CustomAttributeMap,
     /// Declarative security attributes.
-    pub decl_security: DeclSecurityMap,
+    pub decl_security: &'a DeclSecurityMap,
     /// File definitions for multi-file assemblies.
     pub file: &'a FileMap,
     /// Exported type definitions.
@@ -275,12 +317,12 @@ impl LoaderContext<'_> {
     /// # Supported Tables
     ///
     /// The method handles resolution for all major metadata table types:
-    /// - **Type Tables**: TypeDef, TypeRef, TypeSpec
-    /// - **Method Tables**: MethodDef, MemberRef, MethodSpec  
-    /// - **Field/Property Tables**: Field, Property, Param, Event
-    /// - **Assembly Tables**: Assembly, AssemblyRef, Module, ModuleRef
-    /// - **Generic Tables**: GenericParam, GenericParamConstraint
-    /// - **Other Tables**: File, ExportedType, StandAloneSig, DeclSecurity, InterfaceImpl
+    /// - **Type Tables**: `TypeDef`, `TypeRef`, `TypeSpec`
+    /// - **Method Tables**: `MethodDef`, `MemberRef`, `MethodSpec`  
+    /// - **Field/Property Tables**: `Field`, `Property`, `Param`, `Event`
+    /// - **Assembly Tables**: `Assembly`, `AssemblyRef`, Module, `ModuleRef`
+    /// - **Generic Tables**: `GenericParam`, `GenericParamConstraint`
+    /// - **Other Tables**: `File`, `ExportedType`, `StandAloneSig`, `DeclSecurity`, `InterfaceImpl`
     ///
     /// # Resolution Strategy
     ///
@@ -331,6 +373,10 @@ impl LoaderContext<'_> {
     /// let method_ref = context.get_ref(&method_index);
     /// # }
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads during parallel loading.
     pub fn get_ref(&self, coded_index: &CodedIndex) -> CilTypeReference {
         match coded_index.tag {
             TableId::TypeDef => {

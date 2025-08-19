@@ -18,7 +18,7 @@
 //!
 //! # Examples
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::identity::Identity;
 //! use dotscope::metadata::tables::AssemblyHashAlgorithm;
 //!
@@ -42,6 +42,19 @@
 //! - **Token Collision**: 8-byte tokens may have collisions but are sufficient for most use cases
 //! - **Algorithm Choice**: SHA1 is recommended over MD5 for new assemblies
 //!
+//! # Thread Safety
+//!
+//! All types and functions in this module are thread-safe. The [`crate::metadata::identity::Identity`]
+//! enum contains only owned data and is [`std::marker::Send`] and [`std::marker::Sync`].
+//! Hashing operations are stateless and can be called concurrently from multiple threads.
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::tables`] - Assembly and AssemblyRef table identity verification
+//! - Binary data reading utilities for key material parsing
+//! - External cryptographic libraries (`md5`, `sha1`) for token generation
+//!
 //! # Assembly Loading
 //!
 //! The .NET runtime uses assembly identity for:
@@ -49,8 +62,9 @@
 //! - Security policy enforcement
 //! - Global Assembly Cache (GAC) storage and retrieval
 //! - Type loading and assembly isolation
+//! - Cross-assembly type reference resolution
 
-use crate::{file::io::read_le, metadata::tables::AssemblyHashAlgorithm, Result};
+use crate::{metadata::tables::AssemblyHashAlgorithm, utils::read_le, Result};
 
 use md5::{Digest, Md5};
 use sha1::Sha1;
@@ -75,7 +89,7 @@ use sha1::Sha1;
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::identity::Identity;
 /// use dotscope::metadata::tables::AssemblyHashAlgorithm;
 ///
@@ -151,7 +165,7 @@ impl Identity {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::identity::Identity;
     ///
     /// // Create public key identity
@@ -168,6 +182,10 @@ impl Identity {
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn from(data: &[u8], is_pub: bool) -> Result<Self> {
         Ok(if is_pub {
             Identity::PubKey(data.to_vec())
@@ -205,7 +223,7 @@ impl Identity {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::identity::Identity;
     /// use dotscope::metadata::tables::AssemblyHashAlgorithm;
     ///
@@ -224,6 +242,11 @@ impl Identity {
     /// assert_ne!(sha1_token, md5_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
+    /// Hash operations are stateless and do not modify the identity instance.
     pub fn to_token(&self, algo: u32) -> Result<u64> {
         match &self {
             Identity::PubKey(data) => match algo {

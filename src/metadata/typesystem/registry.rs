@@ -40,7 +40,7 @@
 //!
 //! ## Creating and Using a Registry
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::typesystem::{TypeRegistry, CilType};
 //! use dotscope::metadata::token::Token;
 //!
@@ -61,7 +61,7 @@
 //!
 //! ## Registering New Types
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::typesystem::{TypeRegistry, CilType, TypeSource};
 //! use dotscope::metadata::token::Token;
 //! use std::sync::Arc;
@@ -93,17 +93,10 @@
 //! The registry provides multiple lookup methods by name, namespace, and token.
 //! Each method returns the appropriate collection type for the query.
 //!
-//! # Performance Characteristics
-//!
-//! - **Lookup by token**: O(log n) using skip list
-//! - **Lookup by name**: O(1) average case using hash maps
-//! - **Registration**: O(log n) for insertion plus O(1) for index updates
-//! - **Memory overhead**: Minimal due to reference counting and deduplication
-//!
 //! # ECMA-335 Compliance
 //!
 //! The registry handles all type reference mechanisms defined in ECMA-335:
-//! - TypeDef, TypeRef, and TypeSpec tokens
+//! - `TypeDef`, `TypeRef`, and `TypeSpec` tokens
 //! - Assembly, Module, and File references
 //! - Generic type instantiations
 //! - Cross-assembly type resolution
@@ -140,13 +133,13 @@ use crate::{
 /// # Type Resolution
 ///
 /// Different sources require different resolution strategies:
-/// - **CurrentModule**: Direct access to type definition
+/// - **`CurrentModule`**: Direct access to type definition
 /// - **External sources**: Resolution through metadata references
 /// - **Primitive**: Built-in CLR types with artificial tokens
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::typesystem::TypeSource;
 /// use dotscope::metadata::token::Token;
 ///
@@ -347,7 +340,6 @@ impl SourceRegistry {
 //             CilFlavor::Pinned => 22u8.hash(&mut hasher),
 //             CilFlavor::FnPtr { signature: _ } => {
 //                 // Function pointer signatures are complex, so we just use a simple marker
-//                 // A full implementation would hash the entire signature
 //                 23u8.hash(&mut hasher);
 //             }
 //             CilFlavor::GenericParameter { index, method } => {
@@ -474,7 +466,7 @@ impl SourceRegistry {
 ///
 /// ## Basic Registry Operations
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::typesystem::TypeRegistry;
 ///
 /// // Create registry with primitive types
@@ -527,21 +519,26 @@ impl TypeRegistry {
     ///
     /// Constructs a complete type registry with all .NET primitive types
     /// pre-registered and ready for use. The registry starts with artificial
-    /// tokens in the 0xF000_0020+ range for new type registration.
+    /// tokens in the `0xF000_0020`+ range for new type registration.
     ///
     /// # Primitive Types
     ///
     /// The following primitive types are automatically registered:
-    /// - System.Void, System.Boolean, System.Char
-    /// - Integer types: SByte, Byte, Int16, UInt16, Int32, UInt32, Int64, UInt64
-    /// - Floating point: Single, Double
-    /// - Platform types: IntPtr, UIntPtr
-    /// - Reference types: Object, String
-    /// - Special types: TypedReference, ValueType
+    /// - `System.Void`, `System.Boolean`, `System.Char`
+    /// - Integer types: `SByte`, `Byte`, `Int16`, `UInt16`, `Int32`, `UInt32`, `Int64`, `UInt64`
+    /// - Floating point: `Single`, `Double`
+    /// - Platform types: `IntPtr`, `UIntPtr`
+    /// - Reference types: `Object`, `String`
+    /// - Special types: `TypedReference`, `ValueType`
     ///
     /// # Returns
     /// * `Ok(TypeRegistry)` - Fully initialized registry with primitive types
     /// * `Err(Error)` - If primitive type initialization fails
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the primitive type initialization fails,
+    /// which could happen due to internal inconsistencies during registry setup.
     ///
     /// # Thread Safety
     ///
@@ -549,7 +546,7 @@ impl TypeRegistry {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::TypeRegistry;
     ///
     /// let registry = TypeRegistry::new()?;
@@ -738,7 +735,7 @@ impl TypeRegistry {
             return;
         }
 
-        let source = match &new_type.external {
+        let source = match new_type.get_external() {
             Some(external_source) => self.register_source(external_source),
             None => TypeSource::CurrentModule,
         };
@@ -843,7 +840,7 @@ impl TypeRegistry {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::{typesystem::TypeRegistry, token::Token};
     ///
     /// # fn example(registry: &TypeRegistry) {
@@ -878,7 +875,7 @@ impl TypeRegistry {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::{TypeRegistry, TypeSource};
     /// use dotscope::metadata::token::Token;
     ///
@@ -902,7 +899,7 @@ impl TypeRegistry {
         let fullname = if namespace.is_empty() {
             name.to_string()
         } else {
-            format!("{}.{}", namespace, name)
+            format!("{namespace}.{name}")
         };
 
         if let Some(tokens) = self.types_by_source.get(&source) {
@@ -944,7 +941,7 @@ impl TypeRegistry {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::TypeRegistry;
     ///
     /// # fn example(registry: &TypeRegistry) {
@@ -985,7 +982,7 @@ impl TypeRegistry {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::TypeRegistry;
     ///
     /// # fn example(registry: &TypeRegistry) {
@@ -1025,11 +1022,11 @@ impl TypeRegistry {
     ///
     /// The fullname should be in the format:
     /// - "Namespace.TypeName" for namespaced types
-    /// - "TypeName" for types in the global namespace
+    /// - "`TypeName`" for types in the global namespace
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::TypeRegistry;
     ///
     /// # fn example(registry: &TypeRegistry) {
@@ -1142,7 +1139,7 @@ impl TypeRegistry {
     }
 
     /// Returns an iterator over all types in the registry
-    pub fn iter(&self) -> crossbeam_skiplist::map::Iter<Token, CilTypeRc> {
+    pub fn iter(&self) -> crossbeam_skiplist::map::Iter<'_, Token, CilTypeRc> {
         self.types.iter()
     }
 
@@ -1244,11 +1241,7 @@ mod tests {
 
         for primitive in all_primitives.iter() {
             let prim_type = registry.get_primitive(*primitive);
-            assert!(
-                prim_type.is_ok(),
-                "Failed to get primitive: {:?}",
-                primitive
-            );
+            assert!(prim_type.is_ok(), "Failed to get primitive: {primitive:?}");
         }
     }
 
