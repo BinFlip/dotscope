@@ -469,15 +469,15 @@ impl CilType {
         self.flavor.get_or_init(|| self.compute_flavor())
     }
 
-    /// Compute the type flavor based on flags and context
-    // ToDo: Investigate how this can be done without hard-coded heuristics
+    /// Compute the type flavor based on flags, inheritance chain, and intelligent heuristics
     fn compute_flavor(&self) -> CilFlavor {
-        // 1. Check interface flag first (highest priority)
+        // 1. ECMA-335 definitive classification - Interface flag takes precedence
         if self.flags & TypeAttributes::INTERFACE != 0 {
             return CilFlavor::Interface;
         }
 
         // 2. System primitive types (exact namespace/name matching)
+        // Keep these for performance - they're well-defined and unchanging
         if self.namespace == "System" {
             match self.name.as_str() {
                 "Boolean" | "Char" | "SByte" | "Byte" | "Int16" | "UInt16" | "Int32" | "UInt32"
@@ -497,52 +497,191 @@ impl CilType {
             }
         }
 
-        // 3. Analyze inheritance chain for proper classification
+        // 3. Enhanced inheritance chain analysis
+        if let Some(inherited_flavor) = self.classify_by_inheritance() {
+            return inherited_flavor;
+        }
+
+        // 4. Intelligent attribute-based classification
+        if let Some(attribute_flavor) = self.classify_by_attributes() {
+            return attribute_flavor;
+        }
+
+        // 5. Default classification for reference types
+        CilFlavor::Class
+    }
+
+    /// Classify type by analyzing inheritance chain with enhanced logic
+    fn classify_by_inheritance(&self) -> Option<CilFlavor> {
         if let Some(base_type) = self.base() {
             let base_fullname = base_type.fullname();
 
+            // Direct well-known base types
             if base_fullname == "System.ValueType" || base_fullname == "System.Enum" {
-                return CilFlavor::ValueType;
+                return Some(CilFlavor::ValueType);
             }
 
             if base_fullname == "System.Delegate" || base_fullname == "System.MulticastDelegate" {
-                return CilFlavor::Class; // Delegates are reference types but special classes
+                return Some(CilFlavor::Class); // Delegates are reference types but special classes
             }
 
-            // Only check the base type's flavor if it's not the same type (avoid infinite recursion)
+            // Traverse inheritance chain more intelligently
             if base_type.fullname() != self.fullname() {
-                // Check if the base type's flavor has already been computed (don't force computation)
+                // Check if base type already has computed flavor
                 if let Some(base_flavor) = base_type.flavor.get() {
                     match base_flavor {
-                        CilFlavor::ValueType => return CilFlavor::ValueType,
+                        CilFlavor::ValueType => return Some(CilFlavor::ValueType),
                         CilFlavor::Interface => {
                             // This shouldn't happen (can't inherit from interface)
                             // but if it does, this type is a class
-                            return CilFlavor::Class;
+                            return Some(CilFlavor::Class);
                         }
                         _ => {}
+                    }
+                } else {
+                    // Base type flavor not computed yet - use transitive inheritance analysis
+                    if let Some(transitive_flavor) = self.analyze_transitive_inheritance(&base_type)
+                    {
+                        return Some(transitive_flavor);
                     }
                 }
             }
         }
+        None
+    }
 
-        // 4. Heuristic fallbacks for special cases when inheritance info is incomplete
-        // (This handles cases where base type references might not be fully resolved yet)
-        if self.name == "TestEnum" || self.name.ends_with("Enum") {
-            return CilFlavor::ValueType;
+    /// Analyze inheritance chain transitively without forcing computation
+    fn analyze_transitive_inheritance(&self, base_type: &CilType) -> Option<CilFlavor> {
+        // Look up the inheritance chain without computing flavors (avoid infinite recursion)
+        let mut current = base_type.base();
+        let mut depth = 0;
+        const MAX_INHERITANCE_DEPTH: usize = 10; // Prevent infinite loops
+
+        while let Some(ancestor) = current {
+            depth += 1;
+            if depth > MAX_INHERITANCE_DEPTH {
+                break;
+            }
+
+            let ancestor_name = ancestor.fullname();
+
+            // Check for well-known ancestor types
+            if ancestor_name == "System.ValueType" || ancestor_name == "System.Enum" {
+                return Some(CilFlavor::ValueType);
+            }
+
+            if ancestor_name == "System.Delegate" || ancestor_name == "System.MulticastDelegate" {
+                return Some(CilFlavor::Class);
+            }
+
+            if ancestor_name == "System.Object" {
+                // Reached the root - this is a reference type class
+                return Some(CilFlavor::Class);
+            }
+
+            // Continue up the chain
+            current = ancestor.base();
         }
 
-        if self.name.contains("Struct") {
-            return CilFlavor::ValueType;
+        None
+    }
+
+    /// Classify type using TypeAttributes flags and intelligent heuristics
+    fn classify_by_attributes(&self) -> Option<CilFlavor> {
+        // ECMA-335 attribute-based classification
+
+        // Sealed + Abstract is impossible, but if both are set, interface wins
+        let is_sealed = self.flags & TypeAttributes::SEALED != 0;
+        let is_abstract = self.flags & TypeAttributes::ABSTRACT != 0;
+
+        // Value type indicators:
+        // 1. Sealed with no methods often indicates value type (struct/enum)
+        if is_sealed && !is_abstract && self.methods.is_empty() && !self.fields.is_empty() {
+            return Some(CilFlavor::ValueType);
         }
 
-        if self.name.contains("Delegate") {
-            return CilFlavor::Class;
+        // 2. Types with sequential or explicit layout are often value types
+        let layout = self.flags & TypeAttributes::LAYOUT_MASK;
+        if (layout == TypeAttributes::SEQUENTIAL_LAYOUT
+            || layout == TypeAttributes::EXPLICIT_LAYOUT)
+            && is_sealed
+            && !is_abstract
+        {
+            return Some(CilFlavor::ValueType);
         }
 
-        // 5. Default classification for reference types
-        // Most user-defined types without special inheritance are classes
-        CilFlavor::Class
+        // 3. Abstract classes that aren't sealed
+        if is_abstract && !is_sealed {
+            return Some(CilFlavor::Class);
+        }
+
+        // 4. Check for enum-like characteristics
+        if self.has_enum_characteristics() {
+            return Some(CilFlavor::ValueType);
+        }
+
+        // 5. Check for delegate-like characteristics
+        if self.has_delegate_characteristics() {
+            return Some(CilFlavor::Class);
+        }
+
+        None
+    }
+
+    /// Check if type has enum-like characteristics
+    fn has_enum_characteristics(&self) -> bool {
+        // Enums typically:
+        // 1. Are sealed
+        // 2. Have a single instance field named "value__"
+        // 3. May have static fields for enum values
+
+        if self.flags & TypeAttributes::SEALED == 0 {
+            return false;
+        }
+
+        let instance_fields = self
+            .fields
+            .iter()
+            .filter(|(_, field)| field.flags & 0x10 == 0) // Not static
+            .count();
+
+        let has_value_field = self
+            .fields
+            .iter()
+            .any(|(_, field)| field.name == "value__" && field.flags & 0x10 == 0);
+
+        // Classic enum pattern: single instance field named "value__"
+        instance_fields == 1 && has_value_field
+    }
+
+    /// Check if type has delegate-like characteristics  
+    fn has_delegate_characteristics(&self) -> bool {
+        // Delegates typically:
+        // 1. Are sealed classes
+        // 2. Have Invoke, BeginInvoke, EndInvoke methods
+        // 3. Have specific constructor signatures
+
+        if self.flags & TypeAttributes::SEALED == 0 {
+            return false;
+        }
+
+        let has_invoke = self.methods.iter().any(|(_, method)| {
+            if let Some(name) = method.name() {
+                name == "Invoke"
+            } else {
+                false
+            }
+        });
+
+        let has_async_methods = self.methods.iter().any(|(_, method)| {
+            if let Some(name) = method.name() {
+                name == "BeginInvoke" || name == "EndInvoke"
+            } else {
+                false
+            }
+        });
+
+        has_invoke && has_async_methods
     }
 
     /// Returns the full name (Namespace.Name) of the type.
