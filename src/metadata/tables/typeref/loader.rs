@@ -57,7 +57,7 @@ impl MetadataLoader for TypeRefLoader {
                         if let Some(resolution_scope) =
                             row.resolve_resolution_scope(|coded_index| context.get_ref(coded_index))
                         {
-                            type_ref.set_external(resolution_scope)?;
+                            type_ref.set_external(&resolution_scope)?;
                             context.imports.add_type(&type_ref)?;
                         }
                     }

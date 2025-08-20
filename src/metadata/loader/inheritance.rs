@@ -49,7 +49,7 @@ impl MetadataLoader for InheritanceResolver {
                             if let Some(base_type_ref) = raw_typedef
                                 .resolve_base_type(|coded_index| context.get_ref(coded_index))
                             {
-                                let _ = type_def.set_base(base_type_ref);
+                                let _ = type_def.set_base(&base_type_ref);
                             }
 
                             // Note: Failed resolution is not an error - some TypeSpec references

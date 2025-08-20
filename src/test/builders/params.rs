@@ -10,7 +10,9 @@ use crate::{
         marshalling::MarshallingInfo,
         tables::{Param, ParamRc},
         token::Token,
-        typesystem::{CilFlavor, CilPrimitive, TypeRegistry},
+        typesystem::{
+            CilFlavor, CilPrimitive, CilTypeRef, CompleteTypeSpec, TypeRegistry, TypeSource,
+        },
     },
     prelude::{CilPrimitiveData, CilPrimitiveKind, ParamAttributes},
 };
@@ -286,10 +288,7 @@ impl ParamBuilder {
                 std::sync::OnceLock::new();
 
             let type_registry = TEST_TYPE_REGISTRY.get_or_init(|| {
-                Arc::new(
-                    crate::metadata::typesystem::TypeRegistry::new()
-                        .expect("Failed to create test type registry"),
-                )
+                Arc::new(TypeRegistry::new().expect("Failed to create test type registry"))
             });
 
             let param_type = match flavor {
@@ -316,23 +315,20 @@ impl ParamBuilder {
                     .get_primitive(CilPrimitiveKind::Object)
                     .unwrap(),
                 CilFlavor::Void => type_registry.get_primitive(CilPrimitiveKind::Void).unwrap(),
-                other_flavor => {
-                    // For complex types, create them properly in the registry
-                    type_registry
-                        .get_or_create_type(
-                            &mut None,
-                            other_flavor,
-                            "System",
-                            "TestType",
-                            crate::metadata::typesystem::TypeSource::CurrentModule,
-                        )
-                        .unwrap()
-                }
+                other_flavor => type_registry
+                    .get_or_create_type(&CompleteTypeSpec {
+                        token_init: None,
+                        flavor: other_flavor,
+                        namespace: "System".to_string(),
+                        name: "TestType".to_string(),
+                        source: TypeSource::CurrentModule,
+                        generic_args: None,
+                        base_type: None,
+                    })
+                    .unwrap(),
             };
 
-            let _ = param
-                .base
-                .set(crate::metadata::typesystem::CilTypeRef::from(param_type));
+            let _ = param.base.set(CilTypeRef::from(param_type));
         }
 
         param

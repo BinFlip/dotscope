@@ -108,8 +108,8 @@ use crate::{
         tables::MethodSpec,
         token::Token,
         typesystem::{
-            CilFlavor, CilModifier, CilPrimitiveKind, CilTypeRc, CilTypeReference, TypeRegistry,
-            TypeSource,
+            CilFlavor, CilModifier, CilPrimitiveKind, CilTypeRc, CilTypeReference,
+            CompleteTypeSpec, TypeRegistry, TypeSource,
         },
     },
     Error::TypeError,
@@ -389,13 +389,15 @@ impl TypeBuilder {
     ///
     /// [`TypeError`]: crate::Error::TypeError
     pub fn class(mut self, namespace: &str, name: &str) -> Result<Self> {
-        self.current_type = Some(self.registry.get_or_create_type(
-            &mut self.token_init,
-            CilFlavor::Class,
-            namespace,
-            name,
-            self.source,
-        )?);
+        self.current_type = Some(self.registry.get_or_create_type(&CompleteTypeSpec {
+            token_init: self.token_init.take(),
+            flavor: CilFlavor::Class,
+            namespace: namespace.to_string(),
+            name: name.to_string(),
+            source: self.source,
+            generic_args: None,
+            base_type: None,
+        })?);
         Ok(self)
     }
 
@@ -441,13 +443,15 @@ impl TypeBuilder {
     ///
     /// [`TypeError`]: crate::Error::TypeError
     pub fn value_type(mut self, namespace: &str, name: &str) -> Result<Self> {
-        self.current_type = Some(self.registry.get_or_create_type(
-            &mut self.token_init,
-            CilFlavor::ValueType,
-            namespace,
-            name,
-            self.source,
-        )?);
+        self.current_type = Some(self.registry.get_or_create_type(&CompleteTypeSpec {
+            token_init: self.token_init.take(),
+            flavor: CilFlavor::ValueType,
+            namespace: namespace.to_string(),
+            name: name.to_string(),
+            source: self.source,
+            generic_args: None,
+            base_type: None,
+        })?);
         Ok(self)
     }
 
@@ -494,13 +498,15 @@ impl TypeBuilder {
     ///
     /// [`TypeError`]: crate::Error::TypeError
     pub fn interface(mut self, namespace: &str, name: &str) -> Result<Self> {
-        self.current_type = Some(self.registry.get_or_create_type(
-            &mut self.token_init,
-            CilFlavor::Interface,
-            namespace,
-            name,
-            self.source,
-        )?);
+        self.current_type = Some(self.registry.get_or_create_type(&CompleteTypeSpec {
+            token_init: self.token_init.take(),
+            flavor: CilFlavor::Interface,
+            namespace: namespace.to_string(),
+            name: name.to_string(),
+            source: self.source,
+            generic_args: None,
+            base_type: None,
+        })?);
         Ok(self)
     }
 
@@ -553,22 +559,16 @@ impl TypeBuilder {
     /// [`TypeError`]: crate::Error::TypeError
     pub fn pointer(mut self) -> Result<Self> {
         if let Some(base_type) = self.current_type.take() {
-            let name = format!("{}*", base_type.name);
-            let namespace = base_type.namespace.clone();
+            let ptr_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+                token_init: self.token_init.take(),
+                flavor: CilFlavor::Pointer,
+                namespace: base_type.namespace.clone(),
+                name: format!("{}*", base_type.name),
+                source: self.source,
+                generic_args: None,
+                base_type: Some(base_type),
+            })?;
 
-            let ptr_type = self.registry.get_or_create_type(
-                &mut self.token_init,
-                CilFlavor::Pointer,
-                &namespace,
-                &name,
-                self.source,
-            )?;
-
-            // Use weak reference to prevent cycles
-            ptr_type
-                .base
-                .set(base_type.into())
-                .map_err(|_| malformed_error!("Pointer type base already set"))?;
             self.current_type = Some(ptr_type);
         }
         Ok(self)
@@ -583,13 +583,15 @@ impl TypeBuilder {
             let name = format!("{}&", base_type.name);
             let namespace = base_type.namespace.clone();
 
-            let ref_type = self.registry.get_or_create_type(
-                &mut self.token_init,
-                CilFlavor::ByRef,
-                &namespace,
-                &name,
-                self.source,
-            )?;
+            let ref_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+                token_init: self.token_init.take(),
+                flavor: CilFlavor::ByRef,
+                namespace: namespace.clone(),
+                name,
+                source: self.source,
+                generic_args: None,
+                base_type: None,
+            })?;
 
             ref_type
                 .base
@@ -609,13 +611,15 @@ impl TypeBuilder {
             let name = format!("pinned {}", base_type.name);
             let namespace = base_type.namespace.clone();
 
-            let pinned_type = self.registry.get_or_create_type(
-                &mut self.token_init,
-                CilFlavor::Pinned,
-                &namespace,
-                &name,
-                self.source,
-            )?;
+            let pinned_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+                token_init: self.token_init.take(),
+                flavor: CilFlavor::Pinned,
+                namespace: namespace.clone(),
+                name,
+                source: self.source,
+                generic_args: None,
+                base_type: None,
+            })?;
 
             pinned_type
                 .base
@@ -684,16 +688,18 @@ impl TypeBuilder {
             let name = format!("{}[]", base_type.name);
             let namespace = base_type.namespace.clone();
 
-            let array_type = self.registry.get_or_create_type(
-                &mut self.token_init,
-                CilFlavor::Array {
+            let array_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+                token_init: self.token_init.take(),
+                flavor: CilFlavor::Array {
                     rank: 1,
                     dimensions: vec![],
                 },
-                &namespace,
-                &name,
-                self.source,
-            )?;
+                namespace: namespace.clone(),
+                name,
+                source: self.source,
+                generic_args: None,
+                base_type: None,
+            })?;
 
             array_type
                 .base
@@ -722,16 +728,18 @@ impl TypeBuilder {
             let name = format!("{}{}", base_type.name, dimension_part);
             let namespace = base_type.namespace.clone();
 
-            let array_type = self.registry.get_or_create_type(
-                &mut self.token_init,
-                CilFlavor::Array {
+            let array_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+                token_init: self.token_init.take(),
+                flavor: CilFlavor::Array {
                     rank,
                     dimensions: vec![],
                 },
-                &namespace,
-                &name,
-                self.source,
-            )?;
+                namespace: namespace.clone(),
+                name,
+                source: self.source,
+                generic_args: None,
+                base_type: None,
+            })?;
 
             array_type
                 .base
@@ -752,13 +760,15 @@ impl TypeBuilder {
     pub fn function_pointer(mut self, signature: SignatureMethod) -> Result<Self> {
         let name = format!("FunctionPointer_{:X}", &raw const signature as usize);
 
-        let fn_ptr_type = self.registry.get_or_create_type(
-            &mut self.token_init,
-            CilFlavor::FnPtr { signature },
-            "",
-            &name,
-            self.source,
-        )?;
+        let fn_ptr_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+            token_init: self.token_init.take(),
+            flavor: CilFlavor::FnPtr { signature },
+            namespace: String::new(),
+            name,
+            source: self.source,
+            generic_args: None,
+            base_type: None,
+        })?;
 
         self.current_type = Some(fn_ptr_type);
         Ok(self)
@@ -843,13 +853,15 @@ impl TypeBuilder {
             }
 
             let namespace = base_type.namespace.clone();
-            let generic_type = self.registry.get_or_create_type(
-                &mut self.token_init,
-                CilFlavor::GenericInstance,
-                &namespace,
-                &name,
-                self.source,
-            )?;
+            let generic_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+                token_init: self.token_init.take(),
+                flavor: CilFlavor::GenericInstance,
+                namespace: namespace.clone(),
+                name,
+                source: self.source,
+                generic_args: None,
+                base_type: None,
+            })?;
 
             let args = arg_builder(self.registry.clone())?;
             if !args.is_empty() {
@@ -1250,13 +1262,15 @@ mod tests {
 
         let in_attr_token = Token::new(0x01000888);
         let _ = registry
-            .get_or_create_type(
-                &mut Some(in_attr_token),
-                CilFlavor::Class,
-                "System.Runtime.InteropServices",
-                "InAttribute",
-                TypeSource::CurrentModule,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: Some(in_attr_token),
+                flavor: CilFlavor::Class,
+                namespace: "System.Runtime.InteropServices".to_string(),
+                name: "InAttribute".to_string(),
+                source: TypeSource::CurrentModule,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         let int_type = TypeBuilder::new(registry.clone())
@@ -1292,13 +1306,15 @@ mod tests {
 
         let base_token = Token::new(0x01000777);
         let _ = registry
-            .get_or_create_type(
-                &mut Some(base_token),
-                CilFlavor::Class,
-                "System",
-                "Exception",
-                TypeSource::CurrentModule,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: Some(base_token),
+                flavor: CilFlavor::Class,
+                namespace: "System".to_string(),
+                name: "Exception".to_string(),
+                source: TypeSource::CurrentModule,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         let derived_type = TypeBuilder::new(registry.clone())
@@ -1371,13 +1387,15 @@ mod tests {
         // Create Dictionary<TKey, TValue> type
         let dict_token = Token::new(0x01000555);
         let dict_type = registry
-            .get_or_create_type(
-                &mut Some(dict_token),
-                CilFlavor::Class,
-                "System.Collections.Generic",
-                "Dictionary`2",
-                TypeSource::CurrentModule,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: Some(dict_token),
+                flavor: CilFlavor::Class,
+                namespace: "System.Collections.Generic".to_string(),
+                name: "Dictionary`2".to_string(),
+                source: TypeSource::CurrentModule,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         let key_param = Arc::new(GenericParam {
@@ -1410,7 +1428,6 @@ mod tests {
         // Create a Dictionary<string, int> instance
         let dict_instance = TypeBuilder::new(registry.clone())
             .with_source(TypeSource::CurrentModule)
-            .with_token_init(dict_token)
             .class("System.Collections.Generic", "Dictionary`2")
             .unwrap()
             .generic_instance(2, |registry| {

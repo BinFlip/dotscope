@@ -101,12 +101,9 @@
 //! - Generic type instantiations
 //! - Cross-assembly type resolution
 
-use std::{
-    hash::Hash,
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc,
-    },
+use std::sync::{
+    atomic::{AtomicU32, Ordering},
+    Arc,
 };
 
 use crossbeam_skiplist::SkipMap;
@@ -114,15 +111,148 @@ use dashmap::DashMap;
 
 use crate::{
     metadata::{
-        tables::{AssemblyRefRc, FileRc, ModuleRc, ModuleRefRc},
+        signatures::SignatureMethodSpec,
+        tables::{AssemblyRefRc, FileRc, MethodSpec, ModuleRc, ModuleRefRc},
         token::Token,
         typesystem::{
-            CilFlavor, CilPrimitive, CilPrimitiveKind, CilType, CilTypeRc, CilTypeReference,
+            CilFlavor, CilPrimitive, CilPrimitiveKind, CilType, CilTypeRc, CilTypeRef,
+            CilTypeReference, TypeSignatureHash,
         },
     },
     Error::TypeNotFound,
     Result,
 };
+
+/// Complete type specification for proper deduplication
+///
+/// This structure contains all the information needed to create a type with full
+/// structural identity, enabling proper deduplication of complex types like generic
+/// instances, arrays, and other constructed types.
+#[derive(Clone)]
+pub struct CompleteTypeSpec {
+    /// Optional specific token to assign (None for auto-generation)
+    pub token_init: Option<Token>,
+    /// The CIL flavor/kind of the type
+    pub flavor: CilFlavor,
+    /// Type namespace
+    pub namespace: String,
+    /// Type name
+    pub name: String,
+    /// Source context (assembly, module, etc.)
+    pub source: TypeSource,
+    /// Generic arguments for generic instances
+    pub generic_args: Option<Vec<CilTypeRc>>,
+    /// Base type for derived types
+    pub base_type: Option<CilTypeRc>,
+}
+
+impl CompleteTypeSpec {
+    /// Check if this specification matches an existing CilType for deduplication
+    ///
+    /// This method performs comprehensive structural comparison to determine if an
+    /// existing type is equivalent to what this specification describes. This enables
+    /// proper type deduplication while avoiding false positives.
+    ///
+    /// # Comparison Criteria
+    /// Types are considered equivalent if they have identical:
+    /// - **Basic identity**: Namespace, name, and flavor
+    /// - **Source context**: Must originate from the same assembly/module/file  
+    /// - **Generic arguments**: Type arguments must be identical (for generic instances)
+    /// - **Base type**: Inheritance hierarchy must match (for derived types)
+    ///
+    /// # Arguments
+    /// * `existing_type` - The existing CilType to compare against
+    ///
+    /// # Returns
+    /// `true` if the existing type matches this specification exactly
+    pub fn matches(&self, existing_type: &CilType) -> bool {
+        // Basic identity check first for performance
+        if existing_type.namespace != self.namespace
+            || existing_type.name != self.name
+            || *existing_type.flavor() != self.flavor
+        {
+            return false;
+        }
+
+        // Check source equivalence
+        if !self.source_matches(existing_type) {
+            return false;
+        }
+
+        // Check base type equivalence
+        if !self.base_type_matches(existing_type) {
+            return false;
+        }
+
+        // Check generic arguments equivalence
+        self.generic_args_match(existing_type)
+    }
+
+    /// Check if type sources are equivalent
+    fn source_matches(&self, existing_type: &CilType) -> bool {
+        let ext_ref = existing_type.get_external();
+
+        match (&self.source, ext_ref) {
+            (TypeSource::CurrentModule, None) => true, // Both are current module types
+            (TypeSource::CurrentModule, Some(_)) => false, // Local vs external
+            (src, Some(ext_ref)) => {
+                match (ext_ref, src) {
+                    (CilTypeReference::AssemblyRef(ar), TypeSource::AssemblyRef(tok)) => {
+                        ar.token == *tok
+                    }
+                    (CilTypeReference::ModuleRef(mr), TypeSource::ModuleRef(tok)) => {
+                        mr.token == *tok
+                    }
+                    (CilTypeReference::File(f), TypeSource::File(tok)) => f.token == *tok,
+                    _ => true, // Allow different external source types for now
+                }
+            }
+            _ => false, // External vs local
+        }
+    }
+
+    /// Check if base types match
+    fn base_type_matches(&self, existing_type: &CilType) -> bool {
+        match (&self.base_type, existing_type.base.get()) {
+            (Some(spec_base), Some(type_base)) => {
+                match type_base.upgrade() {
+                    Some(base_type) => {
+                        spec_base.token == base_type.token
+                            || spec_base.is_structurally_equivalent(&base_type)
+                    }
+                    None => false, // Base type reference is dropped
+                }
+            }
+            (None, None) => true, // Both have no base type
+            _ => false,           // One has base, one doesn't
+        }
+    }
+
+    /// Check if generic arguments match
+    fn generic_args_match(&self, existing_type: &CilType) -> bool {
+        match &self.generic_args {
+            Some(spec_args) => {
+                // Must have same number of generic arguments
+                if spec_args.len() != existing_type.generic_args.count() {
+                    return false;
+                }
+
+                // Compare each generic argument by token
+                for (i, spec_arg) in spec_args.iter().enumerate() {
+                    if let Some(type_arg) = existing_type.generic_args.get(i) {
+                        if spec_arg.token != type_arg.token {
+                            return false;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+                true
+            }
+            None => existing_type.generic_args.count() == 0, // No generic args in spec
+        }
+    }
+}
 
 /// Classification of type origins within the .NET assembly ecosystem.
 ///
@@ -293,137 +423,6 @@ impl SourceRegistry {
     }
 }
 
-// /// A hash that represents a unique type
-// struct TypeSignatureHash {
-//     hash: u64,
-// }
-
-// impl TypeSignatureHash {
-//     /// Create a new signature hash builder
-//     fn new() -> Self {
-//         TypeSignatureHash { hash: 0 }
-//     }
-
-//     /// Add flavor to the hash
-//     ///
-//     /// ## Arguments
-//     /// * `flavor` - The `CilFlavor` to hash in
-//     fn add_flavor(&mut self, flavor: &CilFlavor) -> &mut Self {
-//         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-
-//         match flavor {
-//             CilFlavor::Void => 1u8.hash(&mut hasher),
-//             CilFlavor::Boolean => 2u8.hash(&mut hasher),
-//             CilFlavor::Char => 3u8.hash(&mut hasher),
-//             CilFlavor::I1 => 4u8.hash(&mut hasher),
-//             CilFlavor::U1 => 5u8.hash(&mut hasher),
-//             CilFlavor::I2 => 6u8.hash(&mut hasher),
-//             CilFlavor::U2 => 7u8.hash(&mut hasher),
-//             CilFlavor::I4 => 8u8.hash(&mut hasher),
-//             CilFlavor::U4 => 9u8.hash(&mut hasher),
-//             CilFlavor::I8 => 10u8.hash(&mut hasher),
-//             CilFlavor::U8 => 11u8.hash(&mut hasher),
-//             CilFlavor::R4 => 12u8.hash(&mut hasher),
-//             CilFlavor::R8 => 13u8.hash(&mut hasher),
-//             CilFlavor::I => 14u8.hash(&mut hasher),
-//             CilFlavor::U => 15u8.hash(&mut hasher),
-//             CilFlavor::Object => 16u8.hash(&mut hasher),
-//             CilFlavor::String => 17u8.hash(&mut hasher),
-//             CilFlavor::Array { rank, dimensions } => {
-//                 18u8.hash(&mut hasher);
-//                 rank.hash(&mut hasher);
-//                 dimensions.len().hash(&mut hasher);
-//             }
-//             CilFlavor::Pointer => 19u8.hash(&mut hasher),
-//             CilFlavor::ByRef => 20u8.hash(&mut hasher),
-//             CilFlavor::GenericInstance => 21u8.hash(&mut hasher),
-//             CilFlavor::Pinned => 22u8.hash(&mut hasher),
-//             CilFlavor::FnPtr { signature: _ } => {
-//                 // Function pointer signatures are complex, so we just use a simple marker
-//                 23u8.hash(&mut hasher);
-//             }
-//             CilFlavor::GenericParameter { index, method } => {
-//                 24u8.hash(&mut hasher);
-//                 index.hash(&mut hasher);
-//                 method.hash(&mut hasher);
-//             }
-//             CilFlavor::Class => 25u8.hash(&mut hasher),
-//             CilFlavor::ValueType => 26u8.hash(&mut hasher),
-//             CilFlavor::Interface => 27u8.hash(&mut hasher),
-//             CilFlavor::Unknown => 0u8.hash(&mut hasher),
-//         }
-
-//         self.hash ^= hasher.finish();
-//         self
-//     }
-
-//     /// Add namespace and name to the hash
-//     ///
-//     /// ## Arguments
-//     /// * 'namespace'   - The namespace of the type
-//     /// * 'name'        - The name of the type
-//     fn add_fullname(&mut self, namespace: &str, name: &str) -> &mut Self {
-//         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-//         namespace.hash(&mut hasher);
-//         name.hash(&mut hasher);
-//         self.hash ^= hasher.finish();
-//         self
-//     }
-
-//     /// Add a token to the hash
-//     ///
-//     /// ## Arguments
-//     /// * 'token' - The token of the type
-//     fn add_token(&mut self, token: Token) -> &mut Self {
-//         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-//         token.value().hash(&mut hasher);
-//         self.hash ^= hasher.finish();
-//         self
-//     }
-
-//     /// Add source information to the hash
-//     ///
-//     /// ## Arguments
-//     /// * 'source' - The source to hash in
-//     fn add_source(&mut self, source: TypeSource) -> &mut Self {
-//         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-//         match source {
-//             TypeSource::CurrentModule => {
-//                 0u8.hash(&mut hasher);
-//             }
-//             TypeSource::Module(token) => {
-//                 1u8.hash(&mut hasher);
-//                 token.value().hash(&mut hasher);
-//             }
-//             TypeSource::ModuleRef(token) => {
-//                 2u8.hash(&mut hasher);
-//                 token.value().hash(&mut hasher);
-//             }
-//             TypeSource::AssemblyRef(token) => {
-//                 3u8.hash(&mut hasher);
-//                 token.value().hash(&mut hasher);
-//             }
-//             TypeSource::File(token) => {
-//                 4u8.hash(&mut hasher);
-//                 token.value().hash(&mut hasher);
-//             }
-//             TypeSource::Primitive => {
-//                 5u8.hash(&mut hasher);
-//             }
-//             TypeSource::Unknown => {
-//                 6u8.hash(&mut hasher);
-//             }
-//         }
-//         self.hash ^= hasher.finish();
-//         self
-//     }
-
-//     /// Finalize and get the hash value
-//     fn finalize(&self) -> u64 {
-//         self.hash
-//     }
-// }
-
 /// Central registry for managing all types within a .NET assembly.
 ///
 /// `TypeRegistry` provides thread-safe, high-performance storage and lookup
@@ -500,8 +499,8 @@ pub struct TypeRegistry {
     types: SkipMap<Token, CilTypeRc>,
     /// Atomic counter for generating unique artificial tokens for new types
     next_token: AtomicU32,
-    /// Cache mapping type signature hashes to tokens for deduplication
-    signature_cache: DashMap<u64, Token>,
+    /// Cache mapping type signature hashes to tokens for deduplication with collision chaining
+    signature_cache: DashMap<u64, Vec<Token>>,
     /// Registry managing external assembly/module/file references
     sources: SourceRegistry,
     /// Secondary index: types grouped by their origin source
@@ -740,22 +739,28 @@ impl TypeRegistry {
             None => TypeSource::CurrentModule,
         };
 
-        // ToDo: Improve hash calculation, generates collisions right now (during TypeDef and TypeRef ingestion)
-        // let hash = TypeSignatureHash::new()
-        //     .add_flavor(&new_type.borrow().flavor)
-        //     .add_fullname(&new_type.borrow().namespace, &new_type.borrow().name)
-        //     .add_source(source)
-        //     .finalize();
+        let hash = TypeSignatureHash::new()
+            .add_flavor(new_type.flavor())
+            .add_fullname(&new_type.namespace, &new_type.name)
+            .add_source(source)
+            .finalize();
 
-        // if let Some(&existing_token) = self.signature_cache.get(&hash) {
-        //     if let Some(existing_type) = self.types.get(&existing_token) {
-        //         let name = &existing_type.borrow().name;
-        //         let fullname = &existing_type.borrow().namespace;
-        //         return;
-        //     }
-        // }
-        //self.signature_cache.insert(hash, token);
+        // Check for existing types with the same signature hash
+        if let Some(collision_chain) = self.signature_cache.get(&hash) {
+            // Check each type in the collision chain for actual equivalence
+            for &existing_token in collision_chain.value() {
+                if let Some(existing_type) = self.types.get(&existing_token) {
+                    if existing_type.value().is_structurally_equivalent(&new_type) {
+                        // Found an equivalent type - map this token to the existing type
+                        // to preserve token-based references from other metadata tables
+                        self.types.insert(token, existing_type.value().clone());
+                        return;
+                    }
+                }
+            }
+        }
 
+        self.register_type_signature(hash, token, &new_type);
         self.register_type_internal(new_type, source);
     }
 
@@ -1067,40 +1072,42 @@ impl TypeRegistry {
         self.sources.get_source(source)
     }
 
-    /// Find or create a type with the given characteristics
+    /// This method creates types with complete structural information upfront, enabling
+    /// proper deduplication that considers the full type identity including generic arguments,
+    /// base types, and other distinguishing characteristics.
     ///
     /// ## Arguments
-    /// * 'token'       - The token to use for the new type (sometimes known, e.g. initial `TypeSpec`)
-    /// * 'flavor'      - The flavor of the type to get or create
-    /// * 'namespace'   - The namespace of the type to get or create
-    /// * 'name'        - The name of the type to get or create
-    /// * 'source'      - The source of the type to get or create
+    /// * `spec` - Complete type specification including all distinguishing information
     ///
-    /// # Errors
-    /// Returns an error if the type cannot be created or if there are conflicts
-    /// in the type registry during type creation.
-    pub fn get_or_create_type(
-        &self,
-        token_init: &mut Option<Token>,
-        flavor: CilFlavor,
-        namespace: &str,
-        name: &str,
-        source: TypeSource,
-    ) -> Result<CilTypeRc> {
-        // ToDo: Improve hash calculation, generates collisions right now (during TypeDef, TypeRef and TypeSpec ingestion)
-        // let hash = TypeSignatureHash::new()
-        //     .add_flavor(&flavor)
-        //     .add_fullname(namespace, name)
-        //     .add_source(source)
-        //     .finalize();
+    /// ## Errors
+    /// Returns an error if type construction fails due to invalid specifications
+    /// or if required dependencies cannot be resolved.
+    pub fn get_or_create_type(&self, spec: &CompleteTypeSpec) -> Result<CilTypeRc> {
+        // Calculate comprehensive hash including all distinguishing information
+        let hash = Self::calculate_complete_type_hash(spec);
 
-        // if let Some(&existing_token) = self.signature_cache.get(&hash) {
-        //     if let Some(existing_type) = self.types.get(&existing_token) {
-        //         return Ok(existing_type.clone());
-        //     }
-        // }
+        // Check for existing structurally equivalent types
+        if let Some(collision_chain) = self.signature_cache.get(&hash) {
+            for &existing_token in collision_chain.value() {
+                if let Some(existing_type) = self.types.get(&existing_token) {
+                    let existing_ref = existing_type.value();
 
-        let token = if let Some(init_token) = token_init.take() {
+                    // Check if this existing type matches the specification
+                    if spec.matches(existing_ref) {
+                        // If we have a specific token requested, map it to this equivalent type
+                        if let Some(requested_token) = spec.token_init {
+                            if requested_token != existing_ref.token {
+                                self.types.insert(requested_token, existing_ref.clone());
+                            }
+                        }
+                        return Ok(existing_ref.clone());
+                    }
+                }
+            }
+        }
+
+        // No equivalent type found, create new one with complete specification
+        let token = if let Some(init_token) = spec.token_init {
             init_token
         } else {
             self.next_token()
@@ -1110,22 +1117,116 @@ impl TypeRegistry {
             return Ok(existing.value().clone());
         }
 
+        // Create type with complete structure
         let new_type = Arc::new(CilType::new(
             token,
-            namespace.to_string(),
-            name.to_string(),
-            self.get_source_reference(source),
+            spec.namespace.to_string(),
+            spec.name.to_string(),
+            self.get_source_reference(spec.source),
             None,
             0,
             Arc::new(boxcar::Vec::new()),
             Arc::new(boxcar::Vec::new()),
-            Some(flavor),
+            Some(spec.flavor.clone()),
         ));
 
-        self.register_type_internal(new_type.clone(), source);
-        //self.signature_cache.insert(hash, token);
+        // Configure the type according to specification
+        Self::configure_type_from_spec(&new_type, spec)?;
+
+        self.register_type_signature(hash, token, &new_type);
+        self.register_type_internal(new_type.clone(), spec.source);
 
         Ok(new_type)
+    }
+
+    /// Calculate hash for complete type specification with enhanced collision resistance
+    fn calculate_complete_type_hash(spec: &CompleteTypeSpec) -> u64 {
+        let mut hash_builder = TypeSignatureHash::new()
+            .add_flavor(&spec.flavor)
+            .add_fullname(&spec.namespace, &spec.name)
+            .add_source(spec.source);
+
+        // Include generic arguments with enhanced entropy
+        if let Some(generic_args) = &spec.generic_args {
+            hash_builder = hash_builder
+                .add_component(&generic_args.len())
+                .add_component(&"generic_args_marker"); // Add distinguishing marker
+
+            for (index, arg) in generic_args.iter().enumerate() {
+                // Include position to prevent order-independent collisions
+                hash_builder = hash_builder.add_component(&index).add_token(&arg.token);
+
+                // Include additional type characteristics for better distinction
+                hash_builder = hash_builder
+                    .add_fullname(&arg.namespace, &arg.name)
+                    .add_flavor(arg.flavor());
+            }
+        } else {
+            // Add explicit marker for non-generic types to distinguish from empty generic args
+            hash_builder = hash_builder.add_component(&"non_generic_marker");
+        }
+
+        // Include base type with enhanced information
+        if let Some(base_type) = &spec.base_type {
+            hash_builder = hash_builder
+                .add_component(&"base_type_marker")
+                .add_token(&base_type.token)
+                .add_fullname(&base_type.namespace, &base_type.name)
+                .add_flavor(base_type.flavor());
+        } else {
+            // Add explicit marker for types without base type
+            hash_builder = hash_builder.add_component(&"no_base_type_marker");
+        }
+
+        hash_builder.finalize()
+    }
+
+    /// Configure type according to complete specification
+    fn configure_type_from_spec(type_ref: &CilTypeRc, spec: &CompleteTypeSpec) -> Result<()> {
+        // Set base type if specified
+        if let Some(base_type) = &spec.base_type {
+            if type_ref.base.get().is_none() {
+                type_ref
+                    .base
+                    .set(CilTypeRef::from(base_type.clone()))
+                    .map_err(|_| malformed_error!("Base type already set"))?;
+            }
+        }
+
+        // Configure generic arguments if specified
+        if let Some(generic_args) = &spec.generic_args {
+            for (index, arg_type) in generic_args.iter().enumerate() {
+                let rid = u32::try_from(index)
+                    .map_err(|_| malformed_error!("Generic argument index too large"))?
+                    + 1;
+                let token_value = 0x2B00_0000_u32
+                    .checked_add(
+                        u32::try_from(index)
+                            .map_err(|_| malformed_error!("Generic argument index too large"))?,
+                    )
+                    .and_then(|v| v.checked_add(1))
+                    .ok_or_else(|| malformed_error!("Token value overflow"))?;
+
+                let method_spec = Arc::new(MethodSpec {
+                    rid,
+                    token: Token::new(token_value),
+                    offset: 0,
+                    method: CilTypeReference::None,
+                    instantiation: SignatureMethodSpec {
+                        generic_args: vec![],
+                    },
+                    custom_attributes: Arc::new(boxcar::Vec::new()),
+                    generic_args: {
+                        let type_ref_list = Arc::new(boxcar::Vec::with_capacity(1));
+                        type_ref_list.push(arg_type.clone().into());
+                        type_ref_list
+                    },
+                });
+                type_ref.generic_args.push(method_spec);
+            }
+        }
+
+        Ok(())
     }
 
     /// Count of types in the registry
@@ -1164,6 +1265,16 @@ impl TypeRegistry {
         } else {
             Vec::new()
         }
+    }
+
+    /// Register a type signature hash with collision chaining
+    ///
+    /// ## Arguments  
+    /// * `hash` - The computed signature hash
+    /// * `token` - The token of the type being registered
+    /// * `type_ref` - The type being registered (for future deep comparison)
+    fn register_type_signature(&self, hash: u64, token: Token, _type_ref: &CilTypeRc) {
+        self.signature_cache.entry(hash).or_default().push(token);
     }
 }
 
@@ -1250,13 +1361,15 @@ mod tests {
         let registry = TypeRegistry::new().unwrap();
 
         let list_type = registry
-            .get_or_create_type(
-                &mut None,
-                CilFlavor::Class,
-                "System.Collections.Generic",
-                "List`1",
-                TypeSource::CurrentModule,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: None,
+                flavor: CilFlavor::Class,
+                namespace: "System.Collections.Generic".to_string(),
+                name: "List`1".to_string(),
+                source: TypeSource::CurrentModule,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         assert_eq!(list_type.name, "List`1");
@@ -1292,23 +1405,27 @@ mod tests {
         let registry = TypeRegistry::new().unwrap();
 
         let point1 = registry
-            .get_or_create_type(
-                &mut None,
-                CilFlavor::ValueType,
-                "System.Drawing",
-                "Point",
-                TypeSource::CurrentModule,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: None,
+                flavor: CilFlavor::ValueType,
+                namespace: "System.Drawing".to_string(),
+                name: "Point".to_string(),
+                source: TypeSource::CurrentModule,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         let point2 = registry
-            .get_or_create_type(
-                &mut None,
-                CilFlavor::ValueType,
-                "System.Windows",
-                "Point",
-                TypeSource::CurrentModule,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: None,
+                flavor: CilFlavor::ValueType,
+                namespace: "System.Windows".to_string(),
+                name: "Point".to_string(),
+                source: TypeSource::CurrentModule,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         assert_ne!(point1.token, point2.token);
@@ -1484,33 +1601,39 @@ mod tests {
         }
 
         let type1 = registry
-            .get_or_create_type(
-                &mut None,
-                CilFlavor::Class,
-                "System.Collections",
-                "ArrayList",
-                TypeSource::CurrentModule,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: None,
+                flavor: CilFlavor::Class,
+                namespace: "System.Collections".to_string(),
+                name: "ArrayList".to_string(),
+                source: TypeSource::CurrentModule,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         let type2 = registry
-            .get_or_create_type(
-                &mut None,
-                CilFlavor::Class,
-                "System.Collections",
-                "ArrayList",
-                module_ref_source,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: None,
+                flavor: CilFlavor::Class,
+                namespace: "System.Collections".to_string(),
+                name: "ArrayList".to_string(),
+                source: module_ref_source,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         let type3 = registry
-            .get_or_create_type(
-                &mut None,
-                CilFlavor::Class,
-                "System.Collections",
-                "ArrayList",
-                assembly_ref_source,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: None,
+                flavor: CilFlavor::Class,
+                namespace: "System.Collections".to_string(),
+                name: "ArrayList".to_string(),
+                source: assembly_ref_source,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         assert_ne!(type1.token, type2.token);
@@ -1533,23 +1656,27 @@ mod tests {
         let initial_count = registry.len();
 
         let _ = registry
-            .get_or_create_type(
-                &mut None,
-                CilFlavor::Class,
-                "MyNamespace",
-                "MyClass1",
-                TypeSource::CurrentModule,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: None,
+                flavor: CilFlavor::Class,
+                namespace: "MyNamespace".to_string(),
+                name: "MyClass1".to_string(),
+                source: TypeSource::CurrentModule,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         let _ = registry
-            .get_or_create_type(
-                &mut None,
-                CilFlavor::Class,
-                "MyNamespace",
-                "MyClass2",
-                TypeSource::CurrentModule,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: None,
+                flavor: CilFlavor::Class,
+                namespace: "MyNamespace".to_string(),
+                name: "MyClass2".to_string(),
+                source: TypeSource::CurrentModule,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         assert_eq!(registry.len(), initial_count + 2);
@@ -1579,26 +1706,118 @@ mod tests {
         let source2 = TypeSource::AssemblyRef(Token::new(0x23000001));
 
         let type1 = registry
-            .get_or_create_type(
-                &mut None,
-                CilFlavor::Class,
-                "System.Collections",
-                "ArrayList",
-                source1,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: None,
+                flavor: CilFlavor::Class,
+                namespace: "System.Collections".to_string(),
+                name: "ArrayList".to_string(),
+                source: source1,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         let type2 = registry
-            .get_or_create_type(
-                &mut None,
-                CilFlavor::Class,
-                "System.Collections",
-                "ArrayList",
-                source2,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: None,
+                flavor: CilFlavor::Class,
+                namespace: "System.Collections".to_string(),
+                name: "ArrayList".to_string(),
+                source: source2,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         assert_ne!(type1.token, type2.token);
+    }
+
+    #[test]
+    fn test_class_vs_generic_instance_hash_debug() {
+        // Debug test to investigate hash collision between Class and GenericInstance
+        let class_hash = TypeSignatureHash::new()
+            .add_flavor(&CilFlavor::Class)
+            .add_fullname("System.Collections.Generic", "Dictionary`2")
+            .add_source(TypeSource::CurrentModule)
+            .finalize();
+
+        let generic_instance_hash = TypeSignatureHash::new()
+            .add_flavor(&CilFlavor::GenericInstance)
+            .add_fullname("System.Collections.Generic", "Dictionary`2")
+            .add_source(TypeSource::CurrentModule)
+            .finalize();
+
+        // They should be different
+        assert_ne!(
+            class_hash, generic_instance_hash,
+            "Class and GenericInstance with same name should have different hashes"
+        );
+    }
+
+    #[test]
+    fn test_enhanced_generic_instance_deduplication() {
+        let registry = TypeRegistry::new().unwrap();
+
+        // Create primitive types for generic arguments
+        let string_type = registry.get_primitive(CilPrimitiveKind::String).unwrap();
+        let int_type = registry.get_primitive(CilPrimitiveKind::I4).unwrap();
+        let _object_type = registry.get_primitive(CilPrimitiveKind::Object).unwrap();
+
+        // Test context-aware deduplication for generic instances
+        let list_string_1 = registry
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: None,
+                flavor: CilFlavor::GenericInstance,
+                namespace: "System.Collections.Generic".to_string(),
+                name: "List`1".to_string(),
+                source: TypeSource::CurrentModule,
+                generic_args: Some(vec![string_type.clone()]),
+                base_type: None,
+            })
+            .unwrap();
+
+        let list_string_2 = registry
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: None,
+                flavor: CilFlavor::GenericInstance,
+                namespace: "System.Collections.Generic".to_string(),
+                name: "List`1".to_string(),
+                source: TypeSource::CurrentModule,
+                generic_args: Some(vec![string_type.clone()]),
+                base_type: None,
+            })
+            .unwrap();
+
+        let list_int = registry
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: None,
+                flavor: CilFlavor::GenericInstance,
+                namespace: "System.Collections.Generic".to_string(),
+                name: "List`1".to_string(),
+                source: TypeSource::CurrentModule,
+                generic_args: Some(vec![int_type.clone()]),
+                base_type: None,
+            })
+            .unwrap();
+
+        // Test structural equivalence using CilType's own comparison method
+        assert!(
+            list_string_1.is_structurally_equivalent(&list_string_2),
+            "List<string> instances should be structurally equivalent"
+        );
+
+        assert!(
+            !list_string_1.is_structurally_equivalent(&list_int),
+            "List<string> and List<int> should NOT be structurally equivalent"
+        );
+
+        // Basic type identity checks
+        assert_eq!(list_string_1.namespace, "System.Collections.Generic");
+        assert_eq!(list_string_1.name, "List`1");
+        assert!(matches!(
+            *list_string_1.flavor(),
+            CilFlavor::GenericInstance
+        ));
     }
 
     #[test]
@@ -1635,5 +1854,258 @@ mod tests {
             "Type",
         );
         assert!(bad_source_name.is_none());
+    }
+
+    #[test]
+    fn test_improved_hash_collision_resistance() {
+        let registry = TypeRegistry::new().unwrap();
+
+        // Test cases that would collide with old XOR-based approach
+        let types = [
+            ("System", "String", TypeSource::CurrentModule),
+            ("System", "Object", TypeSource::CurrentModule),
+            ("System.Collections", "ArrayList", TypeSource::CurrentModule),
+            (
+                "System.Collections.Generic",
+                "List`1",
+                TypeSource::CurrentModule,
+            ),
+            (
+                "MyApp",
+                "Helper",
+                TypeSource::AssemblyRef(Token::new(0x23000001)),
+            ),
+            (
+                "MyApp",
+                "Helper",
+                TypeSource::AssemblyRef(Token::new(0x23000002)),
+            ),
+        ];
+
+        let mut created_types = Vec::new();
+        for (namespace, name, source) in &types {
+            let type_ref = registry
+                .get_or_create_type(&CompleteTypeSpec {
+                    token_init: None,
+                    flavor: CilFlavor::Class,
+                    namespace: namespace.to_string(),
+                    name: name.to_string(),
+                    source: *source,
+                    generic_args: None,
+                    base_type: None,
+                })
+                .unwrap();
+            created_types.push(type_ref);
+        }
+
+        // All types should be unique (no deduplication should occur for different sources)
+        assert_eq!(created_types.len(), types.len());
+
+        // Each type should have a unique token
+        let mut tokens = std::collections::HashSet::new();
+        for type_ref in &created_types {
+            assert!(
+                tokens.insert(type_ref.token),
+                "Duplicate token found: {:?}",
+                type_ref.token
+            );
+        }
+
+        // Verify that identical requests return the same type (deduplication working)
+        let duplicate_request = registry
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: None,
+                flavor: CilFlavor::Class,
+                namespace: "System".to_string(),
+                name: "String".to_string(),
+                source: TypeSource::CurrentModule,
+                generic_args: None,
+                base_type: None,
+            })
+            .unwrap();
+
+        assert_eq!(
+            duplicate_request.token, created_types[0].token,
+            "Deduplication failed for identical type"
+        );
+    }
+
+    #[test]
+    fn test_hash_different_flavors() {
+        let registry = TypeRegistry::new().unwrap();
+
+        // Same name/namespace, different flavors should create different types
+        let class_type = registry
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: None,
+                flavor: CilFlavor::Class,
+                namespace: "MyNamespace".to_string(),
+                name: "MyType".to_string(),
+                source: TypeSource::CurrentModule,
+                generic_args: None,
+                base_type: None,
+            })
+            .unwrap();
+
+        let interface_type = registry
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: None,
+                flavor: CilFlavor::Interface,
+                namespace: "MyNamespace".to_string(),
+                name: "MyType".to_string(),
+                source: TypeSource::CurrentModule,
+                generic_args: None,
+                base_type: None,
+            })
+            .unwrap();
+
+        let value_type = registry
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: None,
+                flavor: CilFlavor::ValueType,
+                namespace: "MyNamespace".to_string(),
+                name: "MyType".to_string(),
+                source: TypeSource::CurrentModule,
+                generic_args: None,
+                base_type: None,
+            })
+            .unwrap();
+
+        // All should have different tokens
+        assert_ne!(class_type.token, interface_type.token);
+        assert_ne!(class_type.token, value_type.token);
+        assert_ne!(interface_type.token, value_type.token);
+
+        // Verify flavors are correct
+        assert_eq!(*class_type.flavor(), CilFlavor::Class);
+        assert_eq!(*interface_type.flavor(), CilFlavor::Interface);
+        assert_eq!(*value_type.flavor(), CilFlavor::ValueType);
+    }
+
+    #[test]
+    fn test_hash_collision_chain_functionality() {
+        let registry = TypeRegistry::new().unwrap();
+
+        // Force potential hash collision by creating many similar types
+        let similar_types = [
+            "Type1", "Type2", "Type3", "Type4", "Type5", "Type11", "Type12", "Type13", "Type14",
+            "Type15", "TypeA", "TypeB", "TypeC", "TypeD", "TypeE",
+        ];
+
+        let mut created_tokens = std::collections::HashSet::new();
+
+        for type_name in &similar_types {
+            let type_ref = registry
+                .get_or_create_type(&CompleteTypeSpec {
+                    token_init: None,
+                    flavor: CilFlavor::Class,
+                    namespace: "TestNamespace".to_string(),
+                    name: type_name.to_string(),
+                    source: TypeSource::CurrentModule,
+                    generic_args: None,
+                    base_type: None,
+                })
+                .unwrap();
+
+            // Each type should get a unique token
+            assert!(
+                created_tokens.insert(type_ref.token),
+                "Token collision for type: {}",
+                type_name
+            );
+
+            // Verify the type can be retrieved correctly
+            assert_eq!(type_ref.name, *type_name);
+            assert_eq!(type_ref.namespace, "TestNamespace");
+        }
+
+        // All types should be distinct
+        assert_eq!(created_tokens.len(), similar_types.len());
+    }
+
+    #[test]
+    fn test_signature_hash_ordering_independence() {
+        // Test that hash function is sensitive to parameter order
+        // This was a problem with the old XOR approach
+
+        let hash1 = TypeSignatureHash::new()
+            .add_fullname("System", "String")
+            .add_source(TypeSource::CurrentModule)
+            .add_flavor(&CilFlavor::Class)
+            .finalize();
+
+        let hash2 = TypeSignatureHash::new()
+            .add_flavor(&CilFlavor::Class)
+            .add_fullname("System", "String")
+            .add_source(TypeSource::CurrentModule)
+            .finalize();
+
+        let hash3 = TypeSignatureHash::new()
+            .add_source(TypeSource::CurrentModule)
+            .add_flavor(&CilFlavor::Class)
+            .add_fullname("System", "String")
+            .finalize();
+
+        // Different orders should produce different hashes (order sensitivity)
+        assert_ne!(hash1, hash2, "Hash should be order-sensitive");
+        assert_ne!(hash1, hash3, "Hash should be order-sensitive");
+        assert_ne!(hash2, hash3, "Hash should be order-sensitive");
+    }
+
+    #[test]
+    fn test_signature_hash_component_uniqueness() {
+        // Test that different components produce different hashes
+
+        let base_hash = TypeSignatureHash::new()
+            .add_fullname("System", "String")
+            .add_source(TypeSource::CurrentModule)
+            .finalize();
+
+        let class_hash = TypeSignatureHash::new()
+            .add_fullname("System", "String")
+            .add_source(TypeSource::CurrentModule)
+            .add_flavor(&CilFlavor::Class)
+            .finalize();
+
+        let interface_hash = TypeSignatureHash::new()
+            .add_fullname("System", "String")
+            .add_source(TypeSource::CurrentModule)
+            .add_flavor(&CilFlavor::Interface)
+            .finalize();
+
+        let different_source_hash = TypeSignatureHash::new()
+            .add_fullname("System", "String")
+            .add_source(TypeSource::AssemblyRef(Token::new(0x23000001)))
+            .add_flavor(&CilFlavor::Class)
+            .finalize();
+
+        // All should be different
+        assert_ne!(base_hash, class_hash);
+        assert_ne!(class_hash, interface_hash);
+        assert_ne!(class_hash, different_source_hash);
+        assert_ne!(interface_hash, different_source_hash);
+    }
+
+    #[test]
+    fn test_class_vs_generic_instance_hash_collision() {
+        // This is the specific collision that breaks the test
+        let class_hash = TypeSignatureHash::new()
+            .add_flavor(&CilFlavor::Class)
+            .add_fullname("System.Collections.Generic", "Dictionary`2")
+            .add_source(TypeSource::CurrentModule)
+            .finalize();
+
+        let generic_instance_hash = TypeSignatureHash::new()
+            .add_flavor(&CilFlavor::GenericInstance)
+            .add_fullname("System.Collections.Generic", "Dictionary`2")
+            .add_source(TypeSource::CurrentModule)
+            .finalize();
+
+        // These MUST be different for deduplication to work correctly
+        assert_ne!(
+            class_hash, generic_instance_hash,
+            "CRITICAL: Class and GenericInstance are generating hash collisions! \
+             This proves the original hash collision issue still exists."
+        );
     }
 }

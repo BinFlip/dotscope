@@ -356,15 +356,14 @@ impl<'a> LoaderGraph<'a> {
     ///
     /// This method is not thread-safe and must be called from a single thread during graph construction.
     pub fn add_loader(&mut self, loader: &'a dyn MetadataLoader) {
-        let loader_key = match loader.table_id() {
-            Some(table_id) => LoaderKey::Table(table_id),
-            None => {
-                let key = LoaderKey::Special {
-                    sequence: self.special_counter,
-                };
-                self.special_counter += 1;
-                key
-            }
+        let loader_key = if let Some(table_id) = loader.table_id() {
+            LoaderKey::Table(table_id)
+        } else {
+            let key = LoaderKey::Special {
+                sequence: self.special_counter,
+            };
+            self.special_counter += 1;
+            key
         };
 
         self.loaders.insert(loader_key.clone(), loader);

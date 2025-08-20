@@ -40,6 +40,7 @@
 mod base;
 mod builder;
 mod encoder;
+mod hash;
 mod primitives;
 mod registry;
 mod resolver;
@@ -52,8 +53,9 @@ pub use base::{
 };
 pub use builder::TypeBuilder;
 pub use encoder::TypeSignatureEncoder;
+pub use hash::TypeSignatureHash;
 pub use primitives::{CilPrimitive, CilPrimitiveData, CilPrimitiveKind};
-pub use registry::{TypeRegistry, TypeSource};
+pub use registry::{CompleteTypeSpec, TypeRegistry, TypeSource};
 pub use resolver::TypeResolver;
 
 use crate::{
@@ -292,10 +294,46 @@ impl CilType {
     /// }
     /// # }
     /// ```
-    pub fn set_base(&self, base_type: CilTypeRef) -> Result<()> {
-        self.base
-            .set(base_type)
-            .map_err(|_| Error::Error("External reference was already set".to_string()))
+    pub fn set_base(&self, base_type: &CilTypeRef) -> Result<()> {
+        match self.base.set(base_type.clone()) {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                if let Some(existing) = self.base.get() {
+                    match (existing.upgrade(), base_type.upgrade()) {
+                        (Some(existing_ref), Some(new_ref)) => {
+                            if existing_ref.token == new_ref.token
+                                || existing_ref.is_structurally_equivalent(&new_ref)
+                            {
+                                Ok(())
+                            } else {
+                                Err(Error::Error(
+                                    format!("Base type was already set with different value: existing {} vs new {}", 
+                                           existing_ref.fullname(), new_ref.fullname())
+                                ))
+                            }
+                        }
+                        (None, None) => {
+                            // Both weak references are dropped - we can't compare
+                            // This might be acceptable for deduplication
+                            Ok(())
+                        }
+                        (Some(_existing_ref), None) => {
+                            // Existing is valid but new is dropped
+                            Ok(())
+                        }
+                        (None, Some(_new_ref)) => {
+                            // This is suspicious - existing dropped but new is valid
+                            Ok(())
+                        }
+                    }
+                } else {
+                    // This should be impossible with OnceLock - if set() failed, get() should return Some()
+                    Err(Error::Error(
+                        "Impossible OnceLock state detected".to_string(),
+                    ))
+                }
+            }
+        }
     }
 
     /// Access the base type of this type, if it exists.
@@ -352,10 +390,39 @@ impl CilType {
     /// ## Thread Safety
     /// This method is thread-safe and can be called concurrently. Only the first
     /// call will succeed in setting the external reference.
-    pub fn set_external(&self, external_ref: CilTypeReference) -> Result<()> {
-        self.external
-            .set(external_ref)
-            .map_err(|_| malformed_error!("External reference was already set"))
+    pub fn set_external(&self, external_ref: &CilTypeReference) -> Result<()> {
+        match self.external.set(external_ref.clone()) {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                if let Some(existing) = self.external.get() {
+                    if Self::external_refs_compatible(existing, external_ref) {
+                        Ok(())
+                    } else {
+                        Err(malformed_error!(
+                            "External reference was already set with different value"
+                        ))
+                    }
+                } else {
+                    Err(malformed_error!("External reference was already set"))
+                }
+            }
+        }
+    }
+
+    /// Check if two external references are compatible (for deduplication)
+    fn external_refs_compatible(existing: &CilTypeReference, new: &CilTypeReference) -> bool {
+        match (existing, new) {
+            (CilTypeReference::AssemblyRef(ar1), CilTypeReference::AssemblyRef(ar2)) => {
+                ar1.token == ar2.token
+            }
+            (CilTypeReference::ModuleRef(mr1), CilTypeReference::ModuleRef(mr2)) => {
+                mr1.token == mr2.token
+            }
+            (CilTypeReference::File(f1), CilTypeReference::File(f2)) => f1.token == f2.token,
+            // For deduplicated types, allow any external reference combination
+            // since they should be structurally equivalent
+            _ => true,
+        }
     }
 
     /// Gets the external type reference for this type, if it exists.
@@ -403,6 +470,7 @@ impl CilType {
     }
 
     /// Compute the type flavor based on flags and context
+    // ToDo: Investigate how this can be done without hard-coded heuristics
     fn compute_flavor(&self) -> CilFlavor {
         // 1. Check interface flag first (highest priority)
         if self.flags & TypeAttributes::INTERFACE != 0 {
@@ -464,9 +532,7 @@ impl CilType {
             return CilFlavor::ValueType;
         }
 
-        if self.name.contains("Struct")
-            && (self.name.starts_with("Generic") || self.name.ends_with("Struct"))
-        {
+        if self.name.contains("Struct") {
             return CilFlavor::ValueType;
         }
 
@@ -588,5 +654,153 @@ impl CilType {
     pub fn accepts_constant(&self, constant: &CilPrimitive) -> bool {
         let constant_flavor = constant.to_flavor();
         self.flavor().accepts_constant(&constant_flavor)
+    }
+
+    /// Performs deep structural comparison with another type for deduplication purposes
+    ///
+    /// This method compares all structural aspects of types to determine true equivalence,
+    /// including generic arguments, base types, and source information. This is the
+    /// authoritative method for determining if two types are semantically identical.
+    ///
+    /// ## Arguments
+    /// * `other` - The other type to compare with
+    ///
+    /// ## Returns
+    /// `true` if the types are structurally equivalent and can be deduplicated
+    pub fn is_structurally_equivalent(&self, other: &CilType) -> bool {
+        // Basic identity must match
+        if self.namespace != other.namespace
+            || self.name != other.name
+            || *self.flavor() != *other.flavor()
+        {
+            return false;
+        }
+
+        // External source comparison
+        if !self.external_sources_equivalent(other) {
+            return false;
+        }
+
+        // Generic arguments comparison for generic instances
+        if !self.generic_args_equivalent(other) {
+            return false;
+        }
+
+        // Generic parameters comparison for generic definitions
+        if !self.generic_params_equivalent(other) {
+            return false;
+        }
+
+        // Base type comparison for derived types
+        self.base_types_equivalent(other)
+    }
+
+    /// Compare external source references for equivalence
+    fn external_sources_equivalent(&self, other: &CilType) -> bool {
+        match (self.external.get(), other.external.get()) {
+            (Some(ext1), Some(ext2)) => Self::type_sources_equivalent(ext1, ext2),
+            (None, None) => true, // Both are current module types
+            _ => false,           // One external, one local
+        }
+    }
+
+    /// Compare type sources for equivalence
+    fn type_sources_equivalent(source1: &CilTypeReference, source2: &CilTypeReference) -> bool {
+        match (source1, source2) {
+            (CilTypeReference::AssemblyRef(ar1), CilTypeReference::AssemblyRef(ar2)) => {
+                ar1.token == ar2.token
+            }
+            (CilTypeReference::ModuleRef(mr1), CilTypeReference::ModuleRef(mr2)) => {
+                mr1.token == mr2.token
+            }
+            (CilTypeReference::File(f1), CilTypeReference::File(f2)) => f1.token == f2.token,
+            (CilTypeReference::None, CilTypeReference::None) => true,
+            _ => false,
+        }
+    }
+
+    /// Compare generic arguments for equivalence
+    fn generic_args_equivalent(&self, other: &CilType) -> bool {
+        // Must have same number of generic arguments
+        if self.generic_args.count() != other.generic_args.count() {
+            return false;
+        }
+
+        // Compare each generic argument
+        for i in 0..self.generic_args.count() {
+            let arg1 = self.generic_args.get(i);
+            let arg2 = other.generic_args.get(i);
+
+            match (arg1, arg2) {
+                (Some(a1), Some(a2)) => {
+                    if a1.generic_args.count() != a2.generic_args.count() {
+                        return false;
+                    }
+
+                    // Compare inner generic argument types
+                    for j in 0..a1.generic_args.count() {
+                        let inner1 = a1.generic_args.get(j);
+                        let inner2 = a2.generic_args.get(j);
+
+                        match (inner1, inner2) {
+                            (Some(i1), Some(i2)) => {
+                                if i1.token() != i2.token() {
+                                    return false;
+                                }
+                            }
+                            (None, None) => {}
+                            _ => return false,
+                        }
+                    }
+                }
+                (None, None) => {}
+                _ => return false,
+            }
+        }
+
+        true
+    }
+
+    /// Compare generic parameters for equivalence
+    fn generic_params_equivalent(&self, other: &CilType) -> bool {
+        // Must have same number of generic parameters
+        if self.generic_params.count() != other.generic_params.count() {
+            return false;
+        }
+
+        // Compare each generic parameter
+        for i in 0..self.generic_params.count() {
+            let param1 = self.generic_params.get(i);
+            let param2 = other.generic_params.get(i);
+
+            match (param1, param2) {
+                (Some(p1), Some(p2)) => {
+                    // Compare parameter names and numbers
+                    if p1.name != p2.name || p1.number != p2.number {
+                        return false;
+                    }
+                }
+                (None, None) => {}
+                _ => return false,
+            }
+        }
+
+        true
+    }
+
+    /// Compare base types for equivalence
+    fn base_types_equivalent(&self, other: &CilType) -> bool {
+        match (self.base.get(), other.base.get()) {
+            (Some(base1), Some(base2)) => {
+                // Compare base type tokens
+                match (base1.upgrade(), base2.upgrade()) {
+                    (Some(b1), Some(b2)) => b1.token == b2.token,
+                    (None, None) => true, // Both have weak refs that are dropped
+                    _ => false,           // One valid, one dropped
+                }
+            }
+            (None, None) => true, // Both have no base type
+            _ => false,           // One has base, one doesn't
+        }
     }
 }

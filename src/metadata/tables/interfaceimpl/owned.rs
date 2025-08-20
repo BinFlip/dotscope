@@ -80,7 +80,7 @@ impl InterfaceImpl {
 
         if class_is_interface && interface_is_interface {
             if self.class.base().is_none() {
-                let _ = self.class.set_base(self.interface.clone().into());
+                let _ = self.class.set_base(&self.interface.clone().into());
             }
         } else {
             self.class.interfaces.push(self.interface.clone().into());

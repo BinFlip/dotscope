@@ -116,7 +116,7 @@ impl InterfaceImplRaw {
 
                 if class_is_interface && interface_is_interface {
                     if class.base().is_none() {
-                        let _ = class.set_base(interface.clone().into());
+                        let _ = class.set_base(&interface.clone().into());
                     }
                 } else {
                     class.interfaces.push(interface.into());
