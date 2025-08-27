@@ -21,7 +21,7 @@ thiserror = "2.0.16"
 uguid = "2.2.1"
 widestring = "1.2.0"
 strum = { version = "0.27.2", features = ["derive"]}
-memmap2 = "0.9.7"
+memmap2 = "0.9.8"
 tempfile = "3.20.0"
 #goblin = "0.10.0"
 # Currently a fork of mine, that includes crash fixes which have not yet been merged into master
@@ -29,7 +29,7 @@ goblin = { version = "0.10.0", git= "https://github.com/BinFlip/goblin.git", bra
 ouroboros = "0.18.5"
 sha1 = "0.10.6"
 md-5 = "0.10.6"
-bitflags = "2.9.2"
+bitflags = "2.9.3"
 dashmap = "6.1.0"
 crossbeam-skiplist = "0.1.3"
 rayon = "1.11.0"
