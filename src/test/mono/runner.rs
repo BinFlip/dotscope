@@ -19,7 +19,7 @@ impl ArchConfig {
     /// Create x86 (32-bit) architecture configuration
     pub fn x86() -> Self {
         Self {
-            name: "32-bit".to_string(),
+            name: "x86".to_string(),
             platform_flags: vec!["/platform:x86".to_string()],
         }
     }
@@ -27,7 +27,7 @@ impl ArchConfig {
     /// Create x64 (64-bit) architecture configuration
     pub fn x64() -> Self {
         Self {
-            name: "64-bit".to_string(),
+            name: "x64".to_string(),
             platform_flags: vec!["/platform:x64".to_string()],
         }
     }
@@ -157,22 +157,22 @@ mod tests {
     #[test]
     fn test_arch_config_creation() {
         let x86 = ArchConfig::x86();
-        assert_eq!(x86.name, "32-bit");
+        assert_eq!(x86.name, "x86");
         assert_eq!(x86.platform_flags, vec!["/platform:x86"]);
-        assert_eq!(x86.filename_component(), "32bit");
+        assert_eq!(x86.filename_component(), "x86");
 
         let x64 = ArchConfig::x64();
-        assert_eq!(x64.name, "64-bit");
+        assert_eq!(x64.name, "x64");
         assert_eq!(x64.platform_flags, vec!["/platform:x64"]);
-        assert_eq!(x64.filename_component(), "64bit");
+        assert_eq!(x64.filename_component(), "x64");
     }
 
     #[test]
     fn test_standard_architectures() {
         let archs = ArchConfig::standard_architectures();
         assert_eq!(archs.len(), 2);
-        assert_eq!(archs[0].name, "32-bit");
-        assert_eq!(archs[1].name, "64-bit");
+        assert_eq!(archs[0].name, "x86");
+        assert_eq!(archs[1].name, "x64");
     }
 
     #[test]
@@ -189,7 +189,7 @@ mod tests {
         let arch = ArchConfig::x86();
         let path = runner.create_arch_file_path("test", &arch, ".exe");
 
-        assert!(path.to_string_lossy().contains("test_32bit.exe"));
+        assert!(path.to_string_lossy().contains("test_x86.exe"));
         Ok(())
     }
 }

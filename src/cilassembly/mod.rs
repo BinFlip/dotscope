@@ -1596,11 +1596,11 @@ mod tests {
                 .map(|r| r.architecture.name.clone())
                 .collect();
             assert!(
-                arch_names.contains(&"32-bit".to_string()),
+                arch_names.contains(&"x86".to_string()),
                 "Missing x86 architecture test"
             );
             assert!(
-                arch_names.contains(&"64-bit".to_string()),
+                arch_names.contains(&"x64".to_string()),
                 "Missing x64 architecture test"
             );
 

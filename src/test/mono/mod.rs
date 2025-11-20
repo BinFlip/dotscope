@@ -542,7 +542,7 @@ mod tests {
     #[test]
     fn test_arch_config_methods() {
         let arch = ArchConfig::x86();
-        assert_eq!(arch.filename_component(), "32bit");
+        assert_eq!(arch.filename_component(), "x86");
 
         let standard_archs = ArchConfig::standard_architectures();
         assert_eq!(standard_archs.len(), 2);
