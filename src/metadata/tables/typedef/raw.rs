@@ -121,6 +121,7 @@ impl TypeDefRaw {
     /// * `method_ptr` - Map of `MethodPtr` entries for indirection resolution
     /// * `defs` - The complete `TypeDef` table for determining field/method ranges
     /// * `resolve_base_type` - Whether to resolve the base type during creation (for two-phase loading)
+    /// * `external_reference` - The external reference (usually current assembly) this type belongs to
     ///
     /// ## Returns
     /// Returns a reference-counted [`CilType`] with all metadata resolved and owned.
@@ -143,6 +144,7 @@ impl TypeDefRaw {
         method_ptr: &MethodPtrMap,
         defs: &MetadataTable<TypeDefRaw>,
         resolve_base_type: bool,
+        external_reference: Option<CilTypeReference>,
     ) -> Result<CilTypeRc>
     where
         F: Fn(&CodedIndex) -> CilTypeReference,
@@ -164,7 +166,7 @@ impl TypeDefRaw {
         let start_fields = self.field_list as usize;
         let type_fields = if self.field_list == 0
             || fields.is_empty()
-            || end_fields >= fields.len()
+            || end_fields > fields.len() + 1
             || start_fields > fields.len()
             || end_fields <= start_fields
         {
@@ -226,7 +228,7 @@ impl TypeDefRaw {
         let start_methods = self.method_list as usize;
         let type_methods = if self.method_list == 0
             || methods.is_empty()
-            || end_methods >= methods.len()
+            || end_methods > methods.len() + 1
             || start_methods > methods.len()
             || end_methods < start_methods
         {
@@ -300,7 +302,7 @@ impl TypeDefRaw {
             self.token,
             strings.get(self.type_namespace as usize)?.to_string(),
             strings.get(self.type_name as usize)?.to_string(),
-            None,
+            external_reference,
             base_type,
             self.flags,
             type_fields,

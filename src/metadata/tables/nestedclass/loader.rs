@@ -83,18 +83,16 @@ impl MetadataLoader for NestedClassLoader {
 
     /// Returns the table dependencies for `NestedClass` loading.
     ///
-    /// The `NestedClass` table depends on type definition and reference tables to resolve
-    /// nested and enclosing type relationships. These dependencies ensure that all
-    /// referenced types are available during nested class processing.
+    /// The `NestedClass` table depends only on type definitions to resolve
+    /// nested and enclosing type relationships. The table contains raw indices
+    /// into the `TypeDef` table only, not `TypeDefOrRef` coded indices.
     ///
     /// ## Dependencies
-    /// - [`crate::metadata::tables::TableId::TypeRef`] - External type references
     /// - [`crate::metadata::tables::TableId::TypeDef`] - Local type definitions
-    /// - [`crate::metadata::tables::TableId::TypeSpec`] - Constructed type specifications
     ///
     /// ## Returns
     /// Array of table IDs that must be loaded before `NestedClass` processing
     fn dependencies(&self) -> &'static [TableId] {
-        &[TableId::TypeRef, TableId::TypeDef, TableId::TypeSpec]
+        &[TableId::TypeDef]
     }
 }

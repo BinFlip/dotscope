@@ -120,7 +120,11 @@ impl MetadataLoader for CustomAttributeLoader {
         if let (Some(header), Some(blob)) = (context.meta, context.blobs) {
             if let Some(table) = header.table::<CustomAttributeRaw>() {
                 table.par_iter().try_for_each(|row| {
-                    let owned = row.to_owned(|coded_index| context.get_ref(coded_index), blob)?;
+                    let owned = row.to_owned(
+                        |coded_index| context.get_ref(coded_index),
+                        blob,
+                        Some(context.types),
+                    )?;
                     owned.apply()?;
 
                     context.custom_attribute.insert(row.token, owned);
@@ -161,6 +165,7 @@ impl MetadataLoader for CustomAttributeLoader {
             TableId::MemberRef,
             TableId::Module,
             TableId::DeclSecurity,
+            TableId::NestedClass,
             TableId::Property,
             TableId::Event,
             TableId::StandAloneSig,

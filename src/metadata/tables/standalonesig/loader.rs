@@ -82,29 +82,33 @@ impl MetadataLoader for StandAloneSigLoader {
     /// with large assemblies while maintaining thread safety through shared state.
     ///
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(blobs)) = (context.meta, context.blobs) {
-            if let Some(table) = header.table::<StandAloneSigRaw>() {
-                let shared_visited = Arc::new(VisitedMap::new(context.input.data().len()));
-                let results: Vec<Result<()>> = context
-                    .method_def
-                    .iter()
-                    .par_bridge()
-                    .map(|row| {
-                        let method = row.value();
-                        method.parse(
-                            &context.input,
-                            blobs,
-                            table,
-                            context.types,
-                            shared_visited.clone(),
-                        )
-                    })
-                    .collect();
+        if let Some(blobs) = context.blobs {
+            let shared_visited = Arc::new(VisitedMap::new(context.input.data().len()));
+            let standalonesig_table = if let Some(header) = context.meta {
+                header.table::<StandAloneSigRaw>()
+            } else {
+                None
+            };
 
-                // ToDo: We return only the first error encountered
-                for result in results {
-                    result?;
-                }
+            let results: Vec<Result<()>> = context
+                .method_def
+                .iter()
+                .par_bridge()
+                .map(|row| {
+                    let method = row.value();
+                    method.parse(
+                        &context.input,
+                        blobs,
+                        standalonesig_table,
+                        context.types,
+                        shared_visited.clone(),
+                    )
+                })
+                .collect();
+
+            // ToDo: We return only the first error encountered
+            for result in results {
+                result?;
             }
         }
 

@@ -3,7 +3,7 @@
 //! This module provides the raw variant of `NestedClass` table entries with unresolved
 //! indexes for initial parsing and memory-efficient storage.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
     metadata::{
@@ -108,7 +108,7 @@ impl NestedClassRaw {
     /// - The relationship violates .NET type system constraints
     ///
     pub fn apply(classes: &MetadataTable<NestedClassRaw>, types: &TypeRegistry) -> Result<()> {
-        let mut mapping: HashMap<u32, Vec<u32>> = HashMap::new();
+        let mut mapping: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
 
         for row in classes {
             mapping

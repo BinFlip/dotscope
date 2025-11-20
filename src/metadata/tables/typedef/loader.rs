@@ -54,6 +54,7 @@ use crate::{
     metadata::{
         loader::{LoaderContext, MetadataLoader},
         tables::{TableId, TypeDefRaw},
+        typesystem::CilTypeReference,
     },
     Result,
 };
@@ -118,6 +119,11 @@ impl MetadataLoader for TypeDefLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
             if let Some(table) = header.table::<TypeDefRaw>() {
+                let current_assembly_ref = context
+                    .assembly
+                    .get()
+                    .map(|assembly| CilTypeReference::Assembly(assembly.clone()));
+
                 table.par_iter().try_for_each(|row| -> Result<()> {
                     let type_def = row.to_owned(
                         |coded_index| context.get_ref(coded_index),
@@ -128,9 +134,10 @@ impl MetadataLoader for TypeDefLoader {
                         &context.method_ptr,
                         table,
                         false, // Skip base type resolution - handled by InheritanceResolver
+                        current_assembly_ref.clone(),
                     )?;
 
-                    context.types.insert(type_def);
+                    context.types.insert(&type_def);
                     Ok(())
                 })?;
             }

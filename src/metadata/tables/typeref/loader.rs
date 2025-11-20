@@ -48,7 +48,7 @@ impl MetadataLoader for TypeRefLoader {
                     let new_entry =
                         row.to_owned(|coded_index| context.get_ref(coded_index), strings, true)?;
 
-                    context.types.insert(new_entry);
+                    context.types.insert(&new_entry);
                     Ok(())
                 })?;
 

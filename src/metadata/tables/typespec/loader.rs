@@ -66,6 +66,7 @@ impl MetadataLoader for TypeSpecLoader {
 
                     let mut resolver =
                         TypeResolver::new(context.types.clone()).with_token_init(row.token);
+
                     resolver.resolve(&owned.signature.base)?;
 
                     context.type_spec.insert(row.token, owned);
