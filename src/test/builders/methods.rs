@@ -12,7 +12,7 @@ use crate::metadata::{
     },
     signatures::{SignatureMethod, SignatureParameter, TypeSignature},
     token::Token,
-    typesystem::CilFlavor,
+    typesystem::{CilFlavor, TypeRegistry},
 };
 
 use super::params::ParamBuilder;
@@ -194,12 +194,16 @@ impl MethodBuilder {
     }
 
     pub fn build(self) -> MethodRc {
+        self.build_with_registry(None)
+    }
+
+    pub fn build_with_registry(self, type_registry: Option<&Arc<TypeRegistry>>) -> MethodRc {
         // Build parameters - either from explicit builders or auto-generated from signature
         let params = if !self.param_builders.is_empty() {
             // Use explicitly provided parameter builders
             let param_vec = Arc::new(boxcar::Vec::new());
             for param_builder in self.param_builders {
-                param_vec.push(param_builder.build());
+                param_vec.push(param_builder.build(type_registry));
             }
             param_vec
         } else if self.auto_create_params {
@@ -211,7 +215,7 @@ impl MethodBuilder {
                         (index + 1) as u32,
                         &format!("param{}", index + 1),
                     )
-                    .build();
+                    .build(type_registry);
                     param_vec.push(param);
                 }
             }

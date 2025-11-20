@@ -76,8 +76,8 @@ impl MetadataLoader for PropertyPtrLoader {
     /// ## Returns
     ///
     /// [`TableId::PropertyPtr`] (0x16) - The metadata table identifier
-    fn table_id(&self) -> TableId {
-        TableId::PropertyPtr
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::PropertyPtr)
     }
 
     /// Returns the dependency list for `PropertyPtr` table loading.

@@ -207,6 +207,7 @@ macro_rules! out_of_bounds_error {
 ///
 /// ## Analysis Errors
 /// - [`crate::Error::RecursionLimit`] - Maximum recursion depth exceeded
+/// - [`crate::Error::DepthLimitExceeded`] - Maximum nesting depth exceeded in iterative parsing
 /// - [`crate::Error::LockError`] - Thread synchronization failure
 /// - [`crate::Error::GraphError`] - Dependency graph analysis error
 ///
@@ -366,6 +367,21 @@ pub enum Error {
     /// The associated value shows the recursion limit that was reached.
     #[error("Reach the maximum recursion level allowed - {0}")]
     RecursionLimit(usize),
+
+    /// Nesting depth limit reached.
+    ///
+    /// To prevent resource exhaustion and stack overflow during iterative parsing
+    /// operations, a maximum nesting depth is enforced. This error indicates that
+    /// the depth limit was exceeded while parsing complex nested structures.
+    ///
+    /// This applies to iterative stack-based parsing in:
+    /// - Signature type parsing (nested generic types, arrays, pointers)
+    /// - Custom attribute parsing (nested arrays, tagged objects)
+    /// - Any other iterative parser with explicit depth limiting
+    ///
+    /// The associated value shows the nesting depth limit that was reached.
+    #[error("Reached the maximum nesting depth allowed - {0}")]
+    DepthLimitExceeded(usize),
 
     /// Failed to lock target.
     ///
@@ -770,6 +786,16 @@ pub enum Error {
     #[error("Binary write memory mapping failed: {message}")]
     WriteMmapFailed {
         /// Details about the memory mapping failure
+        message: String,
+    },
+
+    /// Memory mapping read failed during output inspection.
+    ///
+    /// This error occurs when attempting to read from a memory-mapped file
+    /// during the write process (e.g., reading existing values before modifying them).
+    #[error("Binary read memory mapping failed: {message}")]
+    ReadMmapFailed {
+        /// Details about the memory mapping read failure
         message: String,
     },
 

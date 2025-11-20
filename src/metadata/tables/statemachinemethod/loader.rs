@@ -59,8 +59,8 @@ impl MetadataLoader for StateMachineMethodLoader {
         Ok(())
     }
 
-    fn table_id(&self) -> TableId {
-        TableId::StateMachineMethod
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::StateMachineMethod)
     }
 
     fn dependencies(&self) -> &'static [TableId] {

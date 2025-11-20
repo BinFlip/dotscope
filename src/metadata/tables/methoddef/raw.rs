@@ -252,18 +252,7 @@ impl MethodDefRaw {
                 params_map.len() + 1
             } else {
                 match table.get(next_row_id) {
-                    Some(next_row) => {
-                        let calculated_end = next_row.param_list as usize;
-                        let expected_param_count = signature.params.len();
-
-                        // If the calculated range would be empty but we expect parameters,
-                        // use the signature to determine the correct end
-                        if calculated_end <= start && expected_param_count > 0 {
-                            start + expected_param_count
-                        } else {
-                            calculated_end
-                        }
-                    }
+                    Some(next_row) => next_row.param_list as usize,
                     None => {
                         return Err(malformed_error!(
                             "Failed to resolve param_end from next row - {}",

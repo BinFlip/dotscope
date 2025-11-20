@@ -1051,6 +1051,7 @@ impl TypeSpecSignatureBuilder {
                 })?;
 
         Ok(SignatureTypeSpec {
+            modifiers: Vec::new(),
             base: type_signature,
         })
     }

@@ -5,10 +5,7 @@
 //! structure contains resolved type references for both implementing classes and implemented interfaces.
 
 use crate::{
-    metadata::{
-        customattributes::CustomAttributeValueList, tables::TypeAttributes, token::Token,
-        typesystem::CilTypeRc,
-    },
+    metadata::{customattributes::CustomAttributeValueList, token::Token, typesystem::CilTypeRc},
     Result,
 };
 
@@ -73,18 +70,7 @@ impl InterfaceImpl {
     ///
     /// This function never returns an error; it always returns `Ok(())`.
     pub fn apply(&self) -> Result<()> {
-        // Check if this is interface inheritance (both class and interface are interfaces)
-        // The .NET compiler incorrectly puts interface inheritance in `InterfaceImpl` table
-        let class_is_interface = self.class.flags & TypeAttributes::INTERFACE != 0;
-        let interface_is_interface = self.interface.flags & TypeAttributes::INTERFACE != 0;
-
-        if class_is_interface && interface_is_interface {
-            if self.class.base().is_none() {
-                let _ = self.class.set_base(self.interface.clone().into());
-            }
-        } else {
-            self.class.interfaces.push(self.interface.clone().into());
-        }
+        self.class.interfaces.push(self.interface.clone().into());
         Ok(())
     }
 }

@@ -287,35 +287,45 @@ pub fn calculate_table_stream_expansion(assembly: &CilAssembly) -> Result<u64> {
     })?;
 
     let mut total_expansion = 0u64;
+    let mut header_expansion = 0u64;
 
     for table_id in changes.modified_tables() {
         if let Some(table_mod) = changes.get_table_modifications(table_id) {
             let row_size = calculate_table_row_size(table_id, &tables.info);
+            let original_count = tables.table_row_count(table_id);
 
-            let additional_rows = match table_mod {
+            let (new_count, additional_rows) = match table_mod {
                 TableModifications::Replaced(new_rows) => {
-                    let original_count = tables.table_row_count(table_id);
-                    if u32::try_from(new_rows.len()).unwrap_or(0) > original_count {
-                        u32::try_from(new_rows.len()).unwrap_or(0) - original_count
-                    } else {
-                        0
-                    }
+                    let new_count = u32::try_from(new_rows.len()).unwrap_or(0);
+                    let additional = new_count.saturating_sub(original_count);
+                    (new_count, additional)
                 }
-                TableModifications::Sparse { operations, .. } => u32::try_from(
-                    operations
-                        .iter()
-                        .filter(|op| matches!(op.operation, Operation::Insert(_, _)))
-                        .count(),
-                )
-                .unwrap_or(0),
+                TableModifications::Sparse { operations, .. } => {
+                    let insert_count = u32::try_from(
+                        operations
+                            .iter()
+                            .filter(|op| matches!(op.operation, Operation::Insert(_, _)))
+                            .count(),
+                    )
+                    .unwrap_or(0);
+                    let new_count = original_count + insert_count;
+                    (new_count, insert_count)
+                }
             };
 
+            // Account for table data expansion
             let expansion_bytes = u64::from(additional_rows) * u64::from(row_size);
             total_expansion += expansion_bytes;
+
+            // Account for header expansion: if table goes from 0 rows to >0 rows,
+            // the header needs an additional 4-byte row count entry
+            if original_count == 0 && new_count > 0 {
+                header_expansion += 4;
+            }
         }
     }
 
-    Ok(total_expansion)
+    Ok(total_expansion + header_expansion)
 }
 
 /// Calculates the new row count for a table after modifications with ECMA-335 compliance.

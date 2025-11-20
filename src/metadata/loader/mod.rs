@@ -41,6 +41,7 @@
 mod context;
 mod data;
 mod graph;
+mod inheritance;
 
 pub(crate) use context::LoaderContext;
 pub(crate) use data::CilObjectData;
@@ -83,7 +84,7 @@ pub(crate) use data::CilObjectData;
 /// 2. Add the loader to this array
 /// 3. Update any loaders that depend on the new table
 /// 4. Test that the dependency graph remains acyclic
-static LOADERS: [&'static dyn MetadataLoader; 53] = [
+static LOADERS: [&'static dyn MetadataLoader; 54] = [
     &crate::metadata::tables::AssemblyLoader,
     &crate::metadata::tables::AssemblyOsLoader,
     &crate::metadata::tables::AssemblyProcessorLoader,
@@ -137,9 +138,10 @@ static LOADERS: [&'static dyn MetadataLoader; 53] = [
     &crate::metadata::tables::TypeDefLoader,
     &crate::metadata::tables::TypeRefLoader,
     &crate::metadata::tables::TypeSpecLoader,
+    &inheritance::InheritanceResolver,
 ];
 
-use crate::{metadata::tables::TableId, Result};
+use crate::{metadata::tables::TableId, project::ProjectContext, Error, Result};
 use rayon::prelude::*;
 use std::sync::LazyLock;
 
@@ -274,33 +276,49 @@ pub(crate) trait MetadataLoader: Send + Sync {
     /// ```
     fn load(&self, context: &LoaderContext) -> Result<()>;
 
-    /// Get the ID of the table this loader processes.
+    /// Get the ID of the table this loader processes, if any.
     ///
     /// Returns the unique identifier for the metadata table that this loader is responsible
-    /// for processing. This ID is used by the dependency graph system to:
+    /// for processing, or `None` for special loaders that operate across multiple tables.
+    /// This ID is used by the dependency graph system to:
     /// - **Track Dependencies**: Identify which loaders depend on this table
     /// - **Resolve Conflicts**: Ensure only one loader exists per table type
     /// - **Generate Execution Plan**: Create the topological ordering for parallel execution
+    /// - **Priority Insertion**: Special loaders (`None`) run immediately when dependencies are satisfied
     ///
     /// # Returns
     ///
-    /// The [`crate::metadata::tables::TableId`] enum variant corresponding to this loader's table type.
+    /// - `Some(TableId)` - For loaders that process a specific metadata table
+    /// - `None` - For special loaders that operate across multiple tables (e.g., cross-table resolvers)
     ///
     /// # Examples
     ///
     /// ```rust,ignore
     /// use dotscope::metadata::tables::TableId;
     ///
-    /// fn table_id(&self) -> TableId {
-    ///     TableId::Assembly  // This loader processes the Assembly table
+    /// // Regular table loader
+    /// fn table_id(&self) -> Option<TableId> {
+    ///     Some(TableId::Assembly)  // This loader processes the Assembly table
+    /// }
+    ///
+    /// // Special cross-table loader
+    /// fn table_id(&self) -> Option<TableId> {
+    ///     None  // This loader operates across multiple tables
     /// }
     /// ```
+    ///
+    /// # Special Loaders
+    ///
+    /// Special loaders (`table_id() = None`) have unique behavior:
+    /// - **Cannot be dependencies**: Other loaders cannot depend on them
+    /// - **Priority execution**: Run immediately when their dependencies are satisfied
+    /// - **Cross-table operation**: Can access and modify multiple table types
     ///
     /// # Consistency
     ///
     /// This method must always return the same value for a given loader instance.
-    /// The returned ID should match the actual table type processed by [`MetadataLoader::load`].
-    fn table_id(&self) -> TableId;
+    /// For regular loaders, the returned ID should match the actual table type processed by [`MetadataLoader::load`].
+    fn table_id(&self) -> Option<TableId>;
 
     /// Get dependencies this loader needs to be satisfied before loading.
     ///
@@ -491,11 +509,50 @@ fn build_dependency_graph(
 ///
 /// The function automatically manages CPU resources through rayon's thread pool and
 /// ensures proper cleanup if any loader fails during execution.
-pub(crate) fn execute_loaders_in_parallel(context: &LoaderContext) -> Result<()> {
+pub(crate) fn execute_loaders_in_parallel(
+    context: &LoaderContext,
+    project_context: Option<&ProjectContext>,
+) -> Result<()> {
     // Access pre-computed execution levels (computed once per process)
     let levels = &*EXECUTION_LEVELS;
 
-    for level in levels {
+    for (level_index, level) in levels.iter().enumerate() {
+        if level_index == 4 {
+            if let Some(proj_ctx) = project_context {
+                proj_ctx.wait_stage2()?;
+
+                context.types.build_fullnames();
+
+                // Redirect TypeRefs to their canonical TypeDefs from external assemblies
+                for entry in context.types.iter() {
+                    let type_rc = entry.value();
+                    if !type_rc.is_typeref() {
+                        continue;
+                    }
+
+                    if let Some(canonical_typedef) =
+                        context.types.resolve_type_global(&type_rc.fullname())
+                    {
+                        if !context
+                            .types
+                            .redirect_typeref_to_typedef(type_rc.token, &canonical_typedef)
+                        {
+                            return Err(Error::Error(format!(
+                                "Failed to redirect TypeRef {}",
+                                &type_rc.fullname()
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
+        if level_index == 7 {
+            if let Some(proj_ctx) = project_context {
+                proj_ctx.wait_stage3()?;
+            }
+        }
+
         let results: Vec<Result<()>> = level
             .par_iter()
             .map(|loader| loader.load(context))

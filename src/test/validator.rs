@@ -20,13 +20,13 @@
 use crate::{
     metadata::{
         cilassemblyview::CilAssemblyView,
-        cilobject::CilObject,
         validation::{
             OwnedValidationContext, RawValidationContext, ReferenceScanner, ValidationConfig,
         },
     },
     Error, Result,
 };
+use rayon::ThreadPoolBuilder;
 use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
 
@@ -417,7 +417,15 @@ where
 {
     let assembly_view = CilAssemblyView::from_file(&assembly.path)?;
     let scanner = ReferenceScanner::from_view(&assembly_view)?;
-    let context = RawValidationContext::new_for_loading(&assembly_view, &scanner, config);
+    let thread_count = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    let thread_pool = ThreadPoolBuilder::new()
+        .num_threads(thread_count)
+        .build()
+        .unwrap();
+    let context =
+        RawValidationContext::new_for_loading(&assembly_view, &scanner, config, &thread_pool);
     run_validator(&context)
 }
 
@@ -429,11 +437,37 @@ fn run_owned_validation_test<F>(
 where
     F: Fn(&OwnedValidationContext) -> Result<()>,
 {
-    // Create both CilAssemblyView (for ReferenceScanner) and CilObject (for resolved metadata)
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+    let mono_deps_path = Path::new(&manifest_dir).join("tests/samples/mono_4.8");
+
+    // Create CilAssemblyView for ReferenceScanner
     let assembly_view = CilAssemblyView::from_file(&assembly.path)?;
-    let object = CilObject::from_file(&assembly.path)?;
+
+    // Load CilObject with dependencies using ProjectLoader
+    // Enable strict mode for validator tests so loading failures cause immediate errors
+    // Disable validation during loading to test raw validator logic
+    let project_result = crate::project::ProjectLoader::new()
+        .primary_file(&assembly.path)?
+        .with_search_path(&mono_deps_path)?
+        .auto_discover(true)
+        .strict_mode(true)
+        .with_validation(ValidationConfig::disabled())
+        .build()?;
+
+    let object = project_result
+        .project
+        .get_primary()
+        .ok_or_else(|| Error::Error("Failed to get primary assembly from project".to_string()))?;
+
     let scanner = ReferenceScanner::from_view(&assembly_view)?;
-    let context = OwnedValidationContext::new(&object, &scanner, config);
+    let thread_count = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    let thread_pool = ThreadPoolBuilder::new()
+        .num_threads(thread_count)
+        .build()
+        .unwrap();
+    let context = OwnedValidationContext::new(object.as_ref(), &scanner, config, &thread_pool);
     run_validator(&context)
 }
 
@@ -447,7 +481,7 @@ where
 ///
 /// - `Some(PathBuf)` - Path to WindowsBase.dll if it exists
 /// - `None` - If WindowsBase.dll is not available
-pub fn get_clean_testfile() -> Option<PathBuf> {
+pub fn get_testfile_wb() -> Option<PathBuf> {
     let windowsbase_path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
     if windowsbase_path.exists() {
@@ -457,30 +491,37 @@ pub fn get_clean_testfile() -> Option<PathBuf> {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
+/// Returns path to crafted_2.exe for use as a clean test assembly with proper identity.
+///
+/// This is preferred over WindowsBase.dll for validation tests that create new types,
+/// since crafted_2.exe has its own identity and created types will be recognized
+/// as target assembly types.
+pub fn get_testfile_crafted2() -> Option<PathBuf> {
+    let crafted_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/samples/crafted_2.exe");
+    if crafted_path.exists() {
+        Some(crafted_path)
+    } else {
+        None
+    }
+}
 
-//     #[test]
-//     fn test_validator_harness_example() -> Result<()> {
-//         fn example_file_factory() -> Result<Vec<TestAssembly>> {
-//             let Some(clean_testfile) = get_clean_testfile() else {
-//                 return Err(Error::Error("WindowsBase.dll not available".to_string()));
-//             };
-//             Ok(vec![TestAssembly::new(clean_testfile, true)])
-//         }
-
-//         let example_validator = |_context: &RawValidationContext| -> Result<()> { Ok(()) };
-
-//         validator_test(
-//             example_file_factory,
-//             "ExampleValidator",
-//             "ValidationError",
-//             ValidationConfig {
-//                 enable_structural_validation: true,
-//                 ..Default::default()
-//             },
-//             example_validator,
-//         )
-//     }
-// }
+/// Returns path to mscorlib.dll for use as a completely self-contained test assembly.
+///
+/// This is the best choice for modification tests that don't need to test cross-assembly
+/// dependencies, since mscorlib.dll has zero external dependencies and is completely
+/// self-contained. This makes tests faster and more reliable than using assemblies
+/// with many dependencies.
+///
+/// # Returns
+///
+/// - `Some(PathBuf)` - Path to mscorlib.dll if it exists
+/// - `None` - If mscorlib.dll is not available
+pub fn get_testfile_mscorlib() -> Option<PathBuf> {
+    let mscorlib_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/samples/mono_4.8/mscorlib.dll");
+    if mscorlib_path.exists() {
+        Some(mscorlib_path)
+    } else {
+        None
+    }
+}

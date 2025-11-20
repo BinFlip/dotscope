@@ -1104,6 +1104,40 @@ impl Imports {
         }
         Vec::new()
     }
+
+    /// Get an import by its token.
+    ///
+    /// Direct lookup of an import using its metadata token. This is the most
+    /// efficient lookup method when you already know the token of the import
+    /// you're looking for.
+    ///
+    /// # Arguments
+    /// * `token` - The metadata token identifying the import
+    ///
+    /// # Returns
+    /// - `Some(ImportRc)` if an import with the token exists
+    /// - `None` if no import with the token is found
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::imports::Imports;
+    /// use dotscope::metadata::token::Token;
+    ///
+    /// let imports = Imports::new();
+    /// let token = Token::new(0x0A000001);
+    ///
+    /// if let Some(import) = imports.get(token) {
+    ///     println!("Found import: {}", import.fullname());
+    /// }
+    /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
+    pub fn get(&self, token: Token) -> Option<ImportRc> {
+        self.data.get(&token).map(|entry| entry.value().clone())
+    }
 }
 
 impl Default for Imports {

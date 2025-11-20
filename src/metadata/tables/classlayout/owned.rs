@@ -146,13 +146,60 @@ impl ClassLayout {
     /// definition. Multiple threads can safely call this method concurrently, though
     /// only one will succeed in setting the layout parameters.
     pub fn apply(&self) -> Result<()> {
-        self.parent
-            .class_size
-            .set(self.class_size)
-            .map_err(|_| malformed_error!("Class size already set"))?;
-        self.parent
-            .packing_size
-            .set(self.packing_size)
-            .map_err(|_| malformed_error!("Packing size already set"))
+        if self.parent.class_size.set(self.class_size).is_err() {
+            // Class size was already set - check if it's the same value
+            if let Some(existing_value) = self.parent.class_size.get() {
+                if *existing_value != self.class_size {
+                    return Err(crate::malformed_error!(
+                        "Class size CONFLICT for type '{}' (token: 0x{:08X}). Existing value: {}, attempted to set: {}. ClassLayout token: 0x{:08X}, offset: 0x{:X}. Thread: {:?}",
+                        self.parent.name,
+                        self.parent.token.value(),
+                        *existing_value,
+                        self.class_size,
+                        self.token.value(),
+                        self.offset,
+                        std::thread::current().id()
+                    ));
+                }
+            } else {
+                return Err(crate::malformed_error!(
+                    "Class size setting failed for type '{}' (token: 0x{:08X}) but no current value found. Attempted to set: {}. ClassLayout token: 0x{:08X}, offset: 0x{:X}",
+                    self.parent.name,
+                    self.parent.token.value(),
+                    self.class_size,
+                    self.token.value(),
+                    self.offset
+                ));
+            }
+        }
+
+        if self.parent.packing_size.set(self.packing_size).is_err() {
+            // Packing size was already set - check if it's the same value
+            if let Some(existing_value) = self.parent.packing_size.get() {
+                if *existing_value != self.packing_size {
+                    return Err(crate::malformed_error!(
+                        "Packing size CONFLICT for type '{}' (token: 0x{:08X}). Existing value: {}, attempted to set: {}. ClassLayout token: 0x{:08X}, offset: 0x{:X}. Thread: {:?}",
+                        self.parent.name,
+                        self.parent.token.value(),
+                        *existing_value,
+                        self.packing_size,
+                        self.token.value(),
+                        self.offset,
+                        std::thread::current().id()
+                    ));
+                }
+            } else {
+                return Err(crate::malformed_error!(
+                    "Packing size setting failed for type '{}' (token: 0x{:08X}) but no current value found. Attempted to set: {}. ClassLayout token: 0x{:08X}, offset: 0x{:X}",
+                    self.parent.name,
+                    self.parent.token.value(),
+                    self.packing_size,
+                    self.token.value(),
+                    self.offset
+                ));
+            }
+        }
+
+        Ok(())
     }
 }

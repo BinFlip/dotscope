@@ -88,8 +88,8 @@ impl MetadataLoader for FieldMarshalLoader {
     ///
     /// # Returns
     /// Returns [`crate::prelude::TableId::FieldMarshal`] indicating this loader handles the `FieldMarshal` table.
-    fn table_id(&self) -> TableId {
-        TableId::FieldMarshal
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::FieldMarshal)
     }
 
     /// Returns the table dependencies for `FieldMarshal` loading.

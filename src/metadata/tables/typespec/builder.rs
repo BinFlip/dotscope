@@ -553,7 +553,10 @@ impl TypeSpecBuilder {
                 details: "TypeSpecBuilder requires a type signature".to_string(),
             })?;
 
-        let typespec_signature = SignatureTypeSpec { base: signature };
+        let typespec_signature = SignatureTypeSpec {
+            modifiers: Vec::new(),
+            base: signature,
+        };
 
         let signature_blob = TypeSignatureEncoder::encode(&typespec_signature.base)?;
         let signature_index = context.blob_add(&signature_blob)?;

@@ -48,7 +48,7 @@ impl MetadataLoader for TypeRefLoader {
                     let new_entry =
                         row.to_owned(|coded_index| context.get_ref(coded_index), strings, true)?;
 
-                    context.types.insert(new_entry);
+                    context.types.insert(&new_entry);
                     Ok(())
                 })?;
 
@@ -57,7 +57,7 @@ impl MetadataLoader for TypeRefLoader {
                         if let Some(resolution_scope) =
                             row.resolve_resolution_scope(|coded_index| context.get_ref(coded_index))
                         {
-                            type_ref.set_external(resolution_scope)?;
+                            type_ref.set_external(&resolution_scope)?;
                             context.imports.add_type(&type_ref)?;
                         }
                     }
@@ -73,8 +73,8 @@ impl MetadataLoader for TypeRefLoader {
     ///
     /// ## Returns
     /// [`crate::metadata::tables::TableId::TypeRef`] (0x01) - The metadata table identifier for external type references
-    fn table_id(&self) -> TableId {
-        TableId::TypeRef
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::TypeRef)
     }
 
     /// Returns the dependency list for `TypeRef` table loading.

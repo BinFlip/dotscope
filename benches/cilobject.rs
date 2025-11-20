@@ -12,7 +12,8 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     //        .build_global()
     //        .unwrap();
 
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/mono_4.8/mscorlib.dll");
     c.bench_function("bench_cilobject", |b| {
         b.iter({ || CilObject::from_file(&path).unwrap() });
     });

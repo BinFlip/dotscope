@@ -72,8 +72,6 @@
 //! - [ECMA-335 II.22.20](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - GenericParam table
 //! - [ECMA-335 II.22.21](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - GenericParamConstraint table
 
-use std::collections::{HashMap, HashSet};
-
 use crate::{
     metadata::{
         cilassemblyview::CilAssemblyView,
@@ -449,107 +447,6 @@ impl RawGenericConstraintValidator {
 
         Ok(())
     }
-
-    /// Detects circular constraint dependencies between generic parameters.
-    ///
-    /// Validates that generic parameter constraints do not form circular dependencies
-    /// that would cause infinite recursion during type resolution. Uses depth-first
-    /// search to detect cycles in the constraint dependency graph.
-    ///
-    /// # Arguments
-    ///
-    /// * `assembly_view` - Assembly metadata view containing table data
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(())` - No circular dependencies found
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Circular dependencies detected
-    ///
-    /// # Errors
-    ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
-    /// - Circular constraint dependencies are detected
-    /// - Constraint chains exceed reasonable depth limits
-    fn validate_constraint_circularity(assembly_view: &CilAssemblyView) -> Result<()> {
-        let tables = assembly_view
-            .tables()
-            .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
-
-        if let (Some(generic_param_table), Some(constraint_table)) = (
-            tables.table::<GenericParamRaw>(),
-            tables.table::<GenericParamConstraintRaw>(),
-        ) {
-            let mut param_constraints: HashMap<u32, Vec<u32>> = HashMap::new();
-
-            for constraint in constraint_table {
-                param_constraints
-                    .entry(constraint.owner)
-                    .or_default()
-                    .push(constraint.rid);
-            }
-
-            for param in generic_param_table {
-                let mut visited = HashSet::new();
-                let mut visiting = HashSet::new();
-
-                if Self::has_circular_constraint_dependency(
-                    param.rid,
-                    &param_constraints,
-                    &mut visited,
-                    &mut visiting,
-                ) {
-                    return Err(malformed_error!(
-                        "Circular constraint dependency detected involving GenericParam RID {}",
-                        param.rid
-                    ));
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Helper method to detect circular dependencies using depth-first search.
-    ///
-    /// # Arguments
-    ///
-    /// * `param_id` - Current parameter being checked
-    /// * `param_constraints` - Map of parameter to constraint dependencies
-    /// * `visited` - Set of fully processed parameters
-    /// * `visiting` - Set of parameters currently being processed (for cycle detection)
-    ///
-    /// # Returns
-    ///
-    /// * `true` - Circular dependency detected
-    /// * `false` - No circular dependency
-    fn has_circular_constraint_dependency(
-        param_id: u32,
-        param_constraints: &HashMap<u32, Vec<u32>>,
-        visited: &mut HashSet<u32>,
-        visiting: &mut HashSet<u32>,
-    ) -> bool {
-        if visited.contains(&param_id) {
-            return false;
-        }
-
-        if visiting.contains(&param_id) {
-            return true;
-        }
-
-        visiting.insert(param_id);
-
-        if let Some(constraints) = param_constraints.get(&param_id) {
-            for &constraint_id in constraints {
-                if visiting.contains(&constraint_id) {
-                    return true;
-                }
-            }
-        }
-
-        visiting.remove(&param_id);
-        visited.insert(param_id);
-        false
-    }
 }
 
 impl RawValidator for RawGenericConstraintValidator {
@@ -594,7 +491,6 @@ impl RawValidator for RawGenericConstraintValidator {
 
         Self::validate_constraint_types(assembly_view)?;
         Self::validate_parameter_flags(assembly_view)?;
-        Self::validate_constraint_circularity(assembly_view)?;
 
         Ok(())
     }

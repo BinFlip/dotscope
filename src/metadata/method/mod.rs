@@ -930,7 +930,7 @@ impl Method {
         &self,
         file: &File,
         blobs: &Blob,
-        sigs: &MetadataTable<StandAloneSigRaw>,
+        sigs: Option<&MetadataTable<StandAloneSigRaw>>,
         types: &Arc<TypeRegistry>,
         shared_visited: Arc<VisitedMap>,
     ) -> Result<()> {
@@ -945,38 +945,42 @@ impl Method {
 
             let mut body = MethodBody::from(&file.data()[method_offset..])?;
             if body.local_var_sig_token != 0 {
-                let local_var_sig_data = match sigs.get(body.local_var_sig_token & 0x00FF_FFFF) {
-                    Some(var_sig_row) => blobs.get(var_sig_row.signature as usize)?,
-                    None => {
-                        return Err(malformed_error!(
-                            "Failed to resolve signature - {}",
-                            body.local_var_sig_token & 0x00FF_FFFF
-                        ))
-                    }
-                };
-
-                let mut resolver = TypeResolver::new(types.clone());
-                let local_var_sig = parse_local_var_signature(local_var_sig_data)?;
-                for local_var in &local_var_sig.locals {
-                    let modifiers = Arc::new(boxcar::Vec::with_capacity(local_var.modifiers.len()));
-                    for var_mod in &local_var.modifiers {
-                        match types.get(&var_mod.modifier_type) {
-                            Some(var_mod_type) => _ = modifiers.push(var_mod_type.into()),
+                if let Some(sigs_table) = sigs {
+                    let local_var_sig_data =
+                        match sigs_table.get(body.local_var_sig_token & 0x00FF_FFFF) {
+                            Some(var_sig_row) => blobs.get(var_sig_row.signature as usize)?,
                             None => {
                                 return Err(malformed_error!(
-                                    "Failed to resolve type - {}",
-                                    var_mod.modifier_type.value()
+                                    "Failed to resolve signature - {}",
+                                    body.local_var_sig_token & 0x00FF_FFFF
                                 ))
                             }
-                        }
-                    }
+                        };
 
-                    self.local_vars.push(LocalVariable {
-                        modifiers,
-                        is_byref: local_var.is_byref,
-                        is_pinned: local_var.is_pinned,
-                        base: resolver.resolve(&local_var.base)?.into(),
-                    });
+                    let mut resolver = TypeResolver::new(types.clone());
+                    let local_var_sig = parse_local_var_signature(local_var_sig_data)?;
+                    for local_var in &local_var_sig.locals {
+                        let modifiers =
+                            Arc::new(boxcar::Vec::with_capacity(local_var.modifiers.len()));
+                        for var_mod in &local_var.modifiers {
+                            match types.get(&var_mod.modifier_type) {
+                                Some(var_mod_type) => _ = modifiers.push(var_mod_type.into()),
+                                None => {
+                                    return Err(malformed_error!(
+                                        "Failed to resolve type - {}",
+                                        var_mod.modifier_type.value()
+                                    ))
+                                }
+                            }
+                        }
+
+                        self.local_vars.push(LocalVariable {
+                            modifiers,
+                            is_byref: local_var.is_byref,
+                            is_pinned: local_var.is_pinned,
+                            base: resolver.resolve(&local_var.base)?.into(),
+                        });
+                    }
                 }
             }
 

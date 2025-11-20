@@ -9,7 +9,7 @@ use crate::{
         tables::{CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeDefRaw},
         token::Token,
     },
-    test::{get_clean_testfile, TestAssembly},
+    test::{get_testfile_wb, TestAssembly},
     Error, Result,
 };
 /// Test factory for RawOperationValidator following the golden pattern.
@@ -22,7 +22,7 @@ pub fn raw_operation_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
     // 1. Clean test assembly (should pass all operation validation when no modifications)
-    if let Some(clean_path) = get_clean_testfile() {
+    if let Some(clean_path) = get_testfile_wb() {
         assemblies.push(TestAssembly::new(clean_path, true));
     }
 
@@ -250,7 +250,7 @@ pub fn create_corrupted_changes_with_conflicting_inserts() -> AssemblyChanges {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/modification/operation.rs`
 pub fn create_assembly_with_invalid_rid_zero() -> Result<tempfile::NamedTempFile> {
-    let Some(clean_testfile) = get_clean_testfile() else {
+    let Some(clean_testfile) = get_testfile_wb() else {
         return Err(Error::Error("WindowsBase.dll not available".to_string()));
     };
 
@@ -289,7 +289,7 @@ pub fn create_assembly_with_invalid_rid_zero() -> Result<tempfile::NamedTempFile
 ///
 /// Originally from: `src/metadata/validation/validators/raw/modification/operation.rs`
 pub fn create_assembly_with_excessive_rid() -> Result<tempfile::NamedTempFile> {
-    let Some(clean_testfile) = get_clean_testfile() else {
+    let Some(clean_testfile) = get_testfile_wb() else {
         return Err(Error::Error("WindowsBase.dll not available".to_string()));
     };
 
@@ -319,7 +319,7 @@ pub fn create_assembly_with_excessive_rid() -> Result<tempfile::NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/modification/operation.rs`
 pub fn create_assembly_with_nonexistent_target() -> Result<tempfile::NamedTempFile> {
-    let Some(clean_testfile) = get_clean_testfile() else {
+    let Some(clean_testfile) = get_testfile_wb() else {
         return Err(Error::Error("WindowsBase.dll not available".to_string()));
     };
 
@@ -349,7 +349,7 @@ pub fn create_assembly_with_nonexistent_target() -> Result<tempfile::NamedTempFi
 ///
 /// Originally from: `src/metadata/validation/validators/raw/modification/operation.rs`
 pub fn create_assembly_with_update_after_delete() -> Result<tempfile::NamedTempFile> {
-    let Some(clean_testfile) = get_clean_testfile() else {
+    let Some(clean_testfile) = get_testfile_wb() else {
         return Err(Error::Error("WindowsBase.dll not available".to_string()));
     };
 
@@ -387,7 +387,7 @@ pub fn create_assembly_with_update_after_delete() -> Result<tempfile::NamedTempF
 ///
 /// Originally from: `src/metadata/validation/validators/raw/modification/operation.rs`
 pub fn create_assembly_with_excessive_updates() -> Result<tempfile::NamedTempFile> {
-    let Some(clean_testfile) = get_clean_testfile() else {
+    let Some(clean_testfile) = get_testfile_wb() else {
         return Err(Error::Error("WindowsBase.dll not available".to_string()));
     };
 
@@ -421,7 +421,7 @@ pub fn create_assembly_with_excessive_updates() -> Result<tempfile::NamedTempFil
 ///
 /// Originally from: `src/metadata/validation/validators/raw/modification/operation.rs`
 pub fn create_assembly_with_unordered_operations() -> Result<tempfile::NamedTempFile> {
-    let Some(clean_testfile) = get_clean_testfile() else {
+    let Some(clean_testfile) = get_testfile_wb() else {
         return Err(Error::Error("WindowsBase.dll not available".to_string()));
     };
 
@@ -460,7 +460,7 @@ pub fn create_assembly_with_unordered_operations() -> Result<tempfile::NamedTemp
 ///
 /// Originally from: `src/metadata/validation/validators/raw/modification/operation.rs`
 pub fn create_assembly_with_conflicting_inserts() -> Result<tempfile::NamedTempFile> {
-    let Some(clean_testfile) = get_clean_testfile() else {
+    let Some(clean_testfile) = get_testfile_wb() else {
         return Err(Error::Error("WindowsBase.dll not available".to_string()));
     };
 
@@ -506,7 +506,7 @@ pub fn create_temp_assembly_with_changes(
 
     use std::fs;
 
-    if let Some(clean_testfile) = get_clean_testfile() {
+    if let Some(clean_testfile) = get_testfile_wb() {
         fs::copy(clean_testfile, temp_path)?;
     }
 

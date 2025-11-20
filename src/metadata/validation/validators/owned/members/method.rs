@@ -78,7 +78,10 @@
 
 use crate::{
     metadata::{
-        method::{MethodAccessFlags, MethodImplCodeType, MethodModifiers, MethodVtableFlags},
+        method::{
+            MethodAccessFlags, MethodImplCodeType, MethodImplOptions, MethodModifiers,
+            MethodVtableFlags,
+        },
         validation::{
             context::{OwnedValidationContext, ValidationContext},
             traits::OwnedValidator,
@@ -459,24 +462,38 @@ impl OwnedMethodValidator {
                 }
             }
 
-            if (method.name.starts_with("get_")
-                || method.name.starts_with("set_")
-                || method.name.starts_with("add_")
-                || method.name.starts_with("remove_")
-                || method.name.starts_with("op_"))
+            // Only validate SPECIAL_NAME requirement for operator overloads
+            // Property accessors and event handlers are too varied in real-world .NET assemblies
+            // to reliably validate based on naming patterns alone
+            if method.name.starts_with("op_")
+                && method.flags_modifiers.contains(MethodModifiers::STATIC)
+                && (method.flags_access.contains(MethodAccessFlags::PUBLIC)
+                    || method
+                        .flags_access
+                        .contains(MethodAccessFlags::FAMILY_OR_ASSEMBLY))
                 && !method
                     .flags_modifiers
                     .contains(MethodModifiers::SPECIAL_NAME)
+                && !method
+                    .impl_code_type
+                    .intersects(MethodImplCodeType::RUNTIME)
+                && !method
+                    .impl_options
+                    .contains(MethodImplOptions::INTERNAL_CALL)
             {
                 return Err(Error::ValidationOwnedValidatorFailed {
                     validator: self.name().to_string(),
                     message: format!(
-                        "Method '{}' with special name pattern should have SPECIAL_NAME flag",
+                        "Operator overload '{}' should have SPECIAL_NAME flag",
                         method.name
                     ),
                     source: None,
                 });
             }
+
+            // Note: Property accessors (get_/set_) and event handlers (add_/remove_) validation
+            // is disabled as naming patterns alone are insufficient to distinguish between
+            // legitimate accessors and utility methods in real-world .NET assemblies
         }
 
         Ok(())
@@ -507,67 +524,75 @@ impl OwnedMethodValidator {
     fn validate_method_bodies(&self, context: &OwnedValidationContext) -> Result<()> {
         let methods = context.object().methods();
 
-        for entry in methods {
-            let method = entry.value();
+        for type_rc in context.target_assembly_types() {
+            for (_, method_ref) in type_rc.methods.iter() {
+                if let Some(method_token) = method_ref.token() {
+                    if let Some(method_entry) = methods.get(&method_token) {
+                        let method = method_entry.value();
 
-            if method.flags_modifiers.contains(MethodModifiers::ABSTRACT) && method.rva.is_some() {
-                return Err(Error::ValidationOwnedValidatorFailed {
-                    validator: self.name().to_string(),
-                    message: format!(
-                        "Abstract method '{}' should not have implementation (RVA)",
-                        method.name
-                    ),
-                    source: None,
-                });
-            }
+                        if method.flags_modifiers.contains(MethodModifiers::ABSTRACT)
+                            && method.rva.is_some()
+                        {
+                            return Err(Error::ValidationOwnedValidatorFailed {
+                                validator: self.name().to_string(),
+                                message: format!(
+                                    "Abstract method '{}' should not have implementation (RVA)",
+                                    method.name
+                                ),
+                                source: None,
+                            });
+                        }
 
-            if method
-                .flags_modifiers
-                .contains(MethodModifiers::PINVOKE_IMPL)
-                && method.rva.is_some()
-            {
-                return Err(Error::ValidationOwnedValidatorFailed {
-                    validator: self.name().to_string(),
-                    message: format!(
-                        "P/Invoke method '{}' should not have implementation (RVA)",
-                        method.name
-                    ),
-                    source: None,
-                });
-            }
+                        if method
+                            .flags_modifiers
+                            .contains(MethodModifiers::PINVOKE_IMPL)
+                            && method.rva.is_some()
+                        {
+                            return Err(Error::ValidationOwnedValidatorFailed {
+                                validator: self.name().to_string(),
+                                message: format!(
+                                    "P/Invoke method '{}' should not have implementation (RVA)",
+                                    method.name
+                                ),
+                                source: None,
+                            });
+                        }
 
-            if method
-                .impl_code_type
-                .intersects(MethodImplCodeType::RUNTIME)
-                && method.rva.is_some()
-            {
-                return Err(Error::ValidationOwnedValidatorFailed {
-                    validator: self.name().to_string(),
-                    message: format!(
-                        "Runtime method '{}' should not have implementation (RVA)",
-                        method.name
-                    ),
-                    source: None,
-                });
-            }
+                        if method
+                            .impl_code_type
+                            .intersects(MethodImplCodeType::RUNTIME)
+                            && method.rva.is_some()
+                        {
+                            return Err(Error::ValidationOwnedValidatorFailed {
+                                validator: self.name().to_string(),
+                                message: format!(
+                                    "Runtime method '{}' should not have implementation (RVA)",
+                                    method.name
+                                ),
+                                source: None,
+                            });
+                        }
 
-            if !method.flags_modifiers.contains(MethodModifiers::ABSTRACT)
-                && !method
-                    .flags_modifiers
-                    .contains(MethodModifiers::PINVOKE_IMPL)
-                && !method
-                    .impl_code_type
-                    .intersects(MethodImplCodeType::RUNTIME)
-                && method.rva.is_none()
-            {
-                return Err(Error::ValidationOwnedValidatorFailed {
-                    validator: self.name().to_string(),
-                    message: format!(
-                        "Concrete method '{}' must have implementation (RVA)",
-                        method.name
-                    ),
-                    source: None,
-                });
+                        if !method.flags_modifiers.contains(MethodModifiers::ABSTRACT)
+                            && !method
+                                .flags_modifiers
+                                .contains(MethodModifiers::PINVOKE_IMPL)
+                            && !method
+                                .impl_code_type
+                                .intersects(MethodImplCodeType::RUNTIME)
+                            && method.rva.is_none()
+                        {
+                            return Err(Error::ValidationOwnedValidatorFailed {
+                                validator: self.name().to_string(),
+                                message: format!(
+                                    "Concrete method '{}' must have implementation (RVA)",
+                                    method.name
+                                ),
+                                source: None,
+                            });
+                        }
+                    }
+                }
             }
         }
 

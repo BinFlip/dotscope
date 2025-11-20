@@ -6,7 +6,7 @@
 use crate::{
     cilassembly::{BuilderContext, CilAssembly},
     metadata::{cilassemblyview::CilAssemblyView, validation::ValidationConfig},
-    test::{get_clean_testfile, TestAssembly},
+    test::{get_testfile_wb, TestAssembly},
     Error, Result,
 };
 use tempfile::NamedTempFile;
@@ -20,7 +20,7 @@ use tempfile::NamedTempFile;
 pub fn raw_signature_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
-    if let Some(clean_path) = get_clean_testfile() {
+    if let Some(clean_path) = get_testfile_wb() {
         assemblies.push(TestAssembly::new(clean_path, true));
     }
 
@@ -98,7 +98,7 @@ pub fn raw_signature_validator_file_factory() -> Result<Vec<TestAssembly>> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/signature.rs`
 pub fn create_assembly_with_invalid_method_calling_convention() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
@@ -135,7 +135,7 @@ pub fn create_assembly_with_invalid_method_calling_convention() -> Result<NamedT
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/signature.rs`
 pub fn create_assembly_with_invalid_field_calling_convention() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
@@ -168,7 +168,7 @@ pub fn create_assembly_with_invalid_field_calling_convention() -> Result<NamedTe
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/signature.rs`
 pub fn create_assembly_with_malformed_compressed_integer() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
@@ -202,7 +202,7 @@ pub fn create_assembly_with_malformed_compressed_integer() -> Result<NamedTempFi
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/signature.rs`
 pub fn create_assembly_with_oversized_signature_blob() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);

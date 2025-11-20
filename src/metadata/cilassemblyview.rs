@@ -115,8 +115,10 @@ use crate::{
     file::File,
     metadata::{
         cor20header::Cor20Header,
+        identity::{AssemblyIdentity, AssemblyVersion, Identity},
         root::Root,
         streams::{Blob, Guid, StreamHeader, Strings, TablesHeader, UserStrings},
+        tables::AssemblyRaw,
         validation::ValidationEngine,
     },
     Error, Result, ValidationConfig,
@@ -678,6 +680,68 @@ impl CilAssemblyView {
         let engine = ValidationEngine::new(self, config)?;
         let result = engine.execute_stage1_validation(self, None)?;
         result.into_result()
+    }
+
+    /// Extract assembly identity from the Assembly metadata table.
+    ///
+    /// This method reads the Assembly table (0x20) from the metadata to construct
+    /// the complete AssemblyIdentity including name, version, culture, and strong name.
+    /// This is the proper way to get assembly identity information rather than relying
+    /// on file names or heuristics.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(AssemblyIdentity)` - Complete assembly identity extracted from metadata
+    /// * `Err(_)` - If Assembly table is missing, empty, or malformed
+    ///
+    /// # Errors
+    ///
+    /// This method returns an error if:
+    /// - The metadata tables are not available or corrupted
+    /// - The Assembly table (0x20) is missing or empty
+    /// - The Assembly table data cannot be parsed or converted to owned format
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::CilAssemblyView;
+    /// use std::path::Path;
+    ///
+    /// let view = CilAssemblyView::from_file(Path::new("assembly.dll"))?;
+    /// let identity = view.identity()?;
+    ///
+    /// println!("Assembly: {} v{}", identity.name, identity.version.major);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn identity(&self) -> Result<AssemblyIdentity> {
+        if let (Some(tables), Some(strings), Some(blobs)) =
+            (self.tables(), self.strings(), self.blobs())
+        {
+            if let Some(assembly_table) = tables.table::<AssemblyRaw>() {
+                if let Some(assembly_row) = assembly_table.iter().next() {
+                    let assembly = assembly_row.to_owned(strings, blobs)?;
+
+                    #[allow(clippy::cast_possible_truncation)]
+                    return Ok(AssemblyIdentity {
+                        name: assembly.name.clone(),
+                        version: AssemblyVersion {
+                            major: assembly.major_version as u16,
+                            minor: assembly.minor_version as u16,
+                            build: assembly.build_number as u16,
+                            revision: assembly.revision_number as u16,
+                        },
+                        culture: assembly.culture.clone(),
+                        strong_name: assembly.public_key.clone().map(Identity::PubKey),
+                        processor_architecture: None, // TODO: Extract from AssemblyOS/AssemblyProcessor if needed
+                    });
+                }
+            }
+        }
+
+        Err(Error::Error(
+            "Assembly table (0x20) is missing or empty - cannot extract assembly identity"
+                .to_string(),
+        ))
     }
 }
 

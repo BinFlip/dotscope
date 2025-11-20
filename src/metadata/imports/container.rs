@@ -516,7 +516,7 @@ impl UnifiedImportContainer {
                 // Add to name cache if imported by name
                 if let Some(ref func_name) = function.name {
                     self.unified_name_cache
-                        .entry(func_name.to_string())
+                        .entry(func_name.clone())
                         .or_default()
                         .push(ImportEntry::Native(NativeImportRef {
                             dll_name: dll_name.clone(),
@@ -568,7 +568,7 @@ impl UnifiedImportContainer {
         if let Some(descriptor) = self.native.get_descriptor(dll_name) {
             for function in &descriptor.functions {
                 if let Some(ref name) = function.name {
-                    functions.insert(name.to_string());
+                    functions.insert(name.clone());
                 } else if let Some(ordinal) = function.ordinal {
                     functions.insert(format!("#{ordinal}"));
                 }

@@ -71,14 +71,17 @@ use std::sync::Arc;
 
 use crate::{
     metadata::{
-        customattributes::{parse_custom_attribute_blob, CustomAttributeValue},
+        customattributes::{
+            parse_custom_attribute_blob, parse_custom_attribute_blob_with_registry,
+            CustomAttributeValue,
+        },
         streams::Blob,
         tables::{
             CodedIndex, CodedIndexType, CustomAttribute, CustomAttributeRc, MemberRefSignature,
             TableInfoRef, TableRow,
         },
         token::Token,
-        typesystem::CilTypeReference,
+        typesystem::{CilTypeReference, TypeRegistry},
     },
     Result,
 };
@@ -175,7 +178,12 @@ impl CustomAttributeRaw {
     ///
     /// This method is thread-safe and can be called concurrently from multiple threads.
     /// The resulting owned structure is also thread-safe for concurrent access.
-    pub fn to_owned<F>(&self, get_ref: F, blob: &Blob) -> Result<CustomAttributeRc>
+    pub fn to_owned<F>(
+        &self,
+        get_ref: F,
+        blob: &Blob,
+        type_registry: Option<&Arc<TypeRegistry>>,
+    ) -> Result<CustomAttributeRc>
     where
         F: Fn(&CodedIndex) -> CilTypeReference,
     {
@@ -243,7 +251,16 @@ impl CustomAttributeRaw {
             match &constructor_ref {
                 CilTypeReference::MethodDef(method_ref) => match method_ref.upgrade() {
                     Some(constructor) => {
-                        parse_custom_attribute_blob(blob, self.value, &constructor.params)?
+                        if let Some(registry) = type_registry {
+                            parse_custom_attribute_blob_with_registry(
+                                blob,
+                                self.value,
+                                &constructor.params,
+                                registry,
+                            )?
+                        } else {
+                            parse_custom_attribute_blob(blob, self.value, &constructor.params)?
+                        }
                     }
                     None => CustomAttributeValue {
                         fixed_args: vec![],
@@ -252,7 +269,16 @@ impl CustomAttributeRaw {
                 },
                 CilTypeReference::MemberRef(member_ref) => match &member_ref.signature {
                     MemberRefSignature::Method(_method_sig) => {
-                        parse_custom_attribute_blob(blob, self.value, &member_ref.params)?
+                        if let Some(registry) = type_registry {
+                            parse_custom_attribute_blob_with_registry(
+                                blob,
+                                self.value,
+                                &member_ref.params,
+                                registry,
+                            )?
+                        } else {
+                            parse_custom_attribute_blob(blob, self.value, &member_ref.params)?
+                        }
                     }
                     MemberRefSignature::Field(_) => CustomAttributeValue {
                         fixed_args: vec![],

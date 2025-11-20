@@ -129,7 +129,7 @@ impl MethodSpecRaw {
         let instantiation = parse_method_spec_signature(blob.get(self.instantiation as usize)?)?;
         let generic_args = Arc::new(boxcar::Vec::with_capacity(instantiation.generic_args.len()));
 
-        let mut resolver = TypeResolver::new(types.clone());
+        let mut resolver = TypeResolver::new(types.clone()).with_parent(self.token);
         for type_sig in &instantiation.generic_args {
             let resolved_type = resolver.resolve(type_sig)?;
             generic_args.push(resolved_type.into());

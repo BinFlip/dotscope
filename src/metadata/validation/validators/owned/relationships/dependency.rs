@@ -126,9 +126,7 @@ impl OwnedDependencyValidator {
     /// * `Ok(())` - Dependency graph integrity is valid
     /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Graph integrity violations found
     fn validate_dependency_graph_integrity(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
-
-        for type_entry in types.all_types() {
+        for type_entry in context.target_assembly_types() {
             // Validate base type dependencies
             if let Some(base_type) = type_entry.base() {
                 if base_type.name.is_empty() {
@@ -241,12 +239,11 @@ impl OwnedDependencyValidator {
         &self,
         context: &OwnedValidationContext,
     ) -> Result<()> {
-        let types = context.object().types();
         let methods = context.object().methods();
 
         // Build complete dependency graph
         let mut dependency_graph = std::collections::HashMap::new();
-        for type_entry in types.all_types() {
+        for type_entry in context.target_assembly_types() {
             let token = type_entry.token;
             let mut dependencies = Vec::new();
 
@@ -271,7 +268,7 @@ impl OwnedDependencyValidator {
         }
 
         // Validate method dependencies
-        for type_entry in types.all_types() {
+        for type_entry in context.target_assembly_types() {
             for (_, method_ref) in type_entry.methods.iter() {
                 if let Some(method_token) = method_ref.token() {
                     if let Some(method) = methods.get(&method_token) {
@@ -326,21 +323,36 @@ impl OwnedDependencyValidator {
     /// * `Ok(())` - Dependency ordering is correct
     /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Dependency ordering violations found
     fn validate_dependency_ordering(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
-
-        for type_entry in types.all_types() {
+        for type_entry in context.target_assembly_types() {
             // Validate inheritance ordering
             if let Some(base_type) = type_entry.base() {
-                // Check for self-referential inheritance (should be caught by circularity validator)
+                // Check for self-referential inheritance
+                // IMPORTANT: Only flag self-reference if both types are from the same assembly.
+                // Tokens are only unique within an assembly, so we need to check assembly context.
+                // A type is local (from target assembly) if get_external() returns None.
+                // A type is external if get_external() returns Some(...).
                 if base_type.token == type_entry.token {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
-                        validator: self.name().to_string(),
-                        message: format!(
-                            "Type '{}' has self-referential inheritance dependency",
-                            type_entry.name
-                        ),
-                        source: None,
-                    });
+                    let type_is_local = type_entry.get_external().is_none();
+                    let base_is_local = base_type.get_external().is_none();
+
+                    // Only flag self-reference if both are local (same assembly)
+                    // or both are external from the same source
+                    let is_same_assembly = match (type_is_local, base_is_local) {
+                        (true, true) => true, // Both local to target assembly
+                        // Both external or one local/one external - different assemblies
+                        _ => false,
+                    };
+
+                    if is_same_assembly {
+                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                            validator: self.name().to_string(),
+                            message: format!(
+                                "Type '{}' has self-referential inheritance dependency",
+                                type_entry.name
+                            ),
+                            source: None,
+                        });
+                    }
                 }
 
                 // Validate that base type is loaded/resolvable before derived type
@@ -355,15 +367,24 @@ impl OwnedDependencyValidator {
             for (_, interface_ref) in type_entry.interfaces.iter() {
                 if let Some(interface_type) = interface_ref.upgrade() {
                     // Check for self-referential interface implementation
+                    // Only flag if both types are from the same assembly
                     if interface_type.token == type_entry.token {
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
-                            validator: self.name().to_string(),
-                            message: format!(
-                                "Type '{}' has self-referential interface implementation dependency",
-                                type_entry.name
-                            ),
-                            source: None,
-                        });
+                        let type_is_local = type_entry.get_external().is_none();
+                        let interface_is_local = interface_type.get_external().is_none();
+
+                        let is_same_assembly =
+                            matches!((type_is_local, interface_is_local), (true, true));
+
+                        if is_same_assembly {
+                            return Err(crate::Error::ValidationOwnedValidatorFailed {
+                                validator: self.name().to_string(),
+                                message: format!(
+                                    "Type '{}' has self-referential interface implementation dependency",
+                                    type_entry.name
+                                ),
+                                source: None,
+                            });
+                        }
                     }
                 }
             }
@@ -372,15 +393,24 @@ impl OwnedDependencyValidator {
             for (_, nested_ref) in type_entry.nested_types.iter() {
                 if let Some(nested_type) = nested_ref.upgrade() {
                     // Check for self-referential nested type containment
+                    // Only flag if both types are from the same assembly
                     if nested_type.token == type_entry.token {
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
-                            validator: self.name().to_string(),
-                            message: format!(
-                                "Type '{}' has self-referential nested type dependency",
-                                type_entry.name
-                            ),
-                            source: None,
-                        });
+                        let type_is_local = type_entry.get_external().is_none();
+                        let nested_is_local = nested_type.get_external().is_none();
+
+                        let is_same_assembly =
+                            matches!((type_is_local, nested_is_local), (true, true));
+
+                        if is_same_assembly {
+                            return Err(crate::Error::ValidationOwnedValidatorFailed {
+                                validator: self.name().to_string(),
+                                message: format!(
+                                    "Type '{}' has self-referential nested type dependency",
+                                    type_entry.name
+                                ),
+                                source: None,
+                            });
+                        }
                     }
                 }
             }

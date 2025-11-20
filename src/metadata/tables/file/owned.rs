@@ -61,6 +61,7 @@ use crate::metadata::{
 ///
 /// # ECMA-335 Reference
 /// See ECMA-335, Partition II, §22.19 for the complete File table specification.
+#[derive(Debug)]
 pub struct File {
     /// The row identifier in the File table.
     ///

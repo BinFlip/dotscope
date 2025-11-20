@@ -53,8 +53,8 @@ impl MetadataLoader for LocalConstantLoader {
         Ok(())
     }
 
-    fn table_id(&self) -> TableId {
-        TableId::LocalConstant
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::LocalConstant)
     }
 
     fn dependencies(&self) -> &'static [TableId] {

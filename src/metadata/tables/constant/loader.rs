@@ -129,8 +129,8 @@ impl MetadataLoader for ConstantLoader {
     ///
     /// Provides the [`crate::prelude::TableId::Constant`] constant used to identify this table
     /// type within the metadata loading framework.
-    fn table_id(&self) -> TableId {
-        TableId::Constant
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::Constant)
     }
 
     /// Returns the table dependencies for Constant loading

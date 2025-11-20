@@ -127,6 +127,11 @@ jobs:
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       
+    - name: Setup .NET SDK (for benchmarks that may use mono tests)
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+      
     - name: Setup Rust cache
       uses: Swatinem/rust-cache@v2
       

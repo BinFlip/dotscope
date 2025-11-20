@@ -182,7 +182,7 @@ impl Param {
             }
         }
 
-        let mut resolver = TypeResolver::new(types);
+        let mut resolver = TypeResolver::new(types).with_parent(self.token);
         let resolved_type = resolver.resolve(&signature.base)?;
 
         // Handle the case where multiple methods share the same parameter

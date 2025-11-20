@@ -494,7 +494,7 @@ impl EventBuilder {
                 backing_field_attributes,
             } => {
                 // Generate backing field name if not provided
-                let field_name = backing_field_name.unwrap_or_else(|| self.name.to_string());
+                let field_name = backing_field_name.unwrap_or_else(|| self.name.clone());
 
                 // Create backing delegate field
                 let field_sig = SignatureField {

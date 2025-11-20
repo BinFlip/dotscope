@@ -54,6 +54,7 @@ use crate::{
     metadata::{
         loader::{LoaderContext, MetadataLoader},
         tables::{TableId, TypeDefRaw},
+        typesystem::CilTypeReference,
     },
     Result,
 };
@@ -99,20 +100,13 @@ use crate::{
 pub(crate) struct TypeDefLoader;
 
 impl MetadataLoader for TypeDefLoader {
-    /// Loads and processes all `TypeDef` table entries from the metadata using parallel two-phase loading.
+    /// Loads and processes all `TypeDef` table entries from the metadata.
     ///
-    /// This method implements parallel two-phase loading to handle forward references in TypeDef->TypeDef
-    /// inheritance relationships:
+    /// This method loads all TypeDef entries in parallel without resolving base types,
+    /// ensuring all types are available in the type registry for subsequent lookups.
     ///
-    /// **Phase 1**: Load all TypeDef entries in parallel without resolving base types to ensure all types
-    /// are available in the type registry for subsequent lookups.
-    ///
-    /// **Phase 2**: Resolve base types in parallel for all loaded TypeDef entries now that all types
-    /// are available for reference resolution.
-    ///
-    /// This approach fixes the forward reference resolution issue where types referencing
-    /// base types that appear later in the TypeDef table would fail to resolve properly, while
-    /// leveraging parallel processing for improved performance on large assemblies.
+    /// **Note**: Base type resolution is handled separately by the InheritanceResolver
+    /// to avoid circular dependencies and provide unified inheritance processing.
     ///
     /// ## Arguments
     ///
@@ -125,6 +119,11 @@ impl MetadataLoader for TypeDefLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
             if let Some(table) = header.table::<TypeDefRaw>() {
+                let current_assembly_ref = context
+                    .assembly
+                    .get()
+                    .map(|assembly| CilTypeReference::Assembly(assembly.clone()));
+
                 table.par_iter().try_for_each(|row| -> Result<()> {
                     let type_def = row.to_owned(
                         |coded_index| context.get_ref(coded_index),
@@ -134,21 +133,11 @@ impl MetadataLoader for TypeDefLoader {
                         context.method_def,
                         &context.method_ptr,
                         table,
-                        false, // Skip base type resolution in Phase 1
+                        false, // Skip base type resolution - handled by InheritanceResolver
+                        current_assembly_ref.clone(),
                     )?;
 
-                    context.types.insert(type_def);
-                    Ok(())
-                })?;
-
-                table.par_iter().try_for_each(|row| -> Result<()> {
-                    if let Some(base_type_ref) =
-                        row.resolve_base_type(|coded_index| context.get_ref(coded_index))
-                    {
-                        if let Some(type_def) = context.types.get(&row.token) {
-                            let _ = type_def.set_base(base_type_ref);
-                        }
-                    }
+                    context.types.insert(&type_def);
                     Ok(())
                 })?;
             }
@@ -161,8 +150,8 @@ impl MetadataLoader for TypeDefLoader {
     /// ## Returns
     ///
     /// [`TableId::TypeDef`] (0x02) - The metadata table identifier
-    fn table_id(&self) -> TableId {
-        TableId::TypeDef
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::TypeDef)
     }
 
     /// Returns the dependency list for `TypeDef` table loading.

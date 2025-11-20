@@ -1,8 +1,8 @@
-//! Legacy helper functions and utilities
+//! Helper functions and utilities for testing
 //!
-//! This module contains the original helper functions preserved for backward
-//! compatibility. These functions are thin wrappers around the new builder
-//! pattern APIs.
+//! This module contains helper functions for creating test data structures
+//! and mock objects. It includes both legacy helpers for backward compatibility
+//! and new specialized helpers for different testing scenarios.
 
 use crate::metadata::{
     method::MethodRc,
@@ -14,7 +14,8 @@ use crate::metadata::{
 use super::builders::{
     AssemblyRefBuilder, CilTypeBuilder, FileBuilder, MethodBuilder, ModuleRefBuilder,
 };
-// pub use super::builders::types::create_exportedtype; // TODO: Integrate when used
+
+pub mod dependencies;
 
 // Helper function to create a ModuleRef
 pub fn create_module_ref(rid: u32, name: &str) -> ModuleRefRc {

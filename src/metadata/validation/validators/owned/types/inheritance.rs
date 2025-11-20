@@ -86,8 +86,7 @@ use crate::{
     metadata::{
         method::{Method, MethodMap, MethodModifiers},
         tables::TypeAttributes,
-        token::Token,
-        typesystem::{CilFlavor, CilType, CilTypeRefList, TypeRegistry},
+        typesystem::{CilFlavor, CilType, CilTypeRc, CilTypeRefList},
         validation::{
             context::{OwnedValidationContext, ValidationContext},
             traits::OwnedValidator,
@@ -95,9 +94,11 @@ use crate::{
     },
     Error, Result,
 };
+use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
     mem,
+    sync::Arc,
 };
 
 /// Foundation validator for inheritance hierarchies, circular dependencies, interface implementation, and method inheritance.
@@ -141,31 +142,32 @@ pub struct OwnedInheritanceValidator;
 
 /// Fast method-to-type mapping for efficient method ownership lookup
 struct MethodTypeMapping {
-    /// Maps method token to the type token that owns it
-    method_to_type: HashMap<Token, Token>,
-    /// Maps type token to all methods it owns
-    type_to_methods: HashMap<Token, Vec<Token>>,
+    /// Maps method address to the type address that owns it
+    method_to_type: HashMap<usize, usize>,
+    /// Maps type address to all method addresses it owns
+    type_to_methods: HashMap<usize, Vec<usize>>,
 }
 
 impl MethodTypeMapping {
-    /// Builds the method-to-type mapping for fast lookups
-    fn new(types: &TypeRegistry) -> Self {
+    /// Builds the method-to-type mapping for fast lookups using cross-assembly safe addresses
+    fn new(target_types: Vec<CilTypeRc>) -> Self {
         let mut method_to_type = HashMap::new();
-        let mut type_to_methods: HashMap<Token, Vec<Token>> = HashMap::new();
+        let mut type_to_methods: HashMap<usize, Vec<usize>> = HashMap::new();
 
-        for type_entry in types.all_types() {
-            let type_token = type_entry.token;
+        for type_entry in target_types {
+            let type_address = Arc::as_ptr(&type_entry) as usize;
             let mut type_methods = Vec::new();
 
             for (_, method_ref) in type_entry.methods.iter() {
-                if let Some(method_token) = method_ref.token() {
-                    method_to_type.insert(method_token, type_token);
-                    type_methods.push(method_token);
+                if let Some(method_rc) = method_ref.upgrade() {
+                    let method_address = Arc::as_ptr(&method_rc) as usize;
+                    method_to_type.insert(method_address, type_address);
+                    type_methods.push(method_address);
                 }
             }
 
             if !type_methods.is_empty() {
-                type_to_methods.insert(type_token, type_methods);
+                type_to_methods.insert(type_address, type_methods);
             }
         }
 
@@ -176,14 +178,14 @@ impl MethodTypeMapping {
     }
 
     /// Fast check if a method belongs to a specific type (O(1) lookup)
-    fn method_belongs_to_type(&self, method_token: Token, type_token: Token) -> bool {
-        self.method_to_type.get(&method_token) == Some(&type_token)
+    fn method_belongs_to_type(&self, method_address: usize, type_address: usize) -> bool {
+        self.method_to_type.get(&method_address) == Some(&type_address)
     }
 
     /// Get all methods for a specific type (O(1) lookup)
-    fn get_type_methods(&self, type_token: Token) -> &[Token] {
+    fn get_type_methods(&self, type_address: usize) -> &[usize] {
         self.type_to_methods
-            .get(&type_token)
+            .get(&type_address)
             .map_or(&[], Vec::as_slice)
     }
 }
@@ -217,19 +219,12 @@ impl OwnedInheritanceValidator {
         &self,
         context: &OwnedValidationContext,
     ) -> Result<()> {
-        let types = context.object().types();
         let mut visited = HashSet::new();
         let mut visiting = HashSet::new();
 
-        for type_entry in types.all_types() {
+        for type_entry in context.target_assembly_types() {
             if !visited.contains(&type_entry.token.value()) {
-                self.check_inheritance_cycles(
-                    &type_entry,
-                    &mut visited,
-                    &mut visiting,
-                    context,
-                    0,
-                )?;
+                self.check_inheritance_cycles(type_entry, &mut visited, &mut visiting, context, 0)?;
             }
         }
 
@@ -305,25 +300,15 @@ impl OwnedInheritanceValidator {
     /// Ensures that base types are accessible from derived types and that
     /// inheritance relationships are semantically valid.
     fn validate_base_type_accessibility(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
-
-        let all_types = types.all_types();
-        for type_entry in all_types {
+        for type_entry in context.target_assembly_types() {
             if let Some(base_type) = type_entry.base() {
-                if base_type.flags & 0x0000_0100 != 0 {
+                if base_type.flags & TypeAttributes::SEALED != 0 {
                     let derived_fullname = type_entry.fullname();
                     let base_fullname = base_type.fullname();
                     let is_self_reference = derived_fullname == base_fullname;
-                    let is_generic_relationship = (derived_fullname.contains('`')
-                        || base_fullname.contains('`'))
-                        && (derived_fullname
-                            .starts_with(base_fullname.split('`').next().unwrap_or(""))
-                            || base_fullname
-                                .starts_with(derived_fullname.split('`').next().unwrap_or("")));
-                    let is_pointer_relationship = derived_fullname.ends_with('*')
-                        && derived_fullname.trim_end_matches('*') == base_fullname;
-                    let is_array_relationship = derived_fullname.ends_with("[]")
-                        && derived_fullname.trim_end_matches("[]") == base_fullname;
+                    let is_generic_relationship = type_entry.is_generic_of(&base_fullname);
+                    let is_pointer_relationship = type_entry.is_pointer_to(&base_fullname);
+                    let is_array_relationship = type_entry.is_array_of(&base_fullname);
 
                     let is_system_type = base_type.namespace.starts_with("System");
                     let is_value_type_inheritance = base_type.fullname() == "System.ValueType"
@@ -350,14 +335,18 @@ impl OwnedInheritanceValidator {
                 if base_type.flags & TypeAttributes::INTERFACE != 0 {
                     let derived_fullname = type_entry.fullname();
                     let base_fullname = base_type.fullname();
-                    let is_array_relationship = derived_fullname.ends_with("[]")
-                        && derived_fullname.trim_end_matches("[]") == base_fullname;
-                    let is_pointer_relationship = derived_fullname.ends_with('*')
-                        && derived_fullname.trim_end_matches('*') == base_fullname;
+                    let is_array_relationship = type_entry.is_array_of(&base_fullname);
+                    let is_pointer_relationship = type_entry.is_pointer_to(&base_fullname);
+                    let is_self_reference = derived_fullname == base_fullname;
+                    let is_generic_self_reference = derived_fullname.contains('`')
+                        && base_fullname.contains('`')
+                        && derived_fullname.split('`').next() == base_fullname.split('`').next();
 
                     if type_entry.flags & TypeAttributes::INTERFACE == 0
                         && !is_array_relationship
                         && !is_pointer_relationship
+                        && !is_self_reference
+                        && !is_generic_self_reference
                     {
                         return Err(Error::ValidationOwnedValidatorFailed {
                             validator: self.name().to_string(),
@@ -374,14 +363,10 @@ impl OwnedInheritanceValidator {
                 let base_visibility = base_type.flags & TypeAttributes::VISIBILITY_MASK;
 
                 let base_fullname = base_type.fullname();
-                let derived_fullname = type_entry.fullname();
                 let is_system_type = base_fullname.starts_with("System.");
-                let is_generic_relationship = derived_fullname.contains('`')
-                    && derived_fullname.starts_with(base_fullname.split('`').next().unwrap_or(""));
-                let is_array_relationship = derived_fullname.ends_with("[]")
-                    && derived_fullname.trim_end_matches("[]") == base_fullname;
-                let is_pointer_relationship = derived_fullname.ends_with('*')
-                    && derived_fullname.trim_end_matches('*') == base_fullname;
+                let is_generic_relationship = type_entry.is_generic_of(&base_fullname);
+                let is_array_relationship = type_entry.is_array_of(&base_fullname);
+                let is_pointer_relationship = type_entry.is_pointer_to(&base_fullname);
 
                 if !is_system_type
                     && !is_generic_relationship
@@ -402,22 +387,19 @@ impl OwnedInheritanceValidator {
                 let derived_fullname = type_entry.fullname();
                 let base_fullname = base_type.fullname();
                 let is_self_reference = derived_fullname == base_fullname;
-                let is_generic_relationship = derived_fullname.contains('`')
-                    && derived_fullname.starts_with(base_fullname.split('`').next().unwrap_or(""));
-                let is_array_relationship = derived_fullname.ends_with("[]")
-                    && derived_fullname.trim_end_matches("[]") == base_fullname;
-                let is_pointer_relationship = derived_fullname.ends_with('*')
-                    && derived_fullname.trim_end_matches('*') == base_fullname;
+                let is_generic_relationship = type_entry.is_generic_of(&base_fullname);
+                let is_array_relationship = type_entry.is_array_of(&base_fullname);
+                let is_pointer_relationship = type_entry.is_pointer_to(&base_fullname);
+
                 let is_system_relationship =
                     derived_fullname.starts_with("System.") || base_fullname.starts_with("System.");
-
                 if !is_self_reference
                     && !is_generic_relationship
                     && !is_array_relationship
                     && !is_pointer_relationship
                     && !is_system_relationship
                 {
-                    self.validate_type_flavor_inheritance(&type_entry, &base_type)?;
+                    self.validate_type_flavor_inheritance(type_entry, &base_type)?;
                 }
             }
         }
@@ -433,53 +415,55 @@ impl OwnedInheritanceValidator {
         &self,
         context: &OwnedValidationContext,
     ) -> Result<()> {
-        let types = context.object().types();
+        context
+            .target_assembly_types()
+            .par_iter()
+            .try_for_each(|type_entry| -> Result<()> {
+                for (_, interface_ref) in type_entry.interfaces.iter() {
+                    if let Some(interface_type) = interface_ref.upgrade() {
+                        let is_system_interface = interface_type.fullname().starts_with("System.");
+                        if interface_type.flags & TypeAttributes::INTERFACE == 0
+                            && !is_system_interface
+                        {
+                            return Err(Error::ValidationOwnedValidatorFailed {
+                                validator: self.name().to_string(),
+                                message: format!(
+                                    "Type '{}' tries to implement non-interface type '{}'",
+                                    type_entry.name, interface_type.name
+                                ),
+                                source: None,
+                            });
+                        }
 
-        for type_entry in types.all_types() {
-            for (_, interface_ref) in type_entry.interfaces.iter() {
-                if let Some(interface_type) = interface_ref.upgrade() {
-                    let is_system_interface = interface_type.fullname().starts_with("System.");
-                    if interface_type.flags & TypeAttributes::INTERFACE == 0 && !is_system_interface
-                    {
-                        return Err(Error::ValidationOwnedValidatorFailed {
-                            validator: self.name().to_string(),
-                            message: format!(
-                                "Type '{}' tries to implement non-interface type '{}'",
-                                type_entry.name, interface_type.name
-                            ),
-                            source: None,
-                        });
-                    }
+                        let type_visibility = type_entry.flags & TypeAttributes::VISIBILITY_MASK;
+                        let interface_visibility =
+                            interface_type.flags & TypeAttributes::VISIBILITY_MASK;
 
-                    let type_visibility = type_entry.flags & TypeAttributes::VISIBILITY_MASK;
-                    let interface_visibility =
-                        interface_type.flags & TypeAttributes::VISIBILITY_MASK;
-
-                    let is_system_interface = interface_type.fullname().starts_with("System.");
-                    if !is_system_interface
-                        && !Self::is_accessible_interface_implementation(
-                            type_visibility,
-                            interface_visibility,
-                        )
-                    {
-                        return Err(Error::ValidationOwnedValidatorFailed {
-                            validator: self.name().to_string(),
-                            message: format!(
-                                "Type '{}' cannot implement less accessible interface '{}'",
-                                type_entry.name, interface_type.name
-                            ),
-                            source: None,
-                        });
+                        let is_system_interface = interface_type.fullname().starts_with("System.");
+                        if !is_system_interface
+                            && !Self::is_accessible_interface_implementation(
+                                type_visibility,
+                                interface_visibility,
+                            )
+                        {
+                            return Err(Error::ValidationOwnedValidatorFailed {
+                                validator: self.name().to_string(),
+                                message: format!(
+                                    "Type '{}' cannot implement less accessible interface '{}'",
+                                    type_entry.name, interface_type.name
+                                ),
+                                source: None,
+                            });
+                        }
                     }
                 }
-            }
 
-            if type_entry.interfaces.count() > 1 {
-                Self::validate_interface_compatibility(&type_entry.interfaces);
-            }
-        }
+                if type_entry.interfaces.count() > 1 {
+                    Self::validate_interface_compatibility(&type_entry.interfaces);
+                }
 
-        Ok(())
+                Ok(())
+            })
     }
 
     /// Validates abstract and concrete type inheritance rules.
@@ -490,21 +474,22 @@ impl OwnedInheritanceValidator {
         &self,
         context: &OwnedValidationContext,
     ) -> Result<()> {
-        let types = context.object().types();
+        context
+            .target_assembly_types()
+            .par_iter()
+            .try_for_each(|type_entry| -> Result<()> {
+                let flags = type_entry.flags;
 
-        for type_entry in types.all_types() {
-            let flags = type_entry.flags;
+                if flags & TypeAttributes::ABSTRACT == 0 && flags & TypeAttributes::INTERFACE != 0 {
+                    return Err(Error::ValidationOwnedValidatorFailed {
+                        validator: self.name().to_string(),
+                        message: format!("Interface '{}' must be abstract", type_entry.name),
+                        source: None,
+                    });
+                }
 
-            if flags & TypeAttributes::ABSTRACT == 0 && flags & TypeAttributes::INTERFACE != 0 {
-                return Err(Error::ValidationOwnedValidatorFailed {
-                    validator: self.name().to_string(),
-                    message: format!("Interface '{}' must be abstract", type_entry.name),
-                    source: None,
-                });
-            }
-        }
-
-        Ok(())
+                Ok(())
+            })
     }
 
     /// Validates type flavor inheritance consistency.
@@ -518,8 +503,11 @@ impl OwnedInheritanceValidator {
 
         match (derived_flavor, base_flavor) {
             (CilFlavor::ValueType, CilFlavor::ValueType) |
-            (CilFlavor::Class, CilFlavor::Class | CilFlavor::Object) |
-            (CilFlavor::Interface, CilFlavor::Interface) => Ok(()),
+            (CilFlavor::Class, CilFlavor::Class | CilFlavor::Object | CilFlavor::GenericInstance) |
+            (CilFlavor::Interface, CilFlavor::Interface) |
+            (CilFlavor::Array { .. }, CilFlavor::Array { .. }) | // Arrays can inherit from other arrays (e.g. T[][] from T[])
+            (CilFlavor::Array { .. }, CilFlavor::Class | CilFlavor::ValueType | CilFlavor::Interface) | // Arrays can inherit from their element types
+            (CilFlavor::GenericInstance, _) => Ok(()), // Generic instances can inherit from any type
             (CilFlavor::ValueType, CilFlavor::Object) => {
                 if base_type.fullname() == "System.Object" {
                     Ok(())
@@ -559,38 +547,185 @@ impl OwnedInheritanceValidator {
     }
 
     /// Checks if inheritance is accessible based on visibility rules.
+    ///
+    /// Implements the complete .NET accessibility matrix for type inheritance
+    /// according to ECMA-335 specifications. Each derived type visibility level
+    /// defines which base type visibility levels can be inherited from.
     fn is_accessible_inheritance(derived_visibility: u32, base_visibility: u32) -> bool {
-        if derived_visibility == TypeAttributes::PUBLIC {
-            return base_visibility == TypeAttributes::PUBLIC;
-        }
+        match derived_visibility {
+            TypeAttributes::PUBLIC => {
+                // Public types can only inherit from public base types
+                base_visibility == TypeAttributes::PUBLIC
+                    || base_visibility == TypeAttributes::NESTED_PUBLIC
+            }
 
-        if derived_visibility == TypeAttributes::NOT_PUBLIC {
-            return base_visibility == TypeAttributes::NOT_PUBLIC
-                || base_visibility == TypeAttributes::PUBLIC;
-        }
+            TypeAttributes::NOT_PUBLIC => {
+                // Internal types can inherit from any base type visible within same assembly
+                base_visibility == TypeAttributes::NOT_PUBLIC
+                    || base_visibility == TypeAttributes::PUBLIC
+                    || base_visibility == TypeAttributes::NESTED_PUBLIC
+                    || base_visibility == TypeAttributes::NESTED_ASSEMBLY
+                    || base_visibility == TypeAttributes::NESTED_FAM_OR_ASSEM
+            }
 
-        if derived_visibility >= TypeAttributes::NESTED_PUBLIC {
-            return true;
-        }
+            TypeAttributes::NESTED_PUBLIC => {
+                // Nested public types can inherit from base types accessible to their enclosing type
+                base_visibility == TypeAttributes::PUBLIC
+                    || base_visibility == TypeAttributes::NESTED_PUBLIC
+            }
 
-        false
+            TypeAttributes::NESTED_PRIVATE => {
+                // Nested private types can inherit from any base type accessible within same assembly and enclosing type
+                base_visibility == TypeAttributes::PUBLIC
+                    || base_visibility == TypeAttributes::NOT_PUBLIC  // Assembly-level types
+                    || base_visibility == TypeAttributes::NESTED_PUBLIC
+                    || base_visibility == TypeAttributes::NESTED_PRIVATE
+                    || base_visibility == TypeAttributes::NESTED_FAMILY
+                    || base_visibility == TypeAttributes::NESTED_ASSEMBLY
+                    || base_visibility == TypeAttributes::NESTED_FAM_AND_ASSEM
+                    || base_visibility == TypeAttributes::NESTED_FAM_OR_ASSEM
+            }
+
+            TypeAttributes::NESTED_FAMILY => {
+                // Nested family (protected) types can inherit from family-accessible base types
+                base_visibility == TypeAttributes::PUBLIC
+                    || base_visibility == TypeAttributes::NESTED_PUBLIC
+                    || base_visibility == TypeAttributes::NESTED_FAMILY
+                    || base_visibility == TypeAttributes::NESTED_FAM_AND_ASSEM
+                    || base_visibility == TypeAttributes::NESTED_FAM_OR_ASSEM
+            }
+
+            TypeAttributes::NESTED_ASSEMBLY => {
+                // Nested assembly (internal) types can inherit from assembly-accessible base types
+                base_visibility == TypeAttributes::NOT_PUBLIC
+                    || base_visibility == TypeAttributes::PUBLIC
+                    || base_visibility == TypeAttributes::NESTED_PUBLIC
+                    || base_visibility == TypeAttributes::NESTED_ASSEMBLY
+                    || base_visibility == TypeAttributes::NESTED_FAM_AND_ASSEM
+                    || base_visibility == TypeAttributes::NESTED_FAM_OR_ASSEM
+            }
+
+            TypeAttributes::NESTED_FAM_AND_ASSEM => {
+                // Nested family and assembly (protected internal, intersection)
+                base_visibility == TypeAttributes::NOT_PUBLIC
+                    || base_visibility == TypeAttributes::PUBLIC
+                    || base_visibility == TypeAttributes::NESTED_PUBLIC
+                    || base_visibility == TypeAttributes::NESTED_FAMILY
+                    || base_visibility == TypeAttributes::NESTED_ASSEMBLY
+                    || base_visibility == TypeAttributes::NESTED_FAM_AND_ASSEM
+                    || base_visibility == TypeAttributes::NESTED_FAM_OR_ASSEM
+            }
+
+            TypeAttributes::NESTED_FAM_OR_ASSEM => {
+                // Nested family or assembly (protected internal, union)
+                base_visibility == TypeAttributes::NOT_PUBLIC
+                    || base_visibility == TypeAttributes::PUBLIC
+                    || base_visibility == TypeAttributes::NESTED_PUBLIC
+                    || base_visibility == TypeAttributes::NESTED_FAMILY
+                    || base_visibility == TypeAttributes::NESTED_ASSEMBLY
+                    || base_visibility == TypeAttributes::NESTED_FAM_AND_ASSEM
+                    || base_visibility == TypeAttributes::NESTED_FAM_OR_ASSEM
+            }
+
+            _ => {
+                // Unknown visibility - conservative approach allows inheritance
+                // This handles potential future visibility levels or parsing errors
+                true
+            }
+        }
     }
 
     /// Checks if interface implementation is accessible based on visibility rules.
+    ///
+    /// Implements the complete .NET accessibility matrix for interface implementation
+    /// according to ECMA-335 specifications. Each type visibility level defines
+    /// which interface visibility levels can be implemented.
     fn is_accessible_interface_implementation(
         type_visibility: u32,
         interface_visibility: u32,
     ) -> bool {
-        if type_visibility == TypeAttributes::PUBLIC {
-            return interface_visibility == TypeAttributes::PUBLIC;
-        }
+        match type_visibility {
+            TypeAttributes::PUBLIC => {
+                // Public types can implement public and nested public interfaces
+                interface_visibility == TypeAttributes::PUBLIC
+                    || interface_visibility == TypeAttributes::NESTED_PUBLIC
+            }
 
-        if type_visibility == TypeAttributes::NOT_PUBLIC {
-            return interface_visibility == TypeAttributes::NOT_PUBLIC
-                || interface_visibility == TypeAttributes::PUBLIC;
-        }
+            TypeAttributes::NOT_PUBLIC => {
+                // Internal types can implement any interface visible within same assembly
+                interface_visibility == TypeAttributes::NOT_PUBLIC
+                    || interface_visibility == TypeAttributes::PUBLIC
+                    || interface_visibility == TypeAttributes::NESTED_PUBLIC
+                    || interface_visibility == TypeAttributes::NESTED_ASSEMBLY
+                    || interface_visibility == TypeAttributes::NESTED_FAM_OR_ASSEM
+            }
 
-        true
+            TypeAttributes::NESTED_PUBLIC => {
+                // Nested public types can implement interfaces accessible to their enclosing type
+                interface_visibility == TypeAttributes::PUBLIC
+                    || interface_visibility == TypeAttributes::NESTED_PUBLIC
+            }
+
+            TypeAttributes::NESTED_PRIVATE => {
+                // Nested private types can implement interfaces accessible within enclosing type
+                // This includes NOT_PUBLIC (internal) interfaces from the same assembly
+                interface_visibility == TypeAttributes::NOT_PUBLIC
+                    || interface_visibility == TypeAttributes::PUBLIC
+                    || interface_visibility == TypeAttributes::NESTED_PUBLIC
+                    || interface_visibility == TypeAttributes::NESTED_PRIVATE
+                    || interface_visibility == TypeAttributes::NESTED_FAMILY
+                    || interface_visibility == TypeAttributes::NESTED_ASSEMBLY
+                    || interface_visibility == TypeAttributes::NESTED_FAM_AND_ASSEM
+                    || interface_visibility == TypeAttributes::NESTED_FAM_OR_ASSEM
+            }
+
+            TypeAttributes::NESTED_FAMILY => {
+                // Nested family (protected) types can implement family-accessible interfaces
+                interface_visibility == TypeAttributes::PUBLIC
+                    || interface_visibility == TypeAttributes::NESTED_PUBLIC
+                    || interface_visibility == TypeAttributes::NESTED_FAMILY
+                    || interface_visibility == TypeAttributes::NESTED_FAM_AND_ASSEM
+                    || interface_visibility == TypeAttributes::NESTED_FAM_OR_ASSEM
+            }
+
+            TypeAttributes::NESTED_ASSEMBLY => {
+                // Nested assembly (internal) types can implement assembly-accessible interfaces
+                interface_visibility == TypeAttributes::NOT_PUBLIC
+                    || interface_visibility == TypeAttributes::PUBLIC
+                    || interface_visibility == TypeAttributes::NESTED_PUBLIC
+                    || interface_visibility == TypeAttributes::NESTED_ASSEMBLY
+                    || interface_visibility == TypeAttributes::NESTED_FAM_AND_ASSEM
+                    || interface_visibility == TypeAttributes::NESTED_FAM_OR_ASSEM
+            }
+
+            TypeAttributes::NESTED_FAM_AND_ASSEM => {
+                // Nested family and assembly (protected internal, intersection)
+                interface_visibility == TypeAttributes::NOT_PUBLIC
+                    || interface_visibility == TypeAttributes::PUBLIC
+                    || interface_visibility == TypeAttributes::NESTED_PUBLIC
+                    || interface_visibility == TypeAttributes::NESTED_FAMILY
+                    || interface_visibility == TypeAttributes::NESTED_ASSEMBLY
+                    || interface_visibility == TypeAttributes::NESTED_FAM_AND_ASSEM
+                    || interface_visibility == TypeAttributes::NESTED_FAM_OR_ASSEM
+            }
+
+            TypeAttributes::NESTED_FAM_OR_ASSEM => {
+                // Nested family or assembly (protected internal, union)
+                interface_visibility == TypeAttributes::NOT_PUBLIC
+                    || interface_visibility == TypeAttributes::PUBLIC
+                    || interface_visibility == TypeAttributes::NESTED_PUBLIC
+                    || interface_visibility == TypeAttributes::NESTED_FAMILY
+                    || interface_visibility == TypeAttributes::NESTED_ASSEMBLY
+                    || interface_visibility == TypeAttributes::NESTED_FAM_AND_ASSEM
+                    || interface_visibility == TypeAttributes::NESTED_FAM_OR_ASSEM
+            }
+
+            _ => {
+                // Unknown visibility - conservative approach allows implementation
+                // This handles potential future visibility levels or parsing errors
+                true
+            }
+        }
     }
 
     /// Validates that multiple interface implementations are compatible.
@@ -640,14 +775,14 @@ impl OwnedInheritanceValidator {
     /// This method is thread-safe and operates on immutable resolved metadata structures.
     /// All method and type data is accessed through thread-safe collections.
     fn validate_method_inheritance(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
         let methods = context.object().methods();
-        let method_mapping = MethodTypeMapping::new(types);
+        let all_types = context.object().types().all_types(); // Available for lookups
+        let method_mapping = MethodTypeMapping::new(all_types.clone()); // Need all types for cross-assembly method mapping
 
-        for type_entry in types.all_types() {
+        for type_entry in context.target_assembly_types() {
             if let Some(base_type) = type_entry.base() {
                 self.validate_basic_method_overrides(
-                    &type_entry,
+                    type_entry,
                     &base_type,
                     methods,
                     &method_mapping,
@@ -689,8 +824,8 @@ impl OwnedInheritanceValidator {
     /// This method is thread-safe and operates on immutable resolved metadata structures.
     fn validate_basic_method_overrides(
         &self,
-        derived_type: &CilType,
-        base_type: &CilType,
+        derived_type: &CilTypeRc,
+        base_type: &CilTypeRc,
         methods: &MethodMap,
         method_mapping: &MethodTypeMapping,
     ) -> Result<()> {
@@ -698,9 +833,14 @@ impl OwnedInheritanceValidator {
             return Ok(());
         }
 
-        let type_methods = method_mapping.get_type_methods(derived_type.token);
-        for &method_token in type_methods {
-            if let Some(method_entry) = methods.get(&method_token) {
+        let type_address = Arc::as_ptr(derived_type) as usize;
+        let type_methods = method_mapping.get_type_methods(type_address);
+        for &method_address in type_methods {
+            // Find method by address - need to iterate through all methods to match address
+            let method_entry = methods
+                .iter()
+                .find(|entry| Arc::as_ptr(entry.value()) as usize == method_address);
+            if let Some(method_entry) = method_entry {
                 let method = method_entry.value();
 
                 if method.flags_modifiers.contains(MethodModifiers::VIRTUAL) {
@@ -760,7 +900,7 @@ impl OwnedInheritanceValidator {
     fn validate_virtual_method_override(
         &self,
         derived_method: &Method,
-        base_type: &CilType,
+        base_type: &CilTypeRc,
         methods: &MethodMap,
         method_mapping: &MethodTypeMapping,
     ) -> Result<()> {
@@ -775,9 +915,14 @@ impl OwnedInheritanceValidator {
             return Ok(());
         }
 
-        let base_methods = method_mapping.get_type_methods(base_type.token);
-        for &base_method_token in base_methods {
-            if let Some(base_method_entry) = methods.get(&base_method_token) {
+        let base_address = Arc::as_ptr(base_type) as usize;
+        let base_methods = method_mapping.get_type_methods(base_address);
+        for &base_method_address in base_methods {
+            // Find method by address - need to iterate through all methods to match address
+            let base_method_entry = methods
+                .iter()
+                .find(|entry| Arc::as_ptr(entry.value()) as usize == base_method_address);
+            if let Some(base_method_entry) = base_method_entry {
                 let base_method = base_method_entry.value();
 
                 if base_method

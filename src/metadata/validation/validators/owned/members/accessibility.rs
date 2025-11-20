@@ -146,9 +146,8 @@ impl OwnedAccessibilityValidator {
     /// - Nested types have inappropriate visibility flags
     /// - Interfaces are marked as sealed (invalid combination)
     fn validate_type_accessibility(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
-
-        for type_entry in types.all_types() {
+        for entry in context.object().types().iter() {
+            let type_entry = entry.value();
             let visibility = type_entry.flags & TypeAttributes::VISIBILITY_MASK;
 
             match visibility {
@@ -174,27 +173,28 @@ impl OwnedAccessibilityValidator {
                 }
             }
 
-            if visibility >= TypeAttributes::NESTED_PUBLIC {
-            } else if !type_entry.nested_types.is_empty() {
-                for (_, nested_type_ref) in type_entry.nested_types.iter() {
-                    if let Some(nested_type) = nested_type_ref.upgrade() {
-                        let nested_visibility = nested_type.flags & TypeAttributes::VISIBILITY_MASK;
-                        if nested_visibility > TypeAttributes::NESTED_FAM_OR_ASSEM {
-                            return Err(Error::ValidationOwnedValidatorFailed {
-                                validator: self.name().to_string(),
-                                message: format!(
-                                    "Nested type '{}' has invalid visibility flags: 0x{:02X}",
-                                    nested_type.name, nested_visibility
-                                ),
-                                source: None,
-                            });
-                        }
-                    }
+            // Validate that types which ARE nested have proper nested visibility
+            // Check if this type has an enclosing type (i.e., this type IS nested)
+            if type_entry.enclosing_type.get().is_some() {
+                // This is a nested type - it must use nested visibility flags (0x02-0x07)
+                // It cannot use top-level visibility (NOT_PUBLIC=0x00, PUBLIC=0x01)
+                // and cannot use values beyond NESTED_FAM_OR_ASSEM (>0x07)
+                if !(TypeAttributes::NESTED_PUBLIC..=TypeAttributes::NESTED_FAM_OR_ASSEM)
+                    .contains(&visibility)
+                {
+                    return Err(Error::ValidationOwnedValidatorFailed {
+                        validator: self.name().to_string(),
+                        message: format!(
+                            "Nested type '{}' has invalid visibility flags: 0x{:02X} (must be between NESTED_PUBLIC=0x02 and NESTED_FAM_OR_ASSEM=0x07)",
+                            type_entry.name, visibility
+                        ),
+                        source: None,
+                    });
                 }
             }
 
             if type_entry.flags & TypeAttributes::INTERFACE != 0
-                && type_entry.flags & 0x0000_0100 != 0
+                && type_entry.flags & TypeAttributes::SEALED != 0
             {
                 // SEALED flag
                 return Err(Error::ValidationOwnedValidatorFailed {
@@ -229,9 +229,8 @@ impl OwnedAccessibilityValidator {
     /// - Methods have empty names
     /// - Literal fields are not marked as static (ECMA-335 requirement)
     fn validate_member_accessibility(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
-
-        for type_entry in types.all_types() {
+        for entry in context.object().types().iter() {
+            let type_entry = entry.value();
             let type_visibility = type_entry.flags & TypeAttributes::VISIBILITY_MASK;
 
             for (_, method_ref) in type_entry.methods.iter() {
@@ -299,9 +298,8 @@ impl OwnedAccessibilityValidator {
     /// - Interfaces contain non-static fields
     /// - Interfaces contain non-constant fields
     fn validate_interface_accessibility(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
-
-        for type_entry in types.all_types() {
+        for entry in context.object().types().iter() {
+            let type_entry = entry.value();
             for (_, interface_ref) in type_entry.interfaces.iter() {
                 let type_visibility = type_entry.flags & TypeAttributes::VISIBILITY_MASK;
                 if let Some(interface_type) = interface_ref.upgrade() {
@@ -378,9 +376,8 @@ impl OwnedAccessibilityValidator {
     /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if inheritance accessibility patterns are violated
     /// (specific violations depend on resolved type hierarchy analysis).
     fn validate_inheritance_accessibility(context: &OwnedValidationContext) {
-        let types = context.object().types();
-
-        for type_entry in types.all_types() {
+        for entry in context.object().types().iter() {
+            let type_entry = entry.value();
             // ToDo: For complete inheritance validation, we need to resolve
             // base type references and check accessibility consistency
 

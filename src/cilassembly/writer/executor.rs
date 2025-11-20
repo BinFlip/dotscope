@@ -305,6 +305,7 @@ impl WriteExecutor {
         Self::update_native_data_directories(layout, output, assembly)?;
 
         Self::clear_certificate_table(layout, output, assembly)?;
+        Self::clear_debug_directory(layout, output, assembly)?;
 
         Ok(())
     }
@@ -923,6 +924,109 @@ impl WriteExecutor {
 
         output.write_u32_le_at(certificate_entry_offset, 0)?;
         output.write_u32_le_at(certificate_entry_offset + 4, 0)?;
+
+        Ok(())
+    }
+
+    /// Clears the PE debug directory entry to prevent corruption.
+    ///
+    /// When we relocate sections in a modified PE file, the debug directory's file
+    /// pointers may become invalid, pointing to incorrect file offsets. This causes
+    /// PE parsers like goblin to fail when trying to read debug information (PDB paths).
+    /// This function safely clears the debug directory entry (directory entry 6) and
+    /// also zeros out the actual debug directory structures and debug data in the file
+    /// to prevent parsing errors.
+    ///
+    /// # Arguments
+    ///
+    /// * `layout` - Layout for locating PE data directory
+    /// * `output` - Target output for writing directory clear operation
+    /// * `assembly` - Assembly for PE format information
+    ///
+    /// # Returns
+    ///
+    /// Returns [`crate::Result<()>`] on success. This function is designed to be safe
+    /// and will only return an error if critical operations fail.
+    ///
+    /// # Debug Directory Structure
+    ///
+    /// The debug directory (data directory entry 6) contains:
+    /// - RVA: Pointer to IMAGE_DEBUG_DIRECTORY structures (4 bytes)
+    /// - Size: Total size of all IMAGE_DEBUG_DIRECTORY structures (4 bytes)
+    ///
+    /// Each IMAGE_DEBUG_DIRECTORY (28 bytes) points to actual debug data via:
+    /// - PointerToRawData: File offset to debug data
+    /// - SizeOfData: Size of the debug data
+    ///
+    /// This function clears:
+    /// 1. The data directory entry (to hide from PE header)
+    /// 2. All IMAGE_DEBUG_DIRECTORY structures (at debug_rva for debug_size bytes)
+    /// 3. All actual debug data (by parsing each directory entry)
+    ///
+    /// # Why This Is Safe
+    ///
+    /// Debug information (PDB paths, CodeView signatures) is only needed during debugging.
+    /// Modified assemblies should have their debug info regenerated anyway. Clearing this
+    /// data prevents goblin parsing errors without affecting runtime functionality.
+    fn clear_debug_directory(
+        layout: &WriteLayout,
+        output: &mut Output,
+        assembly: &CilAssembly,
+    ) -> Result<()> {
+        let data_directory_offset = Self::find_data_directory_offset(layout, assembly)?;
+
+        // Debug directory is entry 6 (0-indexed), so offset is 6 * 8 bytes
+        let debug_entry_offset = data_directory_offset + (6 * 8);
+
+        // Read the debug directory RVA and size before clearing
+        let mut rva_bytes = [0u8; 4];
+        let mut size_bytes = [0u8; 4];
+        output.read_at(debug_entry_offset, &mut rva_bytes)?;
+        output.read_at(debug_entry_offset + 4, &mut size_bytes)?;
+
+        let debug_rva = u32::from_le_bytes(rva_bytes);
+        let debug_size = u32::from_le_bytes(size_bytes);
+
+        // Clear the data directory entry first
+        output.write_u32_le_at(debug_entry_offset, 0)?;
+        output.write_u32_le_at(debug_entry_offset + 4, 0)?;
+
+        // Also zero out the actual debug structures and data in the file
+        if debug_rva > 0 && debug_size > 0 {
+            let debug_dir_file_offset = Self::rva_to_file_offset_with_layout(layout, debug_rva);
+
+            // Parse each IMAGE_DEBUG_DIRECTORY entry to find and zero actual debug data
+            let num_entries = debug_size / 28; // Each IMAGE_DEBUG_DIRECTORY is 28 bytes
+
+            for i in 0..num_entries {
+                let entry_offset = debug_dir_file_offset + (u64::from(i) * 28);
+
+                // Read AddressOfRawData (RVA, offset 20) and SizeOfData (offset 16)
+                // Note: We use AddressOfRawData (RVA) instead of PointerToRawData (file offset)
+                // because after section relocation, the file offsets change but RVAs stay the same
+                let mut size_of_data_bytes = [0u8; 4];
+                let mut address_of_raw_data_bytes = [0u8; 4];
+
+                output.read_at(entry_offset + 16, &mut size_of_data_bytes)?;
+                output.read_at(entry_offset + 20, &mut address_of_raw_data_bytes)?;
+
+                let size_of_data = u32::from_le_bytes(size_of_data_bytes);
+                let address_of_raw_data = u32::from_le_bytes(address_of_raw_data_bytes);
+
+                // Zero out the actual debug data if it exists
+                // Convert RVA to file offset using the layout's section information
+                if address_of_raw_data > 0 && size_of_data > 0 && size_of_data < 1_000_000 {
+                    let debug_data_file_offset =
+                        Self::rva_to_file_offset_with_layout(layout, address_of_raw_data);
+                    let zero_buffer = vec![0u8; size_of_data as usize];
+                    output.write_at(debug_data_file_offset, &zero_buffer)?;
+                }
+            }
+
+            // Finally, zero out the IMAGE_DEBUG_DIRECTORY structures themselves
+            let zero_buffer = vec![0u8; debug_size as usize];
+            output.write_at(debug_dir_file_offset, &zero_buffer)?;
+        }
 
         Ok(())
     }

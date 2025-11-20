@@ -129,8 +129,8 @@ impl MetadataLoader for AssemblyRefLoader {
     ///
     /// # Returns
     /// [`crate::metadata::tables::TableId::AssemblyRef`] (0x23)
-    fn table_id(&self) -> TableId {
-        TableId::AssemblyRef
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::AssemblyRef)
     }
 
     /// Get the list of metadata tables that must be loaded before `AssemblyRef`

@@ -144,60 +144,65 @@ impl OwnedTypeCircularityValidator {
     /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
     /// - Type inherits from itself directly or indirectly
     /// - Inheritance chain forms a cycle through multiple types
-    fn validate_inheritance_circularity(&self, context: &OwnedValidationContext) -> Result<()> {
-        let type_registry = context.object().types();
-        let mut visited = HashSet::new();
+    fn validate_inheritance_circularity(
+        &self,
+        context: &OwnedValidationContext,
+        target_types: &[CilTypeRc],
+    ) -> Result<()> {
+        let mut visited = HashMap::new();
         let mut visiting = HashSet::new();
 
-        for entry in type_registry {
-            let token = *entry.key();
-            let type_rc = entry.value();
-            if !visited.contains(&token) {
-                self.check_inheritance_cycle(type_rc, &mut visited, &mut visiting, context, 0)?;
+        for type_rc in target_types {
+            let token = type_rc.token;
+            // Only skip if we've already visited this type
+            // The check inside the recursive function will handle re-traversal at greater depths
+            if visited.contains_key(&token) {
+                continue;
             }
-        }
-
-        for entry in type_registry {
-            let type_rc = entry.value();
-            self.check_inheritance_depth(type_rc, context, 0)?;
+            self.check_inheritance_cycle_and_depth(
+                type_rc,
+                &mut visited,
+                &mut visiting,
+                context,
+                0,
+            )?;
         }
 
         Ok(())
     }
 
-    /// Recursively checks for inheritance cycles starting from a given type.
+    /// Recursively checks for inheritance cycles and excessive depth starting from a given type.
     ///
     /// Uses the white-gray-black algorithm where:
-    /// - White (not in any set): Unvisited
+    /// - White (not in visited map): Unvisited
     /// - Gray (in visiting set): Currently being processed
-    /// - Black (in visited set): Completely processed
+    /// - Black (in visited map): Completely processed
     ///
-    /// Includes recursion depth limiting to prevent stack overflow.
+    /// This unified method performs both cycle detection and depth validation in a single
+    /// traversal for optimal performance. The visited map tracks the maximum depth at
+    /// which each type was encountered, allowing re-traversal at greater depths to properly
+    /// detect depth limit violations.
     ///
     /// # Arguments
     ///
-    /// * `type_rc` - Type to check for inheritance cycles
-    /// * `visited` - Set of completely processed types (black)
+    /// * `type_rc` - Type to check for inheritance cycles and depth
+    /// * `visited` - Map of completely processed types to their maximum observed depth (black)
     /// * `visiting` - Set of currently processing types (gray)
     /// * `context` - Validation context containing configuration
     /// * `depth` - Current recursion depth
     ///
     /// # Returns
     ///
-    /// Returns error if a cycle is detected in the inheritance chain.
-    fn check_inheritance_cycle(
+    /// Returns error if a cycle is detected or depth limit is exceeded.
+    fn check_inheritance_cycle_and_depth(
         &self,
         type_rc: &CilTypeRc,
-        visited: &mut HashSet<Token>,
+        visited: &mut HashMap<Token, usize>,
         visiting: &mut HashSet<Token>,
         context: &OwnedValidationContext,
         depth: usize,
     ) -> Result<()> {
         let current_token = type_rc.token;
-
-        if visited.contains(&current_token) {
-            return Ok(());
-        }
 
         if visiting.contains(&current_token) {
             return Err(Error::ValidationOwnedValidatorFailed {
@@ -208,6 +213,12 @@ impl OwnedTypeCircularityValidator {
                 ),
                 source: None,
             });
+        }
+
+        if let Some(&max_depth) = visited.get(&current_token) {
+            if depth <= max_depth {
+                return Ok(());
+            }
         }
 
         if depth > context.config().max_nesting_depth {
@@ -224,50 +235,21 @@ impl OwnedTypeCircularityValidator {
         visiting.insert(current_token);
 
         if let Some(base_type) = type_rc.base() {
-            self.check_inheritance_cycle(&base_type, visited, visiting, context, depth + 1)?;
+            self.check_inheritance_cycle_and_depth(
+                &base_type,
+                visited,
+                visiting,
+                context,
+                depth + 1,
+            )?;
         }
 
         visiting.remove(&current_token);
-        visited.insert(current_token);
 
-        Ok(())
-    }
-
-    /// Checks inheritance chain depth for a specific type without cycle detection optimization.
-    ///
-    /// This method performs a simple depth check by following the inheritance chain
-    /// from the given type to ensure it doesn't exceed the configured maximum depth.
-    /// Unlike cycle detection, this doesn't use visited sets to allow proper depth counting.
-    ///
-    /// # Arguments
-    ///
-    /// * `type_rc` - Type to check inheritance depth for
-    /// * `context` - Validation context containing configuration
-    /// * `depth` - Current depth in the inheritance chain
-    ///
-    /// # Returns
-    ///
-    /// Returns error if the inheritance chain depth exceeds the maximum allowed.
-    fn check_inheritance_depth(
-        &self,
-        type_rc: &CilTypeRc,
-        context: &OwnedValidationContext,
-        depth: usize,
-    ) -> Result<()> {
-        if depth > context.config().max_nesting_depth {
-            return Err(Error::ValidationOwnedValidatorFailed {
-                validator: self.name().to_string(),
-                message: format!(
-                    "Inheritance chain depth exceeds maximum nesting depth limit of {} for type '{}' (token 0x{:08X})",
-                    context.config().max_nesting_depth, type_rc.name, type_rc.token.value()
-                ),
-                source: None,
-            });
-        }
-
-        if let Some(base_type) = type_rc.base() {
-            self.check_inheritance_depth(&base_type, context, depth + 1)?;
-        }
+        visited
+            .entry(current_token)
+            .and_modify(|d| *d = (*d).max(depth))
+            .or_insert(depth);
 
         Ok(())
     }
@@ -286,15 +268,13 @@ impl OwnedTypeCircularityValidator {
     ///
     /// * `Ok(())` - No nested type circular dependencies found
     /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Nested type circularity detected
-    fn validate_nested_type_circularity(&self, context: &OwnedValidationContext) -> Result<()> {
-        let type_registry = context.object().types();
+    fn validate_nested_type_circularity(&self, target_types: &[CilTypeRc]) -> Result<()> {
         let mut visited = HashSet::new();
         let mut visiting = HashSet::new();
 
         let mut nested_relationships = HashMap::new();
-        for entry in type_registry {
-            let token = *entry.key();
-            let type_rc = entry.value();
+        for type_rc in target_types {
+            let token = type_rc.token;
             let mut nested_tokens = Vec::new();
             for (_, nested_ref) in type_rc.nested_types.iter() {
                 if let Some(nested_type) = nested_ref.upgrade() {
@@ -304,8 +284,8 @@ impl OwnedTypeCircularityValidator {
             nested_relationships.insert(token, nested_tokens);
         }
 
-        for entry in type_registry {
-            let token = *entry.key();
+        for type_rc in target_types {
+            let token = type_rc.token;
             if !visited.contains(&token) {
                 self.check_nested_type_cycle(
                     token,
@@ -389,16 +369,14 @@ impl OwnedTypeCircularityValidator {
     /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Interface circularity detected
     fn validate_interface_implementation_circularity(
         &self,
-        context: &OwnedValidationContext,
+        target_types: &[CilTypeRc],
     ) -> Result<()> {
-        let type_registry = context.object().types();
         let mut visited = HashSet::new();
         let mut visiting = HashSet::new();
 
         let mut interface_relationships = HashMap::new();
-        for entry in type_registry {
-            let token = *entry.key();
-            let type_rc = entry.value();
+        for type_rc in target_types {
+            let token = type_rc.token;
             if type_rc.flavor() == &CilFlavor::Interface {
                 let mut implemented_interfaces = Vec::new();
                 for (_, interface_ref) in type_rc.interfaces.iter() {
@@ -480,9 +458,11 @@ impl OwnedTypeCircularityValidator {
 
 impl OwnedValidator for OwnedTypeCircularityValidator {
     fn validate_owned(&self, context: &OwnedValidationContext) -> Result<()> {
-        self.validate_inheritance_circularity(context)?;
-        self.validate_nested_type_circularity(context)?;
-        self.validate_interface_implementation_circularity(context)?;
+        let all_types = context.object().types().all_types();
+
+        self.validate_inheritance_circularity(context, &all_types)?;
+        self.validate_nested_type_circularity(&all_types)?;
+        self.validate_interface_implementation_circularity(&all_types)?;
 
         Ok(())
     }
@@ -524,6 +504,7 @@ mod tests {
         },
         Result,
     };
+    use rayon::ThreadPoolBuilder;
 
     #[test]
     fn test_owned_type_circularity_validator() -> Result<()> {
@@ -547,8 +528,24 @@ mod tests {
     fn test_validator_detects_circular_inheritance() -> Result<()> {
         let temp_file = create_assembly_with_inheritance_circularity()?;
 
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+        let mono_deps_path = std::path::Path::new(&manifest_dir).join("tests/samples/mono_4.8");
+
         let assembly_view = CilAssemblyView::from_file(temp_file.path())?;
-        let object = CilObject::from_file(temp_file.path())?;
+
+        // Use project loading with dependencies instead of direct file loading
+        let project_result = crate::project::ProjectLoader::new()
+            .primary_file(temp_file.path())?
+            .with_search_path(&mono_deps_path)?
+            .auto_discover(true)
+            .strict_mode(true)
+            .with_validation(ValidationConfig::disabled())
+            .build()?;
+
+        let object = project_result.project.get_primary().ok_or_else(|| {
+            Error::Error("Failed to get primary assembly from project".to_string())
+        })?;
+
         let scanner = ReferenceScanner::from_view(&assembly_view)?;
         let config = ValidationConfig {
             enable_semantic_validation: true,
@@ -556,8 +553,8 @@ mod tests {
             ..Default::default()
         };
 
-        use crate::metadata::validation::context::OwnedValidationContext;
-        let context = OwnedValidationContext::new(&object, &scanner, &config);
+        let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        let context = OwnedValidationContext::new(object.as_ref(), &scanner, &config, &thread_pool);
 
         let validator = OwnedTypeCircularityValidator::new();
 

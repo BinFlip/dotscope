@@ -14,7 +14,7 @@
 //!
 //! - **Fixed Arguments**: Type-aware parsing based on constructor parameter types (CilFlavor-based)
 //! - **Named Arguments**: Explicit `CorSerializationType` tag parsing from blob data
-//! - **Recursive Design**: Clean recursive parsing with depth limiting for complex types
+//! - **Iterative Design**: Stack-based iterative parsing with depth limiting for complex types
 //! - **Enum Support**: Uses `SERIALIZATION_TYPE` constants for documented .NET types
 //!
 //! ## Error Handling Strategy
@@ -46,7 +46,7 @@
 //!
 //! if let Some(blob_heap) = assembly.blob() {
 //!     let custom_attr = parse_custom_attribute_blob(blob_heap, blob_index, &constructor_params)?;
-//!     
+//!
 //!     println!("Fixed arguments: {}", custom_attr.fixed_args.len());
 //!     println!("Named arguments: {}", custom_attr.named_args.len());
 //! }
@@ -102,6 +102,7 @@
 //! - **Type Resolution**: Full support for resolved constructor parameter types
 //! - **Graceful Fallbacks**: Heuristic parsing when full type information unavailable
 //! - **Comprehensive Validation**: ECMA-335 compliance with detailed error reporting
+//! - **Iterative Processing**: Stack-based parsing supporting arbitrarily deep nesting
 //!
 //! ## Future Enhancements
 //! - **Multi-Assembly Support**: Planned project-style loading with cross-assembly resolution
@@ -112,7 +113,7 @@
 //!
 //! - **ECMA-335**: Full compliance with custom attribute specification (II.23.3)
 //! - **Type Safety**: Robust type checking and validation throughout parsing
-//! - **Memory Safety**: Comprehensive bounds checking and recursion limiting
+//! - **Memory Safety**: Comprehensive bounds checking and nesting depth limiting
 //! - **Error Handling**: Detailed error messages for debugging malformed data
 
 use crate::{
@@ -124,16 +125,23 @@ use crate::{
         },
         streams::Blob,
         tables::ParamRc,
-        typesystem::{CilFlavor, CilTypeRef},
+        typesystem::{CilFlavor, CilTypeRef, TypeRegistry},
     },
-    prelude::CilTypeRc,
-    Error::RecursionLimit,
+    utils::EnumUtils,
+    Error::DepthLimitExceeded,
     Result,
 };
 use std::sync::Arc;
 
-/// Maximum recursion depth for custom attribute parsing
-const MAX_RECURSION_DEPTH: usize = 50;
+/// Maximum nesting depth for custom attribute parsing.
+///
+/// This limit prevents stack overflow and excessive memory usage when parsing
+/// deeply nested custom attribute structures. The iterative implementation
+/// uses explicit stack allocation which is tracked against this limit.
+///
+/// The limit is set generously to accommodate legitimate complex custom attributes
+/// while still protecting against malformed or malicious metadata.
+const MAX_NESTING_DEPTH: usize = 1000;
 
 /// Parse custom attribute blob data from the blob heap using constructor parameter information.
 ///
@@ -153,12 +161,9 @@ const MAX_RECURSION_DEPTH: usize = 50;
 /// - `named_args` - Field and property assignments with names and values
 ///
 /// # Errors
-/// Returns [`crate::Error::OutOfBounds`] if the index is invalid, or
-/// [`crate::Error::Malformed`] if the blob data doesn't conform to ECMA-335 format:
-/// - Invalid prolog (not 0x0001)
-/// - Insufficient data for declared arguments
-/// - Type/value mismatches in argument parsing
-/// - Recursion depth exceeded during parsing
+/// Returns [`crate::Error::OutOfBounds`] if the index is invalid, or one of the following:
+/// - [`crate::Error::Malformed`]: Invalid prolog (not 0x0001), insufficient data for declared arguments, or type/value mismatches in argument parsing
+/// - [`crate::Error::DepthLimitExceeded`]: Maximum nesting depth exceeded during parsing
 ///
 /// # Examples
 ///
@@ -173,7 +178,7 @@ const MAX_RECURSION_DEPTH: usize = 50;
 ///
 /// if let Some(blob_heap) = assembly.blob() {
 ///     let custom_attr = parse_custom_attribute_blob(blob_heap, blob_index, &constructor_params)?;
-///     
+///
 ///     println!("Fixed arguments: {}", custom_attr.fixed_args.len());
 ///     println!("Named arguments: {}", custom_attr.named_args.len());
 /// }
@@ -221,13 +226,9 @@ pub fn parse_custom_attribute_blob(
 /// - `named_args` - Field and property assignments with their names and values
 ///
 /// # Errors
-/// Returns [`crate::Error::Malformed`] if the blob data doesn't conform to ECMA-335 format:
-/// - Invalid or missing prolog (must be 0x0001)
-/// - Insufficient data for the number of declared arguments
-/// - Type mismatches between expected and actual argument types
-/// - Invalid serialization type tags in named arguments
-/// - Recursion depth exceeded during complex type parsing
-/// - Truncated or corrupted blob data
+/// Returns one of the following errors if the blob data doesn't conform to ECMA-335 format:
+/// - [`crate::Error::Malformed`]: Invalid or missing prolog (must be 0x0001), insufficient data for the number of declared arguments, type mismatches between expected and actual argument types, invalid serialization type tags in named arguments, or truncated/corrupted blob data
+/// - [`crate::Error::DepthLimitExceeded`]: Maximum nesting depth exceeded during complex type parsing
 ///
 /// # Examples
 ///
@@ -268,12 +269,83 @@ pub fn parse_custom_attribute_data(
     parser.parse_custom_attribute(params)
 }
 
+/// Parse custom attribute blob data with enhanced cross-assembly type resolution.
+///
+/// This enhanced version leverages the TypeRegistry's cross-assembly resolution capabilities
+/// to properly handle external enum types that were previously causing parsing failures
+/// in mono assemblies. This addresses the core issue where CustomAttribute parsing would
+/// fail when enum underlying types were defined in external assemblies.
+///
+/// # Key Enhancements
+///
+/// - **Cross-Assembly Type Resolution**: Uses `TypeRegistry.resolve_type_global()` to find
+///   TypeDef entries across all linked assemblies instead of just the current assembly
+/// - **Proper Enum Detection**: Can determine if external types are enums by finding their
+///   actual TypeDef and analyzing inheritance chains
+/// - **Reliable Underlying Type Resolution**: Gets actual enum underlying types instead of
+///   using heuristics or hardcoded type lists
+///
+/// # Arguments
+/// * `data` - Raw bytes of the custom attribute blob data to parse
+/// * `params` - Reference to the constructor method's parameter vector for type-aware parsing
+/// * `type_registry` - TypeRegistry with cross-assembly resolution via `registry_link()`
+///
+/// # Returns
+/// A fully parsed [`crate::metadata::customattributes::CustomAttributeValue`] with proper
+/// external enum handling that previously would have failed with heuristic approaches.
+///
+/// # Errors
+/// Returns an error if the custom attribute data cannot be parsed.
+///
+/// # Thread Safety
+/// This function is thread-safe and can be called concurrently from multiple threads.
+pub fn parse_custom_attribute_data_with_registry(
+    data: &[u8],
+    params: &Arc<boxcar::Vec<ParamRc>>,
+    type_registry: &Arc<TypeRegistry>,
+) -> Result<CustomAttributeValue> {
+    let mut parser = CustomAttributeParser::with_registry(data, type_registry.clone());
+    parser.parse_custom_attribute(params)
+}
+
+/// Parse custom attribute blob data with enhanced cross-assembly type resolution.
+///
+/// This enhanced version of [`parse_custom_attribute_blob`] leverages the TypeRegistry's
+/// cross-assembly resolution capabilities to properly handle external enum types that were
+/// previously causing parsing failures in mono assemblies.
+///
+/// # Arguments
+/// * `blob` - The blob heap containing custom attribute data
+/// * `index` - Index into the blob heap where the custom attribute data starts
+/// * `params` - Reference to the constructor method's parameter vector for type-aware parsing
+/// * `type_registry` - TypeRegistry with cross-assembly resolution via `registry_link()`
+///
+/// # Returns
+/// A fully parsed [`crate::metadata::customattributes::CustomAttributeValue`] with proper
+/// external enum handling that previously would have failed with heuristic approaches.
+///
+/// # Errors
+/// Returns an error if the custom attribute blob cannot be parsed.
+///
+/// # Thread Safety
+/// This function is thread-safe and can be called concurrently from multiple threads.
+pub fn parse_custom_attribute_blob_with_registry(
+    blob: &Blob,
+    index: u32,
+    params: &Arc<boxcar::Vec<ParamRc>>,
+    type_registry: &Arc<TypeRegistry>,
+) -> Result<CustomAttributeValue> {
+    let data = blob.get(index as usize)?;
+    let mut parser = CustomAttributeParser::with_registry(data, type_registry.clone());
+    parser.parse_custom_attribute(params)
+}
+
 /// Custom attribute parser implementing ECMA-335 II.23.3 specification.
 ///
-/// This parser follows the same architectural pattern as other parsers in the codebase
-/// (like `SignatureParser` and `MarshallingParser`) with proper recursion limiting,
-/// error handling, and state management. It provides a structured approach to parsing
-/// the complex binary format of .NET custom attributes.
+/// This parser uses an iterative stack-based approach with depth limiting to handle
+/// arbitrarily nested custom attribute structures without risk of stack overflow.
+/// It provides a structured approach to parsing the complex binary format of .NET
+/// custom attributes.
 ///
 /// The parser handles both fixed arguments (based on constructor parameters) and named
 /// arguments (with embedded type information) while maintaining compatibility with
@@ -286,8 +358,8 @@ pub fn parse_custom_attribute_data(
 pub struct CustomAttributeParser<'a> {
     /// Binary data parser for reading attribute blob
     parser: Parser<'a>,
-    /// Current recursion depth for nested parsing
-    depth: usize,
+    /// Optional TypeRegistry for cross-assembly type resolution
+    type_registry: Option<Arc<TypeRegistry>>,
 }
 
 impl<'a> CustomAttributeParser<'a> {
@@ -308,7 +380,35 @@ impl<'a> CustomAttributeParser<'a> {
     pub fn new(data: &'a [u8]) -> Self {
         Self {
             parser: Parser::new(data),
-            depth: 0,
+            type_registry: None,
+        }
+    }
+
+    /// Creates a new custom attribute parser with cross-assembly type resolution support.
+    ///
+    /// This enhanced constructor enables cross-assembly type resolution for proper handling
+    /// of external enum types that would otherwise fail with heuristic approaches.
+    ///
+    /// # Arguments
+    /// * `data` - Raw bytes of the custom attribute blob to parse
+    /// * `type_registry` - TypeRegistry with cross-assembly resolution via `registry_link()`
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::customattributes::parser::CustomAttributeParser;
+    /// use std::sync::Arc;
+    ///
+    /// let blob_data = &[0x01, 0x00, 0x00, 0x00]; // Minimal custom attribute
+    /// let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+    /// let type_registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
+    /// let parser = CustomAttributeParser::with_registry(blob_data, type_registry);
+    /// ```
+    #[must_use]
+    pub fn with_registry(data: &'a [u8], type_registry: Arc<TypeRegistry>) -> Self {
+        Self {
+            parser: Parser::new(data),
+            type_registry: Some(type_registry),
         }
     }
 
@@ -335,7 +435,7 @@ impl<'a> CustomAttributeParser<'a> {
     /// - Invalid prolog (not 0x0001)
     /// - Insufficient data for declared arguments
     /// - Invalid serialization types in named arguments
-    /// - Recursion limit exceeded during parsing
+    /// - Nesting depth limit exceeded during parsing
     ///
     /// # Examples
     ///
@@ -451,6 +551,65 @@ impl<'a> CustomAttributeParser<'a> {
         Ok(fixed_args)
     }
 
+    /// Parse an enum value based on its underlying type size.
+    ///
+    /// This method handles all enum parsing logic in one place, reading the appropriate
+    /// number of bytes based on the enum's underlying type and creating the correct
+    /// CustomAttributeArgument variant.
+    ///
+    /// # Arguments
+    /// * `type_name` - Full name of the enum type
+    /// * `underlying_type_size` - Size in bytes of the enum's underlying type
+    ///
+    /// # Returns
+    /// * `Ok(Some(CustomAttributeArgument))` - Successfully parsed enum value
+    /// * `Err(Error)` - If parsing fails or invalid underlying type size
+    fn parse_enum(
+        &mut self,
+        type_name: String,
+        underlying_type_size: usize,
+    ) -> Result<Option<CustomAttributeArgument>> {
+        match underlying_type_size {
+            0 => Err(malformed_error!(
+                "Cannot determine enum underlying type size for '{}' - enum fields not loaded yet.",
+                type_name
+            )),
+            1 => {
+                let enum_value = self.parser.read_le::<u8>()?;
+                Ok(Some(CustomAttributeArgument::Enum(
+                    type_name,
+                    Box::new(CustomAttributeArgument::U1(enum_value)),
+                )))
+            }
+            2 => {
+                let enum_value = self.parser.read_le::<u16>()?;
+                Ok(Some(CustomAttributeArgument::Enum(
+                    type_name,
+                    Box::new(CustomAttributeArgument::U2(enum_value)),
+                )))
+            }
+            4 => {
+                let enum_value = self.parser.read_le::<i32>()?;
+                Ok(Some(CustomAttributeArgument::Enum(
+                    type_name,
+                    Box::new(CustomAttributeArgument::I4(enum_value)),
+                )))
+            }
+            8 => {
+                let enum_value = self.parser.read_le::<i64>()?;
+                Ok(Some(CustomAttributeArgument::Enum(
+                    type_name,
+                    Box::new(CustomAttributeArgument::I8(enum_value)),
+                )))
+            }
+            _ => Err(malformed_error!(
+                "Invalid enum underlying type size {} for enum '{}'. Expected 1, 2, 4, or 8 bytes.",
+                underlying_type_size,
+                type_name
+            )),
+        }
+    }
+
     /// Parse a single fixed argument based on constructor parameter type.
     ///
     /// Uses [`crate::metadata::typesystem::CilFlavor`] to determine the correct parsing
@@ -483,7 +642,6 @@ impl<'a> CustomAttributeParser<'a> {
 
         let flavor = type_ref.flavor();
 
-        // Add debug information about what we're trying to parse
         if !self.parser.has_more_data() {
             return Err(malformed_error!(
                 "Not enough data for fixed argument type {:?} (pos={}, len={})",
@@ -598,68 +756,58 @@ impl<'a> CustomAttributeParser<'a> {
                     let value = self.parse_argument_by_type_tag(type_tag)?;
                     Ok(Some(value))
                 } else {
-                    // TODO: Once we implement 'project' style loading (multiple assemblies that belong together),
-                    // we can provide a 'default' windows_dll directory that includes most of the default DLLs.
-                    // This would allow us in 'project' mode to resolve types across multiple binaries and
-                    // fully support CustomAttribute type resolution by actually loading the type definitions
-                    // from external assemblies instead of relying on heuristics.
-                    //
-                    // For now, we use heuristics to determine if this is an enum type based on:
-                    // 1. Inheritance chain analysis (when available)
-                    // 2. Known enum type name patterns
-                    // 3. Graceful fallback to Type parsing to ensure real-world binaries load
-
-                    if Self::is_enum_type(&type_ref) {
-                        // Parse as enum value (i32) - most .NET enums are int32-based
-                        if self.parser.len() - self.parser.pos() >= 4 {
-                            let enum_value = self.parser.read_le::<i32>()?;
-                            Ok(Some(CustomAttributeArgument::Enum(
-                                type_name,
-                                Box::new(CustomAttributeArgument::I4(enum_value)),
-                            )))
-                        } else {
-                            // Graceful fallback: if we don't have enough data for enum, try Type parsing
-                            // This ensures real-world binaries continue to load even if our heuristic fails
-                            if self.parser.peek_byte()? == 0xFF {
-                                let _ = self.parser.read_le::<u8>()?; // consume null marker
-                                Ok(Some(CustomAttributeArgument::Type(String::new())))
-                            } else {
-                                let s = self.parse_string().map_err(|_| {
-                                    malformed_error!(
-                                        "Failed to parse Class parameter '{}': insufficient data for enum (need 4 bytes) and string parsing failed",
-                                        type_name
-                                    )
-                                })?;
-                                Ok(Some(CustomAttributeArgument::Type(s)))
+                    if let Some(registry) = &self.type_registry {
+                        if let Some(resolved_type) = registry.resolve_type_global(&type_name) {
+                            if EnumUtils::is_enum_type(&resolved_type, Some(registry)) {
+                                let underlying_type_size =
+                                    EnumUtils::get_enum_underlying_type_size(&resolved_type);
+                                return self.parse_enum(type_name, underlying_type_size);
                             }
                         }
-                    } else {
-                        // Parse as Type argument (string containing type name)
-                        // This is the safe fallback that works for most unknown Class types
-                        if self.parser.peek_byte()? == 0xFF {
-                            let _ = self.parser.read_le::<u8>()?; // consume null marker
-                            Ok(Some(CustomAttributeArgument::Type(String::new())))
-                        } else {
-                            let s = self.parse_string().map_err(|e| {
-                                malformed_error!(
-                                    "Failed to parse Class parameter '{}' as Type: {}",
-                                    type_name,
-                                    e
-                                )
-                            })?;
-                            Ok(Some(CustomAttributeArgument::Type(s)))
-                        }
                     }
+
+                    Err(malformed_error!(
+                        "Cannot resolve Class type '{}' - type not found in TypeRegistry. This indicates either the assembly containing this type is not loaded yet, or there's an issue with type name resolution.",
+                        type_name
+                    ))
                 }
             }
             CilFlavor::ValueType => {
-                // ValueType in fixed arguments should be treated as enum
-                let enum_value = self.parser.read_le::<i32>()?;
                 let type_name = type_ref.fullname();
-                Ok(Some(CustomAttributeArgument::Enum(
-                    type_name,
-                    Box::new(CustomAttributeArgument::I4(enum_value)),
-                )))
+
+                if let Some(registry) = &self.type_registry {
+                    if let Some(resolved_type) = registry.resolve_type_global(&type_name) {
+                        if EnumUtils::is_enum_type(&resolved_type, Some(registry)) {
+                            let underlying_type_size =
+                                EnumUtils::get_enum_underlying_type_size(&resolved_type);
+                            return self.parse_enum(type_name, underlying_type_size);
+                        }
+                    }
+                }
+
+                // Use centralized enum utilities as fallback
+                let is_enum = if let Some(registry) = &self.type_registry {
+                    EnumUtils::is_enum_type_by_name(&type_name, registry)
+                } else {
+                    EnumUtils::is_enum_type(&type_ref, None)
+                };
+
+                if is_enum {
+                    let underlying_type_size = if let Some(registry) = &self.type_registry {
+                        EnumUtils::get_enum_underlying_type_size_by_name(&type_name, registry)
+                    } else {
+                        EnumUtils::get_enum_underlying_type_size(&type_ref)
+                    };
+
+                    self.parse_enum(type_name, underlying_type_size)
+                } else {
+                    // Early abort: if we can't resolve the type through TypeRegistry and it's not a known system type,
+                    // this indicates missing dependencies that should be loaded first
+                    Err(malformed_error!(
+                            "Cannot resolve ValueType '{}' - type not found in TypeRegistry. This indicates the assembly containing this type is not loaded yet.",
+                            type_name
+                        ))
+                }
             }
             CilFlavor::Array { rank, .. } => {
                 if *rank == 1 {
@@ -697,6 +845,12 @@ impl<'a> CustomAttributeParser<'a> {
                 }
             }
             CilFlavor::Void => Ok(Some(CustomAttributeArgument::Void)),
+            CilFlavor::Object => {
+                // System.Object in CustomAttribute is stored as a tagged object - read type tag first
+                let type_tag = self.parser.read_le::<u8>()?;
+                let value = self.parse_argument_by_type_tag(type_tag)?;
+                Ok(Some(value))
+            }
             _ => Err(malformed_error!(
                 "Unsupported type flavor in custom attribute: {:?}",
                 flavor
@@ -731,6 +885,11 @@ impl<'a> CustomAttributeParser<'a> {
         let is_field = match field_or_prop {
             0x53 => true,  // FIELD
             0x54 => false, // PROPERTY
+            0x00 => {
+                // 0x00 can appear as padding or end-of-data marker in some custom attributes
+                // This is sometimes used as a null terminator in malformed or legacy attributes
+                return Ok(None);
+            }
             _ => {
                 return Err(malformed_error!(
                     "Invalid field/property indicator: 0x{:02X}",
@@ -756,6 +915,8 @@ impl<'a> CustomAttributeParser<'a> {
             SERIALIZATION_TYPE::R8 => "R8".to_string(),
             SERIALIZATION_TYPE::STRING => "String".to_string(),
             SERIALIZATION_TYPE::TYPE => "Type".to_string(),
+            SERIALIZATION_TYPE::TAGGED_OBJECT => "TaggedObject".to_string(),
+            SERIALIZATION_TYPE::ENUM => "Enum".to_string(),
             _ => {
                 return Err(malformed_error!(
                     "Unsupported named argument type: 0x{:02X}",
@@ -782,23 +943,22 @@ impl<'a> CustomAttributeParser<'a> {
         }))
     }
 
-    /// Parse an argument based on its `CorSerializationType` tag (recursive with depth limiting).
+    /// Parse an argument based on its `CorSerializationType` tag using iterative processing.
     ///
-    /// This method handles the core parsing logic for named arguments and tagged objects
-    /// using the .NET runtime's serialization type enumeration. It supports recursion
-    /// for complex types like arrays and tagged objects while preventing stack overflow
-    /// through depth limiting.
+    /// This method uses an explicit stack-based approach to handle deeply nested structures
+    /// without consuming call stack space. It supports complex types like arrays and tagged
+    /// objects while preventing resource exhaustion through depth limiting.
     ///
     /// # Supported Types
     /// - All primitive types (bool, int, float, char)
     /// - String and Type arguments
     /// - Enum values with type name and underlying value
-    /// - Single-dimensional arrays (SZARRAY)
-    /// - Tagged objects (recursive parsing)
+    /// - Single-dimensional arrays (SZARRAY) - supports arbitrary nesting depth
+    /// - Tagged objects - supports arbitrary nesting depth
     ///
-    /// # Recursion Safety
-    /// Uses `depth` tracking with [`MAX_RECURSION_DEPTH`] limit to prevent stack overflow
-    /// from maliciously crafted or deeply nested custom attribute data.
+    /// # Nesting Safety
+    /// Uses explicit stack tracking with [`MAX_NESTING_DEPTH`] limit to prevent memory
+    /// exhaustion from maliciously crafted or deeply nested custom attribute data.
     ///
     /// # Arguments
     /// * `type_tag` - [`crate::metadata::customattributes::types::SERIALIZATION_TYPE`] enumeration value
@@ -807,92 +967,179 @@ impl<'a> CustomAttributeParser<'a> {
     /// Parsed argument value according to the type tag specification
     ///
     /// # Errors
-    /// Returns [`crate::Error::RecursionLimit`] if maximum depth exceeded, or
-    /// [`crate::Error::Malformed`] for invalid type tags or data format
+    /// - [`crate::Error::DepthLimitExceeded`]: Maximum nesting depth exceeded
+    /// - [`crate::Error::Malformed`]: Invalid type tags or malformed data format
     fn parse_argument_by_type_tag(&mut self, type_tag: u8) -> Result<CustomAttributeArgument> {
-        self.depth += 1;
-        if self.depth >= MAX_RECURSION_DEPTH {
-            return Err(RecursionLimit(MAX_RECURSION_DEPTH));
+        /// Work item for iterative parsing stack
+        enum WorkItem {
+            /// Parse a type tag and push result
+            ParseTag(u8),
+            /// Build array from N elements on stack
+            BuildArray(i32),
+            /// Take inner tagged object result
+            TaggedObject,
         }
 
-        let result = match type_tag {
-            SERIALIZATION_TYPE::BOOLEAN => {
-                let val = self.parser.read_le::<u8>()?;
-                CustomAttributeArgument::Bool(val != 0)
-            }
-            SERIALIZATION_TYPE::CHAR => {
-                let val = self.parser.read_le::<u16>()?;
-                let character = char::from_u32(u32::from(val)).unwrap_or('\u{FFFD}');
-                CustomAttributeArgument::Char(character)
-            }
-            SERIALIZATION_TYPE::I1 => CustomAttributeArgument::I1(self.parser.read_le::<i8>()?),
-            SERIALIZATION_TYPE::U1 => CustomAttributeArgument::U1(self.parser.read_le::<u8>()?),
-            SERIALIZATION_TYPE::I2 => CustomAttributeArgument::I2(self.parser.read_le::<i16>()?),
-            SERIALIZATION_TYPE::U2 => CustomAttributeArgument::U2(self.parser.read_le::<u16>()?),
-            SERIALIZATION_TYPE::I4 => CustomAttributeArgument::I4(self.parser.read_le::<i32>()?),
-            SERIALIZATION_TYPE::U4 => CustomAttributeArgument::U4(self.parser.read_le::<u32>()?),
-            SERIALIZATION_TYPE::I8 => CustomAttributeArgument::I8(self.parser.read_le::<i64>()?),
-            SERIALIZATION_TYPE::U8 => CustomAttributeArgument::U8(self.parser.read_le::<u64>()?),
-            SERIALIZATION_TYPE::R4 => CustomAttributeArgument::R4(self.parser.read_le::<f32>()?),
-            SERIALIZATION_TYPE::R8 => CustomAttributeArgument::R8(self.parser.read_le::<f64>()?),
-            SERIALIZATION_TYPE::STRING => {
-                if self.parser.peek_byte()? == 0xFF {
-                    let _ = self.parser.read_le::<u8>()?; // consume null marker
-                    CustomAttributeArgument::String(String::new())
-                } else {
-                    let s = self.parse_string()?;
-                    CustomAttributeArgument::String(s)
-                }
-            }
-            SERIALIZATION_TYPE::TYPE => {
-                if self.parser.peek_byte()? == 0xFF {
-                    let _ = self.parser.read_le::<u8>()?; // consume null marker
-                    CustomAttributeArgument::Type(String::new())
-                } else {
-                    let s = self.parse_string()?;
-                    CustomAttributeArgument::Type(s)
-                }
-            }
-            SERIALIZATION_TYPE::TAGGED_OBJECT => {
-                // Recursive tagged object parsing
-                let inner_type_tag = self.parser.read_le::<u8>()?;
-                self.parse_argument_by_type_tag(inner_type_tag)?
-            }
-            SERIALIZATION_TYPE::ENUM => {
-                // Read enum type name, then value
-                let type_name = self.parse_string()?;
-                let val = self.parser.read_le::<i32>()?; // Most enums are I4-based
-                CustomAttributeArgument::Enum(type_name, Box::new(CustomAttributeArgument::I4(val)))
-            }
-            SERIALIZATION_TYPE::SZARRAY => {
-                // Read array element type tag and length, then elements
-                let element_type_tag = self.parser.read_le::<u8>()?;
-                let array_length = self.parser.read_le::<i32>()?;
+        let mut work_stack: Vec<WorkItem> = Vec::new();
+        let mut result_stack: Vec<CustomAttributeArgument> = Vec::new();
 
-                if array_length == -1 {
-                    CustomAttributeArgument::Array(vec![]) // null array
-                } else if array_length < 0 {
-                    return Err(malformed_error!("Invalid array length: {}", array_length));
-                } else {
-                    #[allow(clippy::cast_sign_loss)]
-                    let mut elements = Vec::with_capacity(array_length as usize);
-                    for _ in 0..array_length {
-                        let element = self.parse_argument_by_type_tag(element_type_tag)?;
-                        elements.push(element);
+        work_stack.push(WorkItem::ParseTag(type_tag));
+
+        while let Some(work) = work_stack.pop() {
+            if work_stack.len() + result_stack.len() > MAX_NESTING_DEPTH {
+                return Err(DepthLimitExceeded(MAX_NESTING_DEPTH));
+            }
+
+            match work {
+                WorkItem::ParseTag(tag) => {
+                    match tag {
+                        SERIALIZATION_TYPE::BOOLEAN => {
+                            let val = self.parser.read_le::<u8>()?;
+                            result_stack.push(CustomAttributeArgument::Bool(val != 0));
+                        }
+                        SERIALIZATION_TYPE::CHAR => {
+                            let val = self.parser.read_le::<u16>()?;
+                            let character = char::from_u32(u32::from(val)).unwrap_or('\u{FFFD}');
+                            result_stack.push(CustomAttributeArgument::Char(character));
+                        }
+                        SERIALIZATION_TYPE::I1 => {
+                            result_stack
+                                .push(CustomAttributeArgument::I1(self.parser.read_le::<i8>()?));
+                        }
+                        SERIALIZATION_TYPE::U1 => {
+                            result_stack
+                                .push(CustomAttributeArgument::U1(self.parser.read_le::<u8>()?));
+                        }
+                        SERIALIZATION_TYPE::I2 => {
+                            result_stack
+                                .push(CustomAttributeArgument::I2(self.parser.read_le::<i16>()?));
+                        }
+                        SERIALIZATION_TYPE::U2 => {
+                            result_stack
+                                .push(CustomAttributeArgument::U2(self.parser.read_le::<u16>()?));
+                        }
+                        SERIALIZATION_TYPE::I4 => {
+                            result_stack
+                                .push(CustomAttributeArgument::I4(self.parser.read_le::<i32>()?));
+                        }
+                        SERIALIZATION_TYPE::U4 => {
+                            result_stack
+                                .push(CustomAttributeArgument::U4(self.parser.read_le::<u32>()?));
+                        }
+                        SERIALIZATION_TYPE::I8 => {
+                            result_stack
+                                .push(CustomAttributeArgument::I8(self.parser.read_le::<i64>()?));
+                        }
+                        SERIALIZATION_TYPE::U8 => {
+                            result_stack
+                                .push(CustomAttributeArgument::U8(self.parser.read_le::<u64>()?));
+                        }
+                        SERIALIZATION_TYPE::R4 => {
+                            result_stack
+                                .push(CustomAttributeArgument::R4(self.parser.read_le::<f32>()?));
+                        }
+                        SERIALIZATION_TYPE::R8 => {
+                            result_stack
+                                .push(CustomAttributeArgument::R8(self.parser.read_le::<f64>()?));
+                        }
+                        SERIALIZATION_TYPE::STRING => {
+                            if self.parser.peek_byte()? == 0xFF {
+                                let _ = self.parser.read_le::<u8>()?; // consume null marker
+                                result_stack.push(CustomAttributeArgument::String(String::new()));
+                            } else {
+                                let s = self.parse_string()?;
+                                result_stack.push(CustomAttributeArgument::String(s));
+                            }
+                        }
+                        SERIALIZATION_TYPE::TYPE => {
+                            if self.parser.peek_byte()? == 0xFF {
+                                let _ = self.parser.read_le::<u8>()?; // consume null marker
+                                result_stack.push(CustomAttributeArgument::Type(String::new()));
+                            } else {
+                                let s = self.parse_string()?;
+                                result_stack.push(CustomAttributeArgument::Type(s));
+                            }
+                        }
+                        SERIALIZATION_TYPE::TAGGED_OBJECT => {
+                            // Read inner type tag and schedule work
+                            let inner_type_tag = self.parser.read_le::<u8>()?;
+                            work_stack.push(WorkItem::TaggedObject);
+                            work_stack.push(WorkItem::ParseTag(inner_type_tag));
+                        }
+                        SERIALIZATION_TYPE::ENUM => {
+                            // Read enum type name, then value
+                            let type_name = self.parse_string()?;
+                            let val = self.parser.read_le::<i32>()?; // Most enums are I4-based
+                            result_stack.push(CustomAttributeArgument::Enum(
+                                type_name,
+                                Box::new(CustomAttributeArgument::I4(val)),
+                            ));
+                        }
+                        SERIALIZATION_TYPE::SZARRAY => {
+                            // Read array element type tag and length
+                            let element_type_tag = self.parser.read_le::<u8>()?;
+                            let array_length = self.parser.read_le::<i32>()?;
+
+                            if array_length == -1 {
+                                result_stack.push(CustomAttributeArgument::Array(vec![]));
+                            // null array
+                            } else if array_length < 0 {
+                                return Err(malformed_error!(
+                                    "Invalid array length: {}",
+                                    array_length
+                                ));
+                            } else {
+                                // Schedule work to build array after parsing elements
+                                work_stack.push(WorkItem::BuildArray(array_length));
+
+                                // Schedule parsing of array elements in reverse order
+                                // (so they are processed in correct order from stack)
+                                for _ in 0..array_length {
+                                    work_stack.push(WorkItem::ParseTag(element_type_tag));
+                                }
+                            }
+                        }
+                        _ => {
+                            return Err(malformed_error!(
+                                "Unsupported serialization type tag: 0x{:02X}",
+                                tag
+                            ));
+                        }
                     }
-                    CustomAttributeArgument::Array(elements)
+                }
+                WorkItem::BuildArray(count) => {
+                    // Pop N elements from result stack and build array
+                    #[allow(clippy::cast_sign_loss)]
+                    let count_usize = count as usize;
+
+                    if result_stack.len() < count_usize {
+                        return Err(malformed_error!(
+                            "Insufficient elements on stack for array of length {}",
+                            count
+                        ));
+                    }
+
+                    // Elements are on stack in correct order (last parsed = last in array)
+                    let start_idx = result_stack.len() - count_usize;
+                    let elements = result_stack.drain(start_idx..).collect();
+                    result_stack.push(CustomAttributeArgument::Array(elements));
+                }
+                WorkItem::TaggedObject => {
+                    // Result is already on stack from inner ParseTag, nothing to do
+                    // Tagged object is transparent - we just return the inner value
                 }
             }
-            _ => {
-                return Err(malformed_error!(
-                    "Unsupported serialization type tag: 0x{:02X}",
-                    type_tag
-                ));
-            }
-        };
+        }
 
-        self.depth -= 1;
-        Ok(result)
+        // Should have exactly one result
+        if result_stack.len() != 1 {
+            return Err(malformed_error!(
+                "Internal error: expected 1 result, got {}",
+                result_stack.len()
+            ));
+        }
+
+        Ok(result_stack.pop().unwrap())
     }
 
     /// Helper method to check if the current position contains string data.
@@ -1011,7 +1258,7 @@ impl<'a> CustomAttributeParser<'a> {
             }
         } else {
             Err(malformed_error!(
-                "String length {} exceeds available data {} (blob context: pos={}, len={}, first_byte=0x{:02X})", 
+                "String length {} exceeds available data {} (blob context: pos={}, len={}, first_byte=0x{:02X})",
                 length,
                 available_data,
                 self.parser.pos() - 1, // subtract 1 because we already read the length
@@ -1020,255 +1267,20 @@ impl<'a> CustomAttributeParser<'a> {
             ))
         }
     }
-
-    /// Check if a type is an enum using formal inheritance analysis and fallback heuristics
-    ///
-    /// This implements a multi-layered approach to enum detection:
-    ///
-    /// ## 1. Formal Inheritance Analysis (Primary)
-    ///
-    /// Uses actual inheritance chain traversal following .NET specification:
-    /// - All enums must inherit from `System.Enum`
-    /// - Traverses base type chain up to `MAX_INHERITANCE_DEPTH`
-    /// - Returns definitive result when inheritance information is available
-    ///
-    /// ## 2. Heuristic Fallback (Secondary)
-    ///
-    /// For external types where inheritance isn't available:
-    /// - Known .NET framework enum types (explicit list)
-    /// - Common enum naming patterns (conservative approach)
-    /// - Ensures compatibility with real-world assemblies
-    ///
-    /// ## 3. Graceful Degradation (Tertiary)
-    ///
-    /// When enum detection is uncertain:
-    /// - Defaults to `Type` argument parsing (safer)
-    /// - Prevents parsing failures in production scenarios
-    /// - Maintains backward compatibility
-    ///
-    /// # Architecture Benefits
-    ///
-    /// - **Accuracy**: Formal inheritance analysis provides definitive results
-    /// - **Compatibility**: Heuristic fallback handles external assemblies
-    /// - **Robustness**: Graceful degradation prevents failures
-    /// - **Future-Proof**: Ready for multi-assembly project loading
-    fn is_enum_type(type_ref: &CilTypeRc) -> bool {
-        const MAX_INHERITANCE_DEPTH: usize = 10;
-
-        let type_name = type_ref.fullname();
-
-        // Quick check: System.Enum itself is not an enum type
-        if type_name == "System.Enum" {
-            return false;
-        }
-
-        // PHASE 1: Formal inheritance analysis (most accurate)
-        // This provides definitive results when type definitions are available
-        if let Some(enum_result) = Self::analyze_inheritance_chain(type_ref, MAX_INHERITANCE_DEPTH)
-        {
-            return enum_result;
-        }
-
-        // PHASE 2: Heuristic fallback for external types
-        // Used when inheritance information is not available (external assemblies)
-        Self::is_known_enum_type(&type_name)
-    }
-
-    /// Performs formal inheritance chain analysis to detect enum types
-    ///
-    /// This method implements the definitive .NET approach: traverse the inheritance
-    /// hierarchy looking for `System.Enum` as a base type. This is the most accurate
-    /// method when type definitions are available within the current assembly scope.
-    ///
-    /// # Returns
-    /// - `Some(true)` if definitively an enum (inherits from System.Enum)
-    /// - `Some(false)` if definitively not an enum (inheritance chain known, no System.Enum)
-    /// - `None` if inheritance information is unavailable (external types)
-    fn analyze_inheritance_chain(
-        type_ref: &Arc<crate::metadata::typesystem::CilType>,
-        max_depth: usize,
-    ) -> Option<bool> {
-        let mut current_type = Some(type_ref.clone());
-        let mut depth = 0;
-        let mut found_inheritance_info = false;
-
-        while let Some(current) = current_type {
-            depth += 1;
-            if depth > max_depth {
-                break;
-            }
-
-            if let Some(base_type) = current.base() {
-                found_inheritance_info = true;
-                let base_name = base_type.fullname();
-
-                if base_name == "System.Enum" {
-                    return Some(true);
-                }
-                current_type = Some(base_type);
-            } else {
-                break;
-            }
-        }
-
-        // If we found inheritance information but no System.Enum, it's definitely not an enum
-        // If we found no inheritance info, return None to trigger heuristic fallback
-        if found_inheritance_info {
-            Some(false)
-        } else {
-            None
-        }
-    }
-
-    /// Check if a type name corresponds to a known .NET enum type using sophisticated heuristics
-    ///
-    /// This is a fallback heuristic for when formal inheritance analysis isn't available.
-    /// The approach combines multiple evidence sources for accurate enum detection while
-    /// maintaining conservative bias to prevent false positives.
-    ///
-    /// # Multi-Evidence Heuristic Strategy
-    ///
-    /// ## 1. Explicit Known Types (Highest Confidence)
-    /// - Comprehensive list of .NET framework enum types
-    /// - Based on actual .NET runtime enum definitions
-    /// - Provides definitive classification for common types
-    ///
-    /// ## 2. Namespace Analysis (High Confidence)
-    /// - `System.Runtime.InteropServices.*` (P/Invoke enums)
-    /// - `System.Reflection.*Attributes` (Metadata enums)
-    /// - `System.Security.*` (Security policy enums)
-    ///
-    /// ## 3. Naming Pattern Analysis (Medium Confidence)
-    /// - Suffix patterns: `Flags`, `Action`, `Kind`, `Mode`, `Options`
-    /// - Excludes overly broad patterns like `Type` (learned from Type argument issue)
-    /// - Balanced between detection and false positive prevention
-    ///
-    /// ## 4. Compound Evidence Scoring
-    /// - Multiple weak signals can combine to strong evidence
-    /// - Context-aware evaluation (namespace + suffix combinations)
-    ///
-    /// # Conservative Bias
-    ///
-    /// When uncertain, defaults to `Type` parsing for safety and compatibility.
-    /// Better to miss an enum than to incorrectly parse a legitimate Type argument.
-    fn is_known_enum_type(type_name: &str) -> bool {
-        match type_name {
-            // All known .NET enum types consolidated
-            "System.Runtime.InteropServices.CharSet" 
-            | "System.Runtime.InteropServices.TypeLibTypeFlags" 
-            | "System.Runtime.InteropServices.CallConv" 
-            | "System.Runtime.InteropServices.CallingConvention" 
-            | "System.Runtime.InteropServices.LayoutKind" 
-            | "System.Runtime.InteropServices.UnmanagedType" 
-            | "System.Runtime.InteropServices.VarEnum"
-            | "System.AttributeTargets" 
-            | "System.StringComparison" 
-            | "System.DateTimeKind"
-            | "System.DayOfWeek" 
-            | "System.TypeCode" 
-            | "System.UriKind"
-            | "System.Diagnostics.DebuggingModes" 
-            | ".DebuggingModes" // Sometimes namespace is missing
-            | "DebuggingModes" // Sometimes fully qualified name is missing
-            | "System.Reflection.BindingFlags" 
-            | "System.Reflection.MemberTypes" 
-            | "System.Reflection.MethodAttributes" 
-            | "System.Reflection.FieldAttributes" 
-            | "System.Reflection.TypeAttributes" 
-            | "System.Reflection.PropertyAttributes" 
-            | "System.Reflection.EventAttributes" 
-            | "System.Reflection.ParameterAttributes" 
-            | "System.Reflection.CallingConventions"
-            | "System.Security.SecurityAction" 
-            | "System.Security.Permissions.SecurityAction" 
-            | "System.Security.Permissions.FileIOPermissionAccess" 
-            | "System.Security.Permissions.RegistryPermissionAccess" 
-            | "System.Security.Permissions.ReflectionPermissionFlag" 
-            | "System.Security.Permissions.SecurityPermissionFlag" 
-            | "System.Security.Permissions.UIPermissionWindow" 
-            | "System.Security.Permissions.UIPermissionClipboard" 
-            | "System.Security.Permissions.EnvironmentPermissionAccess"
-            | "TestEnum" => true, // Test enum types (for unit tests)
-
-            _ => {
-                // Multi-evidence heuristic analysis for unknown types
-                Self::analyze_type_heuristics(type_name)
-            }
-        }
-    }
-
-    /// Advanced heuristic analysis for enum type detection using multiple evidence sources
-    ///
-    /// This method implements a sophisticated scoring system that combines multiple
-    /// weak signals into a stronger confidence assessment. The approach is designed
-    /// to minimize false positives while maintaining good detection accuracy.
-    ///
-    /// # Evidence Sources & Scoring
-    ///
-    /// - **High-confidence namespaces**: +2 points
-    /// - **Enum-pattern suffixes**: +1 point  
-    /// - **Conservative threshold**: Requires ≥2 points for positive classification
-    ///
-    /// # Examples
-    /// - `Microsoft.Win32.RegistryValueKind` → namespace(+2) + suffix(+1) = 3 → enum
-    /// - `MyApp.UserType` → no namespace match, suffix excluded → 0 → not enum
-    /// - `System.ComponentModel.DesignMode` → no high-confidence match → 0 → not enum
-    fn analyze_type_heuristics(type_name: &str) -> bool {
-        let mut confidence_score = 0;
-
-        // Evidence 1: High-confidence enum namespaces
-        if Self::is_likely_enum_namespace(type_name) {
-            confidence_score += 2;
-        }
-
-        // Evidence 2: Strong enum suffix patterns
-        if Self::has_enum_suffix_pattern(type_name) {
-            confidence_score += 1;
-        }
-
-        // Conservative threshold: require multiple evidence sources
-        confidence_score >= 2
-    }
-
-    /// Check if the type is from a namespace known to contain many enum types
-    fn is_likely_enum_namespace(type_name: &str) -> bool {
-        // High-confidence enum namespaces based on .NET framework analysis
-        type_name.starts_with("System.Runtime.InteropServices.")
-            || type_name.starts_with("System.Reflection.")
-            || type_name.starts_with("System.Security.Permissions.")
-            || type_name.starts_with("Microsoft.Win32.")
-            || type_name.starts_with("System.IO.")
-            || type_name.starts_with("System.Net.")
-            || type_name.starts_with("System.Drawing.")
-            || type_name.starts_with("System.Windows.Forms.")
-    }
-
-    /// Check if the type name has suffix patterns strongly associated with enums
-    fn has_enum_suffix_pattern(type_name: &str) -> bool {
-        type_name.ends_with("Flags")
-            || type_name.ends_with("Action")
-            || type_name.ends_with("Kind")
-            || type_name.ends_with("Attributes")
-            || type_name.ends_with("Access")
-            || type_name.ends_with("Mode")
-            || type_name.ends_with("Modes")
-            || type_name.ends_with("Style")
-            || type_name.ends_with("Options")
-            || type_name.ends_with("State")
-            || type_name.ends_with("Status")
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::metadata::{
+        identity::AssemblyIdentity,
         tables::Param,
         token::Token,
-        typesystem::{CilFlavor, CilTypeRef, TypeBuilder, TypeRegistry},
+        typesystem::{CilFlavor, CilPrimitiveKind, CilTypeRef, TypeBuilder, TypeRegistry},
     };
     use crate::test::factories::metadata::customattributes::{
-        create_constructor_with_params, create_empty_constructor,
+        create_constructor_with_params, create_constructor_with_params_and_registry,
+        create_empty_constructor, get_test_type_registry,
     };
     use std::sync::{Arc, OnceLock};
 
@@ -1525,15 +1537,19 @@ mod tests {
 
     #[test]
     fn test_parse_class_argument_scenarios() {
+        let test_registry = get_test_type_registry();
+
         // Test basic class scenarios that should work
-        let method1 = create_constructor_with_params(vec![CilFlavor::Class]);
+        let method1 =
+            create_constructor_with_params_and_registry(vec![CilFlavor::Class], &test_registry);
         let blob_data1 = &[
             0x01, 0x00, // Prolog
             0x00, // Compressed length: 0 (empty string)
             0x00, 0x00, // NumNamed = 0
         ];
 
-        let result1 = parse_custom_attribute_data(blob_data1, &method1.params);
+        let result1 =
+            parse_custom_attribute_data_with_registry(blob_data1, &method1.params, &test_registry);
         match result1 {
             Ok(attr) => {
                 assert_eq!(attr.fixed_args.len(), 1);
@@ -1550,7 +1566,9 @@ mod tests {
 
     #[test]
     fn test_parse_valuetype_enum_argument() {
-        let method = create_constructor_with_params(vec![CilFlavor::ValueType]);
+        let test_registry = get_test_type_registry();
+        let method =
+            create_constructor_with_params_and_registry(vec![CilFlavor::ValueType], &test_registry);
 
         let blob_data = &[
             0x01, 0x00, // Prolog
@@ -1558,12 +1576,14 @@ mod tests {
             0x00, 0x00, // NumNamed = 0
         ];
 
-        let result = parse_custom_attribute_data(blob_data, &method.params).unwrap();
+        let result =
+            parse_custom_attribute_data_with_registry(blob_data, &method.params, &test_registry)
+                .unwrap();
         assert_eq!(result.fixed_args.len(), 1);
         match &result.fixed_args[0] {
             CustomAttributeArgument::Enum(type_name, boxed_val) => {
-                // Accept either "Unknown" or "System.TestType" based on actual parser behavior
-                assert!(type_name == "Unknown" || type_name == "System.TestType");
+                // Accept either "Unknown" or "System.TestEnum" based on actual parser behavior
+                assert!(type_name == "Unknown" || type_name == "System.TestEnum");
                 match boxed_val.as_ref() {
                     CustomAttributeArgument::I4(val) => assert_eq!(*val, 1),
                     _ => panic!("Expected I4 in enum"),
@@ -1616,11 +1636,12 @@ mod tests {
     #[test]
     fn test_parse_simple_array_argument() {
         // Create an array type with I4 elements using TypeBuilder
-        let type_registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let type_registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         // Create the array type using TypeBuilder to properly set the base type
         let array_type = TypeBuilder::new(type_registry.clone())
-            .primitive(crate::metadata::typesystem::CilPrimitiveKind::I4)
+            .primitive(CilPrimitiveKind::I4)
             .unwrap()
             .array()
             .unwrap()

@@ -140,7 +140,9 @@ pub enum CilPrimitiveData {
     /// Boolean value - System.Boolean (true/false)
     Boolean(bool),
     /// Unicode character - System.Char (UTF-16 code unit)
-    Char(char),
+    /// .NET's System.Char is a 16-bit value that can represent any UTF-16 code unit,
+    /// including surrogate pairs (0xD800-0xDFFF) which are valid in .NET but not in Rust char
+    Char(u16),
     /// Signed 8-bit integer - System.SByte (-128 to 127)
     I1(i8),
     /// Unsigned 8-bit integer - System.Byte (0 to 255)
@@ -328,7 +330,15 @@ impl CilPrimitiveData {
         match self {
             CilPrimitiveData::String(value) => Some(value.clone()),
             CilPrimitiveData::Boolean(value) => Some(value.to_string()),
-            CilPrimitiveData::Char(value) => Some(value.to_string()),
+            CilPrimitiveData::Char(value) => {
+                // Try to convert to a valid Unicode char first
+                if let Some(ch) = char::from_u32(u32::from(*value)) {
+                    Some(ch.to_string())
+                } else {
+                    // For surrogates or invalid values, show as Unicode escape
+                    Some(format!("\\u{{{:04X}}}", value))
+                }
+            }
             CilPrimitiveData::I1(value) => Some(value.to_string()),
             CilPrimitiveData::U1(value) => Some(value.to_string()),
             CilPrimitiveData::I2(value) => Some(value.to_string()),
@@ -403,13 +413,8 @@ impl CilPrimitiveData {
                     Err(out_of_bounds_error!())
                 } else {
                     let code = u16::from_le_bytes([data[0], data[1]]);
-                    match char::from_u32(u32::from(code)) {
-                        Some(ch) => Ok(CilPrimitiveData::Char(ch)),
-                        None => Err(malformed_error!(
-                            "Invalid Unicode code point: {:#06x}",
-                            code
-                        )),
-                    }
+                    // .NET System.Char is a UTF-16 code unit, so any u16 value is valid
+                    Ok(CilPrimitiveData::Char(code))
                 }
             }
             ELEMENT_TYPE::I1 => Ok(CilPrimitiveData::I1(read_le::<i8>(data)?)),
@@ -429,7 +434,7 @@ impl CilPrimitiveData {
                     return Ok(CilPrimitiveData::String(String::new()));
                 }
 
-                if data.len() % 2 != 0 {
+                if !data.len().is_multiple_of(2) {
                     return Err(malformed_error!(
                         "Invalid UTF-16 string length: {} (must be even)",
                         data.len()
@@ -494,6 +499,7 @@ impl CilPrimitiveData {
 /// assert_eq!(void_type.data, CilPrimitiveData::None);
 /// ```
 #[derive(Debug, Clone, PartialEq)]
+// ToDo: This can be simplified to directly be an enum that contains the data and type
 pub struct CilPrimitive {
     /// The primitive type classification
     pub kind: CilPrimitiveKind,
@@ -792,12 +798,24 @@ impl CilPrimitive {
         }
     }
 
-    /// Create a character primitive
+    /// Create a character primitive from a Rust char
     ///
     /// ## Arguments
     /// * `value` - The initial value for the requested primitive
     #[must_use]
     pub fn char(value: char) -> Self {
+        CilPrimitive {
+            kind: CilPrimitiveKind::Char,
+            data: CilPrimitiveData::Char(value as u16),
+        }
+    }
+
+    /// Create a character primitive from a UTF-16 code unit
+    ///
+    /// ## Arguments  
+    /// * `value` - The UTF-16 code unit value (including surrogates)
+    #[must_use]
+    pub fn char_from_u16(value: u16) -> Self {
         CilPrimitive {
             kind: CilPrimitiveKind::Char,
             data: CilPrimitiveData::Char(value),
@@ -1244,7 +1262,7 @@ impl CilPrimitive {
             CilPrimitiveData::None => Vec::new(),
             CilPrimitiveData::Boolean(value) => vec![u8::from(*value)],
             CilPrimitiveData::Char(value) => {
-                let code = *value as u16;
+                let code = *value;
                 vec![(code & 0xFF) as u8, ((code >> 8) & 0xFF) as u8]
             }
             CilPrimitiveData::I1(value) => vec![{
@@ -1282,7 +1300,15 @@ impl fmt::Display for CilPrimitive {
         match &self.data {
             CilPrimitiveData::None => write!(f, "{}", self.clr_full_name()),
             CilPrimitiveData::Boolean(value) => write!(f, "{value}"),
-            CilPrimitiveData::Char(value) => write!(f, "'{value}'"),
+            CilPrimitiveData::Char(value) => {
+                // Try to display as a proper Unicode character if possible
+                if let Some(ch) = char::from_u32(u32::from(*value)) {
+                    write!(f, "'{ch}'")
+                } else {
+                    // For surrogates or invalid values, show as Unicode escape
+                    write!(f, "'\\u{{{:04X}}}'", value)
+                }
+            }
             CilPrimitiveData::I1(value) => write!(f, "{value}"),
             CilPrimitiveData::U1(value) => write!(f, "{value}"),
             CilPrimitiveData::I2(value) => write!(f, "{value}"),
@@ -1475,9 +1501,9 @@ mod tests {
         assert_eq!(void_primitive.data, CilPrimitiveData::None);
 
         let char_primitive =
-            CilPrimitive::with_data(CilPrimitiveKind::Char, CilPrimitiveData::Char('A'));
+            CilPrimitive::with_data(CilPrimitiveKind::Char, CilPrimitiveData::Char('A' as u16));
         assert_eq!(char_primitive.kind, CilPrimitiveKind::Char);
-        assert_eq!(char_primitive.data, CilPrimitiveData::Char('A'));
+        assert_eq!(char_primitive.data, CilPrimitiveData::Char('A' as u16));
     }
 
     #[test]
@@ -1579,7 +1605,7 @@ mod tests {
         let char_blob = vec![65, 0]; // 'A' as UTF-16 little-endian
         let char_prim = CilPrimitive::from_blob(ELEMENT_TYPE::CHAR, &char_blob).unwrap();
         assert_eq!(char_prim.kind, CilPrimitiveKind::Char);
-        assert_eq!(char_prim.data, CilPrimitiveData::Char('A'));
+        assert_eq!(char_prim.data, CilPrimitiveData::Char('A' as u16));
     }
 
     #[test]
@@ -2361,13 +2387,13 @@ mod tests {
         let char_a_bytes = char_a.to_bytes();
         let char_a_decoded =
             CilPrimitiveData::from_bytes(ELEMENT_TYPE::CHAR, &char_a_bytes).unwrap();
-        assert_eq!(char_a_decoded, CilPrimitiveData::Char('A'));
+        assert_eq!(char_a_decoded, CilPrimitiveData::Char('A' as u16));
 
         let char_unicode = CilPrimitive::char('ñ'); // Unicode character within BMP
         let char_unicode_bytes = char_unicode.to_bytes();
         let char_unicode_decoded =
             CilPrimitiveData::from_bytes(ELEMENT_TYPE::CHAR, &char_unicode_bytes).unwrap();
-        assert_eq!(char_unicode_decoded, CilPrimitiveData::Char('ñ'));
+        assert_eq!(char_unicode_decoded, CilPrimitiveData::Char('ñ' as u16));
 
         // Test integer constants
         let i1_test = CilPrimitive::i1(-128);

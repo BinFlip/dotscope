@@ -11,7 +11,7 @@ use crate::{
         token::Token,
         validation::ValidationConfig,
     },
-    test::{get_clean_testfile, TestAssembly},
+    test::{get_testfile_wb, TestAssembly},
     Error, Result,
 };
 use tempfile::NamedTempFile;
@@ -25,7 +25,7 @@ use tempfile::NamedTempFile;
 pub fn raw_table_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
-    let Some(clean_testfile) = get_clean_testfile() else {
+    let Some(clean_testfile) = get_testfile_wb() else {
         return Err(Error::Error(
             "WindowsBase.dll not available - test cannot run".to_string(),
         ));
@@ -104,7 +104,7 @@ pub fn raw_table_validator_file_factory() -> Result<Vec<TestAssembly>> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/table.rs`
 pub fn create_assembly_with_empty_module_table() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
 
@@ -143,7 +143,7 @@ pub fn create_assembly_with_empty_module_table() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/table.rs`
 pub fn create_assembly_with_multiple_assembly_rows() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
@@ -189,7 +189,7 @@ pub fn create_assembly_with_multiple_assembly_rows() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/table.rs`
 pub fn create_assembly_with_field_list_violation() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
@@ -231,7 +231,7 @@ pub fn create_assembly_with_field_list_violation() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/table.rs`
 pub fn create_assembly_with_method_list_violation() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);

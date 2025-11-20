@@ -146,11 +146,9 @@ impl OwnedAttributeValidator {
     /// - Custom attributes have invalid usage patterns on types or methods
     /// - Attribute arguments are malformed or invalid
     fn validate_attribute_usage_rules(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
-        let methods = context.object().methods();
-
         // Validate attributes on types
-        for type_entry in types.all_types() {
+        for entry in context.object().types().iter() {
+            let type_entry = entry.value();
             for (_, custom_attr) in type_entry.custom_attributes.iter() {
                 if let Err(e) = self.validate_attribute_usage(custom_attr, "Type") {
                     let type_name = &type_entry.name;
@@ -166,7 +164,7 @@ impl OwnedAttributeValidator {
         }
 
         // Validate attributes on methods
-        for method_entry in methods {
+        for method_entry in context.object().methods() {
             let method = method_entry.value();
             for (_, custom_attr) in method.custom_attributes.iter() {
                 if let Err(e) = self.validate_attribute_usage(custom_attr, "Method") {
@@ -322,7 +320,8 @@ impl OwnedAttributeValidator {
     fn validate_attribute_constructor_calls(&self, context: &OwnedValidationContext) -> Result<()> {
         let types = context.object().types();
 
-        for type_entry in types.all_types() {
+        for entry in types.iter() {
+            let type_entry = entry.value();
             for (_, custom_attr) in type_entry.custom_attributes.iter() {
                 if custom_attr.fixed_args.len() > 20 {
                     return Err(Error::ValidationOwnedValidatorFailed {
@@ -395,7 +394,8 @@ impl OwnedAttributeValidator {
         let methods = context.object().methods();
 
         // Check type-level attributes
-        for type_entry in types.all_types() {
+        for entry in types.iter() {
+            let type_entry = entry.value();
             for (_, custom_attr) in type_entry.custom_attributes.iter() {
                 if self.has_suspicious_attribute_pattern(custom_attr) {
                     return Err(Error::ValidationOwnedValidatorFailed {
@@ -568,7 +568,6 @@ impl OwnedValidator for OwnedAttributeValidator {
         self.validate_attribute_usage_rules(context)?;
         self.validate_attribute_constructor_calls(context)?;
         self.validate_attribute_target_compatibility(context)?;
-
         Ok(())
     }
 

@@ -92,8 +92,8 @@ impl MetadataLoader for ExportedTypeLoader {
     /// # Returns
     ///
     /// Returns [`TableId::ExportedType`] (0x27) identifying this as the `ExportedType` table loader.
-    fn table_id(&self) -> TableId {
-        TableId::ExportedType
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::ExportedType)
     }
 
     /// Returns the table dependencies required before loading `ExportedType` entries

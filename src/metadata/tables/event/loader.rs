@@ -84,8 +84,8 @@ impl MetadataLoader for EventLoader {
     /// # Returns
     ///
     /// Returns [`TableId::Event`] (0x14) indicating this loader processes the Event table.
-    fn table_id(&self) -> TableId {
-        TableId::Event
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::Event)
     }
 
     /// Returns the table dependencies required before loading events

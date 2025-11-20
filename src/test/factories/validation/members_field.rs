@@ -10,7 +10,7 @@ use crate::{
         tables::{FieldRaw, TableDataOwned, TableId},
         token::Token,
     },
-    test::{get_clean_testfile, TestAssembly},
+    test::{get_testfile_crafted2, TestAssembly},
     Error, Result,
 };
 
@@ -32,9 +32,9 @@ use crate::{
 pub fn owned_field_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
-    let Some(clean_testfile) = get_clean_testfile() else {
+    let Some(clean_testfile) = get_testfile_crafted2() else {
         return Err(Error::Error(
-            "WindowsBase.dll not available - test cannot run".to_string(),
+            "crafted_2.exe not available - test cannot run".to_string(),
         ));
     };
 
@@ -63,8 +63,8 @@ pub fn owned_field_validator_file_factory() -> Result<Vec<TestAssembly>> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/members/field.rs`
 pub fn create_assembly_with_null_character_field_name() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_clean_testfile() else {
-        return Err(Error::Error("WindowsBase.dll not available".to_string()));
+    let Some(clean_testfile) = get_testfile_crafted2() else {
+        return Err(Error::Error("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_file(&clean_testfile)
         .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
@@ -109,8 +109,8 @@ pub fn create_assembly_with_null_character_field_name() -> Result<TestAssembly> 
 ///
 /// Originally from: `src/metadata/validation/validators/owned/members/field.rs`
 pub fn create_assembly_with_literal_non_static_field() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_clean_testfile() else {
-        return Err(Error::Error("WindowsBase.dll not available".to_string()));
+    let Some(clean_testfile) = get_testfile_crafted2() else {
+        return Err(Error::Error("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_file(&clean_testfile)
         .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
@@ -156,8 +156,8 @@ pub fn create_assembly_with_literal_non_static_field() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/members/field.rs`
 pub fn create_assembly_with_rtspecial_without_special() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_clean_testfile() else {
-        return Err(Error::Error("WindowsBase.dll not available".to_string()));
+    let Some(clean_testfile) = get_testfile_crafted2() else {
+        return Err(Error::Error("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_file(&clean_testfile)
         .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
@@ -203,8 +203,8 @@ pub fn create_assembly_with_rtspecial_without_special() -> Result<TestAssembly> 
 ///
 /// Originally from: `src/metadata/validation/validators/owned/members/field.rs`
 pub fn create_assembly_with_empty_field_name() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_clean_testfile() else {
-        return Err(Error::Error("WindowsBase.dll not available".to_string()));
+    let Some(clean_testfile) = get_testfile_crafted2() else {
+        return Err(Error::Error("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_file(&clean_testfile)
         .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
@@ -249,8 +249,8 @@ pub fn create_assembly_with_empty_field_name() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/members/field.rs`
 pub fn create_assembly_with_non_private_backing_field() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_clean_testfile() else {
-        return Err(Error::Error("WindowsBase.dll not available".to_string()));
+    let Some(clean_testfile) = get_testfile_crafted2() else {
+        return Err(Error::Error("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_file(&clean_testfile)
         .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;

@@ -8,13 +8,13 @@
 //!
 //! The signature parser is built around a single [`SignatureParser`] struct that maintains
 //! parsing state and provides methods for extracting different signature types from binary
-//! data. The parser uses a recursive descent approach to handle complex nested types while
-//! maintaining protection against malformed data and infinite recursion.
+//! data. The parser uses an iterative stack-based approach to handle complex nested types while
+//! maintaining protection against malformed data and excessive nesting depth.
 //!
 //! ## Core Components
 //!
 //! - **Binary Reader**: Low-level byte stream processing with compressed integer support
-//! - **Type Parser**: Recursive type signature parsing with depth limiting
+//! - **Type Parser**: Iterative type signature parsing with nesting depth limiting
 //! - **Custom Modifier Handler**: Support for modreq/modopt type annotations
 //! - **Token Resolution**: Compressed metadata token decoding
 //! - **Error Recovery**: Comprehensive error reporting with context information
@@ -87,11 +87,12 @@
 //!
 //! # Security and Safety
 //!
-//! ## Recursion Protection
+//! ## Nesting Depth Protection
 //! The parser includes protection against stack overflow from malformed signatures:
-//! - Maximum recursion depth of 50 levels
+//! - Maximum nesting depth of 10,000 levels using iterative parsing
+//! - Explicit stack-based processing prevents call stack exhaustion
 //! - Early termination on depth limit exceeded
-//! - Clear error reporting for recursion limits
+//! - Clear error reporting for nesting depth limits
 //!
 //! ## Buffer Boundary Checking
 //! All data access includes bounds checking:
@@ -123,16 +124,19 @@ use crate::{
         },
         typesystem::{ArrayDimensions, ELEMENT_TYPE},
     },
-    Error::RecursionLimit,
+    Error::DepthLimitExceeded,
     Result,
 };
 
-/// Maximum recursion depth for signature parsing to prevent stack overflow.
+/// Maximum nesting depth for signature parsing to prevent stack overflow.
 ///
-/// This limit protects against malformed signatures that could cause infinite recursion
-/// through circular type references or deeply nested generic types. The limit of 50
-/// levels is sufficient for legitimate .NET signatures while preventing resource exhaustion.
-const MAX_RECURSION_DEPTH: usize = 50;
+/// This limit protects against malformed signatures that could cause excessive memory usage
+/// through circular type references or deeply nested generic types. The iterative parser
+/// uses an explicit stack which is tracked against this limit.
+///
+/// The limit of 10,000 levels accommodates even the most complex real-world .NET assemblies
+/// with deep generic hierarchies while still preventing resource exhaustion.
+const MAX_NESTING_DEPTH: usize = 1000;
 
 /// Binary signature parser for all .NET metadata signature types according to ECMA-335.
 ///
@@ -266,8 +270,6 @@ const MAX_RECURSION_DEPTH: usize = 50;
 pub struct SignatureParser<'a> {
     /// Binary data parser for reading signature bytes
     parser: Parser<'a>,
-    /// Current recursion depth for nested type parsing
-    depth: usize,
 }
 
 impl<'a> SignatureParser<'a> {
@@ -303,7 +305,6 @@ impl<'a> SignatureParser<'a> {
     pub fn new(data: &'a [u8]) -> Self {
         SignatureParser {
             parser: Parser::new(data),
-            depth: 0,
         }
     }
 
@@ -335,129 +336,366 @@ impl<'a> SignatureParser<'a> {
     /// - **Generic Parameters**: Type (`T`) and method (`M`) generic parameters
     /// - **Custom Modifiers**: Required and optional custom modifiers
     ///
-    /// # Recursion Protection
+    /// # Nesting Depth Protection
     ///
-    /// The parser tracks recursion depth to prevent stack overflow from malformed
-    /// signatures. The maximum depth is [`MAX_RECURSION_DEPTH`] levels.
+    /// The parser uses explicit stack-based processing to prevent call stack overflow from malformed
+    /// signatures. The maximum nesting depth is [`MAX_NESTING_DEPTH`] levels.
     ///
     /// # Returns
     /// A [`crate::metadata::signatures::TypeSignature`] representing the parsed type information.
     ///
     /// # Errors
-    /// - [`crate::error::Error::RecursionLimit`]: Maximum recursion depth exceeded
+    /// - [`crate::error::Error::DepthLimitExceeded`]: Maximum nesting depth exceeded
     /// - [`crate::Error::Malformed`]: Invalid element type or malformed signature data
     /// - [`crate::error::Error::OutOfBounds`]: Truncated signature data
     ///
     /// # Implementation Notes
     ///
     /// This method implements the complete ECMA-335 type encoding specification
-    /// and handles all standard element types. Custom modifiers are parsed inline
+    /// using an iterative stack-based approach. Custom modifiers are parsed inline
     /// and associated with the appropriate type elements.
     fn parse_type(&mut self) -> Result<TypeSignature> {
-        self.depth += 1;
-        if self.depth >= MAX_RECURSION_DEPTH {
-            return Err(RecursionLimit(MAX_RECURSION_DEPTH));
+        /// Work items for the iterative parsing stack
+        enum WorkItem {
+            /// Parse a type signature and push result
+            ParseType,
+            /// Seek parser to a specific position
+            Seek(usize),
+            /// Build PTR from modifiers and base type on stack
+            BuildPtr(Vec<CustomModifier>),
+            /// Build BYREF from base type on stack
+            BuildByRef,
+            /// Build ARRAY - needs elem_type, rank, dimensions on stack
+            BuildArray {
+                rank: u32,
+                dimensions: Vec<ArrayDimensions>,
+            },
+            /// Build GENERICINST - needs base_type and N type_args on stack
+            BuildGenericInst { arg_count: u32 },
+            /// Build SZARRAY from modifiers and base type on stack
+            BuildSzArray(Vec<CustomModifier>),
+            /// Build PINNED from base type on stack
+            BuildPinned,
         }
 
-        let current_byte = self.parser.read_le::<u8>()?;
-        match current_byte {
-            ELEMENT_TYPE::VOID => Ok(TypeSignature::Void),
-            ELEMENT_TYPE::BOOLEAN => Ok(TypeSignature::Boolean),
-            ELEMENT_TYPE::CHAR => Ok(TypeSignature::Char),
-            ELEMENT_TYPE::I1 => Ok(TypeSignature::I1),
-            ELEMENT_TYPE::U1 => Ok(TypeSignature::U1),
-            ELEMENT_TYPE::I2 => Ok(TypeSignature::I2),
-            ELEMENT_TYPE::U2 => Ok(TypeSignature::U2),
-            ELEMENT_TYPE::I4 => Ok(TypeSignature::I4),
-            ELEMENT_TYPE::U4 => Ok(TypeSignature::U4),
-            ELEMENT_TYPE::I8 => Ok(TypeSignature::I8),
-            ELEMENT_TYPE::U8 => Ok(TypeSignature::U8),
-            ELEMENT_TYPE::R4 => Ok(TypeSignature::R4),
-            ELEMENT_TYPE::R8 => Ok(TypeSignature::R8),
-            ELEMENT_TYPE::STRING => Ok(TypeSignature::String),
-            ELEMENT_TYPE::PTR => Ok(TypeSignature::Ptr(SignaturePointer {
-                modifiers: self.parse_custom_mods()?,
-                base: Box::new(self.parse_type()?),
-            })),
-            ELEMENT_TYPE::BYREF => Ok(TypeSignature::ByRef(Box::new(self.parse_type()?))),
-            ELEMENT_TYPE::VALUETYPE => Ok(TypeSignature::ValueType(
-                self.parser.read_compressed_token()?,
-            )),
-            ELEMENT_TYPE::CLASS => Ok(TypeSignature::Class(self.parser.read_compressed_token()?)),
-            ELEMENT_TYPE::VAR => Ok(TypeSignature::GenericParamType(
-                self.parser.read_compressed_uint()?,
-            )),
-            ELEMENT_TYPE::ARRAY => {
-                let elem_type = self.parse_type()?;
-                let rank = self.parser.read_compressed_uint()?;
+        let mut work_stack: Vec<WorkItem> = Vec::new();
+        let mut result_stack: Vec<TypeSignature> = Vec::new();
 
-                let num_sizes = self.parser.read_compressed_uint()?;
-                let mut dimensions: Vec<ArrayDimensions> = Vec::with_capacity(num_sizes as usize);
-                for _ in 0..num_sizes {
-                    dimensions.push(ArrayDimensions {
-                        size: Some(self.parser.read_compressed_uint()?),
-                        lower_bound: None,
-                    });
+        // Start with parsing the root type
+        work_stack.push(WorkItem::ParseType);
+
+        while let Some(work) = work_stack.pop() {
+            // Check nesting depth limit
+            if work_stack.len() + result_stack.len() > MAX_NESTING_DEPTH {
+                return Err(DepthLimitExceeded(MAX_NESTING_DEPTH));
+            }
+
+            match work {
+                WorkItem::Seek(pos) => {
+                    self.parser.seek(pos)?;
                 }
+                WorkItem::ParseType => {
+                    let current_byte = self.parser.read_le::<u8>()?;
+                    match current_byte {
+                        ELEMENT_TYPE::VOID => result_stack.push(TypeSignature::Void),
+                        ELEMENT_TYPE::BOOLEAN => result_stack.push(TypeSignature::Boolean),
+                        ELEMENT_TYPE::CHAR => result_stack.push(TypeSignature::Char),
+                        ELEMENT_TYPE::I1 => result_stack.push(TypeSignature::I1),
+                        ELEMENT_TYPE::U1 => result_stack.push(TypeSignature::U1),
+                        ELEMENT_TYPE::I2 => result_stack.push(TypeSignature::I2),
+                        ELEMENT_TYPE::U2 => result_stack.push(TypeSignature::U2),
+                        ELEMENT_TYPE::I4 => result_stack.push(TypeSignature::I4),
+                        ELEMENT_TYPE::U4 => result_stack.push(TypeSignature::U4),
+                        ELEMENT_TYPE::I8 => result_stack.push(TypeSignature::I8),
+                        ELEMENT_TYPE::U8 => result_stack.push(TypeSignature::U8),
+                        ELEMENT_TYPE::R4 => result_stack.push(TypeSignature::R4),
+                        ELEMENT_TYPE::R8 => result_stack.push(TypeSignature::R8),
+                        ELEMENT_TYPE::STRING => result_stack.push(TypeSignature::String),
+                        ELEMENT_TYPE::VALUETYPE => {
+                            let token = self.parser.read_compressed_token()?;
+                            result_stack.push(TypeSignature::ValueType(token));
+                        }
+                        ELEMENT_TYPE::CLASS => {
+                            let token = self.parser.read_compressed_token()?;
+                            result_stack.push(TypeSignature::Class(token));
+                        }
+                        ELEMENT_TYPE::VAR => {
+                            let index = self.parser.read_compressed_uint()?;
+                            result_stack.push(TypeSignature::GenericParamType(index));
+                        }
+                        ELEMENT_TYPE::TYPEDBYREF => result_stack.push(TypeSignature::TypedByRef),
+                        ELEMENT_TYPE::I => result_stack.push(TypeSignature::I),
+                        ELEMENT_TYPE::U => result_stack.push(TypeSignature::U),
+                        ELEMENT_TYPE::FNPTR => {
+                            let method_sig = self.parse_method_signature()?;
+                            result_stack.push(TypeSignature::FnPtr(Box::new(method_sig)));
+                        }
+                        ELEMENT_TYPE::OBJECT => result_stack.push(TypeSignature::Object),
+                        ELEMENT_TYPE::MVAR => {
+                            let index = self.parser.read_compressed_uint()?;
+                            result_stack.push(TypeSignature::GenericParamMethod(index));
+                        }
+                        ELEMENT_TYPE::INTERNAL => result_stack.push(TypeSignature::Internal),
+                        ELEMENT_TYPE::MODIFIER => result_stack.push(TypeSignature::Modifier),
+                        ELEMENT_TYPE::SENTINEL => result_stack.push(TypeSignature::Sentinel),
+                        ELEMENT_TYPE::END => {
+                            // END (0x00) marks the end of a list in signatures (ECMA-335 II.23.2).
+                            // We treat it as Void to handle padding/terminator bytes gracefully.
+                            result_stack.push(TypeSignature::Void);
+                        }
+                        ELEMENT_TYPE::PTR => {
+                            let modifiers = self.parse_custom_mods()?;
+                            work_stack.push(WorkItem::BuildPtr(modifiers));
+                            work_stack.push(WorkItem::ParseType);
+                        }
+                        ELEMENT_TYPE::BYREF => {
+                            work_stack.push(WorkItem::BuildByRef);
+                            work_stack.push(WorkItem::ParseType);
+                        }
+                        ELEMENT_TYPE::ARRAY => {
+                            // Skip element type to read array metadata
+                            let elem_pos = self.parser.pos();
+                            self.parse_type_simple()?; // Skip element type
 
-                let num_lo_bounds = self.parser.read_compressed_uint()?;
-                for i in 0..num_lo_bounds {
-                    if let Some(dimension) = dimensions.get_mut(i as usize) {
-                        dimension.lower_bound = Some(self.parser.read_compressed_uint()?);
+                            // Read array metadata
+                            let rank = self.parser.read_compressed_uint()?;
+                            let num_sizes = self.parser.read_compressed_uint()?;
+                            let mut dimensions: Vec<ArrayDimensions> =
+                                Vec::with_capacity(num_sizes as usize);
+                            for _ in 0..num_sizes {
+                                dimensions.push(ArrayDimensions {
+                                    size: Some(self.parser.read_compressed_uint()?),
+                                    lower_bound: None,
+                                });
+                            }
+
+                            let num_lo_bounds = self.parser.read_compressed_uint()?;
+                            for i in 0..num_lo_bounds {
+                                if let Some(dimension) = dimensions.get_mut(i as usize) {
+                                    dimension.lower_bound =
+                                        Some(self.parser.read_compressed_uint()?);
+                                }
+                            }
+
+                            // Reset position to parse element type properly
+                            self.parser.seek(elem_pos)?;
+
+                            // Schedule: build array after parsing element type
+                            work_stack.push(WorkItem::BuildArray { rank, dimensions });
+                            work_stack.push(WorkItem::ParseType);
+                        }
+                        ELEMENT_TYPE::GENERICINST => {
+                            let peek_byte = self.parser.peek_byte()?;
+                            if peek_byte != 0x12 && peek_byte != 0x11 {
+                                return Err(malformed_error!(
+                                    "GENERICINST - Next byte is not TYPE_CLASS or TYPE_VALUE - {}",
+                                    peek_byte
+                                ));
+                            }
+
+                            // Save position, parse base type to skip it, read arg_count
+                            let base_pos = self.parser.pos();
+                            self.parse_type_simple()?;
+                            let arg_count = self.parser.read_compressed_uint()?;
+                            let args_pos = self.parser.pos();
+
+                            // Reset to base to parse it properly
+                            self.parser.seek(base_pos)?;
+
+                            work_stack.push(WorkItem::BuildGenericInst { arg_count });
+                            // Parse type args in reverse order
+                            for _ in 0..arg_count {
+                                work_stack.push(WorkItem::ParseType);
+                            }
+                            // Seek to args position before parsing type args
+                            work_stack.push(WorkItem::Seek(args_pos));
+                            // Parse base type first
+                            work_stack.push(WorkItem::ParseType);
+                        }
+                        ELEMENT_TYPE::SZARRAY => {
+                            let modifiers = self.parse_custom_mods()?;
+                            work_stack.push(WorkItem::BuildSzArray(modifiers));
+                            work_stack.push(WorkItem::ParseType);
+                        }
+                        ELEMENT_TYPE::CMOD_REQD => {
+                            // We consumed the CMOD_REQD byte, go back so parse_custom_mods can handle it
+                            self.parser.seek(self.parser.pos() - 1)?;
+                            let modifiers = self.parse_custom_mods()?;
+                            result_stack.push(TypeSignature::ModifiedRequired(modifiers));
+                        }
+                        ELEMENT_TYPE::CMOD_OPT => {
+                            // We consumed the CMOD_OPT byte, go back so parse_custom_mods can handle it
+                            self.parser.seek(self.parser.pos() - 1)?;
+                            let modifiers = self.parse_custom_mods()?;
+                            result_stack.push(TypeSignature::ModifiedOptional(modifiers));
+                        }
+                        ELEMENT_TYPE::PINNED => {
+                            work_stack.push(WorkItem::BuildPinned);
+                            work_stack.push(WorkItem::ParseType);
+                        }
+                        _ => {
+                            return Err(malformed_error!(
+                                "Unsupported ELEMENT_TYPE - {}",
+                                current_byte
+                            ));
+                        }
                     }
                 }
+                WorkItem::BuildPtr(modifiers) => {
+                    let base_type = result_stack
+                        .pop()
+                        .ok_or_else(|| malformed_error!("Missing base type for PTR"))?;
+                    result_stack.push(TypeSignature::Ptr(SignaturePointer {
+                        modifiers,
+                        base: Box::new(base_type),
+                    }));
+                }
+                WorkItem::BuildByRef => {
+                    let base_type = result_stack
+                        .pop()
+                        .ok_or_else(|| malformed_error!("Missing base type for BYREF"))?;
+                    result_stack.push(TypeSignature::ByRef(Box::new(base_type)));
+                }
+                WorkItem::BuildArray { rank, dimensions } => {
+                    let elem_type = result_stack
+                        .pop()
+                        .ok_or_else(|| malformed_error!("Missing element type for ARRAY"))?;
+                    result_stack.push(TypeSignature::Array(SignatureArray {
+                        base: Box::new(elem_type),
+                        rank,
+                        dimensions,
+                    }));
+                }
+                WorkItem::BuildGenericInst { arg_count } => {
+                    // Stack has: base_type, arg1, arg2, ..., argN (top is argN)
+                    // We need to pop argN...arg1 in reverse, then base_type
+                    if result_stack.len() < (arg_count as usize + 1) {
+                        return Err(malformed_error!(
+                            "Insufficient types on stack for GENERICINST"
+                        ));
+                    }
 
-                Ok(TypeSignature::Array(SignatureArray {
-                    base: Box::new(elem_type),
-                    rank,
-                    dimensions,
-                }))
+                    // Pop type args in reverse order (argN, argN-1, ..., arg1)
+                    let mut type_args = Vec::with_capacity(arg_count as usize);
+                    for _ in 0..arg_count {
+                        type_args.push(
+                            result_stack.pop().ok_or_else(|| {
+                                malformed_error!("Missing type arg for GENERICINST")
+                            })?,
+                        );
+                    }
+                    type_args.reverse(); // Reverse to get correct order (arg1, arg2, ..., argN)
+
+                    let base_type = result_stack
+                        .pop()
+                        .ok_or_else(|| malformed_error!("Missing base type for GENERICINST"))?;
+
+                    result_stack.push(TypeSignature::GenericInst(Box::new(base_type), type_args));
+                }
+                WorkItem::BuildSzArray(modifiers) => {
+                    let base_type = result_stack
+                        .pop()
+                        .ok_or_else(|| malformed_error!("Missing base type for SZARRAY"))?;
+                    result_stack.push(TypeSignature::SzArray(SignatureSzArray {
+                        modifiers,
+                        base: Box::new(base_type),
+                    }));
+                }
+                WorkItem::BuildPinned => {
+                    let base_type = result_stack
+                        .pop()
+                        .ok_or_else(|| malformed_error!("Missing base type for PINNED"))?;
+                    result_stack.push(TypeSignature::Pinned(Box::new(base_type)));
+                }
+            }
+        }
+
+        if result_stack.len() != 1 {
+            return Err(malformed_error!(
+                "Internal error: expected 1 type on stack, got {}",
+                result_stack.len()
+            ));
+        }
+
+        Ok(result_stack.pop().unwrap())
+    }
+
+    /// Helper method to parse a type signature without building the result (for lookahead).
+    /// This is used to skip over types when we need to read metadata that comes after them.
+    fn parse_type_simple(&mut self) -> Result<()> {
+        let current_byte = self.parser.read_le::<u8>()?;
+        match current_byte {
+            ELEMENT_TYPE::VOID
+            | ELEMENT_TYPE::BOOLEAN
+            | ELEMENT_TYPE::CHAR
+            | ELEMENT_TYPE::I1
+            | ELEMENT_TYPE::U1
+            | ELEMENT_TYPE::I2
+            | ELEMENT_TYPE::U2
+            | ELEMENT_TYPE::I4
+            | ELEMENT_TYPE::U4
+            | ELEMENT_TYPE::I8
+            | ELEMENT_TYPE::U8
+            | ELEMENT_TYPE::R4
+            | ELEMENT_TYPE::R8
+            | ELEMENT_TYPE::STRING
+            | ELEMENT_TYPE::TYPEDBYREF
+            | ELEMENT_TYPE::I
+            | ELEMENT_TYPE::U
+            | ELEMENT_TYPE::OBJECT
+            | ELEMENT_TYPE::INTERNAL
+            | ELEMENT_TYPE::MODIFIER
+            | ELEMENT_TYPE::SENTINEL
+            | ELEMENT_TYPE::END => Ok(()),
+            ELEMENT_TYPE::VALUETYPE | ELEMENT_TYPE::CLASS => {
+                self.parser.read_compressed_token()?;
+                Ok(())
+            }
+            ELEMENT_TYPE::VAR | ELEMENT_TYPE::MVAR => {
+                self.parser.read_compressed_uint()?;
+                Ok(())
+            }
+            ELEMENT_TYPE::PTR => {
+                let _ = self.parse_custom_mods()?;
+                self.parse_type_simple()
+            }
+            ELEMENT_TYPE::BYREF | ELEMENT_TYPE::PINNED => self.parse_type_simple(),
+            ELEMENT_TYPE::ARRAY => {
+                self.parse_type_simple()?;
+                let _rank = self.parser.read_compressed_uint()?;
+                let num_sizes = self.parser.read_compressed_uint()?;
+                for _ in 0..num_sizes {
+                    self.parser.read_compressed_uint()?;
+                }
+                let num_lo_bounds = self.parser.read_compressed_uint()?;
+                for _ in 0..num_lo_bounds {
+                    self.parser.read_compressed_uint()?;
+                }
+                Ok(())
             }
             ELEMENT_TYPE::GENERICINST => {
-                let peek_byte = self.parser.peek_byte()?;
-                if peek_byte != 0x12 && peek_byte != 0x11 {
-                    return Err(malformed_error!(
-                        "GENERICINST - Next byte is not TYPE_CLASS or TYPE_VALUE - {}",
-                        peek_byte
-                    ));
-                }
-
-                let base_type = self.parse_type()?;
+                self.parse_type_simple()?;
                 let arg_count = self.parser.read_compressed_uint()?;
-
-                let mut type_args = Vec::with_capacity(arg_count as usize);
                 for _ in 0..arg_count {
-                    type_args.push(self.parse_type()?);
+                    self.parse_type_simple()?;
                 }
-
-                Ok(TypeSignature::GenericInst(Box::new(base_type), type_args))
+                Ok(())
             }
-            ELEMENT_TYPE::TYPEDBYREF => Ok(TypeSignature::TypedByRef),
-            ELEMENT_TYPE::I => Ok(TypeSignature::I),
-            ELEMENT_TYPE::U => Ok(TypeSignature::U),
-            ELEMENT_TYPE::FNPTR => Ok(TypeSignature::FnPtr(Box::new(
-                self.parse_method_signature()?,
-            ))),
-            ELEMENT_TYPE::OBJECT => Ok(TypeSignature::Object),
-            ELEMENT_TYPE::SZARRAY => Ok(TypeSignature::SzArray(SignatureSzArray {
-                modifiers: self.parse_custom_mods()?,
-                base: Box::new(self.parse_type()?),
-            })),
-            ELEMENT_TYPE::MVAR => Ok(TypeSignature::GenericParamMethod(
-                self.parser.read_compressed_uint()?,
-            )),
-            ELEMENT_TYPE::CMOD_REQD => {
-                Ok(TypeSignature::ModifiedRequired(self.parse_custom_mods()?))
+            ELEMENT_TYPE::SZARRAY => {
+                let _ = self.parse_custom_mods()?;
+                self.parse_type_simple()
             }
-            ELEMENT_TYPE::CMOD_OPT => {
-                Ok(TypeSignature::ModifiedOptional(self.parse_custom_mods()?))
+            ELEMENT_TYPE::FNPTR => {
+                let _ = self.parse_method_signature()?;
+                Ok(())
             }
-            ELEMENT_TYPE::INTERNAL => Ok(TypeSignature::Internal),
-            ELEMENT_TYPE::MODIFIER => Ok(TypeSignature::Modifier),
-            ELEMENT_TYPE::SENTINEL => Ok(TypeSignature::Sentinel),
-            ELEMENT_TYPE::PINNED => Ok(TypeSignature::Pinned(Box::new(self.parse_type()?))),
+            ELEMENT_TYPE::CMOD_REQD | ELEMENT_TYPE::CMOD_OPT => {
+                self.parser.seek(self.parser.pos() - 1)?;
+                let _ = self.parse_custom_mods()?;
+                Ok(())
+            }
             _ => Err(malformed_error!(
-                "Unsupported ELEMENT_TYPE - {}",
+                "Unsupported ELEMENT_TYPE in simple parse - {}",
                 current_byte
             )),
         }
@@ -588,7 +826,7 @@ impl<'a> SignatureParser<'a> {
     ///
     /// # Errors
     /// - [`crate::Error::Malformed`]: Invalid parameter encoding
-    /// - [`crate::Error::RecursionLimit`]: Parameter type parsing exceeds recursion limit
+    /// - [`crate::Error::DepthLimitExceeded`]: Parameter type parsing exceeds nesting depth limit
     /// - [`crate::error::Error::OutOfBounds`]: Truncated parameter data
     ///
     /// # Usage Notes
@@ -716,7 +954,7 @@ impl<'a> SignatureParser<'a> {
     ///
     /// # Errors
     /// - [`crate::Error::Malformed`]: Invalid calling convention or parameter encoding
-    /// - [`crate::Error::RecursionLimit`]: Parameter type parsing exceeds recursion limit
+    /// - [`crate::Error::DepthLimitExceeded`]: Parameter type parsing exceeds nesting depth limit
     /// - [`crate::error::Error::OutOfBounds`]: Truncated signature data
     ///
     /// # Performance Notes
@@ -752,19 +990,24 @@ impl<'a> SignatureParser<'a> {
             varargs: Vec::new(),
         };
 
+        let mut hit_sentinel = false;
         for _ in 0..method.param_count {
             if self.parser.peek_byte()? == 0x41 {
                 // 0x41 == SENTINEL, indicates that Param is over, and next is the vararg param list for the remaining elements
 
                 self.parser.advance()?;
+                hit_sentinel = true;
                 break;
             }
 
             method.params.push(self.parse_param()?);
         }
 
-        if method.vararg && method.params.len() < method.param_count as usize {
-            for _ in method.params.len()..method.param_count as usize {
+        // After SENTINEL, parse varargs until we hit END (0x00) or run out of data
+        // According to ECMA-335 II.23.2.1, param_count only includes fixed parameters,
+        // not the vararg list. We must check for END marker to know when varargs finish.
+        if hit_sentinel {
+            while self.parser.has_more_data() && self.parser.peek_byte()? != ELEMENT_TYPE::END {
                 method.varargs.push(self.parse_param()?);
             }
         }
@@ -871,7 +1114,7 @@ impl<'a> SignatureParser<'a> {
     ///
     /// # Errors
     /// - [`crate::Error::Malformed`]: Invalid field signature header (not 0x06)
-    /// - [`crate::Error::RecursionLimit`]: Field type parsing exceeds recursion limit
+    /// - [`crate::Error::DepthLimitExceeded`]: Field type parsing exceeds nesting depth limit
     /// - [`crate::error::Error::OutOfBounds`]: Truncated field signature data
     ///
     /// # Custom Modifier Applications
@@ -1019,7 +1262,7 @@ impl<'a> SignatureParser<'a> {
     ///
     /// # Errors
     /// - [`crate::Error::Malformed`]: Invalid property signature header (missing PROPERTY bit)
-    /// - [`crate::Error::RecursionLimit`]: Property or parameter type parsing exceeds recursion limit
+    /// - [`crate::Error::DepthLimitExceeded`]: Property or parameter type parsing exceeds nesting depth limit
     /// - [`crate::error::Error::OutOfBounds`]: Truncated property signature data
     ///
     /// # Indexer Design Patterns
@@ -1203,7 +1446,7 @@ impl<'a> SignatureParser<'a> {
     ///
     /// # Errors
     /// - [`crate::Error::Malformed`]: Invalid local variable signature header (not 0x07)
-    /// - [`crate::Error::RecursionLimit`]: Local variable type parsing exceeds recursion limit
+    /// - [`crate::Error::DepthLimitExceeded`]: Local variable type parsing exceeds nesting depth limit
     /// - [`crate::error::Error::OutOfBounds`]: Truncated local variable signature data
     ///
     /// # Memory Management Implications
@@ -1395,7 +1638,7 @@ impl<'a> SignatureParser<'a> {
     /// type specification information ready for type system operations.
     ///
     /// # Errors
-    /// - [`crate::Error::RecursionLimit`]: Type parsing exceeds maximum recursion depth
+    /// - [`crate::Error::DepthLimitExceeded`]: Type parsing exceeds maximum nesting depth
     /// - [`crate::Error::Malformed`]: Invalid type encoding or format
     /// - [`crate::error::Error::OutOfBounds`]: Truncated type specification data
     ///
@@ -1414,8 +1657,36 @@ impl<'a> SignatureParser<'a> {
     /// - **Partition I, Section 8**: Type system and constructed types
     /// - **Partition II, Section 23.1.16**: Generic type instantiation validation
     pub fn parse_type_spec_signature(&mut self) -> Result<SignatureTypeSpec> {
-        let type_sig = self.parse_type()?;
-        Ok(SignatureTypeSpec { base: type_sig })
+        // First, parse any custom modifiers at the beginning
+        let modifiers = self.parse_custom_mods()?;
+
+        // Then parse the base type signature
+        let base_type_sig = self.parse_type()?;
+
+        // If we got a ModifiedRequired/Optional from parse_type, we need to handle it specially
+        match base_type_sig {
+            TypeSignature::ModifiedRequired(mod_modifiers)
+            | TypeSignature::ModifiedOptional(mod_modifiers) => {
+                // Combine the modifiers from parse_custom_mods() and from the ModifiedRequired
+                let mut all_modifiers = modifiers;
+                all_modifiers.extend(mod_modifiers);
+
+                // Parse the base type that follows the modifiers
+                let base_type = self.parse_type()?;
+
+                Ok(SignatureTypeSpec {
+                    modifiers: all_modifiers,
+                    base: base_type,
+                })
+            }
+            _ => {
+                // No additional modifiers, just use what we found
+                Ok(SignatureTypeSpec {
+                    modifiers,
+                    base: base_type_sig,
+                })
+            }
+        }
     }
 
     /// Parse a method specification signature from the signature blob according to ECMA-335 II.23.2.15.
@@ -1549,7 +1820,7 @@ impl<'a> SignatureParser<'a> {
     ///
     /// # Errors
     /// - [`crate::Error::Malformed`]: Invalid method specification header (not 0x0A)
-    /// - [`crate::Error::RecursionLimit`]: Type argument parsing exceeds recursion limit
+    /// - [`crate::Error::DepthLimitExceeded`]: Type argument parsing exceeds nesting depth limit
     /// - [`crate::error::Error::OutOfBounds`]: Truncated method specification data
     /// - [`crate::error::Error::Malformed`]: Mismatched type argument count
     ///

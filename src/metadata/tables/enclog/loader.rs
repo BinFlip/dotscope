@@ -66,8 +66,8 @@ impl MetadataLoader for EncLogLoader {
     ///
     /// # Returns
     /// [`crate::metadata::tables::TableId::EncLog`] (0x1E)
-    fn table_id(&self) -> TableId {
-        TableId::EncLog
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::EncLog)
     }
 
     /// Returns the list of table dependencies
