@@ -172,9 +172,11 @@ pub mod cor20header;
 pub mod customattributes;
 /// Implementation of custom debug information parsing for Portable PDB format
 pub mod customdebuginformation;
+/// Multi-assembly dependency tracking and analysis system
+pub mod dependencies;
 /// Implementation of 'Exports' by the loaded binary
 pub mod exports;
-/// Implementation of the verification mechanism of an `Assembly`
+/// Assembly identity and cryptographic verification system
 pub mod identity;
 /// Implementation of methods that are imported from other binaries (native or .net)
 pub mod imports;

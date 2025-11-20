@@ -479,7 +479,7 @@ impl Clone for Exports {
 mod tests {
     use super::*;
     use crate::{
-        metadata::{token::Token, typesystem::TypeRegistry},
+        metadata::{identity::AssemblyIdentity, token::Token, typesystem::TypeRegistry},
         test::{create_cil_type, create_exportedtype},
     };
 
@@ -494,9 +494,10 @@ mod tests {
     fn find_by_name_works() {
         let exports = Exports::new();
 
-        let type_registry = TypeRegistry::new().unwrap();
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let type_registry = TypeRegistry::new(test_identity).unwrap();
         let dummy_type = create_cil_type(Token::new(0x02000001), "TestNamespace", "TestType", None);
-        type_registry.insert(dummy_type.clone());
+        type_registry.insert(&dummy_type);
 
         let exported_type = create_exportedtype(dummy_type);
 
@@ -523,13 +524,14 @@ mod tests {
     fn iter_works() {
         let exports = Exports::new();
 
-        let type_registry = TypeRegistry::new().unwrap();
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let type_registry = TypeRegistry::new(test_identity).unwrap();
         let dummy_type1 =
             create_cil_type(Token::new(0x02000001), "TestNamespace", "TestType1", None);
         let dummy_type2 =
             create_cil_type(Token::new(0x02000002), "TestNamespace", "TestType2", None);
-        type_registry.insert(dummy_type1.clone());
-        type_registry.insert(dummy_type2.clone());
+        type_registry.insert(&dummy_type1);
+        type_registry.insert(&dummy_type2);
 
         let exported_type1 = create_exportedtype(dummy_type1);
         let exported_type2 = create_exportedtype(dummy_type2);

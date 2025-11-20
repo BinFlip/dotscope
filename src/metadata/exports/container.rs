@@ -564,7 +564,7 @@ impl UnifiedExportContainer {
             if let Some(ref name) = function.name {
                 // Add to name cache
                 self.unified_name_cache
-                    .entry(name.to_string())
+                    .entry(name.clone())
                     .or_default()
                     .push(ExportEntry::Native(NativeExportRef {
                         ordinal: function.ordinal,
@@ -596,7 +596,7 @@ impl UnifiedExportContainer {
             if let Some(ref name) = forwarder.name {
                 // Add to name cache
                 self.unified_name_cache
-                    .entry(name.to_string())
+                    .entry(name.clone())
                     .or_default()
                     .push(ExportEntry::Native(NativeExportRef {
                         ordinal: forwarder.ordinal,
@@ -606,7 +606,7 @@ impl UnifiedExportContainer {
 
                 // Add to function cache
                 self.unified_function_cache
-                    .entry(name.to_string())
+                    .entry(name.clone())
                     .or_insert_with(|| ExportSource::Native(forwarder.ordinal));
             }
         }

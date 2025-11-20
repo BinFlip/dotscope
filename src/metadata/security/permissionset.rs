@@ -159,17 +159,17 @@
 //! // Binary format (most common)
 //! # fn get_binary_data() -> Vec<u8> { vec![0x2E, 0x00] }
 //! let binary_data = get_binary_data();
-//! let binary_set = PermissionSet::new(&binary_data)?;
+//! let binary_set = PermissionSet::new(&binary_data, None)?;
 //!
 //! // XML format (legacy)
 //! # fn get_xml_data() -> Vec<u8> { b"<PermissionSet>".to_vec() }
 //! let xml_data = get_xml_data();
-//! let xml_set = PermissionSet::new(&xml_data)?;
+//! let xml_set = PermissionSet::new(&xml_data, None)?;
 //!
 //! // Unicode format (specialized)
 //! # fn get_unicode_data() -> Vec<u8> { vec![0xFF, 0xFE] }
 //! let unicode_data = get_unicode_data();
-//! let unicode_set = PermissionSet::new(&unicode_data)?;
+//! let unicode_set = PermissionSet::new(&unicode_data, None)?;
 //!
 //! // All formats provide the same API
 //! println!("Binary permissions: {}", binary_set.permissions().len());
@@ -276,6 +276,7 @@ use crate::{
         security_classes, ArgumentType, ArgumentValue, NamedArgument, Permission,
         PermissionSetFormat, SecurityPermissionFlags,
     },
+    utils::EnumUtils,
     Result,
 };
 use quick_xml::{
@@ -539,7 +540,12 @@ impl PermissionSet {
                         String::new()
                     };
 
-                    let (arg_type, value) = Self::parse_argument_value(&mut parser, prop_type)?;
+                    let (arg_type, value) = Self::parse_argument_value(
+                        &mut parser,
+                        prop_type,
+                        &class_name,
+                        &prop_name,
+                    )?;
 
                     named_arguments.push(NamedArgument {
                         name: prop_name,
@@ -708,6 +714,80 @@ impl PermissionSet {
         )
     }
 
+    /// Validates that the enum type is a known permission Flags enum
+    ///
+    /// ## Arguments
+    /// * `enum_name` - The enum name from the binary data (should be "Flags")
+    /// * `permission_class` - The permission class being parsed (may include version info)
+    /// * `property_name` - The full enum type name (e.g., "System.Security.Permissions.SecurityPermissionFlag")
+    ///
+    /// ## Returns
+    /// `true` if this is a valid permission Flags enum, `false` otherwise
+    fn is_valid_permission_flags_enum(
+        enum_name: &str,
+        permission_class: &str,
+        property_name: &str,
+    ) -> bool {
+        // Accept common .NET permission enum types
+        let valid_enum_names = [
+            "Flags",        // SecurityPermissionFlag, etc.
+            "UsageAllowed", // IsolatedStorageContainment
+            "Access",       // FileIOPermissionAccess
+            "Control",      // Various permission control enums
+            "Rights",       // Various permission rights enums
+            "Level",        // Various permission level enums
+            "Mode",         // Various permission mode enums
+            "Window",       // UIPermissionWindow
+            "Clipboard",    // UIPermissionClipboard
+            "AllFiles",     // FileIOPermissionAccess.AllFiles (added in .NET 4.8)
+        ];
+
+        if !valid_enum_names.contains(&enum_name) {
+            return false;
+        }
+
+        // Property name should be a known permission flag enum type
+        let valid_flag_types = [
+            "System.Security.Permissions.SecurityPermissionFlag",
+            "System.Security.Permissions.DataProtectionPermissionFlags",
+            "System.Security.Permissions.KeyContainerPermissionFlags",
+            "System.Security.Permissions.ReflectionPermissionFlag",
+            "System.Security.Permissions.StorePermissionFlags",
+            "System.Security.Permissions.TypeDescriptorPermissionFlags",
+            "System.Security.Permissions.IsolatedStorageContainment", // for IsolatedStorageFilePermissionAttribute
+            "System.Security.Permissions.UIPermissionWindow",         // for UIPermissionAttribute
+            "System.Security.Permissions.UIPermissionClipboard",      // for UIPermissionAttribute
+            "System.Security.Permissions.FileIOPermissionAccess", // for FileIOPermissionAttribute (added in .NET 4.8)
+            "System.Web.AspNetHostingPermissionLevel", // for AspNetHostingPermissionAttribute
+        ];
+
+        let property_matches = valid_flag_types
+            .iter()
+            .any(|&valid_type| property_name.starts_with(valid_type));
+
+        if !property_matches {
+            return false;
+        }
+
+        // Permission class should start with a known permission class (ignore version info)
+        let known_permission_classes = [
+            "System.Security.Permissions.SecurityPermission",
+            "System.Security.Permissions.DataProtectionPermission",
+            "System.Security.Permissions.KeyContainerPermission",
+            "System.Security.Permissions.ReflectionPermission",
+            "System.Security.Permissions.StorePermission",
+            "System.Security.Permissions.TypeDescriptorPermission",
+            "System.Security.Permissions.IsolatedStorageFilePermission",
+            "System.Security.Permissions.UIPermission", // for UIPermissionAttribute
+            "System.Security.Permissions.FileIOPermission", // for FileIOPermissionAttribute (added in .NET 4.8)
+            "System.Web.AspNetHostingPermission",           // for AspNetHostingPermissionAttribute
+        ];
+
+        known_permission_classes
+            .iter()
+            .any(|&known_class| permission_class.starts_with(known_class))
+    }
+
     /// Resolve assembly name from permission class name
     ///
     /// Maps common .NET permission classes to their containing assemblies
@@ -737,9 +817,13 @@ impl PermissionSet {
     /// ## Arguments
     /// * `parser` - The parser to read from
     /// * `arg_type` - The type code of the argument
+    /// * `permission_class` - The permission class being parsed (for context)
+    /// * `property_name` - The name of the property being parsed (for context)
     fn parse_argument_value(
         parser: &mut Parser,
         arg_type: u8,
+        permission_class: &str,
+        property_name: &str,
     ) -> Result<(ArgumentType, ArgumentValue)> {
         match arg_type {
             // Boolean
@@ -754,8 +838,34 @@ impl PermissionSet {
             }
             // String
             0x0E => {
-                let value = parser.read_prefixed_string_utf8()?;
+                let value = parser.read_compressed_string_utf8()?;
                 Ok((ArgumentType::String, ArgumentValue::String(value)))
+            }
+            // Enum (0x55 = 85)
+            0x55 => {
+                let type_name = parser.read_compressed_string_utf8()?;
+
+                // Validate that this is a known permission Flags enum
+                if !Self::is_valid_permission_flags_enum(
+                    &type_name,
+                    permission_class,
+                    property_name,
+                ) {
+                    return Err(malformed_error!(
+                        "Invalid permission enum: type='{}', property='{}', class='{}'. \
+                         PermissionSets should only contain 'Flags' properties with known .NET permission classes.",
+                        type_name, property_name, permission_class
+                    ));
+                }
+
+                // All permission flag enums are 4-byte integers (default enum backing type)
+                // No need for TypeRegistry lookup since PermissionSets only contain well-known permission types
+                let enum_value = i64::from(parser.read_le::<i32>()?);
+
+                Ok((
+                    ArgumentType::String,
+                    ArgumentValue::String(EnumUtils::format_enum_value(&type_name, enum_value)),
+                ))
             }
             _ => Err(malformed_error!("Unknown argument type: {}", arg_type)),
         }
