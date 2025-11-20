@@ -1,8 +1,8 @@
 //! Central type registry for .NET assembly analysis.
 //!
 //! This module provides the `TypeRegistry`, a thread-safe, high-performance registry for managing
-//! all types within a .NET assembly. It serves as the central hub for type lookup, deduplication,
-//! and cross-reference resolution during metadata analysis.
+//! all types within a .NET assembly. It serves as the central hub for type lookup,
+//! storage, and cross-reference resolution during metadata analysis.
 //!
 //! # Key Components
 //!
@@ -45,11 +45,12 @@
 //! use dotscope::metadata::token::Token;
 //!
 //! // Create a new registry with primitive types
-//! let registry = TypeRegistry::new()?;
+//! let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+//! let registry = TypeRegistry::new(test_identity)?;
 //!
 //! // Look up types by name
-//! for entry in registry.get_by_fullname("System.String") {
-//!     println!("Found String type: 0x{:08X}", entry.token.value());
+//! if let Some(string_type) = registry.get_by_fullname_first("System.String", true) {
+//!     println!("Found String type: 0x{:08X}", string_type.token.value());
 //! }
 //!
 //! // Look up by token
@@ -67,7 +68,8 @@
 //! use std::sync::Arc;
 //!
 //! # fn example() -> dotscope::Result<()> {
-//! let registry = TypeRegistry::new()?;
+//! let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+//! let registry = TypeRegistry::new(test_identity)?;
 //!
 //! // Create a new type
 //! let new_type = CilType::new(
@@ -111,6 +113,7 @@ use dashmap::DashMap;
 
 use crate::{
     metadata::{
+        identity::AssemblyIdentity,
         signatures::SignatureMethodSpec,
         tables::{AssemblyRefRc, FileRc, MethodSpec, ModuleRc, ModuleRefRc},
         token::Token,
@@ -123,10 +126,10 @@ use crate::{
     Result,
 };
 
-/// Complete type specification for proper deduplication
+/// Complete type specification for type construction
 ///
 /// This structure contains all the information needed to create a type with full
-/// structural identity, enabling proper deduplication of complex types like generic
+/// structural identity, enabling proper construction of complex types like generic
 /// instances, arrays, and other constructed types.
 #[derive(Clone)]
 pub struct CompleteTypeSpec {
@@ -147,11 +150,11 @@ pub struct CompleteTypeSpec {
 }
 
 impl CompleteTypeSpec {
-    /// Check if this specification matches an existing CilType for deduplication
+    /// Check if this specification matches an existing CilType for validation
     ///
     /// This method performs comprehensive structural comparison to determine if an
-    /// existing type is equivalent to what this specification describes. This enables
-    /// proper type deduplication while avoiding false positives.
+    /// existing type matches what this specification describes. This is used
+    /// for validation and consistency checking during type construction.
     ///
     /// # Comparison Criteria
     /// Types are considered equivalent if they have identical:
@@ -193,8 +196,8 @@ impl CompleteTypeSpec {
         let ext_ref = existing_type.get_external();
 
         match (&self.source, ext_ref) {
-            (TypeSource::CurrentModule, None) => true, // Both are current module types
-            (TypeSource::CurrentModule, Some(_)) => false, // Local vs external
+            (TypeSource::Assembly(_), None) => true,
+            (TypeSource::Assembly(_), Some(_)) => false, // Local vs external
             (src, Some(ext_ref)) => {
                 match (ext_ref, src) {
                     (CilTypeReference::AssemblyRef(ar), TypeSource::AssemblyRef(tok)) => {
@@ -274,7 +277,7 @@ impl CompleteTypeSpec {
 /// use dotscope::metadata::token::Token;
 ///
 /// // Local type
-/// let local_source = TypeSource::CurrentModule;
+/// let local_source = TypeSource::Unknown;
 ///
 /// // External assembly type
 /// let external_source = TypeSource::AssemblyRef(Token::new(0x23000001));
@@ -282,10 +285,10 @@ impl CompleteTypeSpec {
 /// // Primitive type
 /// let primitive_source = TypeSource::Primitive;
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TypeSource {
-    /// Type is defined in the current module being analyzed
-    CurrentModule,
+    /// Type is defined in a specific assembly (by identity)
+    Assembly(AssemblyIdentity),
     /// Type is defined in an external module (cross-module reference)
     Module(Token),
     /// Type is defined in an external module reference
@@ -377,6 +380,9 @@ impl SourceRegistry {
                     .insert(assembly_ref.token, assembly_ref.clone());
                 TypeSource::AssemblyRef(assembly_ref.token)
             }
+            CilTypeReference::Assembly(assembly) => {
+                TypeSource::Assembly(AssemblyIdentity::from_assembly(assembly))
+            }
             CilTypeReference::File(file) => {
                 self.files.insert(file.token, file.clone());
                 TypeSource::File(file.token)
@@ -400,25 +406,25 @@ impl SourceRegistry {
     /// # Thread Safety
     ///
     /// This method is thread-safe and lock-free for concurrent access.
-    fn get_source(&self, source: TypeSource) -> Option<CilTypeReference> {
+    fn get_source(&self, source: &TypeSource) -> Option<CilTypeReference> {
         match source {
             TypeSource::Module(token) => self
                 .modules
-                .get(&token)
+                .get(token)
                 .map(|module| CilTypeReference::Module(module.clone())),
             TypeSource::ModuleRef(token) => self
                 .module_refs
-                .get(&token)
+                .get(token)
                 .map(|moduleref| CilTypeReference::ModuleRef(moduleref.clone())),
             TypeSource::AssemblyRef(token) => self
                 .assembly_refs
-                .get(&token)
+                .get(token)
                 .map(|assemblyref| CilTypeReference::AssemblyRef(assemblyref.clone())),
             TypeSource::File(token) => self
                 .files
-                .get(&token)
+                .get(token)
                 .map(|file| CilTypeReference::File(file.clone())),
-            TypeSource::Primitive | TypeSource::Unknown | TypeSource::CurrentModule => None,
+            TypeSource::Primitive | TypeSource::Unknown | TypeSource::Assembly(_) => None,
         }
     }
 }
@@ -427,7 +433,7 @@ impl SourceRegistry {
 ///
 /// `TypeRegistry` provides thread-safe, high-performance storage and lookup
 /// capabilities for all types encountered during metadata analysis. It serves
-/// as the authoritative source for type information and handles deduplication,
+/// as the authoritative source for type information and handles storage,
 /// cross-references, and efficient query operations.
 ///
 /// # Architecture
@@ -450,7 +456,6 @@ impl SourceRegistry {
 ///
 /// Types are identified using multiple strategies:
 /// - **Token identity**: Primary key using metadata tokens
-/// - **Signature identity**: Hash-based deduplication for complex types
 /// - **Name identity**: Full namespace.name qualification
 /// - **Source identity**: Origin-based grouping
 ///
@@ -459,7 +464,7 @@ impl SourceRegistry {
 /// The registry uses reference counting (`Arc`) to manage type lifetime:
 /// - Types can be shared across multiple consumers
 /// - Automatic cleanup when no longer referenced
-/// - Efficient memory usage through deduplication
+/// - Efficient memory usage through reference counting
 ///
 /// # Examples
 ///
@@ -493,16 +498,16 @@ impl SourceRegistry {
 /// - **Token lookup**: O(log n) using skip list
 /// - **Name lookup**: O(1) average using hash indices  
 /// - **Registration**: O(log n) + O(1) for indexing
-/// - **Memory**: O(n) with deduplication benefits
+/// - **Memory**: O(n) with reference counting efficiency
 pub struct TypeRegistry {
     /// Primary type storage indexed by metadata tokens - uses skip list for O(log n) operations
     types: SkipMap<Token, CilTypeRc>,
     /// Atomic counter for generating unique artificial tokens for new types
     next_token: AtomicU32,
-    /// Cache mapping type signature hashes to tokens for deduplication with collision chaining
-    signature_cache: DashMap<u64, Vec<Token>>,
     /// Registry managing external assembly/module/file references
     sources: SourceRegistry,
+    /// Identity of the assembly this registry represents
+    current_assembly: AssemblyIdentity,
     /// Secondary index: types grouped by their origin source
     types_by_source: DashMap<TypeSource, Vec<Token>>,
     /// Secondary index: types indexed by full name (namespace.name)
@@ -511,6 +516,9 @@ pub struct TypeRegistry {
     types_by_name: DashMap<String, Vec<Token>>,
     /// Secondary index: types grouped by namespace
     types_by_namespace: DashMap<String, Vec<Token>>,
+    /// Registered external TypeRegistries for cross-assembly type resolution
+    /// Maps AssemblyIdentity to external TypeRegistry for cross-assembly lookups
+    external_registries: DashMap<AssemblyIdentity, Arc<TypeRegistry>>,
 }
 
 impl TypeRegistry {
@@ -555,20 +563,31 @@ impl TypeRegistry {
     /// assert!(!string_types.is_empty());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn new() -> Result<Self> {
+    pub fn new(assembly_identity: AssemblyIdentity) -> Result<Self> {
         let registry = TypeRegistry {
             types: SkipMap::new(),
             next_token: AtomicU32::new(0xF000_0020), // Start after reserved primitives
-            signature_cache: DashMap::new(),
             sources: SourceRegistry::new(),
+            current_assembly: assembly_identity,
             types_by_source: DashMap::new(),
             types_by_fullname: DashMap::new(),
             types_by_name: DashMap::new(),
             types_by_namespace: DashMap::new(),
+            external_registries: DashMap::new(),
         };
 
         registry.initialize_primitives()?;
         Ok(registry)
+    }
+
+    /// Get the current assembly identity.
+    pub fn current_assembly(&self) -> AssemblyIdentity {
+        self.current_assembly.clone()
+    }
+
+    /// Get the TypeSource for the current assembly.
+    pub fn current_assembly_source(&self) -> TypeSource {
+        TypeSource::Assembly(self.current_assembly.clone())
     }
 
     /// Get the next available token and increment the counter
@@ -627,7 +646,7 @@ impl TypeRegistry {
                 Some(flavor),
             ));
 
-            self.register_type_internal(new_type, TypeSource::Primitive);
+            self.register_type_internal(&new_type, TypeSource::Primitive);
         }
 
         // Set up base type relationships
@@ -698,7 +717,14 @@ impl TypeRegistry {
     /// ## Arguments
     /// * `type_rc`     - The type instance
     /// * `source`      - The the source of the type
-    fn register_type_internal(&self, type_rc: CilTypeRc, source: TypeSource) {
+    fn register_type_internal(&self, type_rc: &CilTypeRc, source: TypeSource) {
+        let token = type_rc.token;
+        if self.types.contains_key(&token) {
+            return;
+        }
+
+        self.types.insert(token, type_rc.clone());
+
         self.types_by_source
             .entry(source)
             .or_default()
@@ -720,47 +746,18 @@ impl TypeRegistry {
             .entry(type_rc.fullname())
             .or_default()
             .push(type_rc.token);
-
-        self.types.insert(type_rc.token, type_rc);
     }
 
     /// Insert a `CilType` into the registry
     ///
     /// ## Arguments
     /// * '`new_type`' - The type to register
-    pub fn insert(&self, new_type: CilTypeRc) {
-        let token = new_type.token;
-        if self.types.contains_key(&token) {
-            return;
-        }
-
+    pub fn insert(&self, new_type: &CilTypeRc) {
         let source = match new_type.get_external() {
             Some(external_source) => self.register_source(external_source),
-            None => TypeSource::CurrentModule,
+            None => TypeSource::Assembly(self.current_assembly.clone()),
         };
 
-        let hash = TypeSignatureHash::new()
-            .add_flavor(new_type.flavor())
-            .add_fullname(&new_type.namespace, &new_type.name)
-            .add_source(source)
-            .finalize();
-
-        // Check for existing types with the same signature hash
-        if let Some(collision_chain) = self.signature_cache.get(&hash) {
-            // Check each type in the collision chain for actual equivalence
-            for &existing_token in collision_chain.value() {
-                if let Some(existing_type) = self.types.get(&existing_token) {
-                    if existing_type.value().is_structurally_equivalent(&new_type) {
-                        // Found an equivalent type - map this token to the existing type
-                        // to preserve token-based references from other metadata tables
-                        self.types.insert(token, existing_type.value().clone());
-                        return;
-                    }
-                }
-            }
-        }
-
-        self.register_type_signature(hash, token, &new_type);
         self.register_type_internal(new_type, source);
     }
 
@@ -897,7 +894,7 @@ impl TypeRegistry {
     /// ```
     pub fn get_by_source_and_name(
         &self,
-        source: TypeSource,
+        source: &TypeSource,
         namespace: &str,
         name: &str,
     ) -> Option<CilTypeRc> {
@@ -907,7 +904,7 @@ impl TypeRegistry {
             format!("{namespace}.{name}")
         };
 
-        if let Some(tokens) = self.types_by_source.get(&source) {
+        if let Some(tokens) = self.types_by_source.get(source) {
             for &token in tokens.value() {
                 if let Some(type_rc) = self.types.get(&token) {
                     if type_rc.value().namespace == namespace && type_rc.value().name == name {
@@ -1018,10 +1015,11 @@ impl TypeRegistry {
     ///
     /// # Arguments
     /// * `fullname` - The fully qualified name in "namespace.name" format
+    /// * `external` - Whether to search external registries if not found locally
     ///
     /// # Returns
-    /// A vector containing types that match the full name. Usually contains
-    /// zero or one element, but may contain multiple if duplicates exist.
+    /// * `Some(CilTypeRc)` - The first TypeDef found
+    /// * `None` - If no TypeDef with the name is found
     ///
     /// # Name Format
     ///
@@ -1045,15 +1043,97 @@ impl TypeRegistry {
     /// let global_types = registry.get_by_fullname("GlobalType");
     /// # }
     /// ```
-    pub fn get_by_fullname(&self, fullname: &str) -> Vec<CilTypeRc> {
+    pub fn get_by_fullname(&self, fullname: &str, external: bool) -> Option<CilTypeRc> {
         if let Some(tokens) = self.types_by_fullname.get(fullname) {
-            tokens
-                .iter()
-                .filter_map(|token| self.types.get(token).map(|entry| entry.value().clone()))
-                .collect()
+            for token in tokens.value() {
+                if let Some(entry) = self.types.get(token) {
+                    let type_rc = entry.value().clone();
+                    // Accept TypeDef (0x02), TypeSpec (0x1B), and artificial types (0xF0)
+                    if type_rc.token.table() == 0x02
+                        || type_rc.token.table() == 0x1B
+                        || type_rc.token.table() == 0xF0
+                    {
+                        return Some(type_rc);
+                    }
+                }
+            }
         } else {
-            Vec::new()
+            // Fallback: try suffix matching for nested types
+            // This handles cases where TypeRef has incomplete name (e.g., "DynamicPartitionEnumerator_Abstract`2")
+            // but TypeDef has complete name (e.g., "Partitioner/DynamicPartitionEnumerator_Abstract`2")
+            let mut candidates = Vec::new();
+            for key_entry in &self.types_by_fullname {
+                let key = key_entry.key();
+                let tokens = key_entry.value();
+
+                // Check if this key ends with our target fullname (handling nested types)
+                if key.ends_with(fullname) && key != fullname {
+                    // Additional check: ensure it's a proper nested type match (contains '/')
+                    if key.contains('/') {
+                        // Check tokens for TypeDef or TypeSpec
+                        for token in tokens {
+                            if let Some(entry) = self.types.get(token) {
+                                let type_rc = entry.value().clone();
+                                if type_rc.token.table() == 0x02 || type_rc.token.table() == 0x1B {
+                                    candidates.push(type_rc);
+                                    break; // Take first TypeDef/TypeSpec found
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Return first candidate (could be enhanced with disambiguation logic)
+            if let Some(candidate) = candidates.first() {
+                return Some(candidate.clone());
+            }
         }
+
+        if external {
+            for external_registry_entry in &self.external_registries {
+                let external_registry = external_registry_entry.value();
+                if let Some(external_type) = external_registry.get_by_fullname(fullname, false) {
+                    return Some(external_type);
+                }
+            }
+        }
+        None
+    }
+
+    /// Get all TypeDefs by fully qualified name.
+    ///
+    /// # Arguments
+    /// * `fullname` - The fully qualified name in "namespace.name" format  
+    /// * `include_external` - Whether to search external registries
+    ///
+    /// # Returns
+    /// * `Vec<CilTypeRc>` - All TypeDefs found with the given name
+    pub fn get_by_fullname_list(&self, fullname: &str, include_external: bool) -> Vec<CilTypeRc> {
+        let mut typedef_matches = Vec::new();
+
+        if let Some(tokens) = self.types_by_fullname.get(fullname) {
+            for token in tokens.value() {
+                if let Some(entry) = self.types.get(token) {
+                    let type_rc = entry.value().clone();
+                    if type_rc.token.table() == 0xF0
+                        || (include_external && type_rc.token.table() == 0x02)
+                    {
+                        typedef_matches.push(type_rc);
+                    }
+                }
+            }
+        }
+
+        if include_external {
+            for external_registry_entry in &self.external_registries {
+                let external_registry = external_registry_entry.value();
+                let external_types = external_registry.get_by_fullname_list(fullname, false);
+                typedef_matches.extend(external_types);
+            }
+        }
+
+        typedef_matches
     }
 
     /// Register a source entity to enable resolving references to it
@@ -1068,12 +1148,12 @@ impl TypeRegistry {
     ///
     /// ## Arguments
     /// * 'source' - The source of the type to look for
-    pub fn get_source_reference(&self, source: TypeSource) -> Option<CilTypeReference> {
+    pub fn get_source_reference(&self, source: &TypeSource) -> Option<CilTypeReference> {
         self.sources.get_source(source)
     }
 
     /// This method creates types with complete structural information upfront, enabling
-    /// proper deduplication that considers the full type identity including generic arguments,
+    /// proper type construction that considers the full type identity including generic arguments,
     /// base types, and other distinguishing characteristics.
     ///
     /// ## Arguments
@@ -1083,30 +1163,6 @@ impl TypeRegistry {
     /// Returns an error if type construction fails due to invalid specifications
     /// or if required dependencies cannot be resolved.
     pub fn get_or_create_type(&self, spec: &CompleteTypeSpec) -> Result<CilTypeRc> {
-        // Calculate comprehensive hash including all distinguishing information
-        let hash = Self::calculate_complete_type_hash(spec);
-
-        // Check for existing structurally equivalent types
-        if let Some(collision_chain) = self.signature_cache.get(&hash) {
-            for &existing_token in collision_chain.value() {
-                if let Some(existing_type) = self.types.get(&existing_token) {
-                    let existing_ref = existing_type.value();
-
-                    // Check if this existing type matches the specification
-                    if spec.matches(existing_ref) {
-                        // If we have a specific token requested, map it to this equivalent type
-                        if let Some(requested_token) = spec.token_init {
-                            if requested_token != existing_ref.token {
-                                self.types.insert(requested_token, existing_ref.clone());
-                            }
-                        }
-                        return Ok(existing_ref.clone());
-                    }
-                }
-            }
-        }
-
-        // No equivalent type found, create new one with complete specification
         let token = if let Some(init_token) = spec.token_init {
             init_token
         } else {
@@ -1120,9 +1176,9 @@ impl TypeRegistry {
         // Create type with complete structure
         let new_type = Arc::new(CilType::new(
             token,
-            spec.namespace.to_string(),
-            spec.name.to_string(),
-            self.get_source_reference(spec.source),
+            spec.namespace.clone(),
+            spec.name.clone(),
+            self.get_source_reference(&spec.source),
             None,
             0,
             Arc::new(boxcar::Vec::new()),
@@ -1133,8 +1189,7 @@ impl TypeRegistry {
         // Configure the type according to specification
         Self::configure_type_from_spec(&new_type, spec)?;
 
-        self.register_type_signature(hash, token, &new_type);
-        self.register_type_internal(new_type.clone(), spec.source);
+        self.register_type_internal(&new_type, spec.source.clone());
 
         Ok(new_type)
     }
@@ -1144,7 +1199,7 @@ impl TypeRegistry {
         let mut hash_builder = TypeSignatureHash::new()
             .add_flavor(&spec.flavor)
             .add_fullname(&spec.namespace, &spec.name)
-            .add_source(spec.source);
+            .add_source(&spec.source);
 
         // Include generic arguments with enhanced entropy
         if let Some(generic_args) = &spec.generic_args {
@@ -1256,8 +1311,8 @@ impl TypeRegistry {
     ///
     /// ## Arguments
     /// * 'source' - The source of the types to look for
-    pub fn types_from_source(&self, source: TypeSource) -> Vec<CilTypeRc> {
-        if let Some(tokens) = self.types_by_source.get(&source) {
+    pub fn types_from_source(&self, source: &TypeSource) -> Vec<CilTypeRc> {
+        if let Some(tokens) = self.types_by_source.get(source) {
             tokens
                 .iter()
                 .filter_map(|token| self.types.get(token).map(|entry| entry.value().clone()))
@@ -1267,14 +1322,230 @@ impl TypeRegistry {
         }
     }
 
-    /// Register a type signature hash with collision chaining
+    /// Link another TypeRegistry for cross-assembly type resolution.
     ///
-    /// ## Arguments  
-    /// * `hash` - The computed signature hash
-    /// * `token` - The token of the type being registered
-    /// * `type_ref` - The type being registered (for future deep comparison)
-    fn register_type_signature(&self, hash: u64, token: Token, _type_ref: &CilTypeRc) {
-        self.signature_cache.entry(hash).or_default().push(token);
+    /// This enables the registry to search other assemblies' type registries when
+    /// a type cannot be found locally. This is essential for resolving TypeRef
+    /// tokens that reference external assemblies.
+    ///
+    /// # Arguments
+    /// * `assembly_identity` - The identity of the external assembly
+    /// * `registry` - The TypeRegistry from the external assembly
+    ///
+    /// # Thread Safety
+    /// This method is thread-safe and can be called concurrently.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::{
+    ///     identity::AssemblyIdentity,
+    ///     typesystem::TypeRegistry,
+    /// };
+    /// use std::sync::Arc;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let main_registry = TypeRegistry::new()?;
+    /// let external_registry = Arc::new(TypeRegistry::new()?);
+    /// let external_identity = AssemblyIdentity::parse("mscorlib, Version=4.0.0.0")?;
+    ///
+    /// main_registry.registry_link(external_identity, external_registry);
+    ///
+    /// // Now main_registry can resolve types from the external assembly
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn registry_link(&self, assembly_identity: AssemblyIdentity, registry: Arc<TypeRegistry>) {
+        self.external_registries.insert(assembly_identity, registry);
+    }
+
+    /// Unlink a TypeRegistry from cross-assembly type resolution.
+    ///
+    /// # Arguments
+    /// * `assembly_identity` - The identity of the assembly to unlink
+    ///
+    /// # Returns
+    /// The removed TypeRegistry if it existed, None otherwise
+    pub fn registry_unlink(
+        &self,
+        assembly_identity: &AssemblyIdentity,
+    ) -> Option<Arc<TypeRegistry>> {
+        self.external_registries
+            .remove(assembly_identity)
+            .map(|(_, registry)| registry)
+    }
+
+    /// Get a type by fully qualified name across all registries.
+    ///
+    /// This is a convenience method that calls get_by_fullname_first with include_external=true.
+    ///
+    /// # Arguments  
+    /// * `fullname` - The fully qualified name in "namespace.name" format
+    ///
+    /// # Returns
+    /// * `Some(CilTypeRc)` - The first TypeDef found
+    /// * `None` - If no TypeDef with the name is found in any registry
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::typesystem::TypeRegistry;
+    ///
+    /// # fn example(registry: &TypeRegistry) {
+    /// if let Some(string_type) = registry.resolve_type_global("System.String") {
+    ///     println!("Resolved System.String: 0x{:08X}", string_type.token.value());
+    ///     // This will be a TypeDef if available
+    /// }
+    /// # }
+    /// ```
+    pub fn resolve_type_global(&self, fullname: &str) -> Option<CilTypeRc> {
+        self.get_by_fullname(fullname, true)
+    }
+
+    /// Get all registered external assembly identities.
+    ///
+    /// # Returns
+    /// A vector of all assembly identities that have registered TypeRegistries
+    pub fn external_assemblies(&self) -> Vec<AssemblyIdentity> {
+        self.external_registries
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
+    }
+
+    /// Get an external TypeRegistry by assembly identity.
+    ///
+    /// # Arguments
+    /// * `assembly_identity` - The identity of the external assembly
+    ///
+    /// # Returns  
+    /// * `Some(Arc<TypeRegistry>)` - The external registry if registered
+    /// * `None` - If no registry is registered for the assembly
+    pub fn get_external_registry(
+        &self,
+        assembly_identity: &AssemblyIdentity,
+    ) -> Option<Arc<TypeRegistry>> {
+        self.external_registries
+            .get(assembly_identity)
+            .map(|entry| entry.value().clone())
+    }
+
+    /// Count of registered external registries.
+    ///
+    /// # Returns
+    /// The number of external TypeRegistries currently registered
+    pub fn external_registry_count(&self) -> usize {
+        self.external_registries.len()
+    }
+
+    /// Replace TypeRef registry entries to point to resolved TypeDef.
+    ///
+    /// This method updates the registry's lookup tables so that the TypeRef token
+    /// now points to the resolved TypeDef from another assembly, instead of the
+    /// original TypeRef. The TypeRef token remains as the lookup key.
+    ///
+    /// # Arguments
+    /// * `typeref_token` - The TypeRef token to redirect
+    /// * `resolved_typedef` - The resolved TypeDef to point to
+    ///
+    /// # Returns
+    /// * `true` if the replacement was successful
+    /// * `false` if the TypeRef token was not found in this registry
+    pub fn redirect_typeref_to_typedef(
+        &self,
+        typeref_token: Token,
+        resolved_typedef: &CilTypeRc,
+    ) -> bool {
+        // Get the original TypeRef to clean up its secondary index entries
+        let original_typeref = if let Some(entry) = self.types.get(&typeref_token) {
+            entry.value().clone()
+        } else {
+            return false; // TypeRef not found
+        };
+
+        // Redirect the TypeRef token in all secondary indexes to use the TypeDef's metadata
+        // Remove TypeRef from its original indexes (old metadata)
+        if let Some(external) = original_typeref.get_external() {
+            let source = self.register_source(external);
+            if let Some(mut list) = self.types_by_source.get_mut(&source) {
+                list.retain(|&token| token != typeref_token);
+            }
+        } else {
+            let current_source = self.current_assembly_source();
+            if let Some(mut list) = self.types_by_source.get_mut(&current_source) {
+                list.retain(|&token| token != typeref_token);
+            }
+        }
+
+        if !original_typeref.namespace.is_empty() {
+            if let Some(mut list) = self.types_by_namespace.get_mut(&original_typeref.namespace) {
+                list.retain(|&token| token != typeref_token);
+            }
+        }
+
+        if let Some(mut list) = self.types_by_name.get_mut(&original_typeref.name) {
+            list.retain(|&token| token != typeref_token);
+        }
+
+        let old_fullname = original_typeref.fullname();
+        if let Some(mut list) = self.types_by_fullname.get_mut(&old_fullname) {
+            list.retain(|&token| token != typeref_token);
+        }
+
+        // Add TypeRef token to the TypeDef's indexes (new metadata)
+        if let Some(external) = resolved_typedef.get_external() {
+            let source = self.register_source(external);
+            self.types_by_source
+                .entry(source)
+                .or_default()
+                .push(typeref_token);
+        }
+
+        if !resolved_typedef.namespace.is_empty() {
+            self.types_by_namespace
+                .entry(resolved_typedef.namespace.clone())
+                .or_default()
+                .push(typeref_token);
+        }
+
+        self.types_by_name
+            .entry(resolved_typedef.name.clone())
+            .or_default()
+            .push(typeref_token);
+
+        self.types_by_fullname
+            .entry(resolved_typedef.fullname())
+            .or_default()
+            .push(typeref_token);
+
+        self.types.insert(typeref_token, resolved_typedef.clone());
+        true
+    }
+
+    /// Build the fullname lookup table after structural relationships are established.
+    ///
+    /// This method should be called after all structural relationships (like nested classes)
+    /// have been established, so that types can be looked up by their final hierarchical names.
+    /// It populates the `types_by_fullname` index which is used by lookup methods.
+    ///
+    /// # Usage
+    ///
+    /// This should be called once per assembly after:
+    /// - All TypeDef, TypeRef, TypeSpec entries are loaded
+    /// - All NestedClass relationships are applied
+    /// - Before InheritanceResolver runs (which needs to look up nested types)
+    pub fn build_fullnames(&self) {
+        self.types_by_fullname.clear();
+
+        for entry in &self.types {
+            let type_rc = entry.value();
+            let current_fullname = type_rc.fullname();
+
+            self.types_by_fullname
+                .entry(current_fullname)
+                .or_default()
+                .push(type_rc.token);
+        }
     }
 }
 
@@ -1296,7 +1567,8 @@ mod tests {
 
     #[test]
     fn test_registry_primitives() {
-        let registry = TypeRegistry::new().unwrap();
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = TypeRegistry::new(test_identity).unwrap();
 
         let bool_type = registry.get_primitive(CilPrimitiveKind::Boolean).unwrap();
         assert_eq!(bool_type.name, "Boolean");
@@ -1358,7 +1630,8 @@ mod tests {
 
     #[test]
     fn test_create_and_lookup() {
-        let registry = TypeRegistry::new().unwrap();
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = TypeRegistry::new(test_identity).unwrap();
 
         let list_type = registry
             .get_or_create_type(&CompleteTypeSpec {
@@ -1366,7 +1639,7 @@ mod tests {
                 flavor: CilFlavor::Class,
                 namespace: "System.Collections.Generic".to_string(),
                 name: "List`1".to_string(),
-                source: TypeSource::CurrentModule,
+                source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
             })
@@ -1383,7 +1656,7 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].token, list_type.token);
 
-        let found = registry.get_by_fullname("System.Collections.Generic.List`1");
+        let found = registry.get_by_fullname_list("System.Collections.Generic.List`1", false);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].token, list_type.token);
 
@@ -1392,7 +1665,7 @@ mod tests {
         assert_eq!(found.unwrap().token, list_type.token);
 
         let found = registry.get_by_source_and_name(
-            TypeSource::CurrentModule,
+            &TypeSource::Unknown,
             "System.Collections.Generic",
             "List`1",
         );
@@ -1402,7 +1675,8 @@ mod tests {
 
     #[test]
     fn test_multiple_types_with_same_name() {
-        let registry = TypeRegistry::new().unwrap();
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = TypeRegistry::new(test_identity).unwrap();
 
         let point1 = registry
             .get_or_create_type(&CompleteTypeSpec {
@@ -1410,7 +1684,7 @@ mod tests {
                 flavor: CilFlavor::ValueType,
                 namespace: "System.Drawing".to_string(),
                 name: "Point".to_string(),
-                source: TypeSource::CurrentModule,
+                source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
             })
@@ -1422,7 +1696,7 @@ mod tests {
                 flavor: CilFlavor::ValueType,
                 namespace: "System.Windows".to_string(),
                 name: "Point".to_string(),
-                source: TypeSource::CurrentModule,
+                source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
             })
@@ -1433,18 +1707,19 @@ mod tests {
         let found = registry.get_by_name("Point");
         assert_eq!(found.len(), 2);
 
-        let found = registry.get_by_fullname("System.Drawing.Point");
+        let found = registry.get_by_fullname_list("System.Drawing.Point", false);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].token, point1.token);
 
-        let found = registry.get_by_fullname("System.Windows.Point");
+        let found = registry.get_by_fullname_list("System.Windows.Point", false);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].token, point2.token);
     }
 
     #[test]
     fn test_create_type_empty() {
-        let registry = TypeRegistry::new().unwrap();
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = TypeRegistry::new(test_identity).unwrap();
 
         let empty_type = registry.create_type_empty().unwrap();
 
@@ -1455,7 +1730,8 @@ mod tests {
 
     #[test]
     fn test_create_type_with_flavor() {
-        let registry = TypeRegistry::new().unwrap();
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = TypeRegistry::new(test_identity).unwrap();
 
         let class_type = registry.create_type_with_flavor(CilFlavor::Class).unwrap();
 
@@ -1466,7 +1742,8 @@ mod tests {
 
     #[test]
     fn test_insert() {
-        let registry = TypeRegistry::new().unwrap();
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = TypeRegistry::new(test_identity.clone()).unwrap();
 
         let token = Token::new(0x01000123);
         let new_type = Arc::new(CilType::new(
@@ -1481,21 +1758,22 @@ mod tests {
             Some(CilFlavor::Class),
         ));
 
-        registry.insert(new_type.clone());
+        registry.insert(&new_type);
 
         let found = registry.get(&token);
         assert!(found.is_some());
         assert_eq!(found.unwrap().token, token);
 
-        registry.insert(new_type.clone());
+        registry.insert(&new_type);
 
-        let user_types = registry.types_from_source(TypeSource::CurrentModule);
+        let user_types = registry.types_from_source(&TypeSource::Assembly(test_identity));
         assert_eq!(user_types.len(), 1);
     }
 
     #[test]
     fn test_source_registry() {
-        let registry = TypeRegistry::new().unwrap();
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = TypeRegistry::new(test_identity).unwrap();
 
         let module = Arc::new(Module {
             token: Token::new(0x00000001),
@@ -1562,7 +1840,7 @@ mod tests {
 
         if let TypeSource::Module(token) = module_source {
             if let CilTypeReference::Module(ref m) =
-                registry.get_source_reference(module_source).unwrap()
+                registry.get_source_reference(&module_source).unwrap()
             {
                 assert_eq!(m.token, token);
             } else {
@@ -1572,7 +1850,7 @@ mod tests {
 
         if let TypeSource::ModuleRef(token) = module_ref_source {
             if let CilTypeReference::ModuleRef(ref m) =
-                registry.get_source_reference(module_ref_source).unwrap()
+                registry.get_source_reference(&module_ref_source).unwrap()
             {
                 assert_eq!(m.token, token);
             } else {
@@ -1582,7 +1860,7 @@ mod tests {
 
         if let TypeSource::AssemblyRef(token) = assembly_ref_source {
             if let CilTypeReference::AssemblyRef(ref a) =
-                registry.get_source_reference(assembly_ref_source).unwrap()
+                registry.get_source_reference(&assembly_ref_source).unwrap()
             {
                 assert_eq!(a.token, token);
             } else {
@@ -1592,7 +1870,7 @@ mod tests {
 
         if let TypeSource::File(token) = file_source {
             if let CilTypeReference::File(ref f) =
-                registry.get_source_reference(file_source).unwrap()
+                registry.get_source_reference(&file_source).unwrap()
             {
                 assert_eq!(f.token, token);
             } else {
@@ -1606,7 +1884,7 @@ mod tests {
                 flavor: CilFlavor::Class,
                 namespace: "System.Collections".to_string(),
                 name: "ArrayList".to_string(),
-                source: TypeSource::CurrentModule,
+                source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
             })
@@ -1618,7 +1896,7 @@ mod tests {
                 flavor: CilFlavor::Class,
                 namespace: "System.Collections".to_string(),
                 name: "ArrayList".to_string(),
-                source: module_ref_source,
+                source: module_ref_source.clone(),
                 generic_args: None,
                 base_type: None,
             })
@@ -1630,7 +1908,7 @@ mod tests {
                 flavor: CilFlavor::Class,
                 namespace: "System.Collections".to_string(),
                 name: "ArrayList".to_string(),
-                source: assembly_ref_source,
+                source: assembly_ref_source.clone(),
                 generic_args: None,
                 base_type: None,
             })
@@ -1640,18 +1918,19 @@ mod tests {
         assert_ne!(type1.token, type3.token);
         assert_ne!(type2.token, type3.token);
 
-        let types_from_module_ref = registry.types_from_source(module_ref_source);
+        let types_from_module_ref = registry.types_from_source(&module_ref_source);
         assert_eq!(types_from_module_ref.len(), 1);
         assert_eq!(types_from_module_ref[0].token, type2.token);
 
-        let types_from_assembly_ref = registry.types_from_source(assembly_ref_source);
+        let types_from_assembly_ref = registry.types_from_source(&assembly_ref_source);
         assert_eq!(types_from_assembly_ref.len(), 1);
         assert_eq!(types_from_assembly_ref[0].token, type3.token);
     }
 
     #[test]
     fn test_registry_count_and_all_types() {
-        let registry = TypeRegistry::new().unwrap();
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = TypeRegistry::new(test_identity).unwrap();
 
         let initial_count = registry.len();
 
@@ -1661,7 +1940,7 @@ mod tests {
                 flavor: CilFlavor::Class,
                 namespace: "MyNamespace".to_string(),
                 name: "MyClass1".to_string(),
-                source: TypeSource::CurrentModule,
+                source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
             })
@@ -1673,7 +1952,7 @@ mod tests {
                 flavor: CilFlavor::Class,
                 namespace: "MyNamespace".to_string(),
                 name: "MyClass2".to_string(),
-                source: TypeSource::CurrentModule,
+                source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
             })
@@ -1700,9 +1979,10 @@ mod tests {
 
     #[test]
     fn test_type_signature_hash() {
-        let registry = TypeRegistry::new().unwrap();
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = TypeRegistry::new(test_identity).unwrap();
 
-        let source1 = TypeSource::CurrentModule;
+        let source1 = TypeSource::Unknown;
         let source2 = TypeSource::AssemblyRef(Token::new(0x23000001));
 
         let type1 = registry
@@ -1738,13 +2018,13 @@ mod tests {
         let class_hash = TypeSignatureHash::new()
             .add_flavor(&CilFlavor::Class)
             .add_fullname("System.Collections.Generic", "Dictionary`2")
-            .add_source(TypeSource::CurrentModule)
+            .add_source(&TypeSource::Unknown)
             .finalize();
 
         let generic_instance_hash = TypeSignatureHash::new()
             .add_flavor(&CilFlavor::GenericInstance)
             .add_fullname("System.Collections.Generic", "Dictionary`2")
-            .add_source(TypeSource::CurrentModule)
+            .add_source(&TypeSource::Unknown)
             .finalize();
 
         // They should be different
@@ -1755,22 +2035,23 @@ mod tests {
     }
 
     #[test]
-    fn test_enhanced_generic_instance_deduplication() {
-        let registry = TypeRegistry::new().unwrap();
+    fn test_enhanced_generic_instance_creation() {
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = TypeRegistry::new(test_identity).unwrap();
 
         // Create primitive types for generic arguments
         let string_type = registry.get_primitive(CilPrimitiveKind::String).unwrap();
         let int_type = registry.get_primitive(CilPrimitiveKind::I4).unwrap();
         let _object_type = registry.get_primitive(CilPrimitiveKind::Object).unwrap();
 
-        // Test context-aware deduplication for generic instances
+        // Test context-aware creation for generic instances
         let list_string_1 = registry
             .get_or_create_type(&CompleteTypeSpec {
                 token_init: None,
                 flavor: CilFlavor::GenericInstance,
                 namespace: "System.Collections.Generic".to_string(),
                 name: "List`1".to_string(),
-                source: TypeSource::CurrentModule,
+                source: TypeSource::Unknown,
                 generic_args: Some(vec![string_type.clone()]),
                 base_type: None,
             })
@@ -1782,7 +2063,7 @@ mod tests {
                 flavor: CilFlavor::GenericInstance,
                 namespace: "System.Collections.Generic".to_string(),
                 name: "List`1".to_string(),
-                source: TypeSource::CurrentModule,
+                source: TypeSource::Unknown,
                 generic_args: Some(vec![string_type.clone()]),
                 base_type: None,
             })
@@ -1794,16 +2075,20 @@ mod tests {
                 flavor: CilFlavor::GenericInstance,
                 namespace: "System.Collections.Generic".to_string(),
                 name: "List`1".to_string(),
-                source: TypeSource::CurrentModule,
+                source: TypeSource::Unknown,
                 generic_args: Some(vec![int_type.clone()]),
                 base_type: None,
             })
             .unwrap();
 
-        // Test structural equivalence using CilType's own comparison method
+        // Since deduplication is disabled, these should be different instances
+        assert_ne!(
+            list_string_1.token, list_string_2.token,
+            "Without deduplication, tokens should be different"
+        );
         assert!(
-            list_string_1.is_structurally_equivalent(&list_string_2),
-            "List<string> instances should be structurally equivalent"
+            !Arc::ptr_eq(&list_string_1, &list_string_2),
+            "Without deduplication, instances should be different"
         );
 
         assert!(
@@ -1822,7 +2107,8 @@ mod tests {
 
     #[test]
     fn test_token_generation() {
-        let registry = TypeRegistry::new().unwrap();
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = TypeRegistry::new(test_identity).unwrap();
 
         let token1 = registry.create_type_empty().unwrap().token;
         let token2 = registry.create_type_empty().unwrap().token;
@@ -1834,7 +2120,8 @@ mod tests {
 
     #[test]
     fn test_get_and_lookup_methods() {
-        let registry = TypeRegistry::new().unwrap();
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = TypeRegistry::new(test_identity).unwrap();
 
         let bad_token = Token::new(0x01999999);
         assert!(registry.get(&bad_token).is_none());
@@ -1845,31 +2132,25 @@ mod tests {
         let bad_namespace = registry.get_by_namespace("NonExistent.Namespace");
         assert!(bad_namespace.is_empty());
 
-        let bad_fullname = registry.get_by_fullname("NonExistent.Namespace.Type");
+        let bad_fullname = registry.get_by_fullname_list("NonExistent.Namespace.Type", false);
         assert!(bad_fullname.is_empty());
 
-        let bad_source_name = registry.get_by_source_and_name(
-            TypeSource::CurrentModule,
-            "NonExistent.Namespace",
-            "Type",
-        );
+        let bad_source_name =
+            registry.get_by_source_and_name(&TypeSource::Unknown, "NonExistent.Namespace", "Type");
         assert!(bad_source_name.is_none());
     }
 
     #[test]
     fn test_improved_hash_collision_resistance() {
-        let registry = TypeRegistry::new().unwrap();
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = TypeRegistry::new(test_identity).unwrap();
 
         // Test cases that would collide with old XOR-based approach
         let types = [
-            ("System", "String", TypeSource::CurrentModule),
-            ("System", "Object", TypeSource::CurrentModule),
-            ("System.Collections", "ArrayList", TypeSource::CurrentModule),
-            (
-                "System.Collections.Generic",
-                "List`1",
-                TypeSource::CurrentModule,
-            ),
+            ("System", "String", TypeSource::Unknown),
+            ("System", "Object", TypeSource::Unknown),
+            ("System.Collections", "ArrayList", TypeSource::Unknown),
+            ("System.Collections.Generic", "List`1", TypeSource::Unknown),
             (
                 "MyApp",
                 "Helper",
@@ -1890,7 +2171,7 @@ mod tests {
                     flavor: CilFlavor::Class,
                     namespace: namespace.to_string(),
                     name: name.to_string(),
-                    source: *source,
+                    source: source.clone(),
                     generic_args: None,
                     base_type: None,
                 })
@@ -1898,7 +2179,7 @@ mod tests {
             created_types.push(type_ref);
         }
 
-        // All types should be unique (no deduplication should occur for different sources)
+        // All types should be unique (each request creates a new type instance)
         assert_eq!(created_types.len(), types.len());
 
         // Each type should have a unique token
@@ -1911,28 +2192,29 @@ mod tests {
             );
         }
 
-        // Verify that identical requests return the same type (deduplication working)
+        // Verify that identical requests create different instances (no deduplication)
         let duplicate_request = registry
             .get_or_create_type(&CompleteTypeSpec {
                 token_init: None,
                 flavor: CilFlavor::Class,
                 namespace: "System".to_string(),
                 name: "String".to_string(),
-                source: TypeSource::CurrentModule,
+                source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
             })
             .unwrap();
 
-        assert_eq!(
+        assert_ne!(
             duplicate_request.token, created_types[0].token,
-            "Deduplication failed for identical type"
+            "Each request should create a unique type instance"
         );
     }
 
     #[test]
     fn test_hash_different_flavors() {
-        let registry = TypeRegistry::new().unwrap();
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = TypeRegistry::new(test_identity).unwrap();
 
         // Same name/namespace, different flavors should create different types
         let class_type = registry
@@ -1941,7 +2223,7 @@ mod tests {
                 flavor: CilFlavor::Class,
                 namespace: "MyNamespace".to_string(),
                 name: "MyType".to_string(),
-                source: TypeSource::CurrentModule,
+                source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
             })
@@ -1953,7 +2235,7 @@ mod tests {
                 flavor: CilFlavor::Interface,
                 namespace: "MyNamespace".to_string(),
                 name: "MyType".to_string(),
-                source: TypeSource::CurrentModule,
+                source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
             })
@@ -1965,7 +2247,7 @@ mod tests {
                 flavor: CilFlavor::ValueType,
                 namespace: "MyNamespace".to_string(),
                 name: "MyType".to_string(),
-                source: TypeSource::CurrentModule,
+                source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
             })
@@ -1984,7 +2266,8 @@ mod tests {
 
     #[test]
     fn test_hash_collision_chain_functionality() {
-        let registry = TypeRegistry::new().unwrap();
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = TypeRegistry::new(test_identity).unwrap();
 
         // Force potential hash collision by creating many similar types
         let similar_types = [
@@ -2001,7 +2284,7 @@ mod tests {
                     flavor: CilFlavor::Class,
                     namespace: "TestNamespace".to_string(),
                     name: type_name.to_string(),
-                    source: TypeSource::CurrentModule,
+                    source: TypeSource::Unknown,
                     generic_args: None,
                     base_type: None,
                 })
@@ -2030,18 +2313,18 @@ mod tests {
 
         let hash1 = TypeSignatureHash::new()
             .add_fullname("System", "String")
-            .add_source(TypeSource::CurrentModule)
+            .add_source(&TypeSource::Unknown)
             .add_flavor(&CilFlavor::Class)
             .finalize();
 
         let hash2 = TypeSignatureHash::new()
             .add_flavor(&CilFlavor::Class)
             .add_fullname("System", "String")
-            .add_source(TypeSource::CurrentModule)
+            .add_source(&TypeSource::Unknown)
             .finalize();
 
         let hash3 = TypeSignatureHash::new()
-            .add_source(TypeSource::CurrentModule)
+            .add_source(&TypeSource::Unknown)
             .add_flavor(&CilFlavor::Class)
             .add_fullname("System", "String")
             .finalize();
@@ -2058,24 +2341,24 @@ mod tests {
 
         let base_hash = TypeSignatureHash::new()
             .add_fullname("System", "String")
-            .add_source(TypeSource::CurrentModule)
+            .add_source(&TypeSource::Unknown)
             .finalize();
 
         let class_hash = TypeSignatureHash::new()
             .add_fullname("System", "String")
-            .add_source(TypeSource::CurrentModule)
+            .add_source(&TypeSource::Unknown)
             .add_flavor(&CilFlavor::Class)
             .finalize();
 
         let interface_hash = TypeSignatureHash::new()
             .add_fullname("System", "String")
-            .add_source(TypeSource::CurrentModule)
+            .add_source(&TypeSource::Unknown)
             .add_flavor(&CilFlavor::Interface)
             .finalize();
 
         let different_source_hash = TypeSignatureHash::new()
             .add_fullname("System", "String")
-            .add_source(TypeSource::AssemblyRef(Token::new(0x23000001)))
+            .add_source(&TypeSource::AssemblyRef(Token::new(0x23000001)))
             .add_flavor(&CilFlavor::Class)
             .finalize();
 
@@ -2092,16 +2375,16 @@ mod tests {
         let class_hash = TypeSignatureHash::new()
             .add_flavor(&CilFlavor::Class)
             .add_fullname("System.Collections.Generic", "Dictionary`2")
-            .add_source(TypeSource::CurrentModule)
+            .add_source(&TypeSource::Unknown)
             .finalize();
 
         let generic_instance_hash = TypeSignatureHash::new()
             .add_flavor(&CilFlavor::GenericInstance)
             .add_fullname("System.Collections.Generic", "Dictionary`2")
-            .add_source(TypeSource::CurrentModule)
+            .add_source(&TypeSource::Unknown)
             .finalize();
 
-        // These MUST be different for deduplication to work correctly
+        // These should be different for proper type distinction
         assert_ne!(
             class_hash, generic_instance_hash,
             "CRITICAL: Class and GenericInstance are generating hash collisions! \

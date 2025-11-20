@@ -30,9 +30,9 @@
 //! let type_registry = assembly.types();
 //!
 //! // Look up a specific type
-//! for entry in type_registry.get_by_fullname("System.String") {
+//! if let Some(string_type) = type_registry.get_by_fullname_first("System.String", true) {
 //!     println!("String type: {} (Token: 0x{:08X})",
-//!         entry.name, entry.token.value());
+//!         string_type.name, string_type.token.value());
 //! }
 //! # Ok::<(), dotscope::Error>(())
 //! ```
@@ -45,7 +45,10 @@ mod primitives;
 mod registry;
 mod resolver;
 
-use std::sync::{Arc, OnceLock};
+use std::{
+    collections::HashSet,
+    sync::{Arc, OnceLock},
+};
 
 pub use base::{
     ArrayDimensions, CilFlavor, CilModifier, CilTypeRef, CilTypeRefList, CilTypeReference,
@@ -64,7 +67,8 @@ use crate::{
         method::MethodRefList,
         security::Security,
         tables::{
-            EventList, FieldList, GenericParamList, MethodSpecList, PropertyList, TypeAttributes,
+            EventList, FieldList, GenericParamList, MethodSpecList, PropertyList, TableId,
+            TypeAttributes,
         },
         token::Token,
     },
@@ -150,11 +154,14 @@ pub struct CilType {
     pub modifiers: Arc<boxcar::Vec<CilModifier>>,
     /// Security declarations and permissions associated with this type
     pub security: OnceLock<Security>,
+    /// Enclosing type for nested types - used for reverse lookup to build hierarchical names
+    pub enclosing_type: OnceLock<CilTypeRef>,
+    /// Cached full name to avoid expensive recomputation
+    fullname: OnceLock<String>,
     // vtable
     // security
     // default_constructor: Option<MethodRef>
     // type_initializer: Option<MethodRef>
-    // enclosing_type (counter part of nested_types - who holds this instance, for reverse lookup)
     // module: ModuleRef
     // assembly: AssemblyRef
     // flags holds a lot of information, split up for better access?
@@ -254,6 +261,8 @@ impl CilType {
             spec: OnceLock::new(),
             modifiers: Arc::new(boxcar::Vec::new()),
             security: OnceLock::new(),
+            enclosing_type: OnceLock::new(),
+            fullname: OnceLock::new(),
         }
     }
 
@@ -365,6 +374,51 @@ impl CilType {
     pub fn base(&self) -> Option<CilTypeRc> {
         if let Some(base) = self.base.get() {
             base.upgrade()
+        } else {
+            None
+        }
+    }
+
+    /// Set the enclosing type for nested types.
+    ///
+    /// This method allows setting the enclosing type for nested types, establishing the
+    /// bidirectional relationship between nested and enclosing types. This is used to
+    /// build proper hierarchical names with "/" separators like the .NET runtime.
+    ///
+    /// # Arguments
+    /// * `enclosing_type` - The enclosing type that contains this nested type
+    ///
+    /// # Returns
+    /// * `Ok(())` if the enclosing type was set successfully
+    /// * `Err(_)` if an enclosing type was already set for this type
+    ///
+    /// # Errors
+    /// Returns an error if an enclosing type was already set for this type.
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently. Only the first
+    /// call will succeed in setting the enclosing type.
+    pub fn set_enclosing_type(&self, enclosing_type: CilTypeRef) -> Result<()> {
+        let _ = self.enclosing_type.set(enclosing_type);
+        Ok(())
+    }
+
+    /// Access the enclosing type for nested types, if it exists.
+    ///
+    /// Returns the enclosing type that contains this nested type, if one has been set.
+    /// This is used to traverse up the type hierarchy for building hierarchical names.
+    ///
+    /// # Returns
+    /// * `Some(CilTypeRc)` - The enclosing type if one is set and the reference is still valid
+    /// * `None` - If this is not a nested type or the reference has been dropped
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently.
+    pub fn enclosing_type(&self) -> Option<CilTypeRc> {
+        if let Some(enclosing) = self.enclosing_type.get() {
+            enclosing.upgrade()
         } else {
             None
         }
@@ -540,7 +594,8 @@ impl CilType {
                     }
                 } else {
                     // Base type flavor not computed yet - use transitive inheritance analysis
-                    if let Some(transitive_flavor) = self.analyze_transitive_inheritance(&base_type)
+                    if let Some(transitive_flavor) =
+                        Self::analyze_transitive_inheritance(&base_type)
                     {
                         return Some(transitive_flavor);
                     }
@@ -551,11 +606,12 @@ impl CilType {
     }
 
     /// Analyze inheritance chain transitively without forcing computation
-    fn analyze_transitive_inheritance(&self, base_type: &CilType) -> Option<CilFlavor> {
+    fn analyze_transitive_inheritance(base_type: &CilType) -> Option<CilFlavor> {
+        const MAX_INHERITANCE_DEPTH: usize = 10; // Prevent infinite loops
+
         // Look up the inheritance chain without computing flavors (avoid infinite recursion)
         let mut current = base_type.base();
         let mut depth = 0;
-        const MAX_INHERITANCE_DEPTH: usize = 10; // Prevent infinite loops
 
         while let Some(ancestor) = current {
             depth += 1;
@@ -692,7 +748,99 @@ impl CilType {
     /// # Returns
     /// A string containing the full name in the format "Namespace.Name"
     pub fn fullname(&self) -> String {
-        format!("{0}.{1}", self.namespace, self.name)
+        if let Some(cached) = self.fullname.get() {
+            return cached.clone();
+        }
+
+        let mut path_components = Vec::new();
+
+        // Handle empty names with placeholders to prevent malformed paths
+        let name = if self.name.is_empty() {
+            format!("<unnamed_{:08X}>", self.token.value())
+        } else {
+            self.name.clone()
+        };
+        path_components.push(name);
+
+        let mut visited_tokens = HashSet::new();
+        visited_tokens.insert(self.token);
+
+        let mut current_type = self.enclosing_type();
+        while let Some(enclosing) = current_type {
+            if visited_tokens.contains(&enclosing.token) {
+                // Found a cycle, stop here to prevent infinite loop
+                break;
+            }
+
+            visited_tokens.insert(enclosing.token);
+
+            // Handle empty enclosing type names with placeholders
+            let enclosing_name = if enclosing.name.is_empty() {
+                format!("<unnamed_{:08X}>", enclosing.token.value())
+            } else {
+                enclosing.name.clone()
+            };
+            path_components.push(enclosing_name);
+
+            current_type = enclosing.enclosing_type();
+        }
+
+        // Reverse to get from outermost to innermost
+        path_components.reverse();
+
+        // Build the final name with namespace prefix and "/" separators for nesting
+        let fullname = if path_components.len() > 1 {
+            // This is a nested type - use "/" separators like .NET runtime
+            let nested_path = path_components.join("/");
+            if self.namespace.is_empty() {
+                nested_path
+            } else {
+                format!("{}.{}", self.namespace, nested_path)
+            }
+        } else {
+            // This is a top-level type - use traditional "." separator
+            let type_name = if self.name.is_empty() {
+                format!("<unnamed_{:08X}>", self.token.value())
+            } else {
+                self.name.clone()
+            };
+
+            if self.namespace.is_empty() {
+                type_name
+            } else {
+                format!("{}.{}", self.namespace, type_name)
+            }
+        };
+
+        // Cache the result for future calls
+        let _ = self.fullname.set(fullname.clone());
+        fullname
+    }
+
+    /// Checks if this type was created from a TypeRef table entry.
+    ///
+    /// Returns `true` if this type's token indicates it originated from a TypeRef table,
+    /// meaning it references a type defined in an external assembly. This is essential
+    /// for TypeRef to TypeDef resolution during multi-assembly loading.
+    ///
+    /// # Returns
+    /// * `true` - If the type's token has table ID 0x01 (TypeRef)
+    /// * `false` - If the type came from TypeDef (0x02), TypeSpec (0x1B), or other sources
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::typesystem::CilType;
+    /// use dotscope::metadata::token::Token;
+    ///
+    /// # fn example(type_def: &CilType) {
+    /// if type_def.is_typeref() {
+    ///     println!("Type {} needs TypeRef resolution", type_def.fullname());
+    /// }
+    /// # }
+    /// ```
+    pub fn is_typeref(&self) -> bool {
+        self.token.is_table(TableId::TypeRef)
     }
 
     /// Check if this type is compatible with (assignable to) another type
@@ -815,6 +963,10 @@ impl CilType {
             return false;
         }
 
+        if self.token != other.token {
+            return false;
+        }
+
         // External source comparison
         if !self.external_sources_equivalent(other) {
             return false;
@@ -838,8 +990,8 @@ impl CilType {
     fn external_sources_equivalent(&self, other: &CilType) -> bool {
         match (self.external.get(), other.external.get()) {
             (Some(ext1), Some(ext2)) => Self::type_sources_equivalent(ext1, ext2),
-            (None, None) => true, // Both are current module types
-            _ => false,           // One external, one local
+            // Both are current module types, or one external one local (TypeRef redirection case)
+            _ => true,
         }
     }
 
@@ -847,7 +999,22 @@ impl CilType {
     fn type_sources_equivalent(source1: &CilTypeReference, source2: &CilTypeReference) -> bool {
         match (source1, source2) {
             (CilTypeReference::AssemblyRef(ar1), CilTypeReference::AssemblyRef(ar2)) => {
-                ar1.token == ar2.token
+                // First try direct token comparison (same metadata table)
+                if ar1.token == ar2.token {
+                    return true;
+                }
+
+                // For cross-assembly type resolution, only consider assemblies equivalent
+                // if they have identical name and strong name identity (be more conservative)
+                // This prevents type conflicts while still allowing cross-assembly resolution
+                ar1.name == ar2.name
+                    && ar1.identifier == ar2.identifier
+                    // Only consider versions equivalent if they're exactly the same
+                    && ar1.major_version == ar2.major_version
+                    && ar1.minor_version == ar2.minor_version
+                    && ar1.build_number == ar2.build_number
+                    && ar1.revision_number == ar2.revision_number
+                    && ar1.culture == ar2.culture
             }
             (CilTypeReference::ModuleRef(mr1), CilTypeReference::ModuleRef(mr2)) => {
                 mr1.token == mr2.token
@@ -931,9 +1098,15 @@ impl CilType {
     fn base_types_equivalent(&self, other: &CilType) -> bool {
         match (self.base.get(), other.base.get()) {
             (Some(base1), Some(base2)) => {
-                // Compare base type tokens
+                // Compare base types structurally, not just tokens
                 match (base1.upgrade(), base2.upgrade()) {
-                    (Some(b1), Some(b2)) => b1.token == b2.token,
+                    (Some(b1), Some(b2)) => {
+                        if b1.token == b2.token {
+                            true
+                        } else {
+                            b1.is_structurally_equivalent(&b2)
+                        }
+                    }
                     (None, None) => true, // Both have weak refs that are dropped
                     _ => false,           // One valid, one dropped
                 }
@@ -941,5 +1114,63 @@ impl CilType {
             (None, None) => true, // Both have no base type
             _ => false,           // One has base, one doesn't
         }
+    }
+
+    /// Check if this type has an array relationship with the given base type.
+    ///
+    /// Returns true if this type is an array type (ends with "[]") and the base type
+    /// matches the array's element type. This handles nested types correctly by
+    /// checking both direct name matches and nested type patterns.
+    ///
+    /// # Arguments
+    /// * `base_fullname` - The full name of the potential base type to check against
+    ///
+    /// # Examples
+    /// - `MyClass[]` is an array of `MyClass`
+    /// - `AdjustmentRule[]` is an array of `TimeZoneInfo/AdjustmentRule`
+    pub fn is_array_of(&self, base_fullname: &str) -> bool {
+        if let Some(element_name) = self.fullname().strip_suffix("[]") {
+            base_fullname == element_name || base_fullname.ends_with(&format!("/{}", element_name))
+        } else {
+            false
+        }
+    }
+
+    /// Check if this type has a pointer relationship with the given base type.
+    ///
+    /// Returns true if this type is a pointer type (ends with "*") and the base type
+    /// matches the pointer's target type. This handles nested types correctly by
+    /// checking both direct name matches and nested type patterns.
+    ///
+    /// # Arguments
+    /// * `base_fullname` - The full name of the potential target type to check against
+    ///
+    /// # Examples  
+    /// - `EventData*` is a pointer to `EventData`
+    /// - `MyStruct*` is a pointer to `OuterClass/MyStruct`
+    pub fn is_pointer_to(&self, base_fullname: &str) -> bool {
+        if let Some(element_name) = self.fullname().strip_suffix('*') {
+            base_fullname == element_name || base_fullname.ends_with(&format!("/{}", element_name))
+        } else {
+            false
+        }
+    }
+
+    /// Check if this type represents a generic relationship with the base type.
+    ///
+    /// Returns true if either type has generic parameters (contains '`') and they
+    /// share a common base name, indicating a generic instantiation relationship.
+    ///
+    /// # Arguments
+    /// * `base_fullname` - The full name of the potential generic base type to check against
+    ///
+    /// # Examples
+    /// - `List<int>` has a generic relationship with `List<T>`
+    /// - `Dictionary<string, int>` has a generic relationship with `Dictionary<K, V>`
+    pub fn is_generic_of(&self, base_fullname: &str) -> bool {
+        let derived_fullname = self.fullname();
+        (derived_fullname.contains('`') || base_fullname.contains('`'))
+            && (derived_fullname.starts_with(base_fullname.split('`').next().unwrap_or(""))
+                || base_fullname.starts_with(derived_fullname.split('`').next().unwrap_or("")))
     }
 }

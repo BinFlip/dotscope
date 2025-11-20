@@ -22,7 +22,7 @@
 //! let hash = TypeSignatureHash::new()
 //!     .add_flavor(&CilFlavor::GenericInstance)
 //!     .add_fullname("System.Collections.Generic", "List`1")
-//!     .add_source(TypeSource::CurrentModule)
+//!     .add_source(&TypeSource::CurrentModule)
 //!     .add_component(&string_type.token)  // Generic argument
 //!     .finalize();
 //! ```
@@ -113,8 +113,8 @@ impl TypeSignatureHash {
     /// ## Arguments
     /// * `source` - The source context where the type is defined
     #[must_use]
-    pub fn add_source(self, source: TypeSource) -> Self {
-        self.add_component(&source)
+    pub fn add_source(self, source: &TypeSource) -> Self {
+        self.add_component(source)
     }
 
     /// Add a token to the signature
@@ -155,13 +155,13 @@ mod tests {
         let hash1 = TypeSignatureHash::new()
             .add_flavor(&CilFlavor::Class)
             .add_fullname("System", "String")
-            .add_source(TypeSource::CurrentModule)
+            .add_source(&TypeSource::Unknown)
             .finalize();
 
         let hash2 = TypeSignatureHash::new()
             .add_flavor(&CilFlavor::Class)
             .add_fullname("System", "String")
-            .add_source(TypeSource::CurrentModule)
+            .add_source(&TypeSource::Unknown)
             .finalize();
 
         assert_eq!(hash1, hash2, "Hash should be deterministic");
@@ -215,7 +215,7 @@ mod tests {
             let hash = TypeSignatureHash::new()
                 .add_flavor(&CilFlavor::Class)
                 .add_fullname(namespace, name)
-                .add_source(TypeSource::CurrentModule)
+                .add_source(&TypeSource::Unknown)
                 .finalize();
             hashes.push(hash);
         }

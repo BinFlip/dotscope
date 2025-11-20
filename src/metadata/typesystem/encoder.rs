@@ -49,8 +49,8 @@ use crate::{
 /// Maximum recursion depth for type signature encoding.
 ///
 /// This limit prevents stack overflow from deeply nested or circular type signatures.
-/// The value is set to match the signature parser's limit for consistency.
-const MAX_RECURSION_DEPTH: usize = 50;
+/// The value is set to match the type resolver's limit for consistency since they work together.
+const MAX_RECURSION_DEPTH: usize = 100;
 
 /// Encoder for converting type signatures into binary format.
 ///
@@ -318,19 +318,8 @@ impl TypeSignatureEncoder {
             }
 
             // Custom modifiers
-            TypeSignature::ModifiedRequired(modifiers) => {
-                for modifier in modifiers {
-                    let modifier_type = if modifier.is_required {
-                        0x1F // ELEMENT_TYPE_CMOD_REQD
-                    } else {
-                        0x20 // ELEMENT_TYPE_CMOD_OPT
-                    };
-                    buffer.push(modifier_type);
-                    Self::encode_typedefref_token(modifier.modifier_type, buffer)?;
-                }
-            }
-
-            TypeSignature::ModifiedOptional(modifiers) => {
+            TypeSignature::ModifiedRequired(modifiers)
+            | TypeSignature::ModifiedOptional(modifiers) => {
                 for modifier in modifiers {
                     let modifier_type = if modifier.is_required {
                         0x1F // ELEMENT_TYPE_CMOD_REQD
