@@ -244,6 +244,38 @@ impl Output {
         Ok(())
     }
 
+    /// Reads data from the memory-mapped file at a specific offset.
+    ///
+    /// This method reads existing data from the file, useful for inspecting
+    /// values before modifying them (e.g., reading debug directory RVA before clearing).
+    ///
+    /// # Arguments
+    /// * `offset` - File offset to read from
+    /// * `buffer` - Buffer to read data into
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::ReadMmapFailed`] if the read would exceed file bounds.
+    pub fn read_at(&self, offset: u64, buffer: &mut [u8]) -> Result<()> {
+        let start = usize::try_from(offset).map_err(|_| Error::ReadMmapFailed {
+            message: format!("Offset {offset} too large for target architecture"),
+        })?;
+        let end = start + buffer.len();
+
+        if end > self.mmap.len() {
+            return Err(Error::ReadMmapFailed {
+                message: format!(
+                    "Read would exceed file size: offset={}, len={}, file_size={}",
+                    offset,
+                    buffer.len(),
+                    self.mmap.len()
+                ),
+            });
+        }
+
+        buffer.copy_from_slice(&self.mmap[start..end]);
+        Ok(())
+    }
+
     /// Copies data from the source offset to the target offset within the same file.
     ///
     /// This method provides efficient in-file copying for relocating existing content.
