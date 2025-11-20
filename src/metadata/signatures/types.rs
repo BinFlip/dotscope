@@ -147,7 +147,10 @@
 //! - **.NET Runtime Source**: [CoreCLR metadata implementation](https://github.com/dotnet/runtime/tree/main/src/coreclr/md)
 //! - **CLI Specification**: Partition I (Architecture), Partition II (Metadata)
 
-use crate::metadata::{token::Token, typesystem::ArrayDimensions};
+use crate::metadata::{
+    token::Token,
+    typesystem::{ArrayDimensions, CilPrimitive},
+};
 
 /// Represents a custom modifier with its required/optional flag and type reference.
 ///
@@ -3099,6 +3102,7 @@ pub struct SignatureLocalVariable {
 ///
 /// # fn create_generic_spec() {
 /// let list_of_int = SignatureTypeSpec {
+///     modifiers: vec![],
 ///     base: TypeSignature::GenericInst(
 ///         Box::new(TypeSignature::Class(Token::new(0x02000001))), // List<T> class
 ///         vec![TypeSignature::I4]                                 // int argument
@@ -3114,6 +3118,7 @@ pub struct SignatureLocalVariable {
 ///
 /// # fn create_array_spec() {
 /// let int_2d_array = SignatureTypeSpec {
+///     modifiers: vec![],
 ///     base: TypeSignature::Array(SignatureArray {
 ///         base: Box::new(TypeSignature::I4),
 ///         rank: 2,
@@ -3147,6 +3152,22 @@ pub struct SignatureLocalVariable {
 /// - [`crate::metadata::token::Token`]: For metadata token references
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SignatureTypeSpec {
+    /// Custom modifiers that apply to this type specification.
+    ///
+    /// Contains any required or optional custom modifiers that were parsed
+    /// from the type specification signature. These modifiers provide additional
+    /// type information for interop, security, and platform-specific scenarios.
+    ///
+    /// # Modifier Types
+    /// - **Required modifiers**: Must be understood by the runtime
+    /// - **Optional modifiers**: Can be safely ignored if not understood
+    ///
+    /// # Common Use Cases
+    /// - `modreq` for platform interop constraints
+    /// - `modopt` for compiler optimization hints
+    /// - Security and const/volatile semantics
+    pub modifiers: Vec<CustomModifier>,
+
     /// The complete type signature for this type specification.
     ///
     /// Contains the full type signature that defines this type specification.
@@ -3341,7 +3362,7 @@ impl TypeSignature {
     /// `true` if the constant can be assigned to this type signature
     #[must_use]
     #[allow(clippy::unnested_or_patterns)] // Keep patterns separate for readability
-    pub fn accepts_constant(&self, constant: &crate::metadata::typesystem::CilPrimitive) -> bool {
+    pub fn accepts_constant(&self, constant: &CilPrimitive) -> bool {
         use crate::metadata::typesystem::CilPrimitiveKind;
 
         match (constant.kind, self) {
@@ -3398,6 +3419,12 @@ impl TypeSignature {
             // full type resolution, so we allow them (conservative approach)
             // Note: This also covers Null and Class constants to complex types
             | (_, TypeSignature::Class(_) | TypeSignature::ValueType(_)) => true,
+
+            // For generic instantiations, delegate to the base type
+            // This handles cases like SomeStruct<T> where the underlying type might accept constants
+            | (_, TypeSignature::GenericInst(base_type, _)) => {
+                base_type.accepts_constant(constant)
+            }
 
             // All other combinations are incompatible
             _ => false,
