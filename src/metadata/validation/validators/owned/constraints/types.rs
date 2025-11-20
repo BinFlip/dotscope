@@ -145,9 +145,7 @@ impl OwnedTypeConstraintValidator {
         &self,
         context: &OwnedValidationContext,
     ) -> Result<()> {
-        let types = context.object().types();
-
-        for type_entry in types.all_types() {
+        for type_entry in context.object().types().all_types() {
             // Check for invalid generic parameter constraint combinations
             if type_entry.generic_params.count() > 0 {
                 self.validate_type_generic_constraints(&type_entry)?;
@@ -276,6 +274,16 @@ impl OwnedTypeConstraintValidator {
             }
             CilFlavor::Object => {
                 // System.Object is a valid constraint
+                Ok(())
+            }
+            CilFlavor::GenericInstance => {
+                // Generic instances (e.g., IComparable<T>, IEquatable<T>) are valid constraints
+                // These are commonly used as constraints in generic type definitions
+                Ok(())
+            }
+            CilFlavor::GenericParameter { .. } => {
+                // Generic parameters can be used as constraints in nested generic scenarios
+                // e.g., where T : U in generic type definitions
                 Ok(())
             }
             _ => Err(Error::ValidationOwnedValidatorFailed {

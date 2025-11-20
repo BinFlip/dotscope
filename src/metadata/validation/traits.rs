@@ -370,6 +370,7 @@ mod tests {
         cilassemblyview::CilAssemblyView,
         validation::{config::ValidationConfig, context::factory, scanner::ReferenceScanner},
     };
+    use rayon::ThreadPoolBuilder;
     use std::path::PathBuf;
 
     struct TestRawValidator {
@@ -416,7 +417,8 @@ mod tests {
         if let Ok(view) = CilAssemblyView::from_file(&path) {
             let scanner = ReferenceScanner::from_view(&view).unwrap();
             let config = ValidationConfig::minimal();
-            let context = factory::raw_loading_context(&view, &scanner, &config);
+            let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+            let context = factory::raw_loading_context(&view, &scanner, &config, &thread_pool);
 
             let validator = TestRawValidator {
                 name: "TestValidator",

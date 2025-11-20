@@ -70,9 +70,12 @@
 //! - [ECMA-335 II.22.32](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - NestedClass table and containment relationships
 //! - [ECMA-335 II.22.37](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - TypeDef table and member ownership
 
+use std::{collections::HashSet, sync::Arc};
+
 use crate::{
     metadata::{
         tables::TypeAttributes,
+        typesystem::CilType,
         validation::{
             context::{OwnedValidationContext, ValidationContext},
             traits::OwnedValidator,
@@ -132,12 +135,15 @@ impl OwnedOwnershipValidator {
     /// * `Ok(())` - All type-member ownership relationships are valid
     /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Ownership violations found
     fn validate_type_member_ownership(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
         let methods = context.object().methods();
 
-        for type_entry in types.all_types() {
+        for type_entry in context.target_assembly_types() {
+            if type_entry.get_external().is_some() {
+                continue;
+            }
+
             // Validate method ownership relationships
-            for (_, method_ref) in type_entry.methods.iter() {
+            for (_idx, method_ref) in type_entry.methods.iter() {
                 if let Some(method_token) = method_ref.token() {
                     if let Some(method) = methods.get(&method_token) {
                         let method_value = method.value();
@@ -361,42 +367,38 @@ impl OwnedOwnershipValidator {
         &self,
         context: &OwnedValidationContext,
     ) -> Result<()> {
-        let types = context.object().types();
+        let target_types = context.target_assembly_types();
 
-        for type_entry in types.all_types() {
-            // Comprehensive circular dependency detection
-            let mut visited = std::collections::HashSet::new();
-            let mut recursion_stack = std::collections::HashSet::new();
+        let target_type_pointers: HashSet<*const CilType> = target_types
+            .iter()
+            .map(|t| std::ptr::from_ref::<CilType>(t.as_ref()))
+            .collect();
 
-            self.validate_nested_type_circularity_deep(
-                &type_entry,
-                &mut visited,
-                &mut recursion_stack,
-            )?;
-
+        for type_entry in target_types {
             // Validate nested type ownership consistency
+            // Only validate nested types that belong to the current assembly
             for (_, nested_ref) in type_entry.nested_types.iter() {
                 if let Some(nested_type) = nested_ref.upgrade() {
-                    // Validate nested type accessibility constraints
-                    self.validate_nested_type_accessibility_ownership(
-                        &type_entry.name,
-                        type_entry.flags,
-                        &nested_type.name,
-                        nested_type.flags,
-                    )?;
+                    // Check if the nested type belongs to the current assembly
+                    // by checking if it's in the target assembly types collection
+                    let nested_type_ptr = nested_type.as_ref() as *const CilType;
+                    let is_target_assembly_type = target_type_pointers.contains(&nested_type_ptr);
 
-                    // Note: Nested type naming validation is disabled as it's too strict for real-world .NET assemblies
-                    // Most legitimate nested types have simple names like "DebuggingModes"
-                } else {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
-                        validator: self.name().to_string(),
-                        message: format!(
-                            "Type '{}' has broken nested type reference",
-                            type_entry.name
-                        ),
-                        source: None,
-                    });
+                    if is_target_assembly_type {
+                        // Validate nested type accessibility constraints
+                        self.validate_nested_type_accessibility_ownership(
+                            &type_entry.name,
+                            type_entry.flags,
+                            &nested_type.name,
+                            nested_type.flags,
+                        )?;
+
+                        // Note: Nested type naming validation is disabled as it's too strict for real-world .NET assemblies
+                        // Most legitimate nested types have simple names like "DebuggingModes"
+                    }
+                    // Skip validation for nested types from other assemblies
                 }
+                // Skip broken references - they may be to external assemblies that aren't loaded
             }
         }
 
@@ -406,37 +408,55 @@ impl OwnedOwnershipValidator {
     /// Comprehensive circular dependency detection using DFS.
     fn validate_nested_type_circularity_deep(
         &self,
-        current_type: &std::sync::Arc<crate::metadata::typesystem::CilType>,
-        visited: &mut std::collections::HashSet<String>,
-        recursion_stack: &mut std::collections::HashSet<String>,
+        current_type: &Arc<CilType>,
+        recursion_stack: &mut HashSet<*const CilType>,
+        depth: usize,
     ) -> Result<()> {
-        let type_fullname = current_type.fullname();
+        const MAX_RECURSION_DEPTH: usize = 100;
 
-        if recursion_stack.contains(&type_fullname) {
+        if depth > MAX_RECURSION_DEPTH {
             return Err(crate::Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: format!(
-                    "Circular nested type dependency detected involving type '{type_fullname}'"
+                    "Maximum recursion depth ({}) exceeded for nested type validation starting with type '{}' (token 0x{:08X})",
+                    MAX_RECURSION_DEPTH,
+                    current_type.name,
+                    current_type.token.value()
                 ),
                 source: None,
             });
         }
 
-        if visited.contains(&type_fullname) {
-            return Ok(()); // Already processed this branch
+        let type_ptr = current_type.as_ref() as *const CilType;
+
+        // Check for circular dependency - if this type is already in the current path
+        if recursion_stack.contains(&type_ptr) {
+            return Err(crate::Error::ValidationOwnedValidatorFailed {
+                validator: self.name().to_string(),
+                message: format!(
+                    "Circular nested type dependency detected involving type '{}' with token 0x{:08X} at depth {}",
+                    current_type.name,
+                    current_type.token.value(),
+                    depth
+                ),
+                source: None,
+            });
         }
 
-        visited.insert(type_fullname.clone());
-        recursion_stack.insert(type_fullname.clone());
+        recursion_stack.insert(type_ptr);
 
         // Recursively check all nested types
         for (_, nested_ref) in current_type.nested_types.iter() {
             if let Some(nested_type) = nested_ref.upgrade() {
-                self.validate_nested_type_circularity_deep(&nested_type, visited, recursion_stack)?;
+                self.validate_nested_type_circularity_deep(
+                    &nested_type,
+                    recursion_stack,
+                    depth + 1,
+                )?;
             }
         }
 
-        recursion_stack.remove(&type_fullname);
+        recursion_stack.remove(&type_ptr);
         Ok(())
     }
 

@@ -85,6 +85,7 @@ use crate::{
     },
     Error, Result,
 };
+use rayon::prelude::*;
 
 /// Foundation validator for basic type definition structure, attributes, and metadata consistency.
 ///
@@ -129,81 +130,87 @@ impl OwnedTypeDefinitionValidator {
     /// Ensures that type definitions are properly structured with valid names,
     /// tokens, and basic metadata according to ECMA-335 specifications.
     fn validate_type_definition_structure(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
-
-        for type_entry in types.all_types() {
-            // Validate type name is not empty (except for special cases)
-            if type_entry.name.is_empty() && type_entry.namespace != "<Module>" {
-                return Err(Error::ValidationOwnedValidatorFailed {
-                    validator: self.name().to_string(),
-                    message: {
-                        let token_value = type_entry.token.value();
-                        format!("Type with token 0x{token_value:08X} has empty name")
-                    },
-                    source: None,
-                });
-            }
-
-            // Validate type token is valid
-            if type_entry.token.value() == 0 {
-                let type_name = &type_entry.name;
-                return Err(Error::ValidationOwnedValidatorFailed {
-                    validator: self.name().to_string(),
-                    message: format!("Type '{type_name}' has invalid token (0)"),
-                    source: None,
-                });
-            }
-
-            // Validate type name doesn't contain invalid characters
-            if type_entry.name.contains('\0') {
-                let type_name = &type_entry.name;
-                return Err(Error::ValidationOwnedValidatorFailed {
-                    validator: self.name().to_string(),
-                    message: format!("Type '{type_name}' contains null character in name"),
-                    source: None,
-                });
-            }
-
-            // Validate namespace doesn't contain invalid characters
-            if type_entry.namespace.contains('\0') {
-                return Err(Error::ValidationOwnedValidatorFailed {
-                    validator: self.name().to_string(),
-                    message: {
-                        let type_name = &type_entry.name;
-                        format!("Type '{type_name}' contains null character in namespace")
-                    },
-                    source: None,
-                });
-            }
-
-            // Validate special naming patterns (but allow legitimate compiler-generated types)
-            if type_entry.name.starts_with('<') && !type_entry.name.ends_with('>') {
-                // Allow compiler-generated patterns:
-                // - '<>c' (closures)
-                // - '<MethodName>d__N' (async state machines)
-                // - '<>c__DisplayClassN' (closure display classes)
-                // - '<MethodName>b__N' (lambda expressions)
-                // - '<phReserved>e__FixedBuffer' (fixed buffer struct)
-                let is_compiler_generated = type_entry.name.starts_with("<>")
-                    || type_entry.name.contains(">d__")
-                    || type_entry.name.contains(">b__")
-                    || type_entry.name.contains(">c__")
-                    || type_entry.name.contains(">e__FixedBuffer");
-
-                if !is_compiler_generated {
+        context
+            .target_assembly_types()
+            .par_iter()
+            .try_for_each(|type_entry| -> Result<()> {
+                // Validate type name is not empty (except for special cases)
+                if type_entry.name.is_empty() && type_entry.namespace != "<Module>" {
                     return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: {
-                            let type_name = &type_entry.name;
-                            format!("Type '{type_name}' has malformed special name pattern")
+                            let token_value = type_entry.token.value();
+                            format!("Type with token 0x{token_value:08X} has empty name")
                         },
                         source: None,
                     });
                 }
-            }
-        }
 
-        Ok(())
+                // Validate type token is valid
+                if type_entry.token.value() == 0 {
+                    let type_name = &type_entry.name;
+                    return Err(Error::ValidationOwnedValidatorFailed {
+                        validator: self.name().to_string(),
+                        message: format!("Type '{type_name}' has invalid token (0)"),
+                        source: None,
+                    });
+                }
+
+                // Validate type name doesn't contain invalid characters
+                if type_entry.name.contains('\0') {
+                    let type_name = &type_entry.name;
+                    return Err(Error::ValidationOwnedValidatorFailed {
+                        validator: self.name().to_string(),
+                        message: format!("Type '{type_name}' contains null character in name"),
+                        source: None,
+                    });
+                }
+
+                // Validate namespace doesn't contain invalid characters
+                if type_entry.namespace.contains('\0') {
+                    return Err(Error::ValidationOwnedValidatorFailed {
+                        validator: self.name().to_string(),
+                        message: {
+                            let type_name = &type_entry.name;
+                            format!("Type '{type_name}' contains null character in namespace")
+                        },
+                        source: None,
+                    });
+                }
+
+                // Validate special naming patterns (but allow legitimate compiler-generated types)
+                if type_entry.name.starts_with('<') && !type_entry.name.ends_with('>') {
+                    // Allow compiler-generated patterns:
+                    // - '<>c' (closures)
+                    // - '<MethodName>d__N' (async state machines)
+                    // - '<>c__DisplayClassN' (closure display classes)
+                    // - '<MethodName>b__N' (lambda expressions)
+                    // - '<phReserved>e__FixedBuffer' (fixed buffer struct)
+                    // - '<<MethodName>g__LocalFunction|N_N>d' (async local function state machines)
+                    // - '<Module>' (global/module type)
+                    let is_compiler_generated = type_entry.name.starts_with("<>")
+                    || type_entry.name.contains(">d__")
+                    || type_entry.name.contains(">b__")
+                    || type_entry.name.contains(">c__")
+                    || type_entry.name.contains(">e__FixedBuffer")
+                    || type_entry.name.contains(">g__") // Local function patterns
+                    || type_entry.name.ends_with(">d") // Async state machines ending with >d
+                    || type_entry.name == "<Module>"; // Global module type
+
+                    if !is_compiler_generated {
+                        return Err(Error::ValidationOwnedValidatorFailed {
+                            validator: self.name().to_string(),
+                            message: {
+                                let type_name = &type_entry.name;
+                                format!("Type '{type_name}' has malformed special name pattern")
+                            },
+                            source: None,
+                        });
+                    }
+                }
+
+                Ok(())
+            })
     }
 
     /// Validates type attribute flags for consistency and validity.
@@ -211,9 +218,7 @@ impl OwnedTypeDefinitionValidator {
     /// Ensures that type attribute combinations are valid and mutually
     /// compatible according to .NET type system rules.
     fn validate_type_attribute_consistency(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
-
-        for type_entry in types.all_types() {
+        for type_entry in context.target_assembly_types() {
             let flags = type_entry.flags;
 
             // Validate visibility attributes
@@ -312,9 +317,7 @@ impl OwnedTypeDefinitionValidator {
     /// Ensures that the computed type flavor matches the type's attributes
     /// and structural characteristics.
     fn validate_type_flavor_consistency(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
-
-        for type_entry in types.all_types() {
+        for type_entry in context.target_assembly_types() {
             let flavor = type_entry.flavor();
             let flags = type_entry.flags;
 
@@ -378,9 +381,7 @@ impl OwnedTypeDefinitionValidator {
     /// Ensures that special type modifiers like abstract, sealed, and
     /// special name are used appropriately.
     fn validate_special_type_constraints(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
-
-        for type_entry in types.all_types() {
+        for type_entry in context.target_assembly_types() {
             let flags = type_entry.flags;
 
             // Validate BeforeFieldInit usage

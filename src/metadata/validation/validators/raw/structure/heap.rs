@@ -635,7 +635,7 @@ mod tests {
     use crate::{
         metadata::validation::ValidationConfig,
         test::{
-            factories::validation::raw_structure_heap::*, get_clean_testfile, validator_test,
+            factories::validation::raw_structure_heap::*, get_testfile_wb, validator_test,
             TestAssembly,
         },
         Error, Result,
@@ -663,7 +663,7 @@ mod tests {
         let validator = RawHeapValidator::new();
 
         fn clean_only_factory() -> Result<Vec<TestAssembly>> {
-            let Some(clean_testfile) = get_clean_testfile() else {
+            let Some(clean_testfile) = get_testfile_wb() else {
                 return Err(Error::Error("WindowsBase.dll not available".to_string()));
             };
             Ok(vec![TestAssembly::new(&clean_testfile, true)])

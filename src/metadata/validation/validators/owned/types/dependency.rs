@@ -73,17 +73,18 @@
 //! - [ECMA-335 II.6.3](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Accessing data and calling methods
 
 use crate::{
-    metadata::{
-        token::Token,
-        validation::{
-            context::{OwnedValidationContext, ValidationContext},
-            traits::OwnedValidator,
-        },
+    metadata::validation::{
+        context::{OwnedValidationContext, ValidationContext},
+        traits::OwnedValidator,
     },
-    prelude::TypeRegistry,
+    prelude::CilTypeRc,
     Error, Result,
 };
-use std::collections::{HashMap, HashSet};
+use rayon::prelude::*;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 /// Foundation validator for dependency relationships between types, assemblies, and metadata elements.
 ///
@@ -143,11 +144,8 @@ impl OwnedTypeDependencyValidator {
     /// - Type dependencies violate accessibility constraints
     /// - Base type dependencies are invalid or inaccessible
     fn validate_type_dependency_resolution(&self, context: &OwnedValidationContext) -> Result<()> {
-        let type_registry = context.object().types();
-
-        for entry in type_registry {
-            let token = *entry.key();
-            let type_rc = entry.value();
+        context.target_assembly_types().par_iter().try_for_each(|type_rc| -> Result<()> {
+            let token = type_rc.token;
 
             // Validate base type dependency if it exists
             if let Some(base_type) = type_rc.base() {
@@ -223,9 +221,8 @@ impl OwnedTypeDependencyValidator {
                     });
                 }
             }
-        }
-
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Validates method signature dependencies.
@@ -247,66 +244,73 @@ impl OwnedTypeDependencyValidator {
     ) -> Result<()> {
         let methods = context.object().methods();
 
-        for entry in methods {
-            let method = entry.value();
-            // Validate parameter type dependencies
-            for (index, (_, param)) in method.params.iter().enumerate() {
-                if let Some(param_type_ref) = param.base.get() {
-                    if let Some(param_type) = param_type_ref.upgrade() {
-                        if param_type.name.is_empty() {
-                            return Err(Error::ValidationOwnedValidatorFailed {
-                                validator: self.name().to_string(),
-                                message: format!(
-                                    "Method '{}' parameter {} has unresolved type dependency",
-                                    method.name, index
-                                ),
-                                source: None,
-                            });
-                        }
-                    } else {
-                        return Err(Error::ValidationOwnedValidatorFailed {
-                            validator: self.name().to_string(),
-                            message: format!(
-                                "Method '{}' parameter {} has broken type dependency reference",
-                                method.name, index
-                            ),
-                            source: None,
-                        });
-                    }
-                } else {
-                    return Err(Error::ValidationOwnedValidatorFailed {
-                        validator: self.name().to_string(),
-                        message: format!(
-                            "Method '{}' parameter {} has missing type dependency",
-                            method.name, index
-                        ),
-                        source: None,
-                    });
-                }
-            }
+        for type_rc in context.target_assembly_types() {
+            for (_, method_ref) in type_rc.methods.iter() {
+                if let Some(method_token) = method_ref.token() {
+                    if let Some(method_entry) = methods.get(&method_token) {
+                        let method = method_entry.value();
 
-            // Validate local variable type dependencies
-            for (index, (_, local)) in method.local_vars.iter().enumerate() {
-                if let Some(local_type) = local.base.upgrade() {
-                    if local_type.name.is_empty() {
-                        return Err(Error::ValidationOwnedValidatorFailed {
-                            validator: self.name().to_string(),
-                            message: format!(
-                                "Method '{}' local variable {} has unresolved type dependency",
-                                method.name, index
-                            ),
-                            source: None,
-                        });
+                        // Validate parameter type dependencies
+                        for (index, (_, param)) in method.params.iter().enumerate() {
+                            if let Some(param_type_ref) = param.base.get() {
+                                if let Some(param_type) = param_type_ref.upgrade() {
+                                    if param_type.name.is_empty() {
+                                        return Err(Error::ValidationOwnedValidatorFailed {
+                                            validator: self.name().to_string(),
+                                            message: format!(
+                                                "Method '{}' parameter {} has unresolved type dependency",
+                                                method.name, index
+                                            ),
+                                            source: None,
+                                        });
+                                    }
+                                } else {
+                                    return Err(Error::ValidationOwnedValidatorFailed {
+                                        validator: self.name().to_string(),
+                                        message: format!(
+                                            "Method '{}' parameter {} has broken type dependency reference",
+                                            method.name, index
+                                        ),
+                                        source: None,
+                                    });
+                                }
+                            } else {
+                                return Err(Error::ValidationOwnedValidatorFailed {
+                                    validator: self.name().to_string(),
+                                    message: format!(
+                                        "Method '{}' parameter {} has missing type dependency",
+                                        method.name, param.sequence
+                                    ),
+                                    source: None,
+                                });
+                            }
+                        }
+
+                        // Validate local variable type dependencies
+                        for (index, (_, local)) in method.local_vars.iter().enumerate() {
+                            if let Some(local_type) = local.base.upgrade() {
+                                if local_type.name.is_empty() {
+                                    return Err(Error::ValidationOwnedValidatorFailed {
+                                        validator: self.name().to_string(),
+                                        message: format!(
+                                            "Method '{}' local variable {} has unresolved type dependency",
+                                            method.name, index
+                                        ),
+                                        source: None,
+                                    });
+                                }
+                            } else {
+                                return Err(Error::ValidationOwnedValidatorFailed {
+                                    validator: self.name().to_string(),
+                                    message: format!(
+                                        "Method '{}' local variable {} has broken type dependency reference",
+                                        method.name, index
+                                    ),
+                                    source: None,
+                                });
+                            }
+                        }
                     }
-                } else {
-                    return Err(Error::ValidationOwnedValidatorFailed {
-                        validator: self.name().to_string(),
-                        message: format!(
-                            "Method '{}' local variable {} has broken type dependency reference",
-                            method.name, index
-                        ),
-                        source: None,
-                    });
                 }
             }
         }
@@ -332,42 +336,47 @@ impl OwnedTypeDependencyValidator {
         &self,
         context: &OwnedValidationContext,
     ) -> Result<()> {
-        let type_registry = context.object().types();
         let mut visited = HashSet::new();
         let mut visiting = HashSet::new();
 
-        // Build dependency graph for path analysis
-        let mut dependency_graph = HashMap::new();
-        for entry in type_registry {
-            let token = *entry.key();
-            let type_rc = entry.value();
+        // Build dependency graph only for target assembly types
+        let mut dependency_graph: HashMap<usize, Vec<usize>> = HashMap::new();
+        for type_rc in context.target_assembly_types() {
+            let type_key = Arc::as_ptr(type_rc) as usize;
             let mut dependencies = Vec::new();
 
             // Add base type dependency
             if let Some(base_type) = type_rc.base() {
-                dependencies.push(base_type.token);
+                dependencies.push(Arc::as_ptr(&base_type) as usize);
             }
 
             // Add interface dependencies
             for (_, interface_ref) in type_rc.interfaces.iter() {
                 if let Some(interface_type) = interface_ref.upgrade() {
-                    dependencies.push(interface_type.token);
+                    dependencies.push(Arc::as_ptr(&interface_type) as usize);
                 }
             }
 
-            dependency_graph.insert(token, dependencies);
+            dependency_graph.insert(type_key, dependencies);
         }
 
-        // Check each type's dependency path for accessibility
-        for entry in type_registry {
-            let token = *entry.key();
-            if !visited.contains(&token) {
+        // Check each target type's dependency path for accessibility
+        // Note: We need to collect here because check_dependency_path_accessibility expects a slice
+        let all_types: Vec<CilTypeRc> = context
+            .object()
+            .types()
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
+        for type_rc in context.target_assembly_types() {
+            let type_key = Arc::as_ptr(type_rc) as usize;
+            if !visited.contains(&type_key) {
                 self.check_dependency_path_accessibility(
-                    token,
+                    type_key,
                     &dependency_graph,
                     &mut visited,
                     &mut visiting,
-                    type_registry,
+                    &all_types,
                 )?;
             }
         }
@@ -375,91 +384,77 @@ impl OwnedTypeDependencyValidator {
         Ok(())
     }
 
-    /// Recursively checks dependency path accessibility starting from a given type token.
+    /// Recursively checks dependency path accessibility starting from a given type address.
     ///
     /// Uses depth-first search to validate that all dependencies in the path are accessible.
+    /// Uses CilTypeRc memory addresses instead of tokens to prevent cross-assembly collisions.
     ///
     /// # Arguments
     ///
-    /// * `token` - Type token to check dependency paths for
-    /// * `dependency_graph` - Map of type tokens to their dependency tokens
-    /// * `visited` - Set of completely processed types
-    /// * `visiting` - Set of currently processing types
-    /// * `type_registry` - Registry of all types for name resolution
+    /// * `type_key` - Type memory address to check dependency paths for
+    /// * `dependency_graph` - Map of type addresses to their dependency addresses
+    /// * `visited` - Set of completely processed type addresses
+    /// * `visiting` - Set of currently processing type addresses
+    /// * `all_types` - Vector of all types for name resolution
     ///
     /// # Returns
     ///
     /// Returns error if dependency path accessibility violations are detected.
     fn check_dependency_path_accessibility(
         &self,
-        token: Token,
-        dependency_graph: &HashMap<Token, Vec<Token>>,
-        visited: &mut HashSet<Token>,
-        visiting: &mut HashSet<Token>,
-        type_registry: &TypeRegistry,
+        type_key: usize,
+        dependency_graph: &HashMap<usize, Vec<usize>>,
+        visited: &mut HashSet<usize>,
+        visiting: &mut HashSet<usize>,
+        all_types: &[CilTypeRc],
     ) -> Result<()> {
         // If already completely processed, skip
-        if visited.contains(&token) {
+        if visited.contains(&type_key) {
             return Ok(());
         }
 
         // If currently being processed, we have a circular dependency
         // This should be caught by the circularity validator, but we check here too
-        if visiting.contains(&token) {
+        if visiting.contains(&type_key) {
+            // Find the type name for better error reporting
+            let type_name = all_types
+                .iter()
+                .find(|t| Arc::as_ptr(t) as usize == type_key)
+                .map_or_else(
+                    || format!("Unknown type at address 0x{:X}", type_key),
+                    |t| t.fullname(),
+                );
+
             return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: format!(
-                    "Circular dependency detected in dependency path analysis for token 0x{:08X}",
-                    token.value()
+                    "Circular dependency detected in dependency path analysis for type '{}'",
+                    type_name
                 ),
                 source: None,
             });
         }
 
         // Mark as currently being processed
-        visiting.insert(token);
+        visiting.insert(type_key);
 
         // Check all dependencies
-        if let Some(dependencies) = dependency_graph.get(&token) {
-            for &dep_token in dependencies {
-                // Verify dependency exists in type registry
-                if let Some(dep_type) = type_registry.get(&dep_token) {
-                    if dep_type.name.is_empty() {
-                        return Err(Error::ValidationOwnedValidatorFailed {
-                            validator: self.name().to_string(),
-                            message: format!(
-                                "Type with token 0x{:08X} has dependency on unresolved type 0x{:08X}",
-                                token.value(), dep_token.value()
-                            ),
-                            source: None,
-                        });
-                    }
-                } else {
-                    return Err(Error::ValidationOwnedValidatorFailed {
-                        validator: self.name().to_string(),
-                        message: format!(
-                            "Type with token 0x{:08X} has dependency on non-existent type 0x{:08X}",
-                            token.value(),
-                            dep_token.value()
-                        ),
-                        source: None,
-                    });
-                }
-
+        if let Some(dependencies) = dependency_graph.get(&type_key) {
+            for &dep_key in dependencies {
                 // Recursively check dependency accessibility
                 self.check_dependency_path_accessibility(
-                    dep_token,
+                    dep_key,
                     dependency_graph,
                     visited,
                     visiting,
-                    type_registry,
+                    all_types,
                 )?;
             }
         }
 
         // Mark as completely processed and remove from currently processing
-        visiting.remove(&token);
-        visited.insert(token);
+        visiting.remove(&type_key);
+        visited.insert(type_key);
 
         Ok(())
     }

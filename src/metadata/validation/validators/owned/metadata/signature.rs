@@ -71,6 +71,9 @@
 //! - [ECMA-335 I.8.6](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Assignment compatibility
 //! - [ECMA-335 II.10.1](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Method overriding and signatures
 
+use rayon::prelude::*;
+use std::collections::HashMap;
+
 use crate::{
     metadata::validation::{
         context::{OwnedValidationContext, ValidationContext},
@@ -78,7 +81,6 @@ use crate::{
     },
     Error, Result,
 };
-use std::collections::HashMap;
 
 /// Foundation validator for method signatures, calling conventions, and signature compatibility.
 ///
@@ -144,7 +146,8 @@ impl OwnedSignatureValidator {
     fn validate_method_signature_format(&self, context: &OwnedValidationContext) -> Result<()> {
         let methods = context.object().methods();
 
-        for entry in methods {
+        let results: Vec<Result<()>> = methods.iter().par_bridge().into_par_iter()
+            .map(|entry| {
             let method = entry.value();
 
             // Validate method name is not empty (basic signature validation)
@@ -251,6 +254,12 @@ impl OwnedSignatureValidator {
                     });
                 }
             }
+            Ok(())
+        })
+        .collect();
+
+        for result in results {
+            result?;
         }
 
         Ok(())
@@ -276,32 +285,38 @@ impl OwnedSignatureValidator {
     /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
     /// - Methods have excessive overloads (>1024) indicating potential complexity issues
     fn validate_signature_compatibility(&self, context: &OwnedValidationContext) -> Result<()> {
-        let methods = context.object().methods();
+        // Track method signatures by type and name for proper overload counting
+        // This ensures we count overloads per-type, not globally across all types
+        for type_rc in context.target_assembly_types() {
+            let mut type_method_signatures: HashMap<String, Vec<u32>> = HashMap::new();
+            let methods = context.object().methods();
 
-        // Track method signatures by name for compatibility checking
-        let mut method_signatures: HashMap<String, Vec<u32>> = HashMap::new();
+            // Collect methods for this specific type
+            for (_, method_ref) in type_rc.methods.iter() {
+                if let Some(method_token) = method_ref.token() {
+                    if let Some(method_entry) = methods.get(&method_token) {
+                        let method = method_entry.value();
+                        type_method_signatures
+                            .entry(method.name.clone())
+                            .or_default()
+                            .push(method_token.value());
+                    }
+                }
+            }
 
-        // Collect all methods by name
-        for entry in methods {
-            let method = entry.value();
-            method_signatures
-                .entry(method.name.clone())
-                .or_default()
-                .push(entry.key().value());
-        }
-
-        // Check for potential overloading issues
-        // Allow reasonable number of overloads as found in legitimate .NET libraries
-        for (method_name, method_tokens) in method_signatures {
-            if method_tokens.len() > 1024 {
-                return Err(Error::ValidationOwnedValidatorFailed {
-                    validator: self.name().to_string(),
-                    message: format!(
-                        "Method '{}' has excessive overloads ({}), potential signature complexity issue",
-                        method_name, method_tokens.len()
-                    ),
-                    source: None,
-                });
+            // Check for potential overloading issues within this type
+            // Allow reasonable number of overloads as found in legitimate .NET libraries
+            for (method_name, method_tokens) in type_method_signatures {
+                if method_tokens.len() > 1024 {
+                    return Err(Error::ValidationOwnedValidatorFailed {
+                        validator: self.name().to_string(),
+                        message: format!(
+                            "Method '{}' in type '{}' has excessive overloads ({}), potential signature complexity issue",
+                            method_name, type_rc.name, method_tokens.len()
+                        ),
+                        source: None,
+                    });
+                }
             }
         }
 

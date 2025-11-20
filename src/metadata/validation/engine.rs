@@ -75,7 +75,7 @@ use crate::{
     },
     Error, Result,
 };
-use rayon::prelude::*;
+use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 use std::{sync::OnceLock, time::Instant};
 
 /// Static registry of raw validators.
@@ -168,6 +168,8 @@ pub struct ValidationEngine {
     config: ValidationConfig,
     /// Shared reference scanner
     scanner: ReferenceScanner,
+    /// Dedicated thread pool for this validation engine instance
+    thread_pool: ThreadPool,
 }
 
 impl ValidationEngine {
@@ -191,7 +193,22 @@ impl ValidationEngine {
                 message: format!("Failed to initialize reference scanner: {e}"),
             })?;
 
-        Ok(Self { config, scanner })
+        let thread_count = std::thread::available_parallelism()
+            .map(std::num::NonZero::get)
+            .unwrap_or(4);
+        let thread_pool = ThreadPoolBuilder::new()
+            .thread_name(|i| format!("validation-engine-{}", i))
+            .num_threads(thread_count)
+            .build()
+            .map_err(|e| Error::ValidationEngineInitFailed {
+                message: format!("Failed to create thread pool: {e}"),
+            })?;
+
+        Ok(Self {
+            config,
+            scanner,
+            thread_pool,
+        })
     }
 
     /// Executes validation in two stages: Raw → Owned.
@@ -316,9 +333,20 @@ impl ValidationEngine {
 
         // Create validation context
         let context = if let Some(changes) = changes {
-            context_factory::raw_modification_context(view, changes, &self.scanner, &self.config)
+            context_factory::raw_modification_context(
+                view,
+                changes,
+                &self.scanner,
+                &self.config,
+                &self.thread_pool,
+            )
         } else {
-            context_factory::raw_loading_context(view, &self.scanner, &self.config)
+            context_factory::raw_loading_context(
+                view,
+                &self.scanner,
+                &self.config,
+                &self.thread_pool,
+            )
         };
 
         let active_validators: Vec<_> = validators
@@ -330,20 +358,22 @@ impl ValidationEngine {
             return Ok(ValidationResult::success());
         }
 
-        // Execute validators in parallel
-        let results: Vec<(&str, Result<()>)> = active_validators
-            .par_iter()
-            .map(|validator| {
-                let validator_result = validator.validate_raw(&context).map_err(|e| {
-                    Error::ValidationRawValidatorFailed {
-                        validator: validator.name().to_string(),
-                        message: e.to_string(),
-                        source: Some(Box::new(e)),
-                    }
-                });
-                (validator.name(), validator_result)
-            })
-            .collect();
+        // Execute validators in parallel using this instance's dedicated thread pool
+        let results: Vec<(&str, Result<()>)> = self.thread_pool.install(|| {
+            active_validators
+                .par_iter()
+                .map(|validator| {
+                    let validator_result = validator.validate_raw(&context).map_err(|e| {
+                        Error::ValidationRawValidatorFailed {
+                            validator: validator.name().to_string(),
+                            message: e.to_string(),
+                            source: Some(Box::new(e)),
+                        }
+                    });
+                    (validator.name(), validator_result)
+                })
+                .collect()
+        });
 
         let duration = start_time.elapsed();
 
@@ -378,7 +408,8 @@ impl ValidationEngine {
         let start_time = Instant::now();
 
         // Create validation context
-        let context = context_factory::owned_context(object, &self.scanner, &self.config);
+        let context =
+            context_factory::owned_context(object, &self.scanner, &self.config, &self.thread_pool);
 
         let active_validators: Vec<_> = validators
             .iter()
@@ -389,20 +420,22 @@ impl ValidationEngine {
             return Ok(ValidationResult::success());
         }
 
-        // Execute validators in parallel (collect all errors)
-        let results: Vec<(&str, Result<()>)> = active_validators
-            .par_iter()
-            .map(|validator| {
-                let validator_result = validator.validate_owned(&context).map_err(|e| {
-                    Error::ValidationOwnedValidatorFailed {
-                        validator: validator.name().to_string(),
-                        message: e.to_string(),
-                        source: Some(Box::new(e)),
-                    }
-                });
-                (validator.name(), validator_result)
-            })
-            .collect();
+        // Execute validators in parallel using this instance's dedicated thread pool (collect all errors)
+        let results: Vec<(&str, Result<()>)> = self.thread_pool.install(|| {
+            active_validators
+                .par_iter()
+                .map(|validator| {
+                    let validator_result = validator.validate_owned(&context).map_err(|e| {
+                        Error::ValidationOwnedValidatorFailed {
+                            validator: validator.name().to_string(),
+                            message: e.to_string(),
+                            source: Some(Box::new(e)),
+                        }
+                    });
+                    (validator.name(), validator_result)
+                })
+                .collect()
+        });
 
         let duration = start_time.elapsed();
 
@@ -684,11 +717,25 @@ mod tests {
     /// Test that owned validator creation doesn't panic and validators have unique names  
     #[test]
     fn test_owned_validators_creation_and_uniqueness() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+        let path = PathBuf::from(&manifest_dir).join("tests/samples/WindowsBase.dll");
+        let mono_deps_path = PathBuf::from(&manifest_dir).join("tests/samples/mono_4.8");
 
-        // Load CilObject to test owned validation
-        let object = CilObject::from_file_with_validation(&path, ValidationConfig::disabled())
-            .expect("Failed to load CilObject for owned validation test");
+        // Load CilObject with dependencies using ProjectLoader
+        let result = crate::project::ProjectLoader::new()
+            .primary_file(&path)
+            .expect("Failed to set primary file")
+            .with_search_path(&mono_deps_path)
+            .expect("Failed to set search path")
+            .auto_discover(true)
+            .build();
+
+        let project_result = result.expect("Failed to load project with dependencies");
+
+        let object = project_result
+            .project
+            .get_primary()
+            .expect("Failed to get primary assembly from project");
 
         let view = CilAssemblyView::from_file(&path).expect("Failed to load test assembly");
         let config = ValidationConfig::comprehensive();
@@ -696,12 +743,12 @@ mod tests {
             ValidationEngine::new(&view, config).expect("Failed to create validation engine");
 
         // This will internally call create_owned_validators()
-        let result = engine.execute_stage2_validation(&object);
+        let validation_result = engine.execute_stage2_validation(&object);
 
         // Should not panic during validator creation or execution
         // The important thing is that we didn't panic during validator creation
         assert!(
-            result.is_ok() || result.is_err(),
+            validation_result.is_ok() || validation_result.is_err(),
             "Validation should complete without panicking"
         );
     }
@@ -709,7 +756,9 @@ mod tests {
     /// Test two-stage validation with all validators
     #[test]
     fn test_complete_two_stage_validation() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+        let path = PathBuf::from(&manifest_dir).join("tests/samples/mono_4.8/mscorlib.dll");
+        let mono_deps_path = PathBuf::from(&manifest_dir).join("tests/samples/mono_4.8");
         let view = CilAssemblyView::from_file(&path).expect("Failed to load test assembly");
 
         // Test with different validation configurations
@@ -719,22 +768,32 @@ mod tests {
             ("comprehensive", ValidationConfig::comprehensive()),
         ];
 
-        for (name, config) in configs {
+        // Run all configurations in parallel for better performance
+        configs.into_par_iter().for_each(|(name, config)| {
             let engine =
                 ValidationEngine::new(&view, config).expect("Failed to create validation engine");
 
-            // Test loading a CilObject which triggers both stages
-            let object_result = CilObject::from_file_with_validation(&path, config);
-            assert!(
-                object_result.is_ok() || object_result.is_err(),
-                "Object loading should complete for {name} config"
-            );
+            // Test loading a CilObject with dependencies using ProjectLoader
+            let project_result = crate::project::ProjectLoader::new()
+                .primary_file(&path)
+                .expect("Failed to set primary file")
+                .with_search_path(&mono_deps_path)
+                .expect("Failed to set search path")
+                .auto_discover(true)
+                .with_validation(config)
+                .build();
 
-            // Test two-stage validation directly through the engine
-            let object = CilObject::from_file_with_validation(&path, ValidationConfig::disabled())
-                .expect("Failed to load object for engine test");
+            let project_result = project_result.unwrap_or_else(|e| {
+                panic!("Failed to load project with dependencies for {name} config: {e}")
+            });
 
-            let result = engine.execute_two_stage_validation(&view, None, Some(&object));
+            let object = project_result
+                .project
+                .get_primary()
+                .unwrap_or_else(|| panic!("No primary assembly loaded for {name} config"));
+
+            // Test two-stage validation directly through the engine with loaded dependencies
+            let result = engine.execute_two_stage_validation(&view, None, Some(&*object));
             assert!(
                 result.is_ok(),
                 "Two-stage validation should complete for {name} config"
@@ -748,7 +807,7 @@ mod tests {
                     "At least one validation stage should have run for {name} config"
                 );
             }
-        }
+        });
     }
 
     /// Test validation engine factory methods work with all validators
