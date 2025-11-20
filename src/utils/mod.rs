@@ -43,11 +43,14 @@
 
 mod alignment;
 mod compression;
+mod enums;
 mod heap_calc;
 mod io;
+mod synchronization;
 
 pub use alignment::{align_to, align_to_4_bytes};
 pub use compression::compressed_uint_size;
+pub use enums::EnumUtils;
 pub use heap_calc::calculate_table_row_size;
 #[allow(unused_imports)]
 pub use io::{
@@ -57,3 +60,4 @@ pub use io::{
     write_compressed_uint, write_le, write_le_at, write_le_at_dyn, write_prefixed_string_utf16,
     write_prefixed_string_utf8, write_string_at, write_string_utf8, CilIO,
 };
+pub use synchronization::FailFastBarrier;
