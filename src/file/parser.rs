@@ -12,7 +12,6 @@
 //!
 //! - **Position tracking** - Maintains current offset for sequential parsing operations
 //! - **Bounds checking** - All operations validate data availability before reading
-//! - **Zero-copy access** - Works directly on byte slices without data copying
 //! - **Type-safe reading** - Strongly typed methods for common data types
 //! - **Metadata support** - Specialized methods for .NET metadata structures
 //!
@@ -94,23 +93,10 @@
 //! println!("Parameter count: {}, Type token: {:?}", param_count, type_token);
 //! # Ok::<(), dotscope::Error>(())
 //! ```
-//!
-//! # Integration
-//!
-//! This module integrates with:
-//! - [`crate::metadata`] - Uses parser for reading metadata tables and structures
-//! - [`crate::disassembler`] - Parses CIL instruction streams and method bodies
-//! - [`crate::file::io`] - Leverages low-level I/O utilities for primitive type reading
-//! - [`crate::metadata::signatures`] - Parses complex type and method signatures
-//!
-//! The parser is used internally throughout the dotscope library for all binary data
-//! parsing operations, providing a consistent and safe interface for accessing .NET
-//! assembly structures.
 
 use crate::{
-    file::io::{read_be_at, read_le_at, CilIO},
     metadata::token::Token,
-    Error::OutOfBounds,
+    utils::{read_be_at, read_le_at, CilIO},
     Result,
 };
 
@@ -263,7 +249,7 @@ impl<'a> Parser<'a> {
     /// ```
     pub fn seek(&mut self, pos: usize) -> Result<()> {
         if pos >= self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         self.position = pos;
@@ -312,8 +298,8 @@ impl<'a> Parser<'a> {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn advance_by(&mut self, step: usize) -> Result<()> {
-        if self.position + step >= self.data.len() {
-            return Err(OutOfBounds);
+        if self.position + step > self.data.len() {
+            return Err(out_of_bounds_error!());
         }
 
         self.position += step;
@@ -375,7 +361,7 @@ impl<'a> Parser<'a> {
     /// ```
     pub fn peek_byte(&self) -> Result<u8> {
         if self.position >= self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
         Ok(self.data[self.position])
     }
@@ -406,7 +392,7 @@ impl<'a> Parser<'a> {
     pub fn align(&mut self, alignment: usize) -> Result<()> {
         let padding = (alignment - (self.position % alignment)) % alignment;
         if self.position + padding > self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
         self.position += padding;
         Ok(())
@@ -554,9 +540,9 @@ impl<'a> Parser<'a> {
     ///
     /// Compressed tokens encode type references using 2 tag bits and the table index.
     /// The tag bits determine which metadata table the token refers to:
-    /// - 0x0: TypeDef table
-    /// - 0x1: TypeRef table  
-    /// - 0x2: TypeSpec table
+    /// - 0x0: `TypeDef` table
+    /// - 0x1: `TypeRef` table  
+    /// - 0x2: `TypeSpec` table
     ///
     /// # Errors
     /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or
@@ -626,7 +612,7 @@ impl<'a> Parser<'a> {
 
         loop {
             if self.position >= self.data.len() {
-                return Err(OutOfBounds);
+                return Err(out_of_bounds_error!());
             }
 
             let byte = self.data[self.position];
@@ -679,12 +665,16 @@ impl<'a> Parser<'a> {
             end += 1;
         }
 
-        if end >= self.data.len() {
-            return Err(OutOfBounds);
-        }
-
+        // Handle two cases:
+        // 1. Found null terminator (end < data.len()): normal null-terminated string
+        // 2. Reached end of data (end == data.len()): string without null terminator (valid case)
         let string_data = &self.data[start..end];
-        self.position = end + 1; // Skip null terminator
+
+        if end < self.data.len() {
+            self.position = end + 1;
+        } else {
+            self.position = end;
+        }
 
         String::from_utf8(string_data.to_vec()).map_err(|_| {
             malformed_error!("Invalid string - {} - {} - {:?}", start, end, string_data)
@@ -717,7 +707,7 @@ impl<'a> Parser<'a> {
         let length = self.read_7bit_encoded_int()? as usize;
 
         if self.position + length > self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         let string_data = &self.data[self.position..self.position + length];
@@ -726,6 +716,49 @@ impl<'a> Parser<'a> {
         String::from_utf8(string_data.to_vec()).map_err(|_| {
             malformed_error!(
                 "Invalid string - {} - {} - {:?}",
+                self.position,
+                self.position + length,
+                string_data
+            )
+        })
+    }
+
+    /// Read a compressed uint length-prefixed UTF-8 string.
+    ///
+    /// The string length is encoded as a compressed unsigned integer according to ECMA-335,
+    /// followed by that many UTF-8 bytes. This format is used for strings in custom attributes,
+    /// security permissions, and other metadata structures that follow ECMA-335 blob format.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or
+    /// [`crate::Error::Malformed`] for invalid UTF-8 encoding.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    ///
+    /// // Length 5 (compressed uint), followed by "Hello"
+    /// let data = [5, b'H', b'e', b'l', b'l', b'o'];
+    /// let mut parser = Parser::new(&data);
+    ///
+    /// let result = parser.read_compressed_string_utf8()?;
+    /// assert_eq!(result, "Hello");
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn read_compressed_string_utf8(&mut self) -> Result<String> {
+        let length = self.read_compressed_uint()? as usize;
+
+        if self.position + length > self.data.len() {
+            return Err(out_of_bounds_error!());
+        }
+
+        let string_data = &self.data[self.position..self.position + length];
+        self.position += length;
+
+        String::from_utf8(string_data.to_vec()).map_err(|_| {
+            malformed_error!(
+                "Invalid compressed string - {} - {} - {:?}",
                 self.position,
                 self.position + length,
                 string_data
@@ -759,10 +792,10 @@ impl<'a> Parser<'a> {
     pub fn read_prefixed_string_utf16(&mut self) -> Result<String> {
         let length = self.read_7bit_encoded_int()? as usize;
         if self.position + length > self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
-        if length % 2 != 0 || length < 2 {
+        if !length.is_multiple_of(2) || length < 2 {
             return Err(malformed_error!("Invalid UTF-16 length - {}", length));
         }
 
@@ -791,12 +824,12 @@ mod tests {
     #[test]
     fn test_read_compressed_uint() {
         let test_cases = vec![
-            (vec![0x03], 3),                            // 1-byte format
-            (vec![0x7F], 0x7F),                         // 1-byte format, max value
-            (vec![0x80, 0x80], 0x80),                   // 2-byte format, min value
-            (vec![0xBF, 0xFF], 0x3FFF),                 // 2-byte format, max value
-            (vec![0xC0, 0x00, 0x00, 0x00], 0x00),       // 4-byte format, min value
-            (vec![0xDF, 0xFF, 0xFF, 0xFF], 0x1FFFFFFF), // 4-byte format, max value
+            (vec![0x03], 3),                             // 1-byte format
+            (vec![0x7F], 0x7F),                          // 1-byte format, max value
+            (vec![0x80, 0x80], 0x80),                    // 2-byte format, min value
+            (vec![0xBF, 0xFF], 0x3FFF),                  // 2-byte format, max value
+            (vec![0xC0, 0x00, 0x00, 0x00], 0x00),        // 4-byte format, min value
+            (vec![0xDF, 0xFF, 0xFF, 0xFF], 0x1FFF_FFFF), // 4-byte format, max value
         ];
 
         for (input, expected) in test_cases {
@@ -807,7 +840,10 @@ mod tests {
 
         // Error on empty data
         let mut parser = Parser::new(&[]);
-        assert!(matches!(parser.read_compressed_uint(), Err(OutOfBounds)));
+        assert!(matches!(
+            parser.read_compressed_uint(),
+            Err(crate::Error::OutOfBounds { .. })
+        ));
     }
 
     #[test]
@@ -845,7 +881,10 @@ mod tests {
         // Test unexpected end of data
         let mut parser = Parser::new(&[0x08]); // Just one byte
         assert!(matches!(parser.read_compressed_uint(), Ok(8)));
-        assert!(matches!(parser.read_compressed_uint(), Err(OutOfBounds)));
+        assert!(matches!(
+            parser.read_compressed_uint(),
+            Err(crate::Error::OutOfBounds { .. })
+        ));
     }
 
     #[test]
@@ -894,7 +933,7 @@ mod tests {
         {
             let input = &[0xFF, 0xFF, 0x7F]; // Represents 2097151 (max for three bytes)
             let mut parser = Parser::new(input);
-            assert_eq!(parser.read_7bit_encoded_int().unwrap(), 2097151);
+            assert_eq!(parser.read_7bit_encoded_int().unwrap(), 2_097_151);
             assert_eq!(parser.pos(), 3);
         }
     }

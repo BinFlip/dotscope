@@ -1,44 +1,42 @@
-//! Raw FieldLayout structures for the FieldLayout metadata table.
+//! Raw `FieldLayout` structures for the `FieldLayout` metadata table.
 //!
 //! This module provides the [`crate::metadata::tables::fieldlayout::raw::FieldLayoutRaw`] struct for reading field layout data
-//! directly from metadata tables before index resolution. The FieldLayout table specifies
+//! directly from metadata tables before index resolution. The `FieldLayout` table specifies
 //! explicit field positioning within types that use explicit layout.
 //!
 //! # Table Structure
-//! The FieldLayout table (TableId = 0x10) contains these columns:
+//! The `FieldLayout` table (`TableId` = 0x10) contains these columns:
 //! - `Offset`: 4-byte field offset within the containing type
 //! - `Field`: Index into Field table identifying the positioned field
 //!
 //! # Usage Context
-//! FieldLayout entries are only present for types that require explicit field positioning:
+//! `FieldLayout` entries are only present for types that require explicit field positioning:
 //! - **Interop types**: Types for P/Invoke or COM interop
 //! - **Performance-critical types**: Cache-optimized data structures
 //! - **Legacy compatibility**: Matching existing binary layouts
 //! - **Platform-specific layouts**: Architecture-dependent positioning
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.16 for the FieldLayout table specification.
+//! See ECMA-335, Partition II, §22.16 for the `FieldLayout` table specification.
 
 use std::sync::Arc;
 
 use crate::{
-    file::io::{read_le_at, read_le_at_dyn},
     metadata::{
-        tables::{FieldLayout, FieldLayoutRc, FieldMap, RowDefinition, TableId, TableInfoRef},
+        tables::{FieldLayout, FieldLayoutRc, FieldMap, TableId, TableInfoRef, TableRow},
         token::Token,
-        validation::FieldValidator,
     },
     Result,
 };
 
-/// Raw field layout data read directly from the FieldLayout metadata table.
+/// Raw field layout data read directly from the `FieldLayout` metadata table.
 ///
 /// This structure represents a field layout entry before index resolution and field
 /// dereferencing. Field layouts specify the explicit byte offset of fields within
 /// types that use explicit layout attributes.
 ///
 /// # Binary Format
-/// Each row in the FieldLayout table has this layout:
+/// Each row in the `FieldLayout` table has this layout:
 /// ```text
 /// Offset | Size | Field      | Description
 /// -------|------|------------|----------------------------------
@@ -49,19 +47,19 @@ use crate::{
 /// The Field index size depends on the number of entries in the Field table.
 ///
 /// # Layout Context
-/// FieldLayout entries are created for types with explicit layout control:
+/// `FieldLayout` entries are created for types with explicit layout control:
 /// - **C# StructLayout(LayoutKind.Explicit)**: Explicitly positioned fields
 /// - **C++ CLI types**: Native interop data structures
 /// - **P/Invoke types**: Matching native struct layouts
 /// - **Performance types**: Cache-line aligned data structures
 ///
 /// # ECMA-335 Reference
-/// See ECMA-335, Partition II, §22.16 for the complete FieldLayout table specification.
+/// See ECMA-335, Partition II, §22.16 for the complete `FieldLayout` table specification.
 #[derive(Clone, Debug)]
 pub struct FieldLayoutRaw {
-    /// The row identifier in the FieldLayout table.
+    /// The row identifier in the `FieldLayout` table.
     ///
-    /// This 1-based index uniquely identifies this field layout within the FieldLayout table.
+    /// This 1-based index uniquely identifies this field layout within the `FieldLayout` table.
     pub rid: u32,
 
     /// The metadata token for this field layout.
@@ -113,8 +111,6 @@ impl FieldLayoutRaw {
     /// - **Duplicate Layout**: Field already has layout assigned
     /// - **Token Error**: Invalid field token calculation
     pub fn apply(&self, fields: &FieldMap) -> Result<()> {
-        FieldValidator::validate_field_offset(self.field_offset, None)?;
-
         match fields.get(&Token::new(self.field | 0x0400_0000)) {
             Some(field) => field
                 .value()
@@ -164,108 +160,22 @@ impl FieldLayoutRaw {
     }
 }
 
-impl<'a> RowDefinition<'a> for FieldLayoutRaw {
+impl TableRow for FieldLayoutRaw {
+    /// Calculate the binary size of one `FieldLayout` table row
+    ///
+    /// Returns the total byte size of a single `FieldLayout` table row based on the table
+    /// configuration. The size varies depending on the size of the Field table index.
+    ///
+    /// # Size Breakdown
+    /// - `field_offset`: 4 bytes (field byte offset within type)
+    /// - `field`: Variable bytes (Field table index)
+    ///
+    /// Total: 6-8 bytes depending on Field table index size configuration
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
             /* field_offset */ 4 +
-            /* field */       sizes.table_index_bytes(TableId::Field)
+            /* field */        sizes.table_index_bytes(TableId::Field)
         )
-    }
-
-    fn read_row(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
-        let offset_org = *offset;
-
-        let field_offset = read_le_at::<u32>(data, offset)?;
-        let field = read_le_at_dyn(data, offset, sizes.is_large(TableId::Field))?;
-
-        Ok(FieldLayoutRaw {
-            rid,
-            token: Token::new(0x1000_0000 + rid),
-            offset: offset_org,
-            field_offset,
-            field,
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::metadata::tables::{MetadataTable, TableId, TableInfo};
-
-    use super::*;
-
-    #[test]
-    fn crafted_short() {
-        let data = vec![
-            0x01, 0x01, 0x01, 0x01, // field_offset
-            0x02, 0x02, // field
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[(TableId::Field, 1)],
-            false,
-            false,
-            false,
-        ));
-        let table = MetadataTable::<FieldLayoutRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: FieldLayoutRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x10000001);
-            assert_eq!(row.field_offset, 0x01010101);
-            assert_eq!(row.field, 0x0202);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
-    }
-
-    #[test]
-    fn crafted_long() {
-        let data = vec![
-            0x01, 0x01, 0x01, 0x01, // field_offset
-            0x02, 0x02, 0x02, 0x02, // field
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[(TableId::Field, u16::MAX as u32 + 3)],
-            true,
-            true,
-            true,
-        ));
-        let table =
-            MetadataTable::<FieldLayoutRaw>::new(&data, u16::MAX as u32 + 3, sizes).unwrap();
-
-        let eval = |row: FieldLayoutRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x10000001);
-            assert_eq!(row.field_offset, 0x01010101);
-            assert_eq!(row.field, 0x02020202);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
     }
 }

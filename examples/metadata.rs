@@ -70,7 +70,7 @@ fn print_metadata_tables(assembly: &CilObject) {
         println!("  Available metadata tables:");
         for table_id in tables.present_tables() {
             let row_count = tables.table_row_count(table_id);
-            println!("    ✓ {:?} ({} rows)", table_id, row_count);
+            println!("    ✓ {table_id:?} ({row_count} rows)");
         }
     }
 
@@ -100,23 +100,17 @@ fn print_heap_analysis(assembly: &CilObject) {
         let mut sample_strings = Vec::new();
 
         println!("  String heap analysis:");
-        for result in strings.iter().take(1000) {
-            // Limit to avoid overwhelming output
-            match result {
-                Ok((offset, string)) => {
-                    string_count += 1;
-                    total_length += string.len();
+        for (offset, string) in strings.iter().take(1000) {
+            string_count += 1;
+            total_length += string.len();
 
-                    // Collect interesting samples
-                    if sample_strings.len() < 5 && !string.is_empty() && string.len() > 3 {
-                        sample_strings.push((offset, string));
-                    }
-                }
-                Err(_) => break, // Stop on error
+            // Collect interesting samples
+            if sample_strings.len() < 5 && !string.is_empty() && string.len() > 3 {
+                sample_strings.push((offset, string));
             }
         }
 
-        println!("    Total strings analyzed: {}", string_count);
+        println!("    Total strings analyzed: {string_count}");
         println!(
             "    Average string length: {:.1} chars",
             total_length as f64 / string_count.max(1) as f64
@@ -136,26 +130,13 @@ fn print_heap_analysis(assembly: &CilObject) {
 
     // GUID heap analysis with iterator demonstration
     if let Some(guids) = assembly.guids() {
-        let mut guid_count = 0;
         println!("  GUID heap analysis:");
 
-        for result in guids.iter().take(20) {
-            // Limit to reasonable number
-            match result {
-                Ok((index, guid)) => {
-                    guid_count += 1;
-                    if guid_count <= 3 {
-                        println!("    GUID #{}: {}", index, guid);
-                    }
-                }
-                Err(_) => break,
-            }
+        for (index, guid) in guids.iter().take(3) {
+            println!("    GUID #{index}: {guid}");
         }
 
-        if guid_count > 3 {
-            println!("    ... and {} more GUIDs", guid_count - 3);
-        }
-        println!("    Total GUIDs: {}", guid_count);
+        println!("    Total GUIDs: {}", guids.iter().count());
     }
 
     // Blob heap analysis with iterator demonstration
@@ -165,46 +146,41 @@ fn print_heap_analysis(assembly: &CilObject) {
         let mut size_histogram: HashMap<String, usize> = HashMap::new();
 
         println!("  Blob heap analysis:");
-        for result in blob.iter().take(500) {
+        for (offset, blob_data) in blob.iter().take(500) {
             // Limit to avoid overwhelming output
-            match result {
-                Ok((offset, blob_data)) => {
-                    blob_count += 1;
-                    total_size += blob_data.len();
+            blob_count += 1;
+            total_size += blob_data.len();
 
-                    // Categorize by size
-                    let size_category = match blob_data.len() {
-                        0..=4 => "tiny (0-4 bytes)",
-                        5..=16 => "small (5-16 bytes)",
-                        17..=64 => "medium (17-64 bytes)",
-                        65..=256 => "large (65-256 bytes)",
-                        _ => "huge (>256 bytes)",
-                    };
-                    *size_histogram.entry(size_category.to_string()).or_insert(0) += 1;
+            // Categorize by size
+            let size_category = match blob_data.len() {
+                0..=4 => "tiny (0-4 bytes)",
+                5..=16 => "small (5-16 bytes)",
+                17..=64 => "medium (17-64 bytes)",
+                65..=256 => "large (65-256 bytes)",
+                _ => "huge (>256 bytes)",
+            };
+            *size_histogram.entry(size_category.to_string()).or_insert(0) += 1;
 
-                    // Show a sample of the first few blobs
-                    if blob_count <= 3 && !blob_data.is_empty() {
-                        let preview = blob_data
-                            .iter()
-                            .take(8)
-                            .map(|b| format!("{:02X}", b))
-                            .collect::<Vec<_>>()
-                            .join(" ");
-                        let suffix = if blob_data.len() > 8 { "..." } else { "" };
-                        println!(
-                            "    Blob @{:04X}: {} bytes [{}{}]",
-                            offset,
-                            blob_data.len(),
-                            preview,
-                            suffix
-                        );
-                    }
-                }
-                Err(_) => break,
+            // Show a sample of the first few blobs
+            if blob_count <= 3 && !blob_data.is_empty() {
+                let preview = blob_data
+                    .iter()
+                    .take(8)
+                    .map(|b| format!("{b:02X}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let suffix = if blob_data.len() > 8 { "..." } else { "" };
+                println!(
+                    "    Blob @{:04X}: {} bytes [{}{}]",
+                    offset,
+                    blob_data.len(),
+                    preview,
+                    suffix
+                );
             }
         }
 
-        println!("    Total blobs analyzed: {}", blob_count);
+        println!("    Total blobs analyzed: {blob_count}");
         if blob_count > 0 {
             println!(
                 "    Average blob size: {:.1} bytes",
@@ -212,7 +188,7 @@ fn print_heap_analysis(assembly: &CilObject) {
             );
             println!("    Size distribution:");
             for (category, count) in size_histogram {
-                println!("      {}: {} blobs", category, count);
+                println!("      {category}: {count} blobs");
             }
         }
     }
@@ -223,25 +199,20 @@ fn print_heap_analysis(assembly: &CilObject) {
         let mut sample_user_strings = Vec::new();
 
         println!("  User strings heap analysis:");
-        for result in user_strings.iter().take(100) {
+        for (offset, string) in user_strings.iter().take(100) {
             // Limit for readability
-            match result {
-                Ok((offset, string)) => {
-                    string_count += 1;
+            string_count += 1;
 
-                    // Collect interesting samples
-                    if sample_user_strings.len() < 3 {
-                        let display_string = string.to_string_lossy();
-                        if !display_string.trim().is_empty() && display_string.len() > 2 {
-                            sample_user_strings.push((offset, display_string.to_string()));
-                        }
-                    }
+            // Collect interesting samples
+            if sample_user_strings.len() < 3 {
+                let display_string = string.to_string_lossy();
+                if !display_string.trim().is_empty() && display_string.len() > 2 {
+                    sample_user_strings.push((offset, display_string.to_string()));
                 }
-                Err(_) => break,
             }
         }
 
-        println!("    Total user strings: {}", string_count);
+        println!("    Total user strings: {string_count}");
         if !sample_user_strings.is_empty() {
             println!("    Sample user strings:");
             for (offset, string) in sample_user_strings {
@@ -250,7 +221,7 @@ fn print_heap_analysis(assembly: &CilObject) {
                 } else {
                     string
                 };
-                println!("      @{:04X}: \"{}\"", offset, truncated);
+                println!("      @{offset:04X}: \"{truncated}\"");
             }
         }
     }
@@ -295,13 +266,13 @@ fn print_type_system_analysis(assembly: &CilObject) {
     let mut sorted_ns: Vec<_> = namespace_stats.iter().collect();
     sorted_ns.sort_by(|a, b| b.1.cmp(a.1));
     for (namespace, count) in sorted_ns.iter().take(8) {
-        println!("    {}: {} types", namespace, count);
+        println!("    {namespace}: {count} types");
     }
 
     // Display type kind statistics
     println!("  Type categories:");
     for (kind, count) in &type_kind_stats {
-        println!("    {}: {} types", kind, count);
+        println!("    {kind}: {count} types");
     }
 }
 
@@ -385,21 +356,18 @@ fn print_custom_attributes_analysis(assembly: &CilObject) {
 }
 
 fn print_custom_attribute_info(index: usize, attr: &CustomAttributeValueRc) {
-    println!("      {}. Custom Attribute:", index);
+    println!("      {index}. Custom Attribute:");
 
     // Show argument summary
     let fixed_count = attr.fixed_args.len();
     let named_count = attr.named_args.len();
 
     if fixed_count > 0 || named_count > 0 {
-        println!(
-            "         Arguments: {} fixed, {} named",
-            fixed_count, named_count
-        );
+        println!("         Arguments: {fixed_count} fixed, {named_count} named");
 
         // Show first 2 fixed args
         for (i, arg) in attr.fixed_args.iter().take(2).enumerate() {
-            println!("           Fixed[{}]: {:?}", i, arg);
+            println!("           Fixed[{i}]: {arg:?}");
         }
 
         // Show first 2 named args
@@ -459,7 +427,7 @@ fn print_dependency_analysis(assembly: &CilObject) {
             };
 
             println!("    {}. {} v{}", i + 1, assembly_ref.name, version);
-            println!("       Culture: {}, Flags: {}", culture, flags_str);
+            println!("       Culture: {culture}, Flags: {flags_str}");
 
             // Show identifier information if available
             if let Some(ref identifier) = assembly_ref.identifier {
@@ -468,7 +436,10 @@ fn print_dependency_analysis(assembly: &CilObject) {
                         println!("       PublicKey: {} bytes", key.len());
                     }
                     dotscope::metadata::identity::Identity::Token(token) => {
-                        println!("       Token: 0x{:016X}", token);
+                        println!("       Token: 0x{token:016X}");
+                    }
+                    dotscope::metadata::identity::Identity::EcmaKey(key) => {
+                        println!("       EcmaKey: {} bytes", key.len());
                     }
                 }
             }
@@ -500,9 +471,9 @@ fn print_dependency_analysis(assembly: &CilObject) {
 
     // Import analysis
     let imports = assembly.imports();
-    println!("  Total imports: {}", imports.len());
+    println!("  Total imports: {}", imports.total_count());
 
     // Export analysis
     let exports = assembly.exports();
-    println!("  Total exports: {}", exports.len());
+    println!("  Total exports: {}", exports.total_count());
 }

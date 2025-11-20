@@ -21,12 +21,17 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
       
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
         components: rustfmt, clippy
+        
+    - name: Setup .NET SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
         
     - name: Setup Rust cache
       uses: Swatinem/rust-cache@v2
@@ -43,10 +48,10 @@ jobs:
       run: cargo check --all-features
       
     - name: Run tests
-      run: cargo test --all-features --verbose
+      run: cargo test --release --all-features --verbose
       
     - name: Run doc tests
-      run: cargo test --doc --all-features
+      run: cargo test --release --doc --all-features
       
     - name: Check documentation
       run: cargo doc --all-features --no-deps
@@ -59,7 +64,7 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
       
     - name: Install Rust nightly
       uses: dtolnay/rust-toolchain@nightly
@@ -93,7 +98,7 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
       
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -111,12 +116,17 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
       
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
         components: llvm-tools-preview
+        
+    - name: Setup .NET SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
         
     - name: Setup Rust cache
       uses: Swatinem/rust-cache@v2
@@ -132,6 +142,6 @@ jobs:
     - name: Upload to codecov.io
       uses: codecov/codecov-action@v5
       with:
-        file: lcov.info
+        files: lcov.info
         fail_ci_if_error: true
         token: ${{ secrets.CODECOV_TOKEN }}

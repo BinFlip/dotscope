@@ -1,31 +1,29 @@
-//! # NestedClass Raw Implementation
+//! # `NestedClass` Raw Implementation
 //!
-//! This module provides the raw variant of NestedClass table entries with unresolved
+//! This module provides the raw variant of `NestedClass` table entries with unresolved
 //! indexes for initial parsing and memory-efficient storage.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
-    file::io::read_le_at_dyn,
     metadata::{
-        tables::{MetadataTable, NestedClass, NestedClassRc, RowDefinition, TableId, TableInfoRef},
+        tables::{MetadataTable, NestedClass, NestedClassRc, TableId, TableInfoRef, TableRow},
         token::Token,
         typesystem::TypeRegistry,
-        validation::NestedClassValidator,
     },
     Result,
 };
 
 #[derive(Clone, Debug)]
-/// Raw representation of a NestedClass table entry with unresolved indexes.
+/// Raw representation of a `NestedClass` table entry with unresolved indexes.
 ///
-/// This structure represents the unprocessed entry from the NestedClass metadata table
+/// This structure represents the unprocessed entry from the `NestedClass` metadata table
 /// (ID 0x29), which defines the hierarchical relationship between nested types and their
 /// enclosing types. It contains raw index values that require resolution to actual type objects.
 ///
 /// ## Purpose
 ///
-/// The NestedClass table establishes type containment relationships:
+/// The `NestedClass` table establishes type containment relationships:
 /// - Defines which types are nested within other types
 /// - Establishes type visibility and accessibility scoping
 /// - Enables proper type resolution within nested contexts
@@ -34,7 +32,7 @@ use crate::{
 /// ## Raw vs Owned
 ///
 /// This raw variant is used during initial metadata parsing and contains:
-/// - Unresolved TypeDef indexes requiring lookup in the type registry
+/// - Unresolved `TypeDef` indexes requiring lookup in the type registry
 /// - Minimal memory footprint for storage
 /// - Direct representation of file format
 ///
@@ -42,7 +40,7 @@ use crate::{
 ///
 /// ## Type Relationships
 ///
-/// NestedClass entries create hierarchical type relationships:
+/// `NestedClass` entries create hierarchical type relationships:
 /// - **Containment**: The nested type is contained within the enclosing type
 /// - **Scoping**: Nested types inherit accessibility from their container
 /// - **Resolution**: Type names are resolved relative to the enclosing context
@@ -50,18 +48,18 @@ use crate::{
 ///
 /// ## ECMA-335 Reference
 ///
-/// Corresponds to ECMA-335 §II.22.32 NestedClass table structure.
+/// Corresponds to ECMA-335 §II.22.32 `NestedClass` table structure.
 pub struct NestedClassRaw {
-    /// Row identifier within the NestedClass table.
+    /// Row identifier within the `NestedClass` table.
     ///
-    /// Unique identifier for this NestedClass entry within the table.
-    /// Combined with table ID 0x29, forms the metadata token 0x29??????.
+    /// Unique identifier for this `NestedClass` entry within the table.
+    /// Combined with table ID 0x29, forms the metadata token 0x29FFFFFF.
     pub rid: u32,
 
-    /// Metadata token for this NestedClass entry.
+    /// Metadata token for this `NestedClass` entry.
     ///
-    /// Token in the format 0x29??????, where the high byte 0x29 identifies
-    /// the NestedClass table and the low 3 bytes contain the row ID.
+    /// Token in the format 0x29FFFFFF, where the high byte 0x29 identifies
+    /// the `NestedClass` table and the low 3 bytes contain the row ID.
     pub token: Token,
 
     /// Byte offset of this entry in the original metadata stream.
@@ -70,32 +68,32 @@ pub struct NestedClassRaw {
     /// Used for debugging and low-level metadata inspection.
     pub offset: usize,
 
-    /// Raw index into the TypeDef table for the nested type.
+    /// Raw index into the `TypeDef` table for the nested type.
     ///
     /// This unresolved index identifies the type that is nested within
     /// the enclosing type. Must be resolved using the type registry to
-    /// get the actual type object. Index size depends on TypeDef table size.
+    /// get the actual type object. Index size depends on `TypeDef` table size.
     pub nested_class: u32,
 
-    /// Raw index into the TypeDef table for the enclosing type.
+    /// Raw index into the `TypeDef` table for the enclosing type.
     ///
     /// This unresolved index identifies the type that contains the nested type.
     /// Must be resolved using the type registry to get the actual type object.
-    /// Index size depends on TypeDef table size.
+    /// Index size depends on `TypeDef` table size.
     pub enclosing_class: u32,
 }
 
 impl NestedClassRaw {
-    /// Applies all NestedClass entries to establish type containment relationships.
+    /// Applies all `NestedClass` entries to establish type containment relationships.
     ///
-    /// This static method processes all NestedClass entries from the metadata table,
+    /// This static method processes all `NestedClass` entries from the metadata table,
     /// validating the relationships and updating the type registry to reflect the
     /// nested type hierarchy. The operation groups nested types by their enclosing
     /// types for efficient processing.
     ///
     /// ## Arguments
     ///
-    /// * `classes` - The metadata table containing all NestedClass entries
+    /// * `classes` - The metadata table containing all `NestedClass` entries
     /// * `types` - The type registry containing all parsed type entries
     ///
     /// ## Returns
@@ -110,14 +108,9 @@ impl NestedClassRaw {
     /// - The relationship violates .NET type system constraints
     ///
     pub fn apply(classes: &MetadataTable<NestedClassRaw>, types: &TypeRegistry) -> Result<()> {
-        let mut mapping: HashMap<u32, Vec<u32>> = HashMap::new();
+        let mut mapping: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
 
         for row in classes {
-            let nested_token = Token::new(row.nested_class | 0x0200_0000);
-            let enclosing_token = Token::new(row.enclosing_class | 0x0200_0000);
-
-            NestedClassValidator::validate_nested_relationship(nested_token, enclosing_token)?;
-
             mapping
                 .entry(row.enclosing_class | 0x0200_0000)
                 .or_default()
@@ -155,7 +148,7 @@ impl NestedClassRaw {
 
     /// Converts this raw entry to an owned [`NestedClass`] with resolved references.
     ///
-    /// This method resolves the raw TypeDef indexes to actual type objects,
+    /// This method resolves the raw `TypeDef` indexes to actual type objects,
     /// creating a fully usable [`NestedClass`] instance for runtime access. The conversion
     /// establishes the containment relationship between nested and enclosing types.
     ///
@@ -200,134 +193,22 @@ impl NestedClassRaw {
     }
 }
 
-impl<'a> RowDefinition<'a> for NestedClassRaw {
-    /// Calculates the byte size of a NestedClass table row.
+impl TableRow for NestedClassRaw {
+    /// Calculate the row size for `NestedClass` table entries
     ///
-    /// The row size depends on the TypeDef table size and is calculated as:
-    /// - `nested_class`: 2 or 4 bytes (depends on TypeDef table size)
-    /// - `enclosing_class`: 2 or 4 bytes (depends on TypeDef table size)
+    /// Returns the total byte size of a single `NestedClass` table row based on the
+    /// table configuration. The size varies depending on the size of table indexes in the metadata.
     ///
-    /// ## Arguments
-    /// * `sizes` - Table size information for calculating index widths
+    /// # Size Breakdown
+    /// - `nested_class`: 2 or 4 bytes (table index into `TypeDef` table)
+    /// - `enclosing_class`: 2 or 4 bytes (table index into `TypeDef` table)
     ///
-    /// ## Returns
-    /// Total byte size of one table row
+    /// Total: 4-8 bytes depending on table index size configuration
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
             /* nested_class */    sizes.table_index_bytes(TableId::TypeDef) +
             /* enclosing_class */ sizes.table_index_bytes(TableId::TypeDef)
         )
-    }
-
-    /// Reads a single NestedClass table row from binary data.
-    ///
-    /// Parses the binary representation according to ECMA-335 §II.22.32:
-    /// 1. **NestedClass** (2-4 bytes): Index into TypeDef table for nested type
-    /// 2. **EnclosingClass** (2-4 bytes): Index into TypeDef table for enclosing type
-    ///
-    /// ## Arguments
-    /// * `data` - Binary data containing the table
-    /// * `offset` - Current read position (updated by this method)
-    /// * `rid` - Row identifier for this entry
-    /// * `sizes` - Table size information for proper index width calculation
-    ///
-    /// ## Returns
-    /// Parsed [`NestedClassRaw`] instance with populated fields
-    ///
-    /// ## Errors
-    /// - Insufficient data remaining at offset
-    /// - Data corruption or malformed structure
-    /// - Invalid TypeDef index values
-    fn read_row(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
-        Ok(NestedClassRaw {
-            rid,
-            token: Token::new(0x2900_0000 + rid),
-            offset: *offset,
-            nested_class: read_le_at_dyn(data, offset, sizes.is_large(TableId::TypeDef))?,
-            enclosing_class: read_le_at_dyn(data, offset, sizes.is_large(TableId::TypeDef))?,
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::metadata::tables::{MetadataTable, TableId, TableInfo};
-
-    #[test]
-    fn crafted_short() {
-        let data = vec![
-            0x01, 0x01, // nested_class
-            0x02, 0x02, // enclosing_class
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[(TableId::NestedClass, 1), (TableId::TypeDef, 10)],
-            false,
-            false,
-            false,
-        ));
-        let table = MetadataTable::<NestedClassRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: NestedClassRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x29000001);
-            assert_eq!(row.nested_class, 0x0101);
-            assert_eq!(row.enclosing_class, 0x0202);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
-    }
-
-    #[test]
-    fn crafted_long() {
-        let data = vec![
-            0x01, 0x01, 0x01, 0x01, // nested_class
-            0x02, 0x02, 0x02, 0x02, // enclosing_class
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[
-                (TableId::NestedClass, u16::MAX as u32 + 3),
-                (TableId::TypeDef, u16::MAX as u32 + 3),
-            ],
-            true,
-            true,
-            true,
-        ));
-        let table = MetadataTable::<NestedClassRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: NestedClassRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x29000001);
-            assert_eq!(row.nested_class, 0x01010101);
-            assert_eq!(row.enclosing_class, 0x02020202);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
     }
 }

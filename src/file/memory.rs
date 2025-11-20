@@ -70,6 +70,13 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
+//! # Thread Safety
+//!
+//! The [`Memory`] backend is thread-safe for concurrent read operations. Once created,
+//! the stored data is immutable, making it safe to share across threads. Multiple threads
+//! can safely call [`crate::file::Backend::data_slice`] and other accessor methods
+//! concurrently without additional synchronization.
+//!
 //! # Integration
 //!
 //! This module integrates with:
@@ -81,7 +88,7 @@
 //! providing flexibility in how assembly data is accessed and processed.
 
 use super::Backend;
-use crate::{Error::OutOfBounds, Result};
+use crate::Result;
 
 /// In-memory file backend for parsing .NET assemblies from byte buffers.
 ///
@@ -109,6 +116,12 @@ use crate::{Error::OutOfBounds, Result};
 /// println!("File size: {} bytes", file.len());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+///
+/// # Thread Safety
+///
+/// [`Memory`] is [`std::marker::Send`] and [`std::marker::Sync`] as the stored data is immutable
+/// after creation. Multiple threads can safely access the data concurrently through the
+/// [`crate::file::Backend`] trait methods.
 #[derive(Debug)]
 pub struct Memory {
     /// The in-memory data buffer
@@ -137,6 +150,10 @@ impl Memory {
     /// // The original vector is consumed and cannot be used anymore
     /// // println!("{:?}", file_bytes); // This would be a compile error
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn new(data: Vec<u8>) -> Memory {
         Memory { data }
     }
@@ -145,11 +162,11 @@ impl Memory {
 impl Backend for Memory {
     fn data_slice(&self, offset: usize, len: usize) -> Result<&[u8]> {
         let Some(offset_end) = offset.checked_add(len) else {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         };
 
         if offset_end > self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         Ok(&self.data[offset..offset_end])
@@ -235,17 +252,26 @@ mod tests {
         // Test offset + len overflow
         let result = memory.data_slice(usize::MAX, 1);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), OutOfBounds));
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::Error::OutOfBounds { .. }
+        ));
 
         // Test offset exactly at length
         let result = memory.data_slice(100, 1);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), OutOfBounds));
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::Error::OutOfBounds { .. }
+        ));
 
         // Test offset + len exceeds length by 1
         let result = memory.data_slice(99, 2);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), OutOfBounds));
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::Error::OutOfBounds { .. }
+        ));
     }
 
     #[test]

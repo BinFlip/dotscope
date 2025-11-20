@@ -1,11 +1,11 @@
-//! FieldLayout metadata table implementation.
+//! `FieldLayout` metadata table implementation.
 //!
-//! This module provides structures and utilities for working with the FieldLayout metadata table,
-//! which specifies explicit field positioning within types. The FieldLayout table defines the
+//! This module provides structures and utilities for working with the `FieldLayout` metadata table,
+//! which specifies explicit field positioning within types. The `FieldLayout` table defines the
 //! byte offset of fields in classes and value types, enabling precise control over memory layout.
 //!
 //! # Overview
-//! The FieldLayout table is used when explicit field layout control is required, such as:
+//! The `FieldLayout` table is used when explicit field layout control is required, such as:
 //! - **Interop scenarios**: P/Invoke, COM interop requiring specific layouts
 //! - **Performance optimization**: Cache-line alignment, memory layout control
 //! - **Platform compatibility**: Ensuring consistent layouts across platforms
@@ -20,26 +20,30 @@
 //! - [`crate::metadata::tables::fieldlayout::FieldLayoutRc`]: Reference-counted field layout for shared ownership
 //!
 //! # Table Structure
-//! Each FieldLayout entry contains:
+//! Each `FieldLayout` entry contains:
 //! - **Offset**: 4-byte field offset within the containing type
 //! - **Field**: Reference to the field in the Field table
 //!
 //! # Field Layout Scenarios
-//! - **Sequential Layout**: Default .NET field ordering (no FieldLayout entries)
-//! - **Explicit Layout**: Specific byte offsets defined (FieldLayout entries present)
-//! - **Auto Layout**: Runtime-optimized positioning (no FieldLayout entries)
+//! - **Sequential Layout**: Default .NET field ordering (no `FieldLayout` entries)
+//! - **Explicit Layout**: Specific byte offsets defined (`FieldLayout` entries present)
+//! - **Auto Layout**: Runtime-optimized positioning (no `FieldLayout` entries)
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.16 for the complete FieldLayout table specification.
+//! See ECMA-335, Partition II, §22.16 for the complete `FieldLayout` table specification.
 
 use crate::metadata::token::Token;
 use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
 
+mod builder;
 mod loader;
 mod owned;
 mod raw;
+mod reader;
+mod writer;
 
+pub use builder::*;
 pub(crate) use loader::*;
 pub use owned::*;
 pub use raw::*;

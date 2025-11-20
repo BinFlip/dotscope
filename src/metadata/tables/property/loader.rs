@@ -8,15 +8,15 @@
 //!
 //! The Property table serves as the foundation for .NET property system:
 //! - Defines property names and signatures for types
-//! - Provides property attributes and flags (special name, RTSpecialName, etc.)
+//! - Provides property attributes and flags (special name, `RTSpecialName`, etc.)
 //! - Enables property-based reflection and metadata queries
-//! - Supports property mapping through PropertyMap table relationships
+//! - Supports property mapping through `PropertyMap` table relationships
 //!
 //! ## Dependencies
 //!
 //! - **String Heap**: Required for property name resolution
 //! - **Blob Heap**: Required for property signature parsing
-//! - **PropertyMap Table**: Links properties to their declaring types
+//! - **`PropertyMap` Table**: Links properties to their declaring types
 //!
 //! ## References
 //!
@@ -61,7 +61,7 @@ impl MetadataLoader for PropertyLoader {
         if let (Some(header), Some(strings), Some(blob)) =
             (context.meta, context.strings, context.blobs)
         {
-            if let Some(table) = header.table::<PropertyRaw>(TableId::Property) {
+            if let Some(table) = header.table::<PropertyRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let res = row.to_owned(strings, blob)?;
 
@@ -79,8 +79,8 @@ impl MetadataLoader for PropertyLoader {
     /// ## Returns
     ///
     /// * [`TableId::Property`] - The table identifier (0x17)
-    fn table_id(&self) -> TableId {
-        TableId::Property
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::Property)
     }
 
     /// Returns the table dependencies for the Property table.

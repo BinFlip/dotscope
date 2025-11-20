@@ -1,12 +1,12 @@
-//! ManifestResource table loader implementation.
+//! `ManifestResource` table loader implementation.
 //!
 //! This module provides the [`ManifestResourceLoader`] responsible for loading and processing
-//! ManifestResource metadata table entries. The ManifestResource table defines resources
+//! `ManifestResource` metadata table entries. The `ManifestResource` table defines resources
 //! embedded in or linked to .NET assemblies, enabling access to binary data, strings,
 //! and other non-code assets.
 //!
 //! # Purpose
-//! The ManifestResource table is essential for resource management in .NET applications:
+//! The `ManifestResource` table is essential for resource management in .NET applications:
 //! - **Embedded resources**: Binary data compiled directly into assembly files
 //! - **Linked resources**: External files referenced by the assembly
 //! - **Satellite assemblies**: Localized resources in separate assembly files
@@ -14,18 +14,18 @@
 //! - **Globalization**: Culture-specific resource organization and fallback chains
 //!
 //! # Resource Types and Location
-//! ManifestResource entries support different resource storage models:
+//! `ManifestResource` entries support different resource storage models:
 //! - **Embedded**: Resources stored directly in the current assembly's PE file
-//! - **File-based**: Resources stored in separate files referenced by File table
-//! - **Assembly-based**: Resources located in external assemblies via AssemblyRef
+//! - **File-based**: Resources stored in separate files referenced by `File` table
+//! - **Assembly-based**: Resources located in external assemblies via `AssemblyRef`
 //! - **Streaming**: Large resources accessed through streaming interfaces
 //!
 //! # Table Dependencies
-//! - **File**: Required for resolving file-based resource references
-//! - **AssemblyRef**: Required for resolving external assembly resource references
+//! - **`File`**: Required for resolving file-based resource references
+//! - **`AssemblyRef`**: Required for resolving external assembly resource references
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.24 for the ManifestResource table specification.
+//! See ECMA-335, Partition II, §22.24 for the `ManifestResource` table specification.
 
 use crate::{
     metadata::{
@@ -36,7 +36,7 @@ use crate::{
     Result,
 };
 
-/// Loader implementation for the ManifestResource metadata table.
+/// Loader implementation for the `ManifestResource` metadata table.
 ///
 /// This loader processes resource metadata, establishing resource location references
 /// and enabling runtime resource access. It resolves implementation references, converts
@@ -44,9 +44,9 @@ use crate::{
 pub(crate) struct ManifestResourceLoader;
 
 impl MetadataLoader for ManifestResourceLoader {
-    /// Loads ManifestResource table entries and establishes resource access mechanisms.
+    /// Loads `ManifestResource` table entries and establishes resource access mechanisms.
     ///
-    /// This method iterates through all ManifestResource table entries, resolving implementation
+    /// This method iterates through all `ManifestResource` table entries, resolving implementation
     /// references for resource location and creating resource data access mechanisms. Each entry
     /// is converted to an owned structure for runtime resource operations.
     ///
@@ -54,11 +54,11 @@ impl MetadataLoader for ManifestResourceLoader {
     /// * `context` - The loading context containing metadata tables, strings, and file access
     ///
     /// # Returns
-    /// * `Ok(())` - If all ManifestResource entries were processed successfully
+    /// * `Ok(())` - If all `ManifestResource` entries were processed successfully
     /// * `Err(_)` - If reference resolution or resource access setup fails
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
-            if let Some(table) = header.table::<ManifestResourceRaw>(TableId::ManifestResource) {
+            if let Some(table) = header.table::<ManifestResourceRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned = row.to_owned(
                         |coded_index| context.get_ref(coded_index),
@@ -76,22 +76,22 @@ impl MetadataLoader for ManifestResourceLoader {
         Ok(())
     }
 
-    /// Returns the table identifier for ManifestResource.
+    /// Returns the table identifier for `ManifestResource`.
     ///
     /// # Returns
     /// The [`TableId::ManifestResource`] identifier for this table type.
-    fn table_id(&self) -> TableId {
-        TableId::ManifestResource
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::ManifestResource)
     }
 
-    /// Returns the dependencies required for loading ManifestResource entries.
+    /// Returns the dependencies required for loading `ManifestResource` entries.
     ///
-    /// ManifestResource table loading requires other tables to resolve implementation references:
+    /// `ManifestResource` table loading requires other tables to resolve implementation references:
     /// - [`TableId::File`] - For file-based resource references to external files
     /// - [`TableId::AssemblyRef`] - For assembly-based resource references to external assemblies
     ///
     /// # Returns
-    /// Array of table identifiers that must be loaded before ManifestResource processing.
+    /// Array of table identifiers that must be loaded before `ManifestResource` processing.
     fn dependencies(&self) -> &'static [TableId] {
         &[TableId::File, TableId::AssemblyRef]
     }

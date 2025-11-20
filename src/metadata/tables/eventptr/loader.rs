@@ -1,25 +1,25 @@
-//! EventPtr table loader implementation.
+//! `EventPtr` table loader implementation.
 //!
 //! This module provides the [`crate::metadata::tables::eventptr::loader::EventPtrLoader`]
-//! for loading EventPtr metadata table entries during the metadata parsing process.
-//! EventPtr tables provide a level of indirection for event references when edit-and-continue
+//! for loading `EventPtr` metadata table entries during the metadata parsing process.
+//! `EventPtr` tables provide a level of indirection for event references when edit-and-continue
 //! scenarios require non-contiguous event ordering in the Event table, integrating this
 //! data with existing metadata entries.
 //!
 //! # Edit-and-Continue Support
 //!
-//! EventPtr tables are typically present only in assemblies that have undergone
+//! `EventPtr` tables are typically present only in assemblies that have undergone
 //! edit-and-continue operations, where the original event ordering may have been
 //! disrupted. The indirection provided by this table allows maintaining logical
 //! event ordering while accommodating physical table modifications.
 //!
 //! # Dependencies
 //!
-//! EventPtr loading has no dependencies and can be processed early in the loading
-//! sequence. Other tables (like EventMap) may depend on EventPtr for event resolution.
+//! `EventPtr` loading has no dependencies and can be processed early in the loading
+//! sequence. Other tables (like `EventMap`) may depend on `EventPtr` for event resolution.
 //!
 //! # Reference
-//! - [ECMA-335 II.22.14](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - EventPtr table specification
+//! - [ECMA-335 II.22.14](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `EventPtr` table specification
 
 use crate::{
     metadata::{
@@ -29,18 +29,18 @@ use crate::{
     Result,
 };
 
-/// Metadata loader for EventPtr table entries
+/// Metadata loader for `EventPtr` table entries
 ///
-/// Handles the loading and processing of EventPtr metadata table entries during metadata
-/// parsing. EventPtr tables provide indirection for event references, primarily used
+/// Handles the loading and processing of `EventPtr` metadata table entries during metadata
+/// parsing. `EventPtr` tables provide indirection for event references, primarily used
 /// in edit-and-continue scenarios where the original event table ordering has been
 /// modified.
 pub(crate) struct EventPtrLoader;
 
 impl MetadataLoader for EventPtrLoader {
-    /// Load and process EventPtr metadata table entries
+    /// Load and process `EventPtr` metadata table entries
     ///
-    /// Processes all EventPtr table entries, converting them from raw format to owned
+    /// Processes all `EventPtr` table entries, converting them from raw format to owned
     /// data structures with resolved references. Each entry establishes an indirection
     /// mapping that points to the actual event in the Event table.
     ///
@@ -58,12 +58,12 @@ impl MetadataLoader for EventPtrLoader {
     ///
     /// # Edit-and-Continue Context
     ///
-    /// EventPtr tables are typically only present in assemblies that have been
+    /// `EventPtr` tables are typically only present in assemblies that have been
     /// modified through edit-and-continue operations. When present, they provide
     /// the necessary indirection to maintain logical event ordering.
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) = header.table::<EventPtrRaw>(TableId::EventPtr) {
+            if let Some(table) = header.table::<EventPtrRaw>() {
                 for row in table {
                     let owned = row.to_owned()?;
                     context.event_ptr.insert(row.token, owned);
@@ -73,19 +73,19 @@ impl MetadataLoader for EventPtrLoader {
         Ok(())
     }
 
-    /// Returns the table identifier for EventPtr table
+    /// Returns the table identifier for `EventPtr` table
     ///
     /// # Returns
     ///
-    /// Returns [`TableId::EventPtr`] (0x13) identifying this as the EventPtr table loader.
-    fn table_id(&self) -> TableId {
-        TableId::EventPtr
+    /// Returns [`TableId::EventPtr`] (0x13) identifying this as the `EventPtr` table loader.
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::EventPtr)
     }
 
-    /// Returns the table dependencies required before loading EventPtr entries
+    /// Returns the table dependencies required before loading `EventPtr` entries
     ///
-    /// EventPtr loading has no dependencies and can be processed early in the
-    /// loading sequence. Other tables may depend on EventPtr for event indirection.
+    /// `EventPtr` loading has no dependencies and can be processed early in the
+    /// loading sequence. Other tables may depend on `EventPtr` for event indirection.
     ///
     /// # Returns
     ///

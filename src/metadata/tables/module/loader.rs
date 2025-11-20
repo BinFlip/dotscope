@@ -56,7 +56,7 @@ impl MetadataLoader for ModuleLoader {
         if let (Some(tables_header), Some(strings), Some(guids)) =
             (context.meta, context.strings, context.guids)
         {
-            if let Some(table) = tables_header.table::<ModuleRaw>(TableId::Module) {
+            if let Some(table) = tables_header.table::<ModuleRaw>() {
                 if let Some(row) = table.get(1) {
                     let owned = row.to_owned(strings, guids)?;
 
@@ -76,8 +76,8 @@ impl MetadataLoader for ModuleLoader {
     ///
     /// ## Returns
     /// [`crate::metadata::tables::TableId::Module`] (0x00)
-    fn table_id(&self) -> TableId {
-        TableId::Module
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::Module)
     }
 
     /// Returns the table dependencies for Module loading.

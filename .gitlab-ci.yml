@@ -12,7 +12,7 @@ tests:
   stage: test
   dependencies: []
   script:
-    - cargo test
+    - cargo test --release
   parallel:
     matrix:
     - OS: linux

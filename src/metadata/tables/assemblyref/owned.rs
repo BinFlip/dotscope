@@ -1,4 +1,4 @@
-//! Owned AssemblyRef table representation.
+//! Owned `AssemblyRef` table representation.
 //!
 //! This module provides the [`crate::metadata::tables::assemblyref::owned::AssemblyRef`] struct
 //! which contains fully resolved assembly reference metadata with owned data and resolved heap
@@ -7,7 +7,7 @@
 //!
 //! # Architecture
 //!
-//! The owned representation stores fully resolved data from the AssemblyRef metadata table,
+//! The owned representation stores fully resolved data from the `AssemblyRef` metadata table,
 //! including resolved string and blob heap references. This eliminates the need for heap
 //! lookups during runtime access, providing immediate access to assembly reference metadata.
 //!
@@ -35,7 +35,7 @@ use crate::metadata::{
 
 /// Represents a .NET assembly reference with fully resolved metadata and owned data
 ///
-/// This structure contains the complete assembly reference information from the AssemblyRef
+/// This structure contains the complete assembly reference information from the `AssemblyRef`
 /// metadata table (0x23), with all heap references resolved to owned strings and byte arrays.
 /// Unlike [`crate::metadata::tables::assemblyref::raw::AssemblyRefRaw`], this provides
 /// immediate access to string data without requiring heap lookups.
@@ -52,8 +52,8 @@ use crate::metadata::{
 /// # Additional Metadata
 ///
 /// This structure also includes data from related tables:
-/// - **AssemblyRefOS**: Operating system compatibility information
-/// - **AssemblyRefProcessor**: Processor architecture requirements
+/// - **`AssemblyRefOS`**: Operating system compatibility information
+/// - **`AssemblyRefProcessor`**: Processor architecture requirements
 /// - **Custom attributes**: Additional metadata applied to the reference
 ///
 /// # Thread Safety
@@ -63,11 +63,12 @@ use crate::metadata::{
 /// after construction and safe for concurrent access.
 ///
 /// # References
-/// - [ECMA-335 II.22.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyRef table specification
-/// - [ECMA-335 II.22.7](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyRefOS table specification  
-/// - [ECMA-335 II.22.8](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyRefProcessor table specification
+/// - [ECMA-335 II.22.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyRef` table specification
+/// - [ECMA-335 II.22.7](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyRefOS` table specification  
+/// - [ECMA-335 II.22.8](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyRefProcessor` table specification
+#[derive(Debug)]
 pub struct AssemblyRef {
-    /// Row identifier within the AssemblyRef table
+    /// Row identifier within the `AssemblyRef` table
     ///
     /// Unique identifier for this row within the metadata table. Used for internal
     /// referencing and debugging purposes.
@@ -82,7 +83,7 @@ pub struct AssemblyRef {
     /// File offset where this table entry begins
     ///
     /// Byte offset from the start of the PE file to the beginning of this
-    /// AssemblyRef table entry. Used for low-level file analysis.
+    /// `AssemblyRef` table entry. Used for low-level file analysis.
     pub offset: usize,
 
     /// Simple name of the referenced assembly
@@ -143,26 +144,26 @@ pub struct AssemblyRef {
     /// Operating system platform identifier  
     ///
     /// Specifies the target operating system platform. Uses atomic access for thread safety.
-    /// Corresponds to entries in the AssemblyRefOS table when present.
+    /// Corresponds to entries in the `AssemblyRefOS` table when present.
     pub os_platform_id: AtomicU32,
 
     /// Operating system major version
     ///
     /// Major version number of the target operating system. Uses atomic access for thread safety.
-    /// Corresponds to entries in the AssemblyRefOS table when present.
+    /// Corresponds to entries in the `AssemblyRefOS` table when present.
     pub os_major_version: AtomicU32,
 
     /// Operating system minor version
     ///
     /// Minor version number of the target operating system. Uses atomic access for thread safety.
-    /// Corresponds to entries in the AssemblyRefOS table when present.
+    /// Corresponds to entries in the `AssemblyRefOS` table when present.
     pub os_minor_version: AtomicU32,
 
     // --- AssemblyRefProcessor table data ---
     /// Target processor architecture
     ///
     /// Specifies the required processor architecture for the referenced assembly.
-    /// Uses atomic access for thread safety. Corresponds to entries in the AssemblyRefProcessor table.
+    /// Uses atomic access for thread safety. Corresponds to entries in the `AssemblyRefProcessor` table.
     pub processor: AtomicU32,
 
     /// Custom attributes applied to this assembly reference

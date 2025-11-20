@@ -1,13 +1,13 @@
-///// This module provides loading functionality for the PropertyPtr metadata table (ID 0x16). # PropertyPtr Table Loader
+//! # `PropertyPtr` Table Loader
 //!
-//! This module provides loading functionality for the PropertyPtr metadata table (ID 0x26).
-//! The PropertyPtr table provides indirection for property table access in optimized
+//! This module provides loading functionality for the `PropertyPtr` metadata table (ID 0x16).
+//! The `PropertyPtr` table provides indirection for property table access in optimized
 //! metadata layouts, enabling property table compression and efficient property access
 //! patterns in .NET assemblies.
 //!
 //! ## Purpose
 //!
-//! The PropertyPtr table serves as an indirection mechanism:
+//! The `PropertyPtr` table serves as an indirection mechanism:
 //! - **Property Indirection**: Maps logical property indexes to physical locations
 //! - **Optimization Support**: Enables property table compression and reordering
 //! - **Metadata Efficiency**: Reduces metadata size in optimized assemblies
@@ -15,14 +15,14 @@
 //!
 //! ## Optimization Context
 //!
-//! PropertyPtr tables are typically present in optimized assemblies where:
+//! `PropertyPtr` tables are typically present in optimized assemblies where:
 //! - Property table ordering differs from logical declaration order
 //! - Property table compression has been applied during compilation
 //! - Runtime property access patterns require indirection for efficiency
 //!
 //! ## References
 //!
-//! - ECMA-335, Partition II, §22.38 - PropertyPtr table specification
+//! - ECMA-335, Partition II, §22.38 - `PropertyPtr` table specification
 //! - [`crate::metadata::tables::PropertyPtrRaw`] - Raw table entry structure
 //! - [`crate::metadata::tables::PropertyPtr`] - Owned table entry type
 
@@ -34,9 +34,9 @@ use crate::{
     Result,
 };
 
-/// Loader implementation for the PropertyPtr metadata table.
+/// Loader implementation for the `PropertyPtr` metadata table.
 ///
-/// This loader processes PropertyPtr table entries (ID 0x16) that provide indirection
+/// This loader processes `PropertyPtr` table entries (ID 0x16) that provide indirection
 /// for property table access in optimized metadata layouts. It handles the loading,
 /// validation, and storage of property pointer entries for efficient property access.
 ///
@@ -49,7 +49,7 @@ use crate::{
 pub struct PropertyPtrLoader;
 
 impl MetadataLoader for PropertyPtrLoader {
-    /// Loads and processes all PropertyPtr table entries from the metadata.
+    /// Loads and processes all `PropertyPtr` table entries from the metadata.
     ///
     /// ## Arguments
     ///
@@ -61,7 +61,7 @@ impl MetadataLoader for PropertyPtrLoader {
     /// * `Err(_)` - Property pointer loading or validation failed
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) = header.table::<PropertyPtrRaw>(TableId::PropertyPtr) {
+            if let Some(table) = header.table::<PropertyPtrRaw>() {
                 for row in table {
                     let owned = row.to_owned()?;
                     context.property_ptr.insert(row.token, owned);
@@ -71,18 +71,18 @@ impl MetadataLoader for PropertyPtrLoader {
         Ok(())
     }
 
-    /// Returns the table identifier for the PropertyPtr table.
+    /// Returns the table identifier for the `PropertyPtr` table.
     ///
     /// ## Returns
     ///
-    /// [`TableId::PropertyPtr`] (0x26) - The metadata table identifier
-    fn table_id(&self) -> TableId {
-        TableId::PropertyPtr
+    /// [`TableId::PropertyPtr`] (0x16) - The metadata table identifier
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::PropertyPtr)
     }
 
-    /// Returns the dependency list for PropertyPtr table loading.
+    /// Returns the dependency list for `PropertyPtr` table loading.
     ///
-    /// The PropertyPtr table has no direct dependencies on other metadata tables
+    /// The `PropertyPtr` table has no direct dependencies on other metadata tables
     /// as it provides indirection rather than containing references to other tables.
     ///
     /// ## Returns

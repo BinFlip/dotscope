@@ -1,45 +1,54 @@
-///
-/// This module provides the core infrastructure for loading and processing .NET metadata tables in a dependency-aware and parallelized manner.
-/// It exposes the [`crate::metadata::loader::MetadataLoader`] trait, dependency graph construction, and parallel execution utilities for all table loaders.
-///
-/// # Architecture
-///
-/// The loader system is built around several key concepts:
-///
-/// - **Dependency Management**: Each loader declares its dependencies via [`crate::metadata::loader::MetadataLoader::dependencies`]
-/// - **Graph Construction**: Dependencies are modeled as a directed acyclic graph using [`crate::metadata::loader::graph::LoaderGraph`]
-/// - **Parallel Execution**: Loaders are executed in topologically sorted levels, enabling maximum parallelism
-/// - **Context Sharing**: All loaders share a common [`crate::metadata::loader::context::LoaderContext`] containing loaded table data
-///
-/// # Execution Model
-///
-/// 1. **Registration**: All loaders are statically registered in the [`crate::metadata::loader::LOADERS`] array
-/// 2. **Graph Building**: [`crate::metadata::loader::build_dependency_graph`] constructs the dependency graph and validates for cycles
-/// 3. **Level Generation**: The graph is topologically sorted into execution levels
-/// 4. **Parallel Execution**: Each level is executed in parallel using rayon
-/// 5. **Error Handling**: Any loader failure immediately aborts the entire process
-///
-/// # Thread Safety
-///
-/// - **Loaders**: All implementations must be [`Send`] + [`Sync`] for parallel execution
-/// - **Context**: [`crate::metadata::loader::context::LoaderContext`] provides thread-safe access to shared metadata
-/// - **Synchronization**: Level-based execution provides natural synchronization points
-///
-/// # Modules
-///
-/// - [`crate::metadata::loader::graph`]: Dependency graph and topological sorting for loader execution
-/// - [`crate::metadata::loader::data`]: Contains the [`crate::metadata::loader::data::CilObjectData`] struct used by all loaders
-/// - [`crate::metadata::loader::context`]: Provides the [`crate::metadata::loader::context::LoaderContext`] for sharing data between loaders
+//! Core infrastructure for loading and processing .NET metadata tables in a dependency-aware and parallelized manner.
+//!
+//! This module provides the foundation for parallel metadata loading operations across all .NET metadata
+//! tables as defined by ECMA-335. It exposes the [`crate::metadata::loader::MetadataLoader`] trait,
+//! dependency graph construction, and parallel execution utilities for coordinating the loading of
+//! 53 different metadata table types.
+//!
+//! # Architecture
+//!
+//! The loader system is built around several key concepts:
+//!
+//! - **Dependency Management**: Each loader declares its dependencies via [`crate::metadata::loader::MetadataLoader::dependencies`]
+//! - **Graph Construction**: Dependencies are modeled as a directed acyclic graph using internal graph structures
+//! - **Parallel Execution**: Loaders are executed in topologically sorted levels, enabling maximum parallelism
+//! - **Context Sharing**: All loaders share a common context containing loaded table data
+//!
+//! # Execution Model
+//!
+//! 1. **Registration**: All loaders are statically registered in an internal loader registry
+//! 2. **Graph Building**: Internal graph construction builds the dependency graph and validates for cycles
+//! 3. **Level Generation**: The graph is topologically sorted into execution levels
+//! 4. **Parallel Execution**: Each level is executed in parallel using rayon
+//! 5. **Error Handling**: Any loader failure immediately aborts the entire process
+//!
+//! # Thread Safety
+//!
+//! All components in this module are designed for safe concurrent access during parallel loading:
+//! - **Loaders**: All implementations must be [`std::marker::Send`] + [`std::marker::Sync`] for parallel execution
+//! - **Context**: Internal context structures provide thread-safe access to shared metadata
+//! - **Synchronization**: Level-based execution provides natural synchronization points between dependency levels
+//! - **Static Data**: Internal loader registry and execution level cache are immutable after initialization
+//! - **Error Isolation**: Loader failures are properly isolated and propagated without affecting concurrent operations
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - Internal graph module: Dependency graph and topological sorting for loader execution
+//! - Internal data module: Contains data structures used by all loaders
+//! - Internal context module: Provides context structures for sharing data between loaders
+//! - [`crate::metadata::tables`]: All metadata table implementations and loader definitions
 mod context;
 mod data;
 mod graph;
+mod inheritance;
 
 pub(crate) use context::LoaderContext;
 pub(crate) use data::CilObjectData;
 
 /// Static registry of all metadata table loaders.
 ///
-/// This array contains references to all 43 metadata table loaders that are part of the .NET metadata
+/// This array contains references to all 45 metadata table loaders that are part of the .NET metadata
 /// specification. Each loader is responsible for processing a specific metadata table type and declaring
 /// its dependencies on other tables.
 ///
@@ -65,7 +74,7 @@ pub(crate) use data::CilObjectData;
 /// # Execution Order
 ///
 /// The actual execution order is determined dynamically by the dependency graph, not by the
-/// order in this array. The [`build_dependency_graph`] function analyzes dependencies and
+/// order in this array. Internal graph construction analyzes dependencies and
 /// creates a topological execution plan.
 ///
 /// # Maintenance
@@ -75,7 +84,7 @@ pub(crate) use data::CilObjectData;
 /// 2. Add the loader to this array
 /// 3. Update any loaders that depend on the new table
 /// 4. Test that the dependency graph remains acyclic
-static LOADERS: [&'static dyn MetadataLoader; 43] = [
+static LOADERS: [&'static dyn MetadataLoader; 54] = [
     &crate::metadata::tables::AssemblyLoader,
     &crate::metadata::tables::AssemblyOsLoader,
     &crate::metadata::tables::AssemblyProcessorLoader,
@@ -86,6 +95,16 @@ static LOADERS: [&'static dyn MetadataLoader; 43] = [
     &crate::metadata::tables::ConstantLoader,
     &crate::metadata::tables::CustomAttributeLoader,
     &crate::metadata::tables::DeclSecurityLoader,
+    &crate::metadata::tables::DocumentLoader,
+    &crate::metadata::tables::MethodDebugInformationLoader,
+    &crate::metadata::tables::LocalScopeLoader,
+    &crate::metadata::tables::LocalVariableLoader,
+    &crate::metadata::tables::LocalConstantLoader,
+    &crate::metadata::tables::ImportScopeLoader,
+    &crate::metadata::tables::StateMachineMethodLoader,
+    &crate::metadata::tables::CustomDebugInformationLoader,
+    &crate::metadata::tables::EncLogLoader,
+    &crate::metadata::tables::EncMapLoader,
     &crate::metadata::tables::EventLoader,
     &crate::metadata::tables::EventMapLoader,
     &crate::metadata::tables::EventPtrLoader,
@@ -119,9 +138,10 @@ static LOADERS: [&'static dyn MetadataLoader; 43] = [
     &crate::metadata::tables::TypeDefLoader,
     &crate::metadata::tables::TypeRefLoader,
     &crate::metadata::tables::TypeSpecLoader,
+    &inheritance::InheritanceResolver,
 ];
 
-use crate::{metadata::tables::TableId, Result};
+use crate::{metadata::tables::TableId, project::ProjectContext, Error, Result};
 use rayon::prelude::*;
 use std::sync::LazyLock;
 
@@ -256,33 +276,49 @@ pub(crate) trait MetadataLoader: Send + Sync {
     /// ```
     fn load(&self, context: &LoaderContext) -> Result<()>;
 
-    /// Get the ID of the table this loader processes.
+    /// Get the ID of the table this loader processes, if any.
     ///
     /// Returns the unique identifier for the metadata table that this loader is responsible
-    /// for processing. This ID is used by the dependency graph system to:
+    /// for processing, or `None` for special loaders that operate across multiple tables.
+    /// This ID is used by the dependency graph system to:
     /// - **Track Dependencies**: Identify which loaders depend on this table
     /// - **Resolve Conflicts**: Ensure only one loader exists per table type
     /// - **Generate Execution Plan**: Create the topological ordering for parallel execution
+    /// - **Priority Insertion**: Special loaders (`None`) run immediately when dependencies are satisfied
     ///
     /// # Returns
     ///
-    /// The [`crate::metadata::tables::TableId`] enum variant corresponding to this loader's table type.
+    /// - `Some(TableId)` - For loaders that process a specific metadata table
+    /// - `None` - For special loaders that operate across multiple tables (e.g., cross-table resolvers)
     ///
     /// # Examples
     ///
     /// ```rust,ignore
     /// use dotscope::metadata::tables::TableId;
     ///
-    /// fn table_id(&self) -> TableId {
-    ///     TableId::Assembly  // This loader processes the Assembly table
+    /// // Regular table loader
+    /// fn table_id(&self) -> Option<TableId> {
+    ///     Some(TableId::Assembly)  // This loader processes the Assembly table
+    /// }
+    ///
+    /// // Special cross-table loader
+    /// fn table_id(&self) -> Option<TableId> {
+    ///     None  // This loader operates across multiple tables
     /// }
     /// ```
+    ///
+    /// # Special Loaders
+    ///
+    /// Special loaders (`table_id() = None`) have unique behavior:
+    /// - **Cannot be dependencies**: Other loaders cannot depend on them
+    /// - **Priority execution**: Run immediately when their dependencies are satisfied
+    /// - **Cross-table operation**: Can access and modify multiple table types
     ///
     /// # Consistency
     ///
     /// This method must always return the same value for a given loader instance.
-    /// The returned ID should match the actual table type processed by [`MetadataLoader::load`].
-    fn table_id(&self) -> TableId;
+    /// For regular loaders, the returned ID should match the actual table type processed by [`MetadataLoader::load`].
+    fn table_id(&self) -> Option<TableId>;
 
     /// Get dependencies this loader needs to be satisfied before loading.
     ///
@@ -355,7 +391,7 @@ pub(crate) trait MetadataLoader: Send + Sync {
 /// # Returns
 ///
 /// * [`Ok`]([`graph::LoaderGraph`]) - A validated dependency graph ready for execution planning
-/// * [`Err`]([`crate::Error::GraphError`]) - If validation fails due to missing dependencies or cycles
+/// * [`Err`]([`crate::Error`]) - If validation fails due to missing dependencies or cycles
 ///
 /// # Errors
 ///
@@ -473,11 +509,50 @@ fn build_dependency_graph(
 ///
 /// The function automatically manages CPU resources through rayon's thread pool and
 /// ensures proper cleanup if any loader fails during execution.
-pub(crate) fn execute_loaders_in_parallel(context: &LoaderContext) -> Result<()> {
+pub(crate) fn execute_loaders_in_parallel(
+    context: &LoaderContext,
+    project_context: Option<&ProjectContext>,
+) -> Result<()> {
     // Access pre-computed execution levels (computed once per process)
     let levels = &*EXECUTION_LEVELS;
 
-    for level in levels {
+    for (level_index, level) in levels.iter().enumerate() {
+        if level_index == 4 {
+            if let Some(proj_ctx) = project_context {
+                proj_ctx.wait_stage2()?;
+
+                context.types.build_fullnames();
+
+                // Redirect TypeRefs to their canonical TypeDefs from external assemblies
+                for entry in context.types.iter() {
+                    let type_rc = entry.value();
+                    if !type_rc.is_typeref() {
+                        continue;
+                    }
+
+                    if let Some(canonical_typedef) =
+                        context.types.resolve_type_global(&type_rc.fullname())
+                    {
+                        if !context
+                            .types
+                            .redirect_typeref_to_typedef(type_rc.token, &canonical_typedef)
+                        {
+                            return Err(Error::Error(format!(
+                                "Failed to redirect TypeRef {}",
+                                &type_rc.fullname()
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
+        if level_index == 7 {
+            if let Some(proj_ctx) = project_context {
+                proj_ctx.wait_stage3()?;
+            }
+        }
+
         let results: Vec<Result<()>> = level
             .par_iter()
             .map(|loader| loader.load(context))

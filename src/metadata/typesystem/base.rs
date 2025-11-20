@@ -81,7 +81,11 @@
 //! - [ECMA-335 §II.23.1.16 - Element types](https://www.ecma-international.org/publications-and-standards/standards/ecma-335/)
 //! - [`crate::metadata::typesystem`] - Higher-level type system operations
 
-use std::{sync::Arc, sync::Weak};
+use std::{
+    hash::{Hash, Hasher},
+    sync::Arc,
+    sync::Weak,
+};
 
 use crate::{
     metadata::{
@@ -546,7 +550,7 @@ impl From<CilTypeRc> for CilTypeRef {
 /// ## References
 ///
 /// - [ECMA-335 §II.23.2.13 - Array shapes](https://www.ecma-international.org/publications-and-standards/standards/ecma-335/)
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Hash)]
 pub struct ArrayDimensions {
     /// The size of this dimension (number of elements).
     ///
@@ -749,9 +753,9 @@ pub mod ELEMENT_TYPE {
     pub const PTR: u8 = 0x0f;
     /// Managed reference (followed by type)
     pub const BYREF: u8 = 0x10;
-    /// Value type (followed by TypeDef or TypeRef token)
+    /// Value type (followed by `TypeDef` or `TypeRef` token)
     pub const VALUETYPE: u8 = 0x11;
-    /// Reference type/class (followed by TypeDef or TypeRef token)
+    /// Reference type/class (followed by `TypeDef` or `TypeRef` token)
     pub const CLASS: u8 = 0x12;
     /// Generic parameter in a generic type definition (represented as number)
     pub const VAR: u8 = 0x13;
@@ -773,9 +777,9 @@ pub mod ELEMENT_TYPE {
     pub const SZARRAY: u8 = 0x1d;
     /// Generic parameter in a generic method definition (represented as number)
     pub const MVAR: u8 = 0x1e;
-    /// Required modifier (followed by a TypeDef or TypeRef token)
+    /// Required modifier (followed by a `TypeDef` or `TypeRef` token)
     pub const CMOD_REQD: u8 = 0x1f;
-    /// Optional modifier (followed by a TypeDef or TypeRef token)
+    /// Optional modifier (followed by a `TypeDef` or `TypeRef` token)
     pub const CMOD_OPT: u8 = 0x20;
     /// Implemented within the CLI
     pub const INTERNAL: u8 = 0x21;
@@ -855,7 +859,7 @@ pub struct CilModifier {
 /// - **Floating point**: `R4` (float), `R8` (double)
 /// - **Character types**: `Char` (16-bit Unicode)
 /// - **Boolean**: `Boolean` (true/false)
-/// - **Native integers**: `I` (IntPtr), `U` (UIntPtr)
+/// - **Native integers**: `I` (`IntPtr`), `U` (`UIntPtr`)
 /// - **Special types**: `Void`, `Object`, `String`
 ///
 /// ### Constructed Types
@@ -952,9 +956,9 @@ pub enum CilFlavor {
     R4,
     /// 64-bit floating point number (IEEE 754 double precision)
     R8,
-    /// Native signed integer (pointer-sized, IntPtr)
+    /// Native signed integer (pointer-sized, `IntPtr`)
     I,
-    /// Native unsigned integer (pointer-sized, UIntPtr)
+    /// Native unsigned integer (pointer-sized, `UIntPtr`)
     U,
     /// Base object type (System.Object)
     Object,
@@ -1001,6 +1005,35 @@ pub enum CilFlavor {
     // Fallback
     /// Unknown or unsupported type
     Unknown,
+}
+
+impl Hash for CilFlavor {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // Use discriminant to distinguish between variants
+        std::mem::discriminant(self).hash(state);
+
+        // Hash the data for variants that have data
+        match self {
+            CilFlavor::Array { rank, dimensions } => {
+                rank.hash(state);
+                dimensions.hash(state);
+            }
+            CilFlavor::FnPtr { signature } => {
+                // Hash basic signature properties without requiring Hash on SignatureMethod
+                signature.param_count.hash(state);
+                signature.param_count_generic.hash(state);
+                signature.has_this.hash(state);
+                signature.explicit_this.hash(state);
+                signature.vararg.hash(state);
+            }
+            CilFlavor::GenericParameter { index, method } => {
+                index.hash(state);
+                method.hash(state);
+            }
+            // All other variants have no data or are primitives
+            _ => {}
+        }
+    }
 }
 
 impl CilFlavor {

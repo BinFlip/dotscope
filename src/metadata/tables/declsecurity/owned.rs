@@ -1,9 +1,18 @@
-//! Owned DeclSecurity table representation.
+//! Owned `DeclSecurity` table representation.
 //!
-//! This module provides the [`crate::metadata::tables::declsecurity::owned::DeclSecurity`] struct
+//! This module provides the [`crate::metadata::tables::declsecurity::DeclSecurity`] struct
 //! which contains fully resolved security declaration metadata with owned data and resolved references.
 //! This is the primary data structure for representing .NET Code Access Security (CAS) declarations
 //! in a usable form after the dual variant resolution phase.
+//!
+//! # Key Components
+//!
+//! - [`crate::metadata::tables::declsecurity::DeclSecurity`] - Main struct representing resolved security declarations
+//!
+//! # Thread Safety
+//!
+//! All types in this module are [`Send`] and [`Sync`], enabling safe sharing
+//! across threads through reference counting and immutable data structures.
 
 use std::sync::Arc;
 
@@ -19,9 +28,9 @@ use crate::{
 
 /// Represents a .NET CIL security declaration with fully resolved metadata and owned data
 ///
-/// This structure contains complete security declaration information from the DeclSecurity
+/// This structure contains complete security declaration information from the `DeclSecurity`
 /// metadata table (0x0E), with all references resolved to concrete types and permission
-/// sets. Unlike [`crate::metadata::tables::declsecurity::raw::DeclSecurityRaw`], this
+/// sets. Unlike [`crate::metadata::tables::declsecurity::DeclSecurityRaw`], this
 /// provides immediate access to security data without requiring additional lookups.
 ///
 /// # .NET Code Access Security
@@ -40,13 +49,13 @@ use crate::{
 /// - **Demand**: Code must have the specified permission to execute
 /// - **Assert**: Code temporarily elevates permissions for trusted operations
 /// - **Deny**: Code cannot use the specified permission, even if granted
-/// - **LinkDemand**: Direct callers must have the permission (compile-time check)
-/// - **InheritanceDemand**: Classes inheriting from this type must have permission
+/// - **`LinkDemand`**: Direct callers must have the permission (compile-time check)
+/// - **`InheritanceDemand`**: Classes inheriting from this type must have permission
 ///
 /// # Reference
-/// - [ECMA-335 II.22.11](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - DeclSecurity table specification
+/// - [ECMA-335 II.22.11](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `DeclSecurity` table specification
 pub struct DeclSecurity {
-    /// Row identifier within the DeclSecurity metadata table
+    /// Row identifier within the `DeclSecurity` metadata table
     ///
     /// The 1-based index of this security declaration row. Used for metadata
     /// token generation and cross-referencing with other metadata structures.
@@ -54,7 +63,7 @@ pub struct DeclSecurity {
 
     /// Metadata token for this security declaration  
     ///
-    /// Combines the table identifier (0x0E for DeclSecurity) with the row ID to create
+    /// Combines the table identifier (0x0E for `DeclSecurity`) with the row ID to create
     /// a unique token that can be used to reference this declaration from other metadata.
     pub token: Token,
 
@@ -67,14 +76,14 @@ pub struct DeclSecurity {
     /// Security action specifying how the permission is enforced
     ///
     /// Determines the enforcement behavior for the associated permission set.
-    /// See [`SecurityAction`] for available actions like Demand, Assert, Deny, etc.
+    /// See [`crate::metadata::security::SecurityAction`] for available actions like Demand, Assert, Deny, etc.
     /// This controls whether permissions are checked at runtime, link time, or inheritance.
     pub action: SecurityAction,
 
     /// Reference to the entity this security declaration applies to
     ///
-    /// Can reference a Type (TypeDef), Method (MethodDef), or Assembly through
-    /// a HasDeclSecurity coded index. This determines the scope of the security
+    /// Can reference a Type (`TypeDef`), Method (`MethodDef`), or Assembly through
+    /// a `HasDeclSecurity` coded index. This determines the scope of the security
     /// declaration - whether it applies to an entire assembly, a specific type,
     /// or an individual method.
     pub parent: CilTypeReference,
@@ -84,6 +93,7 @@ pub struct DeclSecurity {
     /// Contains the actual permissions being declared, parsed from the raw
     /// permission blob in the metadata. Uses [`Arc`] for efficient sharing
     /// since permission sets can be referenced from multiple contexts.
+    /// See [`crate::metadata::security::PermissionSet`] for permission details.
     pub permission_set: Arc<PermissionSet>,
 
     /// Custom attributes attached to this security declaration
@@ -222,9 +232,9 @@ impl DeclSecurity {
     ///
     /// # Errors
     ///
-    /// - Returns [`crate::error::Error::Malformed`] if the parent reference is not
-    ///   a TypeDef, MethodDef, or Assembly
-    /// - May return errors if weak references to parent entities cannot be upgraded
+    /// Returns [`crate::Error`] in the following cases:
+    /// - [`crate::Error`] - When the parent reference is not a valid target type
+    /// - [`crate::Error`] - When weak references to parent entities cannot be upgraded
     pub fn apply(&self) -> Result<()> {
         match &self.parent {
             CilTypeReference::TypeDef(typedef) => {

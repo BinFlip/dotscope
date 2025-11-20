@@ -1,11 +1,11 @@
-//! FieldLayout table loader implementation.
+//! `FieldLayout` table loader implementation.
 //!
 //! This module provides the [`crate::metadata::tables::fieldlayout::loader::FieldLayoutLoader`] responsible for loading and processing
-//! FieldLayout metadata table entries. The FieldLayout table specifies explicit field
+//! `FieldLayout` metadata table entries. The `FieldLayout` table specifies explicit field
 //! positioning within types, defining the byte offset of fields in classes and value types.
 //!
 //! # Purpose
-//! The FieldLayout table is used when explicit field layout control is needed, such as:
+//! The `FieldLayout` table is used when explicit field layout control is needed, such as:
 //! - Interop scenarios requiring specific memory layouts
 //! - Performance-critical structures with cache-line awareness  
 //! - Platform-specific data structure alignment
@@ -15,7 +15,7 @@
 //! - **Field table**: Required for field reference resolution
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.16 for the FieldLayout table specification.
+//! See ECMA-335, Partition II, §22.16 for the `FieldLayout` table specification.
 
 use crate::{
     metadata::{
@@ -26,9 +26,9 @@ use crate::{
     Result,
 };
 
-/// Loader implementation for the FieldLayout metadata table.
+/// Loader implementation for the `FieldLayout` metadata table.
 ///
-/// This loader processes FieldLayout table entries which specify the explicit
+/// This loader processes `FieldLayout` table entries which specify the explicit
 /// byte offset of fields within their containing types. Field layout information
 /// is essential for interop scenarios and performance-critical data structures
 /// where precise memory layout control is required.
@@ -41,13 +41,13 @@ use crate::{
 /// - Concurrent access conflicts occur
 ///
 /// # ECMA-335 Reference
-/// See ECMA-335, Partition II, §22.16 for complete FieldLayout table specification.
+/// See ECMA-335, Partition II, §22.16 for complete `FieldLayout` table specification.
 pub(crate) struct FieldLayoutLoader;
 
 impl MetadataLoader for FieldLayoutLoader {
-    /// Load and process all FieldLayout table entries.
+    /// Load and process all `FieldLayout` table entries.
     ///
-    /// This method iterates through the FieldLayout table, resolving field references
+    /// This method iterates through the `FieldLayout` table, resolving field references
     /// and converting raw entries to owned structures. Each field layout entry specifies
     /// the explicit byte offset of a field within its containing type.
     ///
@@ -62,7 +62,7 @@ impl MetadataLoader for FieldLayoutLoader {
     /// - Parallel processing encounters errors
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
-            if let Some(table) = header.table::<FieldLayoutRaw>(TableId::FieldLayout) {
+            if let Some(table) = header.table::<FieldLayoutRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let owned = row.to_owned(&context.field)?;
                     owned.apply()?;
@@ -75,17 +75,17 @@ impl MetadataLoader for FieldLayoutLoader {
         Ok(())
     }
 
-    /// Returns the table identifier for the FieldLayout table.
+    /// Returns the table identifier for the `FieldLayout` table.
     ///
     /// # Returns
-    /// Returns [`crate::prelude::TableId::FieldLayout`] indicating this loader handles the FieldLayout table.
-    fn table_id(&self) -> TableId {
-        TableId::FieldLayout
+    /// Returns [`crate::prelude::TableId::FieldLayout`] indicating this loader handles the `FieldLayout` table.
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::FieldLayout)
     }
 
-    /// Returns the table dependencies for FieldLayout loading.
+    /// Returns the table dependencies for `FieldLayout` loading.
     ///
-    /// The FieldLayout table depends on the Field table since each layout entry
+    /// The `FieldLayout` table depends on the Field table since each layout entry
     /// references a specific field and specifies its byte offset within the containing type.
     ///
     /// # Returns

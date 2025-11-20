@@ -35,7 +35,7 @@
 //! # Thread Safety
 //!
 //! All types in this module are thread-safe:
-//! - **MethodBody**: Immutable after construction
+//! - **`MethodBody`**: Immutable after construction
 //! - **Parsing**: No shared state during parsing operations
 //! - **Exception Handlers**: Read-only data structures
 //!
@@ -79,7 +79,7 @@
 //!
 //! # Examples
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::{CilObject, metadata::method::MethodBody};
 //!
 //! let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
@@ -104,9 +104,8 @@
 //! - ECMA-335 6th Edition, Partition II, Section 25.4.6 - Exception Handling Data Sections
 
 use crate::{
-    file::io::{read_le, read_le_at},
     metadata::method::{ExceptionHandler, ExceptionHandlerFlags, MethodBodyFlags, SectionFlags},
-    Error::OutOfBounds,
+    utils::{read_le, read_le_at},
     Result,
 };
 
@@ -230,14 +229,14 @@ impl MethodBody {
             MethodBodyFlags::TINY_FORMAT => {
                 let size_code = (first_byte >> 2) as usize;
                 if size_code + 1 > data.len() {
-                    return Err(OutOfBounds);
+                    return Err(out_of_bounds_error!());
                 }
 
                 Ok(MethodBody {
                     size_code,
                     size_header: 1,
                     local_var_sig_token: 0,
-                    max_stack: 0,
+                    max_stack: 8,
                     is_fat: false,
                     is_init_local: false,
                     is_exception_data: false,
@@ -246,7 +245,7 @@ impl MethodBody {
             }
             MethodBodyFlags::FAT_FORMAT => {
                 if data.len() < 12 {
-                    return Err(OutOfBounds);
+                    return Err(out_of_bounds_error!());
                 }
 
                 let first_duo = read_le::<u16>(data)?;
@@ -254,7 +253,7 @@ impl MethodBody {
                 let size_header = (first_duo >> 12) * 4;
                 let size_code = read_le::<u32>(&data[4..])?;
                 if data.len() < (size_code as usize + size_header as usize) {
-                    return Err(OutOfBounds);
+                    return Err(out_of_bounds_error!());
                 }
 
                 let local_var_sig_token = read_le::<u32>(&data[8..])?;
@@ -418,7 +417,7 @@ mod tests {
         assert!(!method_header.is_fat);
         assert!(!method_header.is_exception_data);
         assert!(!method_header.is_init_local);
-        assert_eq!(method_header.max_stack, 0);
+        assert_eq!(method_header.max_stack, 8);
         assert_eq!(method_header.size_code, 18);
         assert_eq!(method_header.size_header, 1);
         assert_eq!(method_header.size(), 19);

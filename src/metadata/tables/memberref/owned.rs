@@ -1,4 +1,4 @@
-//! Owned MemberRef table structure with resolved references and parsed signatures.
+//! Owned `MemberRef` table structure with resolved references and parsed signatures.
 //!
 //! This module provides the [`MemberRef`] struct, which represents external member references
 //! with all coded indexes resolved and signatures parsed. Unlike [`MemberRefRaw`], this structure
@@ -7,16 +7,14 @@
 //!
 //! [`MemberRefRaw`]: crate::metadata::tables::MemberRefRaw
 
-use std::sync::Arc;
-
 use crate::metadata::{
     customattributes::CustomAttributeValueList,
-    tables::{MemberRefSignature, ParamRc},
+    tables::{MemberRefSignature, ParamList},
     token::Token,
     typesystem::CilTypeReference,
 };
 
-/// Owned MemberRef table entry with resolved references and parsed signatures.
+/// Owned `MemberRef` table entry with resolved references and parsed signatures.
 ///
 /// This structure represents an external member reference with all coded indexes resolved
 /// to their target structures and signatures parsed for type-safe member access. It provides
@@ -24,19 +22,19 @@ use crate::metadata::{
 /// details for method references.
 ///
 /// # Member Types
-/// MemberRef entries can reference different kinds of external members:
+/// `MemberRef` entries can reference different kinds of external members:
 /// - **Method references**: External method calls with complete signature information
 /// - **Field references**: External field access with type information
 /// - **Constructor references**: Object creation with parameter specifications
 /// - **Generic member references**: Generic methods and fields with type parameters
 pub struct MemberRef {
-    /// Row identifier within the MemberRef table.
+    /// Row identifier within the `MemberRef` table.
     ///
     /// Unique identifier for this member reference entry, used for internal
     /// table management and cross-references.
     pub rid: u32,
 
-    /// Metadata token identifying this MemberRef entry.
+    /// Metadata token identifying this `MemberRef` entry.
     ///
     /// The token enables efficient lookup and reference to this member
     /// from other metadata structures and runtime systems.
@@ -75,7 +73,7 @@ pub struct MemberRef {
     /// Thread-safe collection of parameter information including names, types,
     /// and attributes. Empty for field signatures, populated for method references
     /// with parameter metadata from associated Param table entries.
-    pub params: Arc<boxcar::Vec<ParamRc>>,
+    pub params: ParamList,
 
     /// Custom attributes applied to this member reference.
     ///

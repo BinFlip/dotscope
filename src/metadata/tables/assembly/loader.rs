@@ -7,10 +7,10 @@
 //! # Table Structure
 //!
 //! The Assembly table contains exactly one row (if present) that defines the current assembly:
-//! - **HashAlgId**: Hash algorithm used for file integrity
-//! - **MajorVersion**, **MinorVersion**, **BuildNumber**, **RevisionNumber**: Version components
+//! - **`HashAlgId`**: Hash algorithm used for file integrity
+//! - **`MajorVersion`**, **`MinorVersion`**, **`BuildNumber`**, **`RevisionNumber`**: Version components
 //! - **Flags**: Assembly attributes and loading hints
-//! - **PublicKey**: Strong name public key (blob heap reference)
+//! - **`PublicKey`**: Strong name public key (blob heap reference)
 //! - **Name**: Assembly simple name (string heap reference)
 //! - **Culture**: Localization culture (string heap reference)
 //!
@@ -49,7 +49,7 @@ impl MetadataLoader for AssemblyLoader {
         if let (Some(header), Some(strings), Some(blob)) =
             (context.meta, context.strings, context.blobs)
         {
-            if let Some(table) = header.table::<AssemblyRaw>(TableId::Assembly) {
+            if let Some(table) = header.table::<AssemblyRaw>() {
                 if let Some(row) = table.get(1) {
                     let owned = row.to_owned(strings, blob)?;
 
@@ -68,8 +68,8 @@ impl MetadataLoader for AssemblyLoader {
     ///
     /// # Returns
     /// [`crate::metadata::tables::TableId::Assembly`] (0x20)
-    fn table_id(&self) -> TableId {
-        TableId::Assembly
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::Assembly)
     }
 
     /// Returns the list of table dependencies

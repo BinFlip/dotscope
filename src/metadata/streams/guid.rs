@@ -86,8 +86,7 @@
 //! let heap_data = [0xFF; 32]; // Two GUIDs with all bytes set to 0xFF
 //! let guid_heap = Guid::from(&heap_data)?;
 //!
-//! for result in guid_heap.iter() {
-//!     let (index, guid) = result?;
+//! for (index, guid) in guid_heap.iter() {
 //!     println!("GUID {}: {}", index, guid);
 //! }
 //! # Ok(())
@@ -145,7 +144,7 @@
 //! - **ECMA-335 II.24.2.5**: `#GUID` heap specification
 //! - **RFC 4122**: UUID/GUID format and generation standards
 
-use crate::{Error::OutOfBounds, Result};
+use crate::Result;
 
 /// ECMA-335 GUID heap providing indexed access to 128-bit globally unique identifiers.
 ///
@@ -252,8 +251,7 @@ use crate::{Error::OutOfBounds, Result};
 /// let heap_data = [0xFF; 32]; // Two GUIDs with pattern data
 /// let guid_heap = Guid::from(&heap_data)?;
 ///
-/// for result in &guid_heap {
-///     let (index, guid) = result?;
+/// for (index, guid) in &guid_heap {
 ///     println!("GUID {}: {}", index, guid);
 /// }
 /// # Ok(())
@@ -504,7 +502,7 @@ impl<'a> Guid<'a> {
     /// - [ECMA-335 II.24.2.5](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): GUID heap specification
     pub fn get(&self, index: usize) -> Result<uguid::Guid> {
         if index < 1 || (index - 1) * 16 + 16 > self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         let offset_start = (index - 1) * 16;
@@ -523,7 +521,7 @@ impl<'a> Guid<'a> {
     /// comprehensive analysis, validation, or enumeration of all assembly and module identifiers.
     ///
     /// # Returns
-    /// Returns a [`crate::metadata::streams::guid::GuidIterator`] that yields `Result<(usize, uguid::Guid)>` tuples containing:
+    /// Returns a [`crate::metadata::streams::guid::GuidIterator`] that yields `(usize, uguid::Guid)` tuples containing:
     /// - **Index**: 1-based position of the GUID within the heap
     /// - **GUID**: Constructed 128-bit globally unique identifier
     ///
@@ -531,7 +529,7 @@ impl<'a> Guid<'a> {
     /// - **Sequential access**: GUIDs returned in storage order (index 1, 2, 3, ...)
     /// - **1-based indexing**: Consistent with ECMA-335 specification and `get()` method
     /// - **Complete iteration**: Processes all valid GUIDs until heap end
-    /// - **Error handling**: Returns errors for malformed or incomplete GUID data
+    /// - **Error handling**: Invalid GUIDs are skipped (iteration terminates early)
     ///
     /// # Examples
     ///
@@ -553,8 +551,7 @@ impl<'a> Guid<'a> {
     /// let guid_heap = Guid::from(&heap_data)?;
     /// let null_guid = uguid::guid!("00000000-0000-0000-0000-000000000000");
     ///
-    /// for result in guid_heap.iter() {
-    ///     let (index, guid) = result?;
+    /// for (index, guid) in guid_heap.iter() {
     ///     println!("GUID {}: {}", index, guid);
     ///     
     ///     if guid != null_guid {
@@ -576,8 +573,7 @@ impl<'a> Guid<'a> {
     /// let mut assembly_guids = Vec::new();
     /// let mut module_guids = Vec::new();
     ///
-    /// for result in guid_heap.iter() {
-    ///     let (index, guid) = result?;
+    /// for (index, guid) in guid_heap.iter() {
     ///     
     ///     if index == 1 {
     ///         assembly_guids.push(guid);
@@ -600,16 +596,8 @@ impl<'a> Guid<'a> {
     /// let heap_data = [0xFF; 32]; // Two complete GUIDs
     /// let guid_heap = Guid::from(&heap_data)?;
     ///
-    /// for result in guid_heap.iter() {
-    ///     match result {
-    ///         Ok((index, guid)) => {
-    ///             println!("Valid GUID at index {}: {}", index, guid);
-    ///         }
-    ///         Err(e) => {
-    ///             eprintln!("GUID parsing error: {}", e);
-    ///             break; // Stop on first error
-    ///         }
-    ///     }
+    /// for (index, guid) in guid_heap.iter() {
+    ///     println!("Valid GUID at index {}: {}", index, guid);
     /// }
     /// # Ok(())
     /// # }
@@ -625,8 +613,7 @@ impl<'a> Guid<'a> {
     /// let null_guid = uguid::guid!("00000000-0000-0000-0000-000000000000");
     ///
     /// let mut non_null_guids = Vec::new();
-    /// for result in guid_heap.iter() {
-    ///     let (index, guid) = result?;
+    /// for (index, guid) in guid_heap.iter() {
     ///     if guid != null_guid {
     ///         non_null_guids.push((index, guid));
     ///     }
@@ -639,8 +626,8 @@ impl<'a> Guid<'a> {
     ///
     /// # Error Recovery
     /// If a malformed GUID is encountered (e.g., due to heap truncation),
-    /// the iterator returns an error and terminates. This design ensures
-    /// data integrity while allowing partial processing of valid entries.
+    /// the iterator terminates early. This design ensures data integrity
+    /// while allowing processing of all valid entries up to the error point.
     ///
     /// # Use Cases
     /// - **Assembly enumeration**: Identify all assemblies in a multi-module application
@@ -656,10 +643,38 @@ impl<'a> Guid<'a> {
     pub fn iter(&self) -> GuidIterator<'_> {
         GuidIterator::new(self)
     }
+
+    /// Returns the raw underlying data of the GUID heap.
+    ///
+    /// This provides access to the complete heap data containing all 16-byte GUID entries
+    /// in their original binary format. This method is useful for heap size calculation,
+    /// bounds checking, and low-level metadata analysis.
+    ///
+    /// # Returns
+    /// A byte slice containing the complete GUID heap data.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::streams::Guid;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let heap_data = [0xAB; 32]; // Two GUIDs, 16 bytes each
+    /// let guid_heap = Guid::from(&heap_data)?;
+    ///
+    /// assert_eq!(guid_heap.data().len(), 32);
+    /// assert_eq!(guid_heap.data().len() / 16, 2); // Two GUIDs
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn data(&self) -> &[u8] {
+        self.data
+    }
 }
 
 impl<'a> IntoIterator for &'a Guid<'a> {
-    type Item = std::result::Result<(usize, uguid::Guid), crate::error::Error>;
+    type Item = (usize, uguid::Guid);
     type IntoIter = GuidIterator<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -676,12 +691,12 @@ impl<'a> IntoIterator for &'a Guid<'a> {
 /// # Iteration Protocol
 ///
 /// ## Yielded Items
-/// Each successful iteration returns `Ok((index, guid))` where:
+/// Each iteration returns `(index, guid)` where:
 /// - **`index`**: 1-based position of the GUID within the heap (consistent with ECMA-335)
 /// - **`guid`**: Constructed [`uguid::Guid`] from the 16-byte heap data
 ///
 /// ## Error Handling
-/// Malformed or incomplete GUIDs yield `Err(Error)` with specific information:
+/// Malformed or incomplete GUIDs cause iteration termination:
 /// - **Out of bounds**: GUID extends beyond heap boundaries
 /// - **Incomplete data**: Less than 16 bytes available for complete GUID
 /// - **Index overflow**: GUID count exceeds platform limits
@@ -690,7 +705,7 @@ impl<'a> IntoIterator for &'a Guid<'a> {
 /// - **Starts at index 1**: Follows ECMA-335 1-based indexing convention
 /// - **Sequential processing**: Processes GUIDs in heap storage order
 /// - **Termination**: Stops when insufficient data remains for complete GUID
-/// - **Error termination**: Immediately stops on first malformed entry
+/// - **Early termination**: Immediately stops on first malformed entry
 ///
 /// # GUID Construction
 ///
@@ -721,12 +736,12 @@ impl<'a> IntoIterator for &'a Guid<'a> {
 /// let null_guid = uguid::guid!("00000000-0000-0000-0000-000000000000");
 ///
 /// // First GUID at index 1
-/// let (index1, guid1) = iterator.next().unwrap()?;
+/// let (index1, guid1) = iterator.next().unwrap();
 /// assert_eq!(index1, 1);
 /// assert_ne!(guid1, null_guid);
 ///
 /// // Second GUID at index 2
-/// let (index2, guid2) = iterator.next().unwrap()?;
+/// let (index2, guid2) = iterator.next().unwrap();
 /// assert_eq!(index2, 2);
 /// assert_ne!(guid2, null_guid);
 ///
@@ -749,7 +764,7 @@ impl<'a> IntoIterator for &'a Guid<'a> {
 /// let mut non_null_count = 0;
 ///
 /// for result in guid_heap.iter() {
-///     let (index, guid) = result?;
+///     let (index, guid) = result;
 ///     
 ///     if guid == null_guid {
 ///         null_count += 1;
@@ -774,16 +789,8 @@ impl<'a> IntoIterator for &'a Guid<'a> {
 /// let heap_data = [0xFF; 32];
 /// let guid_heap = Guid::from(&heap_data)?;
 ///
-/// for result in guid_heap.iter() {
-///     match result {
-///         Ok((index, guid)) => {
-///             println!("GUID {}: {}", index, guid);
-///         }
-///         Err(error) => {
-///             eprintln!("Iteration error: {}", error);
-///             break; // Handle error appropriately
-///         }
-///     }
+/// for (index, guid) in guid_heap.iter() {
+///     println!("GUID {}: {}", index, guid);
 /// }
 /// # Ok(())
 /// # }
@@ -838,14 +845,14 @@ impl<'a> GuidIterator<'a> {
 }
 
 impl Iterator for GuidIterator<'_> {
-    type Item = Result<(usize, uguid::Guid)>;
+    type Item = (usize, uguid::Guid);
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.guid.get(self.index) {
             Ok(guid) => {
                 let current_index = self.index;
                 self.index += 1;
-                Some(Ok((current_index, guid)))
+                Some((current_index, guid))
             }
             Err(_) => None,
         }
@@ -887,14 +894,14 @@ mod tests {
         let guids = Guid::from(&data).unwrap();
         let mut iter = guids.iter();
 
-        let first = iter.next().unwrap().unwrap();
+        let first = iter.next().unwrap();
         assert_eq!(first.0, 1);
         assert_eq!(
             first.1,
             uguid::guid!("00000000-0000-0000-0000-000000000000")
         );
 
-        let second = iter.next().unwrap().unwrap();
+        let second = iter.next().unwrap();
         assert_eq!(second.0, 2);
         assert_eq!(
             second.1,
@@ -915,7 +922,7 @@ mod tests {
         let guids = Guid::from(&data).unwrap();
         let mut iter = guids.iter();
 
-        let first = iter.next().unwrap().unwrap();
+        let first = iter.next().unwrap();
         assert_eq!(first.0, 1);
         assert_eq!(
             first.1,
@@ -943,21 +950,21 @@ mod tests {
         let guids = Guid::from(&data).unwrap();
         let mut iter = guids.iter();
 
-        let first = iter.next().unwrap().unwrap();
+        let first = iter.next().unwrap();
         assert_eq!(first.0, 1);
         assert_eq!(
             first.1,
             uguid::guid!("d437908e-65e6-487c-9735-7bdff699bea5")
         );
 
-        let second = iter.next().unwrap().unwrap();
+        let second = iter.next().unwrap();
         assert_eq!(second.0, 2);
         assert_eq!(
             second.1,
             uguid::guid!("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")
         );
 
-        let third = iter.next().unwrap().unwrap();
+        let third = iter.next().unwrap();
         assert_eq!(third.0, 3);
         assert_eq!(
             third.1,
@@ -984,7 +991,7 @@ mod tests {
         let guids = Guid::from(&data).unwrap();
         let mut iter = guids.iter();
 
-        let first = iter.next().unwrap().unwrap();
+        let first = iter.next().unwrap();
         assert_eq!(first.0, 1);
         assert_eq!(
             first.1,

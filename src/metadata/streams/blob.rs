@@ -93,8 +93,7 @@
 //! let data = &[0x00, 0x03, 0x41, 0x42, 0x43, 0x02, 0x44, 0x45];
 //! let blob_heap = Blob::from(data)?;
 //!
-//! for result in blob_heap.iter() {
-//!     let (offset, blob_data) = result?;
+//! for (offset, blob_data) in blob_heap.iter() {
 //!     println!("Blob at offset {}: {} bytes", offset, blob_data.len());
 //! }
 //! # Ok(())
@@ -147,7 +146,7 @@
 //! - **ECMA-335 II.24.2.4**: `#Blob` heap specification
 //! - **ECMA-335 II.23.2**: Signature encoding formats stored in blobs
 
-use crate::{file::parser::Parser, Error::OutOfBounds, Result};
+use crate::{file::parser::Parser, Result};
 
 /// ECMA-335 binary blob heap providing indexed access to variable-length data.
 ///
@@ -266,8 +265,7 @@ use crate::{file::parser::Parser, Error::OutOfBounds, Result};
 /// let heap_data = &[0x00, 0x03, 0x41, 0x42, 0x43, 0x01, 0x44];
 /// let blob_heap = Blob::from(heap_data)?;
 ///
-/// for result in &blob_heap {
-///     let (offset, data) = result?;
+/// for (offset, data) in &blob_heap {
 ///     println!("Blob at offset {}: {:02X?}", offset, data);
 /// }
 /// # Ok(())
@@ -439,8 +437,8 @@ impl<'a> Blob<'a> {
     /// - [`crate::file::parser::Parser`]: For compressed integer parsing
     /// - [ECMA-335 II.23.2](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Compressed integer format
     pub fn get(&self, index: usize) -> Result<&'a [u8]> {
-        if index > self.data.len() {
-            return Err(OutOfBounds);
+        if index >= self.data.len() {
+            return Err(out_of_bounds_error!());
         }
 
         let mut parser = Parser::new(&self.data[index..]);
@@ -448,15 +446,15 @@ impl<'a> Blob<'a> {
         let skip = parser.pos();
 
         let Some(data_start) = index.checked_add(skip) else {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         };
 
         let Some(data_end) = data_start.checked_add(len) else {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         };
 
         if data_start > self.data.len() || data_end > self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         Ok(&self.data[data_start..data_end])
@@ -469,14 +467,14 @@ impl<'a> Blob<'a> {
     /// comprehensive analysis, validation, or debugging of blob heap contents.
     ///
     /// # Returns
-    /// A [`BlobIterator`] that yields `Result<(usize, &[u8])>` tuples containing:
+    /// A [`BlobIterator`] that yields `(usize, &[u8])` tuples containing:
     /// - **Offset**: Byte position of the blob within the heap
     /// - **Data**: Zero-copy slice of the blob's binary content
     ///
     /// # Iteration Behavior
     /// - **Sequential access**: Blobs returned in heap order (not offset order)
     /// - **Skips null blob**: Iterator starts at offset 1, skipping the null blob at 0
-    /// - **Error handling**: Returns errors for malformed blobs but continues iteration
+    /// - **Error handling**: Iterator stops on malformed blobs rather than continuing
     /// - **Zero-copy**: Each blob is a direct slice reference to heap data
     ///
     /// # Examples
@@ -495,8 +493,7 @@ impl<'a> Blob<'a> {
     ///
     /// let blob_heap = Blob::from(data)?;
     ///
-    /// for result in blob_heap.iter() {
-    ///     let (offset, blob_data) = result?;
+    /// for (offset, blob_data) in blob_heap.iter() {
     ///     println!("Blob at offset {}: {} bytes", offset, blob_data.len());
     /// }
     /// # Ok(())
@@ -511,16 +508,8 @@ impl<'a> Blob<'a> {
     /// let data = &[0x00, 0x05, 0x41, 0x42]; // Claims 5 bytes but only 2 available
     /// let blob_heap = Blob::from(data)?;
     ///
-    /// for result in blob_heap.iter() {
-    ///     match result {
-    ///         Ok((offset, blob_data)) => {
-    ///             println!("Valid blob at {}: {:02X?}", offset, blob_data);
-    ///         }
-    ///         Err(e) => {
-    ///             eprintln!("Malformed blob: {}", e);
-    ///             break; // Stop on first error
-    ///         }
-    ///     }
+    /// for (offset, blob_data) in blob_heap.iter() {
+    ///     println!("Valid blob at {}: {:02X?}", offset, blob_data);
     /// }
     /// # Ok(())
     /// # }
@@ -534,8 +523,7 @@ impl<'a> Blob<'a> {
     /// let data = &[0x00, 0x02, 0x41, 0x42, 0x01, 0x43];
     /// let blob_heap = Blob::from(data)?;
     ///
-    /// let blobs: Result<Vec<_>, _> = blob_heap.iter().collect();
-    /// let blobs = blobs?;
+    /// let blobs: Vec<_> = blob_heap.iter().collect();
     ///
     /// assert_eq!(blobs.len(), 2);
     /// assert_eq!(blobs[0], (1, &[0x41, 0x42][..]));
@@ -544,11 +532,10 @@ impl<'a> Blob<'a> {
     /// # }
     /// ```
     ///
-    /// # Error Recovery
-    /// If a malformed blob is encountered, the iterator returns an error but
-    /// can potentially continue with subsequent blobs if the heap structure
-    /// allows recovery. This design enables partial processing of corrupted
-    /// metadata.
+    /// # Error Handling
+    /// If a malformed blob is encountered, the iterator stops and returns None.
+    /// This design prioritizes data integrity over partial processing of
+    /// potentially corrupted metadata.
     ///
     ///
     /// # See Also
@@ -559,10 +546,19 @@ impl<'a> Blob<'a> {
     pub fn iter(&self) -> BlobIterator<'_> {
         BlobIterator::new(self)
     }
+
+    /// Returns the raw underlying data of the blob heap.
+    ///
+    /// This provides access to the complete heap data including the null byte at offset 0
+    /// and all blob entries in their original binary format.
+    #[must_use]
+    pub fn data(&self) -> &[u8] {
+        self.data
+    }
 }
 
 impl<'a> IntoIterator for &'a Blob<'a> {
-    type Item = std::result::Result<(usize, &'a [u8]), crate::error::Error>;
+    type Item = (usize, &'a [u8]);
     type IntoIter = BlobIterator<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -614,12 +610,12 @@ impl<'a> IntoIterator for &'a Blob<'a> {
 /// let mut iterator = blob_heap.iter();
 ///
 /// // First blob: "ABC" at offset 1
-/// let (offset1, blob1) = iterator.next().unwrap()?;
+/// let (offset1, blob1) = iterator.next().unwrap();
 /// assert_eq!(offset1, 1);
 /// assert_eq!(blob1, b"ABC");
 ///
 /// // Second blob: "D" at offset 5
-/// let (offset2, blob2) = iterator.next().unwrap()?;
+/// let (offset2, blob2) = iterator.next().unwrap();
 /// assert_eq!(offset2, 5);
 /// assert_eq!(blob2, b"D");
 ///
@@ -638,16 +634,8 @@ impl<'a> IntoIterator for &'a Blob<'a> {
 /// let data = &[0x00, 0x0A, 0x41, 0x42, 0x43];
 /// let blob_heap = Blob::from(data)?;
 ///
-/// for result in blob_heap.iter() {
-///     match result {
-///         Ok((offset, blob_data)) => {
-///             println!("Valid blob at {}: {} bytes", offset, blob_data.len());
-///         }
-///         Err(error) => {
-///             eprintln!("Malformed blob: {}", error);
-///             break; // Handle error appropriately
-///         }
-///     }
+/// for (offset, blob_data) in blob_heap.iter() {
+///     println!("Valid blob at {}: {} bytes", offset, blob_data.len());
 /// }
 /// # Ok(())
 /// # }
@@ -664,7 +652,6 @@ impl<'a> IntoIterator for &'a Blob<'a> {
 /// // Find all non-empty blobs
 /// let non_empty_blobs: Vec<_> = blob_heap
 ///     .iter()
-///     .filter_map(|result| result.ok())
 ///     .filter(|(_, data)| !data.is_empty())
 ///     .collect();
 ///
@@ -717,7 +704,7 @@ impl<'a> BlobIterator<'a> {
 }
 
 impl<'a> Iterator for BlobIterator<'a> {
-    type Item = Result<(usize, &'a [u8])>;
+    type Item = (usize, &'a [u8]);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.position >= self.blob.data.len() {
@@ -731,15 +718,12 @@ impl<'a> Iterator for BlobIterator<'a> {
                 if parser.read_compressed_uint().is_ok() {
                     let length_bytes = parser.pos();
                     self.position += length_bytes + blob_data.len();
-                    Some(Ok((start_position, blob_data)))
+                    Some((start_position, blob_data))
                 } else {
-                    Some(Err(malformed_error!(
-                        "Failed to parse blob length at position {}",
-                        start_position
-                    )))
+                    None
                 }
             }
-            Err(e) => Some(Err(e)),
+            Err(_) => None,
         }
     }
 }
@@ -819,12 +803,14 @@ mod tests {
         let blob = Blob::from(&data).unwrap();
         let mut iter = blob.iter();
 
-        let first = iter.next().unwrap().unwrap();
+        let first = iter.next().unwrap();
         assert_eq!(first.0, 1);
+        assert_eq!(first.1.len(), 2);
         assert_eq!(first.1, &[0x41, 0x42]);
 
-        let second = iter.next().unwrap().unwrap();
+        let second = iter.next().unwrap();
         assert_eq!(second.0, 4);
+        assert_eq!(second.1.len(), 1);
         assert_eq!(second.1, &[0x43]);
 
         assert!(iter.next().is_none());
@@ -836,12 +822,14 @@ mod tests {
         let blob = Blob::from(&data).unwrap();
         let mut iter = blob.iter();
 
-        let first = iter.next().unwrap().unwrap();
+        let first = iter.next().unwrap();
         assert_eq!(first.0, 1);
+        assert_eq!(first.1.len(), 0);
         assert_eq!(first.1, &[] as &[u8]);
 
-        let second = iter.next().unwrap().unwrap();
+        let second = iter.next().unwrap();
         assert_eq!(second.0, 2);
+        assert_eq!(second.1.len(), 2);
         assert_eq!(second.1, &[0x41, 0x42]);
 
         assert!(iter.next().is_none());
@@ -858,13 +846,14 @@ mod tests {
         let blob = Blob::from(&data).unwrap();
         let mut iter = blob.iter();
 
-        let first = iter.next().unwrap().unwrap();
+        let first = iter.next().unwrap();
         assert_eq!(first.0, 1);
         assert_eq!(first.1.len(), 258);
         assert_eq!(first.1, &vec![0xFF; 258]);
 
-        let second = iter.next().unwrap().unwrap();
+        let second = iter.next().unwrap();
         assert_eq!(second.0, 261);
+        assert_eq!(second.1.len(), 1);
         assert_eq!(second.1, &[0xAA]);
 
         assert!(iter.next().is_none());
@@ -877,8 +866,7 @@ mod tests {
         let blob = Blob::from(&data).unwrap();
         let mut iter = blob.iter();
 
-        let result = iter.next().unwrap();
-        assert!(result.is_err());
+        assert!(iter.next().is_none());
     }
 
     #[test]
@@ -887,8 +875,9 @@ mod tests {
         let blob = Blob::from(&data).unwrap();
         let mut iter = blob.iter();
 
-        let first = iter.next().unwrap().unwrap();
+        let first = iter.next().unwrap();
         assert_eq!(first.0, 1);
+        assert_eq!(first.1.len(), 3);
         assert_eq!(first.1, &[0x41, 0x42, 0x43]);
 
         assert!(iter.next().is_none());

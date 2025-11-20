@@ -1,23 +1,23 @@
-//! # NestedClass Owned Implementation
+//! # `NestedClass` Owned Implementation
 //!
-//! This module provides the owned variant of NestedClass table entries with resolved
+//! This module provides the owned variant of `NestedClass` table entries with resolved
 //! references and owned data structures for efficient runtime access.
 
 use crate::{
-    metadata::{token::Token, typesystem::CilTypeRc, validation::NestedClassValidator},
+    metadata::{token::Token, typesystem::CilTypeRc},
     Result,
 };
 
-/// Owned representation of a NestedClass table entry with resolved references.
+/// Owned representation of a `NestedClass` table entry with resolved references.
 ///
-/// This structure represents the processed entry from the NestedClass metadata table,
+/// This structure represents the processed entry from the `NestedClass` metadata table,
 /// which defines the hierarchical relationship between nested types and their enclosing types.
 /// Unlike [`NestedClassRaw`](crate::metadata::tables::NestedClassRaw), this version contains resolved references
 /// to actual type objects for efficient runtime access.
 ///
 /// ## Purpose
 ///
-/// The NestedClass table entry establishes type containment relationships:
+/// The `NestedClass` table entry establishes type containment relationships:
 /// - Defines which types are nested within other types
 /// - Establishes visibility and accessibility scoping rules
 /// - Enables proper type resolution within nested contexts
@@ -25,7 +25,7 @@ use crate::{
 ///
 /// ## Type Relationships
 ///
-/// NestedClass entries create several important relationships:
+/// `NestedClass` entries create several important relationships:
 /// - **Containment**: The nested type is contained within the enclosing type
 /// - **Visibility**: Nested types inherit access rules from their enclosing context
 /// - **Resolution**: Type names are resolved relative to the enclosing type
@@ -33,22 +33,22 @@ use crate::{
 ///
 /// ## Validation
 ///
-/// The NestedClass entry includes validation to ensure:
+/// The `NestedClass` entry includes validation to ensure:
 /// - No circular nesting relationships exist
 /// - Nested and enclosing types are different
 /// - Type references are valid and resolvable
 /// - Nesting rules comply with .NET type system constraints
 pub struct NestedClass {
-    /// Row identifier within the NestedClass table.
+    /// Row identifier within the `NestedClass` table.
     ///
-    /// Unique identifier for this NestedClass entry within the table.
+    /// Unique identifier for this `NestedClass` entry within the table.
     /// Combined with the table ID, it forms the complete metadata token.
     pub rid: u32,
 
-    /// Metadata token for this NestedClass entry.
+    /// Metadata token for this `NestedClass` entry.
     ///
     /// Token in the format 0x29??????, where the high byte 0x29 identifies
-    /// the NestedClass table and the low 3 bytes contain the row ID.
+    /// the `NestedClass` table and the low 3 bytes contain the row ID.
     pub token: Token,
 
     /// Byte offset of this entry in the original metadata stream.
@@ -60,14 +60,14 @@ pub struct NestedClass {
     /// Resolved reference to the nested type.
     ///
     /// The type that is nested within the enclosing type. This reference
-    /// is resolved from TypeDefOrRef coded index to the actual type object.
+    /// is resolved from `TypeDefOrRef` coded index to the actual type object.
     /// Contains the complete type information for the nested type.
     pub nested_class: CilTypeRc,
 
     /// Resolved reference to the enclosing type.
     ///
     /// The type that contains the nested type. This reference points to
-    /// a TypeDef entry representing the containing type. The enclosing type
+    /// a `TypeDef` entry representing the containing type. The enclosing type
     /// provides the context and scope for the nested type.
     pub enclosing_class: CilTypeRc,
 }
@@ -105,14 +105,13 @@ impl NestedClass {
     /// - Type references are invalid or cannot be resolved
     /// - The relationship violates .NET type system constraints
     pub fn apply(&self) -> Result<()> {
-        NestedClassValidator::validate_nested_relationship(
-            self.nested_class.token,
-            self.enclosing_class.token,
-        )?;
-
         self.enclosing_class
             .nested_types
             .push(self.nested_class.clone().into());
+
+        self.nested_class
+            .set_enclosing_type(self.enclosing_class.clone().into())?;
+
         Ok(())
     }
 }

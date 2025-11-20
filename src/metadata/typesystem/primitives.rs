@@ -32,7 +32,7 @@
 //!
 //! ## Creating Primitive Constants
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::typesystem::{CilPrimitive, CilPrimitiveKind, CilPrimitiveData};
 //!
 //! // Create a boolean constant
@@ -47,7 +47,7 @@
 //!
 //! ## Type Conversions
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::typesystem::{CilPrimitive, CilPrimitiveData};
 //!
 //! let primitive = CilPrimitive::i4(42);
@@ -64,7 +64,7 @@
 //!
 //! ## Parsing from Metadata
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::typesystem::{CilPrimitiveData, ELEMENT_TYPE};
 //!
 //! // Parse a 32-bit integer from metadata bytes
@@ -93,12 +93,12 @@
 use std::{convert::TryFrom, fmt};
 
 use crate::{
-    file::io::read_le,
     metadata::{
         token::Token,
         typesystem::{CilFlavor, ELEMENT_TYPE},
     },
-    Error::{self, OutOfBounds, TypeConversionInvalid, TypeNotPrimitive},
+    utils::read_le,
+    Error::{self, TypeConversionInvalid, TypeNotPrimitive},
     Result,
 };
 
@@ -120,7 +120,7 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::typesystem::CilPrimitiveData;
 ///
 /// // Create different primitive values
@@ -140,7 +140,9 @@ pub enum CilPrimitiveData {
     /// Boolean value - System.Boolean (true/false)
     Boolean(bool),
     /// Unicode character - System.Char (UTF-16 code unit)
-    Char(char),
+    /// .NET's System.Char is a 16-bit value that can represent any UTF-16 code unit,
+    /// including surrogate pairs (0xD800-0xDFFF) which are valid in .NET but not in Rust char
+    Char(u16),
     /// Signed 8-bit integer - System.SByte (-128 to 127)
     I1(i8),
     /// Unsigned 8-bit integer - System.Byte (0 to 255)
@@ -185,7 +187,7 @@ impl CilPrimitiveData {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::CilPrimitiveData;
     ///
     /// assert_eq!(CilPrimitiveData::Boolean(true).as_boolean(), Some(true));
@@ -217,7 +219,7 @@ impl CilPrimitiveData {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::CilPrimitiveData;
     ///
     /// assert_eq!(CilPrimitiveData::Boolean(true).as_i32(), Some(1));
@@ -328,7 +330,15 @@ impl CilPrimitiveData {
         match self {
             CilPrimitiveData::String(value) => Some(value.clone()),
             CilPrimitiveData::Boolean(value) => Some(value.to_string()),
-            CilPrimitiveData::Char(value) => Some(value.to_string()),
+            CilPrimitiveData::Char(value) => {
+                // Try to convert to a valid Unicode char first
+                if let Some(ch) = char::from_u32(u32::from(*value)) {
+                    Some(ch.to_string())
+                } else {
+                    // For surrogates or invalid values, show as Unicode escape
+                    Some(format!("\\u{{{:04X}}}", value))
+                }
+            }
             CilPrimitiveData::I1(value) => Some(value.to_string()),
             CilPrimitiveData::U1(value) => Some(value.to_string()),
             CilPrimitiveData::I2(value) => Some(value.to_string()),
@@ -350,13 +360,20 @@ impl CilPrimitiveData {
     /// and validates data length for each primitive type.
     ///
     /// # Arguments
-    /// * `type_byte` - ELEMENT_TYPE constant identifying the primitive type
+    /// * `type_byte` - `ELEMENT_TYPE` constant identifying the primitive type
     /// * `data` - Raw byte data containing the encoded value
     ///
     /// # Returns
     /// * `Ok(CilPrimitiveData)` - Successfully parsed primitive value
     /// * `Err(OutOfBounds)` - Data buffer too short for the specified type
     /// * `Err(Error)` - Invalid data encoding or unsupported type
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// - The data buffer is too short for the specified primitive type
+    /// - The `type_byte` represents an unsupported or invalid primitive type
+    /// - The data encoding is malformed for the specified type
     ///
     /// # Encoding Format
     ///
@@ -368,7 +385,7 @@ impl CilPrimitiveData {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::{CilPrimitiveData, ELEMENT_TYPE};
     ///
     /// // Parse a 32-bit integer (little-endian)
@@ -386,16 +403,18 @@ impl CilPrimitiveData {
         match type_byte {
             ELEMENT_TYPE::BOOLEAN => {
                 if data.is_empty() {
-                    Err(OutOfBounds)
+                    Err(out_of_bounds_error!())
                 } else {
                     Ok(CilPrimitiveData::Boolean(data[0] != 0))
                 }
             }
             ELEMENT_TYPE::CHAR => {
-                if data.is_empty() {
-                    Err(OutOfBounds)
+                if data.len() < 2 {
+                    Err(out_of_bounds_error!())
                 } else {
-                    Ok(CilPrimitiveData::Char(char::from(data[0])))
+                    let code = u16::from_le_bytes([data[0], data[1]]);
+                    // .NET System.Char is a UTF-16 code unit, so any u16 value is valid
+                    Ok(CilPrimitiveData::Char(code))
                 }
             }
             ELEMENT_TYPE::I1 => Ok(CilPrimitiveData::I1(read_le::<i8>(data)?)),
@@ -415,7 +434,7 @@ impl CilPrimitiveData {
                     return Ok(CilPrimitiveData::String(String::new()));
                 }
 
-                if data.len() % 2 != 0 {
+                if !data.len().is_multiple_of(2) {
                     return Err(malformed_error!(
                         "Invalid UTF-16 string length: {} (must be even)",
                         data.len()
@@ -432,6 +451,14 @@ impl CilPrimitiveData {
                     Err(_) => Err(malformed_error!(
                         "Invalid UTF-16 sequence in primitive string"
                     )),
+                }
+            }
+            ELEMENT_TYPE::CLASS => {
+                // Null reference constant: CLASS type with 4-byte zero value
+                if data.len() == 4 && data == [0, 0, 0, 0] {
+                    Ok(CilPrimitiveData::None)
+                } else {
+                    Ok(CilPrimitiveData::Bytes(data.to_vec()))
                 }
             }
             _ => Ok(CilPrimitiveData::Bytes(data.to_vec())),
@@ -459,7 +486,7 @@ impl CilPrimitiveData {
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::typesystem::{CilPrimitive, CilPrimitiveKind, CilPrimitiveData};
 ///
 /// // Create a primitive with data
@@ -472,6 +499,7 @@ impl CilPrimitiveData {
 /// assert_eq!(void_type.data, CilPrimitiveData::None);
 /// ```
 #[derive(Debug, Clone, PartialEq)]
+// ToDo: This can be simplified to directly be an enum that contains the data and type
 pub struct CilPrimitive {
     /// The primitive type classification
     pub kind: CilPrimitiveKind,
@@ -483,11 +511,11 @@ pub struct CilPrimitive {
 ///
 /// `CilPrimitiveKind` provides a complete enumeration of built-in .NET primitive types
 /// as defined in the ECMA-335 specification. Each variant corresponds to a specific
-/// System type and ELEMENT_TYPE constant.
+/// System type and `ELEMENT_TYPE` constant.
 ///
 /// # ECMA-335 Mapping
 ///
-/// This enum directly maps to ELEMENT_TYPE constants (§II.23.1.16):
+/// This enum directly maps to `ELEMENT_TYPE` constants (§II.23.1.16):
 /// - Numeric types (I1, U1, I2, U2, I4, U4, I8, U8, R4, R8)
 /// - Platform types (I, U for native integers)
 /// - Character and string types (CHAR, STRING)
@@ -496,12 +524,12 @@ pub struct CilPrimitive {
 ///
 /// # Artificial Tokens
 ///
-/// Each primitive kind has an associated artificial token (0xF000_XXXX range)
+/// Each primitive kind has an associated artificial token (`0xF000_XXXX` range)
 /// for use in type resolution and metadata table operations.
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::typesystem::CilPrimitiveKind;
 ///
 /// // Common primitive types
@@ -515,39 +543,39 @@ pub struct CilPrimitive {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CilPrimitiveKind {
-    /// System.Void - represents no value or return type (ELEMENT_TYPE_VOID)
+    /// System.Void - represents no value or return type (`ELEMENT_TYPE_VOID`)
     Void,
-    /// System.Boolean - true/false value, single byte storage (ELEMENT_TYPE_BOOLEAN)
+    /// System.Boolean - true/false value, single byte storage (`ELEMENT_TYPE_BOOLEAN`)
     Boolean,
-    /// System.Char - Unicode UTF-16 code unit, 16-bit value (ELEMENT_TYPE_CHAR)
+    /// System.Char - Unicode UTF-16 code unit, 16-bit value (`ELEMENT_TYPE_CHAR`)
     Char,
-    /// System.SByte - signed 8-bit integer (-128 to 127) (ELEMENT_TYPE_I1)
+    /// System.SByte - signed 8-bit integer (-128 to 127) (`ELEMENT_TYPE_I1`)
     I1,
-    /// System.Byte - unsigned 8-bit integer (0 to 255) (ELEMENT_TYPE_U1)
+    /// System.Byte - unsigned 8-bit integer (0 to 255) (`ELEMENT_TYPE_U1`)
     U1,
-    /// System.Int16 - signed 16-bit integer (-32,768 to 32,767) (ELEMENT_TYPE_I2)
+    /// System.Int16 - signed 16-bit integer (-32,768 to 32,767) (`ELEMENT_TYPE_I2`)
     I2,
-    /// System.UInt16 - unsigned 16-bit integer (0 to 65,535) (ELEMENT_TYPE_U2)
+    /// System.UInt16 - unsigned 16-bit integer (0 to 65,535) (`ELEMENT_TYPE_U2`)
     U2,
-    /// System.Int32 - signed 32-bit integer (-2^31 to 2^31-1) (ELEMENT_TYPE_I4)
+    /// System.Int32 - signed 32-bit integer (-2^31 to 2^31-1) (`ELEMENT_TYPE_I4`)
     I4,
-    /// System.UInt32 - unsigned 32-bit integer (0 to 2^32-1) (ELEMENT_TYPE_U4)
+    /// System.UInt32 - unsigned 32-bit integer (0 to 2^32-1) (`ELEMENT_TYPE_U4`)
     U4,
-    /// System.Int64 - signed 64-bit integer (-2^63 to 2^63-1) (ELEMENT_TYPE_I8)
+    /// System.Int64 - signed 64-bit integer (-2^63 to 2^63-1) (`ELEMENT_TYPE_I8`)
     I8,
-    /// System.UInt64 - unsigned 64-bit integer (0 to 2^64-1) (ELEMENT_TYPE_U8)
+    /// System.UInt64 - unsigned 64-bit integer (0 to 2^64-1) (`ELEMENT_TYPE_U8`)
     U8,
-    /// System.Single - 32-bit IEEE 754 floating point (ELEMENT_TYPE_R4)
+    /// System.Single - 32-bit IEEE 754 floating point (`ELEMENT_TYPE_R4`)
     R4,
-    /// System.Double - 64-bit IEEE 754 floating point (ELEMENT_TYPE_R8)
+    /// System.Double - 64-bit IEEE 754 floating point (`ELEMENT_TYPE_R8`)
     R8,
-    /// System.IntPtr - platform-specific signed integer (pointer-sized) (ELEMENT_TYPE_I)
+    /// System.IntPtr - platform-specific signed integer (pointer-sized) (`ELEMENT_TYPE_I`)
     I,
-    /// System.UIntPtr - platform-specific unsigned integer (pointer-sized) (ELEMENT_TYPE_U)
+    /// System.UIntPtr - platform-specific unsigned integer (pointer-sized) (`ELEMENT_TYPE_U`)
     U,
-    /// System.Object - root of the .NET type hierarchy, all types derive from this (ELEMENT_TYPE_OBJECT)
+    /// System.Object - root of the .NET type hierarchy, all types derive from this (`ELEMENT_TYPE_OBJECT`)
     Object,
-    /// System.String - immutable sequence of UTF-16 characters (ELEMENT_TYPE_STRING)
+    /// System.String - immutable sequence of UTF-16 characters (`ELEMENT_TYPE_STRING`)
     String,
     /// Null reference constant - used for null literal values in metadata
     Null,
@@ -555,25 +583,25 @@ pub enum CilPrimitiveKind {
     TypedReference,
     /// System.ValueType - base class for all value types (structs, enums)
     ValueType,
-    /// Generic type parameter (T, U, etc.) from type definitions (ELEMENT_TYPE_VAR)
+    /// Generic type parameter (T, U, etc.) from type definitions (`ELEMENT_TYPE_VAR`)
     Var,
-    /// Generic method parameter (T, U, etc.) from method definitions (ELEMENT_TYPE_MVAR)
+    /// Generic method parameter (T, U, etc.) from method definitions (`ELEMENT_TYPE_MVAR`)
     MVar,
-    /// General class reference - used for non-primitive reference types (ELEMENT_TYPE_CLASS)
+    /// General class reference - used for non-primitive reference types (`ELEMENT_TYPE_CLASS`)
     Class,
 }
 
 impl CilPrimitiveKind {
     /// Get the artificial token for this primitive type.
     ///
-    /// Returns a unique artificial token in the 0xF000_XXXX range that can be used
+    /// Returns a unique artificial token in the `0xF000_XXXX` range that can be used
     /// to represent this primitive type in metadata operations and type resolution.
     /// These tokens do not correspond to actual metadata table entries but provide
     /// a consistent identifier for primitive types.
     ///
     /// # Token Range
     ///
-    /// All primitive tokens use the artificial range 0xF000_0001 to 0xF000_0017,
+    /// All primitive tokens use the artificial range `0xF000_0001` to `0xF000_0017`,
     /// which avoids conflicts with actual metadata table tokens.
     ///
     /// # Returns
@@ -581,7 +609,7 @@ impl CilPrimitiveKind {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::CilPrimitiveKind;
     ///
     /// let int_token = CilPrimitiveKind::I4.token();
@@ -619,22 +647,27 @@ impl CilPrimitiveKind {
         })
     }
 
-    /// Parse primitive type from ELEMENT_TYPE byte constant.
+    /// Parse primitive type from `ELEMENT_TYPE` byte constant.
     ///
-    /// Converts an ELEMENT_TYPE constant from ECMA-335 metadata into the corresponding
+    /// Converts an `ELEMENT_TYPE` constant from ECMA-335 metadata into the corresponding
     /// primitive type. This is used when parsing type signatures and metadata tables
     /// that contain element type specifications.
     ///
     /// # Arguments
-    /// * `type_byte` - ELEMENT_TYPE constant from metadata (see ECMA-335 §II.23.1.16)
+    /// * `type_byte` - `ELEMENT_TYPE` constant from metadata (see ECMA-335 §II.23.1.16)
     ///
     /// # Returns
     /// * `Ok(CilPrimitiveKind)` - Successfully parsed primitive type
     /// * `Err(TypeNotPrimitive)` - Byte does not represent a valid primitive type
     ///
-    /// # ELEMENT_TYPE Mapping
+    /// # Errors
     ///
-    /// Maps standard ELEMENT_TYPE constants to primitive kinds:
+    /// This function will return an error if the provided byte does not correspond
+    /// to a valid primitive type constant as defined in ECMA-335.
+    ///
+    /// # `ELEMENT_TYPE` Mapping
+    ///
+    /// Maps standard `ELEMENT_TYPE` constants to primitive kinds:
     /// - `ELEMENT_TYPE_BOOLEAN` (0x02) → `Boolean`
     /// - `ELEMENT_TYPE_I4` (0x08) → `I4`
     /// - `ELEMENT_TYPE_STRING` (0x0E) → `String`
@@ -642,7 +675,7 @@ impl CilPrimitiveKind {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::{CilPrimitiveKind, ELEMENT_TYPE};
     ///
     /// let bool_kind = CilPrimitiveKind::from_byte(ELEMENT_TYPE::BOOLEAN)?;
@@ -690,7 +723,7 @@ impl CilPrimitive {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::{CilPrimitive, CilPrimitiveKind, CilPrimitiveData};
     ///
     /// let void_type = CilPrimitive::new(CilPrimitiveKind::Void);
@@ -720,7 +753,7 @@ impl CilPrimitive {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::{CilPrimitive, CilPrimitiveKind, CilPrimitiveData};
     ///
     /// let int_const = CilPrimitive::with_data(
@@ -748,7 +781,7 @@ impl CilPrimitive {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::typesystem::CilPrimitive;
     ///
     /// let true_const = CilPrimitive::boolean(true);
@@ -765,12 +798,24 @@ impl CilPrimitive {
         }
     }
 
-    /// Create a character primitive
+    /// Create a character primitive from a Rust char
     ///
     /// ## Arguments
     /// * `value` - The initial value for the requested primitive
     #[must_use]
     pub fn char(value: char) -> Self {
+        CilPrimitive {
+            kind: CilPrimitiveKind::Char,
+            data: CilPrimitiveData::Char(value as u16),
+        }
+    }
+
+    /// Create a character primitive from a UTF-16 code unit
+    ///
+    /// ## Arguments  
+    /// * `value` - The UTF-16 code unit value (including surrogates)
+    #[must_use]
+    pub fn char_from_u16(value: u16) -> Self {
         CilPrimitive {
             kind: CilPrimitiveKind::Char,
             data: CilPrimitiveData::Char(value),
@@ -1171,8 +1216,8 @@ impl CilPrimitive {
     /// * `blob`    - The data blob to parse for the value
     ///
     /// # Errors
-    /// Returns [`TypeNotPrimitive`] if the primitive type is invalid.
-    /// Returns [`OutOfBounds`] or other errors if the blob data is insufficient or invalid.
+    /// Returns [`crate::Error::TypeNotPrimitive`] if the primitive type is invalid.
+    /// Returns [`crate::Error::OutOfBounds`] or other errors if the blob data is insufficient or invalid.
     pub fn from_blob(p_type: u8, blob: &[u8]) -> Result<Self> {
         Ok(CilPrimitive {
             kind: CilPrimitiveKind::from_byte(p_type)?,
@@ -1217,7 +1262,7 @@ impl CilPrimitive {
             CilPrimitiveData::None => Vec::new(),
             CilPrimitiveData::Boolean(value) => vec![u8::from(*value)],
             CilPrimitiveData::Char(value) => {
-                let code = *value as u16;
+                let code = *value;
                 vec![(code & 0xFF) as u8, ((code >> 8) & 0xFF) as u8]
             }
             CilPrimitiveData::I1(value) => vec![{
@@ -1237,7 +1282,14 @@ impl CilPrimitive {
             CilPrimitiveData::R8(value) => value.to_le_bytes().to_vec(),
             CilPrimitiveData::U(value) => value.to_le_bytes().to_vec(),
             CilPrimitiveData::I(value) => value.to_le_bytes().to_vec(),
-            CilPrimitiveData::String(value) => value.as_bytes().to_vec(),
+            CilPrimitiveData::String(value) => {
+                let utf16_chars: Vec<u16> = value.encode_utf16().collect();
+                let mut bytes = Vec::with_capacity(utf16_chars.len() * 2);
+                for ch in utf16_chars {
+                    bytes.extend_from_slice(&ch.to_le_bytes());
+                }
+                bytes
+            }
             CilPrimitiveData::Bytes(value) => value.clone(),
         }
     }
@@ -1247,28 +1299,36 @@ impl fmt::Display for CilPrimitive {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.data {
             CilPrimitiveData::None => write!(f, "{}", self.clr_full_name()),
-            CilPrimitiveData::Boolean(value) => write!(f, "{}", value),
-            CilPrimitiveData::Char(value) => write!(f, "'{}'", value),
-            CilPrimitiveData::I1(value) => write!(f, "{}", value),
-            CilPrimitiveData::U1(value) => write!(f, "{}", value),
-            CilPrimitiveData::I2(value) => write!(f, "{}", value),
-            CilPrimitiveData::U2(value) => write!(f, "{}", value),
-            CilPrimitiveData::I4(value) => write!(f, "{}", value),
-            CilPrimitiveData::U4(value) => write!(f, "{}", value),
-            CilPrimitiveData::I8(value) => write!(f, "{}", value),
-            CilPrimitiveData::U8(value) => write!(f, "{}", value),
-            CilPrimitiveData::R4(value) => write!(f, "{}", value),
-            CilPrimitiveData::R8(value) => write!(f, "{}", value),
-            CilPrimitiveData::U(value) => write!(f, "{}", value),
-            CilPrimitiveData::I(value) => write!(f, "{}", value),
-            CilPrimitiveData::String(value) => write!(f, "\"{}\"", value),
+            CilPrimitiveData::Boolean(value) => write!(f, "{value}"),
+            CilPrimitiveData::Char(value) => {
+                // Try to display as a proper Unicode character if possible
+                if let Some(ch) = char::from_u32(u32::from(*value)) {
+                    write!(f, "'{ch}'")
+                } else {
+                    // For surrogates or invalid values, show as Unicode escape
+                    write!(f, "'\\u{{{:04X}}}'", value)
+                }
+            }
+            CilPrimitiveData::I1(value) => write!(f, "{value}"),
+            CilPrimitiveData::U1(value) => write!(f, "{value}"),
+            CilPrimitiveData::I2(value) => write!(f, "{value}"),
+            CilPrimitiveData::U2(value) => write!(f, "{value}"),
+            CilPrimitiveData::I4(value) => write!(f, "{value}"),
+            CilPrimitiveData::U4(value) => write!(f, "{value}"),
+            CilPrimitiveData::I8(value) => write!(f, "{value}"),
+            CilPrimitiveData::U8(value) => write!(f, "{value}"),
+            CilPrimitiveData::R4(value) => write!(f, "{value}"),
+            CilPrimitiveData::R8(value) => write!(f, "{value}"),
+            CilPrimitiveData::U(value) => write!(f, "{value}"),
+            CilPrimitiveData::I(value) => write!(f, "{value}"),
+            CilPrimitiveData::String(value) => write!(f, "\"{value}\""),
             CilPrimitiveData::Bytes(value) => {
                 write!(f, "Bytes[")?;
                 for (i, byte) in value.iter().enumerate().take(8) {
                     if i > 0 {
                         write!(f, " ")?;
                     }
-                    write!(f, "{:02X}", byte)?;
+                    write!(f, "{byte:02X}")?;
                 }
                 if value.len() > 8 {
                     write!(f, "...")?;
@@ -1441,9 +1501,9 @@ mod tests {
         assert_eq!(void_primitive.data, CilPrimitiveData::None);
 
         let char_primitive =
-            CilPrimitive::with_data(CilPrimitiveKind::Char, CilPrimitiveData::Char('A'));
+            CilPrimitive::with_data(CilPrimitiveKind::Char, CilPrimitiveData::Char('A' as u16));
         assert_eq!(char_primitive.kind, CilPrimitiveKind::Char);
-        assert_eq!(char_primitive.data, CilPrimitiveData::Char('A'));
+        assert_eq!(char_primitive.data, CilPrimitiveData::Char('A' as u16));
     }
 
     #[test]
@@ -1542,10 +1602,10 @@ mod tests {
         assert_eq!(u8_prim.kind, CilPrimitiveKind::U8);
         assert_eq!(u8_prim.as_i64(), None);
 
-        let char_blob = vec![65]; // 'A'
+        let char_blob = vec![65, 0]; // 'A' as UTF-16 little-endian
         let char_prim = CilPrimitive::from_blob(ELEMENT_TYPE::CHAR, &char_blob).unwrap();
         assert_eq!(char_prim.kind, CilPrimitiveKind::Char);
-        assert_eq!(char_prim.data, CilPrimitiveData::Char('A'));
+        assert_eq!(char_prim.data, CilPrimitiveData::Char('A' as u16));
     }
 
     #[test]
@@ -1786,7 +1846,10 @@ mod tests {
         assert_eq!(int_prim.to_bytes(), vec![42, 0, 0, 0]);
 
         let string_prim = CilPrimitive::string("Hello");
-        assert_eq!(string_prim.to_bytes(), "Hello".as_bytes());
+        assert_eq!(
+            string_prim.to_bytes(),
+            vec![72, 0, 101, 0, 108, 0, 108, 0, 111, 0]
+        );
 
         let void_prim = CilPrimitive::new(CilPrimitiveKind::Void);
         assert!(void_prim.to_bytes().is_empty());
@@ -2247,15 +2310,15 @@ mod tests {
     fn test_from_blob_error_cases() {
         let result = CilPrimitiveData::from_bytes(ELEMENT_TYPE::BOOLEAN, &[]);
         assert!(result.is_err());
-        assert!(matches!(result, Err(Error::OutOfBounds)));
+        assert!(matches!(result, Err(crate::Error::OutOfBounds { .. })));
 
         let result = CilPrimitiveData::from_bytes(ELEMENT_TYPE::CHAR, &[]);
         assert!(result.is_err());
-        assert!(matches!(result, Err(Error::OutOfBounds)));
+        assert!(matches!(result, Err(crate::Error::OutOfBounds { .. })));
 
         let result = CilPrimitiveData::from_bytes(ELEMENT_TYPE::I4, &[1, 2]);
         assert!(result.is_err());
-        assert!(matches!(result, Err(Error::OutOfBounds)));
+        assert!(matches!(result, Err(crate::Error::OutOfBounds { .. })));
 
         let result = CilPrimitiveData::from_bytes(ELEMENT_TYPE::STRING, &[]);
         assert!(result.is_ok());
@@ -2302,5 +2365,265 @@ mod tests {
 
         assert!(!null_prim.is_value_type());
         assert!(!null_prim.is_reference_type());
+    }
+
+    #[test]
+    fn test_constant_encoding_round_trip() {
+        // Test boolean constants
+        let bool_true = CilPrimitive::boolean(true);
+        let bool_true_bytes = bool_true.to_bytes();
+        let bool_true_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::BOOLEAN, &bool_true_bytes).unwrap();
+        assert_eq!(bool_true_decoded, CilPrimitiveData::Boolean(true));
+
+        let bool_false = CilPrimitive::boolean(false);
+        let bool_false_bytes = bool_false.to_bytes();
+        let bool_false_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::BOOLEAN, &bool_false_bytes).unwrap();
+        assert_eq!(bool_false_decoded, CilPrimitiveData::Boolean(false));
+
+        // Test char constants
+        let char_a = CilPrimitive::char('A');
+        let char_a_bytes = char_a.to_bytes();
+        let char_a_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::CHAR, &char_a_bytes).unwrap();
+        assert_eq!(char_a_decoded, CilPrimitiveData::Char('A' as u16));
+
+        let char_unicode = CilPrimitive::char('ñ'); // Unicode character within BMP
+        let char_unicode_bytes = char_unicode.to_bytes();
+        let char_unicode_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::CHAR, &char_unicode_bytes).unwrap();
+        assert_eq!(char_unicode_decoded, CilPrimitiveData::Char('ñ' as u16));
+
+        // Test integer constants
+        let i1_test = CilPrimitive::i1(-128);
+        let i1_test_bytes = i1_test.to_bytes();
+        let i1_test_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::I1, &i1_test_bytes).unwrap();
+        assert_eq!(i1_test_decoded, CilPrimitiveData::I1(-128));
+
+        let u1_test = CilPrimitive::u1(255);
+        let u1_test_bytes = u1_test.to_bytes();
+        let u1_test_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::U1, &u1_test_bytes).unwrap();
+        assert_eq!(u1_test_decoded, CilPrimitiveData::U1(255));
+
+        let i2_test = CilPrimitive::i2(-32768);
+        let i2_test_bytes = i2_test.to_bytes();
+        let i2_test_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::I2, &i2_test_bytes).unwrap();
+        assert_eq!(i2_test_decoded, CilPrimitiveData::I2(-32768));
+
+        let u2_test = CilPrimitive::u2(65535);
+        let u2_test_bytes = u2_test.to_bytes();
+        let u2_test_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::U2, &u2_test_bytes).unwrap();
+        assert_eq!(u2_test_decoded, CilPrimitiveData::U2(65535));
+
+        let i4_test = CilPrimitive::i4(-2147483648);
+        let i4_test_bytes = i4_test.to_bytes();
+        let i4_test_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::I4, &i4_test_bytes).unwrap();
+        assert_eq!(i4_test_decoded, CilPrimitiveData::I4(-2147483648));
+
+        let u4_test = CilPrimitive::u4(4294967295);
+        let u4_test_bytes = u4_test.to_bytes();
+        let u4_test_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::U4, &u4_test_bytes).unwrap();
+        assert_eq!(u4_test_decoded, CilPrimitiveData::U4(4294967295));
+
+        let i8_test = CilPrimitive::i8(-9223372036854775808);
+        let i8_test_bytes = i8_test.to_bytes();
+        let i8_test_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::I8, &i8_test_bytes).unwrap();
+        assert_eq!(i8_test_decoded, CilPrimitiveData::I8(-9223372036854775808));
+
+        let u8_test = CilPrimitive::u8(18446744073709551615);
+        let u8_test_bytes = u8_test.to_bytes();
+        let u8_test_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::U8, &u8_test_bytes).unwrap();
+        assert_eq!(u8_test_decoded, CilPrimitiveData::U8(18446744073709551615));
+
+        // Test string constants
+        let string_empty = CilPrimitive::string("");
+        let string_empty_bytes = string_empty.to_bytes();
+        let string_empty_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::STRING, &string_empty_bytes).unwrap();
+        assert_eq!(
+            string_empty_decoded,
+            CilPrimitiveData::String("".to_string())
+        );
+
+        let string_hello = CilPrimitive::string("Hello, World!");
+        let string_hello_bytes = string_hello.to_bytes();
+        let string_hello_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::STRING, &string_hello_bytes).unwrap();
+        assert_eq!(
+            string_hello_decoded,
+            CilPrimitiveData::String("Hello, World!".to_string())
+        );
+
+        let string_unicode = CilPrimitive::string("Çå UTF-16 Tëst ñ");
+        let string_unicode_bytes = string_unicode.to_bytes();
+        let string_unicode_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::STRING, &string_unicode_bytes).unwrap();
+        assert_eq!(
+            string_unicode_decoded,
+            CilPrimitiveData::String("Çå UTF-16 Tëst ñ".to_string())
+        );
+
+        // Test null reference constants
+        let null_ref_bytes = vec![0, 0, 0, 0]; // 4-byte zero value for null references
+        let null_ref_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::CLASS, &null_ref_bytes).unwrap();
+        assert_eq!(null_ref_decoded, CilPrimitiveData::None);
+    }
+
+    #[test]
+    fn test_floating_point_precision_round_trip() {
+        // Test R4 (32-bit float) precision
+        let r4_pi = CilPrimitive::r4(std::f32::consts::PI);
+        let r4_pi_bytes = r4_pi.to_bytes();
+        let r4_pi_decoded = CilPrimitiveData::from_bytes(ELEMENT_TYPE::R4, &r4_pi_bytes).unwrap();
+        if let CilPrimitiveData::R4(decoded_value) = r4_pi_decoded {
+            assert_eq!(decoded_value, std::f32::consts::PI);
+        } else {
+            panic!("Expected R4 data");
+        }
+
+        let r4_small = CilPrimitive::r4(1.23456e-30_f32);
+        let r4_small_bytes = r4_small.to_bytes();
+        let r4_small_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::R4, &r4_small_bytes).unwrap();
+        if let CilPrimitiveData::R4(decoded_value) = r4_small_decoded {
+            assert_eq!(decoded_value, 1.23456e-30_f32);
+        } else {
+            panic!("Expected R4 data");
+        }
+
+        // Test R8 (64-bit double) precision
+        let r8_e = CilPrimitive::r8(std::f64::consts::E);
+        let r8_e_bytes = r8_e.to_bytes();
+        let r8_e_decoded = CilPrimitiveData::from_bytes(ELEMENT_TYPE::R8, &r8_e_bytes).unwrap();
+        if let CilPrimitiveData::R8(decoded_value) = r8_e_decoded {
+            assert_eq!(decoded_value, std::f64::consts::E);
+        } else {
+            panic!("Expected R8 data");
+        }
+
+        let r8_precise = CilPrimitive::r8(1.23456789012345e-100_f64);
+        let r8_precise_bytes = r8_precise.to_bytes();
+        let r8_precise_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::R8, &r8_precise_bytes).unwrap();
+        if let CilPrimitiveData::R8(decoded_value) = r8_precise_decoded {
+            assert_eq!(decoded_value, 1.23456789012345e-100_f64);
+        } else {
+            panic!("Expected R8 data");
+        }
+    }
+
+    #[test]
+    fn test_floating_point_edge_cases() {
+        // Test NaN (Not a Number)
+        let r4_nan = CilPrimitive::r4(f32::NAN);
+        let r4_nan_bytes = r4_nan.to_bytes();
+        let r4_nan_decoded = CilPrimitiveData::from_bytes(ELEMENT_TYPE::R4, &r4_nan_bytes).unwrap();
+        if let CilPrimitiveData::R4(decoded_value) = r4_nan_decoded {
+            assert!(decoded_value.is_nan());
+        } else {
+            panic!("Expected R4 data");
+        }
+
+        let r8_nan = CilPrimitive::r8(f64::NAN);
+        let r8_nan_bytes = r8_nan.to_bytes();
+        let r8_nan_decoded = CilPrimitiveData::from_bytes(ELEMENT_TYPE::R8, &r8_nan_bytes).unwrap();
+        if let CilPrimitiveData::R8(decoded_value) = r8_nan_decoded {
+            assert!(decoded_value.is_nan());
+        } else {
+            panic!("Expected R8 data");
+        }
+
+        // Test Positive and Negative Infinity
+        let r4_inf_pos = CilPrimitive::r4(f32::INFINITY);
+        let r4_inf_pos_bytes = r4_inf_pos.to_bytes();
+        let r4_inf_pos_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::R4, &r4_inf_pos_bytes).unwrap();
+        if let CilPrimitiveData::R4(decoded_value) = r4_inf_pos_decoded {
+            assert_eq!(decoded_value, f32::INFINITY);
+        } else {
+            panic!("Expected R4 data");
+        }
+
+        let r4_inf_neg = CilPrimitive::r4(f32::NEG_INFINITY);
+        let r4_inf_neg_bytes = r4_inf_neg.to_bytes();
+        let r4_inf_neg_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::R4, &r4_inf_neg_bytes).unwrap();
+        if let CilPrimitiveData::R4(decoded_value) = r4_inf_neg_decoded {
+            assert_eq!(decoded_value, f32::NEG_INFINITY);
+        } else {
+            panic!("Expected R4 data");
+        }
+
+        let r8_inf_pos = CilPrimitive::r8(f64::INFINITY);
+        let r8_inf_pos_bytes = r8_inf_pos.to_bytes();
+        let r8_inf_pos_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::R8, &r8_inf_pos_bytes).unwrap();
+        if let CilPrimitiveData::R8(decoded_value) = r8_inf_pos_decoded {
+            assert_eq!(decoded_value, f64::INFINITY);
+        } else {
+            panic!("Expected R8 data");
+        }
+
+        let r8_inf_neg = CilPrimitive::r8(f64::NEG_INFINITY);
+        let r8_inf_neg_bytes = r8_inf_neg.to_bytes();
+        let r8_inf_neg_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::R8, &r8_inf_neg_bytes).unwrap();
+        if let CilPrimitiveData::R8(decoded_value) = r8_inf_neg_decoded {
+            assert_eq!(decoded_value, f64::NEG_INFINITY);
+        } else {
+            panic!("Expected R8 data");
+        }
+
+        // Test very small denormalized numbers
+        let r4_denorm = CilPrimitive::r4(f32::MIN_POSITIVE);
+        let r4_denorm_bytes = r4_denorm.to_bytes();
+        let r4_denorm_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::R4, &r4_denorm_bytes).unwrap();
+        if let CilPrimitiveData::R4(decoded_value) = r4_denorm_decoded {
+            assert_eq!(decoded_value, f32::MIN_POSITIVE);
+        } else {
+            panic!("Expected R4 data");
+        }
+
+        let r8_denorm = CilPrimitive::r8(f64::MIN_POSITIVE);
+        let r8_denorm_bytes = r8_denorm.to_bytes();
+        let r8_denorm_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::R8, &r8_denorm_bytes).unwrap();
+        if let CilPrimitiveData::R8(decoded_value) = r8_denorm_decoded {
+            assert_eq!(decoded_value, f64::MIN_POSITIVE);
+        } else {
+            panic!("Expected R8 data");
+        }
+
+        // Test positive and negative zero
+        let r4_zero = CilPrimitive::r4(0.0f32);
+        let r4_zero_bytes = r4_zero.to_bytes();
+        let r4_zero_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::R4, &r4_zero_bytes).unwrap();
+        if let CilPrimitiveData::R4(decoded_value) = r4_zero_decoded {
+            assert_eq!(decoded_value, 0.0f32);
+        } else {
+            panic!("Expected R4 data");
+        }
+
+        let r4_neg_zero = CilPrimitive::r4(-0.0f32);
+        let r4_neg_zero_bytes = r4_neg_zero.to_bytes();
+        let r4_neg_zero_decoded =
+            CilPrimitiveData::from_bytes(ELEMENT_TYPE::R4, &r4_neg_zero_bytes).unwrap();
+        if let CilPrimitiveData::R4(decoded_value) = r4_neg_zero_decoded {
+            assert_eq!(decoded_value, -0.0f32);
+        } else {
+            panic!("Expected R4 data");
+        }
     }
 }

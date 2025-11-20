@@ -11,7 +11,6 @@
 //! virtual address space. This architecture provides several key benefits:
 //!
 //! - **Efficient memory usage** - Only requested portions are loaded into physical memory
-//! - **Zero-copy access** - Direct access to mapped memory without data copying
 //! - **Operating system optimization** - Leverages OS-level caching and paging
 //! - **Shared memory** - Multiple processes can efficiently access the same file
 //! - **Lazy loading** - Pages are loaded on-demand as they are accessed
@@ -96,7 +95,7 @@
 
 use super::Backend;
 use crate::{
-    Error::{Error, FileError, OutOfBounds},
+    Error::{Error, FileError},
     Result,
 };
 
@@ -222,11 +221,11 @@ impl Backend for Physical {
     /// ```
     fn data_slice(&self, offset: usize, len: usize) -> Result<&[u8]> {
         let Some(offset_end) = offset.checked_add(len) else {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         };
 
         if offset_end > self.data.len() {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         Ok(&self.data[offset..offset_end])
@@ -350,18 +349,27 @@ mod tests {
         // Test offset + len overflow
         let result = physical.data_slice(usize::MAX, 1);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), OutOfBounds));
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::Error::OutOfBounds { .. }
+        ));
 
         // Test offset exactly at length
         let len = physical.len();
         let result = physical.data_slice(len, 1);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), OutOfBounds));
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::Error::OutOfBounds { .. }
+        ));
 
         // Test offset + len exceeds length by 1
         let result = physical.data_slice(len - 1, 2);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), OutOfBounds));
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::Error::OutOfBounds { .. }
+        ));
     }
 
     #[test]

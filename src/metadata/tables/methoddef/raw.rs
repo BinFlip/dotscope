@@ -1,22 +1,67 @@
-//! Raw MethodDef table structure with unresolved indexes and heap references.
+//! Raw `MethodDef` table structure with unresolved indexes and heap references.
 //!
-//! This module provides the [`MethodDefRaw`] struct, which represents method definitions
+//! This module provides the [`crate::metadata::tables::methoddef::raw::MethodDefRaw`] struct, which represents method definitions
 //! as stored in the metadata stream. The structure contains unresolved indexes
 //! and heap references that require processing to establish complete method information
 //! with parameter metadata and signature details.
 //!
 //! # Purpose
-//! [`MethodDefRaw`] serves as the direct representation of MethodDef table entries from the
+//! [`crate::metadata::tables::methoddef::raw::MethodDefRaw`] serves as the direct representation of `MethodDef` table entries from the
 //! binary metadata stream, before parameter resolution and signature parsing. This raw format
-//! is processed during metadata loading to create [`Method`] instances with resolved
+//! is processed during metadata loading to create [`crate::metadata::method::Method`] instances with resolved
 //! parameters and complete method implementation information.
 //!
-//! [`Method`]: crate::metadata::method::Method
+//! # Architecture
+//!
+//! The raw implementation provides the foundation for method definition parsing:
+//! - **Unresolved References**: Contains raw heap indices and table references
+//! - **Memory Efficiency**: Minimal footprint during initial parsing phases
+//! - **Binary Format**: Direct representation of ECMA-335 table structure
+//! - **Batch Processing**: Optimized for parsing multiple method entries efficiently
+//!
+//! # Binary Format
+//!
+//! Each `MethodDef` table row follows the ECMA-335 §22.26 specification:
+//!
+//! ```text
+//! Offset | Size    | Field      | Description
+//! -------|---------|------------|--------------------------------------------
+//! 0x00   | 4 bytes | RVA        | Relative virtual address of implementation
+//! 0x04   | 2 bytes | ImplFlags  | Method implementation attributes
+//! 0x06   | 2 bytes | Flags      | Method attributes and access modifiers
+//! 0x08   | 2-4     | Name       | String heap index for method name
+//! 0x0A   | 2-4     | Signature  | Blob heap index for method signature
+//! 0x0C   | 2-4     | ParamList  | Index into Param table for first parameter
+//! ```
+//!
+//! # Processing Pipeline
+//!
+//! 1. **Binary Parsing**: Raw entries are read from metadata tables stream
+//! 2. **Validation**: RVA, flags, and indices are validated for consistency
+//! 3. **Resolution**: Heap indices are resolved to actual data values
+//! 4. **Parameter Processing**: Parameter ranges are calculated and resolved
+//! 5. **Signature Parsing**: Method signatures are parsed from blob heap
+//! 6. **Conversion**: Raw entries are converted to owned method representations
+//!
+//! # Thread Safety
+//!
+//! All types in this module are thread-safe for concurrent read access:
+//! - [`crate::metadata::tables::methoddef::raw::MethodDefRaw`] is [`std::marker::Send`] and [`std::marker::Sync`]
+//! - Raw parsing operations can be performed concurrently
+//! - Conversion methods are thread-safe with proper heap synchronization
+//! - No shared mutable state during parsing operations
+//!
+//! # Integration
+//!
+//! This module integrates with:
+//! - [`crate::metadata::tables::methoddef`] - Method definition module and owned representations
+//! - [`crate::metadata::tables::param`] - Parameter table for method parameter resolution
+//! - [`crate::metadata::method`] - Method definition types and containers
+//! - [`crate::metadata::signatures`] - Method signature parsing and validation
 
 use std::sync::{atomic::AtomicU32, Arc, OnceLock};
 
 use crate::{
-    file::io::{read_le_at, read_le_at_dyn},
     metadata::{
         method::{
             Method, MethodAccessFlags, MethodImplCodeType, MethodImplManagement, MethodImplOptions,
@@ -24,17 +69,13 @@ use crate::{
         },
         signatures::parse_method_signature,
         streams::{Blob, Strings},
-        tables::{
-            types::{RowDefinition, TableId, TableInfoRef},
-            ParamMap, ParamPtrMap,
-        },
+        tables::{MetadataTable, ParamMap, ParamPtrMap, TableId, TableInfoRef, TableRow},
         token::Token,
     },
-    prelude::MetadataTable,
     Result,
 };
 
-/// Raw MethodDef table entry with unresolved indexes and heap references.
+/// Raw `MethodDef` table entry with unresolved indexes and heap references.
 ///
 /// This structure represents a method definition as stored directly in the metadata stream.
 /// All references are unresolved indexes or heap offsets that require processing during
@@ -45,13 +86,13 @@ use crate::{
 /// | Column | Size | Description |
 /// |--------|------|-------------|
 /// | RVA | 4 bytes | Relative virtual address of method implementation |
-/// | ImplFlags | 2 bytes | Method implementation attributes |
+/// | `ImplFlags` | 2 bytes | Method implementation attributes |
 /// | Flags | 2 bytes | Method attributes and access modifiers |
 /// | Name | String index | Method name identifier |
 /// | Signature | Blob index | Method signature (calling convention, parameters, return type) |
-/// | ParamList | Param index | First parameter in the parameter list |
+/// | `ParamList` | Param index | First parameter in the parameter list |
 ///
-/// # Implementation Attributes (ImplFlags)
+/// # Implementation Attributes (`ImplFlags`)
 /// The `impl_flags` field contains method implementation characteristics:
 /// - **Code type**: IL, native, OPTIL, or runtime implementation
 /// - **Management**: Managed, unmanaged, or mixed execution model
@@ -70,22 +111,53 @@ use crate::{
 /// - **Parameter range**: Contiguous range in the Param table for this method
 /// - **Return parameter**: Special parameter at sequence 0 for return type information
 /// - **Parameter metadata**: Names, types, default values, and custom attributes
-/// - **Indirect access**: Optional ParamPtr table for parameter pointer indirection
+/// - **Indirect access**: Optional `ParamPtr` table for parameter pointer indirection
 ///
 /// # RVA and Implementation
+///
 /// The `rva` field specifies method implementation location:
 /// - **Zero RVA**: Abstract methods, interface methods, or extern methods without implementation
 /// - **Non-zero RVA**: Concrete methods with IL code or native implementation at specified address
-/// - **Implementation type**: Determined by combination of RVA and implementation flags
+/// - **Implementation Type**: Determined by combination of RVA and implementation flags
+///
+/// # Usage Patterns
+///
+/// ```rust,ignore
+/// use dotscope::metadata::tables::methoddef::raw::MethodDefRaw;
+/// use dotscope::metadata::streams::{Strings, Blob};
+///
+/// # fn process_method_entry(raw_entry: &MethodDefRaw, strings: &Strings, blob: &Blob) -> dotscope::Result<()> {
+/// // Check method implementation type
+/// if raw_entry.rva == 0 {
+///     println!("Abstract or interface method: {}", raw_entry.rid);
+/// } else {
+///     println!("Concrete method at RVA: 0x{:08X}", raw_entry.rva);
+/// }
+///
+/// // Access method name
+/// let method_name = strings.get(raw_entry.name as usize)?;
+/// println!("Method name: {}", method_name);
+///
+/// // Access method signature
+/// let signature_data = blob.get(raw_entry.signature as usize)?;
+/// println!("Signature has {} bytes", signature_data.len());
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Thread Safety
+///
+/// [`MethodDefRaw`] is [`std::marker::Send`] and [`std::marker::Sync`] as it contains only primitive data types.
+/// Instances can be safely shared across threads and accessed concurrently without synchronization.
 #[derive(Clone, Debug)]
 pub struct MethodDefRaw {
-    /// Row identifier within the MethodDef table.
+    /// Row identifier within the `MethodDef` table.
     ///
     /// Unique identifier for this method definition entry, used for internal
     /// table management and token generation.
     pub rid: u32,
 
-    /// Metadata token for this MethodDef entry (TableId 0x06).
+    /// Metadata token for this `MethodDef` entry (`TableId` 0x06).
     ///
     /// Computed as `0x06000000 | rid` to create the full token value
     /// for referencing this method from other metadata structures.
@@ -133,13 +205,13 @@ pub struct MethodDefRaw {
     /// Index into the Param table for the first parameter.
     ///
     /// Specifies the starting position of this method's parameters in the Param table.
-    /// Parameter lists are contiguous ranges ending at the next method's param_list
+    /// Parameter lists are contiguous ranges ending at the next method's `param_list`
     /// or the end of the table. A value of 0 indicates no parameters.
     pub param_list: u32,
 }
 
 impl MethodDefRaw {
-    /// Converts a MethodDefRaw entry into a Method with resolved parameters and parsed signature.
+    /// Converts a `MethodDefRaw` entry into a Method with resolved parameters and parsed signature.
     ///
     /// This method performs complete method definition resolution, including parameter
     /// range calculation, signature parsing, and method attribute processing. The resulting
@@ -150,12 +222,16 @@ impl MethodDefRaw {
     /// * `strings` - The string heap for resolving method names
     /// * `blob` - The blob heap for signature data retrieval
     /// * `params_map` - Collection of all Param entries for parameter resolution
-    /// * `param_ptr_map` - Collection of ParamPtr entries for indirection (if present)
-    /// * `table` - The MethodDef table for parameter range calculation
+    /// * `param_ptr_map` - Collection of `ParamPtr` entries for indirection (if present)
+    /// * `table` - The `MethodDef` table for parameter range calculation
     ///
     /// # Returns
     /// * `Ok(MethodRc)` - Successfully resolved method with complete parameter metadata
     /// * `Err(_)` - If signature parsing, parameter resolution, or name retrieval fails
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if signature parsing, parameter resolution, or name retrieval fails.
     ///
     pub fn to_owned(
         &self,
@@ -172,22 +248,11 @@ impl MethodDefRaw {
         } else {
             let next_row_id = self.rid + 1;
             let start = self.param_list as usize;
-            let end = if next_row_id > table.row_count() {
+            let end = if next_row_id > table.row_count {
                 params_map.len() + 1
             } else {
                 match table.get(next_row_id) {
-                    Some(next_row) => {
-                        let calculated_end = next_row.param_list as usize;
-                        let expected_param_count = signature.params.len();
-
-                        // If the calculated range would be empty but we expect parameters,
-                        // use the signature to determine the correct end
-                        if calculated_end <= start && expected_param_count > 0 {
-                            start + expected_param_count
-                        } else {
-                            calculated_end
-                        }
-                    }
+                    Some(next_row) => next_row.param_list as usize,
                     None => {
                         return Err(malformed_error!(
                             "Failed to resolve param_end from next row - {}",
@@ -296,7 +361,25 @@ impl MethodDefRaw {
     }
 }
 
-impl<'a> RowDefinition<'a> for MethodDefRaw {
+impl TableRow for MethodDefRaw {
+    /// Calculate the byte size of a MethodDef table row
+    ///
+    /// Computes the total size based on fixed-size fields plus variable-size heap and table indexes.
+    /// The size depends on whether the metadata uses 2-byte or 4-byte indexes.
+    ///
+    /// # Row Layout (ECMA-335 §II.22.26)
+    /// - `rva`: 4 bytes (fixed)
+    /// - `impl_flags`: 2 bytes (fixed)
+    /// - `flags`: 2 bytes (fixed)
+    /// - `name`: 2 or 4 bytes (string heap index)
+    /// - `signature`: 2 or 4 bytes (blob heap index)
+    /// - `param_list`: 2 or 4 bytes (Param table index)
+    ///
+    /// # Arguments
+    /// * `sizes` - Table sizing information for heap and table index widths
+    ///
+    /// # Returns
+    /// Total byte size of one MethodDef table row
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
@@ -307,111 +390,5 @@ impl<'a> RowDefinition<'a> for MethodDefRaw {
             /* signature */     sizes.blob_bytes() +
             /* param_list */    sizes.table_index_bytes(TableId::Param)
         )
-    }
-
-    fn read_row(
-        data: &'a [u8],
-        offset: &mut usize,
-        rid: u32,
-        sizes: &TableInfoRef,
-    ) -> Result<Self> {
-        Ok(MethodDefRaw {
-            rid,
-            token: Token::new(0x0600_0000 + rid),
-            offset: *offset,
-            rva: read_le_at::<u32>(data, offset)?,
-            impl_flags: u32::from(read_le_at::<u16>(data, offset)?),
-            flags: u32::from(read_le_at::<u16>(data, offset)?),
-            name: read_le_at_dyn(data, offset, sizes.is_large_str())?,
-            signature: read_le_at_dyn(data, offset, sizes.is_large_blob())?,
-            param_list: read_le_at_dyn(data, offset, sizes.is_large(TableId::Param))?,
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use crate::metadata::tables::{MetadataTable, TableInfo};
-
-    use super::*;
-
-    #[test]
-    fn crafted_short() {
-        let data = vec![
-            0x01, 0x01, 0x01, 0x01, // rva
-            0x02, 0x02, // impl_flags
-            0x03, 0x03, // flags
-            0x04, 0x04, // name
-            0x05, 0x05, // signature
-            0x06, 0x06, // param_list
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[(TableId::MethodDef, 1)],
-            false,
-            false,
-            false,
-        ));
-        let table = MetadataTable::<MethodDefRaw>::new(&data, 1, sizes).unwrap();
-
-        let eval = |row: MethodDefRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x06000001);
-            assert_eq!(row.rva, 0x01010101);
-            assert_eq!(row.impl_flags, 0x0202);
-            assert_eq!(row.flags, 0x0303);
-            assert_eq!(row.name, 0x0404);
-            assert_eq!(row.signature, 0x0505);
-            assert_eq!(row.param_list, 0x0606);
-        };
-
-        {
-            for row in table.iter() {
-                eval(row);
-            }
-        }
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
-    }
-
-    #[test]
-    fn crafted_long() {
-        let data = vec![
-            0x01, 0x01, 0x01, 0x01, // rva
-            0x02, 0x02, // impl_flags
-            0x03, 0x03, // flags
-            0x04, 0x04, 0x04, 0x04, // name
-            0x05, 0x05, 0x05, 0x05, // signature
-            0x06, 0x06, 0x06, 0x06, // param_list
-        ];
-
-        let sizes = Arc::new(TableInfo::new_test(
-            &[(TableId::Param, u16::MAX as u32 + 2)],
-            true,
-            true,
-            true,
-        ));
-        let table = MetadataTable::<MethodDefRaw>::new(&data, u16::MAX as u32 + 2, sizes).unwrap();
-
-        let eval = |row: MethodDefRaw| {
-            assert_eq!(row.rid, 1);
-            assert_eq!(row.token.value(), 0x06000001);
-            assert_eq!(row.rva, 0x01010101);
-            assert_eq!(row.impl_flags, 0x0202);
-            assert_eq!(row.flags, 0x0303);
-            assert_eq!(row.name, 0x04040404);
-            assert_eq!(row.signature, 0x05050505);
-            assert_eq!(row.param_list, 0x06060606);
-        };
-
-        {
-            let row = table.get(1).unwrap();
-            eval(row);
-        }
     }
 }

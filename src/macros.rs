@@ -18,8 +18,8 @@
 //! # Key Components
 //!
 //! - `lock!` - Acquire a mutex lock with panic on failure
-//! - `read_lock!` - Acquire a read lock on an RwLock with panic on failure
-//! - `write_lock!` - Acquire a write lock on an RwLock with panic on failure
+//! - `read_lock!` - Acquire a read lock on an `RwLock` with panic on failure
+//! - `write_lock!` - Acquire a write lock on an `RwLock` with panic on failure
 //! - `with_read!` - Execute a closure with a read lock
 //! - `with_write!` - Execute a closure with a write lock
 //! - `map_get_read!` - Get an item from a map and acquire a read lock
@@ -69,6 +69,8 @@
 //! The macros themselves do not impose additional thread safety requirements beyond
 //! the underlying synchronization primitives. All operations preserve the thread safety
 //! guarantees of the wrapped [`std::sync::Mutex`] and [`std::sync::RwLock`] types.
+//! All macros are thread-safe as they operate on already thread-safe synchronization
+//! primitives and do not introduce additional shared state.
 //!
 //! # Integration
 //!

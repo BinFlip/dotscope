@@ -1,6 +1,6 @@
-//! AssemblyRef Hash module.
+//! `AssemblyRef` Hash module.
 //!
-//! This module provides cryptographic hash support for AssemblyRef metadata table entries in
+//! This module provides cryptographic hash support for `AssemblyRef` metadata table entries in
 //! .NET assemblies. The [`crate::metadata::tables::assemblyref::assemblyrefhash::AssemblyRefHash`]
 //! struct encapsulates hash values used for assembly identity verification, supporting both MD5
 //! and SHA1 hash algorithms as specified in ECMA-335.
@@ -18,7 +18,7 @@
 //!
 //! # Assembly Reference Hashing
 //!
-//! AssemblyRef hash values serve as cryptographic fingerprints for referenced assemblies, enabling:
+//! `AssemblyRef` hash values serve as cryptographic fingerprints for referenced assemblies, enabling:
 //! - **Assembly Identity Verification**: Confirming referenced assemblies match expected versions
 //! - **Integrity Checking**: Detecting assembly tampering or corruption
 //! - **Version Binding**: Ensuring strong name references resolve to correct assemblies
@@ -51,13 +51,13 @@
 //! # Integration
 //!
 //! This module integrates with:
-//! - [`crate::metadata::tables::assemblyref`] - AssemblyRef table entries that reference hash data
+//! - [`crate::metadata::tables::assemblyref`] - `AssemblyRef` table entries that reference hash data
 //! - [`crate::metadata::streams::Blob`] - Blob heap storage for hash data
 //! - [`crate::metadata::tables::assembly`] - Hash algorithm identifiers
 //!
 //! # References
 //!
-//! - [ECMA-335 II.23.1.16](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - AssemblyRef table specification
+//! - [ECMA-335 II.23.1.16](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyRef` table specification
 //! - [RFC 1321](https://tools.ietf.org/html/rfc1321) - MD5 Message-Digest Algorithm (deprecated)
 //! - [RFC 3174](https://tools.ietf.org/html/rfc3174) - SHA-1 Hash Function (deprecated)
 
@@ -82,12 +82,12 @@ use std::fmt::Write;
 fn bytes_to_hex(bytes: &[u8]) -> String {
     let mut hex_string = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
-        write!(&mut hex_string, "{:02x}", byte).unwrap();
+        write!(&mut hex_string, "{byte:02x}").unwrap();
     }
     hex_string
 }
 
-/// Cryptographic hash for AssemblyRef metadata table entries
+/// Cryptographic hash for `AssemblyRef` metadata table entries
 ///
 /// Encapsulates hash values used for assembly identity verification and integrity checking
 /// in .NET assembly references. Supports MD5 (16 bytes) and SHA1 (20 bytes) hash algorithms
@@ -117,7 +117,7 @@ pub struct AssemblyRefHash {
 impl AssemblyRefHash {
     /// Create a new `AssemblyRefHash` from hash data bytes
     ///
-    /// Constructs an AssemblyRefHash instance from raw hash bytes, typically obtained
+    /// Constructs an `AssemblyRefHash` instance from raw hash bytes, typically obtained
     /// from the metadata blob heap. The hash algorithm is inferred from the data length.
     ///
     /// # Arguments
@@ -128,7 +128,7 @@ impl AssemblyRefHash {
     /// * `Err(Error)` - If input data is empty (invalid per ECMA-335)
     ///
     /// # Errors
-    /// Returns [`crate::Error`] if the input data is empty, as AssemblyRef hash entries
+    /// Returns [`crate::Error`] if the input data is empty, as `AssemblyRef` hash entries
     /// are required to contain actual hash data per ECMA-335 specification.
     pub fn new(data: &[u8]) -> Result<AssemblyRefHash> {
         if data.is_empty() {
@@ -191,7 +191,7 @@ impl AssemblyRefHash {
             _ => "Unknown",
         };
 
-        format!("{}: {}", algorithm, hex)
+        format!("{algorithm}: {hex}")
     }
 
     /// Verify if this hash matches input data using MD5 algorithm

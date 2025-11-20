@@ -64,7 +64,7 @@ pub struct Param {
     /// Parameter attributes bitmask according to ECMA-335 §II.23.1.13.
     ///
     /// Defines parameter characteristics including direction (in/out), optional status,
-    /// default values, and marshalling information. See [`ParamAttributes`](crate::metadata::tables::ParamAttributes)
+    /// default values, and marshalling information. See [`crate::metadata::tables::ParamAttributes`]
     /// for available flags.
     pub flags: u32,
 
@@ -81,15 +81,15 @@ pub struct Param {
     /// May be None for compiler-generated or unnamed parameters.
     pub name: Option<String>,
 
-    /// Default value for this parameter when HAS_DEFAULT flag is set.
+    /// Default value for this parameter when `HAS_DEFAULT` flag is set.
     ///
     /// Thread-safe lazy initialization of default values from the Constant table.
     /// Only populated when [`ParamAttributes::HAS_DEFAULT`](crate::metadata::tables::ParamAttributes::HAS_DEFAULT) is set.
     pub default: OnceLock<CilPrimitive>,
 
-    /// Marshalling information for P/Invoke when HAS_FIELD_MARSHAL flag is set.
+    /// Marshalling information for P/Invoke when `HAS_FIELD_MARSHAL` flag is set.
     ///
-    /// Thread-safe lazy initialization of marshalling information from the FieldMarshal table.
+    /// Thread-safe lazy initialization of marshalling information from the `FieldMarshal` table.
     /// Only populated when [`ParamAttributes::HAS_FIELD_MARSHAL`](crate::metadata::tables::ParamAttributes::HAS_FIELD_MARSHAL) is set.
     pub marshal: OnceLock<MarshallingInfo>,
 
@@ -169,20 +169,20 @@ impl Param {
         self.is_by_ref.store(signature.by_ref, Ordering::Relaxed);
 
         for modifier in &signature.modifiers {
-            match types.get(modifier) {
+            match types.get(&modifier.modifier_type) {
                 Some(new_mod) => {
                     self.modifiers.push(new_mod.into());
                 }
                 None => {
                     return Err(malformed_error!(
                         "Failed to resolve modifier type - {}",
-                        modifier.value()
+                        modifier.modifier_type.value()
                     ))
                 }
             }
         }
 
-        let mut resolver = TypeResolver::new(types);
+        let mut resolver = TypeResolver::new(types).with_parent(self.token);
         let resolved_type = resolver.resolve(&signature.base)?;
 
         // Handle the case where multiple methods share the same parameter

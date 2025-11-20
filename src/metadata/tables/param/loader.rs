@@ -68,7 +68,7 @@ impl MetadataLoader for ParamLoader {
     /// Uses parallel iteration and concurrent storage operations for thread safety.
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let (Some(header), Some(strings)) = (context.meta, context.strings) {
-            if let Some(table) = header.table::<ParamRaw>(TableId::Param) {
+            if let Some(table) = header.table::<ParamRaw>() {
                 table.par_iter().try_for_each(|row| {
                     let res = row.to_owned(strings)?;
 
@@ -85,8 +85,8 @@ impl MetadataLoader for ParamLoader {
     ///
     /// ## Returns
     /// [`crate::metadata::tables::TableId::Param`] (0x08)
-    fn table_id(&self) -> TableId {
-        TableId::Param
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::Param)
     }
 
     /// Returns the table dependencies for Param loading.

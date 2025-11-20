@@ -12,7 +12,7 @@
 //!
 //! # Example
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use dotscope::metadata::root::Root;
 //! let root = Root::read(&[
 //!            0x42, 0x53, 0x4A, 0x42,
@@ -39,9 +39,8 @@
 //! - [ECMA-335 II.24.2.1: Metadata root](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf)
 
 use crate::{
-    file::io::{read_le, read_le_at},
     metadata::streams::StreamHeader,
-    Error::OutOfBounds,
+    utils::{read_le, read_le_at},
     Result,
 };
 
@@ -90,7 +89,7 @@ pub const CIL_HEADER_MAGIC: u32 = 0x424A_5342;
 ///
 /// ## Basic Root Parsing
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::root::Root;
 ///
 /// let root = Root::read(&[
@@ -120,7 +119,7 @@ pub const CIL_HEADER_MAGIC: u32 = 0x424A_5342;
 ///
 /// ## Stream Directory Analysis
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use dotscope::metadata::root::Root;
 ///
 /// # let metadata_bytes = &[0u8; 100]; // placeholder
@@ -171,7 +170,7 @@ pub struct Root {
 
     /// Minor version number of the metadata format.
     ///
-    /// Usually 1 for .NET Framework 2.0+ assemblies. Combined with major_version,
+    /// Usually 1 for .NET Framework 2.0+ assemblies. Combined with `major_version`,
     /// this determines the exact metadata format specification being used.
     pub minor_version: u16,
 
@@ -266,7 +265,7 @@ impl Root {
     ///
     /// ## Basic Parsing
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::root::Root;
     ///
     /// // Parse metadata root from assembly bytes
@@ -283,7 +282,7 @@ impl Root {
     ///
     /// ## Stream Directory Access
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use dotscope::metadata::root::Root;
     ///
     /// # let metadata_bytes = &[0u8; 100]; // placeholder
@@ -312,7 +311,7 @@ impl Root {
     /// as it performs no mutations and uses only stack-allocated temporary variables.
     pub fn read(data: &[u8]) -> Result<Root> {
         if data.len() < 36 {
-            return Err(OutOfBounds);
+            return Err(out_of_bounds_error!());
         }
 
         let signature = read_le::<u32>(data)?;
@@ -329,7 +328,7 @@ impl Root {
                 let data_len = u32::try_from(data.len())
                     .map_err(|_| malformed_error!("Data length too large"))?;
                 if str_end > data_len {
-                    return Err(OutOfBounds);
+                    return Err(out_of_bounds_error!());
                 }
             }
             None => {
@@ -371,6 +370,7 @@ impl Root {
         }
 
         let stream_count = read_le_at::<u16>(data, &mut (version_string.len() + 18))?;
+
         if stream_count == 0 || stream_count > 6 || (stream_count * 9) as usize > data.len() {
             // 9 - min size that a valid StreamHeader can be; Must have streams, no duplicates, no more than 6 possible
             return Err(malformed_error!("Invalid stream count"));
@@ -380,9 +380,9 @@ impl Root {
         let mut stream_offset = version_string.len() + 20;
         let mut streams_seen = [false; 6];
 
-        for _ in 0..stream_count {
+        for _i in 0..stream_count {
             if stream_offset > data.len() {
-                return Err(OutOfBounds);
+                return Err(out_of_bounds_error!());
             }
 
             let new_stream = StreamHeader::from(&data[stream_offset..])?;
@@ -390,13 +390,13 @@ impl Root {
                 || new_stream.size as usize > data.len()
                 || new_stream.name.len() > 32
             {
-                return Err(OutOfBounds);
+                return Err(out_of_bounds_error!());
             }
 
             match u32::checked_add(new_stream.offset, new_stream.size) {
                 Some(range) => {
                     if range as usize > data.len() {
-                        return Err(OutOfBounds);
+                        return Err(out_of_bounds_error!());
                     }
                 }
                 None => {

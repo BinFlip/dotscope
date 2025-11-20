@@ -2,7 +2,7 @@
 extern crate dotscope;
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use dotscope::metadata::cilobject::CilObject;
+use dotscope::{metadata::cilobject::CilObject, ValidationConfig};
 use std::path::{Path, PathBuf};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
@@ -12,9 +12,16 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     //        .build_global()
     //        .unwrap();
 
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/mono_4.8/mscorlib.dll");
     c.bench_function("bench_cilobject", |b| {
         b.iter({ || CilObject::from_file(&path).unwrap() });
+    });
+
+    c.bench_function("bench_cilobject_validation", |b| {
+        b.iter({
+            || CilObject::from_file_with_validation(&path, ValidationConfig::strict()).unwrap()
+        });
     });
 }
 

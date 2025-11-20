@@ -1,4 +1,4 @@
-//! Owned FieldRva structures for the FieldRva metadata table.
+//! Owned `FieldRva` structures for the `FieldRva` metadata table.
 //!
 //! This module provides the [`FieldRva`] struct which represents field RVA
 //! definitions with resolved references and owned data. Field RVAs specify
@@ -6,7 +6,7 @@
 //! the PE file.
 //!
 //! # Purpose
-//! The FieldRva table enables static field initialization and data embedding:
+//! The `FieldRva` table enables static field initialization and data embedding:
 //! - **Static field initialization**: Pre-computed initial values for static fields
 //! - **Constant data**: Read-only data embedded directly in the PE file
 //! - **Global variables**: Module-level data with specific initial states
@@ -21,7 +21,7 @@
 //! - **Type-safe access**: Field type determines data interpretation
 //!
 //! # ECMA-335 Reference
-//! See ECMA-335, Partition II, §22.19 for the FieldRva table specification.
+//! See ECMA-335, Partition II, §22.19 for the `FieldRva` table specification.
 
 use crate::{
     metadata::{tables::FieldRc, token::Token},
@@ -59,20 +59,20 @@ use crate::{
 /// - **Relocation handling**: RVAs adjusted during PE loading
 ///
 /// # ECMA-335 Reference
-/// See ECMA-335, Partition II, §22.19 for the complete FieldRva table specification.
+/// See ECMA-335, Partition II, §22.19 for the complete `FieldRva` table specification.
 pub struct FieldRva {
-    /// The row identifier in the FieldRva table.
+    /// The row identifier in the `FieldRva` table.
     ///
-    /// This 1-based index uniquely identifies this field RVA within the FieldRva table.
+    /// This 1-based index uniquely identifies this field RVA within the `FieldRva` table.
     /// Combined with the table type, it forms the RVA entry's unique identity.
     pub rid: u32,
 
     /// The metadata token for this field RVA.
     ///
-    /// A [`Token`] that uniquely identifies this field RVA across the entire assembly.
-    /// The token encodes both the table type (FieldRva) and the row ID.
+    /// A [`crate::metadata::token::Token`] that uniquely identifies this field RVA across the entire assembly.
+    /// The token encodes both the table type (`FieldRva`) and the row ID.
     ///
-    /// [`Token`]: crate::metadata::token::Token
+    /// [`crate::metadata::token::Token`]: crate::metadata::token::Token
     pub token: Token,
 
     /// The byte offset of this field RVA in the metadata tables stream.

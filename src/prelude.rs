@@ -80,6 +80,41 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
+//! ## CIL Instruction Assembly
+//!
+//! ```rust,no_run
+//! use dotscope::prelude::*;
+//!
+//! // High-level fluent API for common instruction patterns
+//! let mut assembler = InstructionAssembler::new();
+//! assembler
+//!     .ldarg_0()?      // Load first argument
+//!     .ldarg_1()?      // Load second argument  
+//!     .add()?          // Add them
+//!     .ret()?;         // Return result
+//! let bytecode = assembler.finish()?;
+//!
+//! // Low-level encoder for any CIL instruction  
+//! let mut encoder = InstructionEncoder::new();
+//! encoder.emit_instruction("ldarg.0", None)?;
+//! encoder.emit_instruction("ldc.i4.s", Some(Operand::Immediate(Immediate::Int8(42))))?;
+//! encoder.emit_instruction("ret", None)?;
+//! let bytecode2 = encoder.finalize()?;
+//!
+//! // Label resolution and control flow
+//! let mut asm = InstructionAssembler::new();
+//! asm.ldarg_0()?
+//!    .brfalse_s("false_case")?
+//!    .ldc_i4_1()?
+//!    .br_s("end")?
+//!    .label("false_case")?
+//!    .ldc_i4_0()?
+//!    .label("end")?
+//!    .ret()?;
+//! let conditional_bytecode = asm.finish()?;
+//! # Ok::<(), dotscope::Error>(())
+//! ```
+//!
 //! ## Metadata Table Access
 //!
 //! ```rust,no_run
@@ -98,7 +133,7 @@
 //! // Token-based navigation
 //! let typedef_token = Token::new(0x02000001);
 //! if let Some(tables) = assembly.tables() {
-//!     if let Some(typedef_table) = tables.table::<TypeDefRaw>(TableId::TypeDef) {
+//!     if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
 //!         let row_index = typedef_token.row();
 //!         if let Some(typedef) = typedef_table.get(row_index) {
 //!             println!("Type name index: {}", typedef.type_name);
@@ -108,13 +143,6 @@
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
-//! # Integration
-//!
-//! The prelude integrates components from across the dotscope ecosystem:
-//! - [`crate::metadata`] - Core metadata parsing and representation
-//! - [`crate::disassembler`] - CIL instruction analysis and control flow
-//! - [`crate::File`] - Low-level PE file parsing and memory management
-//! - [`crate::Error`] - Comprehensive error handling and reporting
 //!
 //! # Import Organization
 //!
@@ -185,6 +213,13 @@ pub use crate::ValidationConfig;
 /// for most dotscope applications.
 pub use crate::CilObject;
 
+/// Raw assembly view for editing and modification operations.
+///
+/// `CilAssemblyView` provides direct access to .NET assembly metadata structures
+/// while maintaining a 1:1 mapping with the underlying file format. Designed as
+/// the foundation for future editing and modification capabilities.
+pub use crate::metadata::cilassemblyview::CilAssemblyView;
+
 /// Low-level file parsing utilities.
 ///
 /// `File` and `Parser` provide direct access to raw PE file structure and metadata
@@ -235,7 +270,7 @@ pub use crate::metadata::imports::ImportType;
 pub use crate::metadata::typesystem::{
     CilFlavor, CilModifier, CilPrimitive, CilPrimitiveData, CilPrimitiveKind, CilType, CilTypeList,
     CilTypeRc, CilTypeRef, CilTypeRefList, CilTypeReference, TypeRegistry, TypeResolver,
-    TypeSource,
+    TypeSignatureEncoder, TypeSource,
 };
 
 // ================================================================================================
@@ -310,6 +345,16 @@ pub use crate::metadata::tables::{
     CustomAttribute, CustomAttributeList, CustomAttributeRc, DeclSecurity, DeclSecurityRc,
 };
 
+/// .NET Code Access Security (CAS) implementation.
+///
+/// Complete support for parsing and representing .NET Code Access Security permissions,
+/// permission sets, and security actions. Essential for analyzing legacy .NET Framework
+/// assemblies that use declarative security attributes and CAS policies.
+pub use crate::metadata::security::{
+    ArgumentType, ArgumentValue, NamedArgument, Permission, PermissionSet, PermissionSetFormat,
+    Security, SecurityAction, SecurityPermissionFlags,
+};
+
 /// Files and resources.
 ///
 /// File references and manifest resources embedded in or referenced by the assembly.
@@ -322,6 +367,63 @@ pub use crate::metadata::tables::{
 ///
 /// Independent signature definitions used for indirect calls and marshalling scenarios.
 pub use crate::metadata::tables::{StandAloneSig, StandAloneSigRc};
+
+// ================================================================================================
+// Portable PDB Debug Information Tables
+// ================================================================================================
+//
+// This section provides access to Portable PDB format debug information tables. These tables
+// enable rich debugging experiences with source line mapping, local variable information,
+// scope tracking, and custom debug data. Essential for debugger integration and development
+// tool support.
+
+/// Document and source file information.
+///
+/// Document table entries provide information about source files referenced in debug information,
+/// including file names, language identifiers, hash algorithms, and source content.
+pub use crate::metadata::tables::{Document, DocumentRc};
+
+/// Method debugging information.
+///
+/// Links methods to their sequence points for source code mapping and debugging.
+/// Essential for providing line-by-line debugging and source code visualization.
+pub use crate::metadata::tables::{MethodDebugInformation, MethodDebugInformationRc};
+
+/// Local variable and constant scope tracking.
+///
+/// `LocalScope` defines the IL instruction ranges where local variables and constants are active.
+/// Critical for proper variable visibility and lifetime tracking during debugging.
+pub use crate::metadata::tables::{LocalScope, LocalScopeRc, LocalScopeRef};
+
+/// Local variable debug information.
+///
+/// Provides names, signatures, and debugging attributes for local variables within methods.
+/// Enables debuggers to display meaningful variable information during execution.
+pub use crate::metadata::tables::{LocalVariable, LocalVariableRc};
+
+/// Local constant debug information.
+///
+/// Contains information about local constants including names, signatures, and values.
+/// Allows debuggers to display constant values and provide comprehensive local state information.
+pub use crate::metadata::tables::{LocalConstant, LocalConstantRc};
+
+/// Namespace import scope information.
+///
+/// Tracks namespace imports (using statements) and their active ranges for proper name resolution
+/// during debugging and `IntelliSense` operations.
+pub use crate::metadata::tables::{ImportScope, ImportScopeRc};
+
+/// State machine method mappings.
+///
+/// Links compiler-generated state machine methods (async/await, iterators) back to their original
+/// user-written methods for seamless debugging experiences.
+pub use crate::metadata::tables::{StateMachineMethod, StateMachineMethodRc};
+
+/// Custom debugging information.
+///
+/// Extensible debug information that can be defined by compilers or tools for specialized
+/// debugging scenarios beyond the standard Portable PDB format.
+pub use crate::metadata::tables::{CustomDebugInformation, CustomDebugInformationRc};
 
 // ================================================================================================
 // Raw Metadata Table Types
@@ -422,38 +524,50 @@ pub use crate::metadata::method::{
 };
 
 // ================================================================================================
-// Disassembler
+// Assembly - CIL Instruction Processing
 // ================================================================================================
 //
-// This section provides CIL (Common Intermediate Language) disassembly capabilities.
-// The disassembler can parse method bodies into individual instructions, analyze control
+// This section provides CIL (Common Intermediate Language) instruction processing capabilities.
+// The assembly module can parse method bodies into individual instructions, analyze control
 // flow, and provide detailed instruction-level analysis for reverse engineering and
-// program analysis scenarios.
+// program analysis scenarios, as well as assemble instructions back into bytecode.
 
-/// CIL instruction disassembly and analysis.
+/// CIL instruction analysis, disassembly, and assembly.
 ///
-/// Complete disassembly toolkit for converting CIL bytecode into structured instruction
-/// representations, analyzing control flow, and understanding program behavior at the IL level.
-pub use crate::disassembler::{
+/// Complete toolkit for CIL instruction processing, including disassembly of bytecode into
+/// structured representations, control flow analysis, and assembly of instructions back to bytecode.
+/// The assembly system provides both high-level fluent APIs and low-level encoding capabilities.
+pub use crate::assembly::{
     decode_blocks, decode_instruction, decode_stream, BasicBlock, FlowType, Immediate, Instruction,
-    InstructionCategory, Operand, OperandType, StackBehavior,
+    InstructionAssembler, InstructionCategory, InstructionEncoder, LabelFixup, Operand,
+    OperandType, StackBehavior,
 };
 
 // ================================================================================================
 // Import/Export Analysis
 // ================================================================================================
 //
-// This section provides analysis of assembly dependencies through import and export
-// tables. These types enable understanding of inter-assembly relationships, dependency
-// analysis, and assembly composition patterns.
+// This section provides analysis of assembly dependencies through both managed (.NET) and
+// native PE import/export tables. These types enable understanding of inter-assembly
+// relationships, dependency analysis, assembly composition patterns, and native DLL dependencies.
+//
+// The unified containers provide a single interface for both CIL and native imports/exports,
+// while individual containers allow focused analysis of specific import/export types.
 
 /// Import and export analysis.
 ///
 /// Tools for analyzing assembly dependencies, exported types, and import relationships
-/// essential for understanding assembly composition and dependency graphs.
+/// essential for understanding assembly composition and dependency graphs. Includes both
+/// managed (.NET) imports/exports and native PE import/export table support.
 pub use crate::metadata::{
-    exports::Exports,
-    imports::{Import, ImportContainer, ImportRc, Imports},
+    exports::{
+        ExportEntry, ExportFunction, ExportSource, ExportTarget, ExportedFunction, Exports,
+        NativeExportRef, NativeExports, UnifiedExportContainer,
+    },
+    imports::{
+        DllDependency, DllSource, Import, ImportContainer, ImportEntry, ImportRc, Imports,
+        NativeImportRef, NativeImports, UnifiedImportContainer,
+    },
 };
 
 // ================================================================================================
@@ -507,6 +621,12 @@ pub use crate::metadata::tables::{
     TypeAttributes,
 };
 
+/// Method and implementation flag constants.
+///
+/// Specialized flag enumerations for method definitions including access modifiers
+/// used with MethodDefBuilder. Other method flags are exported in the method section.
+pub use crate::metadata::method::MethodAccessFlags;
+
 // ================================================================================================
 // Constants and Element Types
 // ================================================================================================
@@ -547,4 +667,107 @@ pub use crate::metadata::tables::TableId;
 /// enabling compact encoding of table relationships and metadata navigation.
 pub use crate::metadata::tables::{
     CodedIndex, CodedIndexType, MetadataTable, TableInfo, TableInfoRef,
+};
+
+// ================================================================================================
+// Metadata Builders
+// ================================================================================================
+//
+// This section provides metadata builder types for creating and modifying .NET assemblies.
+// These builders use a fluent API pattern where the BuilderContext is passed to the build()
+// method, enabling ergonomic creation of multiple metadata entries in sequence.
+//
+// All builders follow the established pattern:
+// - Builder structs do NOT hold references to BuilderContext
+// - Context is passed as a parameter to the build() method
+// - All builders implement Default trait for clippy compliance
+// - Multiple builders can be used in sequence without borrow checker issues
+
+/// Core builder infrastructure.
+///
+/// BuilderContext coordinates metadata creation across all builders, managing heap operations,
+/// table modifications, and cross-reference resolution. CilAssembly provides the mutable assembly
+/// interface required for metadata modification operations. ReferenceHandlingStrategy controls
+/// how references are handled when removing heap entries or table rows.
+pub use crate::{BuilderContext, CilAssembly, ReferenceHandlingStrategy};
+
+/// Assembly validation pipeline components.
+///
+/// Conflict resolvers handle operation conflicts with different strategies (last-write-wins, etc.).
+/// For validation, use the unified ValidationEngine from the metadata::validation module.
+pub use crate::LastWriteWinsResolver;
+
+/// Assembly and module builders.
+///
+/// Create assembly metadata, module definitions, and assembly identity information.
+/// AssemblyBuilder handles version numbers, culture settings, and strong naming.
+pub use crate::metadata::tables::AssemblyBuilder;
+
+/// Type system builders.
+///
+/// Create type definitions, type references, and type specifications. These builders
+/// handle class, interface, value type, and enum creation with proper inheritance
+/// relationships and generic type parameters.
+pub use crate::metadata::tables::{TypeDefBuilder, TypeRefBuilder, TypeSpecBuilder};
+
+/// Member definition builders.
+///
+/// Create field definitions, method definitions, parameter definitions, property
+/// definitions, event definitions, and custom attribute annotations with proper
+/// signatures, attributes, and implementation details. These builders handle all
+/// aspects of type member creation including accessibility, static/instance behavior,
+/// method implementation, parameter information, property encapsulation, event
+/// notification mechanisms, and declarative metadata annotations.
+pub use crate::metadata::tables::{
+    AssemblyRefBuilder, ClassLayoutBuilder, ConstantBuilder, CustomAttributeBuilder,
+    DeclSecurityBuilder, DocumentBuilder, EventBuilder, EventMapBuilder, ExportedTypeBuilder,
+    FieldBuilder, FieldLayoutBuilder, FieldMarshalBuilder, FieldRVABuilder, FileBuilder,
+    GenericParamBuilder, GenericParamConstraintBuilder, ImplMapBuilder, InterfaceImplBuilder,
+    LocalScopeBuilder, LocalVariableBuilder, ManifestResourceBuilder, MemberRefBuilder,
+    MethodDebugInformationBuilder, MethodDefBuilder, MethodImplBuilder, MethodSemanticsBuilder,
+    MethodSpecBuilder, ModuleBuilder, ModuleRefBuilder, NestedClassBuilder, ParamBuilder,
+    PropertyBuilder, PropertyMapBuilder, StandAloneSigBuilder,
+};
+
+/// High-level builders for .NET constructs.
+///
+/// Create complete class, interface, property, event, and method definitions with implementations, signatures, local variables,
+/// exception handlers, and parameter tables. These builders compose the low-level metadata
+/// builders to provide convenient APIs for creating complete .NET types, interfaces, properties, events, and methods with full
+/// implementation details.
+pub use crate::cilassembly::{
+    ClassBuilder, EnumBuilder, EventBuilder as CilEventBuilder, InterfaceBuilder,
+    MethodBodyBuilder, MethodBuilder, PropertyBuilder as CilPropertyBuilder,
+};
+
+/// Native PE import and export builders.
+///
+/// Create native PE import and export tables that integrate with the dotscope builder pattern.
+/// These builders handle native DLL dependencies, function imports by name and ordinal,
+/// export functions, and export forwarders for mixed-mode assemblies and PE files.
+pub use crate::metadata::{exports::NativeExportsBuilder, imports::NativeImportsBuilder};
+
+/// Method semantic relationship constants.
+///
+/// Constants defining the semantic roles methods can play in relation to properties
+/// and events. Used with MethodSemanticsBuilder to specify getter, setter, add, remove,
+/// fire, and other semantic relationships.
+pub use crate::metadata::tables::MethodSemanticsAttributes;
+
+// ================================================================================================
+// PE File Structures
+// ================================================================================================
+//
+// Complete set of owned PE (Portable Executable) file structures for direct manipulation
+// and analysis of Windows executables and .NET assemblies. These structures provide owned
+// representations that don't borrow from the underlying file data, enabling flexible
+// analysis and modification workflows.
+
+/// Complete PE file representation and core structures.
+///
+/// Owned PE file structures including headers, sections, and import/export tables.
+/// These provide direct access to PE file components without borrowing from source data.
+pub use crate::file::pe::{
+    CoffHeader, DataDirectories, DataDirectory, DataDirectoryType, DosHeader, Export as PeExport,
+    Import as PeImport, OptionalHeader, Pe, SectionTable, StandardFields, WindowsFields,
 };

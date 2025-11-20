@@ -179,11 +179,11 @@ fn print_instruction_analysis(assembly: &CilObject) {
                                 // Update instruction statistics
                                 instruction_stats.total_instructions += 1;
                                 match instruction.flow_type {
-                                    dotscope::disassembler::FlowType::ConditionalBranch
-                                    | dotscope::disassembler::FlowType::UnconditionalBranch => {
+                                    dotscope::assembly::FlowType::ConditionalBranch
+                                    | dotscope::assembly::FlowType::UnconditionalBranch => {
                                         instruction_stats.branch_instructions += 1;
                                     }
-                                    dotscope::disassembler::FlowType::Call => {
+                                    dotscope::assembly::FlowType::Call => {
                                         instruction_stats.call_instructions += 1;
                                     }
                                     _ => {}
@@ -206,12 +206,12 @@ fn print_instruction_analysis(assembly: &CilObject) {
                     total_instructions += block.instructions.len();
                 }
 
-                println!("        Basic blocks: {}", block_count);
+                println!("        Basic blocks: {block_count}");
                 if block_count > 3 {
                     println!("        ... ({} more blocks)", block_count - 3);
                 }
 
-                println!("        Total instructions: {}", total_instructions);
+                println!("        Total instructions: {total_instructions}");
 
                 instruction_stats.methods_analyzed += 1;
             }
