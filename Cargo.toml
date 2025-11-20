@@ -23,7 +23,9 @@ widestring = "1.2.1"
 strum = { version = "0.27.2", features = ["derive"]}
 memmap2 = "0.9.9"
 tempfile = "3.23.0"
-goblin = { path = "/Users/john/Development/3_own_public/goblin" }
+#goblin = "0.10.3"
+# Currently a fork of mine, that includes crash fixes which have not yet been merged into master
+goblin = { version = "0.10.3", git= "https://github.com/BinFlip/goblin.git", branch = "mono_resource_padding"}
 ouroboros = "0.18.5"
 sha1 = "0.10.6"
 md-5 = "0.10.6"
