@@ -438,6 +438,9 @@ fn print_dependency_analysis(assembly: &CilObject) {
                     dotscope::metadata::identity::Identity::Token(token) => {
                         println!("       Token: 0x{token:016X}");
                     }
+                    dotscope::metadata::identity::Identity::EcmaKey(key) => {
+                        println!("       EcmaKey: {} bytes", key.len());
+                    }
                 }
             }
 
