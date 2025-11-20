@@ -298,7 +298,7 @@ impl<'a> Parser<'a> {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn advance_by(&mut self, step: usize) -> Result<()> {
-        if self.position + step >= self.data.len() {
+        if self.position + step > self.data.len() {
             return Err(out_of_bounds_error!());
         }
 
@@ -665,12 +665,16 @@ impl<'a> Parser<'a> {
             end += 1;
         }
 
-        if end >= self.data.len() {
-            return Err(out_of_bounds_error!());
-        }
-
+        // Handle two cases:
+        // 1. Found null terminator (end < data.len()): normal null-terminated string
+        // 2. Reached end of data (end == data.len()): string without null terminator (valid case)
         let string_data = &self.data[start..end];
-        self.position = end + 1; // Skip null terminator
+
+        if end < self.data.len() {
+            self.position = end + 1;
+        } else {
+            self.position = end;
+        }
 
         String::from_utf8(string_data.to_vec()).map_err(|_| {
             malformed_error!("Invalid string - {} - {} - {:?}", start, end, string_data)
@@ -719,6 +723,49 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Read a compressed uint length-prefixed UTF-8 string.
+    ///
+    /// The string length is encoded as a compressed unsigned integer according to ECMA-335,
+    /// followed by that many UTF-8 bytes. This format is used for strings in custom attributes,
+    /// security permissions, and other metadata structures that follow ECMA-335 blob format.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or
+    /// [`crate::Error::Malformed`] for invalid UTF-8 encoding.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    ///
+    /// // Length 5 (compressed uint), followed by "Hello"
+    /// let data = [5, b'H', b'e', b'l', b'l', b'o'];
+    /// let mut parser = Parser::new(&data);
+    ///
+    /// let result = parser.read_compressed_string_utf8()?;
+    /// assert_eq!(result, "Hello");
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn read_compressed_string_utf8(&mut self) -> Result<String> {
+        let length = self.read_compressed_uint()? as usize;
+
+        if self.position + length > self.data.len() {
+            return Err(out_of_bounds_error!());
+        }
+
+        let string_data = &self.data[self.position..self.position + length];
+        self.position += length;
+
+        String::from_utf8(string_data.to_vec()).map_err(|_| {
+            malformed_error!(
+                "Invalid compressed string - {} - {} - {:?}",
+                self.position,
+                self.position + length,
+                string_data
+            )
+        })
+    }
+
     /// Read a length-prefixed UTF-16 string.
     ///
     /// The string length is encoded as a 7-bit encoded integer (in bytes), followed by
@@ -748,7 +795,7 @@ impl<'a> Parser<'a> {
             return Err(out_of_bounds_error!());
         }
 
-        if length % 2 != 0 || length < 2 {
+        if !length.is_multiple_of(2) || length < 2 {
             return Err(malformed_error!("Invalid UTF-16 length - {}", length));
         }
 
