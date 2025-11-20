@@ -12,8 +12,9 @@ use crate::{
     metadata::{
         loader::{LoaderContext, MetadataLoader},
         tables::{TableId, TypeDefRaw},
+        typesystem::CilTypeReference,
     },
-    Result,
+    Error, Result,
 };
 
 /// Comprehensive inheritance resolver that runs after all type tables are loaded.
@@ -46,10 +47,25 @@ impl MetadataLoader for InheritanceResolver {
                         }
 
                         if let Some(type_def) = context.types.get(&raw_typedef.token) {
-                            if let Some(base_type_ref) = raw_typedef
-                                .resolve_base_type(|coded_index| context.get_ref(coded_index))
-                            {
-                                let _ = type_def.set_base(&base_type_ref);
+                                match context.get_ref(&raw_typedef.extends) {
+                                    CilTypeReference::TypeDef(type_ref)
+                                    | CilTypeReference::TypeRef(type_ref)
+                                    | CilTypeReference::TypeSpec(type_ref) => {
+                                        let base_type_ref = type_ref.upgrade().ok_or_else(|| {
+                                            Error::Error(format!(
+                                                "InheritanceResolver: Type reference was dropped for type {}",
+                                                type_def.fullname()
+                                            ))
+                                        })?;
+
+                                        let base_fullname = base_type_ref.fullname();
+                                        if let Some(canonical_base_type) = context.types.resolve_type_global(&base_fullname) {
+                                            type_def.set_base(&canonical_base_type.into())?;
+                                        } else {
+                                            type_def.set_base(&base_type_ref.into())?;
+                                        }
+                                    }
+                                    _ => {} // Other types not supported
                             }
 
                             // Note: Failed resolution is not an error - some TypeSpec references
@@ -73,6 +89,11 @@ impl MetadataLoader for InheritanceResolver {
     /// This resolver must run after all type-related tables are loaded to ensure
     /// all type references can be properly resolved.
     fn dependencies(&self) -> &'static [TableId] {
-        &[TableId::TypeDef, TableId::TypeRef, TableId::TypeSpec]
+        &[
+            TableId::TypeDef,
+            TableId::TypeRef,
+            TableId::TypeSpec,
+            TableId::InterfaceImpl,
+        ]
     }
 }

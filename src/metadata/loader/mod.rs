@@ -141,7 +141,7 @@ static LOADERS: [&'static dyn MetadataLoader; 54] = [
     &inheritance::InheritanceResolver,
 ];
 
-use crate::{metadata::tables::TableId, Result};
+use crate::{metadata::tables::TableId, project::ProjectContext, Error, Result};
 use rayon::prelude::*;
 use std::sync::LazyLock;
 
@@ -509,11 +509,50 @@ fn build_dependency_graph(
 ///
 /// The function automatically manages CPU resources through rayon's thread pool and
 /// ensures proper cleanup if any loader fails during execution.
-pub(crate) fn execute_loaders_in_parallel(context: &LoaderContext) -> Result<()> {
+pub(crate) fn execute_loaders_in_parallel(
+    context: &LoaderContext,
+    project_context: Option<&ProjectContext>,
+) -> Result<()> {
     // Access pre-computed execution levels (computed once per process)
     let levels = &*EXECUTION_LEVELS;
 
-    for level in levels {
+    for (level_index, level) in levels.iter().enumerate() {
+        if level_index == 4 {
+            if let Some(proj_ctx) = project_context {
+                proj_ctx.wait_stage2()?;
+
+                context.types.build_fullnames();
+
+                // Redirect TypeRefs to their canonical TypeDefs from external assemblies
+                for entry in context.types.iter() {
+                    let type_rc = entry.value();
+                    if !type_rc.is_typeref() {
+                        continue;
+                    }
+
+                    if let Some(canonical_typedef) =
+                        context.types.resolve_type_global(&type_rc.fullname())
+                    {
+                        if !context
+                            .types
+                            .redirect_typeref_to_typedef(type_rc.token, &canonical_typedef)
+                        {
+                            return Err(Error::Error(format!(
+                                "Failed to redirect TypeRef {}",
+                                &type_rc.fullname()
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
+        if level_index == 7 {
+            if let Some(proj_ctx) = project_context {
+                proj_ctx.wait_stage3()?;
+            }
+        }
+
         let results: Vec<Result<()>> = level
             .par_iter()
             .map(|loader| loader.load(context))
