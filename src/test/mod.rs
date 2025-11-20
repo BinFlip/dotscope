@@ -79,14 +79,16 @@
 //! - Generic type definitions
 
 pub mod builders;
+mod crafted2;
 pub mod factories;
-mod helpers;
+pub mod helpers;
 pub mod mono;
 mod scenarios;
 mod validator;
 mod windowsbase;
 
 pub use builders::*;
+pub use crafted2::*;
 pub use helpers::*;
 pub use validator::*;
 pub use windowsbase::*;

@@ -6,7 +6,7 @@
 use crate::{
     cilassembly::{BuilderContext, CilAssembly},
     metadata::{cilassemblyview::CilAssemblyView, validation::ValidationConfig},
-    test::{get_clean_testfile, TestAssembly},
+    test::{get_testfile_wb, TestAssembly},
     Error, Result,
 };
 use tempfile::NamedTempFile;
@@ -20,7 +20,7 @@ use tempfile::NamedTempFile;
 pub fn raw_heap_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
-    let Some(clean_testfile) = get_clean_testfile() else {
+    let Some(clean_testfile) = get_testfile_wb() else {
         return Err(Error::Error(
             "WindowsBase.dll not available - test cannot run".to_string(),
         ));
@@ -94,7 +94,7 @@ pub fn raw_heap_validator_file_factory() -> Result<Vec<TestAssembly>> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/heap.rs`
 pub fn create_assembly_with_invalid_utf16_userstring() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
@@ -128,7 +128,7 @@ pub fn create_assembly_with_invalid_utf16_userstring() -> Result<NamedTempFile> 
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/heap.rs`
 pub fn create_assembly_with_invalid_guid_alignment() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
@@ -160,7 +160,7 @@ pub fn create_assembly_with_invalid_guid_alignment() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/heap.rs`
 pub fn create_assembly_with_valid_guid_content() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
@@ -192,7 +192,7 @@ pub fn create_assembly_with_valid_guid_content() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/heap.rs`
 pub fn create_assembly_with_unaligned_userstring_heap() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
@@ -217,7 +217,7 @@ pub fn create_assembly_with_unaligned_userstring_heap() -> Result<NamedTempFile>
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/heap.rs`
 pub fn create_assembly_with_oversized_individual_userstring() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
@@ -237,7 +237,7 @@ pub fn create_assembly_with_oversized_individual_userstring() -> Result<NamedTem
     ]);
 
     // Pad to 4-byte alignment
-    while userstring_heap.len() % 4 != 0 {
+    while !userstring_heap.len().is_multiple_of(4) {
         userstring_heap.push(0);
     }
 

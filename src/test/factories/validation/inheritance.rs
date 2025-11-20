@@ -12,7 +12,7 @@ use crate::{
         },
         validation::ValidationConfig,
     },
-    test::{get_clean_testfile, TestAssembly},
+    test::{get_testfile_crafted2, TestAssembly},
     Error, Result,
 };
 use tempfile::NamedTempFile;
@@ -41,8 +41,8 @@ use tempfile::NamedTempFile;
 pub fn owned_inheritance_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
-    let Some(clean_testfile) = get_clean_testfile() else {
-        return Err(Error::Error("WindowsBase.dll not available".to_string()));
+    let Some(clean_testfile) = get_testfile_crafted2() else {
+        return Err(Error::Error("crafted_2.exe not available".to_string()));
     };
 
     assemblies.push(TestAssembly::new(&clean_testfile, true));
@@ -136,8 +136,8 @@ pub fn owned_inheritance_validator_file_factory() -> Result<Vec<TestAssembly>> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/inheritance.rs`
 pub fn create_assembly_with_circular_inheritance() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
-        .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+    let clean_testfile = get_testfile_crafted2()
+        .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -179,8 +179,8 @@ pub fn create_assembly_with_circular_inheritance() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/inheritance.rs`
 pub fn create_assembly_with_sealed_type_inheritance() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
-        .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+    let clean_testfile = get_testfile_crafted2()
+        .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -219,8 +219,8 @@ pub fn create_assembly_with_sealed_type_inheritance() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/inheritance.rs`
 pub fn create_assembly_with_interface_inheritance_violation() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
-        .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+    let clean_testfile = get_testfile_crafted2()
+        .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -259,8 +259,8 @@ pub fn create_assembly_with_interface_inheritance_violation() -> Result<NamedTem
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/inheritance.rs`
 pub fn create_assembly_with_accessibility_violation() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
-        .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+    let clean_testfile = get_testfile_crafted2()
+        .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -299,8 +299,8 @@ pub fn create_assembly_with_accessibility_violation() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/inheritance.rs`
 pub fn create_assembly_with_abstract_concrete_violation() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
-        .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+    let clean_testfile = get_testfile_crafted2()
+        .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -328,8 +328,8 @@ pub fn create_assembly_with_abstract_concrete_violation() -> Result<NamedTempFil
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/inheritance.rs`
 pub fn create_assembly_with_method_inheritance_violation() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
-        .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+    let clean_testfile = get_testfile_crafted2()
+        .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);

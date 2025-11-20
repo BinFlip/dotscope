@@ -15,6 +15,7 @@ use crate::{
         },
     },
     prelude::{CilPrimitiveData, CilPrimitiveKind, ParamAttributes},
+    test::{builders::FieldBuilder, factories::metadata::customattributes::get_test_type_registry},
 };
 
 /// Parameter attribute flags for various parameter characteristics
@@ -175,7 +176,11 @@ impl ParamBuilder {
     }
 
     /// Build the Param instance
-    pub fn build(self) -> ParamRc {
+    ///
+    /// # Arguments
+    /// * `type_registry` - Optional TypeRegistry for resolving parameter types.
+    ///   If None, uses a shared default test registry.
+    pub fn build(self, type_registry: Option<&Arc<TypeRegistry>>) -> ParamRc {
         let mut flags = self.flags;
 
         // Set direction flags
@@ -283,45 +288,92 @@ impl ParamBuilder {
 
         // Set parameter type if provided
         if let Some(flavor) = self.type_flavor {
-            // Get or create a global type registry for tests to avoid dropping type references
-            static TEST_TYPE_REGISTRY: std::sync::OnceLock<Arc<TypeRegistry>> =
-                std::sync::OnceLock::new();
-
-            let type_registry = TEST_TYPE_REGISTRY.get_or_init(|| {
-                Arc::new(TypeRegistry::new().expect("Failed to create test type registry"))
-            });
+            // Use provided registry or get the shared test registry for backwards compatibility
+            let registry = type_registry
+                .cloned()
+                .unwrap_or_else(get_test_type_registry);
 
             let param_type = match flavor {
-                CilFlavor::Boolean => type_registry
-                    .get_primitive(CilPrimitiveKind::Boolean)
-                    .unwrap(),
-                CilFlavor::Char => type_registry.get_primitive(CilPrimitiveKind::Char).unwrap(),
-                CilFlavor::I1 => type_registry.get_primitive(CilPrimitiveKind::I1).unwrap(),
-                CilFlavor::U1 => type_registry.get_primitive(CilPrimitiveKind::U1).unwrap(),
-                CilFlavor::I2 => type_registry.get_primitive(CilPrimitiveKind::I2).unwrap(),
-                CilFlavor::U2 => type_registry.get_primitive(CilPrimitiveKind::U2).unwrap(),
-                CilFlavor::I4 => type_registry.get_primitive(CilPrimitiveKind::I4).unwrap(),
-                CilFlavor::U4 => type_registry.get_primitive(CilPrimitiveKind::U4).unwrap(),
-                CilFlavor::I8 => type_registry.get_primitive(CilPrimitiveKind::I8).unwrap(),
-                CilFlavor::U8 => type_registry.get_primitive(CilPrimitiveKind::U8).unwrap(),
-                CilFlavor::R4 => type_registry.get_primitive(CilPrimitiveKind::R4).unwrap(),
-                CilFlavor::R8 => type_registry.get_primitive(CilPrimitiveKind::R8).unwrap(),
-                CilFlavor::I => type_registry.get_primitive(CilPrimitiveKind::I).unwrap(),
-                CilFlavor::U => type_registry.get_primitive(CilPrimitiveKind::U).unwrap(),
-                CilFlavor::String => type_registry
-                    .get_primitive(CilPrimitiveKind::String)
-                    .unwrap(),
-                CilFlavor::Object => type_registry
-                    .get_primitive(CilPrimitiveKind::Object)
-                    .unwrap(),
-                CilFlavor::Void => type_registry.get_primitive(CilPrimitiveKind::Void).unwrap(),
-                other_flavor => type_registry
+                CilFlavor::Boolean => registry.get_primitive(CilPrimitiveKind::Boolean).unwrap(),
+                CilFlavor::Char => registry.get_primitive(CilPrimitiveKind::Char).unwrap(),
+                CilFlavor::I1 => registry.get_primitive(CilPrimitiveKind::I1).unwrap(),
+                CilFlavor::U1 => registry.get_primitive(CilPrimitiveKind::U1).unwrap(),
+                CilFlavor::I2 => registry.get_primitive(CilPrimitiveKind::I2).unwrap(),
+                CilFlavor::U2 => registry.get_primitive(CilPrimitiveKind::U2).unwrap(),
+                CilFlavor::I4 => registry.get_primitive(CilPrimitiveKind::I4).unwrap(),
+                CilFlavor::U4 => registry.get_primitive(CilPrimitiveKind::U4).unwrap(),
+                CilFlavor::I8 => registry.get_primitive(CilPrimitiveKind::I8).unwrap(),
+                CilFlavor::U8 => registry.get_primitive(CilPrimitiveKind::U8).unwrap(),
+                CilFlavor::R4 => registry.get_primitive(CilPrimitiveKind::R4).unwrap(),
+                CilFlavor::R8 => registry.get_primitive(CilPrimitiveKind::R8).unwrap(),
+                CilFlavor::I => registry.get_primitive(CilPrimitiveKind::I).unwrap(),
+                CilFlavor::U => registry.get_primitive(CilPrimitiveKind::U).unwrap(),
+                CilFlavor::String => registry.get_primitive(CilPrimitiveKind::String).unwrap(),
+                CilFlavor::Object => registry.get_primitive(CilPrimitiveKind::Object).unwrap(),
+                CilFlavor::Void => registry.get_primitive(CilPrimitiveKind::Void).unwrap(),
+                CilFlavor::Class => {
+                    // For Class flavor, use System.Type (the most common Class parameter type)
+                    // This is correct because custom attributes typically use System.Type parameters
+                    registry
+                        .get_or_create_type(&CompleteTypeSpec {
+                            token_init: None,
+                            flavor: CilFlavor::Class,
+                            namespace: "System".to_string(),
+                            name: "Type".to_string(),
+                            source: TypeSource::Unknown,
+                            generic_args: None,
+                            base_type: None,
+                        })
+                        .unwrap()
+                }
+                CilFlavor::ValueType => {
+                    // For ValueType flavor in tests, create an enum type
+                    // Use a unique name to avoid conflicts with Class flavor tests
+                    // First get System.Enum as the base type
+                    let enum_base = registry
+                        .get_or_create_type(&CompleteTypeSpec {
+                            token_init: None,
+                            flavor: CilFlavor::Class,
+                            namespace: "System".to_string(),
+                            name: "Enum".to_string(),
+                            source: TypeSource::Unknown,
+                            generic_args: None,
+                            base_type: None,
+                        })
+                        .unwrap();
+
+                    // Get System.Int32 as the underlying type for the value__ field
+                    let int32_type = registry.get_primitive(CilPrimitiveKind::I4).unwrap();
+
+                    // Create test enum type that inherits from System.Enum
+                    // Use TestEnum instead of TestType to avoid collision with Class flavor
+                    let test_enum = registry
+                        .get_or_create_type(&CompleteTypeSpec {
+                            token_init: None,
+                            flavor: CilFlavor::ValueType,
+                            namespace: "System".to_string(),
+                            name: "TestEnum".to_string(),
+                            source: TypeSource::Unknown,
+                            generic_args: None,
+                            base_type: Some(enum_base),
+                        })
+                        .unwrap();
+
+                    // Add required value__ field for enum types (ECMA-335 requirement)
+                    let value_field = FieldBuilder::new("value__", int32_type).build();
+
+                    // Add the value__ field to the enum type
+                    test_enum.fields.push(value_field);
+
+                    test_enum
+                }
+                other_flavor => registry
                     .get_or_create_type(&CompleteTypeSpec {
                         token_init: None,
                         flavor: other_flavor,
                         namespace: "System".to_string(),
                         name: "TestType".to_string(),
-                        source: TypeSource::CurrentModule,
+                        source: TypeSource::Unknown,
                         generic_args: None,
                         base_type: None,
                     })
@@ -382,17 +434,17 @@ impl ParamListBuilder {
     }
 
     /// Build the parameter list
-    pub fn build(self) -> Arc<boxcar::Vec<ParamRc>> {
+    pub fn build(self, type_registry: Option<&Arc<TypeRegistry>>) -> Arc<boxcar::Vec<ParamRc>> {
         let params = Arc::new(boxcar::Vec::new());
 
         // Add return parameter if requested
         if self.include_return_param {
-            params.push(ParamBuilder::return_value().build());
+            params.push(ParamBuilder::return_value().build(type_registry));
         }
 
         // Add all other parameters
         for param_builder in self.params {
-            params.push(param_builder.build());
+            params.push(param_builder.build(type_registry));
         }
 
         params
