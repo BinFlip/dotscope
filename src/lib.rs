@@ -446,6 +446,61 @@ pub mod assembly;
 /// All metadata types are [`std::marker::Send`] and [`std::marker::Sync`] for safe concurrent access.
 pub mod metadata;
 
+/// Multi-assembly project management and loading.
+///
+/// The `project` module provides the [`crate::project::CilProject`] container for managing
+/// collections of related .NET assemblies with automatic dependency resolution and
+/// cross-assembly analysis capabilities. It includes both legacy APIs and the new
+/// [`crate::project::ProjectLoader`] builder-style API.
+///
+/// # Key Components
+///
+/// - [`crate::project::CilProject`] - Main multi-assembly container
+/// - [`crate::project::ProjectLoader`] - Builder-style loading API with flexible configuration
+/// - [`crate::project::ProjectResult`] - Unified result type with loading statistics
+/// - [`crate::project::ProjectContext`] - Internal coordination for parallel loading
+///
+/// # Examples
+///
+/// ## New ProjectLoader API (Recommended)
+///
+/// ```rust,ignore
+/// use dotscope::project::ProjectLoader;
+///
+/// // Single assembly loading
+/// let result = ProjectLoader::new()
+///     .primary_file("MyApp.exe")?
+///     .build()?;
+///
+/// // Multi-assembly with dependencies
+/// let result = ProjectLoader::new()
+///     .primary_file("MyApp.exe")?
+///     .with_dependency("MyLib.dll")?
+///     .auto_discover(true)
+///     .build()?;
+///
+/// // With automatic discovery
+/// let result = ProjectLoader::new()
+///     .primary_file("MyApp.exe")?
+///     .with_search_path("./dependencies")?
+///     .auto_discover(true)
+///     .build()?;
+///
+/// println!("Loaded {} assemblies", result.success_count());
+/// ```
+///
+/// ## Legacy CilProject API
+///
+/// ```rust,ignore
+/// use dotscope::project::CilProject;
+/// use dotscope::metadata::cilobject::CilObject;
+///
+/// let project = CilProject::new();
+/// let assembly = CilObject::from_file("MyApp.exe")?;
+/// project.add_assembly(assembly)?;
+/// ```
+pub mod project;
+
 /// `dotscope` Result type.
 ///
 /// A type alias for `std::result::Result<T, Error>` where the error type is always [`crate::Error`].
