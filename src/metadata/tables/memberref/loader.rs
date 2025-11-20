@@ -83,8 +83,8 @@ impl MetadataLoader for MemberRefLoader {
     ///
     /// # Returns
     /// The [`TableId::MemberRef`] identifier for this table type.
-    fn table_id(&self) -> TableId {
-        TableId::MemberRef
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::MemberRef)
     }
 
     /// Returns the dependencies required for loading `MemberRef` entries.

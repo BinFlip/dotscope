@@ -99,8 +99,8 @@ impl MetadataLoader for DeclSecurityLoader {
     ///
     /// # Returns
     /// [`crate::metadata::tables::TableId::DeclSecurity`] (0x0E)
-    fn table_id(&self) -> TableId {
-        TableId::DeclSecurity
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::DeclSecurity)
     }
 
     /// Returns the list of table dependencies required before loading `DeclSecurity`

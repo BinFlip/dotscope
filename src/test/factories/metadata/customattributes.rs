@@ -5,8 +5,9 @@
 
 use crate::{
     metadata::{
+        identity::AssemblyIdentity,
         method::{Method, MethodRc},
-        typesystem::CilFlavor,
+        typesystem::{CilFlavor, TypeRegistry},
     },
     test::MethodBuilder,
 };
@@ -38,4 +39,33 @@ pub fn create_empty_constructor() -> MethodRc {
 /// Originally from: `src/metadata/customattributes/parser.rs`
 pub fn create_constructor_with_params(param_types: Vec<CilFlavor>) -> MethodRc {
     MethodBuilder::with_param_types("AttributeConstructor", param_types).build()
+}
+
+/// Get or create a shared test TypeRegistry for custom attribute tests
+///
+/// This returns a TypeRegistry that persists across test calls within the same test run,
+/// ensuring that types created by ParamBuilder remain accessible for custom attribute parsing.
+pub fn get_test_type_registry() -> Arc<TypeRegistry> {
+    static TEST_REGISTRY: std::sync::OnceLock<Arc<TypeRegistry>> = std::sync::OnceLock::new();
+
+    TEST_REGISTRY
+        .get_or_init(|| {
+            let identity = AssemblyIdentity::parse("CustomAttributeTestAssembly, Version=1.0.0.0")
+                .expect("Failed to parse test assembly identity");
+            Arc::new(TypeRegistry::new(identity).expect("Failed to create TypeRegistry"))
+        })
+        .clone()
+}
+
+/// Helper function to create a method with specific parameter types using builders,
+/// with TypeRegistry support for custom attribute parsing
+///
+/// This variant ensures the method's parameter types are registered in the provided
+/// TypeRegistry, enabling proper custom attribute parsing with type resolution.
+pub fn create_constructor_with_params_and_registry(
+    param_types: Vec<CilFlavor>,
+    registry: &Arc<TypeRegistry>,
+) -> MethodRc {
+    MethodBuilder::with_param_types("AttributeConstructor", param_types)
+        .build_with_registry(Some(registry))
 }

@@ -10,7 +10,7 @@ use crate::{
         tables::{CodedIndex, CodedIndexType, CustomAttributeRaw, TableDataOwned, TableId},
         token::Token,
     },
-    test::{get_clean_testfile, TestAssembly},
+    test::{get_testfile_crafted2, get_testfile_mscorlib, TestAssembly},
     Error, Result,
 };
 
@@ -33,9 +33,9 @@ use crate::{
 pub fn owned_attribute_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
-    let Some(clean_testfile) = get_clean_testfile() else {
+    let Some(clean_testfile) = get_testfile_crafted2() else {
         return Err(Error::Error(
-            "WindowsBase.dll not available - test cannot run".to_string(),
+            "crafted_2.exe not available - test cannot run".to_string(),
         ));
     };
 
@@ -67,8 +67,8 @@ pub fn owned_attribute_validator_file_factory() -> Result<Vec<TestAssembly>> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/metadata/attribute.rs`
 pub fn create_assembly_with_excessive_fixed_args() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_clean_testfile() else {
-        return Err(Error::Error("WindowsBase.dll not available".to_string()));
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
+        return Err(Error::Error("mscorlib.dll not available".to_string()));
     };
     let view = CilAssemblyView::from_file(&clean_testfile)
         .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
@@ -128,8 +128,8 @@ pub fn create_assembly_with_excessive_fixed_args() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/metadata/attribute.rs`
 pub fn create_assembly_with_excessive_named_args() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_clean_testfile() else {
-        return Err(Error::Error("WindowsBase.dll not available".to_string()));
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
+        return Err(Error::Error("mscorlib.dll not available".to_string()));
     };
     let view = CilAssemblyView::from_file(&clean_testfile)
         .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
@@ -196,8 +196,8 @@ pub fn create_assembly_with_excessive_named_args() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/metadata/attribute.rs`
 pub fn create_assembly_with_duplicate_named_args() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_clean_testfile() else {
-        return Err(Error::Error("WindowsBase.dll not available".to_string()));
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
+        return Err(Error::Error("mscorlib.dll not available".to_string()));
     };
     let view = CilAssemblyView::from_file(&clean_testfile)
         .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
@@ -269,8 +269,8 @@ pub fn create_assembly_with_duplicate_named_args() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/metadata/attribute.rs`
 pub fn create_assembly_with_empty_named_arg_name() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_clean_testfile() else {
-        return Err(Error::Error("WindowsBase.dll not available".to_string()));
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
+        return Err(Error::Error("mscorlib.dll not available".to_string()));
     };
     let view = CilAssemblyView::from_file(&clean_testfile)
         .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
@@ -334,8 +334,8 @@ pub fn create_assembly_with_empty_named_arg_name() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/metadata/attribute.rs`
 pub fn create_assembly_with_null_character_string() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_clean_testfile() else {
-        return Err(Error::Error("WindowsBase.dll not available".to_string()));
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
+        return Err(Error::Error("mscorlib.dll not available".to_string()));
     };
     let view = CilAssemblyView::from_file(&clean_testfile)
         .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
@@ -394,8 +394,8 @@ pub fn create_assembly_with_null_character_string() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/metadata/attribute.rs`
 pub fn create_assembly_with_excessive_string_length() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_clean_testfile() else {
-        return Err(Error::Error("WindowsBase.dll not available".to_string()));
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
+        return Err(Error::Error("mscorlib.dll not available".to_string()));
     };
     let view = CilAssemblyView::from_file(&clean_testfile)
         .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;

@@ -85,8 +85,8 @@ impl MetadataLoader for ParamLoader {
     ///
     /// ## Returns
     /// [`crate::metadata::tables::TableId::Param`] (0x08)
-    fn table_id(&self) -> TableId {
-        TableId::Param
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::Param)
     }
 
     /// Returns the table dependencies for Param loading.

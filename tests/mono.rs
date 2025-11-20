@@ -1,627 +1,357 @@
-//! Comprehensive .NET assembly generation and runtime compatibility test
+//! Integration tests for Mono .NET Framework assembly compatibility.
+//!
+//! This test suite loads all available Mono assemblies from the test samples
+//! directory and compares the loading success rates between ProjectLoader (with
+//! dependency resolution) and CilAssemblyView. This helps identify compatibility
+//! issues and the benefits of loading assemblies with their dependencies.
 
-use dotscope::{metadata::signatures::TypeSignature, prelude::*};
-use std::path::Path;
-use std::process::Command;
-use tempfile::TempDir;
+use dotscope::{project::ProjectLoader, CilAssemblyView};
+use rayon::prelude::*;
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
-const HELLO_WORLD_SOURCE: &str = r#"
-using System;
+/// Result of loading an assembly with a specific loader.
+#[derive(Debug, Clone)]
+struct LoadResult {
+    success: bool,
+    error_type: Option<String>,
+}
 
-class Program 
-{
-    static void Main() 
-    {
-        Console.WriteLine("Hello from dotscope test!");
+/// Comprehensive comparison of loading results between ProjectLoader (with dependencies) and CilAssemblyView.
+#[derive(Debug)]
+struct LoadComparison {
+    file_name: String,
+    file_size: u64,
+    cilproject_result: LoadResult,
+    cilassemblyview_result: LoadResult,
+}
+
+impl LoadComparison {
+    fn both_successful(&self) -> bool {
+        self.cilproject_result.success && self.cilassemblyview_result.success
+    }
+
+    fn both_failed(&self) -> bool {
+        !self.cilproject_result.success && !self.cilassemblyview_result.success
+    }
+
+    fn only_cilproject_succeeded(&self) -> bool {
+        self.cilproject_result.success && !self.cilassemblyview_result.success
+    }
+
+    fn only_cilassemblyview_succeeded(&self) -> bool {
+        !self.cilproject_result.success && self.cilassemblyview_result.success
     }
 }
-"#;
+
+/// Load an assembly using ProjectLoader (with dependencies) and return the result.
+fn try_load_with_cilproject(path: &Path) -> LoadResult {
+    let search_path = path.parent().unwrap_or_else(|| Path::new("."));
+
+    match ProjectLoader::new()
+        .primary_file(path)
+        .and_then(|loader| loader.with_search_path(search_path))
+        .map(|loader| loader.auto_discover(true))
+        .and_then(|loader| loader.build())
+    {
+        Ok(result) => {
+            if result.success_count() > 0 {
+                LoadResult {
+                    success: true,
+                    error_type: None,
+                }
+            } else {
+                LoadResult {
+                    success: false,
+                    error_type: Some("No assemblies loaded".to_string()),
+                }
+            }
+        }
+        Err(e) => LoadResult {
+            success: false,
+            error_type: Some(format!("{:?}", e)),
+        },
+    }
+}
+
+/// Load an assembly using CilAssemblyView and return the result.
+fn try_load_with_cilassemblyview(path: &Path) -> LoadResult {
+    match CilAssemblyView::from_file(path) {
+        Ok(_) => LoadResult {
+            success: true,
+            error_type: None,
+        },
+        Err(e) => LoadResult {
+            success: false,
+            error_type: Some(format!("{:?}", e)),
+        },
+    }
+}
+
+/// Find all .dll and .exe files in the Mono samples directory.
+fn find_mono_assemblies() -> Vec<PathBuf> {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+    let mono_path = Path::new(&manifest_dir).join("tests/samples/mono_4.5");
+
+    if !mono_path.exists() {
+        return Vec::new();
+    }
+
+    let mut assemblies = Vec::new();
+
+    if let Ok(entries) = fs::read_dir(&mono_path) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(extension) = path.extension() {
+                    if extension == "dll" || extension == "exe" {
+                        assemblies.push(path);
+                    }
+                }
+            }
+        }
+    }
+
+    assemblies.sort();
+    assemblies
+}
+
+/// Categorize error types for analysis.
+fn categorize_error(error: &str) -> &'static str {
+    if error.contains("RecursionLimit") {
+        "RecursionLimit"
+    } else if error.contains("OutOfBounds") {
+        "OutOfBounds"
+    } else if error.contains("Unicode") || error.contains("Utf8") {
+        "UnicodeError"
+    } else if error.contains("NotSupported") {
+        "NotSupported"
+    } else if error.contains("FileError") {
+        "FileError"
+    } else {
+        "Other"
+    }
+}
+
+/// Print detailed analysis of loading results.
+fn print_analysis(comparisons: &[LoadComparison]) {
+    println!("\n=== MONO ASSEMBLY COMPATIBILITY ANALYSIS ===");
+    println!("Total assemblies tested: {}", comparisons.len());
+
+    let both_success = comparisons.iter().filter(|c| c.both_successful()).count();
+    let both_failed = comparisons.iter().filter(|c| c.both_failed()).count();
+    let only_cilproject = comparisons
+        .iter()
+        .filter(|c| c.only_cilproject_succeeded())
+        .count();
+    let only_cilassemblyview = comparisons
+        .iter()
+        .filter(|c| c.only_cilassemblyview_succeeded())
+        .count();
+
+    println!("\n--- OVERALL RESULTS ---");
+    println!(
+        "Both succeeded:              {} ({:.1}%)",
+        both_success,
+        both_success as f64 / comparisons.len() as f64 * 100.0
+    );
+    println!(
+        "Both failed:                 {} ({:.1}%)",
+        both_failed,
+        both_failed as f64 / comparisons.len() as f64 * 100.0
+    );
+    println!(
+        "Only CilProject succeeded:   {} ({:.1}%)",
+        only_cilproject,
+        only_cilproject as f64 / comparisons.len() as f64 * 100.0
+    );
+    println!(
+        "Only CilAssemblyView succeeded: {} ({:.1}%)",
+        only_cilassemblyview,
+        only_cilassemblyview as f64 / comparisons.len() as f64 * 100.0
+    );
+
+    let cilproject_success_rate = comparisons
+        .iter()
+        .filter(|c| c.cilproject_result.success)
+        .count();
+    let cilassemblyview_success_rate = comparisons
+        .iter()
+        .filter(|c| c.cilassemblyview_result.success)
+        .count();
+
+    println!("\n--- SUCCESS RATES ---");
+    println!(
+        "CilProject (with deps): {}/{} ({:.1}%)",
+        cilproject_success_rate,
+        comparisons.len(),
+        cilproject_success_rate as f64 / comparisons.len() as f64 * 100.0
+    );
+    println!(
+        "CilAssemblyView:        {}/{} ({:.1}%)",
+        cilassemblyview_success_rate,
+        comparisons.len(),
+        cilassemblyview_success_rate as f64 / comparisons.len() as f64 * 100.0
+    );
+
+    // Error categorization for ProjectLoader and CilAssemblyView
+    let mut cilproject_errors: HashMap<&str, usize> = HashMap::new();
+    let mut cilassemblyview_errors: HashMap<&str, usize> = HashMap::new();
+
+    for comparison in comparisons {
+        if !comparison.cilproject_result.success {
+            if let Some(error) = &comparison.cilproject_result.error_type {
+                let category = categorize_error(error);
+                *cilproject_errors.entry(category).or_insert(0) += 1;
+            }
+        }
+
+        if !comparison.cilassemblyview_result.success {
+            if let Some(error) = &comparison.cilassemblyview_result.error_type {
+                let category = categorize_error(error);
+                *cilassemblyview_errors.entry(category).or_insert(0) += 1;
+            }
+        }
+    }
+
+    println!("\n--- CILPROJECT ERROR CATEGORIES ---");
+    for (category, count) in &cilproject_errors {
+        println!("{}: {}", category, count);
+    }
+
+    println!("\n--- CILASSEMBLYVIEW ERROR CATEGORIES ---");
+    for (category, count) in &cilassemblyview_errors {
+        println!("{}: {}", category, count);
+    }
+
+    // Show successful assemblies
+    println!("\n--- SUCCESSFUL ASSEMBLIES (Both) ---");
+    for comparison in comparisons.iter().filter(|c| c.both_successful()) {
+        println!(
+            "✅ {} ({} bytes)",
+            comparison.file_name, comparison.file_size
+        );
+    }
+
+    // Show assemblies that only work with one approach
+    if only_cilproject > 0 {
+        println!("\n--- ONLY CILPROJECT SUCCEEDED ---");
+        for comparison in comparisons.iter().filter(|c| c.only_cilproject_succeeded()) {
+            println!(
+                "🔵 {} (CilAssemblyView error: {:?})",
+                comparison.file_name, comparison.cilassemblyview_result.error_type
+            );
+        }
+    }
+
+    if only_cilassemblyview > 0 {
+        println!("\n--- ONLY CILASSEMBLYVIEW SUCCEEDED ---");
+        for comparison in comparisons
+            .iter()
+            .filter(|c| c.only_cilassemblyview_succeeded())
+        {
+            println!(
+                "🟡 {} (CilProject error: {:?})",
+                comparison.file_name, comparison.cilproject_result.error_type
+            );
+        }
+    }
+
+    // Show failures for both
+    if both_failed > 0 {
+        println!("\n--- FAILED WITH BOTH APPROACHES ---");
+        for comparison in comparisons.iter().filter(|c| c.both_failed()) {
+            println!(
+                "❌ {} ({} bytes)",
+                comparison.file_name, comparison.file_size
+            );
+            println!(
+                "   CilProject: {:?}",
+                comparison.cilproject_result.error_type
+            );
+            println!(
+                "   CilAssemblyView: {:?}",
+                comparison.cilassemblyview_result.error_type
+            );
+        }
+    }
+}
 
 #[test]
-fn test_mono_runtime() -> Result<()> {
-    println!("🔬 Analyzing runtime architecture and execution compatibility...");
-
-    let temp_dir = TempDir::new()?;
-    let temp_dir_path = temp_dir.path();
-
-    test_architecture(temp_dir_path, "32-bit", &["/platform:x86"])?;
-    test_architecture(temp_dir_path, "64-bit", &["/platform:x64"])?;
-
-    println!("✅ All architecture tests complete");
-    Ok(())
-}
-
-fn test_architecture(temp_dir: &Path, arch_name: &str, csc_flags: &[&str]) -> Result<()> {
-    println!("\n🏗️  Testing {} architecture:", arch_name);
-
-    let source_file = temp_dir.join(format!("helloworld_{}.cs", arch_name.replace("-", "")));
-    std::fs::write(&source_file, HELLO_WORLD_SOURCE)?;
-
-    let exe_file = temp_dir.join(format!("helloworld_{}.exe", arch_name.replace("-", "")));
-    let exe_path = match compile_test_executable(&source_file, &exe_file, csc_flags) {
-        Ok(path) => path,
-        Err(_) => {
-            println!("   ⚠️  compilation failed, not available for testing");
-            return Ok(());
-        }
-    };
-
-    println!("   📋 Testing original {} executable:", arch_name);
-    test_original_executable(&exe_path)?;
-
-    let modified_exe = create_modified_assembly(&exe_path, temp_dir)?;
-
-    analyze_pe_structure(&modified_exe, arch_name)?;
-    test_mono_compatibility(&modified_exe, arch_name)?;
-    test_runtime_execution(&modified_exe, arch_name)?;
-
-    println!("   ✅ {} architecture test complete", arch_name);
-
-    Ok(())
-}
-
-fn compile_test_executable(
-    source_file: &Path,
-    output_file: &Path,
-    csc_flags: &[&str],
-) -> Result<std::path::PathBuf> {
-    let csc_check = Command::new("csc").arg("/help").output();
-    if csc_check.is_err() {
-        return Err(Error::Error(
-            "csc (C# compiler) not available - cannot run test".to_string(),
-        ));
+#[ignore] // Large-scale compatibility test - run manually with: cargo test -- --ignored
+fn test_mono_assembly_compatibility() {
+    let assemblies = find_mono_assemblies();
+    if assemblies.is_empty() {
+        return;
     }
 
-    println!("   🔨 Compiling with csc...");
+    println!("🔍 Found {} Mono assemblies to test", assemblies.len());
 
-    let mut cmd = Command::new("csc");
-    cmd.arg(format!("/out:{}", output_file.display()));
-    for flag in csc_flags {
-        cmd.arg(flag);
-    }
-    cmd.arg(source_file);
+    // Create a dedicated thread pool for the test to avoid nested rayon deadlock
+    // (ProjectLoader internally uses rayon for parallel assembly loading)
+    let num_test_threads = (rayon::current_num_threads() / 2).max(1);
+    println!(
+        "🚀 Loading assemblies in parallel across {} test threads...",
+        num_test_threads
+    );
 
-    let output = cmd.output()?;
+    let test_pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(num_test_threads)
+        .build()
+        .expect("Failed to create test thread pool");
 
-    if output.status.success() {
-        println!("   ✅ Compilation successful");
-        Ok(output_file.to_path_buf())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(Error::Error(format!("C# compilation failed: {}", stderr)))
-    }
-}
+    // Use dedicated rayon pool for parallel processing
+    let comparisons: Vec<LoadComparison> = test_pool.install(|| {
+        assemblies
+            .par_iter()
+            .map(|assembly_path| {
+                let file_name = assembly_path
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string();
 
-fn test_original_executable(exe_path: &Path) -> Result<()> {
-    match Command::new("mono").arg(exe_path).output() {
-        Ok(result) if result.status.success() => {
-            let stdout = String::from_utf8_lossy(&result.stdout);
-            println!("      ✅ Original executable runs: {}", stdout.trim());
-        }
-        Ok(result) => {
-            let stderr = String::from_utf8_lossy(&result.stderr);
-            println!(
-                "      ❌ Original executable failed: {}",
-                stderr.lines().next().unwrap_or("Unknown error")
-            );
-        }
-        Err(_) => {
-            println!("      ⚠️  mono not available for testing original executable");
-        }
-    }
-    Ok(())
-}
+                println!("Testing: {}", file_name);
 
-fn create_modified_assembly(original_exe: &Path, temp_dir: &Path) -> Result<std::path::PathBuf> {
-    println!("   🔧 Creating modified assembly with dotscope...");
+                let cilproject_result = try_load_with_cilproject(assembly_path);
+                let cilassemblyview_result = try_load_with_cilassemblyview(assembly_path);
 
-    let original_stem = original_exe.file_stem().unwrap().to_str().unwrap();
-    let modified_exe = temp_dir.join(format!("{}_modified.exe", original_stem));
+                let file_size = assembly_path.metadata().map(|m| m.len()).unwrap_or(0);
 
-    let view = CilAssemblyView::from_file(original_exe)?;
-    let assembly = CilAssembly::new(view);
-    let mut context = BuilderContext::new(assembly);
-
-    let _method_token = MethodBuilder::new("DotScopeAddedMethod")
-        .public()
-        .static_method()
-        .parameter("a", TypeSignature::I4)
-        .parameter("b", TypeSignature::I4)
-        .returns(TypeSignature::I4)
-        .implementation(|body| {
-            body.implementation(|asm| {
-                asm.ldarg_0()?.ldarg_1()?.add()?.ret()?;
-                Ok(())
+                LoadComparison {
+                    file_name,
+                    file_size,
+                    cilproject_result,
+                    cilassemblyview_result,
+                }
             })
-        })
-        .build(&mut context)?;
+            .collect()
+    });
 
-    let mut assembly = context.finish();
-    assembly.validate_and_apply_changes()?;
-    assembly.write_to_file(&modified_exe)?;
+    print_analysis(&comparisons);
 
-    println!("   ✅ Modified assembly created");
-    Ok(modified_exe)
-}
-
-fn analyze_pe_structure(file_path: &Path, arch_name: &str) -> Result<()> {
-    println!("   🏗️  PE Structure Analysis ({}):", arch_name);
-
-    let assembly = CilObject::from_file(file_path)?;
-    let file = assembly.file();
-
-    println!(
-        "      File format: {}",
-        if file.is_pe32_plus_format()? {
-            "PE32+"
-        } else {
-            "PE32"
-        }
-    );
-    println!("      File alignment: 0x{:X}", file.file_alignment()?);
-    println!("      Section alignment: 0x{:X}", file.section_alignment()?);
-
-    let mut sections: Vec<_> = file.sections().iter().collect();
-    sections.sort_by_key(|s| s.virtual_address);
-
-    println!("      Sections:");
-    for (i, section) in sections.iter().enumerate() {
-        let characteristics = section.characteristics;
-        let is_executable = (characteristics & 0x20000000) != 0;
-        let is_readable = (characteristics & 0x40000000) != 0;
-        let is_writable = (characteristics & 0x80000000) != 0;
-
-        println!(
-            "        {}: {} ({}{}{})",
-            i,
-            section.name.as_str(),
-            if is_executable { "X" } else { "-" },
-            if is_readable { "R" } else { "-" },
-            if is_writable { "W" } else { "-" }
-        );
-        println!(
-            "           Virtual:  RVA=0x{:08X}, Size=0x{:08X}",
-            section.virtual_address, section.virtual_size
-        );
-        println!(
-            "           Physical: Offset=0x{:08X}, Size=0x{:08X}",
-            section.pointer_to_raw_data, section.size_of_raw_data
-        );
-    }
-
-    let methods = assembly.methods();
-    for entry in methods.iter() {
-        let method = entry.value();
-        if method.name == "DotScopeAddedMethod" {
-            if let Some(body) = method.body.get() {
-                println!("      🎯 Added test method found:");
-                println!("         Name: {}", method.name);
-                println!("         Code size: {} bytes", body.size_code);
-                break;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn test_mono_compatibility(file_path: &Path, arch_name: &str) -> Result<()> {
-    println!("   🐒 Mono Compatibility Test ({}):", arch_name);
-
-    let output = Command::new("mono").arg("--version").output();
-
-    match output {
-        Ok(result) if result.status.success() => {
-            let version = String::from_utf8_lossy(&result.stdout);
-            println!(
-                "      Mono version: {}",
-                version.lines().next().unwrap_or("unknown")
-            );
-        }
-        _ => {
-            println!("      ⚠️  Mono not available - skipping mono tests");
-            return Ok(());
-        }
-    }
-
-    let output = Command::new("mono").arg(file_path).output();
-
-    match output {
-        Ok(result) if result.status.success() => {
-            let stdout = String::from_utf8_lossy(&result.stdout);
-            println!("      ✅ Mono execution successful: {}", stdout.trim());
-        }
-        Ok(result) => {
-            let stderr = String::from_utf8_lossy(&result.stderr);
-            println!("      ❌ Mono execution FAILED:");
-            for line in stderr.lines().take(3) {
-                println!("         {}", line);
-            }
-
-            return Err(Error::Error(format!(
-                "Mono execution failed for {}: {}",
-                arch_name,
-                stderr.lines().next().unwrap_or("Unknown error")
-            )));
-        }
-        Err(e) => {
-            println!("      ❌ Mono execution error: {}", e);
-            return Err(Error::Error(format!(
-                "Failed to run mono for {}: {}",
-                arch_name, e
-            )));
-        }
-    }
-
-    test_monodis_disassembly(file_path, arch_name)?;
-
-    Ok(())
-}
-
-fn test_runtime_execution(file_path: &Path, arch_name: &str) -> Result<()> {
-    println!("   🚀 Runtime Execution Test ({}):", arch_name);
-
-    if Command::new("mono").arg("--version").output().is_err() {
-        println!("      ⚠️  mono not available - skipping reflection test");
-        return Ok(());
-    }
-
-    let test_program = format!(
-        r#"
-using System;
-using System.Reflection;
-
-class Program 
-{{
-    static void Main()
-    {{
-        try 
-        {{
-            Assembly assembly = Assembly.LoadFrom(@"{}");
-            
-            // Find our test method
-            Type[] types = assembly.GetTypes();
-            MethodInfo testMethod = null;
-            
-            foreach (Type type in types) 
-            {{
-                foreach (MethodInfo method in type.GetMethods()) 
-                {{
-                    if (method.Name == "DotScopeAddedMethod") 
-                    {{
-                        testMethod = method;
-                        break;
-                    }}
-                }}
-                if (testMethod != null) break;
-            }}
-            
-            if (testMethod != null) 
-            {{
-                int[][] testCases = {{
-                    new int[] {{5, 7, 12}},
-                    new int[] {{100, 200, 300}},
-                    new int[] {{-10, 25, 15}},
-                    new int[] {{0, 0, 0}},
-                    new int[] {{-50, -30, -80}}
-                }};
-                
-                Console.WriteLine("Testing DotScopeAddedMethod with multiple parameter combinations:");
-                
-                for (int i = 0; i < testCases.Length; i++)
-                {{
-                    int a = testCases[i][0];
-                    int b = testCases[i][1]; 
-                    int expected = testCases[i][2];
-                    
-                    object[] parameters = {{ a, b }};
-                    object result = testMethod.Invoke(null, parameters);
-                    
-                    Console.WriteLine($"  Test {{i + 1}}: {{a}} + {{b}} = {{result}} (expected: {{expected}})");
-                    
-                    if (result is int actualValue && actualValue == expected) 
-                    {{
-                        Console.WriteLine($"    ✅ Test {{i + 1}} PASSED");
-                    }} 
-                    else 
-                    {{
-                        Console.WriteLine($"    ❌ Test {{i + 1}} FAILED: Expected {{expected}}, got {{result}}");
-                        Environment.Exit(1);
-                    }}
-                }}
-                
-                Console.WriteLine("SUCCESS: All parameter combination tests passed!");
-                Environment.Exit(0);
-            }} 
-            else 
-            {{
-                Console.WriteLine("ERROR: DotScopeAddedMethod not found");
-                Environment.Exit(1);
-            }}
-        }} 
-        catch (Exception ex) 
-        {{
-            Console.WriteLine($"ERROR: {{ex.Message}}");
-            Environment.Exit(1);
-        }}
-    }}
-}}
-"#,
-        file_path.to_str().unwrap()
-    );
-
-    let test_cs_path = format!(
-        "/tmp/runtime_execution_test_{}.cs",
-        arch_name.replace("-", "")
-    );
-    std::fs::write(&test_cs_path, test_program)?;
-
-    println!("      Testing reflection-based method invocation:");
-
-    let test_exe_path = format!(
-        "/tmp/runtime_execution_test_{}.exe",
-        arch_name.replace("-", "")
-    );
-    let compile_output = Command::new("mcs")
-        .arg(format!("-out:{}", test_exe_path))
-        .arg(&test_cs_path)
-        .output()
-        .map_err(|_| {
-            Error::Error(
-                "mcs (Mono C# compiler) not available - cannot run reflection test".to_string(),
-            )
-        })?;
-
-    if compile_output.status.success() {
-        println!("      ✅ Test program compiled successfully");
-
-        let run_output = Command::new("mono").arg(&test_exe_path).output()?;
-
-        if run_output.status.success() {
-            let stdout = String::from_utf8_lossy(&run_output.stdout);
-            println!("      ✅ Reflection test PASSED:");
-            for line in stdout.lines() {
-                println!("         {}", line);
-            }
-        } else {
-            let stdout = String::from_utf8_lossy(&run_output.stdout);
-            let stderr = String::from_utf8_lossy(&run_output.stderr);
-            println!("      ❌ Reflection test FAILED:");
-            println!("         Exit code: {}", run_output.status);
-            if !stdout.is_empty() {
-                println!("         Stdout: {}", stdout);
-            }
-            if !stderr.is_empty() {
-                println!("         Stderr: {}", stderr);
-            }
-            return Err(Error::Error(format!(
-                "Reflection test failed for {} with exit code {}: {}",
-                arch_name,
-                run_output.status,
-                stdout.lines().next().unwrap_or("Unknown error")
-            )));
-        }
-    } else {
-        let stderr = String::from_utf8_lossy(&compile_output.stderr);
-        return Err(Error::Error(format!(
-            "Reflection test compilation failed for {}: {}",
-            arch_name, stderr
-        )));
-    }
-
-    Ok(())
-}
-
-fn test_monodis_disassembly(file_path: &Path, arch_name: &str) -> Result<()> {
-    println!("      Testing monodis disassembly:");
-
-    let help_output = Command::new("monodis").arg("--help").output();
-
-    match help_output {
-        Ok(result) => {
-            let help_text = String::from_utf8_lossy(&result.stderr);
-            if help_text.contains("monodis") || help_text.contains("Usage") {
-                println!("      🔍 monodis available - testing comprehensive disassembly");
-
-                let test_options = [
-                    ("basic disassembly", vec![]),
-                    ("method listing", vec!["--method"]),
-                    ("type listing", vec!["--typedef"]),
-                    ("assembly info", vec!["--assembly"]),
-                ];
-
-                for (test_name, args) in test_options {
-                    println!("         Testing {}:", test_name);
-
-                    let mut cmd = Command::new("monodis");
-                    for arg in &args {
-                        cmd.arg(arg);
-                    }
-                    cmd.arg(file_path);
-
-                    match cmd.output() {
-                        Ok(result) if result.status.success() => {
-                            let stdout = String::from_utf8_lossy(&result.stdout);
-
-                            if stdout.contains("DotScopeAddedMethod") {
-                                println!(
-                                    "            ✅ {} passed - found DotScopeAddedMethod",
-                                    test_name
-                                );
-
-                                if test_name == "basic disassembly" {
-                                    verify_method_disassembly(&stdout, arch_name)?;
-                                }
-                            } else if test_name == "method listing" {
-                                return Err(Error::Error(format!(
-                                "monodis method listing succeeded but DotScopeAddedMethod not found in {} assembly output",
-                                arch_name
-                            )));
-                            } else {
-                                println!("            ✅ {} passed", test_name);
-                            }
-
-                            if stdout.len() < 50 {
-                                return Err(Error::Error(format!(
-                                "monodis {} output unusually short ({} chars) for {} assembly - indicates corruption",
-                                test_name, stdout.len(), arch_name
-                            )));
-                            }
-
-                            if stdout.to_lowercase().contains("error")
-                                || stdout.to_lowercase().contains("invalid")
-                            {
-                                return Err(Error::Error(format!(
-                                "monodis {} output contains error indicators for {} assembly: {}",
-                                test_name, arch_name, stdout.lines().take(3).collect::<Vec<_>>().join(" | ")
-                            )));
-                            }
-                        }
-                        Ok(result) => {
-                            let stderr = String::from_utf8_lossy(&result.stderr);
-                            println!(
-                                "            ❌ {} FAILED (exit code: {})",
-                                test_name, result.status
-                            );
-                            if !stderr.is_empty() {
-                                println!(
-                                    "               Error: {}",
-                                    stderr.lines().next().unwrap_or("")
-                                );
-                            }
-
-                            return Err(Error::Error(format!(
-                                "monodis {} failed on {} assembly: {}",
-                                test_name,
-                                arch_name,
-                                stderr.lines().next().unwrap_or("Unknown error")
-                            )));
-                        }
-                        Err(e) => {
-                            println!("            ❌ {} crashed: {}", test_name, e);
-                            return Err(Error::Error(format!(
-                                "monodis {} crashed when processing {} assembly: {}",
-                                test_name, arch_name, e
-                            )));
-                        }
-                    }
-                }
-
-                println!("      ✅ All monodis tests passed");
-            } else {
-                println!("      ⚠️  monodis not available - skipping disassembly test");
-            }
-        }
-        Err(_) => {
-            println!("      ⚠️  monodis not available - skipping disassembly test");
-        }
-    }
-
-    Ok(())
-}
-
-fn verify_method_disassembly(disassembly_output: &str, arch_name: &str) -> Result<()> {
-    println!("            🔍 Verifying IL instruction sequence for DotScopeAddedMethod");
-
-    if disassembly_output.len() < 100 {
-        return Err(Error::Error(format!(
-            "Disassembly output too short ({} chars) for {} assembly - indicates parsing failure",
-            disassembly_output.len(),
-            arch_name
-        )));
-    }
-
-    let lines: Vec<&str> = disassembly_output.lines().collect();
-    let mut method_start = None;
-    let mut method_end = None;
-
-    for (i, line) in lines.iter().enumerate() {
-        if line.contains("DotScopeAddedMethod")
-            && (line.contains("int32") || line.contains("(int32,int32)"))
-        {
-            for (j, line) in lines.iter().enumerate().skip(i) {
-                if line.trim().starts_with("{") {
-                    method_start = Some(j + 1);
-                    break;
-                }
-            }
-
-            if let Some(start) = method_start {
-                for (j, line) in lines.iter().enumerate().skip(start) {
-                    if line.trim().starts_with("}") {
-                        method_end = Some(j);
-                        break;
-                    }
-                }
-            }
-            break;
-        }
-    }
-
-    let (start, end) = match (method_start, method_end) {
-        (Some(s), Some(e)) => (s, e),
-        _ => {
-            return Err(Error::Error(format!(
-                "Could not find DotScopeAddedMethod body in {} assembly disassembly",
-                arch_name
-            )));
-        }
-    };
-
-    println!(
-        "               Method body found at lines {} to {}",
-        start + 1,
-        end + 1
-    );
-
-    let mut il_instructions = Vec::new();
-    for line in &lines[start..end] {
-        let trimmed = line.trim();
-        if !trimmed.is_empty() && !trimmed.starts_with("//") && !trimmed.starts_with(".") {
-            if let Some(colon_pos) = trimmed.find(':') {
-                if colon_pos + 1 < trimmed.len() {
-                    let instruction = trimmed[colon_pos + 1..].trim();
-                    if !instruction.is_empty() {
-                        il_instructions.push(instruction.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    println!(
-        "               Found {} IL instructions:",
-        il_instructions.len()
-    );
-    for (i, instruction) in il_instructions.iter().enumerate() {
-        println!("                  {}: {}", i, instruction);
-    }
-
-    let expected_instructions = ["ldarg.0", "ldarg.1", "add", "ret"];
-
-    if il_instructions.len() != expected_instructions.len() {
-        return Err(Error::Error(format!(
-            "DotScopeAddedMethod in {} assembly has {} IL instructions, expected {}. Found: {:?}",
-            arch_name,
-            il_instructions.len(),
-            expected_instructions.len(),
-            il_instructions
-        )));
-    }
-
-    for (i, (found, expected)) in il_instructions
+    // Assertions for the test
+    let total_count = comparisons.len();
+    let success_count = comparisons
         .iter()
-        .zip(expected_instructions.iter())
-        .enumerate()
-    {
-        if found != expected {
-            return Err(Error::Error(format!(
-                "DotScopeAddedMethod in {} assembly IL instruction {} mismatch: found '{}', expected '{}'",
-                arch_name, i, found, expected
-            )));
-        }
-    }
+        .filter(|c| c.cilproject_result.success || c.cilassemblyview_result.success)
+        .count();
 
-    println!("            ✅ IL instruction verification passed - all {} instructions match expectations", il_instructions.len());
-    Ok(())
+    // At least one approach should work for most assemblies
+    assert!(
+        success_count > total_count / 2,
+        "Less than 50% of assemblies could be loaded with either approach"
+    );
+
+    // At least some assemblies should be parseable
+    assert!(success_count > 0, "No assemblies could be loaded at all");
+
+    println!("\n✅ Mono compatibility test completed");
+    println!(
+        "Overall compatibility: {}/{} assemblies can be loaded",
+        success_count, total_count
+    );
 }

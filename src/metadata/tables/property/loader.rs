@@ -79,8 +79,8 @@ impl MetadataLoader for PropertyLoader {
     /// ## Returns
     ///
     /// * [`TableId::Property`] - The table identifier (0x17)
-    fn table_id(&self) -> TableId {
-        TableId::Property
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::Property)
     }
 
     /// Returns the table dependencies for the Property table.

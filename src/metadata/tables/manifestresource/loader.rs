@@ -80,8 +80,8 @@ impl MetadataLoader for ManifestResourceLoader {
     ///
     /// # Returns
     /// The [`TableId::ManifestResource`] identifier for this table type.
-    fn table_id(&self) -> TableId {
-        TableId::ManifestResource
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::ManifestResource)
     }
 
     /// Returns the dependencies required for loading `ManifestResource` entries.

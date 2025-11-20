@@ -64,8 +64,8 @@ impl MetadataLoader for EncMapLoader {
     ///
     /// # Returns
     /// [`crate::metadata::tables::TableId::EncMap`] (0x1F)
-    fn table_id(&self) -> TableId {
-        TableId::EncMap
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::EncMap)
     }
 
     /// Returns the list of table dependencies

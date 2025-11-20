@@ -73,8 +73,8 @@ impl MetadataLoader for EventMapLoader {
     /// # Returns
     ///
     /// Returns [`TableId::EventMap`] (0x12) identifying this as the `EventMap` table loader.
-    fn table_id(&self) -> TableId {
-        TableId::EventMap
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::EventMap)
     }
 
     /// Returns the table dependencies required before loading `EventMap` entries

@@ -608,11 +608,11 @@ mod tests {
         metadata::cilassemblyview::CilAssemblyView,
         metadata::validation::ValidationConfig,
         test::{
-            factories::validation::raw_modification_operation::*, get_clean_testfile,
-            validator_test,
+            factories::validation::raw_modification_operation::*, get_testfile_wb, validator_test,
         },
         Error,
     };
+    use rayon::ThreadPoolBuilder;
 
     #[test]
     fn test_raw_operation_validator() -> Result<()> {
@@ -735,7 +735,7 @@ mod tests {
             context::RawValidationContext, scanner::ReferenceScanner,
         };
 
-        let Some(clean_testfile) = get_clean_testfile() else {
+        let Some(clean_testfile) = get_testfile_wb() else {
             return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
 
@@ -746,12 +746,14 @@ mod tests {
         };
 
         let scanner = ReferenceScanner::from_view(&view)?;
+        let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
         let context = RawValidationContext::new_for_modification(
             &view,
             &corrupted_changes,
             &scanner,
             &config,
+            &thread_pool,
         );
 
         validator.validate_raw(&context)

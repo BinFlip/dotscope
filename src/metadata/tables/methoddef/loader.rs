@@ -162,8 +162,8 @@ impl MetadataLoader for MethodDefLoader {
     /// # Returns
     ///
     /// The [`crate::metadata::tables::TableId::MethodDef`] identifier (0x06) for this table type.
-    fn table_id(&self) -> TableId {
-        TableId::MethodDef
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::MethodDef)
     }
 
     /// Returns the dependencies required for loading `MethodDef` entries.

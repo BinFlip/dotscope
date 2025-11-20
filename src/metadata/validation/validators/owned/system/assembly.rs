@@ -77,9 +77,12 @@
 //! - [ECMA-335 I.6.3](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Application domains and assemblies
 
 use crate::{
-    metadata::validation::{
-        context::{OwnedValidationContext, ValidationContext},
-        traits::OwnedValidator,
+    metadata::{
+        identity::Identity,
+        validation::{
+            context::{OwnedValidationContext, ValidationContext},
+            traits::OwnedValidator,
+        },
     },
     Error, Result,
 };
@@ -277,11 +280,14 @@ impl OwnedAssemblyValidator {
             return Ok(()); // Empty public key is valid (no strong name)
         }
 
-        if public_key.len() < 160 || public_key.len() > 2048 {
+        // Valid public key sizes per ECMA-335:
+        // - 16 bytes: ECMA keys for framework assemblies
+        // - 160+ bytes: Full RSA public keys for strong-named assemblies
+        if public_key.len() != 16 && (public_key.len() < 160 || public_key.len() > 2048) {
             return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: format!(
-                    "Assembly public key has invalid size: {} bytes",
+                    "Assembly public key has invalid size: {} bytes. Expected 16 bytes (ECMA key) or 160-2048 bytes (RSA key)",
                     public_key.len()
                 ),
                 source: None,
@@ -436,7 +442,7 @@ impl OwnedAssemblyValidator {
             // Validate identity (public key/token) if present
             if let Some(identity) = &assembly_ref.identifier {
                 match identity {
-                    crate::metadata::identity::Identity::Token(token) => {
+                    Identity::Token(token) => {
                         if *token == 0 {
                             return Err(Error::ValidationOwnedValidatorFailed {
                                 validator: self.name().to_string(),
@@ -448,7 +454,7 @@ impl OwnedAssemblyValidator {
                             });
                         }
                     }
-                    crate::metadata::identity::Identity::PubKey(public_key) => {
+                    Identity::PubKey(public_key) => {
                         if public_key.is_empty() {
                             return Err(Error::ValidationOwnedValidatorFailed {
                                 validator: self.name().to_string(),
@@ -459,13 +465,41 @@ impl OwnedAssemblyValidator {
                                 source: None,
                             });
                         }
-                        if public_key.len() < 160 || public_key.len() > 2048 {
+                        // Valid public key sizes per ECMA-335:
+                        // - 16 bytes: ECMA keys for framework assemblies
+                        // - 160+ bytes: Full RSA public keys for strong-named assemblies
+                        if public_key.len() != 16
+                            && (public_key.len() < 160 || public_key.len() > 2048)
+                        {
                             return Err(Error::ValidationOwnedValidatorFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
-                                    "Assembly reference '{}' has invalid public key size: {} bytes",
+                                    "Assembly reference '{}' has invalid public key size: {} bytes. Expected 16 bytes (ECMA key) or 160-2048 bytes (RSA key)",
                                     assembly_ref.name,
                                     public_key.len()
+                                ),
+                                source: None,
+                            });
+                        }
+                    }
+                    Identity::EcmaKey(ecma_key) => {
+                        if ecma_key.len() != 16 {
+                            return Err(Error::ValidationOwnedValidatorFailed {
+                                validator: self.name().to_string(),
+                                message: format!(
+                                    "Assembly reference '{}' has invalid ECMA key size: {} bytes. Expected exactly 16 bytes",
+                                    assembly_ref.name,
+                                    ecma_key.len()
+                                ),
+                                source: None,
+                            });
+                        }
+                        if ecma_key.is_empty() || ecma_key.iter().all(|&b| b == 0) {
+                            return Err(Error::ValidationOwnedValidatorFailed {
+                                validator: self.name().to_string(),
+                                message: format!(
+                                    "Assembly reference '{}' has empty or invalid ECMA key",
+                                    assembly_ref.name
                                 ),
                                 source: None,
                             });
@@ -476,9 +510,8 @@ impl OwnedAssemblyValidator {
         }
 
         // Validate cross-assembly type references
-        let types = context.object().types();
-        for type_entry in types.all_types() {
-            let type_ref = &*type_entry;
+        for type_entry in context.target_assembly_types() {
+            let type_ref = type_entry.as_ref();
             // Only validate external type references
             if let Some(_external) = type_ref.get_external() {
                 // Validate type reference has valid name
@@ -642,7 +675,7 @@ impl OwnedAssemblyValidator {
             // Validate strong name consistency
             if let Some(identity) = &assembly_ref.identifier {
                 match identity {
-                    crate::metadata::identity::Identity::Token(token) => {
+                    Identity::Token(token) => {
                         if *token == 0 {
                             return Err(Error::ValidationOwnedValidatorFailed {
                                 validator: self.name().to_string(),
@@ -654,12 +687,24 @@ impl OwnedAssemblyValidator {
                             });
                         }
                     }
-                    crate::metadata::identity::Identity::PubKey(public_key) => {
+                    Identity::PubKey(public_key) => {
                         if public_key.iter().all(|&b| b == 0) {
                             return Err(Error::ValidationOwnedValidatorFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Assembly reference '{}' public key consists entirely of zero bytes",
+                                    assembly_ref.name
+                                ),
+                                source: None,
+                            });
+                        }
+                    }
+                    Identity::EcmaKey(ecma_key) => {
+                        if ecma_key.iter().all(|&b| b == 0) {
+                            return Err(Error::ValidationOwnedValidatorFailed {
+                                validator: self.name().to_string(),
+                                message: format!(
+                                    "Assembly reference '{}' ECMA key consists entirely of zero bytes",
                                     assembly_ref.name
                                 ),
                                 source: None,

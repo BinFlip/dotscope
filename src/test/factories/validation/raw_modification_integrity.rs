@@ -8,7 +8,7 @@ use crate::{
         tables::{CodedIndex, CodedIndexType, FieldRaw, MethodDefRaw, TableId, TypeDefRaw},
         token::Token,
     },
-    test::{get_clean_testfile, TestAssembly},
+    test::{get_testfile_wb, TestAssembly},
     Result,
 };
 
@@ -21,7 +21,7 @@ use crate::{
 pub fn raw_change_integrity_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
-    if let Some(clean_path) = get_clean_testfile() {
+    if let Some(clean_path) = get_testfile_wb() {
         assemblies.push(TestAssembly::new(clean_path, true));
     }
 

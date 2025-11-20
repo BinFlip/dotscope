@@ -81,6 +81,7 @@ use crate::{
         },
         typesystem::TypeRegistry,
     },
+    project::ProjectContext,
     Result,
 };
 
@@ -175,12 +176,15 @@ impl CilObjectData {
     ///
     /// 1. **Initialize Concurrent Containers**: Create all SkipMap containers for parallel loading
     /// 2. **Native Table Loading**: Load PE import/export tables via CilAssemblyView
-    /// 3. **Context Creation**: Build internal loader context using CilAssemblyView
-    /// 4. **Parallel Loading**: Execute the same complex parallel loaders as before
-    /// 5. **Cross-Reference Resolution**: Build semantic relationships between tables
+    /// 3. **Registry Coordination**: Register with ProjectContext for multi-assembly synchronization (if provided)
+    /// 4. **Context Creation**: Build internal loader context using CilAssemblyView
+    /// 5. **Parallel Loading**: Execute the complex parallel loaders with barrier synchronization
+    /// 6. **Cross-Reference Resolution**: Build semantic relationships between tables
     ///
     /// # Arguments
     /// * `view` - Reference to the CilAssemblyView containing parsed raw metadata
+    /// * `project_context` - Optional ProjectContext for coordinating multi-assembly parallel loading
+    ///   with barrier synchronization to handle circular dependencies.
     ///
     /// # Returns
     /// A fully loaded [`CilObjectData`] instance ready for metadata queries and analysis.
@@ -202,8 +206,12 @@ impl CilObjectData {
     /// // Create CilAssemblyView first
     /// let view = CilAssemblyView::from_file("example.dll")?;
     ///
-    /// // Load resolved metadata using the view
-    /// let cil_data = CilObjectData::from_assembly_view(&view)?;
+    /// // Load single assembly without ProjectContext
+    /// let cil_data = CilObjectData::from_assembly_view(&view, None)?;
+    ///
+    /// // Or with ProjectContext for multi-assembly coordination
+    /// let project_context = ProjectContext::new(3); // for 3 assemblies
+    /// let cil_data = CilObjectData::from_assembly_view(&view, Some(&project_context))?;
     ///
     /// // Metadata is now ready for use
     /// println!("Loaded {} types", cil_data.types.len());
@@ -215,7 +223,12 @@ impl CilObjectData {
     ///
     /// This method is thread-safe but should only be called once per CilAssemblyView.
     /// The resulting [`CilObjectData`] can be safely accessed from multiple threads.
-    pub(crate) fn from_assembly_view(view: &CilAssemblyView) -> Result<Self> {
+    pub(crate) fn from_assembly_view(
+        view: &CilAssemblyView,
+        project_context: Option<&ProjectContext>,
+    ) -> Result<Self> {
+        let identity = view.identity()?;
+
         let mut cil_object = CilObjectData {
             refs_assembly: SkipMap::default(),
             refs_module: SkipMap::default(),
@@ -226,7 +239,7 @@ impl CilObjectData {
             assembly: Arc::new(OnceLock::new()),
             assembly_os: Arc::new(OnceLock::new()),
             assembly_processor: Arc::new(OnceLock::new()),
-            types: Arc::new(TypeRegistry::new()?),
+            types: Arc::new(TypeRegistry::new(identity.clone())?),
             import_container: UnifiedImportContainer::new(),
             export_container: UnifiedExportContainer::new(),
             methods: SkipMap::default(),
@@ -235,6 +248,11 @@ impl CilObjectData {
         };
 
         cil_object.load_native_tables(view)?;
+
+        if let Some(context) = project_context {
+            context.register_and_wait_stage1(identity, cil_object.types.clone())?;
+            context.link_all_registries(&cil_object.types);
+        }
 
         {
             let context = LoaderContext {
@@ -301,7 +319,7 @@ impl CilObjectData {
                 types: &cil_object.types,
             };
 
-            execute_loaders_in_parallel(&context)?;
+            execute_loaders_in_parallel(&context, project_context)?;
         }
 
         Ok(cil_object)

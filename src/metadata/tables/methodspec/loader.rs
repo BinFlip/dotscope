@@ -70,8 +70,8 @@ impl MetadataLoader for MethodSpecLoader {
     ///
     /// ## Returns
     /// [`crate::metadata::tables::TableId::MethodSpec`] (0x2B)
-    fn table_id(&self) -> TableId {
-        TableId::MethodSpec
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::MethodSpec)
     }
 
     /// Returns the table dependencies for `MethodSpec` loading.

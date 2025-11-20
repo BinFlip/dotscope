@@ -96,8 +96,8 @@ impl MetadataLoader for GenericParamLoader {
     /// Returns [`TableId::GenericParam`] indicating this loader handles the `GenericParam` table.
     ///
     /// [`TableId::GenericParam`]: crate::prelude::TableId::GenericParam
-    fn table_id(&self) -> TableId {
-        TableId::GenericParam
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::GenericParam)
     }
 
     /// Returns the table dependencies for `GenericParam` loading.

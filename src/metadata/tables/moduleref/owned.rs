@@ -27,6 +27,7 @@ use crate::metadata::{customattributes::CustomAttributeValueList, token::Token};
 /// - Methods defined in external modules referenced by `MemberRef`
 /// - Multi-module assemblies with components in separate files
 /// - Import resolution for external module dependencies
+#[derive(Debug)]
 pub struct ModuleRef {
     /// Row identifier within the `ModuleRef` table.
     ///

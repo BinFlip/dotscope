@@ -11,7 +11,7 @@ use crate::{
         validation::ValidationConfig,
     },
     prelude::*,
-    test::{get_clean_testfile, TestAssembly},
+    test::{get_testfile_wb, TestAssembly},
     Error, Result,
 };
 use tempfile::NamedTempFile;
@@ -25,7 +25,7 @@ use tempfile::NamedTempFile;
 pub fn raw_token_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
-    let Some(clean_testfile) = get_clean_testfile() else {
+    let Some(clean_testfile) = get_testfile_wb() else {
         return Err(Error::Error(
             "WindowsBase.dll not available - test cannot run".to_string(),
         ));
@@ -121,7 +121,7 @@ pub fn raw_token_validator_file_factory() -> Result<Vec<TestAssembly>> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/token.rs`
 pub fn create_assembly_with_invalid_typedef_extends() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
@@ -150,7 +150,7 @@ pub fn create_assembly_with_invalid_typedef_extends() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/token.rs`
 pub fn create_assembly_with_oversized_table() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
@@ -178,7 +178,7 @@ pub fn create_assembly_with_oversized_table() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/token.rs`
 pub fn create_assembly_with_invalid_coded_index() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
@@ -207,7 +207,7 @@ pub fn create_assembly_with_invalid_coded_index() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/token.rs`
 pub fn create_assembly_with_missing_reference() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
@@ -241,7 +241,7 @@ pub fn create_assembly_with_missing_reference() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/token.rs`
 pub fn create_assembly_with_invalid_memberref() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
@@ -269,7 +269,7 @@ pub fn create_assembly_with_invalid_memberref() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/token.rs`
 pub fn create_assembly_with_rid_bounds_violation() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
@@ -296,7 +296,7 @@ pub fn create_assembly_with_rid_bounds_violation() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/token.rs`
 pub fn create_assembly_with_invalid_customattribute() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
@@ -338,7 +338,7 @@ pub fn create_assembly_with_invalid_customattribute() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/token.rs`
 pub fn create_assembly_with_invalid_genericparam() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
@@ -366,7 +366,7 @@ pub fn create_assembly_with_invalid_genericparam() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/token.rs`
 pub fn create_assembly_with_invalid_interfaceimpl() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
@@ -398,7 +398,7 @@ pub fn create_assembly_with_invalid_interfaceimpl() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/token.rs`
 pub fn create_assembly_with_invalid_methodspec() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
@@ -426,7 +426,7 @@ pub fn create_assembly_with_invalid_methodspec() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/token.rs`
 pub fn create_assembly_for_cross_table_validation() -> Result<NamedTempFile> {
-    let clean_testfile = get_clean_testfile()
+    let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_file(&clean_testfile)?;
     let assembly = CilAssembly::new(view);

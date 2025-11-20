@@ -67,6 +67,7 @@
 //! - [ECMA-335 II.10.7](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Nested types
 //! - [ECMA-335 I.6.2](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Assemblies and application domains
 
+use rayon::prelude::*;
 use std::collections::HashSet;
 
 use crate::{
@@ -123,77 +124,73 @@ impl OwnedTypeOwnershipValidator {
     /// Ensures that nested types are properly owned by their enclosing type and that
     /// naming and accessibility rules are followed according to ECMA-335.
     fn validate_nested_type_ownership(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
-
-        for type_entry in types.all_types() {
+        // Only validate types from the current assembly to avoid cross-assembly reference issues
+        let results: Vec<Result<()>> = context.target_assembly_types()
+            .par_iter()
+            .map(|type_entry| {
             // Validate nested types owned by this type
+            // Only validate nested types that also belong to the current assembly
             for (_, nested_ref) in type_entry.nested_types.iter() {
                 if let Some(nested_type) = nested_ref.upgrade() {
-                    // Basic nested type validation using available public APIs
-                    if nested_type.name.is_empty() {
-                        return Err(Error::ValidationOwnedValidatorFailed {
-                            validator: self.name().to_string(),
-                            message: format!(
-                                "Nested type owned by '{}' has empty name",
-                                type_entry.name
-                            ),
-                            source: None,
-                        });
-                    }
+                    // Check if the nested type belongs to the current assembly
+                    // by checking if it's in the target assembly types collection
+                    let is_target_assembly_type = context.target_assembly_types()
+                        .par_iter()
+                        .any(|t| std::ptr::eq(t.as_ref(), nested_type.as_ref()));
 
-                    // Validate basic nested type structure - be more lenient with visibility
-                    // Some legitimate nested types may have visibility 0x00 (NotPublic) which is valid
-                    let nested_visibility = nested_type.flags & TypeAttributes::VISIBILITY_MASK;
+                    if is_target_assembly_type {
+                        // Basic nested type validation using available public APIs
+                        if nested_type.name.is_empty() {
+                            return Err(Error::ValidationOwnedValidatorFailed {
+                                validator: self.name().to_string(),
+                                message: format!(
+                                    "Nested type owned by '{}' has empty name",
+                                    type_entry.name
+                                ),
+                                source: None,
+                            });
+                        }
 
-                    // Only reject clearly invalid visibility combinations
-                    // Allow NotPublic (0) as it can be valid for nested types in some contexts
-                    if nested_visibility > 7 {
-                        // Beyond valid visibility range
-                        return Err(Error::ValidationOwnedValidatorFailed {
-                            validator: self.name().to_string(),
-                            message: format!(
-                                "Nested type '{}' owned by '{}' has invalid visibility value: 0x{:02X}",
-                                nested_type.name, type_entry.name, nested_visibility
-                            ),
-                            source: None,
-                        });
-                    }
+                        // Validate basic nested type structure - be more lenient with visibility
+                        // Some legitimate nested types may have visibility 0x00 (NotPublic) which is valid
+                        let nested_visibility = nested_type.flags & TypeAttributes::VISIBILITY_MASK;
 
-                    // Validate nested type naming conventions - be more lenient
-                    // Allow various naming patterns including compiler-generated types
-                    if nested_type.name.is_empty() {
-                        return Err(Error::ValidationOwnedValidatorFailed {
-                            validator: self.name().to_string(),
-                            message: format!(
-                                "Nested type owned by '{}' has empty name",
-                                type_entry.name
-                            ),
-                            source: None,
-                        });
-                    }
+                        // Only reject clearly invalid visibility combinations
+                        // Allow NotPublic (0) as it can be valid for nested types in some contexts
+                        if nested_visibility > 7 {
+                            // Beyond valid visibility range
+                            return Err(Error::ValidationOwnedValidatorFailed {
+                                validator: self.name().to_string(),
+                                message: format!(
+                                    "Nested type '{}' owned by '{}' has invalid visibility value: 0x{:02X}",
+                                    nested_type.name, type_entry.name, nested_visibility
+                                ),
+                                source: None,
+                            });
+                        }
 
-                    // Check for obviously invalid characters in nested type names
-                    if nested_type.name.contains('\0') {
-                        return Err(Error::ValidationOwnedValidatorFailed {
-                            validator: self.name().to_string(),
-                            message: format!(
-                                "Nested type '{}' owned by '{}' contains null character",
-                                nested_type.name, type_entry.name
-                            ),
-                            source: None,
-                        });
+                        // Check for obviously invalid characters in nested type names
+                        if nested_type.name.contains('\0') {
+                            return Err(Error::ValidationOwnedValidatorFailed {
+                                validator: self.name().to_string(),
+                                message: format!(
+                                    "Nested type '{}' owned by '{}' contains null character",
+                                    nested_type.name, type_entry.name
+                                ),
+                                source: None,
+                            });
+                        }
                     }
-                } else {
-                    return Err(Error::ValidationOwnedValidatorFailed {
-                        validator: self.name().to_string(),
-                        message: format!(
-                            "Type '{}' has broken nested type reference",
-                            type_entry.name
-                        ),
-                        source: None,
-                    });
+                    // Skip validation for nested types from other assemblies
                 }
+                // Skip broken references - they may be to external assemblies that aren't loaded
             }
+                Ok(())
+            })
+            .collect();
+
+        for result in results {
+            result?;
         }
 
         Ok(())

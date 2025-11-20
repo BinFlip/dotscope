@@ -18,7 +18,7 @@ use crate::{
     metadata::{
         tables::{
             CodedIndex, CodedIndexType, InterfaceImpl, InterfaceImplRc, TableId, TableInfoRef,
-            TableRow, TypeAttributes,
+            TableRow,
         },
         token::Token,
         typesystem::TypeRegistry,
@@ -109,18 +109,7 @@ impl InterfaceImplRaw {
 
         match types.get(&Token::new(self.class | 0x0200_0000)) {
             Some(class) => {
-                // Check if this is interface inheritance (both class and interface are interfaces)
-                // The .NET compiler incorrectly puts interface inheritance in InterfaceImpl table
-                let class_is_interface = class.flags & TypeAttributes::INTERFACE != 0;
-                let interface_is_interface = interface.flags & TypeAttributes::INTERFACE != 0;
-
-                if class_is_interface && interface_is_interface {
-                    if class.base().is_none() {
-                        let _ = class.set_base(interface.clone().into());
-                    }
-                } else {
-                    class.interfaces.push(interface.into());
-                }
+                class.interfaces.push(interface.into());
                 Ok(())
             }
             None => Err(malformed_error!(

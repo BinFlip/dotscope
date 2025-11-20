@@ -115,8 +115,8 @@ impl MetadataLoader for AssemblyRefProcessorLoader {
     ///
     /// Provides the [`crate::prelude::TableId::AssemblyRefProcessor`] constant used to identify this table
     /// type within the metadata loading framework.
-    fn table_id(&self) -> TableId {
-        TableId::AssemblyRefProcessor
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::AssemblyRefProcessor)
     }
 
     /// Returns the table dependencies for `AssemblyRefProcessor` loading

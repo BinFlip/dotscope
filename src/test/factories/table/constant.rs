@@ -58,5 +58,5 @@ pub fn create_test_property(name: &str, property_type: TypeSignature) -> Arc<Pro
 ///
 /// Originally from: `src/metadata/tables/constant/owned.rs`
 pub fn create_test_param(name: &str) -> Arc<Param> {
-    ParamBuilder::input_param(1, name).build()
+    ParamBuilder::input_param(1, name).build(None)
 }

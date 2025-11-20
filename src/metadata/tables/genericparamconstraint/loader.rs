@@ -107,8 +107,8 @@ impl MetadataLoader for GenericParamConstraintLoader {
     /// the `GenericParamConstraint` table.
     ///
     /// [`TableId::GenericParamConstraint`]: crate::prelude::TableId::GenericParamConstraint
-    fn table_id(&self) -> TableId {
-        TableId::GenericParamConstraint
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::GenericParamConstraint)
     }
 
     /// Returns the table dependencies for `GenericParamConstraint` loading.

@@ -1490,4 +1490,890 @@ mod tests {
             assert_eq!(userstring_next_index, 53288);
         }
     }
+
+    /// Mono runtime compatibility tests for assembly modification and execution
+    mod mono_tests {
+        use super::*;
+        use crate::metadata::signatures::{
+            encode_method_signature, SignatureMethod, SignatureParameter, TypeSignature,
+        };
+        use crate::metadata::tables::{
+            CodedIndex, CodedIndexType, MemberRefBuilder, TableId, TypeRefBuilder,
+        };
+        use crate::metadata::token::Token;
+        use crate::test::mono::reflection::ParameterValue;
+        use crate::test::mono::*;
+
+        #[test]
+        fn test_mono_runtime_compatibility() -> Result<()> {
+            // Create test environment using the new utilities
+            let mut env = create_test_environment()?;
+
+            // Define the assembly modification that adds a simple method
+            let modify_assembly = |context: &mut BuilderContext| -> Result<()> {
+                let _method_token = MethodBuilder::new("DotScopeAddedMethod")
+                    .public()
+                    .static_method()
+                    .parameter("a", TypeSignature::I4)
+                    .parameter("b", TypeSignature::I4)
+                    .returns(TypeSignature::I4)
+                    .implementation(|body| {
+                        body.implementation(|asm| {
+                            asm.ldarg_0()?.ldarg_1()?.add()?.ret()?;
+                            Ok(())
+                        })
+                    })
+                    .build(context)?;
+                Ok(())
+            };
+
+            // Define the reflection test
+            let create_reflection_test = |assembly_path: &std::path::Path| -> String {
+                ReflectionTestBuilder::new()
+                    .assembly_path(assembly_path)
+                    .test_method("DotScopeAddedMethod")
+                    .description("Addition 5 + 7 = 12")
+                    .parameters(vec![5, 7])
+                    .expect(12)
+                    .build()
+            };
+
+            // Run the complete test workflow
+            let results = env.run_complete_test(
+                compilation::templates::HELLO_WORLD,
+                modify_assembly,
+                create_reflection_test,
+            )?;
+
+            // Assert all architectures passed all tests
+            for result in &results {
+                assert!(
+                    result.compilation_success,
+                    "Compilation failed for {}: {:?}",
+                    result.architecture.name, result.errors
+                );
+                assert!(
+                    result.modification_success,
+                    "Assembly modification failed for {}: {:?}",
+                    result.architecture.name, result.errors
+                );
+                assert!(
+                    result.execution_success,
+                    "Mono execution failed for {}: {:?}",
+                    result.architecture.name, result.errors
+                );
+                assert!(
+                    result.compatibility_success,
+                    "Mono compatibility test failed for {}: {:?}",
+                    result.architecture.name, result.errors
+                );
+                assert!(
+                    result.disassembly_success,
+                    "Disassembly verification failed for {}: {:?}",
+                    result.architecture.name, result.errors
+                );
+                assert!(
+                    result.reflection_success,
+                    "Reflection test failed for {}: {:?}",
+                    result.architecture.name, result.errors
+                );
+
+                // Assert overall success
+                assert!(
+                    result.is_fully_successful(),
+                    "Overall test failed for {} architecture with errors: {:?}",
+                    result.architecture.name,
+                    result.errors
+                );
+            }
+
+            // Assert we tested both architectures
+            assert_eq!(results.len(), 2, "Expected to test exactly 2 architectures");
+
+            // Verify we have both x86 and x64
+            let arch_names: Vec<String> = results
+                .iter()
+                .map(|r| r.architecture.name.clone())
+                .collect();
+            assert!(
+                arch_names.contains(&"32-bit".to_string()),
+                "Missing x86 architecture test"
+            );
+            assert!(
+                arch_names.contains(&"64-bit".to_string()),
+                "Missing x64 architecture test"
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        fn test_mono_enhanced_modifications() -> Result<()> {
+            // Create test environment using the new utilities
+            let mut env = create_test_environment()?;
+
+            // Test 1: String modification
+            let string_results = test_string_modification(&mut env)?;
+
+            // Test 2: Exception handling
+            let exception_results = test_exception_handling(&mut env)?;
+
+            // Assert string modification tests passed for both architectures
+            for result in &string_results {
+                assert!(
+                    result.compilation_success,
+                    "String test compilation failed for {}: {:?}",
+                    result.architecture.name, result.errors
+                );
+                assert!(
+                    result.modification_success,
+                    "String test modification failed for {}: {:?}",
+                    result.architecture.name, result.errors
+                );
+                assert!(
+                    result.execution_success,
+                    "String test execution failed for {}: {:?}",
+                    result.architecture.name, result.errors
+                );
+                assert!(
+                    result.compatibility_success,
+                    "String test compatibility failed for {}: {:?}",
+                    result.architecture.name, result.errors
+                );
+                assert!(
+                    result.disassembly_success,
+                    "String test disassembly failed for {}: {:?}",
+                    result.architecture.name, result.errors
+                );
+                assert!(
+                    result.reflection_success,
+                    "String test reflection failed for {}: {:?}",
+                    result.architecture.name, result.errors
+                );
+                assert!(
+                    result.is_fully_successful(),
+                    "String modification test failed for {} architecture: {:?}",
+                    result.architecture.name,
+                    result.errors
+                );
+            }
+
+            // Assert exception handling tests passed for both architectures
+            for result in &exception_results {
+                assert!(
+                    result.compilation_success,
+                    "Exception test compilation failed for {}: {:?}",
+                    result.architecture.name, result.errors
+                );
+                assert!(
+                    result.modification_success,
+                    "Exception test modification failed for {}: {:?}",
+                    result.architecture.name, result.errors
+                );
+                assert!(
+                    result.execution_success,
+                    "Exception test execution failed for {}: {:?}",
+                    result.architecture.name, result.errors
+                );
+                assert!(
+                    result.compatibility_success,
+                    "Exception test compatibility failed for {}: {:?}",
+                    result.architecture.name, result.errors
+                );
+                assert!(
+                    result.disassembly_success,
+                    "Exception test disassembly failed for {}: {:?}",
+                    result.architecture.name, result.errors
+                );
+                assert!(
+                    result.reflection_success,
+                    "Exception test reflection failed for {}: {:?}",
+                    result.architecture.name, result.errors
+                );
+                assert!(
+                    result.is_fully_successful(),
+                    "Exception handling test failed for {} architecture: {:?}",
+                    result.architecture.name,
+                    result.errors
+                );
+            }
+
+            // Assert both test suites covered both architectures
+            assert_eq!(
+                string_results.len(),
+                2,
+                "Expected string tests to cover 2 architectures"
+            );
+            assert_eq!(
+                exception_results.len(),
+                2,
+                "Expected exception tests to cover 2 architectures"
+            );
+
+            Ok(())
+        }
+
+        fn test_string_modification(env: &mut TestEnvironment) -> Result<Vec<CompleteTestResult>> {
+            // Define the string modification assembly modification
+            let modify_assembly = |context: &mut BuilderContext| -> Result<()> {
+                // Create method that prints the modified message using Console.WriteLine
+                let new_string = "MODIFIED: Hello from enhanced dotscope test!";
+                let new_string_index = context.userstring_add(new_string)?;
+                let new_string_token = Token::new(0x70000000 | new_string_index);
+
+                // Find Console.WriteLine reference (using the helper from original code)
+                let mscorlib_ref = Token::new(0x23000001);
+                let console_writeline_ref = create_console_writeline_ref(context, mscorlib_ref)?;
+
+                // Add a method that prints the modified string
+                let new_string_token_copy = new_string_token;
+                let console_writeline_ref_copy = console_writeline_ref;
+                let _method_token = MethodBuilder::new("PrintModifiedMessage")
+                    .public()
+                    .static_method()
+                    .returns(TypeSignature::Void)
+                    .implementation(move |body| {
+                        body.implementation(move |asm| {
+                            asm.ldstr(new_string_token_copy)?
+                                .call(console_writeline_ref_copy)?
+                                .ret()?;
+                            Ok(())
+                        })
+                    })
+                    .build(context)?;
+
+                Ok(())
+            };
+
+            // Define the reflection test for string modification
+            let create_reflection_test = |assembly_path: &std::path::Path| -> String {
+                ReflectionTestBuilder::new()
+                    .assembly_path(assembly_path)
+                    .test_method("PrintModifiedMessage")
+                    .description("String modification test")
+                    .expect_no_throw()
+                    .build()
+            };
+
+            // Run the complete test workflow
+            env.run_complete_test(
+                compilation::templates::HELLO_WORLD,
+                modify_assembly,
+                create_reflection_test,
+            )
+        }
+
+        fn test_exception_handling(env: &mut TestEnvironment) -> Result<Vec<CompleteTestResult>> {
+            // Define the exception handling assembly modification
+            let modify_assembly = |context: &mut BuilderContext| -> Result<()> {
+                // Add a string for our success message
+                let success_msg_index = context.userstring_add("Exception handler test PASSED!")?;
+                let success_token = Token::new(0x70000000 | success_msg_index);
+
+                // Create external references
+                let mscorlib_ref = Token::new(0x23000001);
+                let _console_writeline_ref = create_console_writeline_ref(context, mscorlib_ref)?;
+
+                // Create a method with try/finally exception handling
+                let success_token_copy = success_token;
+
+                let _method_token = MethodBuilder::new("TestExceptionHandler")
+                    .public()
+                    .static_method()
+                    .returns(TypeSignature::String)
+                    .implementation(move |body| {
+                        // Implement proper try/finally exception handling using the new label-based API
+                        body.local("result", TypeSignature::String) // Add local variable to store result
+                            .finally_handler_with_labels(
+                                "try_start",
+                                "try_end",
+                                "finally_start",
+                                "finally_end",
+                            )
+                            .implementation(move |asm| {
+                                // Try block:
+                                asm.label("try_start")? // Start of try block
+                                    .ldstr(success_token_copy)? // Load success message
+                                    .stloc_0()? // Store to local variable
+                                    .leave_s("after_finally")? // Leave protected region
+                                    .label("try_end")? // End of try block
+                                    // Finally block:
+                                    .label("finally_start")? // Start of finally handler
+                                    .ldloc_0()? // Load from local (dummy operation)
+                                    .stloc_0()? // Store back to local (dummy operation)
+                                    .endfinally()? // End finally block
+                                    .label("finally_end")? // End of finally handler
+                                    // After finally:
+                                    .label("after_finally")? // Continuation after finally
+                                    .ldloc_0()? // Load result
+                                    .ret()?; // Return result
+
+                                Ok(())
+                            })
+                    })
+                    .build(context)?;
+
+                Ok(())
+            };
+
+            // Define the reflection test for exception handling
+            let create_reflection_test = |assembly_path: &std::path::Path| -> String {
+                ReflectionTestBuilder::new()
+                    .assembly_path(assembly_path)
+                    .test_method("TestExceptionHandler")
+                    .description("Exception handler test")
+                    .expect("Exception handler test PASSED!")
+                    .build()
+            };
+
+            // Run the complete test workflow
+            env.run_complete_test(
+                compilation::templates::HELLO_WORLD,
+                modify_assembly,
+                create_reflection_test,
+            )
+        }
+
+        fn create_writeline_signature() -> Result<Vec<u8>> {
+            let signature = SignatureMethod {
+                has_this: false, // Static method
+                explicit_this: false,
+                default: true, // Default managed calling convention
+                vararg: false,
+                cdecl: false,
+                stdcall: false,
+                thiscall: false,
+                fastcall: false,
+                param_count_generic: 0,
+                param_count: 1, // One string parameter
+                return_type: SignatureParameter {
+                    modifiers: Vec::new(),
+                    by_ref: false,
+                    base: TypeSignature::Void, // void return type
+                },
+                params: vec![SignatureParameter {
+                    modifiers: Vec::new(),
+                    by_ref: false,
+                    base: TypeSignature::String, // string parameter
+                }],
+                varargs: Vec::new(),
+            };
+
+            encode_method_signature(&signature)
+        }
+
+        fn create_console_writeline_ref(
+            context: &mut BuilderContext,
+            mscorlib_ref: Token,
+        ) -> Result<Token> {
+            // Create TypeRef for System.Console
+            let console_typeref = TypeRefBuilder::new()
+                .name("Console")
+                .namespace("System")
+                .resolution_scope(CodedIndex::new(
+                    TableId::AssemblyRef,
+                    mscorlib_ref.row(),
+                    CodedIndexType::ResolutionScope,
+                ))
+                .build(context)?;
+
+            // Create method signature for Console.WriteLine(string) using the working implementation
+            let writeline_signature = create_writeline_signature()?;
+
+            // Create MemberRef for Console.WriteLine method
+            let memberref_token = MemberRefBuilder::new()
+                .name("WriteLine")
+                .class(CodedIndex::new(
+                    TableId::TypeRef,
+                    console_typeref.row(),
+                    CodedIndexType::MemberRefParent,
+                ))
+                .signature(&writeline_signature)
+                .build(context)?;
+
+            Ok(memberref_token)
+        }
+
+        #[test]
+        fn test_mono_mathematical_operations() -> Result<()> {
+            // Test advanced mathematical operations and complex arithmetic
+            let mut env = create_test_environment()?;
+
+            let modify_assembly = |context: &mut BuilderContext| -> Result<()> {
+                // Create method that performs multiple arithmetic operations
+                let _complex_math_method = MethodBuilder::new("ComplexMath")
+                    .public()
+                    .static_method()
+                    .parameter("x", TypeSignature::I4)
+                    .parameter("y", TypeSignature::I4)
+                    .returns(TypeSignature::I4)
+                    .implementation(|body| {
+                        body.implementation(|asm| {
+                            // Calculate: (x * y) + (x - y) * 2
+                            asm.ldarg_0()? // Load x
+                                .ldarg_1()? // Load y
+                                .mul()? // x * y
+                                .ldarg_0()? // Load x again
+                                .ldarg_1()? // Load y again
+                                .sub()? // x - y
+                                .ldc_i4_2()? // Load 2
+                                .mul()? // (x - y) * 2
+                                .add()? // (x * y) + ((x - y) * 2)
+                                .ret()?;
+                            Ok(())
+                        })
+                    })
+                    .build(context)?;
+
+                // Create method that performs division and modulo
+                let _division_method = MethodBuilder::new("DivideAndRemainder")
+                    .public()
+                    .static_method()
+                    .parameter("dividend", TypeSignature::I4)
+                    .parameter("divisor", TypeSignature::I4)
+                    .returns(TypeSignature::I4)
+                    .implementation(|body| {
+                        body.implementation(|asm| {
+                            // Calculate: (dividend / divisor) + (dividend % divisor)
+                            asm.ldarg_0()? // Load dividend
+                                .ldarg_1()? // Load divisor
+                                .div()? // dividend / divisor
+                                .ldarg_0()? // Load dividend again
+                                .ldarg_1()? // Load divisor again
+                                .rem()? // dividend % divisor
+                                .add()? // quotient + remainder
+                                .ret()?;
+                            Ok(())
+                        })
+                    })
+                    .build(context)?;
+
+                Ok(())
+            };
+
+            let create_reflection_test = |assembly_path: &std::path::Path| -> String {
+                ReflectionTestBuilder::new()
+                    .assembly_path(assembly_path)
+                    .test_method("ComplexMath")
+                    .description("ComplexMath(6, 3): (6*3) + (6-3)*2 = 18 + 6 = 24")
+                    .parameters(vec![6, 3])
+                    .expect(24)
+                    .and()
+                    .test_method("ComplexMath")
+                    .description("ComplexMath(5, 2): (5*2) + (5-2)*2 = 10 + 6 = 16")
+                    .parameters(vec![5, 2])
+                    .expect(16)
+                    .and()
+                    .test_method("DivideAndRemainder")
+                    .description("DivideAndRemainder(10, 3): (10/3) + (10%3) = 3 + 1 = 4")
+                    .parameters(vec![10, 3])
+                    .expect(4)
+                    .and()
+                    .test_method("DivideAndRemainder")
+                    .description("DivideAndRemainder(15, 4): (15/4) + (15%4) = 3 + 3 = 6")
+                    .parameters(vec![15, 4])
+                    .expect(6)
+                    .build()
+            };
+
+            let results = env.run_complete_test(
+                compilation::templates::HELLO_WORLD,
+                modify_assembly,
+                create_reflection_test,
+            )?;
+
+            // Assert all tests passed
+            for result in &results {
+                assert!(
+                    result.is_fully_successful(),
+                    "Mathematical operations test failed for {} architecture: {:?}",
+                    result.architecture.name,
+                    result.errors
+                );
+            }
+
+            assert_eq!(results.len(), 2, "Expected to test exactly 2 architectures");
+            Ok(())
+        }
+
+        #[test]
+        fn test_mono_local_variables_and_stack_operations() -> Result<()> {
+            // Test local variable manipulation and stack operations
+            let mut env = create_test_environment()?;
+
+            let modify_assembly = |context: &mut BuilderContext| -> Result<()> {
+                // Create method that demonstrates local variable usage
+                let _local_vars_method = MethodBuilder::new("TestLocalVariables")
+                    .public()
+                    .static_method()
+                    .parameter("input", TypeSignature::I4)
+                    .returns(TypeSignature::I4)
+                    .implementation(|body| {
+                        body.local("temp1", TypeSignature::I4)
+                            .local("temp2", TypeSignature::I4)
+                            .implementation(|asm| {
+                                // temp1 = input * 2
+                                asm.ldarg_0()? // Load input
+                                    .ldc_i4_2()? // Load 2
+                                    .mul()? // input * 2
+                                    .stloc_0()? // Store to temp1
+                                    // temp2 = temp1 + 5
+                                    .ldloc_0()? // Load temp1
+                                    .ldc_i4_5()? // Load 5
+                                    .add()? // temp1 + 5
+                                    .stloc_1()? // Store to temp2
+                                    // return temp2 - temp1
+                                    .ldloc_1()? // Load temp2
+                                    .ldloc_0()? // Load temp1
+                                    .sub()? // temp2 - temp1
+                                    .ret()?; // Return result
+                                Ok(())
+                            })
+                    })
+                    .build(context)?;
+
+                // Create method that demonstrates stack manipulation
+                let _stack_ops_method = MethodBuilder::new("StackOperations")
+                    .public()
+                    .static_method()
+                    .parameter("a", TypeSignature::I4)
+                    .parameter("b", TypeSignature::I4)
+                    .returns(TypeSignature::I4)
+                    .implementation(|body| {
+                        body.implementation(|asm| {
+                            // Demonstrate dup and pop operations
+                            asm.ldarg_0()? // Load a
+                                .dup()? // Duplicate a on stack
+                                .ldarg_1()? // Load b
+                                .add()? // (a + b), with 'a' still on stack
+                                .add()? // a + (a + b) = 2a + b
+                                .ret()?;
+                            Ok(())
+                        })
+                    })
+                    .build(context)?;
+
+                Ok(())
+            };
+
+            let create_reflection_test = |assembly_path: &std::path::Path| -> String {
+                ReflectionTestBuilder::new()
+                    .assembly_path(assembly_path)
+                    .test_method("TestLocalVariables")
+                    .description("TestLocalVariables(3): temp1=6, temp2=11, result=5")
+                    .parameters(vec![3])
+                    .expect(5) // (3*2+5) - (3*2) = 11 - 6 = 5
+                    .and()
+                    .test_method("TestLocalVariables")
+                    .description("TestLocalVariables(7): temp1=14, temp2=19, result=5")
+                    .parameters(vec![7])
+                    .expect(5) // (7*2+5) - (7*2) = 19 - 14 = 5
+                    .and()
+                    .test_method("StackOperations")
+                    .description("StackOperations(4, 3): 2*4 + 3 = 11")
+                    .parameters(vec![4, 3])
+                    .expect(11) // 2*4 + 3 = 8 + 3 = 11
+                    .and()
+                    .test_method("StackOperations")
+                    .description("StackOperations(2, 5): 2*2 + 5 = 9")
+                    .parameters(vec![2, 5])
+                    .expect(9) // 2*2 + 5 = 4 + 5 = 9
+                    .build()
+            };
+
+            let results = env.run_complete_test(
+                compilation::templates::HELLO_WORLD,
+                modify_assembly,
+                create_reflection_test,
+            )?;
+
+            // Assert all tests passed
+            for result in &results {
+                assert!(
+                    result.is_fully_successful(),
+                    "Local variables test failed for {} architecture: {:?}",
+                    result.architecture.name,
+                    result.errors
+                );
+            }
+
+            assert_eq!(results.len(), 2, "Expected to test exactly 2 architectures");
+            Ok(())
+        }
+
+        #[test]
+        fn test_mono_multiple_method_cross_references() -> Result<()> {
+            // Test multiple methods that call each other
+            let mut env = create_test_environment()?;
+
+            let modify_assembly = |context: &mut BuilderContext| -> Result<()> {
+                // Create helper method that doubles a number
+                let double_method = MethodBuilder::new("DoubleNumber")
+                    .public()
+                    .static_method()
+                    .parameter("value", TypeSignature::I4)
+                    .returns(TypeSignature::I4)
+                    .implementation(|body| {
+                        body.implementation(|asm| {
+                            asm.ldarg_0()?.ldc_i4_2()?.mul()?.ret()?;
+                            Ok(())
+                        })
+                    })
+                    .build(context)?;
+
+                // Create helper method that adds 10
+                let add_ten_method = MethodBuilder::new("AddTen")
+                    .public()
+                    .static_method()
+                    .parameter("value", TypeSignature::I4)
+                    .returns(TypeSignature::I4)
+                    .implementation(|body| {
+                        body.implementation(|asm| {
+                            asm.ldarg_0()?.ldc_i4_s(10)?.add()?.ret()?;
+                            Ok(())
+                        })
+                    })
+                    .build(context)?;
+
+                // Create main method that calls both helpers: (x * 2) + 10
+                let _main_method = MethodBuilder::new("ProcessNumber")
+                    .public()
+                    .static_method()
+                    .parameter("input", TypeSignature::I4)
+                    .returns(TypeSignature::I4)
+                    .implementation(move |body| {
+                        body.implementation(move |asm| {
+                            asm.ldarg_0()? // Load input
+                                .call(double_method)? // Call DoubleNumber
+                                .call(add_ten_method)? // Call AddTen on result
+                                .ret()?; // Return final result
+                            Ok(())
+                        })
+                    })
+                    .build(context)?;
+
+                // Create iterative factorial method (avoids recursive call complexity)
+                let _factorial_method = MethodBuilder::new("Factorial")
+                    .public()
+                    .static_method()
+                    .parameter("n", TypeSignature::I4)
+                    .returns(TypeSignature::I4)
+                    .implementation(|body| {
+                        body.local("result", TypeSignature::I4)
+                            .local("counter", TypeSignature::I4)
+                            .implementation(|asm| {
+                                // Iterative factorial: result = 1; for(i=1; i<=n; i++) result *= i
+                                asm.ldc_i4_1()? // Load 1
+                                    .stloc_0()? // result = 1
+                                    .ldc_i4_1()? // Load 1
+                                    .stloc_1()? // counter = 1
+                                    .label("loop_start")?
+                                    .ldloc_1()? // Load counter
+                                    .ldarg_0()? // Load n
+                                    .bgt_s("loop_end")? // Branch if counter > n
+                                    .ldloc_0()? // Load result
+                                    .ldloc_1()? // Load counter
+                                    .mul()? // result * counter
+                                    .stloc_0()? // Store back to result
+                                    .ldloc_1()? // Load counter
+                                    .ldc_i4_1()? // Load 1
+                                    .add()? // counter + 1
+                                    .stloc_1()? // Store back to counter
+                                    .br_s("loop_start")? // Continue loop
+                                    .label("loop_end")?
+                                    .ldloc_0()? // Load result
+                                    .ret()?; // Return result
+                                Ok(())
+                            })
+                    })
+                    .build(context)?;
+
+                Ok(())
+            };
+
+            let create_reflection_test = |assembly_path: &std::path::Path| -> String {
+                ReflectionTestBuilder::new()
+                    .assembly_path(assembly_path)
+                    .test_method("DoubleNumber")
+                    .description("Double 7 = 14")
+                    .parameters(vec![7])
+                    .expect(14)
+                    .and()
+                    .test_method("AddTen")
+                    .description("Add 10 to 5 = 15")
+                    .parameters(vec![5])
+                    .expect(15)
+                    .and()
+                    .test_method("ProcessNumber")
+                    .description("Process 3: (3*2)+10 = 16")
+                    .parameters(vec![3])
+                    .expect(16)
+                    .and()
+                    .test_method("Factorial")
+                    .description("Factorial of 5 = 120")
+                    .parameters(vec![5])
+                    .expect(120)
+                    .and()
+                    .test_method("Factorial")
+                    .description("Factorial of 1 = 1")
+                    .parameters(vec![1])
+                    .expect(1)
+                    .build()
+            };
+
+            let results = env.run_complete_test(
+                compilation::templates::HELLO_WORLD,
+                modify_assembly,
+                create_reflection_test,
+            )?;
+
+            // Assert all tests passed
+            for result in &results {
+                assert!(
+                    result.is_fully_successful(),
+                    "Cross-reference test failed for {} architecture: {:?}",
+                    result.architecture.name,
+                    result.errors
+                );
+            }
+
+            assert_eq!(results.len(), 2, "Expected to test exactly 2 architectures");
+            Ok(())
+        }
+
+        #[test]
+        fn test_mono_blob_heap_and_complex_signatures() -> Result<()> {
+            // Test blob heap modifications with complex method signatures
+            let mut env = create_test_environment()?;
+
+            let modify_assembly = |context: &mut BuilderContext| -> Result<()> {
+                // Create method with multiple parameters of different types
+                let _complex_method = MethodBuilder::new("ComplexMethod")
+                    .public()
+                    .static_method()
+                    .parameter("intParam", TypeSignature::I4)
+                    .parameter("stringParam", TypeSignature::String)
+                    .parameter("boolParam", TypeSignature::Boolean)
+                    .returns(TypeSignature::String)
+                    .implementation(|body| {
+                        body.local("result", TypeSignature::String)
+                            .implementation(|asm| {
+                                // Create a formatted string result
+                                asm.ldstr(Token::new(0x70000001))? // Assume string token exists
+                                    .stloc_0()?
+                                    .ldloc_0()?
+                                    .ret()?;
+                                Ok(())
+                            })
+                    })
+                    .build(context)?;
+
+                // Add a string to the userstring heap for the method above
+                let result_string_index =
+                    context.userstring_add("ComplexMethod executed successfully")?;
+                let _result_string_token = Token::new(0x70000000 | result_string_index);
+
+                // Create method that demonstrates different parameter passing
+                let _param_test_method = MethodBuilder::new("TestParameters")
+                    .public()
+                    .static_method()
+                    .parameter("a", TypeSignature::I4)
+                    .parameter("b", TypeSignature::I4)
+                    .parameter("c", TypeSignature::I4)
+                    .returns(TypeSignature::I4)
+                    .implementation(|body| {
+                        body.implementation(|asm| {
+                            // Test: (a + b) * c
+                            asm.ldarg_0()? // Load a
+                                .ldarg_1()? // Load b
+                                .add()? // a + b
+                                .ldarg_2()? // Load c
+                                .mul()? // (a + b) * c
+                                .ret()?; // Return result
+                            Ok(())
+                        })
+                    })
+                    .build(context)?;
+
+                // Create method that tests boolean logic
+                let _bool_method = MethodBuilder::new("BooleanLogic")
+                    .public()
+                    .static_method()
+                    .parameter("flag1", TypeSignature::Boolean)
+                    .parameter("flag2", TypeSignature::Boolean)
+                    .returns(TypeSignature::Boolean)
+                    .implementation(|body| {
+                        body.implementation(|asm| {
+                            // Test: flag1 AND flag2
+                            asm.ldarg_0()? // Load flag1
+                                .ldarg_1()? // Load flag2
+                                .and()? // flag1 AND flag2
+                                .ret()?; // Return result
+                            Ok(())
+                        })
+                    })
+                    .build(context)?;
+
+                Ok(())
+            };
+
+            let create_reflection_test = |assembly_path: &std::path::Path| -> String {
+                ReflectionTestBuilder::new()
+                    .assembly_path(assembly_path)
+                    .test_method("TestParameters")
+                    .description("Test (2+3)*4 = 20")
+                    .parameters(vec![
+                        ParameterValue::Int32(2),
+                        ParameterValue::Int32(3),
+                        ParameterValue::Int32(4),
+                    ])
+                    .expect(20)
+                    .and()
+                    .test_method("TestParameters")
+                    .description("Test (10+5)*2 = 30")
+                    .parameters(vec![
+                        ParameterValue::Int32(10),
+                        ParameterValue::Int32(5),
+                        ParameterValue::Int32(2),
+                    ])
+                    .expect(30)
+                    .and()
+                    .test_method("BooleanLogic")
+                    .description("Test true AND false = false")
+                    .parameters(vec![
+                        ParameterValue::Boolean(true),
+                        ParameterValue::Boolean(false),
+                    ])
+                    .expect(false)
+                    .and()
+                    .test_method("BooleanLogic")
+                    .description("Test true AND true = true")
+                    .parameters(vec![
+                        ParameterValue::Boolean(true),
+                        ParameterValue::Boolean(true),
+                    ])
+                    .expect(true)
+                    .build()
+            };
+
+            let results = env.run_complete_test(
+                compilation::templates::HELLO_WORLD,
+                modify_assembly,
+                create_reflection_test,
+            )?;
+
+            // Assert all tests passed
+            for result in &results {
+                assert!(
+                    result.is_fully_successful(),
+                    "Blob heap/Complex signature test failed for {} architecture: {:?}",
+                    result.architecture.name,
+                    result.errors
+                );
+            }
+
+            assert_eq!(results.len(), 2, "Expected to test exactly 2 architectures");
+            Ok(())
+        }
+    }
 }

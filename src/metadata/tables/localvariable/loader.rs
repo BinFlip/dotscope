@@ -53,8 +53,8 @@ impl MetadataLoader for LocalVariableLoader {
         Ok(())
     }
 
-    fn table_id(&self) -> TableId {
-        TableId::LocalVariable
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::LocalVariable)
     }
 
     fn dependencies(&self) -> &'static [TableId] {

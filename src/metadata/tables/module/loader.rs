@@ -76,8 +76,8 @@ impl MetadataLoader for ModuleLoader {
     ///
     /// ## Returns
     /// [`crate::metadata::tables::TableId::Module`] (0x00)
-    fn table_id(&self) -> TableId {
-        TableId::Module
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::Module)
     }
 
     /// Returns the table dependencies for Module loading.

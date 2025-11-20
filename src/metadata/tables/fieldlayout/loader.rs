@@ -79,8 +79,8 @@ impl MetadataLoader for FieldLayoutLoader {
     ///
     /// # Returns
     /// Returns [`crate::prelude::TableId::FieldLayout`] indicating this loader handles the `FieldLayout` table.
-    fn table_id(&self) -> TableId {
-        TableId::FieldLayout
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::FieldLayout)
     }
 
     /// Returns the table dependencies for `FieldLayout` loading.

@@ -86,8 +86,8 @@ impl MetadataLoader for PropertyMapLoader {
     /// ## Returns
     ///
     /// * [`TableId::PropertyMap`] - The table identifier (0x15)
-    fn table_id(&self) -> TableId {
-        TableId::PropertyMap
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::PropertyMap)
     }
 
     /// Returns the table dependencies for the `PropertyMap` table.

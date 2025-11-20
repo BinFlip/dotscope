@@ -10,7 +10,7 @@ use crate::{
         tables::{CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeAttributes, TypeDefRaw},
         token::Token,
     },
-    test::{get_clean_testfile, TestAssembly},
+    test::{get_testfile_crafted2, TestAssembly},
     Error, Result,
 };
 use tempfile::NamedTempFile;
@@ -21,9 +21,9 @@ use tempfile::NamedTempFile;
 pub fn owned_circularity_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
-    let Some(clean_testfile) = get_clean_testfile() else {
+    let Some(clean_testfile) = get_testfile_crafted2() else {
         return Err(Error::Error(
-            "WindowsBase.dll not available - test cannot run".to_string(),
+            "crafted_2.exe not available - test cannot run".to_string(),
         ));
     };
 
@@ -46,8 +46,8 @@ pub fn owned_circularity_validator_file_factory() -> Result<Vec<TestAssembly>> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/relationships/circularity.rs`
 pub fn create_assembly_with_circular_inheritance() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_clean_testfile() else {
-        return Err(Error::Error("WindowsBase.dll not available".to_string()));
+    let Some(clean_testfile) = get_testfile_crafted2() else {
+        return Err(Error::Error("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_file(&clean_testfile)
         .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
@@ -115,8 +115,8 @@ pub fn create_assembly_with_circular_inheritance() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/relationships/circularity.rs`
 pub fn create_assembly_with_self_referential_type() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_clean_testfile() else {
-        return Err(Error::Error("WindowsBase.dll not available".to_string()));
+    let Some(clean_testfile) = get_testfile_crafted2() else {
+        return Err(Error::Error("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_file(&clean_testfile)
         .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
@@ -161,8 +161,8 @@ pub fn create_assembly_with_self_referential_type() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/relationships/circularity.rs`
 pub fn create_assembly_with_circular_interface_implementation() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_clean_testfile() else {
-        return Err(Error::Error("WindowsBase.dll not available".to_string()));
+    let Some(clean_testfile) = get_testfile_crafted2() else {
+        return Err(Error::Error("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_file(&clean_testfile)
         .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;

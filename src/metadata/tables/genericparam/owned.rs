@@ -190,14 +190,38 @@ impl GenericParam {
             Some(owner) => match owner {
                 CilTypeReference::TypeDef(cil_type) => {
                     if let Some(generic_params) = cil_type.generic_params() {
-                        generic_params.push(self.clone());
+                        let mut already_exists = false;
+                        for (_, existing_param) in generic_params.iter() {
+                            if existing_param.name == self.name
+                                && existing_param.number == self.number
+                            {
+                                already_exists = true;
+                                break;
+                            }
+                        }
+
+                        if !already_exists {
+                            generic_params.push(self.clone());
+                        }
                     }
 
                     Ok(())
                 }
                 CilTypeReference::MethodDef(method) => {
                     if let Some(method) = method.upgrade() {
-                        method.generic_params.push(self.clone());
+                        let mut already_exists = false;
+                        for (_, existing_param) in method.generic_params.iter() {
+                            if existing_param.name == self.name
+                                && existing_param.number == self.number
+                            {
+                                already_exists = true;
+                                break;
+                            }
+                        }
+
+                        if !already_exists {
+                            method.generic_params.push(self.clone());
+                        }
                     }
 
                     Ok(())

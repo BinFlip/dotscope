@@ -658,10 +658,11 @@ mod tests {
                 create_dummy_field, create_dummy_method, create_dummy_typedef,
                 raw_change_integrity_validator_file_factory,
             },
-            get_clean_testfile, validator_test,
+            get_testfile_wb, validator_test,
         },
         Error,
     };
+    use rayon::ThreadPoolBuilder;
     use std::collections::HashSet;
 
     /// Direct corruption testing for RawChangeIntegrityValidator bypassing file I/O.
@@ -675,7 +676,7 @@ mod tests {
     /// - Operation chronology violations
     #[test]
     fn test_raw_change_integrity_validator_direct_corruption() -> Result<()> {
-        let Some(clean_testfile) = get_clean_testfile() else {
+        let Some(clean_testfile) = get_testfile_wb() else {
             return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
 
@@ -985,7 +986,7 @@ mod tests {
             context::RawValidationContext, scanner::ReferenceScanner,
         };
 
-        let Some(clean_testfile) = get_clean_testfile() else {
+        let Some(clean_testfile) = get_testfile_wb() else {
             return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
 
@@ -996,11 +997,13 @@ mod tests {
         };
 
         let scanner = ReferenceScanner::from_view(&view)?;
+        let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
         let context = RawValidationContext::new_for_modification(
             &view,
             &corrupted_changes,
             &scanner,
             &config,
+            &thread_pool,
         );
 
         validator.validate_raw(&context)

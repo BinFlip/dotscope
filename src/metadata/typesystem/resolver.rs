@@ -146,7 +146,7 @@ use crate::{
         token::Token,
         typesystem::{
             ArrayDimensions, CilFlavor, CilModifier, CilPrimitiveKind, CilTypeRc, CilTypeReference,
-            TypeRegistry, TypeSource,
+            CompleteTypeSpec, TypeRegistry, TypeSource,
         },
     },
     Error::{RecursionLimit, TypeError, TypeMissingParent, TypeNotFound},
@@ -197,7 +197,8 @@ const MAX_RECURSION_DEPTH: usize = 100;
 /// use std::sync::Arc;
 ///
 /// # fn example() -> dotscope::Result<()> {
-/// let registry = Arc::new(TypeRegistry::new()?);
+/// let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+/// let registry = Arc::new(TypeRegistry::new(test_identity)?);
 /// let mut resolver = TypeResolver::new(registry);
 ///
 /// // Resolve primitive types
@@ -255,15 +256,17 @@ impl TypeResolver {
     /// use std::sync::Arc;
     ///
     /// # fn example() -> dotscope::Result<()> {
-    /// let registry = Arc::new(TypeRegistry::new()?);
+    /// let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+    /// let registry = Arc::new(TypeRegistry::new(test_identity)?);
     /// let resolver = TypeResolver::new(registry);
     /// # Ok(())
     /// # }
     /// ```
     pub fn new(registry: Arc<TypeRegistry>) -> Self {
+        let current_source = registry.current_assembly_source();
         TypeResolver {
             registry,
-            current_source: TypeSource::CurrentModule,
+            current_source,
             token_parent: None,
             token_init: None,
         }
@@ -298,7 +301,8 @@ impl TypeResolver {
     /// # fn example2() -> dotscope::Result<()> {
     /// # use std::sync::Arc;
     /// # use dotscope::metadata::typesystem::TypeRegistry;
-    /// let registry = Arc::new(TypeRegistry::new()?);
+    /// let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+    /// let registry = Arc::new(TypeRegistry::new(test_identity)?);
     /// let resolver = TypeResolver::new(registry);
     /// let local_resolver = resolver
     ///     .with_source(TypeSource::CurrentModule);
@@ -520,7 +524,21 @@ impl TypeResolver {
             TypeSignature::String => self.registry.get_primitive(CilPrimitiveKind::String),
             TypeSignature::Class(token) | TypeSignature::ValueType(token) => {
                 if let Some(class_type) = self.registry.get(token) {
-                    Ok(class_type)
+                    if let Some(spec_token) = self.token_init.take() {
+                        let typespec_instance =
+                            self.registry.get_or_create_type(&CompleteTypeSpec {
+                                token_init: Some(spec_token),
+                                flavor: class_type.flavor().clone(),
+                                namespace: class_type.namespace.clone(),
+                                name: class_type.name.clone(),
+                                source: self.current_source.clone(),
+                                generic_args: None,
+                                base_type: Some(class_type),
+                            })?;
+                        Ok(typespec_instance)
+                    } else {
+                        Ok(class_type)
+                    }
                 } else {
                     Err(TypeNotFound(*token))
                 }
@@ -569,18 +587,17 @@ impl TypeResolver {
                     )
                 };
 
-                let array_type = self.registry.get_or_create_type(
-                    &mut token_init,
-                    array_flavor,
-                    &namespace,
-                    &name,
-                    self.current_source,
-                )?;
+                let array_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+                    token_init: token_init.take(),
+                    flavor: array_flavor,
+                    namespace: namespace.clone(),
+                    name,
+                    source: self.current_source.clone(),
+                    generic_args: None,
+                    base_type: None,
+                })?;
 
-                array_type
-                    .base
-                    .set(element_type.into())
-                    .map_err(|_| malformed_error!("Array type base already set"))?;
+                array_type.set_base(&element_type.into())?;
 
                 Ok(array_type)
             }
@@ -600,18 +617,17 @@ impl TypeResolver {
                     }],
                 };
 
-                let array_type = self.registry.get_or_create_type(
-                    &mut token_init,
-                    array_flavor,
-                    &namespace,
-                    &name,
-                    self.current_source,
-                )?;
+                let array_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+                    token_init: token_init.take(),
+                    flavor: array_flavor,
+                    namespace: namespace.clone(),
+                    name,
+                    source: self.current_source.clone(),
+                    generic_args: None,
+                    base_type: None,
+                })?;
 
-                array_type
-                    .base
-                    .set(element_type.into())
-                    .map_err(|_| malformed_error!("Array type base already set"))?;
+                array_type.set_base(&element_type.into())?;
 
                 for modifier in &szarray.modifiers {
                     if let Some(mod_type) = self.registry.get(&modifier.modifier_type) {
@@ -632,18 +648,17 @@ impl TypeResolver {
                 let namespace = pointed_type.namespace.clone();
                 let name = format!("{}*", pointed_type.name);
 
-                let ptr_type = self.registry.get_or_create_type(
-                    &mut token_init,
-                    CilFlavor::Pointer,
-                    &namespace,
-                    &name,
-                    self.current_source,
-                )?;
+                let ptr_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+                    token_init: token_init.take(),
+                    flavor: CilFlavor::Pointer,
+                    namespace: namespace.clone(),
+                    name,
+                    source: self.current_source.clone(),
+                    generic_args: None,
+                    base_type: None,
+                })?;
 
-                ptr_type
-                    .base
-                    .set(pointed_type.into())
-                    .map_err(|_| malformed_error!("Pointer type base already set"))?;
+                ptr_type.set_base(&pointed_type.into())?;
 
                 for modifier in &ptr.modifiers {
                     if let Some(mod_type) = self.registry.get(&modifier.modifier_type) {
@@ -664,32 +679,33 @@ impl TypeResolver {
                 let namespace = ref_type.namespace.clone();
                 let name = format!("{}&", ref_type.name);
 
-                let byref_type = self.registry.get_or_create_type(
-                    &mut token_init,
-                    CilFlavor::ByRef,
-                    &namespace,
-                    &name,
-                    self.current_source,
-                )?;
+                let byref_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+                    token_init: token_init.take(),
+                    flavor: CilFlavor::ByRef,
+                    namespace: namespace.clone(),
+                    name,
+                    source: self.current_source.clone(),
+                    generic_args: None,
+                    base_type: None,
+                })?;
 
-                byref_type
-                    .base
-                    .set(ref_type.into())
-                    .map_err(|_| malformed_error!("ByRef type base already set"))?;
+                byref_type.set_base(&ref_type.into())?;
                 Ok(byref_type)
             }
             TypeSignature::FnPtr(fn_ptr) => {
                 let name = format!("FunctionPointer_{:X}", std::ptr::from_ref(fn_ptr) as usize);
 
-                let fnptr_type = self.registry.get_or_create_type(
-                    &mut self.token_init,
-                    CilFlavor::FnPtr {
+                let fnptr_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+                    token_init: self.token_init.take(),
+                    flavor: CilFlavor::FnPtr {
                         signature: *fn_ptr.clone(),
                     },
-                    "",
-                    &name,
-                    self.current_source,
-                )?;
+                    namespace: String::new(),
+                    name,
+                    source: self.current_source.clone(),
+                    generic_args: None,
+                    base_type: None,
+                })?;
 
                 Ok(fnptr_type)
             }
@@ -701,18 +717,17 @@ impl TypeResolver {
                 let namespace = pinned_type.namespace.clone();
                 let name = format!("pinned {}", pinned_type.name);
 
-                let pinned_wrapper = self.registry.get_or_create_type(
-                    &mut token_init,
-                    CilFlavor::Pinned,
-                    &namespace,
-                    &name,
-                    self.current_source,
-                )?;
+                let pinned_wrapper = self.registry.get_or_create_type(&CompleteTypeSpec {
+                    token_init: token_init.take(),
+                    flavor: CilFlavor::Pinned,
+                    namespace: namespace.clone(),
+                    name,
+                    source: self.current_source.clone(),
+                    generic_args: None,
+                    base_type: None,
+                })?;
 
-                pinned_wrapper
-                    .base
-                    .set(pinned_type.into())
-                    .map_err(|_| malformed_error!("Pinned wrapper base already set"))?;
+                pinned_wrapper.set_base(&pinned_type.into())?;
                 Ok(pinned_wrapper)
             }
             TypeSignature::GenericInst(base_sig, type_args) => {
@@ -729,13 +744,25 @@ impl TypeResolver {
                     name = format!("{}`{}", name, type_args.len());
                 }
 
-                let generic_inst = self.registry.get_or_create_type(
-                    &mut token_init,
-                    CilFlavor::GenericInstance,
-                    &namespace,
-                    &name,
-                    self.current_source,
-                )?;
+                // Use the base type's source instead of the current assembly source
+                // Generic instantiations should inherit the source from their base type
+                let source = if let Some(external) = base_type.get_external() {
+                    self.registry.register_source(external)
+                } else {
+                    // For types without external reference, fall back to current source
+                    // This handles local types in the current assembly
+                    self.current_source.clone()
+                };
+
+                let generic_inst = self.registry.get_or_create_type(&CompleteTypeSpec {
+                    token_init: token_init.take(),
+                    flavor: CilFlavor::GenericInstance,
+                    namespace: namespace.clone(),
+                    name,
+                    source,
+                    generic_args: None,
+                    base_type: None,
+                })?;
 
                 let mut generic_args = Vec::with_capacity(type_args.len());
                 for arg_sig in type_args {
@@ -773,45 +800,64 @@ impl TypeResolver {
                     generic_inst.generic_args.push(method_spec);
                 }
 
-                generic_inst
-                    .base
-                    .set(base_type.into())
-                    .map_err(|_| malformed_error!("Generic instance base already set"))?;
+                if let Some(definition_base) = base_type.base() {
+                    generic_inst.set_base(&definition_base.into())?;
+                }
                 Ok(generic_inst)
             }
             TypeSignature::GenericParamType(index) => {
                 let param_name = format!("T{index}");
 
-                let param_type = self.registry.get_or_create_type(
-                    &mut self.token_init,
-                    CilFlavor::GenericParameter {
+                let param_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+                    token_init: self.token_init.take(),
+                    flavor: CilFlavor::GenericParameter {
                         index: *index,
                         method: false,
                     },
-                    "",
-                    &param_name,
-                    self.current_source,
-                )?;
+                    namespace: String::new(),
+                    name: param_name,
+                    source: self.current_source.clone(),
+                    generic_args: None,
+                    base_type: None,
+                })?;
 
                 Ok(param_type)
             }
             TypeSignature::GenericParamMethod(index) => {
                 let param_name = format!("TM{index}");
 
-                let param_type = self.registry.get_or_create_type(
-                    &mut self.token_init,
-                    CilFlavor::GenericParameter {
+                let param_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+                    token_init: self.token_init.take(),
+                    flavor: CilFlavor::GenericParameter {
                         index: *index,
                         method: true,
                     },
-                    "",
-                    &param_name,
-                    self.current_source,
-                )?;
+                    namespace: String::new(),
+                    name: param_name,
+                    source: self.current_source.clone(),
+                    generic_args: None,
+                    base_type: None,
+                })?;
 
                 Ok(param_type)
             }
-            _ => Err(TypeError("TypeSignature not supported!".to_string())),
+            TypeSignature::TypedByRef => {
+                let typed_ref_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+                    token_init: self.token_init.take(),
+                    flavor: CilFlavor::ValueType,
+                    namespace: "System".to_string(),
+                    name: "TypedReference".to_string(),
+                    source: self.current_source.clone(),
+                    generic_args: None,
+                    base_type: None,
+                })?;
+
+                Ok(typed_ref_type)
+            }
+            _ => Err(TypeError(format!(
+                "TypeSignature not supported: {:?}",
+                signature
+            ))),
         }
     }
 }
@@ -823,6 +869,7 @@ mod tests {
     use super::*;
     use crate::{
         metadata::{
+            identity::AssemblyIdentity,
             signatures::{
                 SignatureArray, SignatureMethod, SignaturePointer, SignatureSzArray, TypeSignature,
             },
@@ -834,7 +881,8 @@ mod tests {
 
     #[test]
     fn test_resolve_primitive() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
         let registry_bool = registry.get_primitive(CilPrimitiveKind::Boolean).unwrap();
         let mut resolver = TypeResolver::new(registry);
 
@@ -872,7 +920,8 @@ mod tests {
 
     #[test]
     fn test_resolve_array() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
         let mut resolver = TypeResolver::new(registry);
         let int_array_sig = TypeSignature::SzArray(SignatureSzArray {
             modifiers: Vec::new(),
@@ -935,16 +984,19 @@ mod tests {
 
     #[test]
     fn test_resolve_pointer() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
         let in_attr_token = Token::new(0x01000111);
         let _ = registry
-            .get_or_create_type(
-                &mut Some(in_attr_token),
-                CilFlavor::Class,
-                "System.Runtime.InteropServices",
-                "InAttribute",
-                TypeSource::CurrentModule,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: Some(in_attr_token),
+                flavor: CilFlavor::Class,
+                namespace: "System.Runtime.InteropServices".to_string(),
+                name: "InAttribute".to_string(),
+                source: TypeSource::Unknown,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         let mut resolver = TypeResolver::new(registry);
@@ -991,7 +1043,8 @@ mod tests {
 
     #[test]
     fn test_resolve_byref() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
         let mut resolver = TypeResolver::new(registry);
         let int_ref_sig = TypeSignature::ByRef(Box::new(TypeSignature::I4));
 
@@ -1016,7 +1069,8 @@ mod tests {
 
     #[test]
     fn test_recursion_limit() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
         let mut resolver = TypeResolver::new(registry);
 
         let mut sig = TypeSignature::I4;
@@ -1034,7 +1088,8 @@ mod tests {
 
     #[test]
     fn test_resolve_fn_ptr() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
         let mut resolver = TypeResolver::new(registry);
 
         let method_sig = SignatureMethod::default();
@@ -1048,7 +1103,8 @@ mod tests {
 
     #[test]
     fn test_resolve_pinned() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
         let mut resolver = TypeResolver::new(registry);
 
         let pinned_sig = TypeSignature::Pinned(Box::new(TypeSignature::Object));
@@ -1064,17 +1120,20 @@ mod tests {
 
     #[test]
     fn test_resolve_generic_instance() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         let list_token = Token::new(0x01000333);
         let list_type = registry
-            .get_or_create_type(
-                &mut Some(list_token),
-                CilFlavor::Class,
-                "System.Collections.Generic",
-                "List`1",
-                TypeSource::CurrentModule,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: Some(list_token),
+                flavor: CilFlavor::Class,
+                namespace: "System.Collections.Generic".to_string(),
+                name: "List`1".to_string(),
+                source: TypeSource::Unknown,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         let type_param = Arc::new(GenericParam {
@@ -1112,7 +1171,8 @@ mod tests {
 
     #[test]
     fn test_resolve_generic_params() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
         let mut resolver = TypeResolver::new(registry);
 
         // Type parameter (T0)
@@ -1142,29 +1202,34 @@ mod tests {
 
     #[test]
     fn test_resolve_class_and_valuetype() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         let class_token = Token::new(0x01000222);
         let value_token = Token::new(0x01000223);
 
         let _ = registry
-            .get_or_create_type(
-                &mut Some(class_token),
-                CilFlavor::Class,
-                "System",
-                "String",
-                TypeSource::CurrentModule,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: Some(class_token),
+                flavor: CilFlavor::Class,
+                namespace: "System".to_string(),
+                name: "String".to_string(),
+                source: TypeSource::Unknown,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         let _ = registry
-            .get_or_create_type(
-                &mut Some(value_token),
-                CilFlavor::ValueType,
-                "System",
-                "DateTime",
-                TypeSource::CurrentModule,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: Some(value_token),
+                flavor: CilFlavor::ValueType,
+                namespace: "System".to_string(),
+                name: "DateTime".to_string(),
+                source: TypeSource::Unknown,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         let mut resolver = TypeResolver::new(registry);
@@ -1184,29 +1249,34 @@ mod tests {
 
     #[test]
     fn test_resolve_modifiers() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         let modifier_token = Token::new(0x01000444);
         let _ = registry
-            .get_or_create_type(
-                &mut Some(modifier_token),
-                CilFlavor::Class,
-                "System.Runtime.InteropServices",
-                "InAttribute",
-                TypeSource::CurrentModule,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: Some(modifier_token),
+                flavor: CilFlavor::Class,
+                namespace: "System.Runtime.InteropServices".to_string(),
+                name: "InAttribute".to_string(),
+                source: TypeSource::Unknown,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         // Create parent type
         let parent_token = Token::new(0x01000445);
         let _ = registry
-            .get_or_create_type(
-                &mut Some(parent_token),
-                CilFlavor::Class,
-                "System",
-                "Int32",
-                TypeSource::CurrentModule,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: Some(parent_token),
+                flavor: CilFlavor::Class,
+                namespace: "System".to_string(),
+                name: "Int32".to_string(),
+                source: TypeSource::Unknown,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         let mut resolver = TypeResolver::new(registry).with_parent(parent_token);
@@ -1241,7 +1311,8 @@ mod tests {
 
     #[test]
     fn test_resolver_with_source() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
         let source = TypeSource::AssemblyRef(Token::new(0x23000001));
 
         let mut resolver = TypeResolver::new(registry).with_source(source);
@@ -1257,7 +1328,8 @@ mod tests {
 
     #[test]
     fn test_resolver_with_token_init() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
         let init_token = Token::new(0x1B000001);
 
         let mut resolver = TypeResolver::new(registry).with_token_init(init_token);
@@ -1273,7 +1345,8 @@ mod tests {
 
     #[test]
     fn test_resolver_error_cases() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
         let mut resolver = TypeResolver::new(registry);
 
         // Test TypeNotFound error

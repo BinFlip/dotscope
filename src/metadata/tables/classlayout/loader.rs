@@ -126,8 +126,8 @@ impl MetadataLoader for ClassLayoutLoader {
     ///
     /// Provides the [`crate::prelude::TableId::ClassLayout`] constant used to identify this table
     /// type within the metadata loading framework.
-    fn table_id(&self) -> TableId {
-        TableId::ClassLayout
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::ClassLayout)
     }
 
     /// Returns the table dependencies for `ClassLayout` loading

@@ -68,8 +68,8 @@ impl MetadataLoader for AssemblyLoader {
     ///
     /// # Returns
     /// [`crate::metadata::tables::TableId::Assembly`] (0x20)
-    fn table_id(&self) -> TableId {
-        TableId::Assembly
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::Assembly)
     }
 
     /// Returns the list of table dependencies

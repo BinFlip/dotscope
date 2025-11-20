@@ -70,8 +70,8 @@ impl MetadataLoader for ModuleRefLoader {
     ///
     /// ## Returns
     /// [`crate::metadata::tables::TableId::ModuleRef`] (0x1A)
-    fn table_id(&self) -> TableId {
-        TableId::ModuleRef
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::ModuleRef)
     }
 
     /// Returns the table dependencies for `ModuleRef` loading.

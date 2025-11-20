@@ -108,6 +108,10 @@ impl NestedClass {
         self.enclosing_class
             .nested_types
             .push(self.nested_class.clone().into());
+
+        self.nested_class
+            .set_enclosing_type(self.enclosing_class.clone().into())?;
+
         Ok(())
     }
 }

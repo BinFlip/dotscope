@@ -117,18 +117,23 @@ mod parser;
 mod types;
 
 pub use encoder::*;
-pub use parser::{parse_custom_attribute_blob, parse_custom_attribute_data};
+pub use parser::{
+    parse_custom_attribute_blob, parse_custom_attribute_blob_with_registry,
+    parse_custom_attribute_data, parse_custom_attribute_data_with_registry,
+};
 pub use types::*;
 
 #[cfg(test)]
 mod tests {
     use crate::metadata::customattributes::{
-        encode_custom_attribute_value, parse_custom_attribute_data, CustomAttributeArgument,
+        encode_custom_attribute_value, parse_custom_attribute_data,
+        parse_custom_attribute_data_with_registry, CustomAttributeArgument,
         CustomAttributeNamedArgument, CustomAttributeValue,
     };
     use crate::metadata::typesystem::CilFlavor;
     use crate::test::factories::metadata::customattributes::{
-        create_empty_method, create_method_with_params,
+        create_constructor_with_params_and_registry, create_empty_method,
+        create_method_with_params, get_test_type_registry,
     };
 
     #[test]
@@ -467,8 +472,14 @@ mod tests {
         let encoded = encode_custom_attribute_value(&original).unwrap();
 
         // Parse as ValueType (enums)
-        let method = create_method_with_params(vec![CilFlavor::ValueType, CilFlavor::ValueType]);
-        let parsed = parse_custom_attribute_data(&encoded, &method.params).unwrap();
+        let test_registry = get_test_type_registry();
+        let method = create_constructor_with_params_and_registry(
+            vec![CilFlavor::ValueType, CilFlavor::ValueType],
+            &test_registry,
+        );
+        let parsed =
+            parse_custom_attribute_data_with_registry(&encoded, &method.params, &test_registry)
+                .unwrap();
 
         // Verify - parser might not preserve exact enum type names
         assert_eq!(parsed.fixed_args.len(), 2);

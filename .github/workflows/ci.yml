@@ -28,6 +28,11 @@ jobs:
       with:
         components: rustfmt, clippy
         
+    - name: Setup .NET SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+        
     - name: Setup Rust cache
       uses: Swatinem/rust-cache@v2
       with:
@@ -43,10 +48,10 @@ jobs:
       run: cargo check --all-features
       
     - name: Run tests
-      run: cargo test --all-features --verbose
+      run: cargo test --release --all-features --verbose
       
     - name: Run doc tests
-      run: cargo test --doc --all-features
+      run: cargo test --release --doc --all-features
       
     - name: Check documentation
       run: cargo doc --all-features --no-deps
@@ -118,6 +123,11 @@ jobs:
       with:
         components: llvm-tools-preview
         
+    - name: Setup .NET SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+        
     - name: Setup Rust cache
       uses: Swatinem/rust-cache@v2
       with:
@@ -132,6 +142,6 @@ jobs:
     - name: Upload to codecov.io
       uses: codecov/codecov-action@v5
       with:
-        file: lcov.info
+        files: lcov.info
         fail_ci_if_error: true
         token: ${{ secrets.CODECOV_TOKEN }}

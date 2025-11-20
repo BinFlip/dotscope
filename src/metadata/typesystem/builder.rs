@@ -29,10 +29,12 @@
 //!
 //! ```rust
 //! use dotscope::metadata::typesystem::{TypeBuilder, TypeRegistry, CilPrimitiveKind};
+//! use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
 //! use std::sync::Arc;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let registry = Arc::new(TypeRegistry::new()?);
+//! let identity = AssemblyIdentity::new("TestAssembly", AssemblyVersion::new(1, 0, 0, 0), None, None, None);
+//! let registry = Arc::new(TypeRegistry::new(identity)?);
 //!
 //! // Create a simple integer type
 //! let int_type = TypeBuilder::new(registry.clone())
@@ -51,9 +53,11 @@
 //!
 //! ```rust
 //! # use dotscope::metadata::typesystem::{TypeBuilder, TypeRegistry, CilPrimitiveKind};
+//! # use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
 //! # use std::sync::Arc;
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! # let registry = Arc::new(TypeRegistry::new()?);
+//! # let identity = AssemblyIdentity::new("TestAssembly", AssemblyVersion::new(1, 0, 0, 0), None, None, None);
+//! # let registry = Arc::new(TypeRegistry::new(identity)?);
 //! // Create an array of integers: int[]
 //! let int_array = TypeBuilder::new(registry.clone())
 //!     .primitive(CilPrimitiveKind::I4)?
@@ -108,8 +112,8 @@ use crate::{
         tables::MethodSpec,
         token::Token,
         typesystem::{
-            CilFlavor, CilModifier, CilPrimitiveKind, CilTypeRc, CilTypeReference, TypeRegistry,
-            TypeSource,
+            CilFlavor, CilModifier, CilPrimitiveKind, CilTypeRc, CilTypeReference,
+            CompleteTypeSpec, TypeRegistry, TypeSource,
         },
     },
     Error::TypeError,
@@ -143,10 +147,12 @@ use crate::{
 ///
 /// ```rust
 /// use dotscope::metadata::typesystem::{TypeBuilder, TypeRegistry, CilPrimitiveKind};
+/// use dotscope::metadata::identity::AssemblyIdentity;
 /// use std::sync::Arc;
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let registry = Arc::new(TypeRegistry::new()?);
+/// let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+/// let registry = Arc::new(TypeRegistry::new(test_identity)?);
 ///
 /// // Build int**[] (array of pointers to pointers to int)
 /// let complex_type = TypeBuilder::new(registry)
@@ -212,10 +218,12 @@ impl TypeBuilder {
     ///
     /// ```rust
     /// use dotscope::metadata::typesystem::{TypeBuilder, TypeRegistry};
+    /// use dotscope::metadata::identity::AssemblyIdentity;
     /// use std::sync::Arc;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let registry = Arc::new(TypeRegistry::new()?);
+    /// let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+    /// let registry = Arc::new(TypeRegistry::new(test_identity)?);
     /// let builder = TypeBuilder::new(registry);
     /// # Ok(())
     /// # }
@@ -223,9 +231,10 @@ impl TypeBuilder {
     ///
     /// [`TypeSource::CurrentModule`]: crate::metadata::typesystem::TypeSource::CurrentModule
     pub fn new(registry: Arc<TypeRegistry>) -> Self {
+        let source = registry.current_assembly_source();
         TypeBuilder {
             registry,
-            source: TypeSource::CurrentModule,
+            source,
             current_type: None,
             token_init: None,
         }
@@ -249,11 +258,14 @@ impl TypeBuilder {
     ///
     /// ```rust
     /// # use dotscope::metadata::typesystem::{TypeBuilder, TypeRegistry, TypeSource};
+    /// # use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
+    /// # use dotscope::metadata::token::Token;
     /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let registry = Arc::new(TypeRegistry::new()?);
+    /// # let identity = AssemblyIdentity::new("TestAssembly", AssemblyVersion::new(1, 0, 0, 0), None, None, None);
+    /// # let registry = Arc::new(TypeRegistry::new(identity)?);
     /// let builder = TypeBuilder::new(registry)
-    ///     .with_source(TypeSource::CurrentModule);
+    ///     .with_source(TypeSource::Module(Token::new(0x26000001)));
     /// # Ok(())
     /// # }
     /// ```
@@ -284,9 +296,11 @@ impl TypeBuilder {
     /// ```rust
     /// # use dotscope::metadata::typesystem::{TypeBuilder, TypeRegistry};
     /// # use dotscope::metadata::token::Token;
+    /// # use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
     /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let registry = Arc::new(TypeRegistry::new()?);
+    /// # let identity = AssemblyIdentity::new("TestAssembly", AssemblyVersion::new(1, 0, 0, 0), None, None, None);
+    /// # let registry = Arc::new(TypeRegistry::new(identity)?);
     /// # let token = Token::new(0x02000001); // TypeDef token
     /// let builder = TypeBuilder::new(registry)
     ///     .with_token_init(token);
@@ -324,9 +338,11 @@ impl TypeBuilder {
     ///
     /// ```rust
     /// # use dotscope::metadata::typesystem::{TypeBuilder, TypeRegistry, CilPrimitiveKind};
+    /// # use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
     /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let registry = Arc::new(TypeRegistry::new()?);
+    /// # let identity = AssemblyIdentity::new("TestAssembly", AssemblyVersion::new(1, 0, 0, 0), None, None, None);
+    /// # let registry = Arc::new(TypeRegistry::new(identity)?);
     /// // Create a 32-bit signed integer type
     /// let int_type = TypeBuilder::new(registry.clone())
     ///     .primitive(CilPrimitiveKind::I4)?
@@ -371,9 +387,11 @@ impl TypeBuilder {
     ///
     /// ```rust
     /// # use dotscope::metadata::typesystem::{TypeBuilder, TypeRegistry};
+    /// # use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
     /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let registry = Arc::new(TypeRegistry::new()?);
+    /// # let identity = AssemblyIdentity::new("TestAssembly", AssemblyVersion::new(1, 0, 0, 0), None, None, None);
+    /// # let registry = Arc::new(TypeRegistry::new(identity)?);
     /// // Create a System.String class type
     /// let string_type = TypeBuilder::new(registry.clone())
     ///     .class("System", "String")?
@@ -389,13 +407,15 @@ impl TypeBuilder {
     ///
     /// [`TypeError`]: crate::Error::TypeError
     pub fn class(mut self, namespace: &str, name: &str) -> Result<Self> {
-        self.current_type = Some(self.registry.get_or_create_type(
-            &mut self.token_init,
-            CilFlavor::Class,
-            namespace,
-            name,
-            self.source,
-        )?);
+        self.current_type = Some(self.registry.get_or_create_type(&CompleteTypeSpec {
+            token_init: self.token_init.take(),
+            flavor: CilFlavor::Class,
+            namespace: namespace.to_string(),
+            name: name.to_string(),
+            source: self.source.clone(),
+            generic_args: None,
+            base_type: None,
+        })?);
         Ok(self)
     }
 
@@ -423,9 +443,11 @@ impl TypeBuilder {
     ///
     /// ```rust
     /// # use dotscope::metadata::typesystem::{TypeBuilder, TypeRegistry};
+    /// # use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
     /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let registry = Arc::new(TypeRegistry::new()?);
+    /// # let identity = AssemblyIdentity::new("TestAssembly", AssemblyVersion::new(1, 0, 0, 0), None, None, None);
+    /// # let registry = Arc::new(TypeRegistry::new(identity)?);
     /// // Create a System.DateTime value type
     /// let datetime_type = TypeBuilder::new(registry.clone())
     ///     .value_type("System", "DateTime")?
@@ -441,13 +463,15 @@ impl TypeBuilder {
     ///
     /// [`TypeError`]: crate::Error::TypeError
     pub fn value_type(mut self, namespace: &str, name: &str) -> Result<Self> {
-        self.current_type = Some(self.registry.get_or_create_type(
-            &mut self.token_init,
-            CilFlavor::ValueType,
-            namespace,
-            name,
-            self.source,
-        )?);
+        self.current_type = Some(self.registry.get_or_create_type(&CompleteTypeSpec {
+            token_init: self.token_init.take(),
+            flavor: CilFlavor::ValueType,
+            namespace: namespace.to_string(),
+            name: name.to_string(),
+            source: self.source.clone(),
+            generic_args: None,
+            base_type: None,
+        })?);
         Ok(self)
     }
 
@@ -476,9 +500,11 @@ impl TypeBuilder {
     ///
     /// ```rust
     /// # use dotscope::metadata::typesystem::{TypeBuilder, TypeRegistry};
+    /// # use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
     /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let registry = Arc::new(TypeRegistry::new()?);
+    /// # let identity = AssemblyIdentity::new("TestAssembly", AssemblyVersion::new(1, 0, 0, 0), None, None, None);
+    /// # let registry = Arc::new(TypeRegistry::new(identity)?);
     /// // Create IDisposable interface
     /// let disposable_interface = TypeBuilder::new(registry.clone())
     ///     .interface("System", "IDisposable")?
@@ -494,13 +520,15 @@ impl TypeBuilder {
     ///
     /// [`TypeError`]: crate::Error::TypeError
     pub fn interface(mut self, namespace: &str, name: &str) -> Result<Self> {
-        self.current_type = Some(self.registry.get_or_create_type(
-            &mut self.token_init,
-            CilFlavor::Interface,
-            namespace,
-            name,
-            self.source,
-        )?);
+        self.current_type = Some(self.registry.get_or_create_type(&CompleteTypeSpec {
+            token_init: self.token_init.take(),
+            flavor: CilFlavor::Interface,
+            namespace: namespace.to_string(),
+            name: name.to_string(),
+            source: self.source.clone(),
+            generic_args: None,
+            base_type: None,
+        })?);
         Ok(self)
     }
 
@@ -526,9 +554,11 @@ impl TypeBuilder {
     ///
     /// ```rust
     /// # use dotscope::metadata::typesystem::{TypeBuilder, TypeRegistry, CilPrimitiveKind};
+    /// # use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
     /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let registry = Arc::new(TypeRegistry::new()?);
+    /// # let identity = AssemblyIdentity::new("TestAssembly", AssemblyVersion::new(1, 0, 0, 0), None, None, None);
+    /// # let registry = Arc::new(TypeRegistry::new(identity)?);
     /// // Create int* (pointer to int)
     /// let int_ptr = TypeBuilder::new(registry.clone())
     ///     .primitive(CilPrimitiveKind::I4)?
@@ -553,22 +583,16 @@ impl TypeBuilder {
     /// [`TypeError`]: crate::Error::TypeError
     pub fn pointer(mut self) -> Result<Self> {
         if let Some(base_type) = self.current_type.take() {
-            let name = format!("{}*", base_type.name);
-            let namespace = base_type.namespace.clone();
+            let ptr_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+                token_init: self.token_init.take(),
+                flavor: CilFlavor::Pointer,
+                namespace: base_type.namespace.clone(),
+                name: format!("{}*", base_type.name),
+                source: self.source.clone(),
+                generic_args: None,
+                base_type: Some(base_type),
+            })?;
 
-            let ptr_type = self.registry.get_or_create_type(
-                &mut self.token_init,
-                CilFlavor::Pointer,
-                &namespace,
-                &name,
-                self.source,
-            )?;
-
-            // Use weak reference to prevent cycles
-            ptr_type
-                .base
-                .set(base_type.into())
-                .map_err(|_| malformed_error!("Pointer type base already set"))?;
             self.current_type = Some(ptr_type);
         }
         Ok(self)
@@ -583,13 +607,15 @@ impl TypeBuilder {
             let name = format!("{}&", base_type.name);
             let namespace = base_type.namespace.clone();
 
-            let ref_type = self.registry.get_or_create_type(
-                &mut self.token_init,
-                CilFlavor::ByRef,
-                &namespace,
-                &name,
-                self.source,
-            )?;
+            let ref_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+                token_init: self.token_init.take(),
+                flavor: CilFlavor::ByRef,
+                namespace: namespace.clone(),
+                name,
+                source: self.source.clone(),
+                generic_args: None,
+                base_type: None,
+            })?;
 
             ref_type
                 .base
@@ -609,13 +635,15 @@ impl TypeBuilder {
             let name = format!("pinned {}", base_type.name);
             let namespace = base_type.namespace.clone();
 
-            let pinned_type = self.registry.get_or_create_type(
-                &mut self.token_init,
-                CilFlavor::Pinned,
-                &namespace,
-                &name,
-                self.source,
-            )?;
+            let pinned_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+                token_init: self.token_init.take(),
+                flavor: CilFlavor::Pinned,
+                namespace: namespace.clone(),
+                name,
+                source: self.source.clone(),
+                generic_args: None,
+                base_type: None,
+            })?;
 
             pinned_type
                 .base
@@ -647,9 +675,11 @@ impl TypeBuilder {
     ///
     /// ```rust
     /// # use dotscope::metadata::typesystem::{TypeBuilder, TypeRegistry, CilPrimitiveKind};
+    /// # use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
     /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let registry = Arc::new(TypeRegistry::new()?);
+    /// # let identity = AssemblyIdentity::new("TestAssembly", AssemblyVersion::new(1, 0, 0, 0), None, None, None);
+    /// # let registry = Arc::new(TypeRegistry::new(identity)?);
     /// // Create int[] (array of integers)
     /// let int_array = TypeBuilder::new(registry.clone())
     ///     .primitive(CilPrimitiveKind::I4)?
@@ -684,16 +714,18 @@ impl TypeBuilder {
             let name = format!("{}[]", base_type.name);
             let namespace = base_type.namespace.clone();
 
-            let array_type = self.registry.get_or_create_type(
-                &mut self.token_init,
-                CilFlavor::Array {
+            let array_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+                token_init: self.token_init.take(),
+                flavor: CilFlavor::Array {
                     rank: 1,
                     dimensions: vec![],
                 },
-                &namespace,
-                &name,
-                self.source,
-            )?;
+                namespace: namespace.clone(),
+                name,
+                source: self.source.clone(),
+                generic_args: None,
+                base_type: None,
+            })?;
 
             array_type
                 .base
@@ -722,16 +754,18 @@ impl TypeBuilder {
             let name = format!("{}{}", base_type.name, dimension_part);
             let namespace = base_type.namespace.clone();
 
-            let array_type = self.registry.get_or_create_type(
-                &mut self.token_init,
-                CilFlavor::Array {
+            let array_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+                token_init: self.token_init.take(),
+                flavor: CilFlavor::Array {
                     rank,
                     dimensions: vec![],
                 },
-                &namespace,
-                &name,
-                self.source,
-            )?;
+                namespace: namespace.clone(),
+                name,
+                source: self.source.clone(),
+                generic_args: None,
+                base_type: None,
+            })?;
 
             array_type
                 .base
@@ -752,13 +786,15 @@ impl TypeBuilder {
     pub fn function_pointer(mut self, signature: SignatureMethod) -> Result<Self> {
         let name = format!("FunctionPointer_{:X}", &raw const signature as usize);
 
-        let fn_ptr_type = self.registry.get_or_create_type(
-            &mut self.token_init,
-            CilFlavor::FnPtr { signature },
-            "",
-            &name,
-            self.source,
-        )?;
+        let fn_ptr_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+            token_init: self.token_init.take(),
+            flavor: CilFlavor::FnPtr { signature },
+            namespace: String::new(),
+            name,
+            source: self.source.clone(),
+            generic_args: None,
+            base_type: None,
+        })?;
 
         self.current_type = Some(fn_ptr_type);
         Ok(self)
@@ -843,13 +879,15 @@ impl TypeBuilder {
             }
 
             let namespace = base_type.namespace.clone();
-            let generic_type = self.registry.get_or_create_type(
-                &mut self.token_init,
-                CilFlavor::GenericInstance,
-                &namespace,
-                &name,
-                self.source,
-            )?;
+            let generic_type = self.registry.get_or_create_type(&CompleteTypeSpec {
+                token_init: self.token_init.take(),
+                flavor: CilFlavor::GenericInstance,
+                namespace: namespace.clone(),
+                name,
+                source: self.source.clone(),
+                generic_args: None,
+                base_type: None,
+            })?;
 
             let args = arg_builder(self.registry.clone())?;
             if !args.is_empty() {
@@ -916,9 +954,11 @@ impl TypeBuilder {
     ///
     /// ```rust
     /// # use dotscope::metadata::typesystem::{TypeBuilder, TypeRegistry, CilPrimitiveKind};
+    /// # use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
     /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let registry = Arc::new(TypeRegistry::new()?);
+    /// # let identity = AssemblyIdentity::new("TestAssembly", AssemblyVersion::new(1, 0, 0, 0), None, None, None);
+    /// # let registry = Arc::new(TypeRegistry::new(identity)?);
     /// // Build a complete type specification
     /// let array_type = TypeBuilder::new(registry)
     ///     .primitive(CilPrimitiveKind::I4)?  // Start with int
@@ -955,6 +995,7 @@ mod tests {
     use super::*;
     use crate::{
         metadata::{
+            identity::AssemblyIdentity,
             signatures::{SignatureMethod, SignatureParameter, TypeSignature},
             tables::GenericParam,
             token::Token,
@@ -965,7 +1006,8 @@ mod tests {
 
     #[test]
     fn test_build_primitive() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         let int_type = TypeBuilder::new(registry.clone())
             .primitive(CilPrimitiveKind::I4)
@@ -980,7 +1022,8 @@ mod tests {
 
     #[test]
     fn test_build_pointer() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         let int_ptr = TypeBuilder::new(registry.clone())
             .primitive(CilPrimitiveKind::I4)
@@ -999,7 +1042,8 @@ mod tests {
 
     #[test]
     fn test_build_array() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         let string_array = TypeBuilder::new(registry.clone())
             .primitive(CilPrimitiveKind::String)
@@ -1018,7 +1062,8 @@ mod tests {
 
     #[test]
     fn test_build_multidimensional_array() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         let int_2d_array = TypeBuilder::new(registry.clone())
             .primitive(CilPrimitiveKind::I4)
@@ -1039,7 +1084,8 @@ mod tests {
 
     #[test]
     fn test_build_class() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         let list_type = TypeBuilder::new(registry.clone())
             .class("System.Collections.Generic", "List`1")
@@ -1054,7 +1100,8 @@ mod tests {
 
     #[test]
     fn test_build_value_type() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         let struct_type = TypeBuilder::new(registry.clone())
             .value_type("System", "DateTime")
@@ -1069,7 +1116,8 @@ mod tests {
 
     #[test]
     fn test_build_interface() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         let interface_type = TypeBuilder::new(registry.clone())
             .interface("System.Collections.Generic", "IList`1")
@@ -1084,7 +1132,8 @@ mod tests {
 
     #[test]
     fn test_build_generic_instance() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         let list_type = TypeBuilder::new(registry.clone())
             .class("System.Collections.Generic", "List`1")
@@ -1107,7 +1156,7 @@ mod tests {
         list_type.generic_params.push(generic_param);
 
         let list_int_instance = TypeBuilder::new(registry.clone())
-            .with_source(TypeSource::CurrentModule)
+            .with_source(TypeSource::Unknown)
             .class("System.Collections.Generic", "List`1")
             .unwrap()
             .generic_instance(1, |registry| {
@@ -1136,7 +1185,8 @@ mod tests {
 
     #[test]
     fn test_build_byref() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         let byref_type = TypeBuilder::new(registry.clone())
             .primitive(CilPrimitiveKind::I4)
@@ -1155,7 +1205,8 @@ mod tests {
 
     #[test]
     fn test_build_pinned() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         let pinned_type = TypeBuilder::new(registry.clone())
             .primitive(CilPrimitiveKind::Object)
@@ -1174,7 +1225,8 @@ mod tests {
 
     #[test]
     fn test_build_function_pointer() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         let signature = SignatureMethod {
             has_this: false,
@@ -1213,7 +1265,8 @@ mod tests {
 
     #[test]
     fn test_with_source() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         let source = TypeSource::AssemblyRef(Token::new(0x23000001));
         let int_type = TypeBuilder::new(registry.clone())
@@ -1228,7 +1281,8 @@ mod tests {
 
     #[test]
     fn test_with_token_init() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         let token: Token = Token::new(0x01000999);
         let list_type = TypeBuilder::new(registry.clone())
@@ -1246,17 +1300,20 @@ mod tests {
 
     #[test]
     fn test_modifiers() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         let in_attr_token = Token::new(0x01000888);
         let _ = registry
-            .get_or_create_type(
-                &mut Some(in_attr_token),
-                CilFlavor::Class,
-                "System.Runtime.InteropServices",
-                "InAttribute",
-                TypeSource::CurrentModule,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: Some(in_attr_token),
+                flavor: CilFlavor::Class,
+                namespace: "System.Runtime.InteropServices".to_string(),
+                name: "InAttribute".to_string(),
+                source: TypeSource::Unknown,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         let int_type = TypeBuilder::new(registry.clone())
@@ -1288,17 +1345,20 @@ mod tests {
 
     #[test]
     fn test_extends() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         let base_token = Token::new(0x01000777);
         let _ = registry
-            .get_or_create_type(
-                &mut Some(base_token),
-                CilFlavor::Class,
-                "System",
-                "Exception",
-                TypeSource::CurrentModule,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: Some(base_token),
+                flavor: CilFlavor::Class,
+                namespace: "System".to_string(),
+                name: "Exception".to_string(),
+                source: TypeSource::Unknown,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         let derived_type = TypeBuilder::new(registry.clone())
@@ -1318,7 +1378,8 @@ mod tests {
 
     #[test]
     fn test_build_failure() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         let result = TypeBuilder::new(registry.clone()).build();
         assert!(result.is_err());
@@ -1330,7 +1391,8 @@ mod tests {
 
     #[test]
     fn test_build_complex_chain() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         // Build a complex type chain: string[][]*&
         let complex_type = TypeBuilder::new(registry.clone())
@@ -1366,18 +1428,21 @@ mod tests {
 
     #[test]
     fn test_generic_instance_with_multiple_args() {
-        let registry = Arc::new(TypeRegistry::new().unwrap());
+        let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
+        let registry = Arc::new(TypeRegistry::new(test_identity).unwrap());
 
         // Create Dictionary<TKey, TValue> type
         let dict_token = Token::new(0x01000555);
         let dict_type = registry
-            .get_or_create_type(
-                &mut Some(dict_token),
-                CilFlavor::Class,
-                "System.Collections.Generic",
-                "Dictionary`2",
-                TypeSource::CurrentModule,
-            )
+            .get_or_create_type(&CompleteTypeSpec {
+                token_init: Some(dict_token),
+                flavor: CilFlavor::Class,
+                namespace: "System.Collections.Generic".to_string(),
+                name: "Dictionary`2".to_string(),
+                source: TypeSource::Unknown,
+                generic_args: None,
+                base_type: None,
+            })
             .unwrap();
 
         let key_param = Arc::new(GenericParam {
@@ -1409,8 +1474,7 @@ mod tests {
 
         // Create a Dictionary<string, int> instance
         let dict_instance = TypeBuilder::new(registry.clone())
-            .with_source(TypeSource::CurrentModule)
-            .with_token_init(dict_token)
+            .with_source(TypeSource::Unknown)
             .class("System.Collections.Generic", "Dictionary`2")
             .unwrap()
             .generic_instance(2, |registry| {

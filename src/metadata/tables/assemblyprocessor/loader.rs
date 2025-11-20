@@ -99,8 +99,8 @@ impl MetadataLoader for AssemblyProcessorLoader {
     ///
     /// # Returns
     /// [`crate::metadata::tables::TableId::AssemblyProcessor`] (0x21)
-    fn table_id(&self) -> TableId {
-        TableId::AssemblyProcessor
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::AssemblyProcessor)
     }
 
     /// Returns the list of table dependencies

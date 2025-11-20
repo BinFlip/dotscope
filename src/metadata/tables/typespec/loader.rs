@@ -66,6 +66,7 @@ impl MetadataLoader for TypeSpecLoader {
 
                     let mut resolver =
                         TypeResolver::new(context.types.clone()).with_token_init(row.token);
+
                     resolver.resolve(&owned.signature.base)?;
 
                     context.type_spec.insert(row.token, owned);
@@ -86,8 +87,8 @@ impl MetadataLoader for TypeSpecLoader {
     /// ## Returns
     ///
     /// [`TableId::TypeSpec`] - The identifier for the `TypeSpec` metadata table (0x1B)
-    fn table_id(&self) -> TableId {
-        TableId::TypeSpec
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::TypeSpec)
     }
 
     /// Returns the list of tables that must be loaded before processing `TypeSpec` entries.

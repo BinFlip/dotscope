@@ -73,8 +73,8 @@ impl MetadataLoader for FieldPtrLoader {
     ///
     /// # Returns
     /// Returns [`crate::metadata::tables::TableId::FieldPtr`] indicating this loader handles the `FieldPtr` table.
-    fn table_id(&self) -> TableId {
-        TableId::FieldPtr
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::FieldPtr)
     }
 
     /// Returns the table dependencies for `FieldPtr` loading.

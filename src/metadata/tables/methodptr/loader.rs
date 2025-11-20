@@ -83,8 +83,8 @@ impl MetadataLoader for MethodPtrLoader {
     ///
     /// # Returns
     /// The [`TableId::MethodPtr`] identifier for this table type.
-    fn table_id(&self) -> TableId {
-        TableId::MethodPtr
+    fn table_id(&self) -> Option<TableId> {
+        Some(TableId::MethodPtr)
     }
 
     /// Returns the dependencies required for loading `MethodPtr` entries.
