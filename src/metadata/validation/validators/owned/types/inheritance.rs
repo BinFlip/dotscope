@@ -84,7 +84,7 @@
 
 use crate::{
     metadata::{
-        method::{Method, MethodMap, MethodModifiers},
+        method::{Method, MethodModifiers},
         tables::TypeAttributes,
         typesystem::{CilFlavor, CilType, CilTypeRc, CilTypeRefList},
         validation::{
@@ -146,6 +146,8 @@ struct MethodTypeMapping {
     method_to_type: HashMap<usize, usize>,
     /// Maps type address to all method addresses it owns
     type_to_methods: HashMap<usize, Vec<usize>>,
+    /// Maps method address to Arc<Method> for lookup
+    address_to_method: HashMap<usize, Arc<Method>>,
 }
 
 impl MethodTypeMapping {
@@ -153,6 +155,7 @@ impl MethodTypeMapping {
     fn new(target_types: Vec<CilTypeRc>) -> Self {
         let mut method_to_type = HashMap::new();
         let mut type_to_methods: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut address_to_method = HashMap::new();
 
         for type_entry in target_types {
             let type_address = Arc::as_ptr(&type_entry) as usize;
@@ -162,6 +165,7 @@ impl MethodTypeMapping {
                 if let Some(method_rc) = method_ref.upgrade() {
                     let method_address = Arc::as_ptr(&method_rc) as usize;
                     method_to_type.insert(method_address, type_address);
+                    address_to_method.insert(method_address, Arc::clone(&method_rc));
                     type_methods.push(method_address);
                 }
             }
@@ -174,6 +178,7 @@ impl MethodTypeMapping {
         Self {
             method_to_type,
             type_to_methods,
+            address_to_method,
         }
     }
 
@@ -187,6 +192,11 @@ impl MethodTypeMapping {
         self.type_to_methods
             .get(&type_address)
             .map_or(&[], Vec::as_slice)
+    }
+
+    /// Get method by address (O(1) lookup)
+    fn get_method(&self, method_address: usize) -> Option<&Arc<Method>> {
+        self.address_to_method.get(&method_address)
     }
 }
 
@@ -775,18 +785,12 @@ impl OwnedInheritanceValidator {
     /// This method is thread-safe and operates on immutable resolved metadata structures.
     /// All method and type data is accessed through thread-safe collections.
     fn validate_method_inheritance(&self, context: &OwnedValidationContext) -> Result<()> {
-        let methods = context.object().methods();
         let all_types = context.object().types().all_types(); // Available for lookups
         let method_mapping = MethodTypeMapping::new(all_types.clone()); // Need all types for cross-assembly method mapping
 
         for type_entry in context.target_assembly_types() {
             if let Some(base_type) = type_entry.base() {
-                self.validate_basic_method_overrides(
-                    type_entry,
-                    &base_type,
-                    methods,
-                    &method_mapping,
-                )?;
+                self.validate_basic_method_overrides(type_entry, &base_type, &method_mapping)?;
             }
         }
 
@@ -805,8 +809,7 @@ impl OwnedInheritanceValidator {
     ///
     /// * `derived_type` - The derived type containing methods to validate via [`crate::metadata::typesystem::CilType`]
     /// * `base_type` - The base type containing methods being overridden via [`crate::metadata::typesystem::CilType`]
-    /// * `methods` - Method map containing all method definitions via [`crate::metadata::method::MethodMap`]
-    /// * `method_mapping` - Pre-built method-to-type mapping for efficient lookups
+    /// * `method_mapping` - Pre-built mapping for efficient validation
     ///
     /// # Returns
     ///
@@ -826,7 +829,6 @@ impl OwnedInheritanceValidator {
         &self,
         derived_type: &CilTypeRc,
         base_type: &CilTypeRc,
-        methods: &MethodMap,
         method_mapping: &MethodTypeMapping,
     ) -> Result<()> {
         if base_type.flags & TypeAttributes::INTERFACE != 0 {
@@ -836,20 +838,9 @@ impl OwnedInheritanceValidator {
         let type_address = Arc::as_ptr(derived_type) as usize;
         let type_methods = method_mapping.get_type_methods(type_address);
         for &method_address in type_methods {
-            // Find method by address - need to iterate through all methods to match address
-            let method_entry = methods
-                .iter()
-                .find(|entry| Arc::as_ptr(entry.value()) as usize == method_address);
-            if let Some(method_entry) = method_entry {
-                let method = method_entry.value();
-
+            if let Some(method) = method_mapping.get_method(method_address) {
                 if method.flags_modifiers.contains(MethodModifiers::VIRTUAL) {
-                    self.validate_virtual_method_override(
-                        method,
-                        base_type,
-                        methods,
-                        method_mapping,
-                    )?;
+                    self.validate_virtual_method_override(method, base_type, method_mapping)?;
                 }
 
                 if method.flags_modifiers.contains(MethodModifiers::ABSTRACT)
@@ -880,8 +871,7 @@ impl OwnedInheritanceValidator {
     ///
     /// * `derived_method` - The derived virtual method being validated via [`crate::metadata::method::Method`]
     /// * `base_type` - The base type containing potential overridden methods via [`crate::metadata::typesystem::CilType`]
-    /// * `methods` - Method map containing all method definitions via [`crate::metadata::method::MethodMap`]
-    /// * `method_mapping` - Pre-built method-to-type mapping for efficient lookups
+    /// * `method_mapping` - Pre-built mapping for efficient validation
     ///
     /// # Returns
     ///
@@ -901,7 +891,6 @@ impl OwnedInheritanceValidator {
         &self,
         derived_method: &Method,
         base_type: &CilTypeRc,
-        methods: &MethodMap,
         method_mapping: &MethodTypeMapping,
     ) -> Result<()> {
         if base_type.flags & TypeAttributes::INTERFACE != 0 {
@@ -918,13 +907,7 @@ impl OwnedInheritanceValidator {
         let base_address = Arc::as_ptr(base_type) as usize;
         let base_methods = method_mapping.get_type_methods(base_address);
         for &base_method_address in base_methods {
-            // Find method by address - need to iterate through all methods to match address
-            let base_method_entry = methods
-                .iter()
-                .find(|entry| Arc::as_ptr(entry.value()) as usize == base_method_address);
-            if let Some(base_method_entry) = base_method_entry {
-                let base_method = base_method_entry.value();
-
+            if let Some(base_method) = method_mapping.get_method(base_method_address) {
                 if base_method
                     .flags_modifiers
                     .contains(MethodModifiers::VIRTUAL)
@@ -1041,8 +1024,10 @@ impl OwnedInheritanceValidator {
             return Err(Error::ValidationOwnedValidatorFailed {
                 validator: self.name().to_string(),
                 message: format!(
-                    "Override method '{}' cannot be less accessible than base method",
-                    derived_method.name
+                    "Override method '{}' cannot be less accessible than base method (derived: {:?}, base: {:?})",
+                    derived_method.name,
+                    derived_method.flags_access,
+                    base_method.flags_access
                 ),
                 source: None,
             });
