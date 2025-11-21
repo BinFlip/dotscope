@@ -55,7 +55,7 @@ use crate::{
 /// # use dotscope::metadata::tables::{ConstantBuilder, CodedIndex, TableId};
 /// # use dotscope::metadata::typesystem::ELEMENT_TYPE;
 /// # use std::path::Path;
-/// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
 /// let assembly = CilAssembly::new(view);
 /// let mut context = BuilderContext::new(assembly);
 ///
@@ -424,7 +424,7 @@ mod tests {
     #[test]
     fn test_constant_builder_basic_integer() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
 
             // Check existing Constant table count
@@ -453,7 +453,7 @@ mod tests {
     #[test]
     fn test_constant_builder_i4_convenience() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -473,7 +473,7 @@ mod tests {
     #[test]
     fn test_constant_builder_boolean() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -493,7 +493,7 @@ mod tests {
     #[test]
     fn test_constant_builder_string() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -513,7 +513,7 @@ mod tests {
     #[test]
     fn test_constant_builder_null_reference() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -535,7 +535,7 @@ mod tests {
     #[test]
     fn test_constant_builder_missing_element_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -555,7 +555,7 @@ mod tests {
     #[test]
     fn test_constant_builder_missing_parent() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -574,7 +574,7 @@ mod tests {
     #[test]
     fn test_constant_builder_missing_value() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -593,7 +593,7 @@ mod tests {
     #[test]
     fn test_constant_builder_invalid_parent_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -615,7 +615,7 @@ mod tests {
     #[test]
     fn test_constant_builder_invalid_element_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -636,7 +636,7 @@ mod tests {
     #[test]
     fn test_constant_builder_multiple_constants() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -690,7 +690,7 @@ mod tests {
     #[test]
     fn test_constant_builder_all_primitive_types() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 

@@ -42,7 +42,7 @@
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
-//! let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+//! let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 //! let resources = assembly.resources();
 //!
 //! println!("Assembly contains {} resources", resources.len());
@@ -68,7 +68,7 @@
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
-//! let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+//! let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 //! let resources = assembly.resources();
 //!
 //! // Access specific resource by name
@@ -94,7 +94,7 @@
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
-//! let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+//! let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 //! let resources = assembly.resources();
 //!
 //! let mut total_size = 0u64;
@@ -205,7 +205,7 @@ use crate::{file::File, metadata::tables::ManifestResourceRc};
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
-/// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+/// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 /// let resources = assembly.resources();
 ///
 /// // Check if assembly has resources
@@ -227,7 +227,7 @@ use crate::{file::File, metadata::tables::ManifestResourceRc};
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
-/// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+/// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 /// let resources = assembly.resources();
 ///
 /// for resource_entry in resources.iter() {
@@ -307,7 +307,7 @@ impl Resources {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// let resources = assembly.resources();
     ///
     /// // Look for specific resources
@@ -342,7 +342,7 @@ impl Resources {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// let resources = assembly.resources();
     ///
     /// // Advanced map operations
@@ -389,7 +389,7 @@ impl Resources {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// let resources = assembly.resources();
     ///
     /// for resource_entry in resources.iter() {
@@ -471,7 +471,7 @@ impl Resources {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// let resources = assembly.resources();
     ///
     /// let count = resources.len();
@@ -502,7 +502,7 @@ impl Resources {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// let resources = assembly.resources();
     ///
     /// if resources.is_empty() {
@@ -540,7 +540,7 @@ impl Resources {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// let resources = assembly.resources();
     ///
     /// // Iterate over all resources

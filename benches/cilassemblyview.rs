@@ -14,13 +14,13 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
     c.bench_function("bench_cilassemblyview", |b| {
-        b.iter({ || CilAssemblyView::from_file(&path).unwrap() });
+        b.iter({ || CilAssemblyView::from_path(&path).unwrap() });
     });
 
     c.bench_function("bench_cilassemblyview_validation", |b| {
         b.iter({
             || {
-                CilAssemblyView::from_file_with_validation(&path, ValidationConfig::strict())
+                CilAssemblyView::from_path_with_validation(&path, ValidationConfig::strict())
                     .unwrap()
             }
         });

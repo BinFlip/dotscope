@@ -42,7 +42,7 @@ use super::method_body::MethodBodyBuilder;
 /// use dotscope::MethodBuilder;
 ///
 /// # fn example() -> dotscope::Result<()> {
-/// # let view = CilAssemblyView::from_file("test.dll".as_ref())?;
+/// # let view = CilAssemblyView::from_path("test.dll")?;
 /// # let assembly = CilAssembly::new(view);
 /// # let mut context = BuilderContext::new(assembly);
 /// let method_token = MethodBuilder::new("Add")
@@ -73,7 +73,7 @@ use super::method_body::MethodBodyBuilder;
 /// use dotscope::metadata::token::Token;
 ///
 /// # fn example() -> dotscope::Result<()> {
-/// # let view = dotscope::metadata::cilassemblyview::CilAssemblyView::from_file("test.dll".as_ref())?;
+/// # let view = dotscope::metadata::cilassemblyview::CilAssemblyView::from_path("test.dll")?;
 /// # let assembly = dotscope::CilAssembly::new(view);
 /// # let mut context = dotscope::BuilderContext::new(assembly);
 /// let ctor_token = MethodBuilder::constructor()
@@ -102,7 +102,7 @@ use super::method_body::MethodBodyBuilder;
 /// use dotscope::metadata::token::Token;
 ///
 /// # fn example() -> dotscope::Result<()> {
-/// # let view = dotscope::metadata::cilassemblyview::CilAssemblyView::from_file("test.dll".as_ref())?;
+/// # let view = dotscope::metadata::cilassemblyview::CilAssemblyView::from_path("test.dll")?;
 /// # let assembly = dotscope::CilAssembly::new(view);
 /// # let mut context = dotscope::BuilderContext::new(assembly);
 /// let getter_token = MethodBuilder::property_getter("Name", TypeSignature::String)
@@ -127,7 +127,7 @@ use super::method_body::MethodBodyBuilder;
 /// use dotscope::metadata::token::Token;
 ///
 /// # fn example() -> dotscope::Result<()> {
-/// # let view = dotscope::metadata::cilassemblyview::CilAssemblyView::from_file("test.dll".as_ref())?;
+/// # let view = dotscope::metadata::cilassemblyview::CilAssemblyView::from_path("test.dll")?;
 /// # let assembly = dotscope::CilAssembly::new(view);
 /// # let mut context = dotscope::BuilderContext::new(assembly);
 /// let pinvoke_token = MethodBuilder::new("GetLastError")
@@ -149,7 +149,7 @@ use super::method_body::MethodBodyBuilder;
 /// use dotscope::metadata::token::Token;
 ///
 /// # fn example() -> dotscope::Result<()> {
-/// # let view = dotscope::metadata::cilassemblyview::CilAssemblyView::from_file("test.dll".as_ref())?;
+/// # let view = dotscope::metadata::cilassemblyview::CilAssemblyView::from_path("test.dll")?;
 /// # let assembly = dotscope::CilAssembly::new(view);
 /// # let mut context = dotscope::BuilderContext::new(assembly);
 /// let printf_token = MethodBuilder::new("printf")
@@ -728,7 +728,7 @@ impl MethodBuilder {
     /// use dotscope::MethodBuilder;
     ///
     /// # fn example() -> dotscope::Result<()> {
-    /// # let view = dotscope::metadata::cilassemblyview::CilAssemblyView::from_file("test.dll".as_ref())?;
+    /// # let view = dotscope::metadata::cilassemblyview::CilAssemblyView::from_path("test.dll")?;
     /// # let assembly = dotscope::CilAssembly::new(view);
     /// # let mut context = dotscope::BuilderContext::new(assembly);
     /// let method = MethodBuilder::new("Test")
@@ -914,7 +914,7 @@ mod tests {
 
     fn get_test_context() -> Result<BuilderContext> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
+        let view = CilAssemblyView::from_path(&path)?;
         let assembly = CilAssembly::new(view);
         Ok(BuilderContext::new(assembly))
     }

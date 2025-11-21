@@ -41,7 +41,7 @@ use crate::{
 /// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::{CustomAttributeBuilder, CodedIndex, TableId};
 /// # use std::path::Path;
-/// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
 /// let assembly = CilAssembly::new(view);
 /// let mut context = BuilderContext::new(assembly);
 ///
@@ -280,7 +280,7 @@ mod tests {
     #[test]
     fn test_custom_attribute_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
 
             // Check existing CustomAttribute table count
@@ -311,7 +311,7 @@ mod tests {
     #[test]
     fn test_custom_attribute_builder_with_value() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -338,7 +338,7 @@ mod tests {
     #[test]
     fn test_custom_attribute_builder_no_value() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -362,7 +362,7 @@ mod tests {
     #[test]
     fn test_custom_attribute_builder_missing_parent() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -381,7 +381,7 @@ mod tests {
     #[test]
     fn test_custom_attribute_builder_missing_constructor() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -400,7 +400,7 @@ mod tests {
     #[test]
     fn test_custom_attribute_builder_invalid_parent_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -423,7 +423,7 @@ mod tests {
     #[test]
     fn test_custom_attribute_builder_invalid_constructor_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -446,7 +446,7 @@ mod tests {
     #[test]
     fn test_custom_attribute_builder_multiple_attributes() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 

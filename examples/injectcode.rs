@@ -66,7 +66,7 @@ fn main() -> Result<()> {
 
     // Step 1: Load the assembly for modification
     println!("📂 Loading assembly for modification...");
-    let view = CilAssemblyView::from_file(input_path).map_err(|e| {
+    let view = CilAssemblyView::from_path(input_path).map_err(|e| {
         eprintln!("❌ Failed to load assembly: {e}");
         eprintln!("   Make sure the file is a valid .NET assembly");
         e

@@ -39,7 +39,7 @@
 //! use dotscope::metadata::customattributes::parse_custom_attribute_blob;
 //! use dotscope::CilObject;
 //!
-//! let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+//! let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
 //!
 //! # fn get_custom_attribute_data() -> (u32, std::sync::Arc<boxcar::Vec<dotscope::metadata::tables::ParamRc>>) { todo!() }
 //! let (blob_index, constructor_params) = get_custom_attribute_data();
@@ -171,7 +171,7 @@ const MAX_NESTING_DEPTH: usize = 1000;
 /// use dotscope::metadata::customattributes::parse_custom_attribute_blob;
 /// use dotscope::CilObject;
 ///
-/// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+/// let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
 ///
 /// # fn get_custom_attribute_data() -> (u32, std::sync::Arc<boxcar::Vec<dotscope::metadata::tables::ParamRc>>) { todo!() }
 /// let (blob_index, constructor_params) = get_custom_attribute_data();

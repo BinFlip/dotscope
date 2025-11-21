@@ -49,7 +49,7 @@ use crate::{
 /// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::{InterfaceImplBuilder, CodedIndex, TableId};
 /// # use std::path::Path;
-/// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
 /// let assembly = CilAssembly::new(view);
 /// let mut context = BuilderContext::new(assembly);
 ///

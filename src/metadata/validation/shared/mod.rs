@@ -31,7 +31,7 @@
 //! use std::path::Path;
 //!
 //! # let path = Path::new("assembly.dll");
-//! let view = CilAssemblyView::from_file(&path)?;
+//! let view = CilAssemblyView::from_path(&path)?;
 //! let scanner = ReferenceScanner::from_view(&view)?;
 //!
 //! // Token validation example

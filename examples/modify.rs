@@ -59,7 +59,7 @@ fn main() -> Result<()> {
 
     // Load the assembly for modification
     println!("📂 Loading assembly for modification...");
-    let view = match CilAssemblyView::from_file(source_path) {
+    let view = match CilAssemblyView::from_path(source_path) {
         Ok(view) => {
             println!("✅ Successfully loaded assembly view");
             view

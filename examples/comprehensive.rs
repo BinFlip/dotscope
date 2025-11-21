@@ -39,7 +39,7 @@ fn main() -> Result<()> {
     println!("🔍 Advanced analysis of: {}", path.display());
 
     // Load assembly using the prelude's CilObject
-    let assembly = CilObject::from_file(path)?;
+    let assembly = CilObject::from_path(path)?;
 
     // === Basic Assembly Information ===
     print_assembly_info(&assembly);

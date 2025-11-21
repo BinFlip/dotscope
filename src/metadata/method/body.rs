@@ -82,7 +82,7 @@
 //! ```rust,ignore
 //! use dotscope::{CilObject, metadata::method::MethodBody};
 //!
-//! let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+//! let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
 //! let methods = assembly.methods();
 //!
 //! for entry in methods.iter() {

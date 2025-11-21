@@ -47,7 +47,7 @@
 //! use dotscope::prelude::*;
 //! use std::path::Path;
 //!
-//! # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+//! # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 //! # let assembly = view.to_owned();
 //! # let output_path = Path::new("output.dll");
 //! let layout = WriteLayout::plan(&assembly)?;
@@ -66,7 +66,7 @@
 //! use dotscope::prelude::*;
 //! use std::path::Path;
 //!
-//! # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+//! # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 //! # let assembly = view.to_owned();
 //! # let output_path = Path::new("output.dll");
 //! let layout = WriteLayout::plan(&assembly)?;
@@ -166,7 +166,7 @@ use crate::{
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// # let output_path = Path::new("output.dll");
 /// let layout = WriteLayout::plan(&assembly)?;
@@ -185,7 +185,7 @@ use crate::{
 /// use dotscope::Error;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// # let output_path = Path::new("output.dll");
 /// # let layout = WriteLayout::plan(&assembly)?;
@@ -252,7 +252,7 @@ impl WriteExecutor {
     /// use dotscope::prelude::*;
     /// use std::path::Path;
     ///
-    /// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
     /// # let assembly = view.to_owned();
     /// # let output_path = Path::new("output.dll");
     /// let layout = WriteLayout::plan(&assembly)?;
@@ -271,7 +271,7 @@ impl WriteExecutor {
     /// use dotscope::prelude::*;
     /// use std::path::Path;
     ///
-    /// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
     /// # let assembly = view.to_owned();
     /// # let output_path = Path::new("output.dll");
     /// let layout = WriteLayout::plan(&assembly)?;
@@ -1150,7 +1150,7 @@ mod tests {
 
     #[test]
     fn test_write_executor_with_basic_layout() {
-        let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))
+        let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))
             .expect("Failed to load test assembly");
         let assembly = view.to_owned();
 

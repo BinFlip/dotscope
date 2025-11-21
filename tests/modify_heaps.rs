@@ -16,7 +16,7 @@ where
     V: FnOnce(&CilAssemblyView) -> Result<()>,
 {
     // Load original assembly and create context
-    let view = CilAssemblyView::from_file(Path::new(TEST_ASSEMBLY_PATH))?;
+    let view = CilAssemblyView::from_path(Path::new(TEST_ASSEMBLY_PATH))?;
     let assembly = view.to_owned();
     let mut context = BuilderContext::new(assembly);
 
@@ -32,7 +32,7 @@ where
     assembly.write_to_file(temp_file.path())?;
 
     // Load written file and verify
-    let written_view = CilAssemblyView::from_file(temp_file.path())?;
+    let written_view = CilAssemblyView::from_path(temp_file.path())?;
     verify_fn(&written_view)?;
 
     Ok(())
@@ -207,7 +207,7 @@ fn test_string_modification_and_verify() -> Result<()> {
     perform_round_trip_test(
         |context| {
             // Get the original view to find the string index
-            let view = CilAssemblyView::from_file(Path::new(TEST_ASSEMBLY_PATH))?;
+            let view = CilAssemblyView::from_path(Path::new(TEST_ASSEMBLY_PATH))?;
             let strings = view
                 .strings()
                 .ok_or_else(|| Error::Error("No strings heap found".to_string()))?;

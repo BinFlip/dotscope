@@ -51,7 +51,7 @@ pub use super::GenericParamAttributes;
 /// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::{GenericParamBuilder, GenericParamAttributes, CodedIndex, TableId};
 /// # use std::path::Path;
-/// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
 /// let assembly = CilAssembly::new(view);
 /// let mut context = BuilderContext::new(assembly);
 ///
@@ -326,7 +326,7 @@ mod tests {
     #[test]
     fn test_generic_param_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
 
             // Check existing GenericParam table count
@@ -355,7 +355,7 @@ mod tests {
     #[test]
     fn test_generic_param_builder_with_flags() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -380,7 +380,7 @@ mod tests {
     #[test]
     fn test_generic_param_builder_covariant() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -403,7 +403,7 @@ mod tests {
     #[test]
     fn test_generic_param_builder_method_parameter() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -425,7 +425,7 @@ mod tests {
     #[test]
     fn test_generic_param_builder_missing_name() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -445,7 +445,7 @@ mod tests {
     #[test]
     fn test_generic_param_builder_missing_number() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -465,7 +465,7 @@ mod tests {
     #[test]
     fn test_generic_param_builder_missing_owner() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -482,7 +482,7 @@ mod tests {
     #[test]
     fn test_generic_param_builder_invalid_owner_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -503,7 +503,7 @@ mod tests {
     #[test]
     fn test_generic_param_builder_invalid_number() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -524,7 +524,7 @@ mod tests {
     #[test]
     fn test_generic_param_builder_invalid_flags() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -546,7 +546,7 @@ mod tests {
     #[test]
     fn test_generic_param_builder_multiple_parameters() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -594,7 +594,7 @@ mod tests {
     #[test]
     fn test_generic_param_builder_all_constraint_types() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 

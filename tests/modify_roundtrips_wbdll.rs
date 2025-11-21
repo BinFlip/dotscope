@@ -25,7 +25,7 @@ fn create_test_assembly() -> Result<CilAssembly> {
         panic!("Test assembly not found at: {}", path.display());
     }
 
-    let view = CilAssemblyView::from_file(&path)?;
+    let view = CilAssemblyView::from_path(&path)?;
     Ok(CilAssembly::new(view))
 }
 
@@ -75,7 +75,7 @@ fn test_string_addition_round_trip() -> Result<()> {
     assembly.write_to_file(temp_file.path())?;
 
     // Step 5: Load the written file
-    let written_view = CilAssemblyView::from_file(temp_file.path())?;
+    let written_view = CilAssemblyView::from_path(temp_file.path())?;
 
     // Step 5: Verify changes are persisted
     let written_strings = written_view
@@ -123,7 +123,7 @@ fn test_string_modification_round_trip() -> Result<()> {
     assembly.write_to_file(temp_file.path())?;
 
     // Step 4: Load the written file
-    let written_view = CilAssemblyView::from_file(temp_file.path())?;
+    let written_view = CilAssemblyView::from_path(temp_file.path())?;
 
     // Step 5: Verify modification is persisted
     let written_strings = written_view
@@ -172,7 +172,7 @@ fn test_string_removal_round_trip() -> Result<()> {
     assembly.write_to_file(temp_file.path())?;
 
     // Step 4: Load the written file
-    let written_view = CilAssemblyView::from_file(temp_file.path())?;
+    let written_view = CilAssemblyView::from_path(temp_file.path())?;
 
     // Step 5: Verify removal is persisted
     let written_strings = written_view
@@ -240,7 +240,7 @@ fn test_blob_operations_round_trip() -> Result<()> {
     assembly.write_to_file(temp_file.path())?;
 
     // Step 4: Load the written file
-    let written_view = CilAssemblyView::from_file(temp_file.path())?;
+    let written_view = CilAssemblyView::from_path(temp_file.path())?;
 
     // Step 5: Verify changes are persisted
     let written_blobs = written_view
@@ -312,7 +312,7 @@ fn test_guid_operations_round_trip() -> Result<()> {
     assembly.write_to_file(temp_file.path())?;
 
     // Step 4: Load the written file
-    let written_view = CilAssemblyView::from_file(temp_file.path())?;
+    let written_view = CilAssemblyView::from_path(temp_file.path())?;
 
     // Step 5: Verify changes are persisted
     let written_guids = written_view
@@ -375,7 +375,7 @@ fn test_userstring_operations_round_trip() -> Result<()> {
     assembly.write_to_file(temp_file.path())?;
 
     // Step 4: Load the written file
-    let written_view = CilAssemblyView::from_file(temp_file.path())?;
+    let written_view = CilAssemblyView::from_path(temp_file.path())?;
 
     // Step 5: Verify changes are persisted
     let written_userstrings = written_view
@@ -451,7 +451,7 @@ fn test_mixed_operations_round_trip() -> Result<()> {
     assembly.write_to_file(temp_file.path())?;
 
     // Step 4: Load the written file
-    let written_view = CilAssemblyView::from_file(temp_file.path())?;
+    let written_view = CilAssemblyView::from_path(temp_file.path())?;
 
     // Step 5: Verify all changes are persisted
     let (written_strings, written_blobs, written_guids, written_userstrings) =
@@ -547,7 +547,7 @@ fn test_builder_context_round_trip() -> Result<()> {
     assembly.write_to_file(temp_file.path())?;
 
     // Step 4: Load the written file
-    let written_view = CilAssemblyView::from_file(temp_file.path())?;
+    let written_view = CilAssemblyView::from_path(temp_file.path())?;
 
     // Step 5: Verify builder operations are persisted
     let (written_strings, written_blobs, written_guids, written_userstrings) =

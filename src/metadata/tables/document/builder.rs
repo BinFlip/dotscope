@@ -19,7 +19,7 @@
 //! ```rust,ignore
 //! # use dotscope::prelude::*;
 //! # use std::path::Path;
-//! # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+//! # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
 //! # let assembly = CilAssembly::new(view);
 //! # let mut context = BuilderContext::new(assembly);
 //!
@@ -77,7 +77,7 @@ use crate::{
 /// ```rust,ignore
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
-/// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
 /// # let assembly = CilAssembly::new(view);
 /// # let mut context = BuilderContext::new(assembly);
 ///
@@ -381,7 +381,7 @@ impl DocumentBuilder {
     /// ```rust,ignore
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
     /// # let assembly = CilAssembly::new(view);
     /// # let mut context = BuilderContext::new(assembly);
     ///

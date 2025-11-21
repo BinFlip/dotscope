@@ -255,7 +255,7 @@ pub fn create_assembly_with_invalid_rid_zero() -> Result<tempfile::NamedTempFile
     };
 
     // Load clean assembly and create CilAssembly
-    let view = crate::metadata::cilassemblyview::CilAssemblyView::from_file(&clean_testfile)?;
+    let view = crate::metadata::cilassemblyview::CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
 
     // Create corrupted modification directly by manipulating the changes structure
@@ -293,7 +293,7 @@ pub fn create_assembly_with_excessive_rid() -> Result<tempfile::NamedTempFile> {
         return Err(Error::Error("WindowsBase.dll not available".to_string()));
     };
 
-    let view = crate::metadata::cilassemblyview::CilAssemblyView::from_file(&clean_testfile)?;
+    let view = crate::metadata::cilassemblyview::CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
 
     let mut corrupted_changes = AssemblyChanges::empty();
@@ -323,7 +323,7 @@ pub fn create_assembly_with_nonexistent_target() -> Result<tempfile::NamedTempFi
         return Err(Error::Error("WindowsBase.dll not available".to_string()));
     };
 
-    let view = crate::metadata::cilassemblyview::CilAssemblyView::from_file(&clean_testfile)?;
+    let view = crate::metadata::cilassemblyview::CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
 
     let mut corrupted_changes = AssemblyChanges::empty();
@@ -353,7 +353,7 @@ pub fn create_assembly_with_update_after_delete() -> Result<tempfile::NamedTempF
         return Err(Error::Error("WindowsBase.dll not available".to_string()));
     };
 
-    let view = crate::metadata::cilassemblyview::CilAssemblyView::from_file(&clean_testfile)?;
+    let view = crate::metadata::cilassemblyview::CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
 
     let mut corrupted_changes = AssemblyChanges::empty();
@@ -391,7 +391,7 @@ pub fn create_assembly_with_excessive_updates() -> Result<tempfile::NamedTempFil
         return Err(Error::Error("WindowsBase.dll not available".to_string()));
     };
 
-    let view = crate::metadata::cilassemblyview::CilAssemblyView::from_file(&clean_testfile)?;
+    let view = crate::metadata::cilassemblyview::CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
 
     let mut corrupted_changes = AssemblyChanges::empty();
@@ -425,7 +425,7 @@ pub fn create_assembly_with_unordered_operations() -> Result<tempfile::NamedTemp
         return Err(Error::Error("WindowsBase.dll not available".to_string()));
     };
 
-    let view = crate::metadata::cilassemblyview::CilAssemblyView::from_file(&clean_testfile)?;
+    let view = crate::metadata::cilassemblyview::CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
 
     let mut corrupted_changes = AssemblyChanges::empty();
@@ -464,7 +464,7 @@ pub fn create_assembly_with_conflicting_inserts() -> Result<tempfile::NamedTempF
         return Err(Error::Error("WindowsBase.dll not available".to_string()));
     };
 
-    let view = crate::metadata::cilassemblyview::CilAssemblyView::from_file(&clean_testfile)?;
+    let view = crate::metadata::cilassemblyview::CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
 
     let mut corrupted_changes = AssemblyChanges::empty();

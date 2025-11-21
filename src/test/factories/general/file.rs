@@ -53,7 +53,7 @@ pub fn verify_file(file: &File) {
         "CLR runtime header directory missing!"
     );
 
-    let (clr_rva, clr_size) = file.clr();
+    let (clr_rva, clr_size) = file.clr().expect("Should have CLR header");
     assert_eq!(clr_rva, 0x1420);
     assert_eq!(clr_size, 0x48);
 }

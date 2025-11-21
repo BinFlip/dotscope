@@ -68,7 +68,7 @@ use crate::{
 /// # use dotscope::metadata::tables::ClassLayoutBuilder;
 /// # use dotscope::metadata::token::Token;
 /// # use std::path::Path;
-/// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
 /// let assembly = CilAssembly::new(view);
 /// let mut context = BuilderContext::new(assembly);
 ///
@@ -351,7 +351,7 @@ mod tests {
     #[test]
     fn test_class_layout_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
 
             // Check existing ClassLayout table count
@@ -379,7 +379,7 @@ mod tests {
     #[test]
     fn test_class_layout_builder_different_packings() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -437,7 +437,7 @@ mod tests {
     #[test]
     fn test_class_layout_builder_default_packing() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn test_class_layout_builder_explicit_sizes() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -502,7 +502,7 @@ mod tests {
     #[test]
     fn test_class_layout_builder_missing_packing_size() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -522,7 +522,7 @@ mod tests {
     #[test]
     fn test_class_layout_builder_missing_class_size() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -542,7 +542,7 @@ mod tests {
     #[test]
     fn test_class_layout_builder_missing_parent() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -560,7 +560,7 @@ mod tests {
     #[test]
     fn test_class_layout_builder_invalid_parent_token() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -581,7 +581,7 @@ mod tests {
     #[test]
     fn test_class_layout_builder_zero_parent_rid() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -602,7 +602,7 @@ mod tests {
     #[test]
     fn test_class_layout_builder_invalid_packing_size() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -623,7 +623,7 @@ mod tests {
     #[test]
     fn test_class_layout_builder_excessive_packing_size() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -643,7 +643,7 @@ mod tests {
     #[test]
     fn test_class_layout_builder_excessive_class_size() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -663,7 +663,7 @@ mod tests {
     #[test]
     fn test_class_layout_builder_maximum_valid_values() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -685,7 +685,7 @@ mod tests {
     #[test]
     fn test_class_layout_builder_all_valid_packing_sizes() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -711,7 +711,7 @@ mod tests {
     #[test]
     fn test_class_layout_builder_realistic_scenarios() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 

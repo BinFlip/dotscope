@@ -74,7 +74,7 @@
 //!
 //! if compilation_result.is_success() {
 //!     // Modify assembly using dotscope
-//!     let view = CilAssemblyView::from_file(&exe_path)?;
+//!     let view = CilAssemblyView::from_path(&exe_path)?;
 //!     let assembly = CilAssembly::new(view);
 //!     let mut context = BuilderContext::new(assembly);
 //!
@@ -392,7 +392,7 @@ impl TestEnvironment {
     {
         use crate::prelude::*;
 
-        let view = CilAssemblyView::from_file(original_path)?;
+        let view = CilAssemblyView::from_path(original_path)?;
         let assembly = CilAssembly::new(view);
         let mut context = BuilderContext::new(assembly);
 

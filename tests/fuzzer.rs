@@ -27,7 +27,7 @@ fn test_load_path(path: PathBuf) {
         for entry in artifacts_path.flatten() {
             let path = entry.path();
             if path.is_file() {
-                let _ = CilObject::from_file(&path);
+                let _ = CilObject::from_path(&path);
             }
         }
     }

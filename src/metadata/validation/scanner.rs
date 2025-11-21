@@ -28,7 +28,7 @@
 //! use std::path::Path;
 //!
 //! # let path = Path::new("assembly.dll");
-//! let view = CilAssemblyView::from_file(&path)?;
+//! let view = CilAssemblyView::from_path(&path)?;
 //! let scanner = ReferenceScanner::from_view(&view)?;
 //!
 //! // Check if a token exists
@@ -91,7 +91,7 @@ use std::collections::{HashMap, HashSet};
 /// use std::path::Path;
 ///
 /// # let path = Path::new("assembly.dll");
-/// let view = CilAssemblyView::from_file(&path)?;
+/// let view = CilAssemblyView::from_path(&path)?;
 /// let scanner = ReferenceScanner::from_view(&view)?;
 ///
 /// // Check if a token exists
@@ -159,7 +159,7 @@ impl ReferenceScanner {
     /// use std::path::Path;
     ///
     /// # let path = Path::new("assembly.dll");
-    /// let view = CilAssemblyView::from_file(&path)?;
+    /// let view = CilAssemblyView::from_path(&path)?;
     /// let scanner = ReferenceScanner::from_view(&view)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
@@ -202,7 +202,7 @@ impl ReferenceScanner {
     /// use std::path::Path;
     ///
     /// # let path = Path::new("assembly.dll");
-    /// let object = CilObject::from_file(&path)?;
+    /// let object = CilObject::from_path(&path)?;
     /// let scanner = ReferenceScanner::from_object(&object)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
@@ -764,7 +764,7 @@ mod tests {
     #[test]
     fn test_reference_scanner_creation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let scanner = ReferenceScanner::from_view(&view);
             assert!(scanner.is_ok(), "Scanner creation should succeed");
 
@@ -779,7 +779,7 @@ mod tests {
     #[test]
     fn test_token_bounds_validation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let invalid_token = Token::new(0x02000000); // TypeDef with RID 0
                 assert!(scanner.validate_token_bounds(invalid_token).is_err());
@@ -801,7 +801,7 @@ mod tests {
     #[test]
     fn test_heap_size_analysis() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let heap_sizes = scanner.heap_sizes();
 
@@ -818,7 +818,7 @@ mod tests {
     #[test]
     fn test_scanner_statistics() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let stats = scanner.statistics();
                 let stats_string = stats.to_string();
@@ -833,7 +833,7 @@ mod tests {
     #[test]
     fn test_reference_analysis_basic_functionality() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let stats = scanner.statistics();
 
@@ -857,7 +857,7 @@ mod tests {
     #[test]
     fn test_typedef_inheritance_references() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 // Find TypeDef tokens that should have inheritance relationships
                 let mut _inheritance_found = false;
@@ -892,7 +892,7 @@ mod tests {
     #[test]
     fn test_interface_implementation_references() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 // Check InterfaceImpl table entries
                 let interface_impl_count = scanner.table_row_count(TableId::InterfaceImpl);
@@ -933,7 +933,7 @@ mod tests {
     #[test]
     fn test_memberref_class_references() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let memberref_count = scanner.table_row_count(TableId::MemberRef);
 
@@ -971,7 +971,7 @@ mod tests {
     #[test]
     fn test_customattribute_references() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let attr_count = scanner.table_row_count(TableId::CustomAttribute);
 
@@ -1010,7 +1010,7 @@ mod tests {
     #[test]
     fn test_nested_class_references() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let nested_count = scanner.table_row_count(TableId::NestedClass);
 
@@ -1059,7 +1059,7 @@ mod tests {
     #[test]
     fn test_generic_parameter_references() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let generic_param_count = scanner.table_row_count(TableId::GenericParam);
 
@@ -1104,7 +1104,7 @@ mod tests {
     #[test]
     fn test_reference_bidirectionality() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 // Test that forward and backward references are consistent
                 for (to_token, from_tokens) in &scanner.forward_references {
@@ -1133,7 +1133,7 @@ mod tests {
     #[test]
     fn test_can_delete_token_functionality() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let stats = scanner.statistics();
 
@@ -1176,7 +1176,7 @@ mod tests {
     #[test]
     fn test_reference_validation_prevents_invalid_references() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(mut scanner) = ReferenceScanner::from_view(&view) {
                 let initial_ref_count = scanner.statistics().total_references;
 
@@ -1201,7 +1201,7 @@ mod tests {
     #[test]
     fn test_comprehensive_reference_coverage() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let stats = scanner.statistics();
 

@@ -49,7 +49,7 @@ pub fn create_assembly_with_broken_method_ownership() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_mscorlib() else {
         return Err(Error::Error("mscorlib.dll not available".to_string()));
     };
-    let view = CilAssemblyView::from_file(&clean_testfile)
+    let view = CilAssemblyView::from_path(&clean_testfile)
         .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
@@ -118,7 +118,7 @@ pub fn create_assembly_with_invalid_method_accessibility() -> Result<TestAssembl
     let Some(clean_testfile) = get_testfile_mscorlib() else {
         return Err(Error::Error("mscorlib.dll not available".to_string()));
     };
-    let view = CilAssemblyView::from_file(&clean_testfile)
+    let view = CilAssemblyView::from_path(&clean_testfile)
         .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
@@ -186,7 +186,7 @@ pub fn create_assembly_with_invalid_static_constructor() -> Result<TestAssembly>
     let Some(clean_testfile) = get_testfile_mscorlib() else {
         return Err(Error::Error("mscorlib.dll not available".to_string()));
     };
-    let view = CilAssemblyView::from_file(&clean_testfile)
+    let view = CilAssemblyView::from_path(&clean_testfile)
         .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);

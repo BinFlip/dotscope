@@ -59,7 +59,7 @@ use crate::{
 /// ```rust,ignore
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
-/// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
 /// let assembly = CilAssembly::new(view);
 /// let mut context = BuilderContext::new(assembly);
 ///
@@ -595,7 +595,7 @@ mod tests {
     #[test]
     fn test_field_marshal_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
 
             // Check existing FieldMarshal table count
@@ -623,7 +623,7 @@ mod tests {
     #[test]
     fn test_field_marshal_builder_different_parents() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -655,7 +655,7 @@ mod tests {
     #[test]
     fn test_field_marshal_builder_different_native_types() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -728,7 +728,7 @@ mod tests {
     #[test]
     fn test_field_marshal_builder_complex_descriptors() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -763,7 +763,7 @@ mod tests {
     #[test]
     fn test_field_marshal_builder_missing_parent() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -782,7 +782,7 @@ mod tests {
     #[test]
     fn test_field_marshal_builder_missing_native_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -801,7 +801,7 @@ mod tests {
     #[test]
     fn test_field_marshal_builder_empty_native_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -821,7 +821,7 @@ mod tests {
     #[test]
     fn test_field_marshal_builder_invalid_parent_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -843,7 +843,7 @@ mod tests {
     #[test]
     fn test_field_marshal_builder_all_primitive_types() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -886,7 +886,7 @@ mod tests {
     #[test]
     fn test_field_marshal_builder_string_types() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -935,7 +935,7 @@ mod tests {
     #[test]
     fn test_field_marshal_builder_realistic_pinvoke() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -991,7 +991,7 @@ mod tests {
     #[test]
     fn test_field_marshal_builder_struct_fields() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -1025,7 +1025,7 @@ mod tests {
     #[test]
     fn test_field_marshal_builder_high_level_native_type_spec() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -1048,7 +1048,7 @@ mod tests {
     #[test]
     fn test_field_marshal_builder_variable_array() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -1069,7 +1069,7 @@ mod tests {
     #[test]
     fn test_field_marshal_builder_fixed_array_typed() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -1090,7 +1090,7 @@ mod tests {
     #[test]
     fn test_field_marshal_builder_native_struct() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -1111,7 +1111,7 @@ mod tests {
     #[test]
     fn test_field_marshal_builder_pointer() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -1132,7 +1132,7 @@ mod tests {
     #[test]
     fn test_field_marshal_builder_custom_marshaler() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -1158,7 +1158,7 @@ mod tests {
     #[test]
     fn test_field_marshal_builder_safe_array() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -1179,7 +1179,7 @@ mod tests {
     #[test]
     fn test_field_marshal_builder_marshalling_info() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 

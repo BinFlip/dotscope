@@ -90,7 +90,7 @@ fn main() -> Result<()> {
     let path = Path::new(&args[1]);
     println!("🔍 Comprehensive Method Analysis of: {}", path.display());
 
-    let assembly = CilObject::from_file(path)?;
+    let assembly = CilObject::from_path(path)?;
 
     // Find a suitable method for analysis (not too small, has IL code)
     let target_method = find_suitable_method(&assembly)?;

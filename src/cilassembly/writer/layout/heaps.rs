@@ -120,7 +120,7 @@
 //! use dotscope::prelude::*;
 //! use std::path::Path;
 //!
-//! # let view = CilAssemblyView::from_file(Path::new(\"tests/samples/crafted_2.exe\"))?;
+//! # let view = CilAssemblyView::from_path(Path::new(\"tests/samples/crafted_2.exe\"))?;
 //! # let mut assembly = view.to_owned();
 //! // Add some strings and calculate size
 //! assembly.changes_mut().strings.add_string(\"Hello, World!\".to_string());
@@ -142,7 +142,7 @@
 //! use dotscope::prelude::*;
 //! use std::path::Path;
 //!
-//! # let view = CilAssemblyView::from_file(Path::new(\"tests/samples/crafted_2.exe\"))?;
+//! # let view = CilAssemblyView::from_path(Path::new(\"tests/samples/crafted_2.exe\"))?;
 //! # let mut assembly = view.to_owned();
 //! // Calculate sizes for all heap types
 //! let string_size = calculate_string_heap_size(&assembly.changes().strings, &assembly)?;
@@ -382,7 +382,7 @@ pub fn calculate_string_heap_size(
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let mut assembly = view.to_owned();
 /// // Add new blobs
 /// assembly.changes_mut().blobs.add_blob(vec![0x01, 0x02, 0x03]);
@@ -401,7 +401,7 @@ pub fn calculate_string_heap_size(
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let mut assembly = view.to_owned();
 /// // Modify existing blob with larger data (will be remapped)
 /// let large_blob = vec![0; 1000]; // Much larger than original
@@ -593,7 +593,7 @@ pub fn calculate_blob_heap_size(
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let mut assembly = view.to_owned();
 /// // Add new GUIDs
 /// let guid1 = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
@@ -617,7 +617,7 @@ pub fn calculate_blob_heap_size(
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let mut assembly = view.to_owned();
 /// // Modify existing GUID at offset 16 (second GUID)
 /// let new_guid = [0xFF; 16]; // All 0xFF bytes

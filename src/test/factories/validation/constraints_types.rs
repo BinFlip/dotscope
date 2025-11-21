@@ -128,7 +128,7 @@ pub fn owned_type_constraint_validator_file_factory() -> Result<Vec<TestAssembly
 fn create_assembly_with_conflicting_variance() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
         .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -175,7 +175,7 @@ fn create_assembly_with_conflicting_variance() -> Result<NamedTempFile> {
 fn create_assembly_with_conflicting_constraints() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
         .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -222,7 +222,7 @@ fn create_assembly_with_conflicting_constraints() -> Result<NamedTempFile> {
 fn create_assembly_with_broken_constraint_reference() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
         .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -276,7 +276,7 @@ fn create_assembly_with_broken_constraint_reference() -> Result<NamedTempFile> {
 fn create_assembly_with_empty_constraint_name() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
         .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -338,7 +338,7 @@ fn create_assembly_with_empty_constraint_name() -> Result<NamedTempFile> {
 fn create_assembly_with_fake_interface_implementation() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
         .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 

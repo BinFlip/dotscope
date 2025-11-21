@@ -28,7 +28,7 @@
 //! use crate::metadata::cilassemblyview::CilAssemblyView;
 //! use std::path::Path;
 //!
-//! # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+//! # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
 //! let mut changes = AssemblyChanges::new(&view);
 //!
 //! // Check if any changes have been made
@@ -74,7 +74,7 @@ use crate::{
 /// use crate::metadata::cilassemblyview::CilAssemblyView;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
 /// let changes = AssemblyChanges::new(&view);
 ///
 /// // Check modification status

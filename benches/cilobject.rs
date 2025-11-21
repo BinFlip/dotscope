@@ -15,12 +15,12 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     let path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/mono_4.8/mscorlib.dll");
     c.bench_function("bench_cilobject", |b| {
-        b.iter({ || CilObject::from_file(&path).unwrap() });
+        b.iter({ || CilObject::from_path(&path).unwrap() });
     });
 
     c.bench_function("bench_cilobject_validation", |b| {
         b.iter({
-            || CilObject::from_file_with_validation(&path, ValidationConfig::strict()).unwrap()
+            || CilObject::from_path_with_validation(&path, ValidationConfig::strict()).unwrap()
         });
     });
 }

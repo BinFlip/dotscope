@@ -91,7 +91,7 @@ pub fn verify_assembly_view_complete(view: &CilAssemblyView) {
     let file = view.file();
     assert!(!file.data().is_empty());
 
-    let (clr_rva, clr_size) = file.clr();
+    let (clr_rva, clr_size) = file.clr().expect("Should have CLR header");
     assert!(clr_rva > 0);
     assert!(clr_size > 0);
     assert!(clr_size >= 72); // Minimum COR20 header size

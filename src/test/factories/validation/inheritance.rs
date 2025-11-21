@@ -138,7 +138,7 @@ pub fn owned_inheritance_validator_file_factory() -> Result<Vec<TestAssembly>> {
 pub fn create_assembly_with_circular_inheritance() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
         .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -181,7 +181,7 @@ pub fn create_assembly_with_circular_inheritance() -> Result<NamedTempFile> {
 pub fn create_assembly_with_sealed_type_inheritance() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
         .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -221,7 +221,7 @@ pub fn create_assembly_with_sealed_type_inheritance() -> Result<NamedTempFile> {
 pub fn create_assembly_with_interface_inheritance_violation() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
         .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -261,7 +261,7 @@ pub fn create_assembly_with_interface_inheritance_violation() -> Result<NamedTem
 pub fn create_assembly_with_accessibility_violation() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
         .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -301,7 +301,7 @@ pub fn create_assembly_with_accessibility_violation() -> Result<NamedTempFile> {
 pub fn create_assembly_with_abstract_concrete_violation() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
         .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -330,7 +330,7 @@ pub fn create_assembly_with_abstract_concrete_violation() -> Result<NamedTempFil
 pub fn create_assembly_with_method_inheritance_violation() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
         .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 

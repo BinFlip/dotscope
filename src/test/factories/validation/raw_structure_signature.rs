@@ -100,7 +100,7 @@ pub fn raw_signature_validator_file_factory() -> Result<Vec<TestAssembly>> {
 pub fn create_assembly_with_invalid_method_calling_convention() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -137,7 +137,7 @@ pub fn create_assembly_with_invalid_method_calling_convention() -> Result<NamedT
 pub fn create_assembly_with_invalid_field_calling_convention() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -170,7 +170,7 @@ pub fn create_assembly_with_invalid_field_calling_convention() -> Result<NamedTe
 pub fn create_assembly_with_malformed_compressed_integer() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -204,7 +204,7 @@ pub fn create_assembly_with_malformed_compressed_integer() -> Result<NamedTempFi
 pub fn create_assembly_with_oversized_signature_blob() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 

@@ -59,7 +59,7 @@ struct PropertyDefinition {
 /// use dotscope::prelude::*;
 ///
 /// # fn example() -> dotscope::Result<()> {
-/// # let view = CilAssemblyView::from_file("test.dll".as_ref())?;
+/// # let view = CilAssemblyView::from_path("test.dll")?;
 /// # let assembly = CilAssembly::new(view);
 /// # let mut context = BuilderContext::new(assembly);
 /// let class_token = ClassBuilder::new("Person")
@@ -79,7 +79,7 @@ struct PropertyDefinition {
 /// use dotscope::metadata::signatures::TypeSignature;
 ///
 /// # fn example() -> dotscope::Result<()> {
-/// # let view = dotscope::CilAssemblyView::from_file("test.dll".as_ref())?;
+/// # let view = dotscope::CilAssemblyView::from_path("test.dll")?;
 /// # let assembly = dotscope::CilAssembly::new(view);
 /// # let mut context = dotscope::BuilderContext::new(assembly);
 /// let class_token = ClassBuilder::new("Employee")
@@ -98,7 +98,7 @@ struct PropertyDefinition {
 /// use dotscope::metadata::signatures::TypeSignature;
 ///
 /// # fn example() -> dotscope::Result<()> {
-/// # let view = dotscope::CilAssemblyView::from_file("test.dll".as_ref())?;
+/// # let view = dotscope::CilAssemblyView::from_path("test.dll")?;
 /// # let assembly = dotscope::CilAssembly::new(view);
 /// # let mut context = dotscope::BuilderContext::new(assembly);
 /// let class_token = ClassBuilder::new("Calculator")
@@ -403,7 +403,7 @@ impl ClassBuilder {
     /// use dotscope::metadata::signatures::TypeSignature;
     ///
     /// # fn example() -> dotscope::Result<()> {
-    /// # let view = dotscope::CilAssemblyView::from_file("test.dll".as_ref())?;
+    /// # let view = dotscope::CilAssemblyView::from_path("test.dll")?;
     /// # let assembly = dotscope::CilAssembly::new(view);
     /// # let mut context = dotscope::BuilderContext::new(assembly);
     /// let class_token = ClassBuilder::new("Calculator")
@@ -682,7 +682,7 @@ mod tests {
 
     fn get_test_context() -> Result<BuilderContext> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
+        let view = CilAssemblyView::from_path(&path)?;
         let assembly = CilAssembly::new(view);
         Ok(BuilderContext::new(assembly))
     }

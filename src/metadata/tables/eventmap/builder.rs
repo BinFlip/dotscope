@@ -17,7 +17,7 @@
 //! ```rust,ignore
 //! # use dotscope::prelude::*;
 //! # use std::path::Path;
-//! # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+//! # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
 //! # let assembly = CilAssembly::new(view);
 //! # let mut context = BuilderContext::new(assembly);
 //!
@@ -93,7 +93,7 @@ use crate::{
 /// ```rust,ignore
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
-/// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
 /// # let assembly = CilAssembly::new(view);
 /// # let mut context = BuilderContext::new(assembly);
 /// # let type_token = Token::new(0x02000001);
@@ -169,7 +169,7 @@ impl EventMapBuilder {
     /// ```rust,ignore
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
     /// # let assembly = CilAssembly::new(view);
     /// # let mut context = BuilderContext::new(assembly);
     /// let type_token = TypeDefBuilder::new()
@@ -240,7 +240,7 @@ impl EventMapBuilder {
     /// ```rust,ignore
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
     /// # let assembly = CilAssembly::new(view);
     /// # let mut context = BuilderContext::new(assembly);
     /// # let type_token = Token::new(0x02000001);

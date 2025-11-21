@@ -11,6 +11,6 @@ use std::path::PathBuf;
 /// Originally from: `src/metadata/tables/assemblyref/builder.rs`
 pub fn get_test_assembly() -> Result<CilAssembly> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-    let view = CilAssemblyView::from_file(&path)?;
+    let view = CilAssemblyView::from_path(&path)?;
     Ok(CilAssembly::new(view))
 }

@@ -11,7 +11,7 @@ use std::path::Path;
 #[test]
 fn test_native_imports_with_minimal_changes() -> Result<()> {
     // Test native imports with minimal metadata changes to trigger the write pipeline properly
-    let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+    let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
     let assembly = view.to_owned();
     let mut context = BuilderContext::new(assembly);
 
@@ -39,7 +39,7 @@ fn test_native_imports_with_minimal_changes() -> Result<()> {
     let file_data = std::fs::read(temp_path)?;
     assert!(!file_data.is_empty(), "Written file should not be empty");
 
-    match CilAssemblyView::from_file(temp_path) {
+    match CilAssemblyView::from_path(temp_path) {
         Ok(reloaded_view) => {
             // Verify the import directory exists
             let import_directory = reloaded_view
@@ -58,7 +58,7 @@ fn test_native_imports_with_minimal_changes() -> Result<()> {
 #[test]
 fn add_native_imports_to_crafted_2() -> Result<()> {
     // Step 1: Load the original assembly
-    let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+    let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 
     // Check if assembly already has native imports
     let _original_has_imports = view
@@ -105,7 +105,7 @@ fn add_native_imports_to_crafted_2() -> Result<()> {
 
     // Step 4: Load the modified file and verify native imports
     let modified_view =
-        CilAssemblyView::from_file(temp_path).expect("Modified assembly should load successfully");
+        CilAssemblyView::from_path(temp_path).expect("Modified assembly should load successfully");
 
     // Verify the assembly now has an import directory
     let import_directory = modified_view
@@ -193,7 +193,7 @@ fn add_native_imports_to_crafted_2() -> Result<()> {
 #[test]
 fn add_native_exports_to_crafted_2() -> Result<()> {
     // Step 1: Load the original assembly
-    let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+    let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 
     // Check if assembly already has native exports
     let _original_has_exports = view
@@ -237,7 +237,7 @@ fn add_native_exports_to_crafted_2() -> Result<()> {
 
     // Step 4: Load the modified file and verify native exports
     let modified_view =
-        CilAssemblyView::from_file(temp_path).expect("Modified assembly should load successfully");
+        CilAssemblyView::from_path(temp_path).expect("Modified assembly should load successfully");
 
     // Verify the assembly now has an export directory
     let export_directory = modified_view
@@ -375,7 +375,7 @@ fn add_native_exports_to_crafted_2() -> Result<()> {
 #[test]
 fn add_both_imports_and_exports_to_crafted_2() -> Result<()> {
     // Step 1: Load the original assembly
-    let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+    let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
     let assembly = view.to_owned();
     let mut context = BuilderContext::new(assembly);
 
@@ -421,7 +421,7 @@ fn add_both_imports_and_exports_to_crafted_2() -> Result<()> {
 
     // Step 4: Load the modified file and verify both imports and exports
     let modified_view =
-        CilAssemblyView::from_file(temp_path).expect("Modified assembly should load successfully");
+        CilAssemblyView::from_path(temp_path).expect("Modified assembly should load successfully");
 
     // Verify import directory
     let import_directory = modified_view
@@ -563,7 +563,7 @@ fn round_trip_preserve_existing_data() -> Result<()> {
     // This test verifies that adding native imports/exports doesn't corrupt existing assembly data
 
     // Step 1: Load the original assembly and capture baseline data
-    let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+    let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 
     let original_string_count = view.strings().map(|s| s.iter().count()).unwrap_or(0);
     let original_method_count = view
@@ -596,7 +596,7 @@ fn round_trip_preserve_existing_data() -> Result<()> {
     assembly.write_to_file(temp_path)?;
 
     let modified_view =
-        CilAssemblyView::from_file(temp_path).expect("Modified assembly should load successfully");
+        CilAssemblyView::from_path(temp_path).expect("Modified assembly should load successfully");
 
     // Step 4: Verify existing data is preserved
 
@@ -648,7 +648,7 @@ fn test_native_imports_parsing_from_existing_pe() -> Result<()> {
     // Test that existing native imports are correctly parsed when loading a CilAssemblyView
     // This test verifies the implementation of PE import/export parsing functionality
 
-    let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+    let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 
     // Verify the file has imports to parse
     let original_imports = view.file().imports();
@@ -698,7 +698,7 @@ fn test_native_imports_parsing_from_existing_pe() -> Result<()> {
 fn test_import_table_format_validation() -> Result<()> {
     // Test that import tables are correctly formatted and parseable
 
-    let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+    let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
     let assembly = view.to_owned();
     let mut context = BuilderContext::new(assembly);
 
@@ -723,7 +723,7 @@ fn test_import_table_format_validation() -> Result<()> {
     assembly.validate_and_apply_changes()?;
     assembly.write_to_file(temp_path)?;
 
-    let modified_view = CilAssemblyView::from_file(temp_path)?;
+    let modified_view = CilAssemblyView::from_path(temp_path)?;
 
     // Verify import directory exists and is valid
     let import_directory = modified_view

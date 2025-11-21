@@ -86,7 +86,7 @@ pub fn create_assembly_with_unresolved_base_type() -> Result<TestAssembly> {
         return Err(Error::Error("crafted_2.exe not available".to_string()));
     };
 
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -158,7 +158,7 @@ pub fn create_assembly_with_broken_interface_reference() -> Result<TestAssembly>
         return Err(Error::Error("crafted_2.exe not available".to_string()));
     };
 
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -244,7 +244,7 @@ pub fn create_assembly_with_missing_parameter_type() -> Result<TestAssembly> {
         return Err(Error::Error("crafted_2.exe not available".to_string()));
     };
 
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -332,7 +332,7 @@ pub fn create_assembly_with_unresolved_nested_type() -> Result<TestAssembly> {
         return Err(Error::Error("crafted_2.exe not available".to_string()));
     };
 
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 

@@ -114,7 +114,7 @@
 //! use dotscope::metadata::customdebuginformation::{parse_custom_debug_blob, CustomDebugInfo};
 //! use dotscope::CilObject;
 //!
-//! let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+//! let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
 //!
 //! # fn get_debug_entries() -> Vec<(dotscope::metadata::customdebuginformation::CustomDebugKind, Vec<u8>)> {
 //! #     vec![]

@@ -29,7 +29,7 @@
 //! use std::path::Path;
 //!
 //! # let path = Path::new("assembly.dll");
-//! let view = CilAssemblyView::from_file(&path)?;
+//! let view = CilAssemblyView::from_path(&path)?;
 //! let scanner = ReferenceScanner::from_view(&view)?;
 //! let validator = TokenValidator::new(&scanner);
 //!
@@ -502,7 +502,7 @@ mod tests {
     #[test]
     fn test_token_validator_creation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = TokenValidator::new(&scanner);
 
@@ -515,7 +515,7 @@ mod tests {
     #[test]
     fn test_token_bounds_validation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = TokenValidator::new(&scanner);
 
@@ -535,7 +535,7 @@ mod tests {
     #[test]
     fn test_token_table_type_validation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = TokenValidator::new(&scanner);
 
@@ -581,7 +581,7 @@ mod tests {
     #[test]
     fn test_null_token_validation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = TokenValidator::new(&scanner);
 
@@ -599,7 +599,7 @@ mod tests {
     #[test]
     fn test_typed_token_validation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = TokenValidator::new(&scanner);
 

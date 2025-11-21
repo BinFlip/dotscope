@@ -53,7 +53,7 @@
 //! use dotscope::{Error, metadata::cilobject::CilObject};
 //! use std::path::Path;
 //!
-//! match CilObject::from_file(Path::new("assembly.dll")) {
+//! match CilObject::from_path(Path::new("assembly.dll")) {
 //!     Ok(assembly) => {
 //!         println!("Successfully loaded assembly");
 //!     }

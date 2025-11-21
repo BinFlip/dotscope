@@ -148,7 +148,7 @@ impl Physical {
     /// processes to efficiently access the same file.
     ///
     /// # Arguments
-    /// * `path` - The file path to open and memory-map
+    /// * `path` - Path to the PE file on disk. Accepts `&Path`, `&str`, `String`, or `PathBuf`.
     ///
     /// # Errors
     /// Returns [`crate::Error::FileError`] if the file cannot be opened or
@@ -169,7 +169,7 @@ impl Physical {
     /// assert!(result.is_err());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn new(path: &Path) -> Result<Physical> {
+    pub fn new(path: impl AsRef<Path>) -> Result<Physical> {
         let file = match fs::File::open(path) {
             Ok(file) => file,
             Err(error) => return Err(FileError(error)),
@@ -182,43 +182,42 @@ impl Physical {
 
         Ok(Physical { data: mmap })
     }
-}
 
-impl Backend for Physical {
-    /// Get a slice of data from the memory-mapped file.
+    /// Creates a new physical file backend from an opened std::fs::File.
     ///
-    /// This method provides bounds-checked access to a specific region of the
-    /// memory-mapped file. It validates that the requested range is within
-    /// the file bounds and doesn't overflow.
+    /// This method takes an already-opened file handle and creates a memory mapping
+    /// for it. This is useful when you need to open the file with specific permissions
+    /// or flags before creating the backend.
     ///
     /// # Arguments
-    /// * `offset` - The starting offset in bytes
-    /// * `len` - The number of bytes to read
+    /// * `file` - An opened file handle
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if the requested range extends
-    /// beyond the file or if offset + len would overflow.
+    /// Returns [`crate::Error::Error`] if memory mapping fails.
     ///
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use dotscope::file::{Physical, Backend};
-    /// use std::path::Path;
+    /// use dotscope::file::Physical;
+    /// use std::fs::File;
     ///
-    /// let physical = Physical::new(Path::new("assembly.dll"))?;
-    ///
-    /// // Read DOS header signature
-    /// let dos_sig = physical.data_slice(0, 2)?;
-    /// assert_eq!(dos_sig, b"MZ");
-    ///
-    /// // Read 4 bytes starting at offset 60 (PE header offset location)
-    /// let pe_offset_bytes = physical.data_slice(60, 4)?;
-    /// let pe_offset = u32::from_le_bytes([
-    ///     pe_offset_bytes[0], pe_offset_bytes[1],
-    ///     pe_offset_bytes[2], pe_offset_bytes[3]
-    /// ]);
+    /// let std_file = File::open("System.dll")?;
+    /// let physical = Physical::from_std_file(std_file)?;
+    /// assert!(physical.len() > 0);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn from_std_file(file: fs::File) -> Result<Physical> {
+        // Note: We take ownership of `file` even though we only borrow it for Mmap::map().
+        // This is intentional - the file handle must remain alive for the duration of the mmap,
+        // and Mmap internally keeps the file alive. Taking by value matches std library conventions.
+        let mmap = unsafe { Mmap::map(&file) }.map_err(|error| Error(error.to_string()))?;
+
+        Ok(Physical { data: mmap })
+    }
+}
+
+impl Backend for Physical {
     fn data_slice(&self, offset: usize, len: usize) -> Result<&[u8]> {
         let Some(offset_end) = offset.checked_add(len) else {
             return Err(out_of_bounds_error!());
@@ -231,45 +230,16 @@ impl Backend for Physical {
         Ok(&self.data[offset..offset_end])
     }
 
-    /// Get a reference to the entire memory-mapped file data.
-    ///
-    /// This provides direct access to the underlying memory-mapped data as a byte slice.
-    /// The returned slice represents the entire file contents.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// use dotscope::file::{Physical, Backend};
-    /// use std::path::Path;
-    ///
-    /// let physical = Physical::new(Path::new("assembly.dll"))?;
-    /// let full_data = physical.data();
-    ///
-    /// // Check if it's a PE file
-    /// if full_data.len() >= 2 {
-    ///     assert_eq!(&full_data[0..2], b"MZ");
-    /// }
-    /// # Ok::<(), dotscope::Error>(())
-    /// ```
     fn data(&self) -> &[u8] {
         self.data.as_ref()
     }
 
-    /// Get the size of the memory-mapped file in bytes.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// use dotscope::file::{Physical, Backend};
-    /// use std::path::Path;
-    ///
-    /// let physical = Physical::new(Path::new("assembly.dll"))?;
-    /// let size = physical.len();
-    /// println!("File size: {} bytes ({:.2} MB)", size, size as f64 / 1024.0 / 1024.0);
-    /// # Ok::<(), dotscope::Error>(())
-    /// ```
     fn len(&self) -> usize {
         self.data.len()
+    }
+
+    fn into_data(self: Box<Self>) -> Vec<u8> {
+        self.data.as_ref().to_vec()
     }
 }
 
@@ -395,5 +365,49 @@ mod tests {
         let result = physical.data_slice(len, 0);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_physical_into_data() {
+        // Test with real file
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
+        let physical = Physical::new(&path).unwrap();
+
+        let expected_len = physical.len();
+        let expected_first = physical.data()[0];
+        let expected_last = physical.data()[expected_len - 1];
+
+        // Convert to Box<dyn Backend>
+        let backend: Box<dyn Backend> = Box::new(physical);
+
+        // Call into_data() - should copy the mmap'd data
+        let recovered_data = backend.into_data();
+
+        // Verify data is copied correctly
+        assert_eq!(recovered_data.len(), expected_len);
+        assert_eq!(recovered_data[0], expected_first);
+        assert_eq!(recovered_data[expected_len - 1], expected_last);
+
+        // Verify MZ signature
+        assert_eq!(&recovered_data[0..2], b"MZ");
+    }
+
+    #[test]
+    fn test_physical_into_data_small_file() {
+        // Create a small temporary file
+        let temp_dir = std::env::temp_dir();
+        let temp_path = temp_dir.join("test_physical_into_data.bin");
+
+        let test_data = vec![0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
+        std::fs::write(&temp_path, &test_data).unwrap();
+
+        let physical = Physical::new(&temp_path).unwrap();
+        let backend: Box<dyn Backend> = Box::new(physical);
+        let recovered_data = backend.into_data();
+
+        assert_eq!(recovered_data, test_data);
+
+        // Cleanup
+        std::fs::remove_file(&temp_path).unwrap();
     }
 }

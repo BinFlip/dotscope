@@ -29,7 +29,7 @@
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
-//! let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+//! let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 //! let methods = assembly.methods();
 //!
 //! for entry in methods.iter().take(5) {
@@ -56,7 +56,7 @@
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
-//! let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+//! let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 //! let methods = assembly.methods();
 //!
 //! for entry in methods.iter().take(3) {
@@ -118,7 +118,7 @@ use crate::assembly::BasicBlock;
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
-/// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+/// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 /// for entry in assembly.methods().iter().take(3) {
 ///     let method = entry.value();
 ///     let mut instruction_count = 0;
@@ -143,7 +143,7 @@ use crate::assembly::BasicBlock;
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
-/// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+/// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 /// for entry in assembly.methods().iter().take(1) {
 ///     let method = entry.value();
 ///     
@@ -168,7 +168,7 @@ use crate::assembly::BasicBlock;
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
-/// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+/// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 /// for entry in assembly.methods().iter().take(5) {
 ///     let method = entry.value();
 ///     
@@ -219,7 +219,7 @@ impl<'a> InstructionIterator<'a> {
     /// use std::path::Path;
     ///
     /// // This is typically called by method.instructions() internally
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// for entry in assembly.methods().iter().take(1) {
     ///     let method = entry.value();
     ///     
@@ -301,7 +301,7 @@ impl<'a> Iterator for InstructionIterator<'a> {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// for entry in assembly.methods().iter().take(1) {
     ///     let method = entry.value();
     ///     let mut iter = method.instructions();

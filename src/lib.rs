@@ -76,7 +76,7 @@
 //! use dotscope::prelude::*;
 //!
 //! // Load and analyze a .NET assembly  
-//! let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+//! let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
 //! println!("Found {} methods", assembly.methods().len());
 //! # Ok::<(), dotscope::Error>(())
 //! ```
@@ -88,7 +88,7 @@
 //! use std::path::Path;
 //!
 //! // Load and parse a .NET assembly
-//! let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+//! let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 //!
 //! // Access metadata
 //! if let Some(module) = assembly.module() {
@@ -124,7 +124,7 @@
 //!
 //! fn analyze_assembly(path: &str) -> dotscope::Result<()> {
 //!     // Use minimal validation for best performance
-//!     let assembly = CilObject::from_file_with_validation(
+//!     let assembly = CilObject::from_path_with_validation(
 //!         std::path::Path::new(path),
 //!         ValidationConfig::minimal()
 //!     )?;
@@ -182,7 +182,7 @@
 //! ```rust,no_run
 //! use dotscope::CilObject;
 //!
-//! let assembly = CilObject::from_file(std::path::Path::new("tests/samples/WindowsBase.dll"))?;
+//! let assembly = CilObject::from_path(std::path::Path::new("tests/samples/WindowsBase.dll"))?;
 //!
 //! // Access raw metadata tables
 //! if let Some(tables) = assembly.tables() {
@@ -218,7 +218,7 @@
 //! ```rust,no_run
 //! use dotscope::{Error, metadata::cilobject::CilObject};
 //!
-//! match CilObject::from_file(std::path::Path::new("tests/samples/crafted_2.exe")) {
+//! match CilObject::from_path(std::path::Path::new("tests/samples/crafted_2.exe")) {
 //!     Ok(assembly) => println!("Successfully loaded assembly"),
 //!     Err(Error::NotSupported) => println!("File format not supported"),
 //!     Err(Error::Malformed { message, .. }) => println!("Malformed file: {}", message),
@@ -267,7 +267,7 @@ pub(crate) mod test;
 /// use dotscope::prelude::*;
 ///
 /// // Now you have access to the most common types
-/// let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+/// let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
 /// let methods = assembly.methods();
 /// # Ok::<(), dotscope::Error>(())
 /// ```
@@ -418,7 +418,7 @@ pub mod assembly;
 /// use std::path::Path;
 ///
 /// // Load assembly and examine metadata
-/// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+/// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 ///
 /// // Access basic information
 /// if let Some(module) = assembly.module() {
@@ -496,7 +496,7 @@ pub mod metadata;
 /// use dotscope::metadata::cilobject::CilObject;
 ///
 /// let project = CilProject::new();
-/// let assembly = CilObject::from_file("MyApp.exe")?;
+/// let assembly = CilObject::from_path("MyApp.exe")?;
 /// project.add_assembly(assembly)?;
 /// ```
 pub mod project;
@@ -512,7 +512,7 @@ pub mod project;
 /// use dotscope::{Result, CilObject};
 ///
 /// fn load_assembly(path: &str) -> Result<CilObject> {
-///     CilObject::from_file(std::path::Path::new(path))
+///     CilObject::from_path(std::path::Path::new(path))
 /// }
 /// ```
 pub type Result<T> = std::result::Result<T, Error>;
@@ -527,7 +527,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// ```rust,no_run
 /// use dotscope::{Error, CilObject};
 ///
-/// match CilObject::from_file(std::path::Path::new("tests/samples/crafted_2.exe")) {
+/// match CilObject::from_path(std::path::Path::new("tests/samples/crafted_2.exe")) {
 ///     Ok(assembly) => println!("Loaded successfully"),
 ///     Err(Error::NotSupported) => println!("File format not supported"),
 ///     Err(Error::Malformed { message, .. }) => println!("Malformed: {}", message),
@@ -557,7 +557,7 @@ pub use error::Error;
 /// use std::path::Path;
 ///
 /// // Load assembly for raw metadata access
-/// let view = CilAssemblyView::from_file(Path::new("assembly.dll"))?;
+/// let view = CilAssemblyView::from_path(Path::new("assembly.dll"))?;
 ///
 /// // Access raw metadata tables
 /// if let Some(tables) = view.tables() {
@@ -579,7 +579,7 @@ pub use error::Error;
 ///
 /// ```rust,no_run
 /// use dotscope::{CilAssemblyView, CilAssembly};
-/// let view = CilAssemblyView::from_file(std::path::Path::new("assembly.dll"))?;
+/// let view = CilAssemblyView::from_path(std::path::Path::new("assembly.dll"))?;
 /// let mut assembly = view.to_owned(); // Convert to mutable CilAssembly
 /// # Ok::<(), dotscope::Error>(())
 /// ```
@@ -605,7 +605,7 @@ pub use metadata::cilassemblyview::CilAssemblyView;
 /// use dotscope::{CilAssemblyView, CilAssembly};
 ///
 /// // Load and convert to mutable assembly
-/// let view = CilAssemblyView::from_file(std::path::Path::new("assembly.dll"))?;
+/// let view = CilAssemblyView::from_path(std::path::Path::new("assembly.dll"))?;
 /// let mut assembly = view.to_owned();
 ///
 /// // Add a new string to the heap
@@ -629,7 +629,7 @@ mod cilassembly;
 ///
 /// ```rust,no_run
 /// use dotscope::CilObject;
-/// let assembly = CilObject::from_file(std::path::Path::new("tests/samples/WindowsBase.dll"))?;
+/// let assembly = CilObject::from_path(std::path::Path::new("tests/samples/WindowsBase.dll"))?;
 /// println!("Found {} methods", assembly.methods().len());
 /// # Ok::<(), dotscope::Error>(())
 /// ```
@@ -646,7 +646,7 @@ pub use metadata::cilobject::CilObject;
 /// use dotscope::{CilObject, ValidationConfig};
 ///
 /// // Use minimal validation for best performance
-/// let assembly = CilObject::from_file_with_validation(
+/// let assembly = CilObject::from_path_with_validation(
 ///     std::path::Path::new("tests/samples/WindowsBase.dll"),
 ///     ValidationConfig::minimal()
 /// )?;
@@ -671,7 +671,7 @@ pub use metadata::validation::{ValidationConfig, ValidationEngine};
 ///
 /// ```rust,no_run
 /// use dotscope::{CilObject, Strings};
-/// let assembly = CilObject::from_file(std::path::Path::new("tests/samples/WindowsBase.dll"))?;
+/// let assembly = CilObject::from_path(std::path::Path::new("tests/samples/WindowsBase.dll"))?;
 ///
 /// // Access metadata heaps with indexed access and iteration
 /// if let Some(strings) = assembly.strings() {

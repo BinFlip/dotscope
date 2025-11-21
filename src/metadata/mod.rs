@@ -59,7 +59,7 @@
 //! use std::path::Path;
 //!
 //! // Load and parse a .NET assembly
-//! let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+//! let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 //!
 //! // Access basic assembly information
 //! if let Some(assembly_info) = assembly.assembly() {
@@ -82,7 +82,7 @@
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
-//! let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+//! let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 //!
 //! // Analyze methods with IL code
 //! for entry in assembly.methods().iter().take(10) {
@@ -113,7 +113,7 @@
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
-//! let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+//! let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 //!
 //! // Explore the type system
 //! for entry in assembly.types().iter().take(10) {

@@ -142,7 +142,7 @@ fn resolve_labeled_exception_handler(
 /// use dotscope::assembly::InstructionAssembler;
 ///
 /// # fn example() -> dotscope::Result<()> {
-/// # let view = dotscope::CilAssemblyView::from_file("test.dll".as_ref())?;
+/// # let view = dotscope::CilAssemblyView::from_path("test.dll")?;
 /// # let assembly = dotscope::CilAssembly::new(view);
 /// # let mut context = dotscope::BuilderContext::new(assembly);
 /// let (body_bytes, _token) = MethodBodyBuilder::new()
@@ -166,7 +166,7 @@ fn resolve_labeled_exception_handler(
 /// use dotscope::metadata::signatures::TypeSignature;
 ///
 /// # fn example() -> dotscope::Result<()> {
-/// # let view = dotscope::CilAssemblyView::from_file("test.dll".as_ref())?;
+/// # let view = dotscope::CilAssemblyView::from_path("test.dll")?;
 /// # let assembly = dotscope::CilAssembly::new(view);
 /// # let mut context = dotscope::BuilderContext::new(assembly);
 /// let (body_bytes, _token) = MethodBodyBuilder::new()
@@ -526,7 +526,7 @@ impl MethodBodyBuilder {
     /// use dotscope::MethodBodyBuilder;
     ///
     /// # fn example() -> dotscope::Result<()> {
-    /// # let view = dotscope::CilAssemblyView::from_file("test.dll".as_ref())?;
+    /// # let view = dotscope::CilAssemblyView::from_path("test.dll")?;
     /// # let assembly = dotscope::CilAssembly::new(view);
     /// # let mut context = dotscope::BuilderContext::new(assembly);
     /// let (body_bytes, _token) = MethodBodyBuilder::new()
@@ -704,7 +704,7 @@ mod tests {
 
     fn get_test_context() -> Result<BuilderContext> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
+        let view = CilAssemblyView::from_path(&path)?;
         let assembly = CilAssembly::new(view);
         Ok(BuilderContext::new(assembly))
     }

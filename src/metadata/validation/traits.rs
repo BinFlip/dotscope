@@ -414,7 +414,7 @@ mod tests {
     #[test]
     fn test_raw_validator_trait() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let scanner = ReferenceScanner::from_view(&view).unwrap();
             let config = ValidationConfig::minimal();
             let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();

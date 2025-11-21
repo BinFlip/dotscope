@@ -42,7 +42,7 @@
 //! use std::path::Path;
 //!
 //! // Load assembly for potential editing operations
-//! let view = CilAssemblyView::from_file(Path::new("assembly.dll"))?;
+//! let view = CilAssemblyView::from_path(Path::new("assembly.dll"))?;
 //!
 //! // Access raw metadata structures
 //! if let Some(tables) = view.tables() {
@@ -65,7 +65,7 @@
 //! use std::path::Path;
 //!
 //! // Load raw view
-//! let view = CilAssemblyView::from_file(Path::new("assembly.dll"))?;
+//! let view = CilAssemblyView::from_path(Path::new("assembly.dll"))?;
 //!
 //! // Convert to mutable assembly for editing
 //! let mut assembly = view.to_owned();
@@ -81,7 +81,7 @@
 //! use dotscope::CilAssemblyView;
 //! use std::path::Path;
 //!
-//! let view = CilAssemblyView::from_file(Path::new("assembly.dll"))?;
+//! let view = CilAssemblyView::from_path(Path::new("assembly.dll"))?;
 //!
 //! // Direct access to CLR header
 //! let cor20 = view.with_data(|data| &data.cor20header);
@@ -193,8 +193,9 @@ impl<'a> CilAssemblyViewData<'a> {
     ///
     /// Returns [`crate::Error::NotSupported`] if the file is not a .NET assembly (missing CLR header).
     /// Returns [`crate::Error::OutOfBounds`] if the file data is truncated or corrupted.
-    pub fn from_file(file: Arc<File>, data: &'a [u8]) -> Result<Self> {
-        let (clr_rva, clr_size) = file.clr();
+    pub fn from_dotscope_file(file: Arc<File>, data: &'a [u8]) -> Result<Self> {
+        let (clr_rva, clr_size) = file.clr().ok_or(Error::NotSupported)?;
+
         if clr_rva == 0 || clr_size == 0 {
             return Err(Error::NotSupported);
         }
@@ -316,7 +317,7 @@ pub struct CilAssemblyView {
 }
 
 impl CilAssemblyView {
-    /// Creates a new `CilAssemblyView` by loading a .NET assembly from disk.
+    /// Creates a new `CilAssemblyView` by loading a .NET assembly from a path.
     ///
     /// This method loads the assembly and parses essential metadata structures
     /// while preserving their raw format. The file is memory-mapped for
@@ -324,7 +325,8 @@ impl CilAssemblyView {
     ///
     /// # Arguments
     ///
-    /// * `file` - Path to the .NET assembly file (.dll, .exe, or .netmodule)
+    /// * `path` - Path to the .NET assembly file (.dll, .exe, or .netmodule).
+    ///   Accepts `&Path`, `&str`, `String`, or `PathBuf`.
     ///
     /// # Returns
     ///
@@ -343,25 +345,30 @@ impl CilAssemblyView {
     /// use dotscope::CilAssemblyView;
     /// use std::path::Path;
     ///
-    /// let view = CilAssemblyView::from_file(Path::new("assembly.dll"))?;
+    /// // With Path
+    /// let view = CilAssemblyView::from_path(Path::new("assembly.dll"))?;
+    ///
+    /// // With string slice
+    /// let view = CilAssemblyView::from_path("assembly.dll")?;
     ///
     /// // Access raw metadata
     /// let root = view.metadata_root();
     /// println!("Metadata root loaded");
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn from_file(file: &Path) -> Result<Self> {
-        Self::from_file_with_validation(file, ValidationConfig::disabled())
+    pub fn from_path(path: impl AsRef<Path>) -> Result<Self> {
+        Self::from_path_with_validation(path, ValidationConfig::disabled())
     }
 
-    /// Creates a new `CilAssemblyView` by loading a .NET assembly from disk with custom validation configuration.
+    /// Creates a new `CilAssemblyView` by loading a .NET assembly from a path with custom validation configuration.
     ///
     /// This method allows you to control which validation checks are performed during loading.
     /// Raw validation (stage 1) is performed if enabled in the configuration.
     ///
     /// # Arguments
     ///
-    /// * `file` - Path to the .NET assembly file (.dll, .exe, or .netmodule)
+    /// * `path` - Path to the .NET assembly file (.dll, .exe, or .netmodule).
+    ///   Accepts `&Path`, `&str`, `String`, or `PathBuf`.
     /// * `validation_config` - Configuration specifying which validation checks to perform
     ///
     /// # Returns
@@ -384,23 +391,23 @@ impl CilAssemblyView {
     /// use std::path::Path;
     ///
     /// // Load with minimal validation for maximum performance
-    /// let view = CilAssemblyView::from_file_with_validation(
-    ///     Path::new("assembly.dll"),
+    /// let view = CilAssemblyView::from_path_with_validation(
+    ///     "assembly.dll",
     ///     ValidationConfig::minimal()
     /// )?;
     ///
     /// // Load with comprehensive validation for maximum safety
-    /// let view = CilAssemblyView::from_file_with_validation(
+    /// let view = CilAssemblyView::from_path_with_validation(
     ///     Path::new("assembly.dll"),
     ///     ValidationConfig::comprehensive()
     /// )?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn from_file_with_validation(
-        file: &Path,
+    pub fn from_path_with_validation(
+        path: impl AsRef<Path>,
         validation_config: ValidationConfig,
     ) -> Result<Self> {
-        let input = Arc::new(File::from_file(file)?);
+        let input = Arc::new(File::from_path(path)?);
         Self::load_with_validation(input, validation_config)
     }
 
@@ -475,6 +482,179 @@ impl CilAssemblyView {
         Self::load_with_validation(input, validation_config)
     }
 
+    /// Creates a CilAssemblyView from a dotscope::file::File.
+    ///
+    /// This allows you to inspect the PE file before deciding to parse the .NET metadata,
+    /// or to reuse an existing File instance.
+    ///
+    /// # Arguments
+    /// * `file` - A File instance containing a .NET assembly
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The File doesn't contain a CLR runtime header
+    /// - The .NET metadata is corrupted or invalid
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::{File, CilAssemblyView};
+    /// use std::path::Path;
+    ///
+    /// let file = File::from_path(Path::new("assembly.dll"))?;
+    /// if file.is_clr() {
+    ///     let view = CilAssemblyView::from_dotscope_file(file)?;
+    ///     println!("Loaded .NET assembly view");
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn from_dotscope_file(file: File) -> Result<Self> {
+        Self::from_dotscope_file_with_validation(file, ValidationConfig::disabled())
+    }
+
+    /// Creates a CilAssemblyView from a dotscope::file::File with validation.
+    ///
+    /// # Arguments
+    /// * `file` - A File instance containing a .NET assembly
+    /// * `validation_config` - Validation configuration
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The File doesn't contain a CLR runtime header
+    /// - The .NET metadata is corrupted or invalid
+    /// - Validation checks fail
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::{File, CilAssemblyView, ValidationConfig};
+    /// use std::path::Path;
+    ///
+    /// let file = File::from_path(Path::new("assembly.dll"))?;
+    /// let view = CilAssemblyView::from_dotscope_file_with_validation(
+    ///     file,
+    ///     ValidationConfig::production()
+    /// )?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn from_dotscope_file_with_validation(
+        file: File,
+        validation_config: ValidationConfig,
+    ) -> Result<Self> {
+        let file_arc = Arc::new(file);
+        Self::load_with_validation(file_arc, validation_config)
+    }
+
+    /// Creates a CilAssemblyView from an opened std::fs::File.
+    ///
+    /// The file is memory-mapped for efficient access.
+    ///
+    /// # Arguments
+    /// * `file` - An opened file handle to a .NET assembly
+    ///
+    /// # Errors
+    /// Returns an error if the file is not a valid .NET assembly.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilAssemblyView;
+    /// use std::fs::File;
+    ///
+    /// let std_file = File::open("assembly.dll")?;
+    /// let view = CilAssemblyView::from_std_file(std_file)?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn from_std_file(file: std::fs::File) -> Result<Self> {
+        Self::from_std_file_with_validation(file, ValidationConfig::disabled())
+    }
+
+    /// Creates a CilAssemblyView from an opened std::fs::File with validation.
+    ///
+    /// The file is memory-mapped for efficient access.
+    ///
+    /// # Arguments
+    /// * `file` - An opened file handle to a .NET assembly
+    /// * `validation_config` - Configuration specifying which validation checks to perform
+    ///
+    /// # Errors
+    /// Returns an error if the file is not a valid .NET assembly or if validation checks fail.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::{CilAssemblyView, ValidationConfig};
+    /// use std::fs::File;
+    ///
+    /// let std_file = File::open("assembly.dll")?;
+    /// let view = CilAssemblyView::from_std_file_with_validation(
+    ///     std_file,
+    ///     ValidationConfig::production()
+    /// )?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn from_std_file_with_validation(
+        file: std::fs::File,
+        validation_config: ValidationConfig,
+    ) -> Result<Self> {
+        let pe_file = File::from_std_file(file)?;
+        Self::from_dotscope_file_with_validation(pe_file, validation_config)
+    }
+
+    /// Creates a CilAssemblyView from any reader.
+    ///
+    /// # Arguments
+    /// * `reader` - Any type implementing Read
+    ///
+    /// # Errors
+    /// Returns an error if the data is not a valid .NET assembly.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilAssemblyView;
+    /// use std::io::Cursor;
+    ///
+    /// let data = vec![/* PE bytes */];
+    /// let cursor = Cursor::new(data);
+    /// let view = CilAssemblyView::from_reader(cursor)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn from_reader<R: std::io::Read>(reader: R) -> Result<Self> {
+        Self::from_reader_with_validation(reader, ValidationConfig::disabled())
+    }
+
+    /// Creates a CilAssemblyView from any reader with validation.
+    ///
+    /// # Arguments
+    /// * `reader` - Any type implementing Read
+    /// * `validation_config` - Configuration specifying which validation checks to perform
+    ///
+    /// # Errors
+    /// Returns an error if the data is not a valid .NET assembly or if validation checks fail.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::{CilAssemblyView, ValidationConfig};
+    /// use std::io::Cursor;
+    ///
+    /// let data = vec![/* PE bytes */];
+    /// let cursor = Cursor::new(data);
+    /// let view = CilAssemblyView::from_reader_with_validation(
+    ///     cursor,
+    ///     ValidationConfig::production()
+    /// )?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn from_reader_with_validation<R: std::io::Read>(
+        reader: R,
+        validation_config: ValidationConfig,
+    ) -> Result<Self> {
+        let pe_file = File::from_reader(reader)?;
+        Self::from_dotscope_file_with_validation(pe_file, validation_config)
+    }
+
     /// Internal method for loading a CilAssemblyView from a File structure with validation.
     ///
     /// This method serves as the common implementation for validation-enabled loading operations.
@@ -492,7 +672,7 @@ impl CilAssemblyView {
     /// or an error if parsing or validation fails.
     fn load_with_validation(file: Arc<File>, validation_config: ValidationConfig) -> Result<Self> {
         let view = CilAssemblyView::try_new(file, |file| {
-            CilAssemblyViewData::from_file(file.clone(), file.data())
+            CilAssemblyViewData::from_dotscope_file(file.clone(), file.data())
         })?;
 
         if validation_config.should_validate_raw() {
@@ -634,7 +814,7 @@ impl CilAssemblyView {
     /// use dotscope::CilAssemblyView;
     /// use std::path::Path;
     ///
-    /// let view = CilAssemblyView::from_file(Path::new("assembly.dll"))?;
+    /// let view = CilAssemblyView::from_path(Path::new("assembly.dll"))?;
     /// let mut assembly = view.to_owned();
     /// # Ok::<(), dotscope::Error>(())
     /// ```
@@ -668,7 +848,7 @@ impl CilAssemblyView {
     /// use dotscope::{CilAssemblyView, ValidationConfig};
     /// use std::path::Path;
     ///
-    /// let view = CilAssemblyView::from_file(Path::new("assembly.dll"))?;
+    /// let view = CilAssemblyView::from_path(Path::new("assembly.dll"))?;
     /// view.validate(ValidationConfig::production())?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
@@ -707,7 +887,7 @@ impl CilAssemblyView {
     /// use dotscope::CilAssemblyView;
     /// use std::path::Path;
     ///
-    /// let view = CilAssemblyView::from_file(Path::new("assembly.dll"))?;
+    /// let view = CilAssemblyView::from_path(Path::new("assembly.dll"))?;
     /// let identity = view.identity()?;
     ///
     /// println!("Assembly: {} v{}", identity.name, identity.version.major);
@@ -754,7 +934,7 @@ mod tests {
     #[test]
     fn from_file() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path).unwrap();
+        let view = CilAssemblyView::from_path(&path).unwrap();
 
         verify_assembly_view_complete(&view);
     }
@@ -772,7 +952,7 @@ mod tests {
     #[test]
     fn test_error_handling() {
         // Test with non-existent file
-        let result = CilAssemblyView::from_file(Path::new("non_existent_file.dll"));
+        let result = CilAssemblyView::from_path(Path::new("non_existent_file.dll"));
         assert!(result.is_err());
 
         // Test with invalid data

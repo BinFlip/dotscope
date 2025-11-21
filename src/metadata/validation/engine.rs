@@ -26,7 +26,7 @@
 //! use std::path::Path;
 //!
 //! # let path = Path::new("assembly.dll");
-//! let view = CilAssemblyView::from_file(&path)?;
+//! let view = CilAssemblyView::from_path(&path)?;
 //! let config = ValidationConfig::production();
 //! let engine = ValidationEngine::new(&view, config)?;
 //!
@@ -587,7 +587,7 @@ mod tests {
     #[test]
     fn test_validation_engine_creation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let config = ValidationConfig::minimal();
             let engine = ValidationEngine::new(&view, config);
             assert!(engine.is_ok(), "Engine creation should succeed");
@@ -601,7 +601,7 @@ mod tests {
     #[test]
     fn test_two_stage_validation_early_termination() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut config = ValidationConfig::comprehensive();
             config.enable_raw_validation = true;
             config.enable_owned_validation = true;
@@ -621,7 +621,7 @@ mod tests {
     #[test]
     fn test_raw_validation_with_changes() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let config = ValidationConfig::minimal();
             if let Ok(engine) = ValidationEngine::new(&view, config) {
                 let changes = AssemblyChanges::empty();
@@ -640,7 +640,7 @@ mod tests {
     #[test]
     fn test_factory_functions() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             assert!(factory::minimal_engine(&view).is_ok());
             assert!(factory::production_engine(&view).is_ok());
             assert!(factory::comprehensive_engine(&view).is_ok());
@@ -651,7 +651,7 @@ mod tests {
     #[test]
     fn test_engine_statistics() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(engine) = ValidationEngine::new(&view, ValidationConfig::minimal()) {
                 let stats = engine.statistics();
                 let stats_string = stats.to_string();
@@ -666,7 +666,7 @@ mod tests {
     #[test]
     fn test_all_validators_registered() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path).expect("Failed to load test assembly");
+        let view = CilAssemblyView::from_path(&path).expect("Failed to load test assembly");
 
         // Create validation engine with comprehensive config to ensure all validators would run
         let config = ValidationConfig::comprehensive();
@@ -694,7 +694,7 @@ mod tests {
     #[test]
     fn test_raw_validators_creation_and_uniqueness() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path).expect("Failed to load test assembly");
+        let view = CilAssemblyView::from_path(&path).expect("Failed to load test assembly");
 
         let config = ValidationConfig::comprehensive();
         let engine =
@@ -737,7 +737,7 @@ mod tests {
             .get_primary()
             .expect("Failed to get primary assembly from project");
 
-        let view = CilAssemblyView::from_file(&path).expect("Failed to load test assembly");
+        let view = CilAssemblyView::from_path(&path).expect("Failed to load test assembly");
         let config = ValidationConfig::comprehensive();
         let engine =
             ValidationEngine::new(&view, config).expect("Failed to create validation engine");
@@ -759,7 +759,7 @@ mod tests {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
         let path = PathBuf::from(&manifest_dir).join("tests/samples/mono_4.8/mscorlib.dll");
         let mono_deps_path = PathBuf::from(&manifest_dir).join("tests/samples/mono_4.8");
-        let view = CilAssemblyView::from_file(&path).expect("Failed to load test assembly");
+        let view = CilAssemblyView::from_path(&path).expect("Failed to load test assembly");
 
         // Test with different validation configurations
         let configs = vec![
@@ -814,7 +814,7 @@ mod tests {
     #[test]
     fn test_validation_engine_factories() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path).expect("Failed to load test assembly");
+        let view = CilAssemblyView::from_path(&path).expect("Failed to load test assembly");
 
         // Test all factory methods
         let engines = vec![
@@ -849,7 +849,7 @@ mod tests {
     #[test]
     fn test_validator_name_uniqueness() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path).expect("Failed to load test assembly");
+        let view = CilAssemblyView::from_path(&path).expect("Failed to load test assembly");
 
         let config = ValidationConfig::comprehensive();
         let engine =

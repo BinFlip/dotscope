@@ -47,7 +47,7 @@ struct EnumValueDefinition {
 /// use dotscope::prelude::*;
 ///
 /// # fn example() -> dotscope::Result<()> {
-/// # let view = CilAssemblyView::from_file("test.dll".as_ref())?;
+/// # let view = CilAssemblyView::from_path("test.dll")?;
 /// # let assembly = CilAssembly::new(view);
 /// # let mut context = BuilderContext::new(assembly);
 /// let enum_token = EnumBuilder::new("Color")
@@ -66,7 +66,7 @@ struct EnumValueDefinition {
 /// use dotscope::prelude::*;
 ///
 /// # fn example() -> dotscope::Result<()> {
-/// # let view = CilAssemblyView::from_file("test.dll".as_ref())?;
+/// # let view = CilAssemblyView::from_path("test.dll")?;
 /// # let assembly = CilAssembly::new(view);
 /// # let mut context = BuilderContext::new(assembly);
 /// let enum_token = EnumBuilder::new("Status")
@@ -86,7 +86,7 @@ struct EnumValueDefinition {
 /// use dotscope::prelude::*;
 ///
 /// # fn example() -> dotscope::Result<()> {
-/// # let view = CilAssemblyView::from_file("test.dll".as_ref())?;
+/// # let view = CilAssemblyView::from_path("test.dll")?;
 /// # let assembly = CilAssembly::new(view);
 /// # let mut context = BuilderContext::new(assembly);
 /// let enum_token = EnumBuilder::new("FileAccess")
@@ -425,7 +425,7 @@ mod tests {
 
     fn get_test_context() -> Result<BuilderContext> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let view = CilAssemblyView::from_file(&path)?;
+        let view = CilAssemblyView::from_path(&path)?;
         let assembly = CilAssembly::new(view);
         Ok(BuilderContext::new(assembly))
     }

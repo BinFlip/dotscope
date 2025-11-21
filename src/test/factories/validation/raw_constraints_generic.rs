@@ -91,7 +91,7 @@ pub fn raw_generic_constraint_validator_file_factory() -> Result<Vec<TestAssembl
 pub fn create_assembly_with_null_constraint_owner() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -150,7 +150,7 @@ pub fn create_assembly_with_null_constraint_owner() -> Result<NamedTempFile> {
 pub fn create_assembly_with_constraint_owner_exceeding_bounds() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -209,7 +209,7 @@ pub fn create_assembly_with_constraint_owner_exceeding_bounds() -> Result<NamedT
 pub fn create_assembly_with_invalid_parameter_flags() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 

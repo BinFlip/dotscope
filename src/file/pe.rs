@@ -382,17 +382,8 @@ impl Pe {
             .map(OptionalHeader::from_goblin)
             .transpose()?;
 
-        match optional_header.as_ref() {
-            Some(oh) => {
-                if oh.data_directories.get_clr_runtime_header().is_none() {
-                    return Err(malformed_error!(
-                        "File does not have a CLR runtime header directory"
-                    ));
-                }
-            }
-            None => {
-                return Err(malformed_error!("File does not have an OptionalHeader"));
-            }
+        if optional_header.is_none() {
+            return Err(malformed_error!("File does not have an OptionalHeader"));
         }
 
         let sections = goblin_pe

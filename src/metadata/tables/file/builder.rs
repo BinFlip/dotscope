@@ -17,7 +17,7 @@
 //! ```rust,ignore
 //! # use dotscope::prelude::*;
 //! # use std::path::Path;
-//! # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+//! # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
 //! # let assembly = CilAssembly::new(view);
 //! # let mut context = BuilderContext::new(assembly);
 //!
@@ -76,7 +76,7 @@ use crate::{
 /// ```rust,ignore
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
-/// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
 /// # let assembly = CilAssembly::new(view);
 /// # let mut context = BuilderContext::new(assembly);
 /// let hash_bytes = vec![0x01, 0x02, 0x03, 0x04]; // Example hash
@@ -268,7 +268,7 @@ impl FileBuilder {
     /// ```rust,ignore
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
     /// # let assembly = CilAssembly::new(view);
     /// # let mut context = BuilderContext::new(assembly);
     ///

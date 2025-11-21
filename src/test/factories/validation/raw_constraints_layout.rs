@@ -109,7 +109,7 @@ pub fn raw_layout_constraint_validator_file_factory() -> Result<Vec<TestAssembly
 pub fn create_assembly_with_overlapping_fields() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -159,7 +159,7 @@ pub fn create_assembly_with_overlapping_fields() -> Result<NamedTempFile> {
 pub fn create_assembly_with_invalid_packing_size() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -199,7 +199,7 @@ pub fn create_assembly_with_invalid_packing_size() -> Result<NamedTempFile> {
 pub fn create_assembly_with_excessive_class_size() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -239,7 +239,7 @@ pub fn create_assembly_with_excessive_class_size() -> Result<NamedTempFile> {
 pub fn create_assembly_with_invalid_field_offset() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -284,7 +284,7 @@ pub fn create_assembly_with_invalid_field_offset() -> Result<NamedTempFile> {
 pub fn create_assembly_with_null_field_reference() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -323,7 +323,7 @@ pub fn create_assembly_with_null_field_reference() -> Result<NamedTempFile> {
 pub fn create_assembly_with_boundary_field_offset() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_wb()
         .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 

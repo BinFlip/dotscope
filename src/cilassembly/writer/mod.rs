@@ -48,7 +48,7 @@
 //! use dotscope::prelude::*;
 //! use std::path::Path;
 //!
-//! # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+//! # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 //! # let assembly = view.to_owned();
 //! // Simple one-line API that replaces the complex pipeline
 //! write_assembly_to_file(&assembly, "output.dll")?;
@@ -63,7 +63,7 @@
 //! use dotscope::prelude::*;
 //! use std::path::Path;
 //!
-//! # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+//! # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 //! # let assembly = view.to_owned();
 //! # let output_path = Path::new("output.dll");
 //! // Stage 1: Plan complete layout
@@ -174,7 +174,7 @@ pub use crate::cilassembly::writer::{executor::WriteExecutor, layout::WriteLayou
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// write_assembly_to_file(&assembly, "output.dll")?;
 /// # Ok::<(), dotscope::Error>(())
@@ -188,7 +188,7 @@ pub use crate::cilassembly::writer::{executor::WriteExecutor, layout::WriteLayou
 /// use dotscope::Error;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// match write_assembly_to_file(&assembly, "output.dll") {
 ///     Ok(()) => println!("Assembly written successfully"),
@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn test_write_assembly_to_file_basic() {
-        let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))
+        let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))
             .expect("Failed to load test assembly");
         let assembly = view.to_owned();
 

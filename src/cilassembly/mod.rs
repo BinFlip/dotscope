@@ -123,7 +123,7 @@
 //! use std::path::Path;
 //!
 //! // Load and convert to mutable assembly
-//! let view = CilAssemblyView::from_file(Path::new("assembly.dll"))?;
+//! let view = CilAssemblyView::from_path(Path::new("assembly.dll"))?;
 //! let mut assembly = CilAssembly::new(view);
 //!
 //! // Add a string to the heap
@@ -198,7 +198,7 @@ impl CilAssembly {
     /// use dotscope::{CilAssemblyView, CilAssembly};
     /// use std::path::Path;
     ///
-    /// let view = CilAssemblyView::from_file(Path::new("assembly.dll"))?;
+    /// let view = CilAssemblyView::from_path(Path::new("assembly.dll"))?;
     /// let assembly = CilAssembly::new(view);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
@@ -234,7 +234,7 @@ impl CilAssembly {
     /// ```rust,ignore
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(&Path::new("assembly.dll"))?;
+    /// # let view = CilAssemblyView::from_path(&Path::new("assembly.dll"))?;
     /// let mut assembly = CilAssembly::new(view);
     ///
     /// let hello_index = assembly.add_string("Hello")?;
@@ -310,7 +310,7 @@ impl CilAssembly {
     /// ```rust,ignore
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(&Path::new("assembly.dll"))?;
+    /// # let view = CilAssemblyView::from_path(&Path::new("assembly.dll"))?;
     /// let mut assembly = CilAssembly::new(view);
     ///
     /// let guid = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0,
@@ -366,7 +366,7 @@ impl CilAssembly {
     /// ```rust,ignore
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(&Path::new("assembly.dll"))?;
+    /// # let view = CilAssemblyView::from_path(&Path::new("assembly.dll"))?;
     /// let mut assembly = CilAssembly::new(view);
     ///
     /// let userstring_index = assembly.add_userstring("Hello, World!")?;
@@ -414,7 +414,7 @@ impl CilAssembly {
     /// ```rust,ignore
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(&Path::new("assembly.dll"))?;
+    /// # let view = CilAssemblyView::from_path(&Path::new("assembly.dll"))?;
     /// let mut assembly = CilAssembly::new(view);
     ///
     /// // Modify an existing string at index 42
@@ -452,7 +452,7 @@ impl CilAssembly {
     /// # use dotscope::{CilAssembly, CilAssemblyView};
     /// # use dotscope::cilassembly::ReferenceHandlingStrategy;
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(&Path::new("assembly.dll"))?;
+    /// # let view = CilAssemblyView::from_path(&Path::new("assembly.dll"))?;
     /// let mut assembly = CilAssembly::new(view);
     ///
     /// // Remove string at index 42, fail if references exist
@@ -604,7 +604,7 @@ impl CilAssembly {
     /// ```rust,ignore
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(&Path::new("assembly.dll"))?;
+    /// # let view = CilAssemblyView::from_path(&Path::new("assembly.dll"))?;
     /// let mut assembly = CilAssembly::new(view);
     ///
     /// // Replace with custom string heap containing "Hello\0World\0"
@@ -637,7 +637,7 @@ impl CilAssembly {
     /// ```rust,ignore
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(&Path::new("assembly.dll"))?;
+    /// # let view = CilAssemblyView::from_path(&Path::new("assembly.dll"))?;
     /// let mut assembly = CilAssembly::new(view);
     ///
     /// // Replace with custom blob heap containing length-prefixed blobs
@@ -670,7 +670,7 @@ impl CilAssembly {
     /// ```rust,ignore
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(&Path::new("assembly.dll"))?;
+    /// # let view = CilAssemblyView::from_path(&Path::new("assembly.dll"))?;
     /// let mut assembly = CilAssembly::new(view);
     ///
     /// // Replace with custom GUID heap containing one GUID
@@ -704,7 +704,7 @@ impl CilAssembly {
     /// ```rust,ignore
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(&Path::new("assembly.dll"))?;
+    /// # let view = CilAssemblyView::from_path(&Path::new("assembly.dll"))?;
     /// let mut assembly = CilAssembly::new(view);
     ///
     /// // Replace with custom user string heap containing UTF-16 strings with length prefixes
@@ -974,7 +974,7 @@ impl CilAssembly {
     /// ```rust,ignore
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
     /// let mut assembly = CilAssembly::new(view);
     ///
     /// assembly.add_native_import_dll("kernel32.dll")?;
@@ -1013,7 +1013,7 @@ impl CilAssembly {
     /// ```rust,ignore
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
     /// let mut assembly = CilAssembly::new(view);
     ///
     /// // Add kernel32 functions
@@ -1061,7 +1061,7 @@ impl CilAssembly {
     /// ```rust,ignore
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
     /// let mut assembly = CilAssembly::new(view);
     ///
     /// // Import MessageBoxW by ordinal (more efficient)
@@ -1105,7 +1105,7 @@ impl CilAssembly {
     /// ```rust,ignore
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
     /// let mut assembly = CilAssembly::new(view);
     ///
     /// // Export library functions
@@ -1148,7 +1148,7 @@ impl CilAssembly {
     /// ```rust,ignore
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
     /// let mut assembly = CilAssembly::new(view);
     ///
     /// // Export internal functions by ordinal only
@@ -1194,7 +1194,7 @@ impl CilAssembly {
     /// ```rust,ignore
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
     /// let mut assembly = CilAssembly::new(view);
     ///
     /// // Forward to functions in other DLLs
@@ -1227,7 +1227,7 @@ impl CilAssembly {
     /// ```rust,ignore
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
     /// let assembly = CilAssembly::new(view);
     ///
     /// if let Some(imports) = assembly.native_imports() {
@@ -1253,7 +1253,7 @@ impl CilAssembly {
     /// ```rust,ignore
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
     /// let assembly = CilAssembly::new(view);
     ///
     /// if let Some(exports) = assembly.native_exports() {
@@ -1285,7 +1285,7 @@ impl CilAssembly {
     /// ```rust,ignore
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
     /// let mut assembly = CilAssembly::new(view);
     ///
     /// let method_body = vec![0x02, 0x17, 0x2A]; // Tiny header + ldc.i4.1 + ret
@@ -1326,7 +1326,7 @@ mod tests {
     #[test]
     fn test_convert_from_view() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let _assembly = CilAssembly::new(view);
             // Basic smoke test - conversion should succeed
         }
@@ -1335,7 +1335,7 @@ mod tests {
     #[test]
     fn test_add_string() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut assembly = CilAssembly::new(view);
 
             let index1 = assembly.string_add("Hello").unwrap();
@@ -1349,7 +1349,7 @@ mod tests {
     #[test]
     fn test_add_blob() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut assembly = CilAssembly::new(view);
 
             let index1 = assembly.blob_add(&[1, 2, 3]).unwrap();
@@ -1363,7 +1363,7 @@ mod tests {
     #[test]
     fn test_add_guid() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut assembly = CilAssembly::new(view);
 
             let guid1 = [
@@ -1386,7 +1386,7 @@ mod tests {
     #[test]
     fn test_add_userstring() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut assembly = CilAssembly::new(view);
 
             let index1 = assembly.userstring_add("Hello").unwrap();
@@ -1400,7 +1400,7 @@ mod tests {
     #[test]
     fn test_table_row_assignment_uses_correct_rid() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut assembly = CilAssembly::new(view);
 
             // Get original table size to verify RID calculation
@@ -1434,7 +1434,7 @@ mod tests {
     #[test]
     fn test_validation_pipeline_catches_errors() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut assembly = CilAssembly::new(view);
 
             // Try to add an invalid RID (should be caught by validation)
@@ -1474,7 +1474,7 @@ mod tests {
     #[test]
     fn test_heap_sizes_are_real() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
 
             // Check that heap changes are properly initialized with correct next_index values

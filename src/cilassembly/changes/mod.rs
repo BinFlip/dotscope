@@ -24,7 +24,7 @@
 //! use crate::metadata::cilassemblyview::CilAssemblyView;
 //! use std::path::Path;
 //!
-//! # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+//! # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
 //! // Create change tracker for an assembly
 //! let mut changes = AssemblyChanges::new(&view);
 //!

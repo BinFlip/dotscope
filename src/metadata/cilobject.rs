@@ -24,10 +24,18 @@
 //! - Internal data structure holding parsed metadata and type registry
 //!
 //! ## Loading Methods
-//! - [`crate::CilObject::from_file`] - Load assembly from disk with default validation
-//! - [`crate::CilObject::from_file_with_validation`] - Load with custom validation settings
+//! - [`crate::CilObject::from_path`] - Load assembly from disk with default validation
+//! - [`crate::CilObject::from_path_with_validation`] - Load from path with custom validation settings
 //! - [`crate::CilObject::from_mem`] - Load assembly from memory buffer
 //! - [`crate::CilObject::from_mem_with_validation`] - Load from memory with custom validation
+//! - [`crate::CilObject::from_dotscope_file`] - Load from a dotscope File instance
+//! - [`crate::CilObject::from_dotscope_file_with_validation`] - Load from File with custom validation
+//! - [`crate::CilObject::from_std_file`] - Load from a std::fs::File handle
+//! - [`crate::CilObject::from_std_file_with_validation`] - Load from std::fs::File with custom validation
+//! - [`crate::CilObject::from_reader`] - Load from any Read implementation
+//! - [`crate::CilObject::from_reader_with_validation`] - Load from Read with custom validation
+//! - [`crate::CilObject::from_view`] - Load from a CilAssemblyView instance
+//! - [`crate::CilObject::from_view_with_validation`] - Load from CilAssemblyView with custom validation
 //!
 //! ## Metadata Access Methods
 //! - [`crate::CilObject::module`] - Get module information
@@ -54,7 +62,7 @@
 //! use std::path::Path;
 //!
 //! // Load an assembly from file
-//! let assembly = CilObject::from_file(Path::new("tests/samples/mono_2.0/mscorlib.dll"))?;
+//! let assembly = CilObject::from_path(Path::new("tests/samples/mono_2.0/mscorlib.dll"))?;
 //!
 //! // Access basic assembly information
 //! if let Some(module) = assembly.module() {
@@ -103,13 +111,13 @@
 //! use std::path::Path;
 //!
 //! // Use minimal validation for best performance
-//! let assembly = CilObject::from_file_with_validation(
+//! let assembly = CilObject::from_path_with_validation(
 //!     Path::new("tests/samples/mono_2.0/mscorlib.dll"),
 //!     ValidationConfig::minimal()
 //! )?;
 //!
 //! // Use strict validation for maximum verification
-//! let assembly = CilObject::from_file_with_validation(
+//! let assembly = CilObject::from_path_with_validation(
 //!     Path::new("tests/samples/mono_2.0/mscorlib.dll"),
 //!     ValidationConfig::strict()
 //! )?;
@@ -122,7 +130,7 @@
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
-//! let assembly = CilObject::from_file(Path::new("tests/samples/mono_2.0/mscorlib.dll"))?;
+//! let assembly = CilObject::from_path(Path::new("tests/samples/mono_2.0/mscorlib.dll"))?;
 //!
 //! // Analyze imports and exports
 //! let imports = assembly.imports();
@@ -211,7 +219,7 @@ use crate::{
 /// use std::path::Path;
 ///
 /// // Load an assembly from file
-/// let assembly = CilObject::from_file(Path::new("tests/samples/mono_2.0/mscorlib.dll"))?;
+/// let assembly = CilObject::from_path(Path::new("tests/samples/mono_2.0/mscorlib.dll"))?;
 ///
 /// // Access assembly metadata
 /// if let Some(assembly_info) = assembly.assembly() {
@@ -244,7 +252,7 @@ pub struct CilObject {
 }
 
 impl CilObject {
-    /// Creates a new `CilObject` by loading and parsing a .NET assembly from disk.
+    /// Creates a new `CilObject` by loading and parsing a .NET assembly from a path.
     ///
     /// This method handles the complete loading process including file I/O,
     /// PE header validation, and metadata parsing. The file is memory-mapped
@@ -252,7 +260,8 @@ impl CilObject {
     ///
     /// # Arguments
     ///
-    /// * `file` - Path to the .NET assembly file (.dll, .exe, or .netmodule)
+    /// * `path` - Path to the .NET assembly file (.dll, .exe, or .netmodule).
+    ///   Accepts `&Path`, `&str`, `String`, or `PathBuf`.
     ///
     /// # Returns
     ///
@@ -268,7 +277,12 @@ impl CilObject {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/mono_2.0/mscorlib.dll"))?;
+    /// // With Path
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/mono_2.0/mscorlib.dll"))?;
+    ///
+    /// // With string slice
+    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
+    ///
     /// if let Some(assembly_info) = assembly.assembly() {
     ///     println!("Loaded assembly: {}", assembly_info.name);
     /// }
@@ -282,18 +296,18 @@ impl CilObject {
     /// # Thread Safety
     ///
     /// This method is thread-safe and can be called concurrently from multiple threads.
-    pub fn from_file(file: &Path) -> Result<Self> {
-        Self::from_file_with_validation(file, ValidationConfig::disabled())
+    pub fn from_path(path: impl AsRef<Path>) -> Result<Self> {
+        Self::from_path_with_validation(path, ValidationConfig::disabled())
     }
 
-    /// Creates a new `CilObject` by parsing a .NET assembly from a file with custom validation configuration.
+    /// Creates a new `CilObject` by parsing a .NET assembly from a path with custom validation configuration.
     ///
     /// This method allows you to control which validation checks are performed during loading.
     /// Use this when you need to balance security requirements vs. loading speed.
     ///
     /// # Arguments
     ///
-    /// * `file` - Path to the .NET assembly file
+    /// * `path` - Path to the .NET assembly file. Accepts `&Path`, `&str`, `String`, or `PathBuf`.
     /// * `validation_config` - Configuration specifying which validation checks to perform
     ///
     /// # Usage Examples
@@ -303,13 +317,13 @@ impl CilObject {
     /// use std::path::Path;
     ///
     /// // Load with minimal validation for maximum speed
-    /// let assembly = CilObject::from_file_with_validation(
-    ///     Path::new("tests/samples/mono_2.0/mscorlib.dll"),
+    /// let assembly = CilObject::from_path_with_validation(
+    ///     "tests/samples/mono_2.0/mscorlib.dll",
     ///     ValidationConfig::minimal()
     /// )?;
     ///
     /// // Load with production validation for balance of safety and speed
-    /// let assembly = CilObject::from_file_with_validation(
+    /// let assembly = CilObject::from_path_with_validation(
     ///     Path::new("tests/samples/mono_2.0/mscorlib.dll"),
     ///     ValidationConfig::production()
     /// )?;
@@ -324,11 +338,11 @@ impl CilObject {
     /// # Thread Safety
     ///
     /// This method is thread-safe and can be called concurrently from multiple threads.
-    pub fn from_file_with_validation(
-        file: &Path,
+    pub fn from_path_with_validation(
+        path: impl AsRef<Path>,
         validation_config: ValidationConfig,
     ) -> Result<Self> {
-        let assembly_view = CilAssemblyView::from_file(file)?;
+        let assembly_view = CilAssemblyView::from_path(path)?;
         let data = CilObjectData::from_assembly_view(&assembly_view, None)?;
 
         let object = CilObject {
@@ -434,6 +448,185 @@ impl CilObject {
         Ok(object)
     }
 
+    /// Creates a CilObject from a dotscope::file::File.
+    ///
+    /// This allows you to inspect the PE file before parsing .NET metadata,
+    /// or to reuse an existing File instance.
+    ///
+    /// # Arguments
+    /// * `file` - A File instance containing a .NET assembly
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The File doesn't contain a CLR runtime header
+    /// - The .NET metadata is corrupted or invalid
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::{File, CilObject};
+    /// use std::path::Path;
+    ///
+    /// let file = File::from_path(Path::new("assembly.dll"))?;
+    /// if file.is_clr() {
+    ///     let cil_obj = CilObject::from_dotscope_file(file)?;
+    ///     println!("Loaded {} methods", cil_obj.methods().len());
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn from_dotscope_file(file: File) -> Result<Self> {
+        Self::from_dotscope_file_with_validation(file, ValidationConfig::disabled())
+    }
+
+    /// Creates a CilObject from a dotscope::file::File with validation.
+    ///
+    /// # Arguments
+    /// * `file` - A File instance containing a .NET assembly
+    /// * `validation_config` - Configuration specifying which validation checks to perform
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The File doesn't contain a CLR runtime header
+    /// - The .NET metadata is corrupted or invalid
+    /// - Validation checks fail
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::{File, CilObject, ValidationConfig};
+    /// use std::path::Path;
+    ///
+    /// let file = File::from_path(Path::new("assembly.dll"))?;
+    /// let cil_obj = CilObject::from_dotscope_file_with_validation(
+    ///     file,
+    ///     ValidationConfig::production()
+    /// )?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn from_dotscope_file_with_validation(
+        file: File,
+        validation_config: ValidationConfig,
+    ) -> Result<Self> {
+        // Validate CLR header presence
+        if !file.is_clr() {
+            return Err(crate::Error::NotSupported);
+        }
+
+        // Extract data and use existing from_mem path
+        let data = file.into_data();
+        Self::from_mem_with_validation(data, validation_config)
+    }
+
+    /// Creates a CilObject from an opened std::fs::File.
+    ///
+    /// The file is memory-mapped for efficient access.
+    ///
+    /// # Arguments
+    /// * `file` - An opened file handle to a .NET assembly
+    ///
+    /// # Errors
+    /// Returns an error if the file is not a valid .NET assembly.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::fs::File;
+    ///
+    /// let std_file = File::open("assembly.dll")?;
+    /// let cil_obj = CilObject::from_std_file(std_file)?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn from_std_file(file: std::fs::File) -> Result<Self> {
+        Self::from_std_file_with_validation(file, ValidationConfig::disabled())
+    }
+
+    /// Creates a CilObject from an opened std::fs::File with validation.
+    ///
+    /// The file is memory-mapped for efficient access.
+    ///
+    /// # Arguments
+    /// * `file` - An opened file handle to a .NET assembly
+    /// * `validation_config` - Configuration specifying which validation checks to perform
+    ///
+    /// # Errors
+    /// Returns an error if the file is not a valid .NET assembly or if validation checks fail.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::{CilObject, ValidationConfig};
+    /// use std::fs::File;
+    ///
+    /// let std_file = File::open("assembly.dll")?;
+    /// let cil_obj = CilObject::from_std_file_with_validation(
+    ///     std_file,
+    ///     ValidationConfig::production()
+    /// )?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn from_std_file_with_validation(
+        file: std::fs::File,
+        validation_config: ValidationConfig,
+    ) -> Result<Self> {
+        let pe_file = File::from_std_file(file)?;
+        Self::from_dotscope_file_with_validation(pe_file, validation_config)
+    }
+
+    /// Creates a CilObject from any reader.
+    ///
+    /// # Arguments
+    /// * `reader` - Any type implementing Read
+    ///
+    /// # Errors
+    /// Returns an error if the data is not a valid .NET assembly.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::io::Cursor;
+    ///
+    /// let data = vec![/* PE bytes */];
+    /// let cursor = Cursor::new(data);
+    /// let cil_obj = CilObject::from_reader(cursor)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn from_reader<R: std::io::Read>(reader: R) -> Result<Self> {
+        Self::from_reader_with_validation(reader, ValidationConfig::disabled())
+    }
+
+    /// Creates a CilObject from any reader with validation.
+    ///
+    /// # Arguments
+    /// * `reader` - Any type implementing Read
+    /// * `validation_config` - Configuration specifying which validation checks to perform
+    ///
+    /// # Errors
+    /// Returns an error if the data is not a valid .NET assembly or if validation checks fail.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::{CilObject, ValidationConfig};
+    /// use std::io::Cursor;
+    ///
+    /// let data = vec![/* PE bytes */];
+    /// let cursor = Cursor::new(data);
+    /// let cil_obj = CilObject::from_reader_with_validation(
+    ///     cursor,
+    ///     ValidationConfig::production()
+    /// )?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn from_reader_with_validation<R: std::io::Read>(
+        reader: R,
+        validation_config: ValidationConfig,
+    ) -> Result<Self> {
+        let pe_file = File::from_reader(reader)?;
+        Self::from_dotscope_file_with_validation(pe_file, validation_config)
+    }
+
     /// Creates a new `CilObject` from an existing `CilAssemblyView`.
     ///
     /// This method is designed for the CilProject workflow where CilAssemblyView instances
@@ -458,7 +651,7 @@ impl CilObject {
     /// use std::path::Path;
     ///
     /// // Load assembly view for dependency discovery
-    /// let view = CilAssemblyView::from_file(Path::new("assembly.dll"))?;
+    /// let view = CilAssemblyView::from_path(Path::new("assembly.dll"))?;
     ///
     /// // Convert to full CilObject (single assembly mode)
     /// let assembly = CilObject::from_view(view)?;
@@ -574,7 +767,7 @@ impl CilObject {
     /// ```rust,ignore
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_file("tests/samples/mono_2.0/mscorlib.dll".as_ref())?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
     /// let header = assembly.cor20header();
     ///
     /// println!("Metadata RVA: 0x{:X}", header.meta_data_rva);
@@ -604,7 +797,7 @@ impl CilObject {
     /// ```rust,ignore
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_file("tests/samples/mono_2.0/mscorlib.dll".as_ref())?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
     /// let root = assembly.metadata_root();
     ///
     /// println!("Metadata version: {}", root.version);
@@ -640,7 +833,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::{CilObject, metadata::tables::{TypeDefRaw, TableId}};
     ///
-    /// let assembly = CilObject::from_file("tests/samples/mono_2.0/mscorlib.dll".as_ref())?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
     ///
     /// if let Some(tables) = assembly.tables() {
     ///     println!("Schema version: {}.{}", tables.major_version, tables.minor_version);
@@ -672,7 +865,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_file("tests/samples/mono_2.0/mscorlib.dll".as_ref())?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
     ///
     /// if let Some(strings) = assembly.strings() {
     ///     // Look up string by index (from metadata table)
@@ -702,7 +895,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_file("tests/samples/mono_2.0/mscorlib.dll".as_ref())?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
     ///
     /// if let Some(user_strings) = assembly.userstrings() {
     ///     // Look up user string by token (from ldstr instruction)
@@ -732,7 +925,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_file("tests/samples/mono_2.0/mscorlib.dll".as_ref())?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
     ///
     /// if let Some(guids) = assembly.guids() {
     ///     // Look up GUID by index (from metadata table)
@@ -762,7 +955,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_file("tests/samples/mono_2.0/mscorlib.dll".as_ref())?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
     ///
     /// if let Some(blob) = assembly.blob() {
     ///     // Look up blob by index (from metadata table)
@@ -791,7 +984,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_file("tests/samples/mono_2.0/mscorlib.dll".as_ref())?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
     /// let refs = assembly.refs_assembly();
     ///
     /// for entry in refs.iter() {
@@ -825,7 +1018,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_file("tests/samples/mono_2.0/mscorlib.dll".as_ref())?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
     /// let refs = assembly.refs_module();
     ///
     /// for entry in refs.iter() {
@@ -853,7 +1046,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_file("tests/samples/mono_2.0/mscorlib.dll".as_ref())?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
     /// let refs = assembly.refs_members();
     ///
     /// for entry in refs.iter() {
@@ -884,7 +1077,7 @@ impl CilObject {
     /// ```rust,ignore
     /// # use dotscope::CilObject;
     /// # fn security_example() -> dotscope::Result<()> {
-    /// let assembly = CilObject::from_file("example.dll")?;
+    /// let assembly = CilObject::from_path("example.dll")?;
     /// let security_decls = assembly.security_declarations();
     ///
     /// for entry in security_decls.iter() {
@@ -916,7 +1109,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_file("tests/samples/mono_2.0/mscorlib.dll".as_ref())?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
     ///
     /// if let Some(module) = assembly.module() {
     ///     println!("Module name: {}", module.name);
@@ -944,7 +1137,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_file("tests/samples/mono_2.0/mscorlib.dll".as_ref())?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
     ///
     /// if let Some(assembly_info) = assembly.assembly() {
     ///     println!("Assembly: {}", assembly_info.name);
@@ -1007,7 +1200,7 @@ impl CilObject {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("example.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("example.dll"))?;
     ///
     /// if let Some(identity) = assembly.identity() {
     ///     println!("Assembly: {}", identity.display_name());
@@ -1028,7 +1221,7 @@ impl CilObject {
     /// let mut assemblies = HashMap::new();
     ///
     /// for path in assembly_paths {
-    ///     let assembly = CilObject::from_file(&path)?;
+    ///     let assembly = CilObject::from_path(&path)?;
     ///     if let Some(identity) = assembly.identity() {
     ///         assemblies.insert(identity, assembly);
     ///     }
@@ -1055,7 +1248,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_file("tests/samples/mono_2.0/mscorlib.dll".as_ref())?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
     /// let imports = assembly.imports();
     ///
     /// for entry in imports.cil().iter() {
@@ -1083,7 +1276,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_file("tests/samples/mono_2.0/mscorlib.dll".as_ref())?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
     /// let exports = assembly.exports();
     ///
     /// // Access CIL exports (existing functionality)
@@ -1118,7 +1311,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_file("tests/samples/mono_2.0/mscorlib.dll".as_ref())?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
     /// let methods = assembly.methods();
     ///
     /// for entry in methods.iter() {
@@ -1149,7 +1342,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_file("tests/samples/mono_2.0/mscorlib.dll".as_ref())?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
     /// let method_specs = assembly.method_specs();
     ///
     /// for entry in method_specs.iter() {
@@ -1178,7 +1371,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_file("tests/samples/mono_2.0/mscorlib.dll".as_ref())?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
     /// let resources = assembly.resources();
     ///
     /// for entry in resources.iter() {
@@ -1207,7 +1400,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_file("tests/samples/mono_2.0/mscorlib.dll".as_ref())?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
     /// let types = assembly.types();
     ///
     /// println!("Total types: {}", types.len());
@@ -1245,7 +1438,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_file("tests/samples/mono_2.0/mscorlib.dll".as_ref())?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
     /// let file = assembly.file();
     ///
     /// // Access file-level information
@@ -1257,7 +1450,9 @@ impl CilObject {
     /// println!("Machine type: 0x{:X}", nt_headers.machine);
     ///
     /// // Convert RVA to file offset
-    /// let (clr_rva, _) = file.clr();
+    /// let Some((clr_rva, _)) = file.clr() else {
+    ///     panic!("No CLR header found");
+    /// };
     /// let offset = file.rva_to_offset(clr_rva)?;
     /// println!("CLR header at file offset: 0x{:X}", offset);
     /// # Ok::<(), dotscope::Error>(())
@@ -1292,7 +1487,7 @@ impl CilObject {
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// // Load assembly with minimal validation for speed
-    /// let assembly = CilObject::from_file_with_validation(
+    /// let assembly = CilObject::from_path_with_validation(
     ///     Path::new("tests/samples/mono_2.0/mscorlib.dll"),
     ///     ValidationConfig::minimal()
     /// )?;

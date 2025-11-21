@@ -20,7 +20,7 @@ fn create_test_assembly() -> Result<CilAssembly> {
         panic!("Test assembly not found at: {}", path.display());
     }
 
-    let view = CilAssemblyView::from_file(path)?;
+    let view = CilAssemblyView::from_path(path)?;
     Ok(CilAssembly::new(view))
 }
 
@@ -43,7 +43,7 @@ where
     assembly.write_to_file(temp_file.path())?;
 
     // Step 4: Load the written file
-    let written_view = CilAssemblyView::from_file(temp_file.path())?;
+    let written_view = CilAssemblyView::from_path(temp_file.path())?;
 
     println!("Round-trip test '{test_name}' completed successfully");
     Ok(written_view)
@@ -525,7 +525,7 @@ fn test_builder_context_round_trip() -> Result<()> {
     assembly.write_to_file(temp_file.path())?;
 
     // Load the written file
-    let written_view = CilAssemblyView::from_file(temp_file.path())?;
+    let written_view = CilAssemblyView::from_path(temp_file.path())?;
 
     // Verify builder operations persisted correctly
     let strings_heap = written_view.strings().expect("Should have strings heap");
@@ -844,7 +844,7 @@ fn test_metadata_preservation_round_trip() -> Result<()> {
 fn test_simple_method_roundtrip() -> Result<()> {
     let written_file_path =
         perform_method_round_trip_test("simple_method_roundtrip", |assembly| {
-            let fresh_view = CilAssemblyView::from_file(std::path::Path::new(TEST_ASSEMBLY_PATH))?;
+            let fresh_view = CilAssemblyView::from_path(std::path::Path::new(TEST_ASSEMBLY_PATH))?;
             let mut context = BuilderContext::new(CilAssembly::new(fresh_view));
 
             // Create a simple addition method
@@ -868,7 +868,7 @@ fn test_simple_method_roundtrip() -> Result<()> {
         })?;
 
     // Create CilObject from the written file to access method information
-    let cil_object = CilObject::from_file(&written_file_path)?;
+    let cil_object = CilObject::from_path(&written_file_path)?;
     let methods = cil_object.methods();
 
     // Find our added method
@@ -907,7 +907,7 @@ fn test_simple_method_roundtrip() -> Result<()> {
 fn test_method_with_locals_roundtrip() -> Result<()> {
     let written_file_path =
         perform_method_round_trip_test("method_with_locals_roundtrip", |assembly| {
-            let fresh_view = CilAssemblyView::from_file(std::path::Path::new(TEST_ASSEMBLY_PATH))?;
+            let fresh_view = CilAssemblyView::from_path(std::path::Path::new(TEST_ASSEMBLY_PATH))?;
             let mut context = BuilderContext::new(CilAssembly::new(fresh_view));
 
             // Create a method with local variables
@@ -941,7 +941,7 @@ fn test_method_with_locals_roundtrip() -> Result<()> {
 
     // Verify the method exists with correct local variables
     // Create CilObject from the written file to access method information
-    let cil_object = CilObject::from_file(&written_file_path)?;
+    let cil_object = CilObject::from_path(&written_file_path)?;
     let methods = cil_object.methods();
 
     let mut found_method = false;
@@ -974,7 +974,7 @@ fn test_method_with_locals_roundtrip() -> Result<()> {
 fn test_complex_method_with_branching_roundtrip() -> Result<()> {
     let written_file_path =
         perform_method_round_trip_test("complex_method_branching_roundtrip", |assembly| {
-            let fresh_view = CilAssemblyView::from_file(std::path::Path::new(TEST_ASSEMBLY_PATH))?;
+            let fresh_view = CilAssemblyView::from_path(std::path::Path::new(TEST_ASSEMBLY_PATH))?;
             let mut context = BuilderContext::new(CilAssembly::new(fresh_view));
 
             // Create a method with control flow (loop)
@@ -1010,7 +1010,7 @@ fn test_complex_method_with_branching_roundtrip() -> Result<()> {
 
     // Verify the method exists and contains branching instructions
     // Create CilObject from the written file to access method information
-    let cil_object = CilObject::from_file(&written_file_path)?;
+    let cil_object = CilObject::from_path(&written_file_path)?;
     let methods = cil_object.methods();
 
     let mut found_method = false;
@@ -1040,7 +1040,7 @@ fn test_complex_method_with_branching_roundtrip() -> Result<()> {
 fn test_method_with_exception_handling_roundtrip() -> Result<()> {
     let written_file_path =
         perform_method_round_trip_test("method_exception_handling_roundtrip", |assembly| {
-            let fresh_view = CilAssemblyView::from_file(std::path::Path::new(TEST_ASSEMBLY_PATH))?;
+            let fresh_view = CilAssemblyView::from_path(std::path::Path::new(TEST_ASSEMBLY_PATH))?;
             let mut context = BuilderContext::new(CilAssembly::new(fresh_view));
 
             // Create a method with exception handlers (simplified version)
@@ -1072,7 +1072,7 @@ fn test_method_with_exception_handling_roundtrip() -> Result<()> {
 
     // Verify the method exists and has exception handling metadata
     // Create CilObject from the written file to access method information
-    let cil_object = CilObject::from_file(&written_file_path)?;
+    let cil_object = CilObject::from_path(&written_file_path)?;
     let methods = cil_object.methods();
 
     let mut found_method = false;
@@ -1110,7 +1110,7 @@ fn test_method_with_exception_handling_roundtrip() -> Result<()> {
 fn test_multiple_methods_roundtrip() -> Result<()> {
     let written_file_path =
         perform_method_round_trip_test("multiple_methods_roundtrip", |assembly| {
-            let fresh_view = CilAssemblyView::from_file(std::path::Path::new(TEST_ASSEMBLY_PATH))?;
+            let fresh_view = CilAssemblyView::from_path(std::path::Path::new(TEST_ASSEMBLY_PATH))?;
             let mut context = BuilderContext::new(CilAssembly::new(fresh_view));
 
             // Create multiple methods with different signatures
@@ -1163,7 +1163,7 @@ fn test_multiple_methods_roundtrip() -> Result<()> {
 
     // Verify all methods exist and are correctly formed
     // Create CilObject from the written file to access method information
-    let cil_object = CilObject::from_file(&written_file_path)?;
+    let cil_object = CilObject::from_path(&written_file_path)?;
     let methods = cil_object.methods();
 
     let mut found_methods = std::collections::HashSet::new();
@@ -1239,7 +1239,7 @@ fn test_multiple_methods_roundtrip() -> Result<()> {
 fn test_method_with_stack_tracking_roundtrip() -> Result<()> {
     let written_file_path =
         perform_method_round_trip_test("method_stack_tracking_roundtrip", |assembly| {
-            let fresh_view = CilAssemblyView::from_file(std::path::Path::new(TEST_ASSEMBLY_PATH))?;
+            let fresh_view = CilAssemblyView::from_path(std::path::Path::new(TEST_ASSEMBLY_PATH))?;
             let mut context = BuilderContext::new(CilAssembly::new(fresh_view));
 
             // Create a method that tests accurate stack tracking
@@ -1277,7 +1277,7 @@ fn test_method_with_stack_tracking_roundtrip() -> Result<()> {
 
     // Verify the method was created with correct stack tracking
     // Create CilObject from the written file to access method information
-    let cil_object = CilObject::from_file(&written_file_path)?;
+    let cil_object = CilObject::from_path(&written_file_path)?;
     let methods = cil_object.methods();
 
     let mut found_method = false;
