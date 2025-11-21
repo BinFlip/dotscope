@@ -69,7 +69,7 @@ pub fn create_assembly_with_invalid_security_action() -> Result<NamedTempFile> {
         return Err(Error::Error("crafted_2.exe not available".to_string()));
     };
 
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let mut assembly = CilAssembly::new(view);
 
     // Create a DeclSecurity entry with invalid action (0 is outside valid range 1-14)
@@ -106,7 +106,7 @@ pub fn create_assembly_with_malformed_permission_set() -> Result<NamedTempFile> 
         return Err(Error::Error("crafted_2.exe not available".to_string()));
     };
 
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
 
@@ -151,7 +151,7 @@ pub fn create_assembly_with_conflicting_security_attributes() -> Result<NamedTem
         return Err(Error::Error("crafted_2.exe not available".to_string()));
     };
 
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let mut assembly = CilAssembly::new(view);
 
     // For now, create a simple assembly that will pass until we have better CustomAttribute support
@@ -177,7 +177,7 @@ pub fn create_assembly_with_security_transparency_violations() -> Result<NamedTe
         return Err(Error::Error("crafted_2.exe not available".to_string()));
     };
 
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let mut assembly = CilAssembly::new(view);
 
     // For now, create a simple assembly that will pass until we have better security attribute support

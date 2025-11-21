@@ -21,7 +21,7 @@
 //! use dotscope::prelude::*;
 //!
 //! # fn example() -> dotscope::Result<()> {
-//! # let view = CilAssemblyView::from_file("test.dll".as_ref())?;
+//! # let view = CilAssemblyView::from_path("test.dll")?;
 //! # let assembly = CilAssembly::new(view);
 //! # let mut context = BuilderContext::new(assembly);
 //! // Create a complete class with properties and methods
@@ -52,7 +52,7 @@
 //! use dotscope::prelude::*;
 //!
 //! # fn example() -> dotscope::Result<()> {
-//! # let view = CilAssemblyView::from_file("test.dll".as_ref())?;
+//! # let view = CilAssemblyView::from_path("test.dll")?;
 //! # let assembly = CilAssembly::new(view);
 //! # let mut context = BuilderContext::new(assembly);
 //! // Create a simple addition method

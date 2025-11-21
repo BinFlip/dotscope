@@ -32,7 +32,7 @@
 //! ```rust,ignore
 //! use dotscope::{CilObject, metadata::security::PermissionSet};
 //!
-//! let assembly = CilObject::from_file("legacy_app.dll".as_ref())?;
+//! let assembly = CilObject::from_path("legacy_app.dll")?;
 //!
 //! // Analyze security permissions on types
 //! for entry in assembly.types().iter() {

@@ -121,7 +121,7 @@
 //! use dotscope::CilObject;
 //!
 //! # fn example() -> dotscope::Result<()> {
-//! let assembly = CilObject::from_file("example.dll".as_ref())?;
+//! let assembly = CilObject::from_path("example.dll")?;
 //!
 //! // Access string heap for type and member names
 //! if let Some(strings) = assembly.strings() {
@@ -144,7 +144,7 @@
 //! use dotscope::CilObject;
 //!
 //! # fn example() -> dotscope::Result<()> {
-//! let assembly = CilObject::from_file("example.dll".as_ref())?;
+//! let assembly = CilObject::from_path("example.dll")?;
 //!
 //! // Access blob heap for method signatures and field types
 //! if let Some(blob) = assembly.blob() {
@@ -167,7 +167,7 @@
 //! use dotscope::CilObject;
 //!
 //! # fn example() -> dotscope::Result<()> {
-//! let assembly = CilObject::from_file("example.dll".as_ref())?;
+//! let assembly = CilObject::from_path("example.dll")?;
 //!
 //! // Access GUID heap for assembly and module identifiers
 //! if let Some(guid) = assembly.guids() {
@@ -191,7 +191,7 @@
 //! use dotscope::CilObject;
 //!
 //! # fn example() -> dotscope::Result<()> {
-//! let assembly = CilObject::from_file("example.dll".as_ref())?;
+//! let assembly = CilObject::from_path("example.dll")?;
 //!
 //! // Access user strings heap for IL string literals
 //! if let Some(user_strings) = assembly.userstrings() {
@@ -214,7 +214,7 @@
 //! use dotscope::CilObject;
 //!
 //! # fn example() -> dotscope::Result<()> {
-//! let assembly = CilObject::from_file("example.dll".as_ref())?;
+//! let assembly = CilObject::from_path("example.dll")?;
 //!
 //! // Analyze all available streams for comprehensive metadata overview
 //! println!("=== Metadata Stream Analysis ===");

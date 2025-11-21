@@ -38,15 +38,15 @@
 //! // Use production configuration for balanced validation
 //! let config = ValidationConfig::production();
 //! let path = Path::new("assembly.dll");
-//! let view = CilAssemblyView::from_file_with_validation(&path, config)?;
+//! let view = CilAssemblyView::from_path_with_validation(&path, config)?;
 //!
 //! // Use minimal configuration for maximum performance
 //! let config = ValidationConfig::minimal();
-//! let view = CilAssemblyView::from_file_with_validation(&path, config)?;
+//! let view = CilAssemblyView::from_path_with_validation(&path, config)?;
 //!
 //! // Use comprehensive configuration for maximum safety
 //! let config = ValidationConfig::comprehensive();
-//! let view = CilAssemblyView::from_file_with_validation(&path, config)?;
+//! let view = CilAssemblyView::from_path_with_validation(&path, config)?;
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!

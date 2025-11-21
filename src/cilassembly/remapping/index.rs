@@ -36,7 +36,7 @@
 //! use crate::metadata::cilassemblyview::CilAssemblyView;
 //! use std::path::Path;
 //!
-//! # let view = CilAssemblyView::from_file(Path::new("test.dll"));
+//! # let view = CilAssemblyView::from_path(Path::new("test.dll"));
 //! # let mut changes = AssemblyChanges::new(&view);
 //! // Build complete remapping from changes
 //! let remapper = IndexRemapper::build_from_changes(&changes, &view);
@@ -107,7 +107,7 @@ use crate::{
 /// use crate::metadata::tables::TableId;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("test.dll"));
+/// # let view = CilAssemblyView::from_path(Path::new("test.dll"));
 /// # let changes = AssemblyChanges::new(&view);
 /// // Build remapper from assembly changes
 /// let remapper = IndexRemapper::build_from_changes(&changes, &view);
@@ -853,7 +853,7 @@ mod tests {
     #[test]
     fn test_index_remapper_empty_changes() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let changes = AssemblyChanges::empty();
             let remapper = IndexRemapper::build_from_changes(&changes, &view);
 
@@ -869,7 +869,7 @@ mod tests {
     #[test]
     fn test_index_remapper_string_heap_mapping() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut changes = AssemblyChanges::empty();
 
             // Add some strings to heap
@@ -895,7 +895,7 @@ mod tests {
     #[test]
     fn test_index_remapper_blob_heap_mapping() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut changes = AssemblyChanges::empty();
 
             // Add some blobs to heap
@@ -921,7 +921,7 @@ mod tests {
     #[test]
     fn test_index_remapper_table_remapping() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut changes = AssemblyChanges::empty();
 
             // Add table operations
@@ -947,7 +947,7 @@ mod tests {
     #[test]
     fn test_index_remapper_replaced_table() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut changes = AssemblyChanges::empty();
 
             // Create replaced table
@@ -973,7 +973,7 @@ mod tests {
     #[test]
     fn test_index_remapper_guid_heap_mapping() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut changes = AssemblyChanges::empty();
 
             // Add some GUIDs to heap
@@ -997,7 +997,7 @@ mod tests {
     #[test]
     fn test_index_remapper_mixed_changes() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut changes = AssemblyChanges::empty();
 
             // Add string changes
@@ -1037,7 +1037,7 @@ mod tests {
     #[test]
     fn test_heap_compaction_with_removed_items() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut changes = AssemblyChanges::empty();
 
             // Create string heap changes with removed items
@@ -1074,7 +1074,7 @@ mod tests {
     #[test]
     fn test_cross_reference_integrity_after_remapping() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut changes = AssemblyChanges::empty();
 
             // Create TypeDef with cross-references that need updating
@@ -1139,7 +1139,7 @@ mod tests {
     #[test]
     fn test_multiple_heap_compaction_scenarios() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut changes = AssemblyChanges::empty();
 
             // Test blob heap compaction
@@ -1202,7 +1202,7 @@ mod tests {
     #[test]
     fn test_edge_case_empty_heaps() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut changes = AssemblyChanges::empty();
 
             // Test with empty heaps (only default size 1)
@@ -1235,7 +1235,7 @@ mod tests {
     #[test]
     fn test_edge_case_all_items_removed() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut changes = AssemblyChanges::empty();
 
             // Test scenario where all original items are removed
@@ -1263,7 +1263,7 @@ mod tests {
     #[test]
     fn test_cross_reference_update_comprehensive() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut changes = AssemblyChanges::empty();
 
             // Create a complex row with multiple types of cross-references
@@ -1336,7 +1336,7 @@ mod tests {
     #[test]
     fn test_large_heap_performance() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut changes = AssemblyChanges::empty();
 
             // Simulate a large heap with many removals (performance test)

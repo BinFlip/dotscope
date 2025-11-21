@@ -26,7 +26,7 @@ fn create_test_assembly() -> Result<CilAssembly> {
         panic!("Test assembly not found at: {}", path.display());
     }
 
-    let view = CilAssemblyView::from_file(path)?;
+    let view = CilAssemblyView::from_path(path)?;
     Ok(CilAssembly::new(view))
 }
 
@@ -82,7 +82,7 @@ fn inject_hello_world_method(output_path: &Path) -> Result<CilObject> {
     assembly.write_to_file(output_path)?;
 
     // Load the written assembly for verification
-    CilObject::from_file(output_path)
+    CilObject::from_path(output_path)
 }
 
 /// Verify basic assembly integrity after modification

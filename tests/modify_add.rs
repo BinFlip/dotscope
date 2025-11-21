@@ -9,7 +9,7 @@ use std::path::Path;
 #[test]
 fn extend_crafted_2() -> Result<()> {
     // Step 1: Load the original assembly
-    let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+    let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 
     let original_string_count = view.strings().map(|s| s.iter().count()).unwrap_or(0);
     let original_blob_count = view.blobs().map(|b| b.iter().count()).unwrap_or(0);
@@ -109,7 +109,7 @@ fn extend_crafted_2() -> Result<()> {
 
     // Step 5: Load the new file and verify our additions
     let modified_view =
-        CilAssemblyView::from_file(temp_path).expect("Modified assembly should load successfully");
+        CilAssemblyView::from_path(temp_path).expect("Modified assembly should load successfully");
 
     // Verify heap additions
     // Check strings

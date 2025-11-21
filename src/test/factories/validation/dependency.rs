@@ -68,7 +68,7 @@ pub fn create_assembly_with_broken_dependency_chain() -> Result<NamedTempFile> {
         return Err(Error::Error("crafted_2.exe not available".to_string()));
     };
 
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let mut assembly = CilAssembly::new(view);
 
     // Create a TypeDef that extends a non-existent TypeRef (RID 9999)
@@ -105,7 +105,7 @@ pub fn create_assembly_with_unsatisfied_transitive_dependencies() -> Result<Name
         return Err(Error::Error("crafted_2.exe not available".to_string()));
     };
 
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let mut assembly = CilAssembly::new(view);
 
     // Create TypeDef A that extends TypeDef B
@@ -157,7 +157,7 @@ pub fn create_assembly_with_invalid_dependency_ordering() -> Result<NamedTempFil
         return Err(Error::Error("crafted_2.exe not available".to_string()));
     };
 
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let mut assembly = CilAssembly::new(view);
 
     // Create TypeDef A that extends TypeDef B
@@ -209,7 +209,7 @@ pub fn create_assembly_with_self_referential_dependencies() -> Result<NamedTempF
         return Err(Error::Error("crafted_2.exe not available".to_string()));
     };
 
-    let view = CilAssemblyView::from_file(&clean_testfile)?;
+    let view = CilAssemblyView::from_path(&clean_testfile)?;
     let mut assembly = CilAssembly::new(view);
 
     // Create a TypeDef that extends itself

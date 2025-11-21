@@ -38,7 +38,7 @@ use dotscope::prelude::*;
 
 fn main() -> dotscope::Result<()> {
     // Load assembly for raw access
-    let view = CilAssemblyView::from_file("MyAssembly.dll".as_ref())?;
+    let view = CilAssemblyView::from_path("MyAssembly.dll".as_ref())?;
     
     // Direct access to metadata tables
     if let Some(tables) = view.tables() {
@@ -64,7 +64,7 @@ use dotscope::prelude::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load assembly for high-level analysis
-    let assembly = CilObject::from_file("MyAssembly.dll".as_ref())?;
+    let assembly = CilObject::from_path("MyAssembly.dll".as_ref())?;
     
     // Access resolved information
     if let Some(module) = assembly.module() {
@@ -91,7 +91,7 @@ use dotscope::prelude::*;
 
 fn main() -> dotscope::Result<()> {
     // Load assembly for modification
-    let view = CilAssemblyView::from_file("input.dll".as_ref())?;
+    let view = CilAssemblyView::from_path("input.dll".as_ref())?;
     let mut assembly = CilAssembly::new(view);
     
     // Add strings to metadata heaps
@@ -117,7 +117,7 @@ use dotscope::prelude::*;
 
 fn main() -> dotscope::Result<()> {
     // Load assembly and create builder context
-    let view = CilAssemblyView::from_file("input.dll".as_ref())?;
+    let view = CilAssemblyView::from_path("input.dll".as_ref())?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
     

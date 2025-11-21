@@ -65,7 +65,7 @@
 //! use dotscope::{CilObject, metadata::method::{MethodAccessFlags, MethodModifiers}};
 //! use std::path::Path;
 //!
-//! let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+//! let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 //!
 //! for entry in assembly.methods().iter().take(20) {
 //!     let method = entry.value();
@@ -92,7 +92,7 @@
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
-//! let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+//! let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 //!
 //! for entry in assembly.methods().iter().take(10) {
 //!     let method = entry.value();
@@ -1016,7 +1016,7 @@ bitflags! {
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
-/// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+/// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 ///
 /// for entry in assembly.methods().iter().take(10) {
 ///     let method = entry.value();
@@ -1102,7 +1102,7 @@ pub struct LocalVariable {
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
-/// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+/// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 ///
 /// for entry in assembly.methods().iter() {
 ///     let method = entry.value();

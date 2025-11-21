@@ -1,7 +1,7 @@
 //! # Basic Assembly Analysis
 //!
 //! **What this example teaches:**
-//! - Loading .NET assemblies from files using `CilObject::from_file()`
+//! - Loading .NET assemblies from files using `CilObject::from_path()`
 //! - Accessing basic metadata (assembly info, module info)
 //! - Iterating through methods and examining method bodies
 //! - Using the prelude for convenient access to common types
@@ -38,7 +38,7 @@ fn main() -> Result<()> {
     // This demonstrates the primary entry point for assembly analysis
     println!("🔍 Loading .NET assembly: {}", path.display());
 
-    let assembly = match CilObject::from_file(path) {
+    let assembly = match CilObject::from_path(path) {
         Ok(assembly) => {
             println!("✅ Successfully loaded assembly");
             assembly
@@ -136,7 +136,7 @@ fn main() -> Result<()> {
 
     // Summary of what we've learned
     println!("\n🎯 Analysis Summary:");
-    println!("  - Assembly loaded successfully using CilObject::from_file()");
+    println!("  - Assembly loaded successfully using CilObject::from_path()");
     println!(
         "  - Accessed {} methods via assembly.methods()",
         methods.len()

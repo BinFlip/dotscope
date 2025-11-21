@@ -66,8 +66,8 @@
 //! let project = CilProject::new();
 //!
 //! // Manually load assemblies and add to project
-//! let main_assembly = CilObject::from_file(Path::new("MyApp.exe"))?;
-//! let lib_assembly = CilObject::from_file(Path::new("MyLib.dll"))?;
+//! let main_assembly = CilObject::from_path(Path::new("MyApp.exe"))?;
+//! let lib_assembly = CilObject::from_path(Path::new("MyLib.dll"))?;
 //!
 //! project.add_assembly(main_assembly)?;
 //! project.add_assembly(lib_assembly)?;
@@ -128,7 +128,7 @@ pub use result::ProjectResult;
 /// let mut project = CilProject::new();
 ///
 /// // Add assemblies to the project
-/// let assembly = CilObject::from_file(Path::new("example.dll"))?;
+/// let assembly = CilObject::from_path(Path::new("example.dll"))?;
 /// project.add_assembly(assembly)?;
 ///
 /// // Create global resolver for cross-assembly lookup
@@ -273,7 +273,7 @@ impl CilProject {
     /// use std::path::Path;
     ///
     /// let mut project = CilProject::new();
-    /// let assembly = CilObject::from_file(Path::new("example.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("example.dll"))?;
     ///
     /// project.add_assembly(assembly)?;
     /// assert_eq!(project.assembly_count(), 1);

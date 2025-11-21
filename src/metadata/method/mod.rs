@@ -32,7 +32,7 @@
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
-//! let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+//! let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 //!
 //! for entry in assembly.methods().iter().take(10) {
 //!     let method = entry.value();
@@ -56,7 +56,7 @@
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
-//! let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+//! let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 //!
 //! for entry in assembly.methods().iter().take(5) {
 //!     let method = entry.value();
@@ -139,7 +139,7 @@ pub type MethodRc = Arc<Method>;
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
-/// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+/// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 ///
 /// // Create weak references to avoid circular dependencies
 /// for entry in assembly.methods().iter().take(5) {
@@ -177,7 +177,7 @@ impl MethodRef {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// if let Some(entry) = assembly.methods().iter().next() {
     ///     let method = entry.value();
     ///     let method_ref = dotscope::metadata::method::MethodRef::new(&method);
@@ -207,7 +207,7 @@ impl MethodRef {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// if let Some(entry) = assembly.methods().iter().next() {
     ///     let method = entry.value();
     ///     let method_ref = dotscope::metadata::method::MethodRef::new(&method);
@@ -245,7 +245,7 @@ impl MethodRef {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// if let Some(entry) = assembly.methods().iter().next() {
     ///     let method = entry.value();
     ///     let method_ref = dotscope::metadata::method::MethodRef::new(&method);
@@ -276,7 +276,7 @@ impl MethodRef {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// let mut method_refs = Vec::new();
     ///
     /// // Collect weak references
@@ -312,7 +312,7 @@ impl MethodRef {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// if let Some(entry) = assembly.methods().iter().next() {
     ///     let method = entry.value();
     ///     let method_ref = dotscope::metadata::method::MethodRef::new(&method);
@@ -344,7 +344,7 @@ impl MethodRef {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// let mut method_names = Vec::new();
     ///
     /// for entry in assembly.methods().iter().take(5) {
@@ -379,7 +379,7 @@ impl MethodRef {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// let mut constructor_count = 0;
     ///
     /// for entry in assembly.methods().iter() {
@@ -494,7 +494,7 @@ impl Method {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// for entry in assembly.methods().iter().take(3) {
     ///     let method = entry.value();
     ///     println!("Method: {} ({} instructions)",
@@ -536,7 +536,7 @@ impl Method {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// for entry in assembly.methods().iter().take(3) {
     ///     let method = entry.value();
     ///     println!("Method: {} has {} basic blocks",
@@ -588,7 +588,7 @@ impl Method {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// for entry in assembly.methods().iter().take(10) {
     ///     let method = entry.value();
     ///     let block_count = method.block_count();
@@ -627,7 +627,7 @@ impl Method {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// let mut total_instructions = 0;
     /// let mut method_count = 0;
     ///
@@ -666,7 +666,7 @@ impl Method {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// for entry in assembly.methods().iter().take(10) {
     ///     let method = entry.value();
     ///     if method.is_code_il() {
@@ -691,7 +691,7 @@ impl Method {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// let native_methods: Vec<_> = assembly.methods().iter()
     ///     .filter(|entry| entry.value().is_code_native())
     ///     .map(|entry| entry.value().name.clone())
@@ -716,7 +716,7 @@ impl Method {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// for entry in assembly.methods().iter() {
     ///     let method = entry.value();
     ///     if method.is_code_opt_il() {
@@ -741,7 +741,7 @@ impl Method {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// let runtime_methods: Vec<_> = assembly.methods().iter()
     ///     .filter(|entry| entry.value().is_code_runtime())
     ///     .map(|entry| entry.value().name.clone())
@@ -766,7 +766,7 @@ impl Method {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// for entry in assembly.methods().iter() {
     ///     let method = entry.value();
     ///     if method.is_code_unmanaged() {
@@ -792,7 +792,7 @@ impl Method {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// let forward_refs: Vec<_> = assembly.methods().iter()
     ///     .filter(|entry| entry.value().is_forward_ref())
     ///     .map(|entry| entry.value().name.clone())
@@ -820,7 +820,7 @@ impl Method {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// for entry in assembly.methods().iter() {
     ///     let method = entry.value();
     ///     if method.is_synchronized() {
@@ -845,7 +845,7 @@ impl Method {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// for entry in assembly.methods().iter() {
     ///     let method = entry.value();
     ///     if method.is_pinvoke() {
@@ -870,7 +870,7 @@ impl Method {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// let internal_methods: Vec<_> = assembly.methods().iter()
     ///     .filter(|entry| entry.value().is_internal_call())
     ///     .map(|entry| entry.value().name.clone())
@@ -895,7 +895,7 @@ impl Method {
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
-    /// let assembly = CilObject::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// for entry in assembly.methods().iter() {
     ///     let method = entry.value();
     ///     if method.is_forarded_pinvoke() {

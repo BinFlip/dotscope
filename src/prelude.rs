@@ -40,7 +40,7 @@
 //! use dotscope::prelude::*;
 //!
 //! // Core functionality immediately available
-//! let assembly = CilObject::from_file("example.dll".as_ref())?;
+//! let assembly = CilObject::from_path("example.dll")?;
 //! let types = assembly.types();
 //!
 //! // Type system components
@@ -60,7 +60,7 @@
 //! ```rust,no_run
 //! use dotscope::prelude::*;
 //!
-//! let assembly = CilObject::from_file("example.dll".as_ref())?;
+//! let assembly = CilObject::from_path("example.dll")?;
 //! let methods = assembly.methods();
 //!
 //! for entry in methods.iter() {
@@ -120,7 +120,7 @@
 //! ```rust,no_run
 //! use dotscope::prelude::*;
 //!
-//! let assembly = CilObject::from_file("example.dll".as_ref())?;
+//! let assembly = CilObject::from_path("example.dll")?;
 //!
 //! // High-level table access
 //! if let Some(assembly_info) = assembly.assembly() {

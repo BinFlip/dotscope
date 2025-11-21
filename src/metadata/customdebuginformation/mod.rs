@@ -34,7 +34,7 @@
 //! use dotscope::metadata::customdebuginformation::{parse_custom_debug_blob, CustomDebugInfo};
 //! use dotscope::CilObject;
 //!
-//! let assembly = CilObject::from_file("tests/samples/WindowsBase.dll".as_ref())?;
+//! let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
 //!
 //! # fn get_custom_debug_data() -> (uuid::Uuid, &'static [u8]) {
 //! #     (uuid::Uuid::new_v4(), &[0x01, 0x02, 0x03])

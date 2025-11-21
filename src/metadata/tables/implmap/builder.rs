@@ -61,7 +61,7 @@ use crate::{
 /// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::PInvokeAttributes;
 /// # use std::path::Path;
-/// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
 /// let assembly = CilAssembly::new(view);
 /// let mut context = BuilderContext::new(assembly);
 ///
@@ -285,7 +285,7 @@ impl ImplMapBuilder {
     /// ```rust,ignore
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
-    /// # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
     /// # let assembly = CilAssembly::new(view);
     /// # let mut context = BuilderContext::new(assembly);
     /// let token = ImplMapBuilder::new()

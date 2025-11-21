@@ -91,7 +91,7 @@
 //! use dotscope::prelude::*;
 //! use std::path::Path;
 //!
-//! # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+//! # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 //! # let assembly = view.to_owned();
 //! // Create planner and generate complete layout
 //! let mut planner = LayoutPlanner::new(&assembly);
@@ -110,7 +110,7 @@
 //! use dotscope::prelude::*;
 //! use std::path::Path;
 //!
-//! # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+//! # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 //! # let assembly = view.to_owned();
 //! let mut planner = LayoutPlanner::new(&assembly);
 //!
@@ -296,7 +296,7 @@ use crate::{
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// let mut planner = LayoutPlanner::new(&assembly);
 /// let layout = planner.plan_complete_layout()?;
@@ -311,7 +311,7 @@ use crate::{
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// let mut planner = LayoutPlanner::new(&assembly);
 /// let layout = planner.plan_complete_layout()?;
@@ -380,7 +380,7 @@ impl<'a> LayoutPlanner<'a> {
     /// use dotscope::prelude::*;
     /// use std::path::Path;
     ///
-    /// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
     /// # let assembly = view.to_owned();
     /// let planner = LayoutPlanner::new(&assembly);
     /// # Ok::<(), dotscope::Error>(())
@@ -490,7 +490,7 @@ impl<'a> LayoutPlanner<'a> {
     /// use dotscope::prelude::*;
     /// use std::path::Path;
     ///
-    /// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
     /// # let assembly = view.to_owned();
     /// let mut planner = LayoutPlanner::new(&assembly);
     /// let layout = planner.plan_complete_layout()?;
@@ -507,7 +507,7 @@ impl<'a> LayoutPlanner<'a> {
     /// use dotscope::prelude::*;
     /// use std::path::Path;
     ///
-    /// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
     /// # let assembly = view.to_owned();
     /// let mut planner = LayoutPlanner::new(&assembly);
     /// let layout = planner.plan_complete_layout()?;

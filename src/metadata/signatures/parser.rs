@@ -655,7 +655,7 @@ impl<'a> SignatureParser<'a> {
                 self.parser.read_compressed_uint()?;
                 Ok(())
             }
-            ELEMENT_TYPE::PTR => {
+            ELEMENT_TYPE::PTR | ELEMENT_TYPE::SZARRAY => {
                 let _ = self.parse_custom_mods()?;
                 self.parse_type_simple()
             }
@@ -680,10 +680,6 @@ impl<'a> SignatureParser<'a> {
                     self.parse_type_simple()?;
                 }
                 Ok(())
-            }
-            ELEMENT_TYPE::SZARRAY => {
-                let _ = self.parse_custom_mods()?;
-                self.parse_type_simple()
             }
             ELEMENT_TYPE::FNPTR => {
                 let _ = self.parse_method_signature()?;

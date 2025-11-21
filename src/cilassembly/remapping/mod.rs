@@ -57,7 +57,7 @@
 //! use crate::metadata::tables::TableId;
 //! use std::path::Path;
 //!
-//! # let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+//! # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
 //! # let mut changes = AssemblyChanges::new(&view);
 //!
 //! // Build comprehensive remapping

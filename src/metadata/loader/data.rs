@@ -204,7 +204,7 @@ impl CilObjectData {
     ///
     /// # fn load_assembly_example() -> dotscope::Result<()> {
     /// // Create CilAssemblyView first
-    /// let view = CilAssemblyView::from_file("example.dll")?;
+    /// let view = CilAssemblyView::from_path("example.dll")?;
     ///
     /// // Load single assembly without ProjectContext
     /// let cil_data = CilObjectData::from_assembly_view(&view, None)?;

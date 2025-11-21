@@ -60,7 +60,7 @@
 //! use dotscope::prelude::*;
 //! use std::path::Path;
 //!
-//! # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+//! # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 //! # let assembly = view.to_owned();
 //! // Complete layout planning in a single call
 //! let layout = WriteLayout::plan(&assembly)?;
@@ -85,7 +85,7 @@
 //! use dotscope::prelude::*;
 //! use std::path::Path;
 //!
-//! # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+//! # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 //! # let assembly = view.to_owned();
 //! let layout = WriteLayout::plan(&assembly)?;
 //!
@@ -121,7 +121,7 @@
 //! use dotscope::prelude::*;
 //! use std::path::Path;
 //!
-//! # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+//! # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 //! # let assembly = view.to_owned();
 //! // Complete three-stage pipeline
 //! let layout = WriteLayout::plan(&assembly)?;
@@ -242,7 +242,7 @@ pub(crate) use tables::calculate_table_stream_expansion;
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// // Create complete layout plan
 /// let layout = WriteLayout::plan(&assembly)?;
@@ -266,7 +266,7 @@ pub(crate) use tables::calculate_table_stream_expansion;
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// let layout = WriteLayout::plan(&assembly)?;
 ///
@@ -297,7 +297,7 @@ pub(crate) use tables::calculate_table_stream_expansion;
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// let layout = WriteLayout::plan(&assembly)?;
 ///
@@ -390,7 +390,7 @@ pub struct WriteLayout {
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// let layout = WriteLayout::plan(&assembly)?;
 /// let requirements = &layout.native_table_requirements;
@@ -424,7 +424,7 @@ pub struct WriteLayout {
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// let layout = WriteLayout::plan(&assembly)?;
 /// let requirements = &layout.native_table_requirements;
@@ -522,7 +522,7 @@ pub struct NativeTableRequirements {
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// let layout = WriteLayout::plan(&assembly)?;
 /// let file_structure = &layout.file_structure;
@@ -550,7 +550,7 @@ pub struct NativeTableRequirements {
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// let layout = WriteLayout::plan(&assembly)?;
 ///
@@ -661,7 +661,7 @@ pub struct FileStructureLayout {
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// let layout = WriteLayout::plan(&assembly)?;
 /// let metadata = &layout.metadata_layout;
@@ -695,7 +695,7 @@ pub struct FileStructureLayout {
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// let layout = WriteLayout::plan(&assembly)?;
 ///
@@ -832,7 +832,7 @@ pub struct MetadataLayout {
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// let layout = WriteLayout::plan(&assembly)?;
 ///
@@ -974,7 +974,7 @@ pub struct SectionLayout {
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// let layout = WriteLayout::plan(&assembly)?;
 ///
@@ -1011,7 +1011,7 @@ pub struct SectionLayout {
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// let layout = WriteLayout::plan(&assembly)?;
 ///
@@ -1092,7 +1092,7 @@ pub struct StreamLayout {
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// let layout = WriteLayout::plan(&assembly)?;
 /// let info = &layout.planning_info;
@@ -1125,7 +1125,7 @@ pub struct StreamLayout {
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// let layout = WriteLayout::plan(&assembly)?;
 /// let breakdown = &layout.planning_info.size_breakdown;
@@ -1167,7 +1167,7 @@ pub struct StreamLayout {
 /// use std::path::Path;
 /// use std::time::Duration;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// let layout = WriteLayout::plan(&assembly)?;
 /// let info = &layout.planning_info;
@@ -1207,7 +1207,7 @@ pub struct StreamLayout {
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let assembly = view.to_owned();
 /// let layout = WriteLayout::plan(&assembly)?;
 /// let warnings = &layout.planning_info.warnings;
@@ -1376,7 +1376,7 @@ impl WriteLayout {
     /// use dotscope::prelude::*;
     /// use std::path::Path;
     ///
-    /// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
     /// # let assembly = view.to_owned();
     /// // Plan complete layout in one call
     /// let layout = WriteLayout::plan(&assembly)?;
@@ -1397,7 +1397,7 @@ impl WriteLayout {
     /// use dotscope::prelude::*;
     /// use std::path::Path;
     ///
-    /// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
     /// # let assembly = view.to_owned();
     /// match WriteLayout::plan(&assembly) {
     ///     Ok(layout) => {
@@ -1427,7 +1427,7 @@ impl WriteLayout {
     /// use dotscope::prelude::*;
     /// use std::path::Path;
     ///
-    /// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+    /// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
     /// # let assembly = view.to_owned();
     /// // Stage 1: Comprehensive planning
     /// let start_time = std::time::Instant::now();
@@ -1662,7 +1662,7 @@ mod tests {
 
     #[test]
     fn test_write_layout_planning() {
-        let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))
+        let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))
             .expect("Failed to load test assembly");
         let assembly = view.to_owned();
 
@@ -1679,7 +1679,7 @@ mod tests {
 
     #[test]
     fn test_layout_validation() {
-        let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))
+        let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))
             .expect("Failed to load test assembly");
         let assembly = view.to_owned();
 

@@ -531,7 +531,7 @@ mod tests {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
         let mono_deps_path = std::path::Path::new(&manifest_dir).join("tests/samples/mono_4.8");
 
-        let assembly_view = CilAssemblyView::from_file(temp_file.path())?;
+        let assembly_view = CilAssemblyView::from_path(temp_file.path())?;
 
         // Use project loading with dependencies instead of direct file loading
         let project_result = crate::project::ProjectLoader::new()

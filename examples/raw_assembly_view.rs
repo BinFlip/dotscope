@@ -20,7 +20,7 @@ fn main() -> Result<()> {
     println!("{}", "=".repeat(60));
 
     // Load assembly using CilAssemblyView for raw metadata access
-    let view = CilAssemblyView::from_file(assembly_path.as_ref())?;
+    let view = CilAssemblyView::from_path(assembly_path)?;
 
     // 1. Display COR20 Header Information
     display_cor20_header(&view);

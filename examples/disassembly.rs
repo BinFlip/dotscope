@@ -37,7 +37,7 @@ fn main() -> Result<()> {
     let path = Path::new(&args[1]);
     println!("⚙️  IL Disassembly analysis of: {}", path.display());
 
-    let assembly = CilObject::from_file(path)?;
+    let assembly = CilObject::from_path(path)?;
 
     // === Method Body Analysis ===
     print_method_body_analysis(&assembly);

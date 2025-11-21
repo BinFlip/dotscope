@@ -30,7 +30,7 @@
 //! use rayon::ThreadPoolBuilder;
 //!
 //! # let path = Path::new("assembly.dll");
-//! let view = CilAssemblyView::from_file(&path)?;
+//! let view = CilAssemblyView::from_path(&path)?;
 //! let scanner = ReferenceScanner::from_view(&view)?;
 //! let config = ValidationConfig::production();
 //! let thread_pool = ThreadPoolBuilder::new().build().unwrap();
@@ -155,7 +155,7 @@ pub trait ValidationContext {
 /// use rayon::ThreadPoolBuilder;
 ///
 /// # let path = Path::new("assembly.dll");
-/// let view = CilAssemblyView::from_file(&path)?;
+/// let view = CilAssemblyView::from_path(&path)?;
 /// let scanner = ReferenceScanner::from_view(&view)?;
 /// let config = ValidationConfig::minimal();
 /// let thread_pool = ThreadPoolBuilder::new().build().unwrap();
@@ -207,7 +207,7 @@ impl<'a> RawValidationContext<'a> {
     /// use rayon::ThreadPoolBuilder;
     ///
     /// # let path = Path::new("assembly.dll");
-    /// let view = CilAssemblyView::from_file(&path)?;
+    /// let view = CilAssemblyView::from_path(&path)?;
     /// let scanner = ReferenceScanner::from_view(&view)?;
     /// let config = ValidationConfig::production();
     /// let thread_pool = ThreadPoolBuilder::new().build().unwrap();
@@ -483,7 +483,7 @@ mod tests {
     #[test]
     fn test_raw_loading_context() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let scanner = ReferenceScanner::from_view(&view).unwrap();
             let config = ValidationConfig::minimal();
             let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
@@ -501,7 +501,7 @@ mod tests {
     #[test]
     fn test_raw_modification_context() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let scanner = ReferenceScanner::from_view(&view).unwrap();
             let config = ValidationConfig::minimal();
             let changes = AssemblyChanges::new(&view);
@@ -525,7 +525,7 @@ mod tests {
     #[test]
     fn test_factory_functions() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let scanner = ReferenceScanner::from_view(&view).unwrap();
             let config = ValidationConfig::minimal();
             let changes = AssemblyChanges::new(&view);

@@ -259,7 +259,7 @@ impl ProjectLoader {
             }
             processed_files.insert(current_path.clone());
 
-            match CilAssemblyView::from_file(&current_path) {
+            match CilAssemblyView::from_path(&current_path) {
                 Ok(view) => {
                     if let Ok(assembly_identity) = view.identity() {
                         // Track if this is the primary assembly

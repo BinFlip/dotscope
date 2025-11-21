@@ -37,7 +37,7 @@ fn main() -> Result<()> {
     let path = Path::new(&args[1]);
     println!("🏗️  Type system analysis of: {}", path.display());
 
-    let assembly = CilObject::from_file(path)?;
+    let assembly = CilObject::from_path(path)?;
 
     // === Type Registry Analysis ===
     print_type_registry_analysis(&assembly);

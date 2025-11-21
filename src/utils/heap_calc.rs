@@ -17,7 +17,7 @@
 //! use dotscope::prelude::*;
 //! use std::path::Path;
 //!
-//! # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+//! # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 //! let table_info = view.tables().unwrap().table_info();
 //!
 //! let type_def_size = calculate_table_row_size(TableId::TypeDef, &table_info);
@@ -68,7 +68,7 @@ use crate::{
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// let table_info = view.tables().unwrap().table_info();
 ///
 /// // Calculate sizes for common table types

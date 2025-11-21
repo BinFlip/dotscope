@@ -53,7 +53,7 @@ use crate::{
 /// use std::path::Path;
 ///
 /// # fn main() -> Result<()> {
-/// let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+/// let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
 /// let assembly = CilAssembly::new(view);
 /// let mut context = BuilderContext::new(assembly);
 ///
@@ -148,7 +148,7 @@ impl MethodImplBuilder {
     /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
-    /// let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
     /// let assembly = CilAssembly::new(view);
     /// let mut context = BuilderContext::new(assembly);
     ///
@@ -196,7 +196,7 @@ impl MethodImplBuilder {
     /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
-    /// let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
     /// let assembly = CilAssembly::new(view);
     /// let mut context = BuilderContext::new(assembly);
     ///
@@ -250,7 +250,7 @@ impl MethodImplBuilder {
     /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
-    /// let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
     /// let assembly = CilAssembly::new(view);
     /// let mut context = BuilderContext::new(assembly);
     ///
@@ -304,7 +304,7 @@ impl MethodImplBuilder {
     /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
-    /// let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
     /// let assembly = CilAssembly::new(view);
     /// let mut context = BuilderContext::new(assembly);
     ///
@@ -358,7 +358,7 @@ impl MethodImplBuilder {
     /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
-    /// let view = CilAssemblyView::from_file(Path::new("test.dll"))?;
+    /// let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
     /// let assembly = CilAssembly::new(view);
     /// let mut context = BuilderContext::new(assembly);
     ///
@@ -535,7 +535,7 @@ mod tests {
     #[test]
     fn test_interface_implementation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -561,7 +561,7 @@ mod tests {
     #[test]
     fn test_virtual_method_override() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -587,7 +587,7 @@ mod tests {
     #[test]
     fn test_explicit_interface_implementation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -613,7 +613,7 @@ mod tests {
     #[test]
     fn test_external_method_body() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -639,7 +639,7 @@ mod tests {
     #[test]
     fn test_direct_coded_index() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -667,7 +667,7 @@ mod tests {
     #[test]
     fn test_build_without_class_fails() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -687,7 +687,7 @@ mod tests {
     #[test]
     fn test_build_without_method_body_fails() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -707,7 +707,7 @@ mod tests {
     #[test]
     fn test_build_without_method_declaration_fails() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 
@@ -727,7 +727,7 @@ mod tests {
     #[test]
     fn test_multiple_method_impls() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             let assembly = CilAssembly::new(view);
             let mut context = BuilderContext::new(assembly);
 

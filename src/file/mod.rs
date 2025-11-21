@@ -53,7 +53,7 @@
 //! use std::path::Path;
 //!
 //! // Load a .NET assembly from disk
-//! let file = File::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+//! let file = File::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 //! println!("Loaded PE file with {} bytes", file.len());
 //!
 //! // Access PE headers
@@ -61,7 +61,9 @@
 //! println!("Number of sections: {}", file.sections().len());
 //!
 //! // Access .NET metadata location
-//! let (clr_rva, clr_size) = file.clr();
+//! let Some((clr_rva, clr_size)) = file.clr() else {
+//!     panic!("No CLR header found");
+//! };
 //! println!("CLR header at RVA 0x{:x}, size: {} bytes", clr_rva, clr_size);
 //! # Ok::<(), dotscope::Error>(())
 //! ```
@@ -96,10 +98,12 @@
 //! use dotscope::File;
 //! use std::path::Path;
 //!
-//! let file = File::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+//! let file = File::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 //!
 //! // Convert CLR header RVA to file offset
-//! let (clr_rva, _) = file.clr();
+//! let Some((clr_rva, _)) = file.clr() else {
+//!     panic!("No CLR header found");
+//! };
 //! let clr_offset = file.rva_to_offset(clr_rva)?;
 //!
 //! // Read CLR header data
@@ -174,32 +178,57 @@ pub trait Backend: Send + Sync {
     /// This is equivalent to `self.data().len()` but may be more efficient
     /// for some backend implementations.
     fn len(&self) -> usize;
+
+    /// Consumes the backend and returns the underlying data as an owned Vec<u8>.
+    ///
+    /// For memory-backed backends, this transfers ownership without copying.
+    /// For file-backed backends (mmap), this makes a complete copy of the data.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// // Memory backend - no copy, ownership transfer
+    /// let backend = Memory::new(vec![1, 2, 3]);
+    /// let data = backend.into_data(); // Moves the Vec, no allocation
+    ///
+    /// // Physical backend - copies the mmap'd data
+    /// let backend = Physical::new(Path::new("file.dll"))?;
+    /// let data = backend.into_data(); // Allocates and copies
+    /// ```
+    fn into_data(self: Box<Self>) -> Vec<u8>;
 }
 
-/// Represents a loaded PE file with .NET metadata.
+/// Represents a loaded PE file.
+///
+/// This struct can load both .NET assemblies and native PE files. Use [`File::is_clr()`]
+/// to check if the file contains .NET metadata.
 ///
 /// This struct contains the parsed PE information and provides methods for accessing headers,
 /// sections, data directories, and for converting between address spaces. It supports loading
 /// from both files and memory buffers.
 ///
-/// The `File` struct is the main entry point for working with .NET PE files. It automatically
-/// validates that the loaded file is a valid .NET assembly by checking for the presence of
-/// the CLR runtime header.
+/// The `File` struct is the main entry point for working with PE files. It can load both
+/// .NET assemblies and native PE executables/DLLs. Use [`File::is_clr()`] or [`File::clr()`]
+/// to determine if the loaded file contains .NET metadata.
 ///
 /// # Examples
 ///
-/// ## Loading from a file
+/// ## Loading and checking for .NET metadata
 ///
 /// ```rust,no_run
 /// use dotscope::File;
 /// use std::path::Path;
 ///
-/// let file = File::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+/// let file = File::from_path(Path::new("example.exe"))?;
 /// println!("Loaded PE with {} sections", file.sections().len());
 ///
-/// // Access assembly metadata
-/// let (clr_rva, clr_size) = file.clr();
-/// println!("CLR runtime header: RVA=0x{:x}, size={}", clr_rva, clr_size);
+/// // Check if it's a .NET assembly
+/// if file.is_clr() {
+///     let (clr_rva, clr_size) = file.clr().unwrap();
+///     println!(".NET assembly - CLR at RVA 0x{:x}, size={}", clr_rva, clr_size);
+/// } else {
+///     println!("Native PE executable (no .NET metadata)");
+/// }
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
@@ -209,12 +238,13 @@ pub trait Backend: Send + Sync {
 /// use dotscope::File;
 /// use std::fs;
 ///
-/// let data = fs::read("tests/samples/WindowsBase.dll")?;
+/// let data = fs::read("assembly.dll")?;
 /// let file = File::from_mem(data)?;
 ///
-/// // Access CLR metadata
-/// let (clr_rva, clr_size) = file.clr();
-/// println!("CLR header at RVA 0x{:x}, {} bytes", clr_rva, clr_size);
+/// // Access CLR metadata if present
+/// if let Some((clr_rva, clr_size)) = file.clr() {
+///     println!("CLR header at RVA 0x{:x}, {} bytes", clr_rva, clr_size);
+/// }
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
@@ -224,7 +254,7 @@ pub trait Backend: Send + Sync {
 /// use dotscope::File;
 /// use std::path::Path;
 ///
-/// let file = File::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+/// let file = File::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
 ///
 /// // Convert between address spaces
 /// let entry_rva = file.header_optional().as_ref().unwrap()
@@ -246,19 +276,19 @@ pub struct File {
 impl File {
     /// Loads a PE file from the given path.
     ///
-    /// This method opens a file from disk and parses it as a .NET PE file.
-    /// The file is memory-mapped for efficient access.
+    /// This method opens a file from disk and parses it as a PE file.
+    /// The file is memory-mapped for efficient access. Works with both .NET assemblies
+    /// and native PE executables/DLLs.
     ///
     /// # Arguments
     ///
-    /// * `file` - Path to the PE file on disk.
+    /// * `path` - Path to the PE file on disk. Accepts `&Path`, `&str`, `String`, or `PathBuf`.
     ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - The file cannot be read or opened
     /// - The file is not a valid PE format
-    /// - The PE file does not contain .NET metadata (missing CLR runtime header)
     /// - The file is empty
     ///
     /// # Examples
@@ -267,17 +297,23 @@ impl File {
     /// use dotscope::File;
     /// use std::path::Path;
     ///
-    /// let file = File::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// // With Path
+    /// let file = File::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
+    ///
+    /// // With string slice
+    /// let file = File::from_path("tests/samples/WindowsBase.dll")?;
+    ///
     /// println!("Loaded {} bytes with {} sections",
     ///          file.len(), file.sections().len());
     ///
-    /// // Access assembly metadata
-    /// let (clr_rva, clr_size) = file.clr();
-    /// println!("CLR runtime header: RVA=0x{:x}, size={}", clr_rva, clr_size);
+    /// // Check if it's a .NET assembly
+    /// if let Some((clr_rva, clr_size)) = file.clr() {
+    ///     println!("CLR runtime header: RVA=0x{:x}, size={}", clr_rva, clr_size);
+    /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn from_file(file: &Path) -> Result<File> {
-        let input = Physical::new(file)?;
+    pub fn from_path(path: impl AsRef<Path>) -> Result<File> {
+        let input = Physical::new(path.as_ref())?;
 
         Self::load(input)
     }
@@ -286,6 +322,7 @@ impl File {
     ///
     /// This method parses a PE file that's already loaded into memory.
     /// Useful when working with embedded resources or downloaded files.
+    /// Works with both .NET assemblies and native PE executables/DLLs.
     ///
     /// # Arguments
     ///
@@ -296,7 +333,6 @@ impl File {
     /// Returns an error if:
     /// - The buffer is empty
     /// - The data is not a valid PE format
-    /// - The PE file does not contain .NET metadata (missing CLR runtime header)
     ///
     /// # Examples
     ///
@@ -328,6 +364,67 @@ impl File {
         Self::load(input)
     }
 
+    /// Creates a File from an opened std::fs::File.
+    ///
+    /// The file is memory-mapped for efficient access. This is useful when you already have
+    /// a file handle open with specific permissions or from a special location.
+    ///
+    /// # Arguments
+    /// * `file` - An opened file handle
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The file cannot be memory-mapped
+    /// - The data is not a valid PE format
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::File;
+    /// use std::fs::File as StdFile;
+    ///
+    /// let std_file = StdFile::open("assembly.dll")?;
+    /// let pe_file = File::from_std_file(std_file)?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn from_std_file(file: std::fs::File) -> Result<File> {
+        let input = Physical::from_std_file(file)?;
+
+        Self::load(input)
+    }
+
+    /// Creates a File from any type implementing Read.
+    ///
+    /// This is the most flexible constructor, allowing Files to be created from
+    /// network streams, archives, cursors, or any custom reader.
+    ///
+    /// # Arguments
+    /// * `reader` - Any type implementing Read
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The reader cannot be read
+    /// - The data is not a valid PE format
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::File;
+    /// use std::io::Cursor;
+    ///
+    /// let data = vec![/* PE bytes */];
+    /// let cursor = Cursor::new(data);
+    /// let file = File::from_reader(cursor)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn from_reader<R: std::io::Read>(mut reader: R) -> Result<File> {
+        let mut data = Vec::new();
+        reader
+            .read_to_end(&mut data)
+            .map_err(|e| crate::Error::Error(format!("Failed to read from reader: {}", e)))?;
+        Self::from_mem(data)
+    }
+
     /// Internal loader for any backend.
     ///
     /// # Arguments
@@ -336,7 +433,7 @@ impl File {
     ///
     /// # Errors
     ///
-    /// Returns an error if the data is empty, not a valid PE, or missing .NET metadata.
+    /// Returns an error if the data is empty or not a valid PE format.
     fn load<T: Backend + 'static>(data: T) -> Result<File> {
         if data.len() == 0 {
             return Err(Empty);
@@ -367,7 +464,7 @@ impl File {
     /// use dotscope::File;
     /// use std::path::Path;
     ///
-    /// let file = File::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let file = File::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// println!("File size: {} bytes", file.len());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
@@ -384,7 +481,7 @@ impl File {
     /// use dotscope::File;
     /// use std::path::Path;
     ///
-    /// let file = File::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let file = File::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// assert!(!file.is_empty()); // Valid PE files are never empty
     /// # Ok::<(), dotscope::Error>(())
     /// ```
@@ -404,7 +501,7 @@ impl File {
     /// use dotscope::File;
     /// use std::path::Path;
     ///
-    /// let file = File::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let file = File::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// let base = file.imagebase();
     /// println!("Image base: 0x{:x}", base);
     /// # Ok::<(), dotscope::Error>(())
@@ -425,7 +522,7 @@ impl File {
     /// use dotscope::File;
     /// use std::path::Path;
     ///
-    /// let file = File::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let file = File::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// let header = file.header();
     /// println!("Machine type: 0x{:x}", header.machine);
     /// println!("Number of sections: {}", header.number_of_sections);
@@ -447,7 +544,7 @@ impl File {
     /// use dotscope::File;
     /// use std::path::Path;
     ///
-    /// let file = File::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let file = File::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// let dos_header = file.header_dos();
     /// println!("DOS signature: 0x{:x}", dos_header.signature);
     /// println!("Number of bytes on last page: {}", dos_header.bytes_on_last_page);
@@ -469,7 +566,7 @@ impl File {
     /// use dotscope::File;
     /// use std::path::Path;
     ///
-    /// let file = File::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let file = File::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// let optional_header = file.header_optional().as_ref().unwrap();
     /// println!("Entry point: 0x{:x}", optional_header.standard_fields.address_of_entry_point);
     /// println!("Subsystem: {:?}", optional_header.windows_fields.subsystem);
@@ -481,16 +578,15 @@ impl File {
         &self.pe.optional_header
     }
 
-    /// Returns the RVA and size (in bytes) of the CLR runtime header.
+    /// Returns the RVA and size of the CLR runtime header, if present.
     ///
     /// The CLR runtime header contains metadata about the .NET runtime,
     /// including pointers to metadata tables and other runtime structures.
     ///
     /// # Returns
     ///
-    /// A tuple containing `(rva, size)` where:
-    /// - `rva` is the relative virtual address of the CLR header
-    /// - `size` is the size of the CLR header in bytes
+    /// - `Some((rva, size))` if this PE file contains a CLR runtime header (.NET assembly)
+    /// - `None` if this is a native PE file without .NET metadata
     ///
     /// # Examples
     ///
@@ -498,23 +594,41 @@ impl File {
     /// use dotscope::File;
     /// use std::path::Path;
     ///
-    /// let file = File::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
-    /// let (clr_rva, clr_size) = file.clr();
-    /// println!("CLR header at RVA: 0x{:x}, size: {} bytes", clr_rva, clr_size);
+    /// let file = File::from_path(Path::new("example.exe"))?;
+    /// match file.clr() {
+    ///     Some((rva, size)) => println!(".NET assembly: CLR at RVA 0x{:x}", rva),
+    ///     None => println!("Native PE file (no .NET metadata)"),
+    /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    ///
-    /// # Panics
-    ///
-    /// Panics if the CLR runtime header is missing (should not happen for valid .NET assemblies).
     #[must_use]
-    pub fn clr(&self) -> (usize, usize) {
-        let clr_dir = self
-            .pe
+    pub fn clr(&self) -> Option<(usize, usize)> {
+        self.pe
             .get_clr_runtime_header()
-            .expect("CLR runtime header should exist for .NET assemblies");
+            .map(|clr_dir| (clr_dir.virtual_address as usize, clr_dir.size as usize))
+    }
 
-        (clr_dir.virtual_address as usize, clr_dir.size as usize)
+    /// Returns true if this PE file contains a CLR runtime header (.NET assembly).
+    ///
+    /// This is a convenience method equivalent to `file.clr().is_some()`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::File;
+    /// use std::path::Path;
+    ///
+    /// let file = File::from_path(Path::new("example.exe"))?;
+    /// if file.is_clr() {
+    ///     println!("This is a .NET assembly");
+    /// } else {
+    ///     println!("This is a native PE file");
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn is_clr(&self) -> bool {
+        self.clr().is_some()
     }
 
     /// Returns a slice of the section headers of the PE file.
@@ -528,7 +642,7 @@ impl File {
     /// use dotscope::File;
     /// use std::path::Path;
     ///
-    /// let file = File::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let file = File::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// for section in file.sections() {
     ///     println!("Section: {} at RVA 0x{:x}, size: {} bytes",
     ///              section.name, section.virtual_address, section.virtual_size);
@@ -548,16 +662,12 @@ impl File {
     /// use dotscope::File;
     /// use std::path::Path;
     ///
-    /// let file = File::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let file = File::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// for (dir_type, directory) in file.directories() {
     ///     println!("Directory: {:?}, RVA: 0x{:x}", dir_type, directory.virtual_address);
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    ///
-    /// # Panics
-    ///
-    /// Panics if the optional header is missing (should not happen for valid .NET assemblies).
     #[must_use]
     pub fn directories(&self) -> Vec<(DataDirectoryType, DataDirectory)> {
         // We have verified the existence of the optional_header during the initial load.
@@ -581,10 +691,6 @@ impl File {
     /// - `Some((rva, size))` if the directory exists with non-zero address and size
     /// - `None` if the directory doesn't exist or has zero address/size
     ///
-    /// # Panics
-    ///
-    /// Panics if the PE file has no optional header (which should not happen for valid PE files).
-    ///
     /// # Examples
     ///
     /// ```rust,no_run
@@ -592,7 +698,7 @@ impl File {
     /// use dotscope::DataDirectoryType;
     /// use std::path::Path;
     ///
-    /// let file = File::from_file(Path::new("example.dll"))?;
+    /// let file = File::from_path(Path::new("example.dll"))?;
     ///
     /// // Check for import table
     /// if let Some((import_rva, import_size)) = file.get_data_directory(DataDirectoryType::ImportTable) {
@@ -629,7 +735,7 @@ impl File {
     /// use dotscope::File;
     /// use std::path::Path;
     ///
-    /// let file = File::from_file(Path::new("example.dll"))?;
+    /// let file = File::from_path(Path::new("example.dll"))?;
     /// if let Some(imports) = file.imports() {
     ///     for import in imports {
     ///         println!("DLL: {}", import.dll);
@@ -669,7 +775,7 @@ impl File {
     /// use dotscope::File;
     /// use std::path::Path;
     ///
-    /// let file = File::from_file(Path::new("example.dll"))?;
+    /// let file = File::from_path(Path::new("example.dll"))?;
     /// if let Some(exports) = file.exports() {
     ///     for export in exports {
     ///         if let Some(name) = &export.name {
@@ -700,7 +806,7 @@ impl File {
     /// use dotscope::File;
     /// use std::path::Path;
     ///
-    /// let file = File::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let file = File::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// let data = file.data();
     ///
     /// // Check DOS signature (MZ)
@@ -736,7 +842,7 @@ impl File {
     /// use dotscope::File;
     /// use std::path::Path;
     ///
-    /// let file = File::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let file = File::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     ///
     /// // Read the DOS header (first 64 bytes)
     /// let dos_header = file.data_slice(0, 64)?;
@@ -773,7 +879,7 @@ impl File {
     /// use dotscope::File;
     /// use std::path::Path;
     ///
-    /// let file = File::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let file = File::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     ///
     /// // Convert entry point VA to file offset
     /// let entry_point_va = file.header_optional().as_ref().unwrap().standard_fields.address_of_entry_point as usize;
@@ -815,10 +921,12 @@ impl File {
     /// use dotscope::File;
     /// use std::path::Path;
     ///
-    /// let file = File::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let file = File::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     ///
     /// // Convert CLR header RVA to file offset
-    /// let (clr_rva, _) = file.clr();
+    /// let Some((clr_rva, _)) = file.clr() else {
+    ///     panic!("No CLR header found");
+    /// };
     /// let clr_offset = file.rva_to_offset(clr_rva)?;
     ///
     /// // Read CLR header data
@@ -872,7 +980,7 @@ impl File {
     /// use dotscope::File;
     /// use std::path::Path;
     ///
-    /// let file = File::from_file(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// let file = File::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     ///
     /// // Find what RVA corresponds to file offset 0x1000
     /// let rva = file.offset_to_rva(0x1000)?;
@@ -928,7 +1036,7 @@ impl File {
     /// use dotscope::File;
     /// use std::path::Path;
     ///
-    /// let file = File::from_file(Path::new("example.dll"))?;
+    /// let file = File::from_path(Path::new("example.dll"))?;
     ///
     /// if file.section_contains_metadata(".text") {
     ///     println!("The .text section contains .NET metadata");
@@ -939,7 +1047,7 @@ impl File {
     pub fn section_contains_metadata(&self, section_name: &str) -> bool {
         let (clr_rva, _clr_size) = match self.clr() {
             #[allow(clippy::cast_possible_truncation)]
-            (rva, size) if rva > 0 && size >= 72 => (rva as u32, size),
+            Some((rva, size)) if rva > 0 && size >= 72 => (rva as u32, size),
             _ => return false, // No CLR header means no .NET metadata
         };
 
@@ -1226,7 +1334,7 @@ impl File {
     /// # Examples
     /// ```rust,ignore
     /// // Add a new section to the PE file
-    /// let mut file = File::from_file(path)?;
+    /// let mut file = File::from_path(path)?;
     /// let new_section = SectionTable::from_layout_info(
     ///     ".meta".to_string(),
     ///     0x4000,
@@ -1243,6 +1351,32 @@ impl File {
     pub fn pe_mut(&mut self) -> &mut Pe {
         &mut self.pe
     }
+
+    /// Consumes the File and returns the underlying data as an owned Vec<u8>.
+    ///
+    /// For files loaded via `from_mem()`, this transfers ownership without copying.
+    /// For files loaded via `from_file()`, this makes a complete copy of the memory-mapped data.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::File;
+    /// use std::path::Path;
+    ///
+    /// // From memory - no copy
+    /// let original_data = vec![/* PE bytes */];
+    /// let file = File::from_mem(original_data)?;
+    /// let recovered_data = file.into_data();
+    ///
+    /// // From file - copies the data
+    /// let file = File::from_path(Path::new("assembly.dll"))?;
+    /// let data_copy = file.into_data();
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn into_data(self) -> Vec<u8> {
+        self.data.into_data()
+    }
 }
 
 #[cfg(test)]
@@ -1256,7 +1390,7 @@ mod tests {
     #[test]
     fn load_file() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let file = File::from_file(&path).unwrap();
+        let file = File::from_path(&path).unwrap();
 
         verify_file(&file);
     }
@@ -1284,7 +1418,7 @@ mod tests {
     #[test]
     fn test_get_data_directory() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        let file = File::from_file(&path).unwrap();
+        let file = File::from_path(&path).unwrap();
 
         // Test CLR runtime header (should exist for .NET assemblies)
         let clr_dir = file.get_data_directory(DataDirectoryType::ClrRuntimeHeader);
@@ -1294,7 +1428,7 @@ mod tests {
         assert!(clr_size > 0, "CLR size should be non-zero");
 
         // Verify it matches the existing clr() method
-        let (expected_rva, expected_size) = file.clr();
+        let (expected_rva, expected_size) = file.clr().expect("Should have CLR header");
         assert_eq!(
             clr_rva as usize, expected_rva,
             "CLR RVA should match clr() method"
@@ -1324,7 +1458,7 @@ mod tests {
     #[test]
     fn test_pe_signature_offset() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/crafted_2.exe");
-        let file = File::from_file(&path).expect("Failed to load test assembly");
+        let file = File::from_path(&path).expect("Failed to load test assembly");
 
         let pe_offset = file
             .pe_signature_offset()
@@ -1337,7 +1471,7 @@ mod tests {
     #[test]
     fn test_pe_headers_size() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/crafted_2.exe");
-        let file = File::from_file(&path).expect("Failed to load test assembly");
+        let file = File::from_path(&path).expect("Failed to load test assembly");
 
         let headers_size = file
             .pe_headers_size()
@@ -1350,7 +1484,7 @@ mod tests {
     #[test]
     fn test_align_to_file_alignment() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/crafted_2.exe");
-        let file = File::from_file(&path).expect("Failed to load test assembly");
+        let file = File::from_path(&path).expect("Failed to load test assembly");
 
         // Test alignment with actual file alignment from PE header
         let alignment = file.file_alignment().expect("Should get file alignment");

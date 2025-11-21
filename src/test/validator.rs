@@ -415,7 +415,7 @@ fn run_validation_test<F>(
 where
     F: Fn(&RawValidationContext) -> Result<()>,
 {
-    let assembly_view = CilAssemblyView::from_file(&assembly.path)?;
+    let assembly_view = CilAssemblyView::from_path(&assembly.path)?;
     let scanner = ReferenceScanner::from_view(&assembly_view)?;
     let thread_count = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -441,7 +441,7 @@ where
     let mono_deps_path = Path::new(&manifest_dir).join("tests/samples/mono_4.8");
 
     // Create CilAssemblyView for ReferenceScanner
-    let assembly_view = CilAssemblyView::from_file(&assembly.path)?;
+    let assembly_view = CilAssemblyView::from_path(&assembly.path)?;
 
     // Load CilObject with dependencies using ProjectLoader
     // Enable strict mode for validator tests so loading failures cause immediate errors

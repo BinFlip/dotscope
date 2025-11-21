@@ -79,7 +79,7 @@ fn try_load_with_cilproject(path: &Path) -> LoadResult {
 
 /// Load an assembly using CilAssemblyView and return the result.
 fn try_load_with_cilassemblyview(path: &Path) -> LoadResult {
-    match CilAssemblyView::from_file(path) {
+    match CilAssemblyView::from_path(path) {
         Ok(_) => LoadResult {
             success: true,
             error_type: None,
@@ -94,7 +94,7 @@ fn try_load_with_cilassemblyview(path: &Path) -> LoadResult {
 /// Find all .dll and .exe files in the Mono samples directory.
 fn find_mono_assemblies() -> Vec<PathBuf> {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-    let mono_path = Path::new(&manifest_dir).join("tests/samples/mono_4.5");
+    let mono_path = Path::new(&manifest_dir).join("tests/samples/mono_4.8");
 
     if !mono_path.exists() {
         return Vec::new();

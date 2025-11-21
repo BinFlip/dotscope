@@ -739,7 +739,7 @@ mod tests {
             return Err(Error::Error("WindowsBase.dll not available".to_string()));
         };
 
-        let view = CilAssemblyView::from_file(&clean_testfile)?;
+        let view = CilAssemblyView::from_path(&clean_testfile)?;
         let config = ValidationConfig {
             enable_structural_validation: true,
             ..Default::default()

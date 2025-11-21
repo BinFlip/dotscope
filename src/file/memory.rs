@@ -179,6 +179,10 @@ impl Backend for Memory {
     fn len(&self) -> usize {
         self.data.len()
     }
+
+    fn into_data(self: Box<Self>) -> Vec<u8> {
+        self.data
+    }
 }
 
 #[cfg(test)]
@@ -290,5 +294,55 @@ mod tests {
         let full_data = memory.data_slice(0, size).unwrap();
         assert_eq!(full_data.len(), size);
         assert_eq!(full_data[size - 1], 0xFF);
+    }
+
+    #[test]
+    fn test_memory_into_data() {
+        // Create test data with recognizable pattern
+        let original_data = vec![0x4D, 0x5A, 0x90, 0x00, 0x03, 0x00];
+        let expected_len = original_data.len();
+        let expected_first = original_data[0];
+        let expected_last = original_data[expected_len - 1];
+
+        // Create memory backend
+        let memory = Memory::new(original_data);
+        assert_eq!(memory.len(), expected_len);
+
+        // Convert to Box<dyn Backend> to simulate real usage
+        let backend: Box<dyn Backend> = Box::new(memory);
+
+        // Call into_data() - should transfer ownership without copying
+        let recovered_data = backend.into_data();
+
+        // Verify data is recovered correctly
+        assert_eq!(recovered_data.len(), expected_len);
+        assert_eq!(recovered_data[0], expected_first);
+        assert_eq!(recovered_data[expected_len - 1], expected_last);
+        assert_eq!(recovered_data, vec![0x4D, 0x5A, 0x90, 0x00, 0x03, 0x00]);
+    }
+
+    #[test]
+    fn test_memory_into_data_empty() {
+        let memory = Memory::new(vec![]);
+        let backend: Box<dyn Backend> = Box::new(memory);
+        let recovered_data = backend.into_data();
+        assert_eq!(recovered_data.len(), 0);
+    }
+
+    #[test]
+    fn test_memory_into_data_large() {
+        // Test with larger buffer
+        let size = 1024 * 1024; // 1MB
+        let mut data = vec![0x00; size];
+        data[0] = 0xAA;
+        data[size - 1] = 0xBB;
+
+        let memory = Memory::new(data);
+        let backend: Box<dyn Backend> = Box::new(memory);
+        let recovered_data = backend.into_data();
+
+        assert_eq!(recovered_data.len(), size);
+        assert_eq!(recovered_data[0], 0xAA);
+        assert_eq!(recovered_data[size - 1], 0xBB);
     }
 }

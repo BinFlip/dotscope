@@ -28,7 +28,7 @@
 //! use std::path::Path;
 //!
 //! # let path = Path::new("assembly.dll");
-//! let view = CilAssemblyView::from_file(&path)?;
+//! let view = CilAssemblyView::from_path(&path)?;
 //! let scanner = ReferenceScanner::from_view(&view)?;
 //! let validator = SchemaValidator::new(&scanner);
 //!
@@ -505,7 +505,7 @@ mod tests {
     #[test]
     fn test_schema_validator_creation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = SchemaValidator::new(&scanner);
 
@@ -520,7 +520,7 @@ mod tests {
     #[test]
     fn test_basic_structure_validation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = crate::metadata::cilassemblyview::CilAssemblyView::from_file(&path) {
+        if let Ok(view) = crate::metadata::cilassemblyview::CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = SchemaValidator::new(&scanner);
 
@@ -535,7 +535,7 @@ mod tests {
     #[test]
     fn test_rid_validation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = SchemaValidator::new(&scanner);
 
@@ -561,7 +561,7 @@ mod tests {
     #[test]
     fn test_heap_reference_validation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = SchemaValidator::new(&scanner);
 
@@ -583,7 +583,7 @@ mod tests {
     #[test]
     fn test_validation_statistics() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = SchemaValidator::new(&scanner);
 
@@ -600,7 +600,7 @@ mod tests {
     #[test]
     fn test_coded_index_validation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_file(&path) {
+        if let Ok(view) = CilAssemblyView::from_path(&path) {
             if let Ok(scanner) = ReferenceScanner::from_view(&view) {
                 let validator = SchemaValidator::new(&scanner);
 

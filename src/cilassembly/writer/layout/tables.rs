@@ -124,7 +124,7 @@
 //! use dotscope::prelude::*;
 //! use std::path::Path;
 //!
-//! # let view = CilAssemblyView::from_file(Path::new(\"tests/samples/crafted_2.exe\"))?;
+//! # let view = CilAssemblyView::from_path(Path::new(\"tests/samples/crafted_2.exe\"))?;
 //! # let mut assembly = view.to_owned();
 //! // Add some methods which will expand the MethodDef table
 //! // assembly.add_method(...);  // This would add methods
@@ -142,7 +142,7 @@
 //! use dotscope::prelude::*;
 //! use std::path::Path;
 //!
-//! # let view = CilAssemblyView::from_file(Path::new(\"tests/samples/crafted_2.exe\"))?;
+//! # let view = CilAssemblyView::from_path(Path::new(\"tests/samples/crafted_2.exe\"))?;
 //! # let mut assembly = view.to_owned();
 //! # let changes = assembly.changes();
 //! // Check if MethodDef table was modified
@@ -244,7 +244,7 @@ use crate::{
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let mut assembly = view.to_owned();
 /// // After adding methods, types, etc., calculate expansion
 /// let expansion_bytes = calculate_table_stream_expansion(&assembly)?;
@@ -264,7 +264,7 @@ use crate::{
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let mut assembly = view.to_owned();
 /// let original_size = assembly.view().tables()
 ///     .map(|t| t.stream_size())
@@ -399,7 +399,7 @@ pub fn calculate_table_stream_expansion(assembly: &CilAssembly) -> Result<u64> {
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let mut assembly = view.to_owned();
 /// # let changes = assembly.changes();
 /// // Check TypeDef table after complete replacement
@@ -418,7 +418,7 @@ pub fn calculate_table_stream_expansion(assembly: &CilAssembly) -> Result<u64> {
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_file(Path::new("tests/samples/crafted_2.exe"))?;
+/// # let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
 /// # let mut assembly = view.to_owned();
 /// # let changes = assembly.changes();
 /// // Analyze MethodDef table with sparse operations

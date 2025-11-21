@@ -64,7 +64,7 @@ fn main() -> Result<()> {
 
     // Step 3: Parse CLR metadata using low-level Cor20Header struct
     println!("\n=== Step 3: Parsing CLR Header using Cor20Header ===");
-    let (clr_rva, clr_size) = file.clr();
+    let (clr_rva, clr_size) = file.clr().expect("File should have CLR runtime header");
     println!("CLR Runtime Header: RVA=0x{clr_rva:08X}, Size={clr_size} bytes");
 
     // Convert RVA to file offset and read CLR header

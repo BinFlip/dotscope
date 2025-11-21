@@ -38,7 +38,7 @@ fn main() -> Result<()> {
     let path = Path::new(&args[1]);
     println!("🔬 Metadata exploration of: {}", path.display());
 
-    let assembly = CilObject::from_file(path)?;
+    let assembly = CilObject::from_path(path)?;
 
     // === Metadata Tables Analysis ===
     print_metadata_tables(&assembly);
