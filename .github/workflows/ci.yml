@@ -9,6 +9,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-Dwarnings"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_NOLOGO: "true"
 
 jobs:
   # Library testing and linting - no build artifacts needed
@@ -32,7 +35,10 @@ jobs:
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '8.0.x'
-        
+
+    - name: Warm up .NET SDK
+      run: dotnet --info
+
     - name: Setup Rust cache
       uses: Swatinem/rust-cache@v2
       with:
@@ -127,7 +133,10 @@ jobs:
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '8.0.x'
-        
+
+    - name: Warm up .NET SDK
+      run: dotnet --info
+
     - name: Setup Rust cache
       uses: Swatinem/rust-cache@v2
       with:
