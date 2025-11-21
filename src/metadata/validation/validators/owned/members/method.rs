@@ -453,7 +453,7 @@ impl OwnedMethodValidator {
                     });
                 }
 
-                if !method.flags_access.contains(MethodAccessFlags::PRIVATE) {
+                if method.flags_access != MethodAccessFlags::PRIVATE {
                     return Err(Error::ValidationOwnedValidatorFailed {
                         validator: self.name().to_string(),
                         message: format!("Static constructor '{}' should be private", method.name),
@@ -467,10 +467,8 @@ impl OwnedMethodValidator {
             // to reliably validate based on naming patterns alone
             if method.name.starts_with("op_")
                 && method.flags_modifiers.contains(MethodModifiers::STATIC)
-                && (method.flags_access.contains(MethodAccessFlags::PUBLIC)
-                    || method
-                        .flags_access
-                        .contains(MethodAccessFlags::FAMILY_OR_ASSEMBLY))
+                && (method.flags_access == MethodAccessFlags::PUBLIC
+                    || method.flags_access == MethodAccessFlags::FAMILY_OR_ASSEMBLY)
                 && !method
                     .flags_modifiers
                     .contains(MethodModifiers::SPECIAL_NAME)

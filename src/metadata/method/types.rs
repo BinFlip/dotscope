@@ -71,7 +71,7 @@
 //!     let method = entry.value();
 //!     
 //!     // Analyze method characteristics
-//!     if method.flags_access.contains(MethodAccessFlags::PUBLIC) {
+//!     if method.flags_access == MethodAccessFlags::PUBLIC {
 //!         println!("Public method: {}", method.name);
 //!     }
 //!     
@@ -431,79 +431,89 @@ impl MethodImplOptions {
     }
 }
 
-// Method attributes split into logical groups
-bitflags! {
-    #[derive(PartialEq, Eq, Debug)]
-    /// Method accessibility flags as defined in ECMA-335 II.23.1.10.
-    ///
-    /// These flags control the visibility and accessibility of methods, determining
-    /// which code can call or reference the method. The access levels follow the
-    /// standard .NET visibility model with support for assembly-level and
-    /// inheritance-based access control.
-    ///
-    /// # Access Hierarchy
-    ///
-    /// The access levels form a hierarchy from most restrictive to least restrictive:
-    /// 1. [`COMPILER_CONTROLLED`](Self::COMPILER_CONTROLLED) - No external access
-    /// 2. [`PRIVATE`](Self::PRIVATE) - Only within the same type
-    /// 3. [`FAM_AND_ASSEM`](Self::FAM_AND_ASSEM) - Family within assembly
-    /// 4. [`ASSEM`](Self::ASSEM) - Assembly-level access
-    /// 5. [`FAMILY`](Self::FAMILY) - Inheritance-based access
-    /// 6. [`FAM_OR_ASSEM`](Self::FAM_OR_ASSEM) - Family or assembly access
-    /// 7. [`PUBLIC`](Self::PUBLIC) - Universal access
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::method::MethodAccessFlags;
-    ///
-    /// // Extract from raw method attributes
-    /// let raw_flags = 0x0006; // Public method
-    /// let access = MethodAccessFlags::from_method_flags(raw_flags);
-    /// assert!(access.contains(MethodAccessFlags::PUBLIC));
-    /// ```
-    pub struct MethodAccessFlags: u32 {
-        /// Member not referenceable by external code.
-        ///
-        /// The method is controlled by the compiler and cannot be accessed
-        /// by user code. This is the most restrictive access level.
-        const COMPILER_CONTROLLED = 0x0000;
+/// Method accessibility level as defined in ECMA-335 II.23.1.10.
+///
+/// These access levels control the visibility and accessibility of methods, determining
+/// which code can call or reference the method. The access levels follow the
+/// standard .NET visibility model with support for assembly-level and
+/// inheritance-based access control.
+///
+/// Unlike other method attributes, access levels are **mutually exclusive** - a method
+/// can have exactly one access level, not a combination. This is represented as a
+/// simple u32 value, not a bitflags combination.
+///
+/// # Access Hierarchy
+///
+/// The access levels form a hierarchy from most restrictive to least restrictive:
+/// 1. [`COMPILER_CONTROLLED`](Self::COMPILER_CONTROLLED) - No external access
+/// 2. [`PRIVATE`](Self::PRIVATE) - Only within the same type
+/// 3. [`FAMILY_AND_ASSEMBLY`](Self::FAMILY_AND_ASSEMBLY) - Family within assembly
+/// 4. [`ASSEMBLY`](Self::ASSEMBLY) - Assembly-level access
+/// 5. [`FAMILY`](Self::FAMILY) - Inheritance-based access
+/// 6. [`FAMILY_OR_ASSEMBLY`](Self::FAMILY_OR_ASSEMBLY) - Family or assembly access
+/// 7. [`PUBLIC`](Self::PUBLIC) - Universal access
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use dotscope::metadata::method::MethodAccessFlags;
+///
+/// // Extract from raw method attributes
+/// let raw_flags = 0x0006; // Public method
+/// let access = MethodAccessFlags::from_method_flags(raw_flags);
+/// assert_eq!(access, MethodAccessFlags::PUBLIC);
+/// ```
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub struct MethodAccessFlags(u32);
 
-        /// Accessible only by the parent type.
-        ///
-        /// The method can only be called from within the same type that
-        /// declares it. This corresponds to `private` in C#.
-        const PRIVATE = 0x0001;
+impl MethodAccessFlags {
+    /// Member not referenceable by external code.
+    ///
+    /// The method is controlled by the compiler and cannot be accessed
+    /// by user code. This is the most restrictive access level.
+    pub const COMPILER_CONTROLLED: Self = Self(0x0000);
 
-        /// Accessible by sub-types only within this Assembly.
-        ///
-        /// The method can be accessed by derived types, but only when those
-        /// types are in the same assembly. This combines family and assembly access.
-        const FAMILY_AND_ASSEMBLY = 0x0002;
+    /// Accessible only by the parent type.
+    ///
+    /// The method can only be called from within the same type that
+    /// declares it. This corresponds to `private` in C#.
+    pub const PRIVATE: Self = Self(0x0001);
 
-        /// Accessible by anyone in the Assembly.
-        ///
-        /// The method can be called by any code within the same assembly,
-        /// regardless of type relationships. This corresponds to `internal` in C#.
-        const ASSEMBLY = 0x0003;
+    /// Accessible by sub-types only within this Assembly.
+    ///
+    /// The method can be accessed by derived types, but only when those
+    /// types are in the same assembly. This combines family and assembly access.
+    /// This corresponds to `private protected` in C#.
+    pub const FAMILY_AND_ASSEMBLY: Self = Self(0x0002);
 
-        /// Accessible only by type and sub-types.
-        ///
-        /// The method can be accessed by the declaring type and any derived types,
-        /// regardless of assembly boundaries. This corresponds to `protected` in C#.
-        const FAMILY = 0x0004;
+    /// Accessible by anyone in the Assembly.
+    ///
+    /// The method can be called by any code within the same assembly,
+    /// regardless of type relationships. This corresponds to `internal` in C#.
+    pub const ASSEMBLY: Self = Self(0x0003);
 
-        /// Accessible by sub-types anywhere, plus anyone in assembly.
-        ///
-        /// The method can be accessed by derived types in any assembly, or by
-        /// any code within the same assembly. This corresponds to `protected internal` in C#.
-        const FAMILY_OR_ASSEMBLY = 0x0005;
+    /// Accessible only by type and sub-types.
+    ///
+    /// The method can be accessed by the declaring type and any derived types,
+    /// regardless of assembly boundaries. This corresponds to `protected` in C#.
+    pub const FAMILY: Self = Self(0x0004);
 
-        /// Accessible by anyone who has visibility to this scope.
-        ///
-        /// The method can be called by any code that can see the declaring type.
-        /// This is the least restrictive access level and corresponds to `public` in C#.
-        const PUBLIC = 0x0006;
+    /// Accessible by sub-types anywhere, plus anyone in assembly.
+    ///
+    /// The method can be accessed by derived types in any assembly, or by
+    /// any code within the same assembly. This corresponds to `protected internal` in C#.
+    pub const FAMILY_OR_ASSEMBLY: Self = Self(0x0005);
+
+    /// Accessible by anyone who has visibility to this scope.
+    ///
+    /// The method can be called by any code that can see the declaring type.
+    /// This is the least restrictive access level and corresponds to `public` in C#.
+    pub const PUBLIC: Self = Self(0x0006);
+
+    /// Get the raw u32 value of the access level.
+    #[must_use]
+    pub const fn bits(self) -> u32 {
+        self.0
     }
 }
 
@@ -541,7 +551,25 @@ impl MethodAccessFlags {
     #[must_use]
     pub fn from_method_flags(flags: u32) -> Self {
         let access = flags & METHOD_ACCESS_MASK;
-        Self::from_bits_truncate(access)
+
+        // Access levels are mutually exclusive (like an enum), not combinable flags.
+        // Map the 3-bit access value directly to the corresponding single flag.
+        // This prevents invalid combinations like PRIVATE | FAMILY (0x0005) and ensures
+        // FAMILY_OR_ASSEMBLY is represented correctly as a single value.
+        match access {
+            0x0000 => Self::COMPILER_CONTROLLED,
+            0x0001 => Self::PRIVATE,
+            0x0002 => Self::FAMILY_AND_ASSEMBLY,
+            0x0003 => Self::ASSEMBLY,
+            0x0004 => Self::FAMILY,
+            0x0005 => Self::FAMILY_OR_ASSEMBLY,
+            0x0006 => Self::PUBLIC,
+            _ => {
+                // Unknown/invalid access level - fallback to treating it as a raw value
+                // This should never happen with valid metadata, but provides safety
+                Self(access)
+            }
+        }
     }
 }
 
@@ -556,6 +584,24 @@ impl Ord for MethodAccessFlags {
         // Compare by accessibility level: higher values = more accessible
         // COMPILER_CONTROLLED(0) < PRIVATE(1) < FAMILY_AND_ASSEMBLY(2) < ASSEMBLY(3) < FAMILY(4) < FAMILY_OR_ASSEMBLY(5) < PUBLIC(6)
         self.bits().cmp(&other.bits())
+    }
+}
+
+impl std::fmt::Debug for MethodAccessFlags {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Access levels are mutually exclusive, so display the single access level name
+        // instead of showing it as a combination of bits (which would be confusing).
+        let name = match self.bits() {
+            0x0000 => "COMPILER_CONTROLLED",
+            0x0001 => "PRIVATE",
+            0x0002 => "FAMILY_AND_ASSEMBLY",
+            0x0003 => "ASSEMBLY",
+            0x0004 => "FAMILY",
+            0x0005 => "FAMILY_OR_ASSEMBLY",
+            0x0006 => "PUBLIC",
+            _ => return write!(f, "MethodAccessFlags(0x{:04X})", self.bits()),
+        };
+        write!(f, "MethodAccessFlags({})", name)
     }
 }
 

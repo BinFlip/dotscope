@@ -884,7 +884,7 @@ fn test_simple_method_roundtrip() -> Result<()> {
                 "Method should be static"
             );
             assert!(
-                method.flags_access.contains(MethodAccessFlags::PUBLIC),
+                method.flags_access == MethodAccessFlags::PUBLIC,
                 "Method should be public"
             );
 
@@ -1175,7 +1175,7 @@ fn test_multiple_methods_roundtrip() -> Result<()> {
                 found_methods.insert("TestMethod1");
                 assert!(
                     method.flags_modifiers.contains(MethodModifiers::STATIC)
-                        && method.flags_access.contains(MethodAccessFlags::PUBLIC),
+                        && method.flags_access == MethodAccessFlags::PUBLIC,
                     "TestMethod1 should be public static"
                 );
 
@@ -1187,7 +1187,7 @@ fn test_multiple_methods_roundtrip() -> Result<()> {
                 found_methods.insert("TestMethod2");
                 assert!(
                     method.flags_modifiers.contains(MethodModifiers::STATIC)
-                        && method.flags_access.contains(MethodAccessFlags::PUBLIC),
+                        && method.flags_access == MethodAccessFlags::PUBLIC,
                     "TestMethod2 should be public static"
                 );
 
@@ -1199,7 +1199,7 @@ fn test_multiple_methods_roundtrip() -> Result<()> {
                 found_methods.insert("TestMethod3");
                 assert!(
                     method.flags_modifiers.contains(MethodModifiers::STATIC)
-                        && method.flags_access.contains(MethodAccessFlags::PUBLIC),
+                        && method.flags_access == MethodAccessFlags::PUBLIC,
                     "TestMethod3 should be public static"
                 );
 
