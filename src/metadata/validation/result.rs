@@ -305,11 +305,16 @@ impl ValidationResult {
         if self.is_success() {
             Ok(())
         } else {
+            let failures = self.failures();
             let errors = self.errors().into_iter().cloned().collect::<Vec<_>>();
             let error_count = errors.len();
+
+            let validator_names: Vec<_> = failures.iter().map(|f| f.validator_name()).collect();
             let summary = format!(
-                "{} of {} validators failed",
-                error_count, self.validator_count
+                "{} of {} validators failed: {}",
+                error_count,
+                self.validator_count,
+                validator_names.join(", ")
             );
 
             Err(Error::ValidationStage2Failed {
