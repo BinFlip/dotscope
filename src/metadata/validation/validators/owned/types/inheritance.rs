@@ -84,7 +84,7 @@
 
 use crate::{
     metadata::{
-        method::{Method, MethodModifiers},
+        method::{Method, MethodAccessFlags, MethodModifiers},
         tables::TypeAttributes,
         typesystem::{CilFlavor, CilType, CilTypeRc, CilTypeRefList},
         validation::{
@@ -785,8 +785,8 @@ impl OwnedInheritanceValidator {
     /// This method is thread-safe and operates on immutable resolved metadata structures.
     /// All method and type data is accessed through thread-safe collections.
     fn validate_method_inheritance(&self, context: &OwnedValidationContext) -> Result<()> {
-        let all_types = context.object().types().all_types(); // Available for lookups
-        let method_mapping = MethodTypeMapping::new(all_types.clone()); // Need all types for cross-assembly method mapping
+        let all_types = context.object().types().all_types();
+        let method_mapping = MethodTypeMapping::new(all_types);
 
         for type_entry in context.target_assembly_types() {
             if let Some(base_type) = type_entry.base() {
@@ -840,7 +840,12 @@ impl OwnedInheritanceValidator {
         for &method_address in type_methods {
             if let Some(method) = method_mapping.get_method(method_address) {
                 if method.flags_modifiers.contains(MethodModifiers::VIRTUAL) {
-                    self.validate_virtual_method_override(method, base_type, method_mapping)?;
+                    self.validate_virtual_method_override(
+                        method,
+                        derived_type,
+                        base_type,
+                        method_mapping,
+                    )?;
                 }
 
                 if method.flags_modifiers.contains(MethodModifiers::ABSTRACT)
@@ -870,6 +875,7 @@ impl OwnedInheritanceValidator {
     /// # Arguments
     ///
     /// * `derived_method` - The derived virtual method being validated via [`crate::metadata::method::Method`]
+    /// * `derived_type` - The derived type containing the method via [`crate::metadata::typesystem::CilType`]
     /// * `base_type` - The base type containing potential overridden methods via [`crate::metadata::typesystem::CilType`]
     /// * `method_mapping` - Pre-built mapping for efficient validation
     ///
@@ -890,6 +896,7 @@ impl OwnedInheritanceValidator {
     fn validate_virtual_method_override(
         &self,
         derived_method: &Method,
+        derived_type: &CilTypeRc,
         base_type: &CilTypeRc,
         method_mapping: &MethodTypeMapping,
     ) -> Result<()> {
@@ -913,7 +920,12 @@ impl OwnedInheritanceValidator {
                     .contains(MethodModifiers::VIRTUAL)
                     && Self::is_potential_method_override(derived_method, base_method)
                 {
-                    self.validate_method_override_rules(derived_method, base_method)?;
+                    self.validate_method_override_rules(
+                        derived_method,
+                        derived_type,
+                        base_method,
+                        base_type,
+                    )?;
                 }
             }
         }
@@ -971,7 +983,9 @@ impl OwnedInheritanceValidator {
     /// # Arguments
     ///
     /// * `derived_method` - The overriding method in the derived type
+    /// * `derived_type` - The derived type containing the method
     /// * `base_method` - The base method being overridden
+    /// * `base_type` - The base type containing the overridden method
     ///
     /// # Returns
     ///
@@ -979,7 +993,9 @@ impl OwnedInheritanceValidator {
     fn validate_method_override_rules(
         &self,
         derived_method: &Method,
+        derived_type: &CilTypeRc,
         base_method: &Method,
+        base_type: &CilTypeRc,
     ) -> Result<()> {
         if base_method.flags_modifiers.contains(MethodModifiers::FINAL) {
             return Err(Error::ValidationOwnedValidatorFailed {
@@ -1020,17 +1036,33 @@ impl OwnedInheritanceValidator {
             });
         }
 
+        // ECMA-335 I.8.5.3.2: Check accessibility narrowing restrictions
+        // General rule: Override methods cannot be less accessible than base methods
+        // Exception (ECMA-335 I.8.5.3.2): When overriding a method from a different assembly
+        // with family-or-assembly accessibility, the override may have family accessibility.
+        // This is not considered restricting access because family-or-assembly cannot be
+        // properly expressed across assembly boundaries.
         if derived_method.flags_access < base_method.flags_access {
-            return Err(Error::ValidationOwnedValidatorFailed {
-                validator: self.name().to_string(),
-                message: format!(
-                    "Override method '{}' cannot be less accessible than base method (derived: {:?}, base: {:?})",
-                    derived_method.name,
-                    derived_method.flags_access,
-                    base_method.flags_access
-                ),
-                source: None,
-            });
+            // ECMA-335 I.8.5.3.2: Cross-assembly exception for FAMILY_OR_ASSEMBLY → FAMILY narrowing
+            // When overriding across assembly boundaries, family-or-assembly can be narrowed to family
+            let is_cross_assembly = !derived_type.external_sources_equivalent(base_type);
+
+            let is_exception_case = is_cross_assembly
+                && base_method.flags_access == MethodAccessFlags::FAMILY_OR_ASSEMBLY
+                && derived_method.flags_access == MethodAccessFlags::FAMILY;
+
+            if !is_exception_case {
+                return Err(Error::ValidationOwnedValidatorFailed {
+                    validator: self.name().to_string(),
+                    message: format!(
+                        "Override method '{}' cannot be less accessible than base method (derived: {:?}, base: {:?})",
+                        derived_method.name,
+                        derived_method.flags_access,
+                        base_method.flags_access
+                    ),
+                    source: None,
+                });
+            }
         }
 
         if base_method
