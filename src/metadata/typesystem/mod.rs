@@ -986,12 +986,25 @@ impl CilType {
         self.base_types_equivalent(other)
     }
 
-    /// Compare external source references for equivalence
-    fn external_sources_equivalent(&self, other: &CilType) -> bool {
+    /// Compare external source references for equivalence.
+    ///
+    /// Determines if two types originate from the same assembly by comparing their
+    /// external source references (AssemblyRef, ModuleRef, File, etc.).
+    ///
+    /// # Returns
+    ///
+    /// - `true` if types are from the same assembly or indeterminate (conservative)
+    /// - `false` if types are definitively from different assemblies
+    ///
+    /// # Examples
+    ///
+    /// Types from the same assembly will return `true`, while types from different
+    /// assemblies (different AssemblyRef) will return `false`.
+    pub fn external_sources_equivalent(&self, other: &CilType) -> bool {
         match (self.external.get(), other.external.get()) {
             (Some(ext1), Some(ext2)) => Self::type_sources_equivalent(ext1, ext2),
             // Both are current module types, or one external one local (TypeRef redirection case)
-            _ => true,
+            _ => false,
         }
     }
 
