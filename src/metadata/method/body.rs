@@ -109,6 +109,10 @@ use crate::{
     Result,
 };
 
+/// Maximum number of exception handlers allowed per method.
+/// Real-world methods typically have < 20 handlers.
+const MAX_EXCEPTION_HANDLERS: usize = 1024;
+
 /// Describes one method that has been compiled to CIL bytecode.
 ///
 /// The `MethodBody` struct represents the parsed body of a .NET method, including header information,
@@ -287,9 +291,18 @@ impl MethodBody {
                                 break;
                             }
 
+                            let handler_count = (method_data_section_size - 4) / 24;
+                            if handler_count as usize > MAX_EXCEPTION_HANDLERS {
+                                return Err(malformed_error!(
+                                    "Method has too many exception handlers: {} (max: {})",
+                                    handler_count,
+                                    MAX_EXCEPTION_HANDLERS
+                                ));
+                            }
+
                             cursor += 4;
 
-                            for _ in 0..(method_data_section_size - 4) / 24 {
+                            for _ in 0..handler_count {
                                 exception_handlers.push(ExceptionHandler {
                                     // Intentionally truncating u32 to u16 for exception handler flags
                                     #[allow(clippy::cast_possible_truncation)]
@@ -317,8 +330,17 @@ impl MethodBody {
                                 break;
                             }
 
+                            let handler_count = (method_data_section_size - 4) / 12;
+                            if handler_count as usize > MAX_EXCEPTION_HANDLERS {
+                                return Err(malformed_error!(
+                                    "Method has too many exception handlers: {} (max: {})",
+                                    handler_count,
+                                    MAX_EXCEPTION_HANDLERS
+                                ));
+                            }
+
                             cursor += 4;
-                            for _ in 0..(method_data_section_size - 4) / 12 {
+                            for _ in 0..handler_count {
                                 exception_handlers.push(ExceptionHandler {
                                     flags: ExceptionHandlerFlags::from_bits_truncate(read_le_at::<
                                         u16,

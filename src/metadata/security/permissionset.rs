@@ -285,6 +285,12 @@ use quick_xml::{
 };
 use std::fmt;
 
+/// Maximum number of permissions in a permission set.
+///
+/// Most permission sets contain only a handful of permissions. 1024 provides
+/// generous headroom while preventing malformed data.
+const MAX_PERMISSIONS: u32 = 1024;
+
 /// Represents a collection of .NET security permissions in a permission set.
 ///
 /// A `PermissionSet` contains all the security permissions that define the complete security
@@ -467,8 +473,16 @@ impl PermissionSet {
         // Binary format starts with '.' (0x2E) - skip the format marker
         parser.advance()?;
 
-        let permission_count = parser.read_compressed_uint()? as usize;
-        let mut permissions = Vec::with_capacity(permission_count);
+        let permission_count = parser.read_compressed_uint()?;
+        if permission_count > MAX_PERMISSIONS {
+            return Err(malformed_error!(
+                "Permission set has too many permissions: {} (max: {})",
+                permission_count,
+                MAX_PERMISSIONS
+            ));
+        }
+
+        let mut permissions = Vec::with_capacity(permission_count as usize);
         for _ in 0..permission_count {
             let class_name_length = parser.read_compressed_uint()? as usize;
             let class_name = if class_name_length > 0 {
