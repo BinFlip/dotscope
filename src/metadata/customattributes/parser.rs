@@ -143,6 +143,18 @@ use std::sync::Arc;
 /// while still protecting against malformed or malicious metadata.
 const MAX_NESTING_DEPTH: usize = 1000;
 
+/// Maximum number of named arguments in a custom attribute.
+///
+/// Custom attributes can have named properties/fields, but excessive counts indicate
+/// malformed data. 1024 is far beyond any reasonable use case.
+const MAX_NAMED_ARGS: u16 = 1024;
+
+/// Maximum array length in custom attribute arguments.
+///
+/// Arrays in custom attribute values should be reasonable in size. 65536 elements
+/// provides headroom for data-heavy attributes while preventing allocation bombs.
+const MAX_ATTRIBUTE_ARRAY_LENGTH: i32 = 65536;
+
 /// Parse custom attribute blob data from the blob heap using constructor parameter information.
 ///
 /// This function retrieves custom attribute data from the specified blob heap index and
@@ -471,6 +483,14 @@ impl<'a> CustomAttributeParser<'a> {
         let named_args =
             if self.parser.has_more_data() && self.parser.len() >= self.parser.pos() + 2 {
                 let num_named = self.parser.read_le::<u16>()?;
+                if num_named > MAX_NAMED_ARGS {
+                    return Err(malformed_error!(
+                        "Custom attribute has too many named arguments: {} (max: {})",
+                        num_named,
+                        MAX_NAMED_ARGS
+                    ));
+                }
+
                 let mut args = Vec::with_capacity(num_named as usize);
                 for _ in 0..num_named {
                     if let Some(arg) = self.parse_named_argument()? {
@@ -816,6 +836,12 @@ impl<'a> CustomAttributeParser<'a> {
                         Ok(Some(CustomAttributeArgument::Array(vec![]))) // null array
                     } else if array_length < 0 {
                         Err(malformed_error!("Invalid array length: {}", array_length))
+                    } else if array_length > MAX_ATTRIBUTE_ARRAY_LENGTH {
+                        Err(malformed_error!(
+                            "Custom attribute array too large: {} (max: {})",
+                            array_length,
+                            MAX_ATTRIBUTE_ARRAY_LENGTH
+                        ))
                     } else {
                         // Try to get the base element type from the array type
                         if let Some(base_type) = type_ref.base() {

@@ -138,6 +138,30 @@ use crate::{
 /// with deep generic hierarchies while still preventing resource exhaustion.
 const MAX_NESTING_DEPTH: usize = 1000;
 
+/// Maximum number of array dimensions allowed in a signature.
+///
+/// .NET supports multi-dimensional arrays, but reasonable limits prevent memory exhaustion
+/// attacks. 32 dimensions is far beyond any practical use case.
+const MAX_ARRAY_DIMENSIONS: u32 = 32;
+
+/// Maximum number of parameters in a method or property signature.
+///
+/// Most methods have fewer than 10 parameters. 1024 accommodates extreme edge cases
+/// while preventing allocation bombs from malformed signatures.
+const MAX_SIGNATURE_PARAMS: u32 = 1024;
+
+/// Maximum number of generic type arguments.
+///
+/// Generic instantiations like List<T> rarely exceed a handful of type arguments.
+/// 256 provides headroom for complex scenarios while preventing abuse.
+const MAX_GENERIC_ARGS: u32 = 256;
+
+/// Maximum number of local variables in a method.
+///
+/// While some generated code may have many locals, 65536 is a reasonable upper bound
+/// that prevents allocation attacks while supporting legitimate complex methods.
+const MAX_LOCAL_VARIABLES: u32 = 65536;
+
 /// Binary signature parser for all .NET metadata signature types according to ECMA-335.
 ///
 /// `SignatureParser` provides a stateful parser for extracting type information from the
@@ -460,6 +484,14 @@ impl<'a> SignatureParser<'a> {
                             // Read array metadata
                             let rank = self.parser.read_compressed_uint()?;
                             let num_sizes = self.parser.read_compressed_uint()?;
+                            if num_sizes > MAX_ARRAY_DIMENSIONS {
+                                return Err(malformed_error!(
+                                    "Array signature has too many dimensions: {} (max: {})",
+                                    num_sizes,
+                                    MAX_ARRAY_DIMENSIONS
+                                ));
+                            }
+
                             let mut dimensions: Vec<ArrayDimensions> =
                                 Vec::with_capacity(num_sizes as usize);
                             for _ in 0..num_sizes {
@@ -497,6 +529,14 @@ impl<'a> SignatureParser<'a> {
                             let base_pos = self.parser.pos();
                             self.parse_type_simple()?;
                             let arg_count = self.parser.read_compressed_uint()?;
+                            if arg_count > MAX_GENERIC_ARGS {
+                                return Err(malformed_error!(
+                                    "Generic instantiation has too many type arguments: {} (max: {})",
+                                    arg_count,
+                                    MAX_GENERIC_ARGS
+                                ));
+                            }
+
                             let args_pos = self.parser.pos();
 
                             // Reset to base to parse it properly
@@ -976,11 +1016,29 @@ impl<'a> SignatureParser<'a> {
             thiscall: convention_byte & 0x3 != 0,
             fastcall: convention_byte & 0x4 != 0,
             param_count_generic: if convention_byte & 0x10 != 0 {
-                self.parser.read_compressed_uint()?
+                let gen_count = self.parser.read_compressed_uint()?;
+                if gen_count > MAX_GENERIC_ARGS {
+                    return Err(malformed_error!(
+                        "Method signature has too many generic parameters: {} (max: {})",
+                        gen_count,
+                        MAX_GENERIC_ARGS
+                    ));
+                }
+                gen_count
             } else {
                 0
             },
-            param_count: self.parser.read_compressed_uint()?,
+            param_count: {
+                let p_count = self.parser.read_compressed_uint()?;
+                if p_count > MAX_SIGNATURE_PARAMS {
+                    return Err(malformed_error!(
+                        "Method signature has too many parameters: {} (max: {})",
+                        p_count,
+                        MAX_SIGNATURE_PARAMS
+                    ));
+                }
+                p_count
+            },
             return_type: self.parse_param()?,
             params: Vec::new(),
             varargs: Vec::new(),
@@ -1004,6 +1062,13 @@ impl<'a> SignatureParser<'a> {
         // not the vararg list. We must check for END marker to know when varargs finish.
         if hit_sentinel {
             while self.parser.has_more_data() && self.parser.peek_byte()? != ELEMENT_TYPE::END {
+                if method.varargs.len() >= MAX_SIGNATURE_PARAMS as usize {
+                    return Err(malformed_error!(
+                        "Method signature has too many varargs: {} (max: {})",
+                        method.varargs.len(),
+                        MAX_SIGNATURE_PARAMS
+                    ));
+                }
                 method.varargs.push(self.parse_param()?);
             }
         }
@@ -1304,6 +1369,14 @@ impl<'a> SignatureParser<'a> {
         let has_this = (head_byte & 0x20) != 0;
 
         let param_count = self.parser.read_compressed_uint()?;
+        if param_count > MAX_SIGNATURE_PARAMS {
+            return Err(malformed_error!(
+                "Property signature has too many parameters: {} (max: {})",
+                param_count,
+                MAX_SIGNATURE_PARAMS
+            ));
+        }
+
         let custom_mods = self.parse_custom_mods()?;
         let type_sig = self.parse_type()?;
 
@@ -1485,6 +1558,13 @@ impl<'a> SignatureParser<'a> {
         }
 
         let count = self.parser.read_compressed_uint()?;
+        if count > MAX_LOCAL_VARIABLES {
+            return Err(malformed_error!(
+                "Local variable signature has too many locals: {} (max: {})",
+                count,
+                MAX_LOCAL_VARIABLES
+            ));
+        }
 
         let mut locals = Vec::with_capacity(count as usize);
         for _ in 0..count {
@@ -1844,6 +1924,14 @@ impl<'a> SignatureParser<'a> {
         }
 
         let arg_count = self.parser.read_compressed_uint()?;
+        if arg_count > MAX_GENERIC_ARGS {
+            return Err(malformed_error!(
+                "Method specification has too many type arguments: {} (max: {})",
+                arg_count,
+                MAX_GENERIC_ARGS
+            ));
+        }
+
         let mut generic_args = Vec::with_capacity(arg_count as usize);
         for _ in 0..arg_count {
             generic_args.push(self.parse_type()?);

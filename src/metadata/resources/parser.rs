@@ -83,6 +83,14 @@ use crate::{
     Result,
 };
 
+/// Maximum number of resource types allowed in a resource file.
+/// Real-world .NET resource files typically have < 50 types.
+const MAX_RESOURCE_TYPES: u32 = 4096;
+
+/// Maximum number of resources allowed in a resource file.
+/// Real-world .NET resource files typically have < 10,000 resources.
+const MAX_RESOURCES: u32 = 1_000_000;
+
 /// Parse a complete .NET resource buffer into a collection of named resources.
 ///
 /// This is the primary entry point for resource parsing, providing a high-level
@@ -435,8 +443,22 @@ impl Resource {
             }
         }
         res.resource_count = parser.read_le::<u32>()?;
+        if res.resource_count > MAX_RESOURCES {
+            return Err(malformed_error!(
+                "Resource file has too many resources: {} (max: {})",
+                res.resource_count,
+                MAX_RESOURCES
+            ));
+        }
 
         let type_count = parser.read_le::<u32>()?;
+        if type_count > MAX_RESOURCE_TYPES {
+            return Err(malformed_error!(
+                "Resource file has too many types: {} (max: {})",
+                type_count,
+                MAX_RESOURCE_TYPES
+            ));
+        }
         for _ in 0..type_count {
             res.type_names.push(parser.read_prefixed_string_utf8()?);
         }
