@@ -56,6 +56,10 @@ harness = false
 name = "assembly"
 harness = false
 
+[[bench]]
+name = "resources"
+harness = false
+
 [profile.bench]
 debug = true
 lto="fat"
