@@ -328,6 +328,40 @@ impl DotNetResourceEncoder {
         Ok(())
     }
 
+    /// Adds a stream resource.
+    ///
+    /// Registers binary data as a stream resource. Stream resources use the same
+    /// storage format as byte arrays (4-byte LE length prefix + data), but are
+    /// returned as a `Stream` by .NET's `ResourceReader` instead of a `byte[]`.
+    /// This allows for memory-mapped access and streaming reads for large resources.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Unique name for the resource
+    /// * `data` - Binary data to store
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    ///
+    /// let mut encoder = DotNetResourceEncoder::new();
+    ///
+    /// let image_data = std::fs::read("large_image.png")?;
+    /// encoder.add_stream("BackgroundImage", &image_data)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`. Future versions may return errors
+    /// for invalid resource names or encoding issues.
+    pub fn add_stream(&mut self, name: &str, data: &[u8]) -> Result<()> {
+        self.resources
+            .push((name.to_string(), ResourceType::Stream(data.to_vec())));
+        Ok(())
+    }
+
     /// Adds an unsigned 8-bit integer resource.
     ///
     /// Registers a byte value with the specified name.
@@ -621,6 +655,140 @@ impl DotNetResourceEncoder {
         Ok(())
     }
 
+    /// Adds a .NET Decimal resource using raw bit representation.
+    ///
+    /// Registers a 128-bit decimal value with the specified name using the same
+    /// binary format as .NET's `System.Decimal`. The four 32-bit integers represent
+    /// the internal structure of a .NET decimal number.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Unique name for the resource
+    /// * `lo` - Low 32 bits of the 96-bit mantissa
+    /// * `mid` - Middle 32 bits of the 96-bit mantissa
+    /// * `hi` - High 32 bits of the 96-bit mantissa
+    /// * `flags` - Sign (bit 31) and scale (bits 16-23, valid range 0-28)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    ///
+    /// let mut encoder = DotNetResourceEncoder::new();
+    ///
+    /// // Represents 3.261 (mantissa=3261, scale=3, positive)
+    /// // flags = 0x00030000 (scale 3 in bits 16-23)
+    /// encoder.add_decimal("Price", 3261, 0, 0, 0x00030000)?;
+    ///
+    /// // Represents -123.45 (mantissa=12345, scale=2, negative)
+    /// // flags = 0x80020000 (sign bit + scale 2)
+    /// encoder.add_decimal("Discount", 12345, 0, 0, 0x80020000_u32 as i32)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`. Future versions may return errors
+    /// for invalid resource names or encoding issues.
+    pub fn add_decimal(
+        &mut self,
+        name: &str,
+        lo: i32,
+        mid: i32,
+        hi: i32,
+        flags: i32,
+    ) -> Result<()> {
+        self.resources.push((
+            name.to_string(),
+            ResourceType::Decimal { lo, mid, hi, flags },
+        ));
+        Ok(())
+    }
+
+    /// Adds a .NET DateTime resource using binary representation.
+    ///
+    /// Registers a date/time value with the specified name using the same binary
+    /// format as .NET's `DateTime.ToBinary()`. The 64-bit value encodes both the
+    /// ticks and the `DateTimeKind`.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Unique name for the resource
+    /// * `binary_value` - The binary representation from `DateTime.ToBinary()`
+    ///   - Bits 0-61: Ticks (100-nanosecond intervals since 01/01/0001 00:00:00)
+    ///   - Bits 62-63: DateTimeKind (0=Unspecified, 1=UTC, 2=Local)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    ///
+    /// let mut encoder = DotNetResourceEncoder::new();
+    ///
+    /// // Ticks for 2024-01-01 00:00:00 UTC (kind=1, so bits 62-63 = 0b01)
+    /// let ticks: i64 = 638_396_736_000_000_000; // Ticks component
+    /// let kind: i64 = 1 << 62; // UTC kind
+    /// encoder.add_datetime("ReleaseDate", ticks | kind)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`. Future versions may return errors
+    /// for invalid resource names or encoding issues.
+    pub fn add_datetime(&mut self, name: &str, binary_value: i64) -> Result<()> {
+        self.resources
+            .push((name.to_string(), ResourceType::DateTime(binary_value)));
+        Ok(())
+    }
+
+    /// Adds a .NET TimeSpan resource using ticks.
+    ///
+    /// Registers a time interval with the specified name. The 64-bit signed value
+    /// represents the number of 100-nanosecond intervals in the time span.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Unique name for the resource
+    /// * `ticks` - Number of 100-nanosecond intervals (negative for negative spans)
+    ///
+    /// # Conversion Reference
+    ///
+    /// Common tick conversions:
+    /// - 1 millisecond = 10,000 ticks
+    /// - 1 second = 10,000,000 ticks
+    /// - 1 minute = 600,000,000 ticks
+    /// - 1 hour = 36,000,000,000 ticks
+    /// - 1 day = 864,000,000,000 ticks
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    ///
+    /// let mut encoder = DotNetResourceEncoder::new();
+    ///
+    /// // 1 hour timeout
+    /// encoder.add_timespan("Timeout", 36_000_000_000)?;
+    ///
+    /// // 30 seconds
+    /// encoder.add_timespan("RetryDelay", 300_000_000)?;
+    ///
+    /// // Negative 5 minutes
+    /// encoder.add_timespan("TimeOffset", -3_000_000_000)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Currently always returns `Ok(())`. Future versions may return errors
+    /// for invalid resource names or encoding issues.
+    pub fn add_timespan(&mut self, name: &str, ticks: i64) -> Result<()> {
+        self.resources
+            .push((name.to_string(), ResourceType::TimeSpan(ticks)));
+        Ok(())
+    }
+
     /// Returns the number of resources in the encoder.
     ///
     /// # Returns
@@ -876,25 +1044,25 @@ impl DotNetResourceEncoder {
 
             // Use Microsoft's ResourceTypeCode enum values exactly
             let type_code = match resource_type {
-                ResourceType::Null => 0u32,          // ResourceTypeCode.Null
-                ResourceType::String(_) => 1u32,     // ResourceTypeCode.String
-                ResourceType::Boolean(_) => 2u32,    // ResourceTypeCode.Boolean
-                ResourceType::Char(_) => 3u32,       // ResourceTypeCode.Char
-                ResourceType::Byte(_) => 4u32,       // ResourceTypeCode.Byte
-                ResourceType::SByte(_) => 5u32,      // ResourceTypeCode.SByte
-                ResourceType::Int16(_) => 6u32,      // ResourceTypeCode.Int16
-                ResourceType::UInt16(_) => 7u32,     // ResourceTypeCode.UInt16
-                ResourceType::Int32(_) => 8u32,      // ResourceTypeCode.Int32
-                ResourceType::UInt32(_) => 9u32,     // ResourceTypeCode.UInt32
-                ResourceType::Int64(_) => 10u32,     // ResourceTypeCode.Int64
-                ResourceType::UInt64(_) => 11u32,    // ResourceTypeCode.UInt64
-                ResourceType::Single(_) => 12u32,    // ResourceTypeCode.Single
-                ResourceType::Double(_) => 13u32,    // ResourceTypeCode.Double
-                ResourceType::Decimal => 14u32,      // ResourceTypeCode.Decimal
-                ResourceType::DateTime => 15u32,     // ResourceTypeCode.DateTime
-                ResourceType::TimeSpan => 16u32,     // ResourceTypeCode.TimeSpan
-                ResourceType::ByteArray(_) => 32u32, // ResourceTypeCode.ByteArray (0x20)
-                ResourceType::Stream => 33u32,       // ResourceTypeCode.Stream (0x21)
+                ResourceType::Null => 0u32,            // ResourceTypeCode.Null
+                ResourceType::String(_) => 1u32,       // ResourceTypeCode.String
+                ResourceType::Boolean(_) => 2u32,      // ResourceTypeCode.Boolean
+                ResourceType::Char(_) => 3u32,         // ResourceTypeCode.Char
+                ResourceType::Byte(_) => 4u32,         // ResourceTypeCode.Byte
+                ResourceType::SByte(_) => 5u32,        // ResourceTypeCode.SByte
+                ResourceType::Int16(_) => 6u32,        // ResourceTypeCode.Int16
+                ResourceType::UInt16(_) => 7u32,       // ResourceTypeCode.UInt16
+                ResourceType::Int32(_) => 8u32,        // ResourceTypeCode.Int32
+                ResourceType::UInt32(_) => 9u32,       // ResourceTypeCode.UInt32
+                ResourceType::Int64(_) => 10u32,       // ResourceTypeCode.Int64
+                ResourceType::UInt64(_) => 11u32,      // ResourceTypeCode.UInt64
+                ResourceType::Single(_) => 12u32,      // ResourceTypeCode.Single
+                ResourceType::Double(_) => 13u32,      // ResourceTypeCode.Double
+                ResourceType::Decimal { .. } => 14u32, // ResourceTypeCode.Decimal (0x0E)
+                ResourceType::DateTime(_) => 15u32,    // ResourceTypeCode.DateTime (0x0F)
+                ResourceType::TimeSpan(_) => 16u32,    // ResourceTypeCode.TimeSpan (0x10)
+                ResourceType::ByteArray(_) => 32u32,   // ResourceTypeCode.ByteArray (0x20)
+                ResourceType::Stream(_) => 33u32,      // ResourceTypeCode.Stream (0x21)
                 ResourceType::StartOfUserTypes => return Err(crate::Error::NotSupported),
             };
 
@@ -956,14 +1124,29 @@ impl DotNetResourceEncoder {
                 ResourceType::Double(d) => {
                     buffer.extend_from_slice(&d.to_le_bytes());
                 }
-                ResourceType::ByteArray(data) => {
-                    // Microsoft writes byte array length then data
+                ResourceType::Decimal { lo, mid, hi, flags } => {
+                    // Write 4 × i32 in little-endian order: lo, mid, hi, flags
+                    buffer.extend_from_slice(&lo.to_le_bytes());
+                    buffer.extend_from_slice(&mid.to_le_bytes());
+                    buffer.extend_from_slice(&hi.to_le_bytes());
+                    buffer.extend_from_slice(&flags.to_le_bytes());
+                }
+                ResourceType::DateTime(binary_value) => {
+                    // Write i64 binary representation (ticks + kind)
+                    buffer.extend_from_slice(&binary_value.to_le_bytes());
+                }
+                ResourceType::TimeSpan(ticks) => {
+                    // Write i64 ticks
+                    buffer.extend_from_slice(&ticks.to_le_bytes());
+                }
+                ResourceType::ByteArray(data) | ResourceType::Stream(data) => {
                     #[allow(clippy::cast_possible_truncation)]
                     {
-                        write_compressed_uint(data.len() as u32, buffer);
+                        buffer.extend_from_slice(&(data.len() as u32).to_le_bytes());
                     }
                     buffer.extend_from_slice(data);
                 }
+                #[allow(clippy::match_wildcard_for_single_variants)]
                 _ => {
                     return Err(crate::Error::NotSupported);
                 }
