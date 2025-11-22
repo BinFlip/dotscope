@@ -1590,15 +1590,26 @@ mod tests {
             // Assert we tested both architectures
             assert_eq!(results.len(), 2, "Expected to test exactly 2 architectures");
 
-            // Verify we have both x86 and x64
+            // Verify we have the expected architectures for this platform
+            // On Windows: x86 + x64, on other platforms: anycpu + x64
             let arch_names: Vec<String> = results
                 .iter()
                 .map(|r| r.architecture.name.clone())
                 .collect();
-            assert!(
-                arch_names.contains(&"x86".to_string()),
-                "Missing x86 architecture test"
-            );
+            #[cfg(target_os = "windows")]
+            {
+                assert!(
+                    arch_names.contains(&"x86".to_string()),
+                    "Missing x86 architecture test"
+                );
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                assert!(
+                    arch_names.contains(&"anycpu".to_string()),
+                    "Missing anycpu architecture test"
+                );
+            }
             assert!(
                 arch_names.contains(&"x64".to_string()),
                 "Missing x64 architecture test"

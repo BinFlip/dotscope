@@ -121,8 +121,16 @@ impl CSharpCompiler {
                 }
             }
         } else {
+            let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            result.error = Some(format!("C# compilation failed: {}", stderr));
+            let combined_output = if !stdout.is_empty() && !stderr.is_empty() {
+                format!("stdout: {}\nstderr: {}", stdout, stderr)
+            } else if !stdout.is_empty() {
+                stdout.to_string()
+            } else {
+                stderr.to_string()
+            };
+            result.error = Some(format!("C# compilation failed: {}", combined_output));
         }
 
         Ok(result)
