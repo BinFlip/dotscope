@@ -212,7 +212,7 @@ pub mod runner;
 // Re-export main types for convenience
 pub use compilation::CSharpCompiler;
 pub use disassembly::MonoDisassembler;
-pub use execution::MonoRuntime;
+pub use execution::{MonoRuntime, RuntimeType};
 pub use reflection::{ReflectionTestBuilder, ReflectionTestExecutor};
 pub use runner::{ArchConfig, MonoTestRunner};
 
@@ -267,12 +267,18 @@ impl TestEnvironment {
 
             // 1. Compile source
             let exe_path = self.runner.create_arch_file_path("test", &arch, ".exe");
-            match self
+            let _comp_result = match self
                 .compiler
                 .compile_executable(source_code, &exe_path, &arch)
             {
                 Ok(comp_result) if comp_result.is_success() => {
                     arch_result.compilation_success = true;
+                    // Set the appropriate runtime based on which compiler was used
+                    if let Some(ref compiler_type) = comp_result.compiler_used {
+                        self.runtime
+                            .set_runtime(RuntimeType::for_compiler(compiler_type));
+                    }
+                    comp_result
                 }
                 Ok(comp_result) => {
                     arch_result.errors.push(format!(
@@ -287,7 +293,7 @@ impl TestEnvironment {
                     results.push(arch_result);
                     continue;
                 }
-            }
+            };
 
             // 2. Modify assembly
             let modified_path = self

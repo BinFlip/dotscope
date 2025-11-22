@@ -80,6 +80,7 @@ impl CSharpCompiler {
                     output_path: None,
                     error: Some("No C# compiler available - cannot run test".to_string()),
                     warnings: Vec::new(),
+                    compiler_used: None,
                 });
             }
         };
@@ -105,6 +106,7 @@ impl CSharpCompiler {
             },
             error: None,
             warnings: Vec::new(),
+            compiler_used: Some(compiler_type.clone()),
         };
 
         if output.status.success() {
@@ -292,6 +294,7 @@ impl CSharpCompiler {
                             output_path: None,
                             error: Some(e.to_string()),
                             warnings: Vec::new(),
+                            compiler_used: None,
                         },
                     });
                 }
@@ -314,6 +317,8 @@ pub struct CompilationResult {
     pub output_path: Option<PathBuf>,
     pub error: Option<String>,
     pub warnings: Vec<String>,
+    /// The compiler type that was used for this compilation
+    pub compiler_used: Option<CompilerType>,
 }
 
 impl CompilationResult {
@@ -417,6 +422,7 @@ mod tests {
             output_path: Some(PathBuf::from("/test/path.exe")),
             error: None,
             warnings: Vec::new(),
+            compiler_used: None,
         };
 
         assert!(result.is_success());
