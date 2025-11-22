@@ -155,22 +155,96 @@ pub enum ResourceType {
     /// 64-bit floating point resource, little-endian (type code 0x0D)
     /* 0xD */
     Double(f64),
-    /// Decimal resource value (type code 0x0E) - not yet implemented
+    /// .NET Decimal resource value stored as raw bits (type code 0x0E)
+    ///
+    /// Represents a 128-bit decimal number using the same binary format as .NET's
+    /// `System.Decimal`. The four 32-bit integers represent:
+    /// - `lo`: Low 32 bits of the 96-bit mantissa
+    /// - `mid`: Middle 32 bits of the 96-bit mantissa
+    /// - `hi`: High 32 bits of the 96-bit mantissa
+    /// - `flags`: Sign (bit 31) and scale (bits 16-23, valid range 0-28)
+    ///
+    /// # Binary Format
+    ///
+    /// The decimal is stored as 16 bytes (4 consecutive little-endian i32 values):
+    /// ```text
+    /// Bytes 0-3:   lo    (low 32 bits of mantissa)
+    /// Bytes 4-7:   mid   (middle 32 bits of mantissa)
+    /// Bytes 8-11:  hi    (high 32 bits of mantissa)
+    /// Bytes 12-15: flags (sign in bit 31, scale in bits 16-23)
+    /// ```
+    ///
+    /// # Example
+    ///
+    /// The value `3.261` would be represented as mantissa `3261` with scale `3`.
     /* 0xE */
-    Decimal,
-    /// `DateTime` resource value (type code 0x0F) - not yet implemented
+    Decimal {
+        /// Low 32 bits of the 96-bit mantissa
+        lo: i32,
+        /// Middle 32 bits of the 96-bit mantissa
+        mid: i32,
+        /// High 32 bits of the 96-bit mantissa
+        hi: i32,
+        /// Flags containing sign (bit 31) and scale (bits 16-23)
+        flags: i32,
+    },
+    /// .NET DateTime resource value stored as binary ticks (type code 0x0F)
+    ///
+    /// Represents a point in time using the same binary format as .NET's
+    /// `System.DateTime.ToBinary()`. The 64-bit value encodes both the ticks
+    /// (100-nanosecond intervals since 12:00 midnight, January 1, 0001 CE)
+    /// and the `DateTimeKind` (UTC, Local, or Unspecified).
+    ///
+    /// # Binary Format
+    ///
+    /// The value is stored as a single little-endian i64:
+    /// - Bits 0-61: Ticks (number of 100-nanosecond intervals)
+    /// - Bits 62-63: DateTimeKind (0=Unspecified, 1=UTC, 2=Local)
+    ///
+    /// # Conversion
+    ///
+    /// To extract the components:
+    /// ```text
+    /// ticks = binary_value & 0x3FFFFFFFFFFFFFFF
+    /// kind  = (binary_value >> 62) & 0x3
+    /// ```
+    ///
+    /// To reconstruct a .NET DateTime, use `DateTime.FromBinary(binary_value)`.
     /* 0xF */
-    DateTime,
-    /// `TimeSpan` resource value (type code 0x10) - not yet implemented
+    DateTime(i64),
+    /// .NET TimeSpan resource value stored as ticks (type code 0x10)
+    ///
+    /// Represents a time interval using the same format as .NET's
+    /// `System.TimeSpan.Ticks`. The 64-bit signed value represents the number
+    /// of 100-nanosecond intervals in the time span.
+    ///
+    /// # Binary Format
+    ///
+    /// The value is stored as a single little-endian i64 representing ticks.
+    /// Negative values represent negative time spans.
+    ///
+    /// # Conversion Examples
+    ///
+    /// Common conversions:
+    /// ```text
+    /// 1 tick         = 100 nanoseconds
+    /// 10,000 ticks   = 1 millisecond
+    /// 10,000,000 ticks = 1 second
+    /// 600,000,000 ticks = 1 minute
+    /// 36,000,000,000 ticks = 1 hour
+    /// ```
+    ///
+    /// To convert to seconds: `seconds = ticks / 10_000_000`
     /* 0x10 */
-    TimeSpan,
+    TimeSpan(i64),
+
+    // Type with special representation, like byte[] and Stream
     /// Byte array resource with length prefix (type code 0x20)
     /* 0x20 */
     ByteArray(Vec<u8>),
-    /// Stream resource reference (type code 0x21) - not yet implemented
+    /// Stream resource with length prefix (type code 0x21)
     /* 0x21 */
-    Stream,
-
+    Stream(Vec<u8>),
     // User types - serialized using the binary formatter
     /// Marker for the beginning of user-defined types (type code 0x40+)
     /* 0x40 */
@@ -219,14 +293,13 @@ impl ResourceType {
             ResourceType::UInt64(_) => Some("System.UInt64"),
             ResourceType::Single(_) => Some("System.Single"),
             ResourceType::Double(_) => Some("System.Double"),
+            ResourceType::Decimal { .. } => Some("System.Decimal"),
+            ResourceType::DateTime(_) => Some("System.DateTime"),
+            ResourceType::TimeSpan(_) => Some("System.TimeSpan"),
             ResourceType::ByteArray(_) => Some("System.Byte[]"),
-            // Types without .NET equivalents or not yet implemented
-            ResourceType::Null
-            | ResourceType::Decimal // TODO: Implement when Decimal support is added
-            | ResourceType::DateTime // TODO: Implement when DateTime support is added
-            | ResourceType::TimeSpan // TODO: Implement when TimeSpan support is added
-            | ResourceType::Stream  // TODO: Implement when Stream support is added
-            | ResourceType::StartOfUserTypes => None,
+            ResourceType::Stream(_) => Some("System.IO.Stream"),
+            // Types without .NET equivalents
+            ResourceType::Null | ResourceType::StartOfUserTypes => None,
         }
     }
 
@@ -288,14 +361,13 @@ impl ResourceType {
             ResourceType::Single(_) => Some(10),
             ResourceType::Double(_) => Some(11),
             ResourceType::String(_) => Some(12),
-            ResourceType::ByteArray(_) => Some(13),
-            // Types without .NET equivalents or not yet implemented
-            ResourceType::Null
-            | ResourceType::Decimal // TODO: Implement when Decimal support is added
-            | ResourceType::DateTime // TODO: Implement when DateTime support is added
-            | ResourceType::TimeSpan // TODO: Implement when TimeSpan support is added
-            | ResourceType::Stream  // TODO: Implement when Stream support is added
-            | ResourceType::StartOfUserTypes => None,
+            ResourceType::Decimal { .. } => Some(13),
+            ResourceType::DateTime(_) => Some(14),
+            ResourceType::TimeSpan(_) => Some(15),
+            ResourceType::ByteArray(_) => Some(16),
+            ResourceType::Stream(_) => Some(17),
+            // Types without .NET equivalents
+            ResourceType::Null | ResourceType::StartOfUserTypes => None,
         }
     }
 
@@ -362,11 +434,11 @@ impl ResourceType {
             ResourceType::UInt64(_) => Some(0x0B),
             ResourceType::Single(_) => Some(0x0C),
             ResourceType::Double(_) => Some(0x0D),
-            ResourceType::Decimal => Some(0x0E),
-            ResourceType::DateTime => Some(0x0F),
-            ResourceType::TimeSpan => Some(0x10),
+            ResourceType::Decimal { .. } => Some(0x0E),
+            ResourceType::DateTime(_) => Some(0x0F),
+            ResourceType::TimeSpan(_) => Some(0x10),
             ResourceType::ByteArray(_) => Some(0x20),
-            ResourceType::Stream => Some(0x21),
+            ResourceType::Stream(_) => Some(0x21),
             // Types without .NET equivalents
             ResourceType::Null | ResourceType::StartOfUserTypes => None,
         }
@@ -413,20 +485,22 @@ impl ResourceType {
             ResourceType::Boolean(_) | ResourceType::Byte(_) | ResourceType::SByte(_) => Some(1), // Single byte
             ResourceType::Char(_) | ResourceType::Int16(_) | ResourceType::UInt16(_) => Some(2), // 2 bytes
             ResourceType::Int32(_) | ResourceType::UInt32(_) | ResourceType::Single(_) => Some(4), // 4 bytes
-            ResourceType::Int64(_) | ResourceType::UInt64(_) | ResourceType::Double(_) => Some(8), // 8 bytes
-            ResourceType::ByteArray(data) => {
-                // Array length (7-bit encoded) + data bytes
+            ResourceType::Int64(_)
+            | ResourceType::UInt64(_)
+            | ResourceType::Double(_)
+            | ResourceType::DateTime(_)  // i64 binary ticks
+            | ResourceType::TimeSpan(_)  // i64 ticks
+            => Some(8), // 8 bytes
+            ResourceType::Decimal { .. } => Some(16), // 4 × i32 = 16 bytes
+            ResourceType::ByteArray(data) | ResourceType::Stream(data) => {
+                // Length (4-byte LE integer) + data bytes
+                // Per .NET specification: ByteArray and Stream use fixed 4-byte LE length
+                // Note: Type code is NOT included here - encoder adds type_code_size separately
                 let data_size = u32::try_from(data.len()).ok()?;
-                let prefix_size = u32::try_from(compressed_uint_size(data_size as usize)).ok()?;
-                Some(prefix_size + data_size)
+                Some(4 + data_size)
             }
-            // Types without .NET equivalents or not yet implemented
-            ResourceType::Null
-            | ResourceType::Decimal // TODO: Implement when Decimal support is added
-            | ResourceType::DateTime // TODO: Implement when DateTime support is added
-            | ResourceType::TimeSpan // TODO: Implement when TimeSpan support is added
-            | ResourceType::Stream  // TODO: Implement when Stream support is added
-            | ResourceType::StartOfUserTypes => None,
+            // Types without .NET equivalents
+            ResourceType::Null | ResourceType::StartOfUserTypes => None,
         }
     }
 
@@ -511,28 +585,28 @@ impl ResourceType {
             0xC => Ok(ResourceType::Single(parser.read_le::<f32>()?)),
             0xD => Ok(ResourceType::Double(parser.read_le::<f64>()?)),
             0xE => {
-                // ResourceTypeCode.Decimal - 16 bytes (128-bit decimal)
-                // For now, return not supported as we don't have Decimal type
-                Err(TypeError(format!(
-                    "TypeByte - {byte:X} (Decimal) is not yet implemented"
-                )))
+                // ResourceTypeCode.Decimal - 16 bytes (4 × i32)
+                // Format: lo, mid, hi, flags (all little-endian i32)
+                let lo = parser.read_le::<i32>()?;
+                let mid = parser.read_le::<i32>()?;
+                let hi = parser.read_le::<i32>()?;
+                let flags = parser.read_le::<i32>()?;
+                Ok(ResourceType::Decimal { lo, mid, hi, flags })
             }
             0xF => {
-                // ResourceTypeCode.DateTime - 8 bytes (64-bit binary format)
-                // For now, return not supported as we don't have DateTime type
-                Err(TypeError(format!(
-                    "TypeByte - {byte:X} (DateTime) is not yet implemented"
-                )))
+                // ResourceTypeCode.DateTime - 8 bytes (i64 binary format)
+                // Contains ticks (bits 0-61) and DateTimeKind (bits 62-63)
+                let binary_value = parser.read_le::<i64>()?;
+                Ok(ResourceType::DateTime(binary_value))
             }
             0x10 => {
-                // ResourceTypeCode.TimeSpan - 8 bytes (64-bit ticks)
-                // For now, return not supported as we don't have TimeSpan type
-                Err(TypeError(format!(
-                    "TypeByte - {byte:X} (TimeSpan) is not yet implemented"
-                )))
+                // ResourceTypeCode.TimeSpan - 8 bytes (i64 ticks)
+                // Ticks represent 100-nanosecond intervals
+                let ticks = parser.read_le::<i64>()?;
+                Ok(ResourceType::TimeSpan(ticks))
             }
             0x20 => {
-                let length = parser.read_compressed_uint()?;
+                let length = parser.read_le::<u32>()?;
                 let start_pos = parser.pos();
                 let end_pos = start_pos + length as usize;
 
@@ -541,15 +615,13 @@ impl ResourceType {
                 }
 
                 let data = parser.data()[start_pos..end_pos].to_vec();
-                // Seek to end position if it's not at the exact end of the data
                 if end_pos < parser.data().len() {
                     parser.seek(end_pos)?;
                 }
                 Ok(ResourceType::ByteArray(data))
             }
             0x21 => {
-                // ResourceTypeCode.Stream - similar to ByteArray but different semantics
-                let length = parser.read_compressed_uint()?;
+                let length = parser.read_le::<u32>()?;
                 let start_pos = parser.pos();
                 let end_pos = start_pos + length as usize;
 
@@ -558,12 +630,11 @@ impl ResourceType {
                 }
 
                 let data = parser.data()[start_pos..end_pos].to_vec();
-                // Seek to end position if it's not at the exact end of the data
                 if end_pos < parser.data().len() {
                     parser.seek(end_pos)?;
                 }
-                // For now, treat Stream as ByteArray - we don't have separate Stream type
-                Ok(ResourceType::ByteArray(data))
+                // Stream uses same format as ByteArray, just different type code
+                Ok(ResourceType::Stream(data))
             }
             0x40..=0xFF => {
                 // User types - these require a type table for resolution
@@ -781,23 +852,38 @@ pub enum ResourceTypeRef<'a> {
     /// 64-bit floating point resource, little-endian (type code 0x0D)
     /* 0xD */
     Double(f64),
-    /// Decimal resource value (type code 0x0E) - not yet implemented
+    /// .NET Decimal resource value stored as raw bits (type code 0x0E)
+    ///
+    /// See [`ResourceType::Decimal`] for detailed documentation on the binary format.
     /* 0xE */
-    Decimal,
-    /// `DateTime` resource value (type code 0x0F) - not yet implemented
+    Decimal {
+        /// Low 32 bits of the 96-bit mantissa
+        lo: i32,
+        /// Middle 32 bits of the 96-bit mantissa
+        mid: i32,
+        /// High 32 bits of the 96-bit mantissa
+        hi: i32,
+        /// Flags containing sign (bit 31) and scale (bits 16-23)
+        flags: i32,
+    },
+    /// .NET DateTime resource value stored as binary ticks (type code 0x0F)
+    ///
+    /// See [`ResourceType::DateTime`] for detailed documentation on the binary format.
     /* 0xF */
-    DateTime,
-    /// `TimeSpan` resource value (type code 0x10) - not yet implemented
+    DateTime(i64),
+    /// .NET TimeSpan resource value stored as ticks (type code 0x10)
+    ///
+    /// See [`ResourceType::TimeSpan`] for detailed documentation on the binary format.
     /* 0x10 */
-    TimeSpan,
+    TimeSpan(i64),
+
+    // Type with special representation, like byte[] and Stream
     /// Byte array resource with borrowed data (type code 0x20)
     /* 0x20 */
     ByteArray(&'a [u8]),
-    /// Stream resource reference (type code 0x21) - not yet implemented
+    /// Stream resource with borrowed data (type code 0x21)
     /* 0x21 */
-    Stream,
-
-    // User types - serialized using the binary formatter
+    Stream(&'a [u8]),
     /// Marker for the beginning of user-defined types (type code 0x40+)
     /* 0x40 */
     StartOfUserTypes,
@@ -942,26 +1028,28 @@ impl<'a> ResourceTypeRef<'a> {
             0xC => Ok(ResourceTypeRef::Single(parser.read_le::<f32>()?)),
             0xD => Ok(ResourceTypeRef::Double(parser.read_le::<f64>()?)),
             0xE => {
-                // ResourceTypeCode.Decimal - 16 bytes (128-bit decimal)
-                Err(TypeError(format!(
-                    "TypeByte - {byte:X} (Decimal) is not yet implemented"
-                )))
+                // ResourceTypeCode.Decimal - 16 bytes (4 × i32)
+                // Format: lo, mid, hi, flags (all little-endian i32)
+                let lo = parser.read_le::<i32>()?;
+                let mid = parser.read_le::<i32>()?;
+                let hi = parser.read_le::<i32>()?;
+                let flags = parser.read_le::<i32>()?;
+                Ok(ResourceTypeRef::Decimal { lo, mid, hi, flags })
             }
             0xF => {
-                // ResourceTypeCode.DateTime - 8 bytes (64-bit binary format)
-                Err(TypeError(format!(
-                    "TypeByte - {byte:X} (DateTime) is not yet implemented"
-                )))
+                // ResourceTypeCode.DateTime - 8 bytes (i64 binary format)
+                // Contains ticks (bits 0-61) and DateTimeKind (bits 62-63)
+                let binary_value = parser.read_le::<i64>()?;
+                Ok(ResourceTypeRef::DateTime(binary_value))
             }
             0x10 => {
-                // ResourceTypeCode.TimeSpan - 8 bytes (64-bit ticks)
-                Err(TypeError(format!(
-                    "TypeByte - {byte:X} (TimeSpan) is not yet implemented"
-                )))
+                // ResourceTypeCode.TimeSpan - 8 bytes (i64 ticks)
+                // Ticks represent 100-nanosecond intervals
+                let ticks = parser.read_le::<i64>()?;
+                Ok(ResourceTypeRef::TimeSpan(ticks))
             }
             0x20 => {
-                // ByteArray - zero-copy variant returns borrowed slice
-                let length = parser.read_compressed_uint()?;
+                let length = parser.read_le::<u32>()?;
                 let start_pos = parser.pos();
                 let end_pos = start_pos + length as usize;
 
@@ -969,17 +1057,14 @@ impl<'a> ResourceTypeRef<'a> {
                     return Err(out_of_bounds_error!());
                 }
 
-                // Seek past the data if not at exact end
                 if end_pos < data.len() {
                     parser.seek(end_pos)?;
                 }
 
-                // Return the borrowed slice from the data parameter
                 Ok(ResourceTypeRef::ByteArray(&data[start_pos..end_pos]))
             }
             0x21 => {
-                // ResourceTypeCode.Stream - zero-copy variant returns borrowed slice
-                let length = parser.read_compressed_uint()?;
+                let length = parser.read_le::<u32>()?;
                 let start_pos = parser.pos();
                 let end_pos = start_pos + length as usize;
 
@@ -987,14 +1072,12 @@ impl<'a> ResourceTypeRef<'a> {
                     return Err(out_of_bounds_error!());
                 }
 
-                // Seek past the data if not at exact end
                 if end_pos < data.len() {
                     parser.seek(end_pos)?;
                 }
 
-                // Return the borrowed slice from the data parameter
-                // For now, treat Stream as ByteArray - we don't have separate Stream type
-                Ok(ResourceTypeRef::ByteArray(&data[start_pos..end_pos]))
+                // Stream uses same format as ByteArray, just different type code
+                Ok(ResourceTypeRef::Stream(&data[start_pos..end_pos]))
             }
             0x40..=0xFF => {
                 // User types - these require a type table for resolution
@@ -1461,11 +1544,23 @@ mod tests {
             Some("System.Double")
         );
 
-        // Test unimplemented/special types
+        // Test special types (without data)
         assert_eq!(ResourceType::Null.as_str(), None);
-        assert_eq!(ResourceType::Decimal.as_str(), None);
-        assert_eq!(ResourceType::DateTime.as_str(), None);
         assert_eq!(ResourceType::StartOfUserTypes.as_str(), None);
+
+        // Test implemented types (with data)
+        assert_eq!(
+            ResourceType::Decimal {
+                lo: 0,
+                mid: 0,
+                hi: 0,
+                flags: 0
+            }
+            .as_str(),
+            Some("System.Decimal")
+        );
+        assert_eq!(ResourceType::DateTime(0).as_str(), Some("System.DateTime"));
+        assert_eq!(ResourceType::TimeSpan(0).as_str(), Some("System.TimeSpan"));
     }
 
     #[test]
@@ -1484,14 +1579,23 @@ mod tests {
         assert_eq!(ResourceType::Single(std::f32::consts::PI).index(), Some(10));
         assert_eq!(ResourceType::Double(std::f64::consts::PI).index(), Some(11));
         assert_eq!(ResourceType::String("test".to_string()).index(), Some(12));
-        assert_eq!(ResourceType::ByteArray(vec![1, 2, 3]).index(), Some(13));
+        assert_eq!(
+            ResourceType::Decimal {
+                lo: 0,
+                mid: 0,
+                hi: 0,
+                flags: 0
+            }
+            .index(),
+            Some(13)
+        );
+        assert_eq!(ResourceType::DateTime(0).index(), Some(14));
+        assert_eq!(ResourceType::TimeSpan(0).index(), Some(15));
+        assert_eq!(ResourceType::ByteArray(vec![1, 2, 3]).index(), Some(16));
+        assert_eq!(ResourceType::Stream(vec![]).index(), Some(17));
 
-        // Test unimplemented/special types
+        // Test special types (without data)
         assert_eq!(ResourceType::Null.index(), None);
-        assert_eq!(ResourceType::Decimal.index(), None);
-        assert_eq!(ResourceType::DateTime.index(), None);
-        assert_eq!(ResourceType::TimeSpan.index(), None);
-        assert_eq!(ResourceType::Stream.index(), None);
         assert_eq!(ResourceType::StartOfUserTypes.index(), None);
     }
 
@@ -1562,15 +1666,26 @@ mod tests {
             Some(6)
         ); // 1 byte length prefix + 5 bytes UTF-8
         assert_eq!(ResourceType::String("".to_string()).data_size(), Some(1)); // 1 byte length + 0 bytes
-        assert_eq!(ResourceType::ByteArray(vec![1, 2, 3]).data_size(), Some(4)); // 1 byte length + 3 bytes data
-        assert_eq!(ResourceType::ByteArray(vec![]).data_size(), Some(1)); // 1 byte length + 0 bytes
+        assert_eq!(ResourceType::ByteArray(vec![1, 2, 3]).data_size(), Some(7)); // 4 byte LE length + 3 bytes data
+        assert_eq!(ResourceType::ByteArray(vec![]).data_size(), Some(4)); // 4 byte LE length + 0 bytes
 
-        // Test unimplemented/special types
+        // Test implemented types (Decimal, DateTime, TimeSpan)
+        assert_eq!(
+            ResourceType::Decimal {
+                lo: 0,
+                mid: 0,
+                hi: 0,
+                flags: 0
+            }
+            .data_size(),
+            Some(16) // 4 × i32 = 16 bytes
+        );
+        assert_eq!(ResourceType::DateTime(0).data_size(), Some(8)); // i64
+        assert_eq!(ResourceType::TimeSpan(0).data_size(), Some(8)); // i64
+        assert_eq!(ResourceType::Stream(vec![1, 2, 3]).data_size(), Some(7)); // Same as ByteArray
+
+        // Test special types (without data)
         assert_eq!(ResourceType::Null.data_size(), None);
-        assert_eq!(ResourceType::Decimal.data_size(), None);
-        assert_eq!(ResourceType::DateTime.data_size(), None);
-        assert_eq!(ResourceType::TimeSpan.data_size(), None);
-        assert_eq!(ResourceType::Stream.data_size(), None);
         assert_eq!(ResourceType::StartOfUserTypes.data_size(), None);
     }
 

@@ -891,6 +891,311 @@ mod tests {
     }
 
     #[test]
+    fn test_stream_roundtrip() {
+        // Test that Stream resources encode with type code 0x21 and decode correctly
+        let mut encoder = DotNetResourceEncoder::new();
+
+        encoder.add_stream("empty_stream", &[]).unwrap();
+        encoder
+            .add_stream("image_data", &[0x89, 0x50, 0x4E, 0x47])
+            .unwrap(); // PNG magic
+        encoder
+            .add_stream("large_stream", &vec![0xAB; 5000])
+            .unwrap();
+
+        let encoded_data = encoder.encode_dotnet_format().unwrap();
+        let parsed_resources = parse_dotnet_resource(&encoded_data).unwrap();
+
+        assert_eq!(parsed_resources.len(), 3);
+
+        match &parsed_resources["empty_stream"].data {
+            ResourceType::Stream(data) => assert_eq!(data.len(), 0),
+            _ => panic!("Expected Stream resource"),
+        }
+
+        match &parsed_resources["image_data"].data {
+            ResourceType::Stream(data) => assert_eq!(data, &[0x89, 0x50, 0x4E, 0x47]),
+            _ => panic!("Expected Stream resource"),
+        }
+
+        match &parsed_resources["large_stream"].data {
+            ResourceType::Stream(data) => {
+                assert_eq!(data.len(), 5000);
+                assert!(data.iter().all(|&b| b == 0xAB));
+            }
+            _ => panic!("Expected Stream resource"),
+        }
+    }
+
+    #[test]
+    fn test_decimal_roundtrip() {
+        // Test Decimal resource encoding/decoding roundtrip
+        let mut encoder = DotNetResourceEncoder::new();
+
+        // Test case 1: Simple positive decimal 3.261 (mantissa=3261, scale=3)
+        // flags = 0x00030000 (scale 3 in bits 16-23)
+        encoder
+            .add_decimal("positive", 3261, 0, 0, 0x0003_0000)
+            .unwrap();
+
+        // Test case 2: Negative decimal -123.45 (mantissa=12345, scale=2)
+        // flags = 0x80020000 (sign bit + scale 2)
+        #[allow(clippy::cast_possible_wrap)]
+        encoder
+            .add_decimal("negative", 12345, 0, 0, 0x8002_0000_u32 as i32)
+            .unwrap();
+
+        // Test case 3: Large decimal using all mantissa parts
+        encoder
+            .add_decimal("large", i32::MAX, i32::MAX, 100, 0x0000_0000)
+            .unwrap();
+
+        // Test case 4: Zero
+        encoder.add_decimal("zero", 0, 0, 0, 0).unwrap();
+
+        // Test case 5: Maximum scale (28)
+        encoder
+            .add_decimal("max_scale", 1, 0, 0, 0x001C_0000)
+            .unwrap();
+
+        let encoded_data = encoder.encode_dotnet_format().unwrap();
+        let parsed_resources = parse_dotnet_resource(&encoded_data).unwrap();
+
+        assert_eq!(parsed_resources.len(), 5);
+
+        match &parsed_resources["positive"].data {
+            ResourceType::Decimal { lo, mid, hi, flags } => {
+                assert_eq!(*lo, 3261);
+                assert_eq!(*mid, 0);
+                assert_eq!(*hi, 0);
+                assert_eq!(*flags, 0x0003_0000);
+            }
+            _ => panic!("Expected Decimal resource"),
+        }
+
+        match &parsed_resources["negative"].data {
+            ResourceType::Decimal { lo, mid, hi, flags } => {
+                assert_eq!(*lo, 12345);
+                assert_eq!(*mid, 0);
+                assert_eq!(*hi, 0);
+                #[allow(clippy::cast_possible_wrap)]
+                let expected_flags = 0x8002_0000_u32 as i32;
+                assert_eq!(*flags, expected_flags);
+            }
+            _ => panic!("Expected Decimal resource"),
+        }
+
+        match &parsed_resources["large"].data {
+            ResourceType::Decimal { lo, mid, hi, flags } => {
+                assert_eq!(*lo, i32::MAX);
+                assert_eq!(*mid, i32::MAX);
+                assert_eq!(*hi, 100);
+                assert_eq!(*flags, 0);
+            }
+            _ => panic!("Expected Decimal resource"),
+        }
+
+        match &parsed_resources["zero"].data {
+            ResourceType::Decimal { lo, mid, hi, flags } => {
+                assert_eq!(*lo, 0);
+                assert_eq!(*mid, 0);
+                assert_eq!(*hi, 0);
+                assert_eq!(*flags, 0);
+            }
+            _ => panic!("Expected Decimal resource"),
+        }
+
+        match &parsed_resources["max_scale"].data {
+            ResourceType::Decimal { lo, mid, hi, flags } => {
+                assert_eq!(*lo, 1);
+                assert_eq!(*mid, 0);
+                assert_eq!(*hi, 0);
+                assert_eq!(*flags, 0x001C_0000); // Scale 28
+            }
+            _ => panic!("Expected Decimal resource"),
+        }
+    }
+
+    #[test]
+    fn test_datetime_roundtrip() {
+        // Test DateTime resource encoding/decoding roundtrip
+        let mut encoder = DotNetResourceEncoder::new();
+
+        // Test case 1: Specific date with UTC kind
+        // Ticks for 2024-01-01 00:00:00 UTC
+        let ticks_2024: i64 = 638_396_736_000_000_000;
+        let utc_kind: i64 = 1 << 62; // UTC = 1
+        encoder
+            .add_datetime("utc_date", ticks_2024 | utc_kind)
+            .unwrap();
+
+        // Test case 2: Date with Local kind
+        let local_kind: i64 = 2 << 62; // Local = 2
+        encoder
+            .add_datetime("local_date", ticks_2024 | local_kind)
+            .unwrap();
+
+        // Test case 3: Date with Unspecified kind
+        encoder
+            .add_datetime("unspecified_date", ticks_2024)
+            .unwrap();
+
+        // Test case 4: Minimum DateTime (01/01/0001)
+        encoder.add_datetime("min_date", 0).unwrap();
+
+        // Test case 5: Large ticks value
+        let large_ticks: i64 = 3_155_378_975_999_999_999; // Near max valid ticks
+        encoder.add_datetime("large_date", large_ticks).unwrap();
+
+        let encoded_data = encoder.encode_dotnet_format().unwrap();
+        let parsed_resources = parse_dotnet_resource(&encoded_data).unwrap();
+
+        assert_eq!(parsed_resources.len(), 5);
+
+        match &parsed_resources["utc_date"].data {
+            ResourceType::DateTime(binary) => {
+                assert_eq!(*binary, ticks_2024 | utc_kind);
+                // Verify we can extract components
+                let extracted_ticks = *binary & 0x3FFF_FFFF_FFFF_FFFF;
+                let extracted_kind = (*binary >> 62) & 0x3;
+                assert_eq!(extracted_ticks, ticks_2024);
+                assert_eq!(extracted_kind, 1); // UTC
+            }
+            _ => panic!("Expected DateTime resource"),
+        }
+
+        match &parsed_resources["local_date"].data {
+            ResourceType::DateTime(binary) => {
+                let extracted_kind = (*binary >> 62) & 0x3;
+                assert_eq!(extracted_kind, 2); // Local
+            }
+            _ => panic!("Expected DateTime resource"),
+        }
+
+        match &parsed_resources["unspecified_date"].data {
+            ResourceType::DateTime(binary) => {
+                let extracted_kind = (*binary >> 62) & 0x3;
+                assert_eq!(extracted_kind, 0); // Unspecified
+            }
+            _ => panic!("Expected DateTime resource"),
+        }
+
+        match &parsed_resources["min_date"].data {
+            ResourceType::DateTime(binary) => {
+                assert_eq!(*binary, 0);
+            }
+            _ => panic!("Expected DateTime resource"),
+        }
+
+        match &parsed_resources["large_date"].data {
+            ResourceType::DateTime(binary) => {
+                assert_eq!(*binary, large_ticks);
+            }
+            _ => panic!("Expected DateTime resource"),
+        }
+    }
+
+    #[test]
+    fn test_timespan_roundtrip() {
+        // Test TimeSpan resource encoding/decoding roundtrip
+        let mut encoder = DotNetResourceEncoder::new();
+
+        // Constants for tick conversions
+        const TICKS_PER_MILLISECOND: i64 = 10_000;
+        const TICKS_PER_SECOND: i64 = 10_000_000;
+        const TICKS_PER_MINUTE: i64 = 600_000_000;
+        const TICKS_PER_HOUR: i64 = 36_000_000_000;
+        const TICKS_PER_DAY: i64 = 864_000_000_000;
+
+        // Test case 1: 1 hour
+        encoder.add_timespan("one_hour", TICKS_PER_HOUR).unwrap();
+
+        // Test case 2: 30 seconds
+        encoder
+            .add_timespan("thirty_seconds", 30 * TICKS_PER_SECOND)
+            .unwrap();
+
+        // Test case 3: Negative 5 minutes
+        encoder
+            .add_timespan("negative_5min", -5 * TICKS_PER_MINUTE)
+            .unwrap();
+
+        // Test case 4: Zero timespan
+        encoder.add_timespan("zero", 0).unwrap();
+
+        // Test case 5: 1 day, 2 hours, 3 minutes, 4 seconds, 5 milliseconds
+        let complex_span = TICKS_PER_DAY
+            + 2 * TICKS_PER_HOUR
+            + 3 * TICKS_PER_MINUTE
+            + 4 * TICKS_PER_SECOND
+            + 5 * TICKS_PER_MILLISECOND;
+        encoder.add_timespan("complex", complex_span).unwrap();
+
+        // Test case 6: Maximum i64 value
+        encoder.add_timespan("max", i64::MAX).unwrap();
+
+        // Test case 7: Minimum i64 value
+        encoder.add_timespan("min", i64::MIN).unwrap();
+
+        let encoded_data = encoder.encode_dotnet_format().unwrap();
+        let parsed_resources = parse_dotnet_resource(&encoded_data).unwrap();
+
+        assert_eq!(parsed_resources.len(), 7);
+
+        match &parsed_resources["one_hour"].data {
+            ResourceType::TimeSpan(ticks) => {
+                assert_eq!(*ticks, TICKS_PER_HOUR);
+                // Verify conversion to hours
+                assert_eq!(*ticks / TICKS_PER_HOUR, 1);
+            }
+            _ => panic!("Expected TimeSpan resource"),
+        }
+
+        match &parsed_resources["thirty_seconds"].data {
+            ResourceType::TimeSpan(ticks) => {
+                assert_eq!(*ticks, 30 * TICKS_PER_SECOND);
+            }
+            _ => panic!("Expected TimeSpan resource"),
+        }
+
+        match &parsed_resources["negative_5min"].data {
+            ResourceType::TimeSpan(ticks) => {
+                assert_eq!(*ticks, -5 * TICKS_PER_MINUTE);
+                assert!(*ticks < 0); // Verify negative
+            }
+            _ => panic!("Expected TimeSpan resource"),
+        }
+
+        match &parsed_resources["zero"].data {
+            ResourceType::TimeSpan(ticks) => {
+                assert_eq!(*ticks, 0);
+            }
+            _ => panic!("Expected TimeSpan resource"),
+        }
+
+        match &parsed_resources["complex"].data {
+            ResourceType::TimeSpan(ticks) => {
+                assert_eq!(*ticks, complex_span);
+            }
+            _ => panic!("Expected TimeSpan resource"),
+        }
+
+        match &parsed_resources["max"].data {
+            ResourceType::TimeSpan(ticks) => {
+                assert_eq!(*ticks, i64::MAX);
+            }
+            _ => panic!("Expected TimeSpan resource"),
+        }
+
+        match &parsed_resources["min"].data {
+            ResourceType::TimeSpan(ticks) => {
+                assert_eq!(*ticks, i64::MIN);
+            }
+            _ => panic!("Expected TimeSpan resource"),
+        }
+    }
+
+    #[test]
     fn test_mixed_large_resource_set_roundtrip() {
         let mut encoder = DotNetResourceEncoder::new();
 
