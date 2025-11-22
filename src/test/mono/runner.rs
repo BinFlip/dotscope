@@ -40,19 +40,23 @@ impl ArchConfig {
     /// Create architectures available on the current platform
     ///
     /// On Windows, both x86 and x64 are available.
-    /// On Linux/macOS, x86 (32-bit) targets are typically not available
-    /// in CI environments without additional SDK components, so we only
-    /// include x64 and the native architecture.
+    /// On Linux/macOS, we use AnyCPU plus the native architecture.
+    /// x64 assemblies cannot run on ARM64 hardware without emulation.
     pub fn platform_available_architectures() -> Vec<Self> {
         #[cfg(target_os = "windows")]
         {
             vec![Self::x86(), Self::x64()]
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
         {
-            // On non-Windows platforms, x86 cross-compilation is often not available
-            // Use AnyCPU (no platform flag) which works universally, plus x64
+            // On x86_64 Unix platforms, we can run AnyCPU and x64
             vec![Self::anycpu(), Self::x64()]
+        }
+        #[cfg(all(not(target_os = "windows"), not(target_arch = "x86_64")))]
+        {
+            // On ARM64 and other architectures, only use AnyCPU
+            // x64-specific assemblies won't run without emulation
+            vec![Self::anycpu()]
         }
     }
 
@@ -213,23 +217,38 @@ mod tests {
     #[test]
     fn test_platform_available_architectures() {
         let archs = ArchConfig::platform_available_architectures();
-        assert_eq!(archs.len(), 2);
-        // On Windows: x86 + x64, on other platforms: anycpu + x64
+        // On Windows: x86 + x64 (2 archs)
+        // On x86_64 Unix: anycpu + x64 (2 archs)
+        // On ARM64 Unix: anycpu only (1 arch)
         #[cfg(target_os = "windows")]
         {
+            assert_eq!(archs.len(), 2);
             assert_eq!(archs[0].name, "x86");
+            assert_eq!(archs[1].name, "x64");
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
         {
+            assert_eq!(archs.len(), 2);
+            assert_eq!(archs[0].name, "anycpu");
+            assert_eq!(archs[1].name, "x64");
+        }
+        #[cfg(all(not(target_os = "windows"), not(target_arch = "x86_64")))]
+        {
+            assert_eq!(archs.len(), 1);
             assert_eq!(archs[0].name, "anycpu");
         }
-        assert_eq!(archs[1].name, "x64");
     }
 
     #[test]
     fn test_runner_creation() -> Result<()> {
         let runner = MonoTestRunner::new()?;
+        // Number of architectures depends on platform
+        #[cfg(target_os = "windows")]
         assert_eq!(runner.architectures().len(), 2);
+        #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
+        assert_eq!(runner.architectures().len(), 2);
+        #[cfg(all(not(target_os = "windows"), not(target_arch = "x86_64")))]
+        assert_eq!(runner.architectures().len(), 1);
         assert!(runner.temp_path().exists());
         Ok(())
     }

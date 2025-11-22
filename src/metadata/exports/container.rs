@@ -630,3 +630,310 @@ impl std::fmt::Debug for UnifiedExportContainer {
             .finish_non_exhaustive()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_unified_export_container_new() {
+        let container = UnifiedExportContainer::new();
+        assert!(container.is_empty());
+        assert_eq!(container.total_count(), 0);
+    }
+
+    #[test]
+    fn test_unified_export_container_with_dll_name() {
+        let container = UnifiedExportContainer::with_dll_name("MyLibrary.dll");
+        assert!(container.is_empty());
+    }
+
+    #[test]
+    fn test_unified_export_container_default() {
+        let container = UnifiedExportContainer::default();
+        assert!(container.is_empty());
+    }
+
+    #[test]
+    fn test_add_native_function() {
+        let mut container = UnifiedExportContainer::new();
+        container
+            .add_native_function("TestFunction", 1, 0x1000)
+            .unwrap();
+
+        assert!(!container.is_empty());
+        assert_eq!(container.total_count(), 1);
+    }
+
+    #[test]
+    fn test_add_multiple_native_functions() {
+        let mut container = UnifiedExportContainer::new();
+        container
+            .add_native_function("Function1", 1, 0x1000)
+            .unwrap();
+        container
+            .add_native_function("Function2", 2, 0x2000)
+            .unwrap();
+        container
+            .add_native_function("Function3", 3, 0x3000)
+            .unwrap();
+
+        assert_eq!(container.total_count(), 3);
+    }
+
+    #[test]
+    fn test_add_native_function_by_ordinal() {
+        let mut container = UnifiedExportContainer::new();
+        container
+            .add_native_function_by_ordinal(100, 0x5000)
+            .unwrap();
+
+        assert!(!container.is_empty());
+        assert_eq!(container.total_count(), 1);
+    }
+
+    #[test]
+    fn test_add_native_function_invalid_ordinal() {
+        let mut container = UnifiedExportContainer::new();
+        // Ordinal 0 should be invalid
+        let result = container.add_native_function("Test", 0, 0x1000);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_add_native_function_duplicate_ordinal() {
+        let mut container = UnifiedExportContainer::new();
+        container
+            .add_native_function("Function1", 1, 0x1000)
+            .unwrap();
+        // Adding another function with the same ordinal should fail
+        let result = container.add_native_function("Function2", 1, 0x2000);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_add_native_forwarder() {
+        let mut container = UnifiedExportContainer::new();
+        container
+            .add_native_forwarder("ForwardedFunction", 1, "kernel32.dll.GetCurrentProcessId")
+            .unwrap();
+
+        assert!(!container.is_empty());
+        // total_count includes both function_count and forwarder_count
+        // The implementation stores forwarders as both a function and forwarder entry
+        assert!(container.total_count() >= 1);
+        assert!(container.native().forwarder_count() >= 1);
+    }
+
+    #[test]
+    fn test_find_by_name_native() {
+        let mut container = UnifiedExportContainer::new();
+        container
+            .add_native_function("MyExport", 1, 0x1000)
+            .unwrap();
+
+        let results = container.find_by_name("MyExport");
+        assert_eq!(results.len(), 1);
+
+        if let ExportEntry::Native(native_ref) = &results[0] {
+            assert_eq!(native_ref.ordinal, 1);
+            assert_eq!(native_ref.name, Some("MyExport".to_string()));
+        } else {
+            panic!("Expected Native export entry");
+        }
+    }
+
+    #[test]
+    fn test_find_by_name_not_found() {
+        let container = UnifiedExportContainer::new();
+        let results = container.find_by_name("NonExistent");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_get_native_function_names() {
+        let mut container = UnifiedExportContainer::new();
+        container.add_native_function("Alpha", 1, 0x1000).unwrap();
+        container.add_native_function("Beta", 2, 0x2000).unwrap();
+        container.add_native_function("Gamma", 3, 0x3000).unwrap();
+
+        let names = container.get_native_function_names();
+        assert_eq!(names.len(), 3);
+        assert!(names.contains(&"Alpha".to_string()));
+        assert!(names.contains(&"Beta".to_string()));
+        assert!(names.contains(&"Gamma".to_string()));
+    }
+
+    #[test]
+    fn test_get_all_exported_functions() {
+        let mut container = UnifiedExportContainer::new();
+        container
+            .add_native_function("NativeFunc", 1, 0x1000)
+            .unwrap();
+
+        let functions = container.get_all_exported_functions();
+        assert_eq!(functions.len(), 1);
+        assert_eq!(functions[0].name, "NativeFunc");
+
+        if let ExportSource::Native(ordinal) = functions[0].source {
+            assert_eq!(ordinal, 1);
+        } else {
+            panic!("Expected Native export source");
+        }
+    }
+
+    #[test]
+    fn test_get_all_exported_functions_with_forwarder() {
+        let mut container = UnifiedExportContainer::new();
+        container
+            .add_native_forwarder("ForwardedFunc", 1, "other.dll.RealFunc")
+            .unwrap();
+
+        let functions = container.get_all_exported_functions();
+        assert_eq!(functions.len(), 1);
+        assert!(functions[0].is_forwarder);
+        assert_eq!(
+            functions[0].forwarder_target,
+            Some("other.dll.RealFunc".to_string())
+        );
+    }
+
+    #[test]
+    fn test_cil_accessor() {
+        let container = UnifiedExportContainer::new();
+        let cil = container.cil();
+        assert!(cil.is_empty());
+    }
+
+    #[test]
+    fn test_native_accessor() {
+        let container = UnifiedExportContainer::new();
+        let native = container.native();
+        assert!(native.is_empty());
+    }
+
+    #[test]
+    fn test_native_mut_invalidates_cache() {
+        let mut container = UnifiedExportContainer::new();
+        container.add_native_function("Test", 1, 0x1000).unwrap();
+
+        // Force cache to be built
+        let _ = container.find_by_name("Test");
+
+        // Mutating native should invalidate cache
+        let _ = container.native_mut();
+
+        // Cache should be dirty now
+        assert!(container.cache_dirty.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_clone_resets_cache() {
+        let mut container = UnifiedExportContainer::new();
+        container.add_native_function("Test", 1, 0x1000).unwrap();
+
+        // Force cache to be built
+        let _ = container.find_by_name("Test");
+
+        // Clone should reset cache to dirty
+        let cloned = container.clone();
+        assert!(cloned.cache_dirty.load(Ordering::Relaxed));
+
+        // But data should be preserved
+        assert_eq!(cloned.total_count(), 1);
+    }
+
+    #[test]
+    fn test_debug_output() {
+        let mut container = UnifiedExportContainer::new();
+        container.add_native_function("Test", 1, 0x1000).unwrap();
+
+        let debug_output = format!("{:?}", container);
+        assert!(debug_output.contains("UnifiedExportContainer"));
+        assert!(debug_output.contains("native_function_count"));
+    }
+
+    #[test]
+    fn test_export_target_address() {
+        let target = ExportTarget::Address(0x1234);
+        if let ExportTarget::Address(addr) = target {
+            assert_eq!(addr, 0x1234);
+        } else {
+            panic!("Expected Address variant");
+        }
+    }
+
+    #[test]
+    fn test_export_target_forwarder() {
+        let target = ExportTarget::Forwarder("kernel32.dll.Func".to_string());
+        if let ExportTarget::Forwarder(ref fwd) = target {
+            assert_eq!(fwd, "kernel32.dll.Func");
+        } else {
+            panic!("Expected Forwarder variant");
+        }
+    }
+
+    #[test]
+    fn test_export_source_variants() {
+        let token = Token::new(0x02000001);
+
+        let cil_source = ExportSource::Cil(token);
+        if let ExportSource::Cil(t) = cil_source {
+            assert_eq!(t, token);
+        }
+
+        let native_source = ExportSource::Native(42);
+        if let ExportSource::Native(ord) = native_source {
+            assert_eq!(ord, 42);
+        }
+
+        let both_source = ExportSource::Both(token, 42);
+        if let ExportSource::Both(t, ord) = both_source {
+            assert_eq!(t, token);
+            assert_eq!(ord, 42);
+        }
+    }
+
+    #[test]
+    fn test_native_export_ref_clone() {
+        let export_ref = NativeExportRef {
+            ordinal: 1,
+            name: Some("TestFunc".to_string()),
+            address_or_forwarder: ExportTarget::Address(0x1000),
+        };
+
+        let cloned = export_ref.clone();
+        assert_eq!(cloned.ordinal, 1);
+        assert_eq!(cloned.name, Some("TestFunc".to_string()));
+    }
+
+    #[test]
+    fn test_exported_function_structure() {
+        let func = ExportedFunction {
+            name: "TestFunction".to_string(),
+            source: ExportSource::Native(1),
+            is_forwarder: false,
+            forwarder_target: None,
+        };
+
+        assert_eq!(func.name, "TestFunction");
+        assert!(!func.is_forwarder);
+        assert!(func.forwarder_target.is_none());
+    }
+
+    #[test]
+    fn test_exported_function_forwarder() {
+        let func = ExportedFunction {
+            name: "ForwardedFunc".to_string(),
+            source: ExportSource::Native(1),
+            is_forwarder: true,
+            forwarder_target: Some("target.dll.RealFunc".to_string()),
+        };
+
+        assert!(func.is_forwarder);
+        assert_eq!(
+            func.forwarder_target,
+            Some("target.dll.RealFunc".to_string())
+        );
+    }
+}

@@ -1146,8 +1146,7 @@ impl DotNetResourceEncoder {
                     }
                     buffer.extend_from_slice(data);
                 }
-                #[allow(clippy::match_wildcard_for_single_variants)]
-                _ => {
+                ResourceType::StartOfUserTypes => {
                     return Err(crate::Error::NotSupported);
                 }
             }

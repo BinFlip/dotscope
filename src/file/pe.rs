@@ -684,6 +684,52 @@ impl Pe {
         }
     }
 
+    /// Updates the SizeOfImage field in the PE optional header.
+    ///
+    /// SizeOfImage must be updated when sections are added or modified to ensure
+    /// the PE image size encompasses all sections. This value represents the total
+    /// size of the image when loaded in memory, including all sections aligned to
+    /// the section alignment boundary.
+    ///
+    /// # Arguments
+    /// * `new_size` - The new SizeOfImage value
+    ///
+    /// # Errors
+    /// Returns an error if the PE has no optional header
+    pub fn update_size_of_image(&mut self, new_size: u32) -> Result<()> {
+        if let Some(ref mut optional_header) = self.optional_header {
+            optional_header.windows_fields.size_of_image = new_size;
+            Ok(())
+        } else {
+            Err(malformed_error!(
+                "Cannot update SizeOfImage: PE has no optional header"
+            ))
+        }
+    }
+
+    /// Updates the SizeOfHeaders field in the PE optional header.
+    ///
+    /// SizeOfHeaders must be updated when sections are added to ensure the value
+    /// encompasses all headers including the expanded section table. This value
+    /// represents the combined size of DOS header, PE headers, and section table,
+    /// rounded up to FileAlignment.
+    ///
+    /// # Arguments
+    /// * `new_size` - The new SizeOfHeaders value (must be aligned to FileAlignment)
+    ///
+    /// # Errors
+    /// Returns an error if the PE has no optional header
+    pub fn update_size_of_headers(&mut self, new_size: u32) -> Result<()> {
+        if let Some(ref mut optional_header) = self.optional_header {
+            optional_header.windows_fields.size_of_headers = new_size;
+            Ok(())
+        } else {
+            Err(malformed_error!(
+                "Cannot update SizeOfHeaders: PE has no optional header"
+            ))
+        }
+    }
+
     /// Writes the complete PE headers in their current state.
     ///
     /// This method serializes the PE signature, COFF header, and optional header

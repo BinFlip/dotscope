@@ -829,3 +829,451 @@ impl FromStr for ProcessorArchitecture {
         Self::parse(s)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_assembly_version_new() {
+        let version = AssemblyVersion::new(1, 2, 3, 4);
+        assert_eq!(version.major, 1);
+        assert_eq!(version.minor, 2);
+        assert_eq!(version.build, 3);
+        assert_eq!(version.revision, 4);
+    }
+
+    #[test]
+    fn test_assembly_version_parse_full() {
+        let version = AssemblyVersion::parse("4.0.0.0").unwrap();
+        assert_eq!(version.major, 4);
+        assert_eq!(version.minor, 0);
+        assert_eq!(version.build, 0);
+        assert_eq!(version.revision, 0);
+    }
+
+    #[test]
+    fn test_assembly_version_parse_partial() {
+        // Three parts
+        let v3 = AssemblyVersion::parse("1.2.3").unwrap();
+        assert_eq!(v3, AssemblyVersion::new(1, 2, 3, 0));
+
+        // Two parts
+        let v2 = AssemblyVersion::parse("1.2").unwrap();
+        assert_eq!(v2, AssemblyVersion::new(1, 2, 0, 0));
+
+        // Single part
+        let v1 = AssemblyVersion::parse("1").unwrap();
+        assert_eq!(v1, AssemblyVersion::new(1, 0, 0, 0));
+    }
+
+    #[test]
+    fn test_assembly_version_parse_invalid() {
+        // Empty string
+        assert!(AssemblyVersion::parse("").is_err());
+
+        // Too many parts
+        assert!(AssemblyVersion::parse("1.2.3.4.5").is_err());
+
+        // Invalid component
+        assert!(AssemblyVersion::parse("1.2.abc.4").is_err());
+
+        // Overflow
+        assert!(AssemblyVersion::parse("1.2.99999.4").is_err());
+    }
+
+    #[test]
+    fn test_assembly_version_display() {
+        let version = AssemblyVersion::new(4, 0, 0, 0);
+        assert_eq!(version.to_string(), "4.0.0.0");
+
+        let version = AssemblyVersion::new(1, 2, 3, 4);
+        assert_eq!(version.to_string(), "1.2.3.4");
+    }
+
+    #[test]
+    fn test_assembly_version_ordering() {
+        let v1 = AssemblyVersion::new(1, 0, 0, 0);
+        let v2 = AssemblyVersion::new(2, 0, 0, 0);
+        let v1_1 = AssemblyVersion::new(1, 1, 0, 0);
+
+        assert!(v1 < v2);
+        assert!(v1 < v1_1);
+        assert!(v1_1 < v2);
+    }
+
+    #[test]
+    fn test_assembly_version_from_str() {
+        let version: AssemblyVersion = "4.0.0.0".parse().unwrap();
+        assert_eq!(version, AssemblyVersion::new(4, 0, 0, 0));
+    }
+
+    #[test]
+    fn test_processor_architecture_parse() {
+        assert_eq!(
+            ProcessorArchitecture::parse("MSIL").unwrap(),
+            ProcessorArchitecture::MSIL
+        );
+        assert_eq!(
+            ProcessorArchitecture::parse("msil").unwrap(),
+            ProcessorArchitecture::MSIL
+        );
+        assert_eq!(
+            ProcessorArchitecture::parse("x86").unwrap(),
+            ProcessorArchitecture::X86
+        );
+        assert_eq!(
+            ProcessorArchitecture::parse("X86").unwrap(),
+            ProcessorArchitecture::X86
+        );
+        assert_eq!(
+            ProcessorArchitecture::parse("AMD64").unwrap(),
+            ProcessorArchitecture::AMD64
+        );
+        assert_eq!(
+            ProcessorArchitecture::parse("amd64").unwrap(),
+            ProcessorArchitecture::AMD64
+        );
+        assert_eq!(
+            ProcessorArchitecture::parse("x64").unwrap(),
+            ProcessorArchitecture::AMD64
+        );
+        assert_eq!(
+            ProcessorArchitecture::parse("IA64").unwrap(),
+            ProcessorArchitecture::IA64
+        );
+        assert_eq!(
+            ProcessorArchitecture::parse("ARM").unwrap(),
+            ProcessorArchitecture::ARM
+        );
+        assert_eq!(
+            ProcessorArchitecture::parse("arm").unwrap(),
+            ProcessorArchitecture::ARM
+        );
+        assert_eq!(
+            ProcessorArchitecture::parse("ARM64").unwrap(),
+            ProcessorArchitecture::ARM64
+        );
+        assert_eq!(
+            ProcessorArchitecture::parse("arm64").unwrap(),
+            ProcessorArchitecture::ARM64
+        );
+    }
+
+    #[test]
+    fn test_processor_architecture_parse_invalid() {
+        assert!(ProcessorArchitecture::parse("unknown").is_err());
+        assert!(ProcessorArchitecture::parse("").is_err());
+        assert!(ProcessorArchitecture::parse("PowerPC").is_err());
+    }
+
+    #[test]
+    fn test_processor_architecture_display() {
+        assert_eq!(ProcessorArchitecture::MSIL.to_string(), "MSIL");
+        assert_eq!(ProcessorArchitecture::X86.to_string(), "x86");
+        assert_eq!(ProcessorArchitecture::AMD64.to_string(), "AMD64");
+        assert_eq!(ProcessorArchitecture::IA64.to_string(), "IA64");
+        assert_eq!(ProcessorArchitecture::ARM.to_string(), "ARM");
+        assert_eq!(ProcessorArchitecture::ARM64.to_string(), "ARM64");
+    }
+
+    #[test]
+    fn test_processor_architecture_from_str() {
+        let arch: ProcessorArchitecture = "x86".parse().unwrap();
+        assert_eq!(arch, ProcessorArchitecture::X86);
+    }
+
+    #[test]
+    fn test_assembly_identity_new() {
+        let identity = AssemblyIdentity::new(
+            "TestAssembly",
+            AssemblyVersion::new(1, 0, 0, 0),
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(identity.name, "TestAssembly");
+        assert_eq!(identity.version, AssemblyVersion::new(1, 0, 0, 0));
+        assert!(identity.culture.is_none());
+        assert!(identity.strong_name.is_none());
+        assert!(identity.processor_architecture.is_none());
+    }
+
+    #[test]
+    fn test_assembly_identity_parse_simple_name() {
+        let identity = AssemblyIdentity::parse("MyLibrary").unwrap();
+        assert_eq!(identity.name, "MyLibrary");
+        assert_eq!(identity.version, AssemblyVersion::new(0, 0, 0, 0));
+        assert!(identity.culture.is_none());
+        assert!(identity.strong_name.is_none());
+    }
+
+    #[test]
+    fn test_assembly_identity_parse_with_version() {
+        let identity = AssemblyIdentity::parse("MyLibrary, Version=1.2.3.4").unwrap();
+        assert_eq!(identity.name, "MyLibrary");
+        assert_eq!(identity.version, AssemblyVersion::new(1, 2, 3, 4));
+    }
+
+    #[test]
+    fn test_assembly_identity_parse_full_mscorlib() {
+        let identity = AssemblyIdentity::parse(
+            "mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089",
+        )
+        .unwrap();
+
+        assert_eq!(identity.name, "mscorlib");
+        assert_eq!(identity.version, AssemblyVersion::new(4, 0, 0, 0));
+        assert!(identity.culture.is_none()); // "neutral" maps to None
+        assert!(identity.strong_name.is_some());
+
+        if let Some(Identity::Token(token)) = identity.strong_name {
+            // Token is parsed as little-endian bytes
+            let expected = u64::from_le_bytes([0xb7, 0x7a, 0x5c, 0x56, 0x19, 0x34, 0xe0, 0x89]);
+            assert_eq!(token, expected);
+        } else {
+            panic!("Expected Token identity");
+        }
+    }
+
+    #[test]
+    fn test_assembly_identity_parse_with_culture() {
+        let identity = AssemblyIdentity::parse(
+            "Resources, Version=1.0.0.0, Culture=en-US, PublicKeyToken=null",
+        )
+        .unwrap();
+
+        assert_eq!(identity.name, "Resources");
+        assert_eq!(identity.culture, Some("en-US".to_string()));
+        assert!(identity.strong_name.is_none());
+    }
+
+    #[test]
+    fn test_assembly_identity_parse_with_architecture() {
+        let identity =
+            AssemblyIdentity::parse("NativeLib, Version=1.0.0.0, ProcessorArchitecture=x86")
+                .unwrap();
+
+        assert_eq!(identity.name, "NativeLib");
+        assert_eq!(
+            identity.processor_architecture,
+            Some(ProcessorArchitecture::X86)
+        );
+    }
+
+    #[test]
+    fn test_assembly_identity_parse_empty_returns_empty_name() {
+        // Note: An empty string currently produces an identity with an empty name
+        // This is documented behavior - the parser does not reject empty names
+        let identity = AssemblyIdentity::parse("").unwrap();
+        assert_eq!(identity.name, "");
+    }
+
+    #[test]
+    fn test_assembly_identity_display_name_simple() {
+        let identity = AssemblyIdentity::new(
+            "MyLibrary",
+            AssemblyVersion::new(1, 0, 0, 0),
+            None,
+            None,
+            None,
+        );
+
+        let display = identity.display_name();
+        assert!(display.contains("MyLibrary"));
+        assert!(display.contains("Version=1.0.0.0"));
+        assert!(display.contains("Culture=neutral"));
+        assert!(display.contains("PublicKeyToken=null"));
+    }
+
+    #[test]
+    fn test_assembly_identity_display_name_with_culture() {
+        let identity = AssemblyIdentity::new(
+            "Resources",
+            AssemblyVersion::new(1, 0, 0, 0),
+            Some("fr-FR".to_string()),
+            None,
+            None,
+        );
+
+        let display = identity.display_name();
+        assert!(display.contains("Culture=fr-FR"));
+    }
+
+    #[test]
+    fn test_assembly_identity_simple_name() {
+        let identity = AssemblyIdentity::new(
+            "System.Core",
+            AssemblyVersion::new(4, 0, 0, 0),
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(identity.simple_name(), "System.Core");
+    }
+
+    #[test]
+    fn test_assembly_identity_is_strong_named() {
+        let weak = AssemblyIdentity::new(
+            "WeakAssembly",
+            AssemblyVersion::new(1, 0, 0, 0),
+            None,
+            None,
+            None,
+        );
+        assert!(!weak.is_strong_named());
+
+        let strong = AssemblyIdentity::new(
+            "StrongAssembly",
+            AssemblyVersion::new(1, 0, 0, 0),
+            None,
+            Some(Identity::Token(0x1234567890ABCDEF)),
+            None,
+        );
+        assert!(strong.is_strong_named());
+    }
+
+    #[test]
+    fn test_assembly_identity_is_culture_neutral() {
+        let neutral = AssemblyIdentity::new(
+            "MainAssembly",
+            AssemblyVersion::new(1, 0, 0, 0),
+            None,
+            None,
+            None,
+        );
+        assert!(neutral.is_culture_neutral());
+
+        let localized = AssemblyIdentity::new(
+            "Resources",
+            AssemblyVersion::new(1, 0, 0, 0),
+            Some("de-DE".to_string()),
+            None,
+            None,
+        );
+        assert!(!localized.is_culture_neutral());
+    }
+
+    #[test]
+    fn test_assembly_identity_equality() {
+        let id1 = AssemblyIdentity::new(
+            "TestAssembly",
+            AssemblyVersion::new(1, 0, 0, 0),
+            None,
+            None,
+            None,
+        );
+
+        let id2 = AssemblyIdentity::new(
+            "TestAssembly",
+            AssemblyVersion::new(1, 0, 0, 0),
+            None,
+            None,
+            None,
+        );
+
+        let id_different_version = AssemblyIdentity::new(
+            "TestAssembly",
+            AssemblyVersion::new(2, 0, 0, 0),
+            None,
+            None,
+            None,
+        );
+
+        let id_different_name = AssemblyIdentity::new(
+            "OtherAssembly",
+            AssemblyVersion::new(1, 0, 0, 0),
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(id1, id2);
+        assert_ne!(id1, id_different_version);
+        assert_ne!(id1, id_different_name);
+    }
+
+    #[test]
+    fn test_assembly_identity_equality_ignores_strong_name_difference() {
+        // Strong name differences should NOT affect equality
+        // (as per the PartialEq implementation comment)
+        let id_with_token = AssemblyIdentity::new(
+            "TestAssembly",
+            AssemblyVersion::new(1, 0, 0, 0),
+            None,
+            Some(Identity::Token(0x1234567890ABCDEF)),
+            None,
+        );
+
+        let id_without_token = AssemblyIdentity::new(
+            "TestAssembly",
+            AssemblyVersion::new(1, 0, 0, 0),
+            None,
+            None,
+            None,
+        );
+
+        // These should be equal because strong_name is excluded from equality
+        assert_eq!(id_with_token, id_without_token);
+    }
+
+    #[test]
+    fn test_assembly_identity_hash_consistency() {
+        use std::collections::HashMap;
+
+        let id1 = AssemblyIdentity::new(
+            "TestAssembly",
+            AssemblyVersion::new(1, 0, 0, 0),
+            None,
+            Some(Identity::Token(0x1234567890ABCDEF)),
+            None,
+        );
+
+        let id2 = AssemblyIdentity::new(
+            "TestAssembly",
+            AssemblyVersion::new(1, 0, 0, 0),
+            None,
+            None, // Different strong_name
+            None,
+        );
+
+        // Since they are equal, they should hash to the same value
+        // and work correctly as HashMap keys
+        let mut map = HashMap::new();
+        map.insert(id1.clone(), "value1");
+
+        // Should find the same entry with id2 since they're equal
+        assert!(map.contains_key(&id2));
+    }
+
+    #[test]
+    fn test_assembly_identity_from_str() {
+        let identity: AssemblyIdentity = "System.Core, Version=3.5.0.0".parse().unwrap();
+        assert_eq!(identity.name, "System.Core");
+        assert_eq!(identity.version, AssemblyVersion::new(3, 5, 0, 0));
+    }
+
+    #[test]
+    fn test_assembly_identity_roundtrip_parse_display() {
+        let original = AssemblyIdentity::new(
+            "TestLib",
+            AssemblyVersion::new(2, 1, 3, 4),
+            None,
+            None,
+            Some(ProcessorArchitecture::AMD64),
+        );
+
+        let display = original.display_name();
+        let parsed = AssemblyIdentity::parse(&display).unwrap();
+
+        assert_eq!(original.name, parsed.name);
+        assert_eq!(original.version, parsed.version);
+        assert_eq!(original.culture, parsed.culture);
+        assert_eq!(
+            original.processor_architecture,
+            parsed.processor_architecture
+        );
+    }
+}

@@ -1559,7 +1559,7 @@ mod tests {
                     .add_byte_array(&format!("bytes_{i}"), &vec![i as u8; i % 20 + 1])
                     .unwrap(),
                 4 => encoder
-                    .add_double(&format!("double_{i}"), i as f64 * 3.14)
+                    .add_double(&format!("double_{i}"), i as f64 * std::f64::consts::PI)
                     .unwrap(),
                 _ => unreachable!(),
             }
@@ -1578,7 +1578,7 @@ mod tests {
 
         match &parsed_resources["bytes_13"].data {
             ResourceTypeRef::ByteArray(data) => {
-                assert_eq!(data.len(), 13 % 20 + 1);
+                assert_eq!(data.len(), 14); // 13 % 20 + 1 = 14
                 assert!(data.iter().all(|&b| b == 13));
             }
             _ => panic!("Expected byte array resource"),
