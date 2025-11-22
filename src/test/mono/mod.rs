@@ -266,41 +266,73 @@ impl TestEnvironment {
             };
 
             // 1. Compile source
-            let exe_path = self.runner.create_arch_file_path("test", &arch, ".exe");
-            let _comp_result = match self
-                .compiler
-                .compile_executable(source_code, &exe_path, &arch)
-            {
-                Ok(comp_result) if comp_result.is_success() => {
-                    arch_result.compilation_success = true;
-                    // Set the appropriate runtime based on which compiler was used
-                    if let Some(ref compiler_type) = comp_result.compiler_used {
-                        self.runtime
-                            .set_runtime(RuntimeType::for_compiler(compiler_type));
+            let requested_exe_path = self.runner.create_arch_file_path("test", &arch, ".exe");
+            let comp_result =
+                match self
+                    .compiler
+                    .compile_executable(source_code, &requested_exe_path, &arch)
+                {
+                    Ok(comp_result) if comp_result.is_success() => {
+                        arch_result.compilation_success = true;
+                        // Set the appropriate runtime based on which compiler was used
+                        if let Some(ref compiler_type) = comp_result.compiler_used {
+                            self.runtime
+                                .set_runtime(RuntimeType::for_compiler(compiler_type));
+                        }
+                        comp_result
                     }
-                    comp_result
-                }
-                Ok(comp_result) => {
-                    arch_result.errors.push(format!(
-                        "Compilation failed: {}",
-                        comp_result.error.as_deref().unwrap_or("Unknown error")
-                    ));
-                    results.push(arch_result);
-                    continue;
-                }
-                Err(e) => {
-                    arch_result.errors.push(format!("Compilation error: {}", e));
-                    results.push(arch_result);
-                    continue;
-                }
-            };
+                    Ok(comp_result) => {
+                        arch_result.errors.push(format!(
+                            "Compilation failed: {}",
+                            comp_result.error.as_deref().unwrap_or("Unknown error")
+                        ));
+                        results.push(arch_result);
+                        continue;
+                    }
+                    Err(e) => {
+                        arch_result.errors.push(format!("Compilation error: {}", e));
+                        results.push(arch_result);
+                        continue;
+                    }
+                };
+
+            // Get the actual output path (may differ from requested path for dotnet SDK)
+            let actual_exe_path = comp_result.executable_path();
 
             // 2. Modify assembly
-            let modified_path = self
-                .runner
-                .create_arch_file_path("test_modified", &arch, ".exe");
-            match self.modify_assembly_internal(&exe_path, &modified_path, &modify_assembly) {
-                Ok(_) => arch_result.modification_success = true,
+            // Save modified assembly with the SAME filename as the original but in a
+            // per-architecture subdirectory. This is critical because:
+            // 1. .NET validates that the assembly's internal name matches the filename
+            // 2. Each architecture must be isolated to prevent cross-probing conflicts
+            let original_filename = actual_exe_path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("test.dll");
+            let modified_dir = self.runner.temp_path().join("modified").join(&arch.name);
+            std::fs::create_dir_all(&modified_dir).ok();
+            let modified_path = modified_dir.join(original_filename);
+
+            match self.modify_assembly_internal(actual_exe_path, &modified_path, &modify_assembly) {
+                Ok(_) => {
+                    arch_result.modification_success = true;
+
+                    // Copy runtimeconfig.json from original to modified assembly location
+                    // This is required for .NET 8+ runtime to execute the assembly
+                    let original_stem = actual_exe_path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("");
+
+                    if let Some(original_dir) = actual_exe_path.parent() {
+                        let original_runtimeconfig =
+                            original_dir.join(format!("{}.runtimeconfig.json", original_stem));
+                        if original_runtimeconfig.exists() {
+                            let modified_runtimeconfig =
+                                modified_dir.join(format!("{}.runtimeconfig.json", original_stem));
+                            std::fs::copy(&original_runtimeconfig, &modified_runtimeconfig).ok();
+                        }
+                    }
+                }
                 Err(e) => {
                     arch_result
                         .errors
@@ -359,10 +391,12 @@ impl TestEnvironment {
             }
 
             // 6. Test reflection
+            // Execute the reflection test from the modified directory so .NET can
+            // properly resolve assembly references during reflection calls
             let reflection_test = create_reflection_test(&modified_path);
             match self
                 .reflection_executor
-                .execute_test(&reflection_test, self.runner.temp_path())
+                .execute_test(&reflection_test, &modified_dir)
             {
                 Ok(refl_result) if refl_result.is_successful() => {
                     arch_result.reflection_success = true;

@@ -86,13 +86,17 @@ impl ReflectionTestBuilder {
             r#"
 {using_statements}
 
-class Program 
+class Program
 {{
     static void Main()
     {{
-        try 
+        try
         {{
-            Assembly assembly = Assembly.LoadFrom(@"{assembly_path}");
+            // Use LoadFile instead of LoadFrom for better isolation.
+            // LoadFile doesn't use the assembly resolution context which
+            // causes issues when loading .NET Framework/modified assemblies
+            // from a .NET 8 host application.
+            Assembly assembly = Assembly.LoadFile(@"{assembly_path}");
             
             {setup_code}
             
@@ -485,11 +489,12 @@ impl ReflectionTestExecutor {
         temp_dir: &Path,
     ) -> Result<ReflectionTestResult> {
         // Compile test program
+        // Use AnyCPU architecture for maximum compatibility across CI environments
         let test_exe_path = temp_dir.join("reflection_test.exe");
         let compilation_result = self.compiler.compile_executable(
             test_program,
             &test_exe_path,
-            &super::runner::ArchConfig::x64(), // Default to x64 for reflection tests
+            &super::runner::ArchConfig::anycpu(),
         )?;
 
         if !compilation_result.success {
@@ -504,13 +509,13 @@ impl ReflectionTestExecutor {
 
         // Set the appropriate runtime based on which compiler was used
         if let Some(ref compiler_type) = compilation_result.compiler_used {
-            self.runtime.set_runtime(
-                super::execution::RuntimeType::for_compiler(compiler_type),
-            );
+            self.runtime
+                .set_runtime(super::execution::RuntimeType::for_compiler(compiler_type));
         }
 
-        // Execute test program
-        let execution_result = self.runtime.execute_assembly(&test_exe_path)?;
+        // Execute test program using the actual output path (may be .dll for dotnet SDK)
+        let actual_output_path = compilation_result.executable_path();
+        let execution_result = self.runtime.execute_assembly(actual_output_path)?;
 
         Ok(ReflectionTestResult {
             compilation_success: true,
@@ -655,7 +660,7 @@ mod tests {
             .expect(42)
             .build();
 
-        assert!(program.contains("Assembly.LoadFrom"));
+        assert!(program.contains("Assembly.LoadFile"));
         assert!(program.contains("TestMethod"));
         assert!(program.contains("AssertEqual"));
     }

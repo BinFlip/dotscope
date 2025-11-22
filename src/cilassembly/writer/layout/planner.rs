@@ -890,9 +890,13 @@ impl<'a> LayoutPlanner<'a> {
         let file = view.file();
         let mut sections = Vec::new();
 
-        // Calculate section table growth to determine relocation offset
+        // Calculate new SizeOfHeaders to determine where sections can start
         let original_section_count = file.sections().len();
-        let section_table_growth = 40; // 40 bytes for new .meta section entry
+        let file_alignment = file.file_alignment()?;
+        let original_size_of_headers = file
+            .header_optional()
+            .as_ref()
+            .map_or(0x200, |oh| u64::from(oh.windows_fields.size_of_headers)); // Default to 0x200 if no optional header
 
         // Calculate where the new section table will end
         let pe_header_offset = u64::from(file.header_dos().pe_header_offset);
@@ -901,19 +905,20 @@ impl<'a> LayoutPlanner<'a> {
         let new_section_table_size = (original_section_count + 1) * 40; // +1 for .meta section
         let new_section_table_end = section_table_start + new_section_table_size as u64;
 
+        // SizeOfHeaders must be aligned to FileAlignment - this is where sections can start
+        let new_size_of_headers = align_to(new_section_table_end, u64::from(file_alignment));
+
+        // Calculate how much we need to shift sections
+        // All sections must be shifted by the difference between new and old SizeOfHeaders
+        let header_growth = new_size_of_headers.saturating_sub(original_size_of_headers);
+
         // Plan relocated original sections
         for (index, original_section) in file.sections().iter().enumerate() {
             let section_name = original_section.name.as_str();
 
-            // FIXED: Only relocate sections that would overlap with the expanded section table
+            // All sections need to be shifted by header_growth to maintain relative positions
             let original_section_start = u64::from(original_section.pointer_to_raw_data);
-            let new_file_offset = if original_section_start < new_section_table_end {
-                // This section overlaps with the expanded section table, need to relocate
-                original_section_start + section_table_growth
-            } else {
-                // This section is after the section table, keep original offset
-                original_section_start
-            };
+            let new_file_offset = original_section_start + header_growth;
 
             // FIXED: Preserve original virtual addresses instead of recalculating
             // This ensures that resource section data is interpreted correctly
@@ -930,14 +935,9 @@ impl<'a> LayoutPlanner<'a> {
             let mut next_section_offset = u64::MAX;
             for (next_index, next_section) in file.sections().iter().enumerate() {
                 if next_index > index {
-                    let next_offset =
-                        if u64::from(next_section.pointer_to_raw_data) < new_section_table_end {
-                            // Next section will be relocated
-                            u64::from(next_section.pointer_to_raw_data) + section_table_growth
-                        } else {
-                            // Next section keeps original offset
-                            u64::from(next_section.pointer_to_raw_data)
-                        };
+                    // All sections are shifted by header_growth
+                    let next_original_start = u64::from(next_section.pointer_to_raw_data);
+                    let next_offset = next_original_start + header_growth;
                     next_section_offset = std::cmp::min(next_section_offset, next_offset);
                 }
             }
@@ -1793,6 +1793,31 @@ impl<'a> LayoutPlanner<'a> {
             .map_err(|_| malformed_error!("Section count exceeds u16 range"))?;
         self.pe.coff_header.update_section_count(new_section_count);
 
+        // Calculate and update SizeOfImage to encompass all sections
+        // SizeOfImage must include all sections aligned to section alignment
+        let section_alignment = self.assembly.file().section_alignment()?;
+        let mut max_virtual_end: u64 = 0;
+        for section in &file_structure.sections {
+            let section_virtual_end = u64::from(section.virtual_address)
+                + align_to(
+                    u64::from(section.virtual_size),
+                    u64::from(section_alignment),
+                );
+            max_virtual_end = max_virtual_end.max(section_virtual_end);
+        }
+        let new_size_of_image = u32::try_from(max_virtual_end)
+            .map_err(|_| malformed_error!("SizeOfImage exceeds u32 range"))?;
+        self.pe.update_size_of_image(new_size_of_image)?;
+
+        // Calculate and update SizeOfHeaders to include the expanded section table
+        // SizeOfHeaders = section_table_offset + section_table_size, aligned to FileAlignment
+        let file_alignment = u64::from(self.assembly.file().file_alignment()?);
+        let section_table_end =
+            file_structure.section_table.offset + file_structure.section_table.size;
+        let new_size_of_headers = u32::try_from(align_to(section_table_end, file_alignment))
+            .map_err(|_| malformed_error!("SizeOfHeaders exceeds u32 range"))?;
+        self.pe.update_size_of_headers(new_size_of_headers)?;
+
         // Write the complete section table using the updated Pe struct
         let mut section_table_data = Vec::new();
         self.pe.write_section_headers(&mut section_table_data)?;
@@ -1843,9 +1868,15 @@ impl<'a> LayoutPlanner<'a> {
         cor20_data[offset..offset + 4].copy_from_slice(&metadata_rva.to_le_bytes());
         offset += 4;
 
-        // Calculate total metadata size (excluding COR20 header)
-        let total_metadata_size =
-            metadata_layout.meta_section.file_region.size - metadata_layout.cor20_header.size;
+        // Calculate total metadata size from actual stream layout
+        // The size should be the end of the last stream relative to metadata root start
+        let total_metadata_size = if let Some(last_stream) = metadata_layout.streams.last() {
+            // Last stream's offset_from_root + size gives the actual metadata end
+            u64::from(last_stream.offset_from_root) + u64::from(last_stream.size)
+        } else {
+            // No streams - just the root header
+            metadata_layout.metadata_root.size
+        };
         let metadata_size_u32 = u32::try_from(total_metadata_size)
             .map_err(|_| malformed_error!("Total metadata size exceeds u32 range"))?;
         cor20_data[offset..offset + 4].copy_from_slice(&metadata_size_u32.to_le_bytes());

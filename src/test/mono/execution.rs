@@ -158,8 +158,22 @@ impl MonoRuntime {
 
     /// Execute assembly using modern .NET runtime
     fn execute_with_dotnet(&self, assembly_path: &Path) -> Result<ExecutionResult> {
-        let output = Command::new("dotnet")
-            .arg(assembly_path)
+        let mut cmd = Command::new("dotnet");
+
+        // Set working directory to the assembly's directory so .NET can find
+        // the runtimeconfig.json and deps.json files for dependency resolution
+        if let Some(parent) = assembly_path.parent() {
+            cmd.current_dir(parent);
+            if let Some(filename) = assembly_path.file_name() {
+                cmd.arg(filename);
+            } else {
+                cmd.arg(assembly_path);
+            }
+        } else {
+            cmd.arg(assembly_path);
+        }
+
+        let output = cmd
             .output()
             .map_err(|e| Error::Error(format!("Failed to execute dotnet: {}", e)))?;
 

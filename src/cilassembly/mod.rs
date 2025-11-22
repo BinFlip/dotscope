@@ -1502,6 +1502,7 @@ mod tests {
         };
         use crate::metadata::token::Token;
         use crate::test::mono::reflection::ParameterValue;
+        use crate::test::mono::runner::ArchConfig;
         use crate::test::mono::*;
 
         #[test]
@@ -1588,10 +1589,18 @@ mod tests {
             }
 
             // Assert we tested both architectures
-            assert_eq!(results.len(), 2, "Expected to test exactly 2 architectures");
+            let expected_arch_count = ArchConfig::platform_available_architectures().len();
+            assert_eq!(
+                results.len(),
+                expected_arch_count,
+                "Expected to test {} architectures",
+                expected_arch_count
+            );
 
             // Verify we have the expected architectures for this platform
-            // On Windows: x86 + x64, on other platforms: anycpu + x64
+            // On Windows: x86 + x64
+            // On x86_64 Unix: anycpu + x64
+            // On ARM64 Unix: anycpu only
             let arch_names: Vec<String> = results
                 .iter()
                 .map(|r| r.architecture.name.clone())
@@ -1602,18 +1611,29 @@ mod tests {
                     arch_names.contains(&"x86".to_string()),
                     "Missing x86 architecture test"
                 );
+                assert!(
+                    arch_names.contains(&"x64".to_string()),
+                    "Missing x64 architecture test"
+                );
             }
-            #[cfg(not(target_os = "windows"))]
+            #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
+            {
+                assert!(
+                    arch_names.contains(&"anycpu".to_string()),
+                    "Missing anycpu architecture test"
+                );
+                assert!(
+                    arch_names.contains(&"x64".to_string()),
+                    "Missing x64 architecture test"
+                );
+            }
+            #[cfg(all(not(target_os = "windows"), not(target_arch = "x86_64")))]
             {
                 assert!(
                     arch_names.contains(&"anycpu".to_string()),
                     "Missing anycpu architecture test"
                 );
             }
-            assert!(
-                arch_names.contains(&"x64".to_string()),
-                "Missing x64 architecture test"
-            );
 
             Ok(())
         }
@@ -1709,16 +1729,20 @@ mod tests {
                 );
             }
 
-            // Assert both test suites covered both architectures
+            // Assert both test suites covered the expected number of architectures
+            // On ARM64, only AnyCPU is tested; on x86_64, both AnyCPU and x64 are tested
+            let expected_arch_count = ArchConfig::platform_available_architectures().len();
             assert_eq!(
                 string_results.len(),
-                2,
-                "Expected string tests to cover 2 architectures"
+                expected_arch_count,
+                "Expected string tests to cover {} architectures",
+                expected_arch_count
             );
             assert_eq!(
                 exception_results.len(),
-                2,
-                "Expected exception tests to cover 2 architectures"
+                expected_arch_count,
+                "Expected exception tests to cover {} architectures",
+                expected_arch_count
             );
 
             Ok(())
@@ -1732,9 +1756,20 @@ mod tests {
                 let new_string_index = context.userstring_add(new_string)?;
                 let new_string_token = Token::new(0x70000000 | new_string_index);
 
-                // Find Console.WriteLine reference (using the helper from original code)
-                let mscorlib_ref = Token::new(0x23000001);
-                let console_writeline_ref = create_console_writeline_ref(context, mscorlib_ref)?;
+                // Find the assembly reference containing System.Console
+                // .NET 8+ uses separate System.Console assembly, while older frameworks use mscorlib
+                let console_assembly_ref = context
+                    .find_assembly_ref_by_name("System.Console")
+                    .or_else(|| context.find_core_library_ref())
+                    .ok_or_else(|| {
+                        crate::Error::Error(
+                            "Could not find System.Console or core library reference".to_string(),
+                        )
+                    })?;
+                let console_assembly_token =
+                    Token::new((TableId::AssemblyRef as u32) << 24 | console_assembly_ref.row);
+                let console_writeline_ref =
+                    create_console_writeline_ref(context, console_assembly_token)?;
 
                 // Add a method that prints the modified string
                 let new_string_token_copy = new_string_token;
@@ -2003,7 +2038,13 @@ mod tests {
                 );
             }
 
-            assert_eq!(results.len(), 2, "Expected to test exactly 2 architectures");
+            let expected_arch_count = ArchConfig::platform_available_architectures().len();
+            assert_eq!(
+                results.len(),
+                expected_arch_count,
+                "Expected to test {} architectures",
+                expected_arch_count
+            );
             Ok(())
         }
 
@@ -2108,7 +2149,13 @@ mod tests {
                 );
             }
 
-            assert_eq!(results.len(), 2, "Expected to test exactly 2 architectures");
+            let expected_arch_count = ArchConfig::platform_available_architectures().len();
+            assert_eq!(
+                results.len(),
+                expected_arch_count,
+                "Expected to test {} architectures",
+                expected_arch_count
+            );
             Ok(())
         }
 
@@ -2248,7 +2295,13 @@ mod tests {
                 );
             }
 
-            assert_eq!(results.len(), 2, "Expected to test exactly 2 architectures");
+            let expected_arch_count = ArchConfig::platform_available_architectures().len();
+            assert_eq!(
+                results.len(),
+                expected_arch_count,
+                "Expected to test {} architectures",
+                expected_arch_count
+            );
             Ok(())
         }
 
@@ -2383,7 +2436,13 @@ mod tests {
                 );
             }
 
-            assert_eq!(results.len(), 2, "Expected to test exactly 2 architectures");
+            let expected_arch_count = ArchConfig::platform_available_architectures().len();
+            assert_eq!(
+                results.len(),
+                expected_arch_count,
+                "Expected to test {} architectures",
+                expected_arch_count
+            );
             Ok(())
         }
     }

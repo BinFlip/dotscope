@@ -599,3 +599,358 @@ impl std::fmt::Debug for UnifiedImportContainer {
             .finish_non_exhaustive()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_unified_import_container_new() {
+        let container = UnifiedImportContainer::new();
+        assert!(container.is_empty());
+        assert_eq!(container.total_count(), 0);
+    }
+
+    #[test]
+    fn test_unified_import_container_default() {
+        let container = UnifiedImportContainer::default();
+        assert!(container.is_empty());
+    }
+
+    #[test]
+    fn test_add_native_function() {
+        let mut container = UnifiedImportContainer::new();
+        container
+            .add_native_function("kernel32.dll", "GetCurrentProcessId")
+            .unwrap();
+
+        assert!(!container.is_empty());
+        assert!(container.total_count() >= 1);
+    }
+
+    #[test]
+    fn test_add_multiple_native_functions_same_dll() {
+        let mut container = UnifiedImportContainer::new();
+        container
+            .add_native_function("kernel32.dll", "GetCurrentProcessId")
+            .unwrap();
+        container
+            .add_native_function("kernel32.dll", "GetCurrentThreadId")
+            .unwrap();
+        container
+            .add_native_function("kernel32.dll", "GetLastError")
+            .unwrap();
+
+        assert!(!container.is_empty());
+        assert!(container.total_count() >= 3);
+    }
+
+    #[test]
+    fn test_add_native_functions_multiple_dlls() {
+        let mut container = UnifiedImportContainer::new();
+        container
+            .add_native_function("kernel32.dll", "GetCurrentProcessId")
+            .unwrap();
+        container
+            .add_native_function("user32.dll", "MessageBoxW")
+            .unwrap();
+
+        assert!(!container.is_empty());
+        assert!(container.total_count() >= 2);
+    }
+
+    #[test]
+    fn test_add_native_function_by_ordinal() {
+        let mut container = UnifiedImportContainer::new();
+        container
+            .add_native_function_by_ordinal("user32.dll", 100)
+            .unwrap();
+
+        assert!(!container.is_empty());
+    }
+
+    #[test]
+    fn test_add_native_function_by_ordinal_invalid() {
+        let mut container = UnifiedImportContainer::new();
+        // Ordinal 0 should be invalid
+        let result = container.add_native_function_by_ordinal("user32.dll", 0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_find_by_name_native() {
+        let mut container = UnifiedImportContainer::new();
+        container
+            .add_native_function("kernel32.dll", "TestImport")
+            .unwrap();
+
+        let results = container.find_by_name("TestImport");
+        assert_eq!(results.len(), 1);
+
+        if let ImportEntry::Native(native_ref) = &results[0] {
+            assert_eq!(native_ref.dll_name, "kernel32.dll");
+            assert_eq!(native_ref.function_name, Some("TestImport".to_string()));
+        } else {
+            panic!("Expected Native import entry");
+        }
+    }
+
+    #[test]
+    fn test_find_by_name_not_found() {
+        let container = UnifiedImportContainer::new();
+        let results = container.find_by_name("NonExistent");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_get_all_dll_names() {
+        let mut container = UnifiedImportContainer::new();
+        container
+            .add_native_function("kernel32.dll", "Func1")
+            .unwrap();
+        container
+            .add_native_function("user32.dll", "Func2")
+            .unwrap();
+        container
+            .add_native_function("advapi32.dll", "Func3")
+            .unwrap();
+
+        let dll_names = container.get_all_dll_names();
+        assert_eq!(dll_names.len(), 3);
+        assert!(dll_names.contains(&"kernel32.dll".to_string()));
+        assert!(dll_names.contains(&"user32.dll".to_string()));
+        assert!(dll_names.contains(&"advapi32.dll".to_string()));
+    }
+
+    #[test]
+    fn test_get_all_dll_dependencies() {
+        let mut container = UnifiedImportContainer::new();
+        container
+            .add_native_function("kernel32.dll", "GetCurrentProcessId")
+            .unwrap();
+        container
+            .add_native_function("kernel32.dll", "GetLastError")
+            .unwrap();
+
+        let dependencies = container.get_all_dll_dependencies();
+        assert!(!dependencies.is_empty());
+
+        let kernel32_dep = dependencies.iter().find(|d| d.name == "kernel32.dll");
+        assert!(kernel32_dep.is_some());
+
+        let dep = kernel32_dep.unwrap();
+        assert!(dep.functions.len() >= 2);
+        assert!(dep.functions.contains(&"GetCurrentProcessId".to_string()));
+        assert!(dep.functions.contains(&"GetLastError".to_string()));
+    }
+
+    #[test]
+    fn test_cil_accessor() {
+        let container = UnifiedImportContainer::new();
+        let cil = container.cil();
+        assert!(cil.is_empty());
+    }
+
+    #[test]
+    fn test_native_accessor() {
+        let container = UnifiedImportContainer::new();
+        let native = container.native();
+        assert!(native.is_empty());
+    }
+
+    #[test]
+    fn test_native_mut_invalidates_cache() {
+        let mut container = UnifiedImportContainer::new();
+        container
+            .add_native_function("test.dll", "TestFunc")
+            .unwrap();
+
+        // Force cache to be built
+        let _ = container.find_by_name("TestFunc");
+
+        // Mutating native should invalidate cache
+        let _ = container.native_mut();
+
+        // Cache should be dirty now
+        assert!(container.cache_dirty.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_clone_resets_cache() {
+        let mut container = UnifiedImportContainer::new();
+        container
+            .add_native_function("test.dll", "TestFunc")
+            .unwrap();
+
+        // Force cache to be built
+        let _ = container.find_by_name("TestFunc");
+
+        // Clone should reset cache to dirty
+        let cloned = container.clone();
+        assert!(cloned.cache_dirty.load(Ordering::Relaxed));
+
+        // But data should be preserved
+        assert!(!cloned.is_empty());
+    }
+
+    #[test]
+    fn test_debug_output() {
+        let mut container = UnifiedImportContainer::new();
+        container
+            .add_native_function("test.dll", "TestFunc")
+            .unwrap();
+
+        let debug_output = format!("{:?}", container);
+        assert!(debug_output.contains("ImportContainer"));
+        assert!(debug_output.contains("native_dll_count"));
+        assert!(debug_output.contains("native_function_count"));
+    }
+
+    #[test]
+    fn test_native_import_ref_structure() {
+        let import_ref = NativeImportRef {
+            dll_name: "kernel32.dll".to_string(),
+            function_name: Some("GetCurrentProcessId".to_string()),
+            ordinal: None,
+            iat_rva: 0x1000,
+        };
+
+        assert_eq!(import_ref.dll_name, "kernel32.dll");
+        assert_eq!(
+            import_ref.function_name,
+            Some("GetCurrentProcessId".to_string())
+        );
+        assert!(import_ref.ordinal.is_none());
+        assert_eq!(import_ref.iat_rva, 0x1000);
+    }
+
+    #[test]
+    fn test_native_import_ref_ordinal() {
+        let import_ref = NativeImportRef {
+            dll_name: "user32.dll".to_string(),
+            function_name: None,
+            ordinal: Some(120),
+            iat_rva: 0x2000,
+        };
+
+        assert!(import_ref.function_name.is_none());
+        assert_eq!(import_ref.ordinal, Some(120));
+    }
+
+    #[test]
+    fn test_native_import_ref_clone() {
+        let import_ref = NativeImportRef {
+            dll_name: "test.dll".to_string(),
+            function_name: Some("TestFunc".to_string()),
+            ordinal: None,
+            iat_rva: 0x3000,
+        };
+
+        let cloned = import_ref.clone();
+        assert_eq!(cloned.dll_name, "test.dll");
+        assert_eq!(cloned.function_name, Some("TestFunc".to_string()));
+    }
+
+    #[test]
+    fn test_dll_source_cil() {
+        let token = Token::new(0x06000001);
+        let source = DllSource::Cil(vec![token]);
+
+        if let DllSource::Cil(tokens) = source {
+            assert_eq!(tokens.len(), 1);
+            assert_eq!(tokens[0], token);
+        } else {
+            panic!("Expected Cil variant");
+        }
+    }
+
+    #[test]
+    fn test_dll_source_native() {
+        let source = DllSource::Native;
+        assert!(matches!(source, DllSource::Native));
+    }
+
+    #[test]
+    fn test_dll_source_both() {
+        let token = Token::new(0x06000001);
+        let source = DllSource::Both(vec![token]);
+
+        if let DllSource::Both(tokens) = source {
+            assert_eq!(tokens.len(), 1);
+        } else {
+            panic!("Expected Both variant");
+        }
+    }
+
+    #[test]
+    fn test_dll_dependency_structure() {
+        let dep = DllDependency {
+            name: "kernel32.dll".to_string(),
+            source: DllSource::Native,
+            functions: vec![
+                "GetCurrentProcessId".to_string(),
+                "GetLastError".to_string(),
+            ],
+        };
+
+        assert_eq!(dep.name, "kernel32.dll");
+        assert!(matches!(dep.source, DllSource::Native));
+        assert_eq!(dep.functions.len(), 2);
+    }
+
+    #[test]
+    fn test_update_iat_rvas_positive() {
+        let mut container = UnifiedImportContainer::new();
+        container
+            .add_native_function("test.dll", "TestFunc")
+            .unwrap();
+
+        // Should succeed with positive delta
+        let result = container.update_iat_rvas(0x1000);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_update_iat_rvas_negative() {
+        let mut container = UnifiedImportContainer::new();
+        container
+            .add_native_function("test.dll", "TestFunc")
+            .unwrap();
+
+        // Should succeed with negative delta
+        let result = container.update_iat_rvas(-0x100);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_get_import_table_data_empty() {
+        let container = UnifiedImportContainer::new();
+        let result = container.get_import_table_data(false);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_get_import_table_data_pe32() {
+        let mut container = UnifiedImportContainer::new();
+        container
+            .add_native_function("kernel32.dll", "GetCurrentProcessId")
+            .unwrap();
+
+        let result = container.get_import_table_data(false);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+    }
+
+    #[test]
+    fn test_get_import_table_data_pe32_plus() {
+        let mut container = UnifiedImportContainer::new();
+        container
+            .add_native_function("kernel32.dll", "GetCurrentProcessId")
+            .unwrap();
+
+        let result = container.get_import_table_data(true);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+    }
+}

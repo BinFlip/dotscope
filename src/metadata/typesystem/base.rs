@@ -1248,7 +1248,7 @@ impl CilFlavor {
     /// # Arguments
     /// * `constant_flavor` - The flavor of the constant value
     ///
-    /// # Returns  
+    /// # Returns
     /// `true` if a constant of the given flavor can be assigned to this type
     #[must_use]
     pub fn accepts_constant(&self, constant_flavor: &CilFlavor) -> bool {

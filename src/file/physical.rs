@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn physical() {
         let physical = Physical::new(
-            &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll"),
         )
         .unwrap();
 
@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn test_physical_invalid_file_path() {
-        let result = Physical::new(&PathBuf::from("/nonexistent/path/to/file.dll"));
+        let result = Physical::new(PathBuf::from("/nonexistent/path/to/file.dll"));
         assert!(result.is_err());
         match result.unwrap_err() {
             FileError(io_error) => {
@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn test_physical_large_offset_overflow() {
         let physical = Physical::new(
-            &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll"),
         )
         .unwrap();
 
@@ -345,7 +345,7 @@ mod tests {
     #[test]
     fn test_physical_boundary_conditions() {
         let physical = Physical::new(
-            &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll"),
         )
         .unwrap();
 
