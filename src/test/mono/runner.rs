@@ -37,6 +37,33 @@ impl ArchConfig {
         vec![Self::x86(), Self::x64()]
     }
 
+    /// Create architectures available on the current platform
+    ///
+    /// On Windows, both x86 and x64 are available.
+    /// On Linux/macOS, x86 (32-bit) targets are typically not available
+    /// in CI environments without additional SDK components, so we only
+    /// include x64 and the native architecture.
+    pub fn platform_available_architectures() -> Vec<Self> {
+        #[cfg(target_os = "windows")]
+        {
+            vec![Self::x86(), Self::x64()]
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            // On non-Windows platforms, x86 cross-compilation is often not available
+            // Use AnyCPU (no platform flag) which works universally, plus x64
+            vec![Self::anycpu(), Self::x64()]
+        }
+    }
+
+    /// Create AnyCPU (platform-agnostic) configuration
+    pub fn anycpu() -> Self {
+        Self {
+            name: "anycpu".to_string(),
+            platform_flags: vec![],
+        }
+    }
+
     /// Get safe filename component for this architecture
     pub fn filename_component(&self) -> String {
         self.name.replace("-", "").to_lowercase()
@@ -50,11 +77,14 @@ pub struct MonoTestRunner {
 }
 
 impl MonoTestRunner {
-    /// Create new test runner with standard architectures (x86 + x64)
+    /// Create new test runner with platform-available architectures
+    ///
+    /// Uses `platform_available_architectures()` to select architectures
+    /// that work on the current platform (x86+x64 on Windows, anycpu+x64 elsewhere).
     pub fn new() -> Result<Self> {
         Ok(Self {
             temp_dir: TempDir::new()?,
-            architectures: ArchConfig::standard_architectures(),
+            architectures: ArchConfig::platform_available_architectures(),
         })
     }
 
@@ -165,6 +195,11 @@ mod tests {
         assert_eq!(x64.name, "x64");
         assert_eq!(x64.platform_flags, vec!["/platform:x64"]);
         assert_eq!(x64.filename_component(), "x64");
+
+        let anycpu = ArchConfig::anycpu();
+        assert_eq!(anycpu.name, "anycpu");
+        assert!(anycpu.platform_flags.is_empty());
+        assert_eq!(anycpu.filename_component(), "anycpu");
     }
 
     #[test]
@@ -172,6 +207,22 @@ mod tests {
         let archs = ArchConfig::standard_architectures();
         assert_eq!(archs.len(), 2);
         assert_eq!(archs[0].name, "x86");
+        assert_eq!(archs[1].name, "x64");
+    }
+
+    #[test]
+    fn test_platform_available_architectures() {
+        let archs = ArchConfig::platform_available_architectures();
+        assert_eq!(archs.len(), 2);
+        // On Windows: x86 + x64, on other platforms: anycpu + x64
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(archs[0].name, "x86");
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert_eq!(archs[0].name, "anycpu");
+        }
         assert_eq!(archs[1].name, "x64");
     }
 
