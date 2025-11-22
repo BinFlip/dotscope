@@ -164,8 +164,6 @@ pub enum ResourceType {
     /// `TimeSpan` resource value (type code 0x10) - not yet implemented
     /* 0x10 */
     TimeSpan,
-
-    // Type with special representation, like byte[] and Stream
     /// Byte array resource with length prefix (type code 0x20)
     /* 0x20 */
     ByteArray(Vec<u8>),
@@ -671,7 +669,10 @@ impl ResourceType {
     }
 }
 
-/// A parsed .NET resource entry
+/// A parsed .NET resource entry with owned data.
+///
+/// This structure contains owned copies of resource data. For zero-copy access to large
+/// resources (like embedded ZIP archives), see [`ResourceEntryRef`].
 pub struct ResourceEntry {
     /// The name of the resource
     pub name: String,
@@ -679,6 +680,401 @@ pub struct ResourceEntry {
     pub name_hash: u32,
     /// The parsed resource
     pub data: ResourceType,
+}
+
+/// Zero-copy variant of [`ResourceType`] that borrows data instead of copying.
+///
+/// This enum is identical to [`ResourceType`] except that `String` and `ByteArray` variants
+/// hold borrowed references instead of owned data. This enables efficient access to large
+/// embedded resources (like ZIP archives) without allocating copies that could be hundreds
+/// of megabytes or gigabytes.
+///
+/// # Lifetime
+///
+/// The lifetime parameter `'a` represents the lifetime of the source data buffer. All borrowed
+/// data (strings and byte arrays) will remain valid for this lifetime.
+///
+/// # Usage
+///
+/// Use this type when:
+/// - Working with large embedded resources (e.g., ZIP archives, large binary data)
+/// - Memory-mapping resource files for efficient access
+/// - Avoiding unnecessary allocations for performance-critical code
+///
+/// Use [`ResourceType`] (the owned variant) when:
+/// - You need to store resources beyond the lifetime of the source buffer
+/// - Working with small resources where copying overhead is negligible
+/// - You prefer simpler APIs without lifetime parameters
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use dotscope::metadata::resources::parser::parse_dotnet_resource_ref;
+///
+/// let resource_data = std::fs::read("MyApp.resources")?;
+/// let resources = parse_dotnet_resource_ref(&resource_data)?;
+///
+/// for (name, entry) in &resources {
+///     match &entry.data {
+///         ResourceTypeRef::ByteArray(bytes) => {
+///             // Zero-copy access to potentially large byte array
+///             println!("Resource '{}': {} bytes (no copy!)", name, bytes.len());
+///
+///             // Can pass directly to functions expecting &[u8]
+///             process_zip_archive(bytes)?;
+///         }
+///         ResourceTypeRef::String(s) => {
+///             // Zero-copy access to string data
+///             println!("String resource: {}", s);
+///         }
+///         _ => {}
+///     }
+/// }
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+///
+/// # Thread Safety
+///
+/// All variants are thread-safe and can be safely shared across threads without synchronization,
+/// as long as the underlying data buffer remains valid.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResourceTypeRef<'a> {
+    /// Null resource value (type code 0x00)
+    /* 0 */
+    Null,
+    /// UTF-8 string resource with borrowed data (type code 0x01)
+    /* 1 */
+    String(&'a str),
+    /// Boolean resource value, false=0, true=non-zero (type code 0x02)
+    /* 2 */
+    Boolean(bool),
+    /// Single character resource as byte value (type code 0x03)
+    /* 3 */
+    Char(char),
+    /// Unsigned 8-bit integer resource (type code 0x04)
+    /* 4 */
+    Byte(u8),
+    /// Signed 8-bit integer resource (type code 0x05)
+    /* 5 */
+    SByte(i8),
+    /// Signed 16-bit integer resource, little-endian (type code 0x06)
+    /* 6 */
+    Int16(i16),
+    /// Unsigned 16-bit integer resource, little-endian (type code 0x07)
+    /* 7 */
+    UInt16(u16),
+    /// Signed 32-bit integer resource, little-endian (type code 0x08)
+    /* 8 */
+    Int32(i32),
+    /// Unsigned 32-bit integer resource, little-endian (type code 0x09)
+    /* 9 */
+    UInt32(u32),
+    /// Signed 64-bit integer resource, little-endian (type code 0x0A)
+    /* 0xA */
+    Int64(i64),
+    /// Unsigned 64-bit integer resource, little-endian (type code 0x0B)
+    /* 0xB */
+    UInt64(u64),
+    /// 32-bit floating point resource, little-endian (type code 0x0C)
+    /* 0xC */
+    Single(f32),
+    /// 64-bit floating point resource, little-endian (type code 0x0D)
+    /* 0xD */
+    Double(f64),
+    /// Decimal resource value (type code 0x0E) - not yet implemented
+    /* 0xE */
+    Decimal,
+    /// `DateTime` resource value (type code 0x0F) - not yet implemented
+    /* 0xF */
+    DateTime,
+    /// `TimeSpan` resource value (type code 0x10) - not yet implemented
+    /* 0x10 */
+    TimeSpan,
+    /// Byte array resource with borrowed data (type code 0x20)
+    /* 0x20 */
+    ByteArray(&'a [u8]),
+    /// Stream resource reference (type code 0x21) - not yet implemented
+    /* 0x21 */
+    Stream,
+
+    // User types - serialized using the binary formatter
+    /// Marker for the beginning of user-defined types (type code 0x40+)
+    /* 0x40 */
+    StartOfUserTypes,
+}
+
+/// A parsed .NET resource entry with borrowed data for zero-copy access.
+///
+/// This is the zero-copy variant of [`ResourceEntry`] that borrows resource data instead of
+/// copying it. Use this when working with large embedded resources to avoid allocating
+/// potentially hundreds of megabytes or gigabytes of memory.
+///
+/// # Lifetime
+///
+/// The lifetime parameter `'a` represents the lifetime of the source resource data buffer.
+/// The resource data will remain valid for this lifetime.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use dotscope::metadata::resources::parser::Resource;
+///
+/// let resource_data = std::fs::read("MyApp.resources")?;
+/// let mut resource = Resource::parse(&resource_data)?;
+/// let resources = resource.read_resources_ref(&resource_data)?;
+///
+/// for (name, entry) in &resources {
+///     println!("Resource: {} (Hash: 0x{:08X})", name, entry.name_hash);
+///
+///     match &entry.data {
+///         ResourceTypeRef::ByteArray(bytes) => {
+///             // Extract embedded ZIP without copying
+///             if bytes.starts_with(b"PK\x03\x04") {
+///                 println!("  Found ZIP archive: {} bytes", bytes.len());
+///                 extract_zip(bytes)?;
+///             }
+///         }
+///         ResourceTypeRef::String(s) => {
+///             println!("  String: '{}'", s);
+///         }
+///         _ => {}
+///     }
+/// }
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+pub struct ResourceEntryRef<'a> {
+    /// The name of the resource (owned for efficient map key usage)
+    pub name: String,
+    /// The hash of the name
+    pub name_hash: u32,
+    /// The parsed resource with borrowed data
+    pub data: ResourceTypeRef<'a>,
+}
+
+impl<'a> ResourceTypeRef<'a> {
+    /// Parses a resource type from its binary type code with zero-copy semantics.
+    ///
+    /// This is the zero-copy variant of [`ResourceType::from_type_byte`]. Instead of allocating
+    /// owned copies for string and byte array data, it returns borrowed slices directly into
+    /// the parser's underlying data buffer.
+    ///
+    /// This method reads a resource value from the parser based on the provided type byte,
+    /// which corresponds to the type codes defined in the .NET resource format specification.
+    /// Each type code indicates both the data type and how to parse the following bytes.
+    ///
+    /// # Arguments
+    ///
+    /// * `byte` - The type code byte (0x00-0xFF) that identifies the data type
+    /// * `parser` - A mutable reference to the parser positioned after the type byte
+    ///
+    /// # Returns
+    ///
+    /// Returns a [`crate::Result<ResourceTypeRef<'a>>`] containing the parsed resource value
+    /// with borrowed data where applicable (strings and byte arrays).
+    ///
+    /// # Supported Type Codes
+    ///
+    /// All type codes from [`ResourceType::from_type_byte`] are supported with the same
+    /// semantics, except:
+    /// - `0x01`: UTF-8 string returns `&'a str` instead of `String`
+    /// - `0x20`: Byte array returns `&'a [u8]` instead of `Vec<u8>`
+    /// - `0x21`: Stream returns `&'a [u8]` instead of `Vec<u8>`
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use dotscope::metadata::resources::types::ResourceTypeRef;
+    /// use dotscope::file::parser::Parser;
+    ///
+    /// let data = b"\x05hello"; // Type byte 0x01, length 5, "hello"
+    /// let mut parser = Parser::new(data);
+    ///
+    /// // Parse a string resource (type code 0x01) - zero-copy
+    /// let string_type = ResourceTypeRef::from_type_byte_ref(0x01, &mut parser)?;
+    /// if let ResourceTypeRef::String(s) = string_type {
+    ///     println!("Found string: {}", s); // No allocation occurred
+    /// }
+    ///
+    /// // Parse a byte array (type code 0x20) - zero-copy
+    /// let data = b"\x04\x01\x02\x03\x04"; // Length 4, followed by 4 bytes
+    /// let mut parser = Parser::new(data);
+    /// let bytes_type = ResourceTypeRef::from_type_byte_ref(0x20, &mut parser)?;
+    /// if let ResourceTypeRef::ByteArray(bytes) = bytes_type {
+    ///     println!("Found {} bytes (no copy!)", bytes.len());
+    /// }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - [`crate::Error::TypeError`]: If the type byte is not supported
+    /// - Parser errors: If reading the underlying data fails (e.g., truncated data)
+    ///
+    /// # Implementation Note
+    ///
+    /// Both `parser` and `data` parameters are required even though `parser.data()` returns `&'a [u8]`.
+    /// This is because the parser is typically a local variable with a shorter lifetime than `'a`,
+    /// and we need to return slices with lifetime `'a`. The `data` parameter provides the stable
+    /// reference with lifetime `'a` that our returned slices borrow from, while `parser` is used
+    /// for position tracking and reading operations.
+    pub fn from_type_byte_ref(byte: u8, parser: &mut Parser<'a>, data: &'a [u8]) -> Result<Self> {
+        match byte {
+            0x0 => {
+                // ResourceTypeCode.Null - no data to read
+                Ok(ResourceTypeRef::Null)
+            }
+            0x1 => {
+                // .NET string resources use UTF-8 encoding with 7-bit encoded byte length prefix
+                // Zero-copy variant - returns borrowed slice
+                Ok(ResourceTypeRef::String(
+                    parser.read_prefixed_string_utf8_ref()?,
+                ))
+            }
+            0x2 => Ok(ResourceTypeRef::Boolean(parser.read_le::<u8>()? > 0)),
+            0x3 => Ok(ResourceTypeRef::Char(parser.read_le::<u8>()?.into())),
+            0x4 => Ok(ResourceTypeRef::Byte(parser.read_le::<u8>()?)),
+            0x5 => Ok(ResourceTypeRef::SByte(parser.read_le::<i8>()?)),
+            0x6 => Ok(ResourceTypeRef::Int16(parser.read_le::<i16>()?)),
+            0x7 => Ok(ResourceTypeRef::UInt16(parser.read_le::<u16>()?)),
+            0x8 => Ok(ResourceTypeRef::Int32(parser.read_le::<i32>()?)),
+            0x9 => Ok(ResourceTypeRef::UInt32(parser.read_le::<u32>()?)),
+            0xA => Ok(ResourceTypeRef::Int64(parser.read_le::<i64>()?)),
+            0xB => Ok(ResourceTypeRef::UInt64(parser.read_le::<u64>()?)),
+            0xC => Ok(ResourceTypeRef::Single(parser.read_le::<f32>()?)),
+            0xD => Ok(ResourceTypeRef::Double(parser.read_le::<f64>()?)),
+            0xE => {
+                // ResourceTypeCode.Decimal - 16 bytes (128-bit decimal)
+                Err(TypeError(format!(
+                    "TypeByte - {byte:X} (Decimal) is not yet implemented"
+                )))
+            }
+            0xF => {
+                // ResourceTypeCode.DateTime - 8 bytes (64-bit binary format)
+                Err(TypeError(format!(
+                    "TypeByte - {byte:X} (DateTime) is not yet implemented"
+                )))
+            }
+            0x10 => {
+                // ResourceTypeCode.TimeSpan - 8 bytes (64-bit ticks)
+                Err(TypeError(format!(
+                    "TypeByte - {byte:X} (TimeSpan) is not yet implemented"
+                )))
+            }
+            0x20 => {
+                // ByteArray - zero-copy variant returns borrowed slice
+                let length = parser.read_compressed_uint()?;
+                let start_pos = parser.pos();
+                let end_pos = start_pos + length as usize;
+
+                if end_pos > data.len() {
+                    return Err(out_of_bounds_error!());
+                }
+
+                // Seek past the data if not at exact end
+                if end_pos < data.len() {
+                    parser.seek(end_pos)?;
+                }
+
+                // Return the borrowed slice from the data parameter
+                Ok(ResourceTypeRef::ByteArray(&data[start_pos..end_pos]))
+            }
+            0x21 => {
+                // ResourceTypeCode.Stream - zero-copy variant returns borrowed slice
+                let length = parser.read_compressed_uint()?;
+                let start_pos = parser.pos();
+                let end_pos = start_pos + length as usize;
+
+                if end_pos > data.len() {
+                    return Err(out_of_bounds_error!());
+                }
+
+                // Seek past the data if not at exact end
+                if end_pos < data.len() {
+                    parser.seek(end_pos)?;
+                }
+
+                // Return the borrowed slice from the data parameter
+                // For now, treat Stream as ByteArray - we don't have separate Stream type
+                Ok(ResourceTypeRef::ByteArray(&data[start_pos..end_pos]))
+            }
+            0x40..=0xFF => {
+                // User types - these require a type table for resolution
+                Err(TypeError(format!(
+                    "TypeByte - {byte:X} is a user type (>=0x40) but requires type table resolution which is not yet implemented"
+                )))
+            }
+            _ => Err(TypeError(format!(
+                "TypeByte - {byte:X} is currently not supported"
+            ))),
+        }
+    }
+
+    /// Parses a resource type from its .NET type name with zero-copy semantics.
+    ///
+    /// This is the zero-copy variant of [`ResourceType::from_type_name`]. It maps common
+    /// .NET Framework type names to their corresponding binary representations and delegates
+    /// to [`Self::from_type_byte_ref`] for the actual parsing with zero-copy semantics.
+    ///
+    /// # Arguments
+    ///
+    /// * `type_name` - The fully qualified .NET type name (e.g., "System.String")
+    /// * `parser` - A mutable reference to the parser positioned at the resource value
+    ///
+    /// # Returns
+    ///
+    /// Returns a [`crate::Result<ResourceTypeRef<'a>>`] containing the parsed resource value
+    /// with borrowed data for strings and byte arrays.
+    ///
+    /// # Supported Type Names
+    ///
+    /// All type names from [`ResourceType::from_type_name`] are supported. String and
+    /// ByteArray types return borrowed slices instead of owned data.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use dotscope::metadata::resources::types::ResourceTypeRef;
+    /// use dotscope::file::parser::Parser;
+    ///
+    /// let data = b"\x05hello";
+    /// let mut parser = Parser::new(data);
+    ///
+    /// // Parse using .NET type name - zero-copy
+    /// let string_resource = ResourceTypeRef::from_type_name_ref("System.String", &mut parser)?;
+    /// if let ResourceTypeRef::String(s) = string_resource {
+    ///     println!("String resource: {}", s); // No allocation
+    /// }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - [`crate::Error::TypeError`]: If the type name is not supported
+    /// - Parser errors: If reading the underlying data fails
+    pub fn from_type_name_ref(
+        type_name: &str,
+        parser: &mut Parser<'a>,
+        data: &'a [u8],
+    ) -> Result<Self> {
+        match type_name {
+            "System.Null" => ResourceTypeRef::from_type_byte_ref(0, parser, data),
+            "System.String" => ResourceTypeRef::from_type_byte_ref(1, parser, data),
+            "System.Boolean" => ResourceTypeRef::from_type_byte_ref(2, parser, data),
+            "System.Char" => ResourceTypeRef::from_type_byte_ref(3, parser, data),
+            "System.Byte" => ResourceTypeRef::from_type_byte_ref(4, parser, data),
+            "System.SByte" => ResourceTypeRef::from_type_byte_ref(5, parser, data),
+            "System.Int16" => ResourceTypeRef::from_type_byte_ref(6, parser, data),
+            "System.UInt16" => ResourceTypeRef::from_type_byte_ref(7, parser, data),
+            "System.Int32" => ResourceTypeRef::from_type_byte_ref(8, parser, data),
+            "System.UInt32" => ResourceTypeRef::from_type_byte_ref(9, parser, data),
+            "System.Int64" => ResourceTypeRef::from_type_byte_ref(0xA, parser, data),
+            "System.UInt64" => ResourceTypeRef::from_type_byte_ref(0xB, parser, data),
+            "System.Single" => ResourceTypeRef::from_type_byte_ref(0xC, parser, data),
+            "System.Double" => ResourceTypeRef::from_type_byte_ref(0xD, parser, data),
+            "System.Byte[]" => ResourceTypeRef::from_type_byte_ref(0x20, parser, data),
+            _ => Err(TypeError(format!(
+                "TypeName - {type_name} is currently not supported"
+            ))),
+        }
+    }
 }
 
 #[cfg(test)]

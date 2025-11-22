@@ -723,6 +723,60 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Read a 7-bit encoded length-prefixed UTF-8 string as a borrowed slice (zero-copy).
+    ///
+    /// This is the zero-copy variant of [`read_prefixed_string_utf8`](Parser::read_prefixed_string_utf8).
+    /// Instead of allocating a new `String`, it returns a borrowed `&str` slice directly into
+    /// the underlying data buffer. This is ideal for large strings or performance-critical code
+    /// where you want to avoid allocations.
+    ///
+    /// The string length is encoded as a 7-bit compressed integer (ECMA-335 format),
+    /// followed by that many UTF-8 bytes.
+    ///
+    /// # Lifetime
+    ///
+    /// The returned string slice borrows from the parser's underlying data buffer and has
+    /// the same lifetime `'a` as the parser.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or
+    /// [`crate::Error::Malformed`] for invalid UTF-8 encoding.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    ///
+    /// // Length 5, followed by "Hello"
+    /// let data = [5, b'H', b'e', b'l', b'l', b'o'];
+    /// let mut parser = Parser::new(&data);
+    ///
+    /// let result = parser.read_prefixed_string_utf8_ref()?;
+    /// assert_eq!(result, "Hello");
+    /// // No allocation - result borrows from data
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn read_prefixed_string_utf8_ref(&mut self) -> Result<&'a str> {
+        let length = self.read_7bit_encoded_int()? as usize;
+
+        if self.position + length > self.data.len() {
+            return Err(out_of_bounds_error!());
+        }
+
+        let string_data = &self.data[self.position..self.position + length];
+        self.position += length;
+
+        std::str::from_utf8(string_data).map_err(|_| {
+            malformed_error!(
+                "Invalid UTF-8 string at position {} - {} - {:?}",
+                self.position - length,
+                self.position,
+                string_data
+            )
+        })
+    }
+
     /// Read a compressed uint length-prefixed UTF-8 string.
     ///
     /// The string length is encoded as a compressed unsigned integer according to ECMA-335,
@@ -986,5 +1040,47 @@ mod tests {
         let input = &[0x80, 0x80, 0x80, 0x80, 0x80, 0x01];
         let mut parser = Parser::new(input);
         assert!(parser.read_7bit_encoded_int().is_err());
+    }
+
+    #[test]
+    fn test_read_prefixed_string_utf8_ref() {
+        // Test basic string
+        let data = [5, b'H', b'e', b'l', b'l', b'o'];
+        let mut parser = Parser::new(&data);
+        let result = parser.read_prefixed_string_utf8_ref().unwrap();
+        assert_eq!(result, "Hello");
+
+        // Verify zero-copy: the string should point into the original data
+        let data_ptr = data.as_ptr() as usize;
+        let result_ptr = result.as_ptr() as usize;
+        assert!(
+            result_ptr >= data_ptr && result_ptr < data_ptr + data.len(),
+            "String should be borrowed from source data (zero-copy)"
+        );
+
+        // Test empty string
+        let data = [0];
+        let mut parser = Parser::new(&data);
+        let result = parser.read_prefixed_string_utf8_ref().unwrap();
+        assert_eq!(result, "");
+
+        // Test UTF-8 string
+        let data = [9, 0xE4, 0xB8, 0xAD, 0xE6, 0x96, 0x87, 0xE2, 0x9C, 0x93]; // "中文✓"
+        let mut parser = Parser::new(&data);
+        let result = parser.read_prefixed_string_utf8_ref().unwrap();
+        assert_eq!(result, "中文✓");
+
+        // Test invalid UTF-8
+        let data = [3, 0xFF, 0xFE, 0xFD];
+        let mut parser = Parser::new(&data);
+        assert!(parser.read_prefixed_string_utf8_ref().is_err());
+
+        // Test out of bounds
+        let data = [10, b'H', b'i']; // Claims 10 bytes but only has 2
+        let mut parser = Parser::new(&data);
+        assert!(matches!(
+            parser.read_prefixed_string_utf8_ref(),
+            Err(crate::Error::OutOfBounds { .. })
+        ));
     }
 }

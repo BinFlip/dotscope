@@ -363,6 +363,20 @@ pub use crate::metadata::tables::{
     File as MetadataFile, FileRc, ManifestResource, ManifestResourceRc,
 };
 
+/// Resource parsing with owned and zero-copy semantics.
+///
+/// Parse .NET resource files with both owned and zero-copy variants for flexible resource access.
+/// The zero-copy variant (`parse_dotnet_resource_ref`, `ResourceEntryRef`, `ResourceTypeRef`) borrows
+/// string and byte array data directly from the source buffer without allocation, enabling efficient
+/// handling of large embedded resources (e.g., ZIP archives) that could be hundreds of megabytes or
+/// gigabytes. The owned variant (`parse_dotnet_resource`, `ResourceEntry`, `ResourceType`) provides
+/// traditional owned data for scenarios where borrowed data is inconvenient. Essential for
+/// memory-mapped files and memory-critical scenarios.
+pub use crate::metadata::resources::{
+    parse_dotnet_resource, parse_dotnet_resource_ref, DotNetResourceEncoder, Resource,
+    ResourceEntry, ResourceEntryRef, ResourceType, ResourceTypeRef,
+};
+
 /// Standalone signatures.
 ///
 /// Independent signature definitions used for indirect calls and marshalling scenarios.

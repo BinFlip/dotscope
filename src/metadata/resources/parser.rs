@@ -79,7 +79,9 @@ use std::collections::BTreeMap;
 
 use crate::{
     file::parser::Parser,
-    metadata::resources::{ResourceEntry, ResourceType, RESOURCE_MAGIC},
+    metadata::resources::{
+        ResourceEntry, ResourceEntryRef, ResourceType, ResourceTypeRef, RESOURCE_MAGIC,
+    },
     Result,
 };
 
@@ -138,6 +140,105 @@ const MAX_RESOURCES: u32 = 1_000_000;
 pub fn parse_dotnet_resource(data: &[u8]) -> Result<BTreeMap<String, ResourceEntry>> {
     let mut resource = Resource::parse(data)?;
     resource.read_resources(data)
+}
+
+/// Parse a complete .NET resource buffer with zero-copy semantics.
+///
+/// This is the zero-copy variant of [`parse_dotnet_resource`]. Instead of allocating
+/// owned copies of resource data, it returns borrowed slices directly into the source
+/// data buffer. This is the recommended entry point when working with large embedded
+/// resources (like ZIP archives) that could be hundreds of megabytes or gigabytes.
+///
+/// # Format Support
+///
+/// - **V1 Resources**: Standard release format
+/// - **V2 Resources**: Enhanced format with optional debug information
+/// - **All Resource Types**: Strings, primitives, byte arrays, and complex objects
+/// - **Zero-Copy Data**: String and byte array resources borrow from source buffer
+///
+/// # Arguments
+///
+/// * `data` - Complete resource file data starting with the resource header
+///
+/// # Lifetime
+///
+/// The returned resources borrow from the `data` parameter. All borrowed resource data
+/// (strings and byte arrays) will remain valid as long as `data` is valid.
+///
+/// # Returns
+///
+/// A `BTreeMap<String, ResourceEntryRef>` containing all parsed resources with borrowed
+/// data, sorted by name for consistent iteration order.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The data is too small to contain a valid resource header
+/// - The magic number doesn't match the expected value (0xBEEFCACE)
+/// - Header versions are unsupported or malformed
+/// - Resource data sections are truncated or corrupted
+/// - Individual resource entries cannot be parsed
+///
+/// # Examples
+///
+/// ## Basic Usage
+///
+/// ```rust,ignore
+/// use dotscope::metadata::resources::parser::parse_dotnet_resource_ref;
+/// use dotscope::metadata::resources::ResourceTypeRef;
+///
+/// let resource_data = std::fs::read("MyApp.resources")?;
+/// let resources = parse_dotnet_resource_ref(&resource_data)?;
+///
+/// println!("Found {} resources:", resources.len());
+/// for (name, entry) in &resources {
+///     match &entry.data {
+///         ResourceTypeRef::ByteArray(bytes) => {
+///             println!("  {}: {} bytes (no copy!)", name, bytes.len());
+///         }
+///         ResourceTypeRef::String(s) => {
+///             println!("  {}: \"{}\"", name, s);
+///         }
+///         _ => {
+///             println!("  {}: {:?}", name, entry.data);
+///         }
+///     }
+/// }
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+///
+/// ## Extracting Embedded ZIP Archives
+///
+/// ```rust,ignore
+/// use dotscope::metadata::resources::parser::parse_dotnet_resource_ref;
+/// use dotscope::metadata::resources::ResourceTypeRef;
+///
+/// let resource_data = std::fs::read("MyApp.resources")?;
+/// let resources = parse_dotnet_resource_ref(&resource_data)?;
+///
+/// // Find and extract ZIP files without copying data
+/// for (name, entry) in &resources {
+///     if let ResourceTypeRef::ByteArray(bytes) = &entry.data {
+///         if bytes.starts_with(b"PK\x03\x04") {
+///             println!("Found ZIP: {} ({} bytes)", name, bytes.len());
+///
+///             // Process ZIP directly from borrowed slice - no allocation!
+///             let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
+///             for i in 0..archive.len() {
+///                 let file = archive.by_index(i)?;
+///                 println!("  - {}", file.name());
+///             }
+///         }
+///     }
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// For small resources or when data needs to outlive the source buffer, consider
+/// using [`parse_dotnet_resource`] instead.
+pub fn parse_dotnet_resource_ref(data: &[u8]) -> Result<BTreeMap<String, ResourceEntryRef<'_>>> {
+    let mut resource = Resource::parse(data)?;
+    resource.read_resources_ref(data)
 }
 
 /// Low-level parser for .NET `ResourceManager` format with complete format exposure.
@@ -652,6 +753,186 @@ impl Resource {
             };
 
             let result = ResourceEntry {
+                name: name.clone(),
+                name_hash: self.name_hashes[i],
+                data: resource_data,
+            };
+
+            resources.insert(name, result);
+        }
+
+        Ok(resources)
+    }
+
+    /// Parse all resources into a name-indexed collection with zero-copy semantics.
+    ///
+    /// This is the zero-copy variant of [`read_resources`](Resource::read_resources). Instead
+    /// of allocating owned copies of resource data, it returns borrowed slices directly into
+    /// the source data buffer. This is essential for efficient handling of large embedded
+    /// resources like ZIP archives that could be hundreds of megabytes or gigabytes.
+    ///
+    /// # Parsing Process
+    ///
+    /// Identical to [`read_resources`](Resource::read_resources), but for each resource:
+    /// - **String data**: Returns `&'a str` instead of allocating `String`
+    /// - **Byte arrays**: Returns `&'a [u8]` instead of allocating `Vec<u8>`
+    /// - **Primitive types**: Returned by value (no difference from owned variant)
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The complete resource file data buffer used for parsing. This is the same
+    ///   buffer that was passed to [`parse`](Resource::parse).
+    ///
+    /// # Lifetime
+    ///
+    /// The returned resources borrow from the `data` parameter. All borrowed resource data
+    /// (strings and byte arrays) will remain valid as long as `data` is valid.
+    ///
+    /// # Returns
+    ///
+    /// A `BTreeMap<String, ResourceEntryRef<'a>>` containing all resources indexed by name.
+    /// The map maintains sorted order for consistent iteration and enables efficient lookups.
+    /// Resource names are owned (String) for efficient map key usage, but resource data is borrowed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Name section offsets point beyond the data buffer
+    /// - UTF-16 resource names are malformed or truncated
+    /// - Data section offsets are invalid or out of bounds
+    /// - Resource type codes are unsupported or corrupted
+    /// - Individual resource data cannot be parsed
+    ///
+    /// # Examples
+    ///
+    /// ## Basic Zero-Copy Usage
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::resources::parser::Resource;
+    /// use dotscope::metadata::resources::ResourceTypeRef;
+    ///
+    /// let resource_data = std::fs::read("MyApp.resources")?;
+    /// let mut resource = Resource::parse(&resource_data)?;
+    /// let resources = resource.read_resources_ref(&resource_data)?;
+    ///
+    /// println!("Found {} resources:", resources.len());
+    /// for (name, entry) in &resources {
+    ///     println!("Resource: {} (Hash: 0x{:08X})", name, entry.name_hash);
+    ///
+    ///     match &entry.data {
+    ///         ResourceTypeRef::ByteArray(bytes) => {
+    ///             // Zero-copy access - no allocation!
+    ///             println!("  Binary data: {} bytes (no copy!)", bytes.len());
+    ///         }
+    ///         ResourceTypeRef::String(s) => {
+    ///             // Zero-copy string access
+    ///             println!("  String: '{}'", s);
+    ///         }
+    ///         ResourceTypeRef::Int32(value) => {
+    ///             println!("  Integer: {}", value);
+    ///         }
+    ///         _ => {
+    ///             println!("  Other type: {:?}", entry.data);
+    ///         }
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    ///
+    /// ## Extracting Embedded ZIP Archives
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::resources::parser::Resource;
+    /// use dotscope::metadata::resources::ResourceTypeRef;
+    ///
+    /// let resource_data = std::fs::read("MyApp.resources")?;
+    /// let mut resource = Resource::parse(&resource_data)?;
+    /// let resources = resource.read_resources_ref(&resource_data)?;
+    ///
+    /// for (name, entry) in &resources {
+    ///     if let ResourceTypeRef::ByteArray(bytes) = &entry.data {
+    ///         // Check if this is a ZIP file (PK magic number)
+    ///         if bytes.len() > 4 && &bytes[0..4] == b"PK\x03\x04" {
+    ///             println!("Found embedded ZIP: {} ({} bytes)", name, bytes.len());
+    ///
+    ///             // Extract ZIP without copying the data
+    ///             // Pass borrowed slice directly to ZIP library
+    ///             let archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
+    ///             println!("  Contains {} files", archive.len());
+    ///         }
+    ///     }
+    /// }
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// Use [`read_resources`](Resource::read_resources) when:
+    /// - Resource data needs to outlive the source buffer
+    /// - Working with small resources where copy overhead is negligible
+    /// - You prefer simpler APIs without lifetime parameters
+    pub fn read_resources_ref<'a>(
+        &mut self,
+        data: &'a [u8],
+    ) -> Result<BTreeMap<String, ResourceEntryRef<'a>>> {
+        let mut resources = BTreeMap::new();
+        let mut parser = Parser::new(data);
+
+        for i in 0..self.resource_count as usize {
+            let name_pos = self.name_section_offset + self.name_positions[i] as usize;
+            parser.seek(name_pos)?;
+
+            let name = parser.read_prefixed_string_utf16()?;
+            let type_offset = parser.read_le::<u32>()?;
+
+            let data_pos = if self.is_embedded_resource {
+                // Embedded resources: offset calculated from magic number position, need +4 for size field
+                self.data_section_offset + type_offset as usize + 4
+            } else {
+                // Standalone .resources files: use direct offset
+                self.data_section_offset + type_offset as usize
+            };
+
+            // Validate data position bounds
+            if data_pos >= data.len() {
+                return Err(malformed_error!(
+                    "Resource data offset {} is beyond file bounds",
+                    data_pos
+                ));
+            }
+
+            parser.seek(data_pos)?;
+
+            let resource_data = if self.rr_version == 1 {
+                // V1 format: type index (7-bit encoded) followed by data
+                let type_index = parser.read_7bit_encoded_int()?;
+                if type_index == u32::MAX {
+                    // -1 encoded as 7-bit represents null
+                    ResourceTypeRef::Null
+                } else if (type_index as usize) < self.type_names.len() {
+                    let type_name = &self.type_names[type_index as usize];
+                    ResourceTypeRef::from_type_name_ref(type_name, &mut parser, data)?
+                } else {
+                    return Err(malformed_error!("Invalid type index: {}", type_index));
+                }
+            } else {
+                // V2 format: type code (7-bit encoded) followed by data
+                #[allow(clippy::cast_possible_truncation)]
+                let type_code = parser.read_7bit_encoded_int()? as u8;
+
+                if self.type_names.is_empty() {
+                    // No type table - this file uses only primitive types (direct type codes)
+                    ResourceTypeRef::from_type_byte_ref(type_code, &mut parser, data)?
+                } else {
+                    // Has type table - type code is an index into the type table
+                    if (type_code as usize) < self.type_names.len() {
+                        let type_name = &self.type_names[type_code as usize];
+                        ResourceTypeRef::from_type_name_ref(type_name, &mut parser, data)?
+                    } else {
+                        return Err(malformed_error!("Invalid type index: {}", type_code));
+                    }
+                }
+            };
+
+            let result = ResourceEntryRef {
                 name: name.clone(),
                 name_hash: self.name_hashes[i],
                 data: resource_data,
