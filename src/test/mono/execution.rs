@@ -1,26 +1,89 @@
-//! Mono runtime testing utilities
+//! .NET runtime testing utilities
 //!
-//! This module provides utilities for testing .NET assemblies against the Mono runtime,
-//! including version detection, execution testing, and output validation.
+//! This module provides utilities for testing .NET assemblies against various runtimes
+//! (Mono or modern .NET), including version detection, execution testing, and output validation.
 
 use crate::prelude::*;
+use crate::test::mono::compilation::CompilerType;
 use std::path::Path;
 use std::process::Command;
+
+/// Runtime type for executing .NET assemblies
+#[derive(Debug, Clone, PartialEq)]
+pub enum RuntimeType {
+    /// Mono runtime (for .NET Framework assemblies)
+    Mono,
+    /// Modern .NET runtime (for .NET 8.0+ assemblies)
+    DotNet,
+}
+
+impl RuntimeType {
+    /// Determine the appropriate runtime based on compiler type
+    pub fn for_compiler(compiler: &CompilerType) -> Self {
+        match compiler {
+            CompilerType::DotNet => RuntimeType::DotNet,
+            CompilerType::Csc | CompilerType::Mcs => RuntimeType::Mono,
+        }
+    }
+}
 
 /// Mono runtime environment and execution utilities
 pub struct MonoRuntime {
     version_info: Option<MonoVersionInfo>,
+    /// Override runtime type (if None, will auto-detect based on availability)
+    runtime_override: Option<RuntimeType>,
 }
 
 impl MonoRuntime {
     /// Create new Mono runtime instance
     pub fn new() -> Self {
-        Self { version_info: None }
+        Self {
+            version_info: None,
+            runtime_override: None,
+        }
+    }
+
+    /// Create a runtime instance configured for a specific runtime type
+    pub fn with_runtime(runtime_type: RuntimeType) -> Self {
+        Self {
+            version_info: None,
+            runtime_override: Some(runtime_type),
+        }
+    }
+
+    /// Set the runtime type to use for execution
+    pub fn set_runtime(&mut self, runtime_type: RuntimeType) {
+        self.runtime_override = Some(runtime_type);
     }
 
     /// Check if Mono is available on the system
     pub fn is_available(&self) -> bool {
+        self.is_mono_available() || self.is_dotnet_available()
+    }
+
+    /// Check if Mono runtime is available
+    pub fn is_mono_available(&self) -> bool {
         Command::new("mono").arg("--version").output().is_ok()
+    }
+
+    /// Check if modern .NET runtime is available
+    pub fn is_dotnet_available(&self) -> bool {
+        Command::new("dotnet").arg("--version").output().is_ok()
+    }
+
+    /// Get the runtime type that will be used for execution
+    pub fn active_runtime(&self) -> Option<RuntimeType> {
+        if let Some(ref override_type) = self.runtime_override {
+            return Some(override_type.clone());
+        }
+        // Default preference: mono first, then dotnet
+        if self.is_mono_available() {
+            Some(RuntimeType::Mono)
+        } else if self.is_dotnet_available() {
+            Some(RuntimeType::DotNet)
+        } else {
+            None
+        }
     }
 
     /// Get Mono version information (cached after first call)
@@ -56,22 +119,49 @@ impl MonoRuntime {
         })
     }
 
-    /// Execute a .NET assembly with Mono runtime
+    /// Execute a .NET assembly using the appropriate runtime (Mono or .NET)
     pub fn execute_assembly(&mut self, assembly_path: &Path) -> Result<ExecutionResult> {
-        if !self.is_available() {
-            return Ok(ExecutionResult {
-                success: false,
-                exit_code: None,
-                stdout: String::new(),
-                stderr: String::new(),
-                error: Some("mono not available".to_string()),
-            });
-        }
+        let runtime = match self.active_runtime() {
+            Some(rt) => rt,
+            None => {
+                return Ok(ExecutionResult {
+                    success: false,
+                    exit_code: None,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    error: Some("No .NET runtime available (neither mono nor dotnet)".to_string()),
+                });
+            }
+        };
 
+        match runtime {
+            RuntimeType::Mono => self.execute_with_mono(assembly_path),
+            RuntimeType::DotNet => self.execute_with_dotnet(assembly_path),
+        }
+    }
+
+    /// Execute assembly using Mono runtime
+    fn execute_with_mono(&self, assembly_path: &Path) -> Result<ExecutionResult> {
         let output = Command::new("mono")
             .arg(assembly_path)
             .output()
             .map_err(|e| Error::Error(format!("Failed to execute mono: {}", e)))?;
+
+        Ok(ExecutionResult {
+            success: output.status.success(),
+            exit_code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            error: None,
+        })
+    }
+
+    /// Execute assembly using modern .NET runtime
+    fn execute_with_dotnet(&self, assembly_path: &Path) -> Result<ExecutionResult> {
+        let output = Command::new("dotnet")
+            .arg(assembly_path)
+            .output()
+            .map_err(|e| Error::Error(format!("Failed to execute dotnet: {}", e)))?;
 
         Ok(ExecutionResult {
             success: output.status.success(),
@@ -88,7 +178,7 @@ impl MonoRuntime {
         Ok(result)
     }
 
-    /// Comprehensive Mono compatibility test
+    /// Comprehensive runtime compatibility test
     pub fn test_compatibility(
         &mut self,
         file_path: &Path,
@@ -96,16 +186,32 @@ impl MonoRuntime {
     ) -> Result<CompatibilityResult> {
         let mut result = CompatibilityResult::new();
 
-        // Get version info
-        match self.version_info() {
-            Ok(version) => {
-                result.mono_version = Some(version.version_string.clone());
-                result.mono_available = version.available;
+        // Check runtime availability and get version info
+        let runtime = self.active_runtime();
+        result.mono_available = runtime.is_some();
+
+        if let Some(ref rt) = runtime {
+            // Get version info based on runtime type
+            match rt {
+                RuntimeType::Mono => {
+                    if let Ok(version) = self.version_info() {
+                        result.mono_version = Some(version.version_string.clone());
+                    }
+                }
+                RuntimeType::DotNet => {
+                    // Get dotnet version
+                    if let Ok(output) = Command::new("dotnet").arg("--version").output() {
+                        if output.status.success() {
+                            result.mono_version = Some(format!(
+                                "dotnet {}",
+                                String::from_utf8_lossy(&output.stdout).trim()
+                            ));
+                        }
+                    }
+                }
             }
-            Err(_) => {
-                result.mono_available = false;
-                return Ok(result);
-            }
+        } else {
+            return Ok(result);
         }
 
         // Test execution
@@ -135,17 +241,25 @@ impl MonoRuntime {
         assembly_path: &Path,
         args: &[&str],
     ) -> Result<ExecutionResult> {
-        if !self.is_available() {
-            return Ok(ExecutionResult {
-                success: false,
-                exit_code: None,
-                stdout: String::new(),
-                stderr: String::new(),
-                error: Some("mono not available".to_string()),
-            });
-        }
+        let runtime = match self.active_runtime() {
+            Some(rt) => rt,
+            None => {
+                return Ok(ExecutionResult {
+                    success: false,
+                    exit_code: None,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    error: Some("No .NET runtime available".to_string()),
+                });
+            }
+        };
 
-        let mut cmd = Command::new("mono");
+        let (cmd_name, cmd_error) = match runtime {
+            RuntimeType::Mono => ("mono", "Failed to execute mono"),
+            RuntimeType::DotNet => ("dotnet", "Failed to execute dotnet"),
+        };
+
+        let mut cmd = Command::new(cmd_name);
         cmd.arg(assembly_path);
         for arg in args {
             cmd.arg(arg);
@@ -153,7 +267,7 @@ impl MonoRuntime {
 
         let output = cmd
             .output()
-            .map_err(|e| Error::Error(format!("Failed to execute mono: {}", e)))?;
+            .map_err(|e| Error::Error(format!("{}: {}", cmd_error, e)))?;
 
         Ok(ExecutionResult {
             success: output.status.success(),
@@ -170,20 +284,28 @@ impl MonoRuntime {
         assembly_path: &Path,
         timeout_seconds: u32,
     ) -> Result<ExecutionResult> {
-        if !self.is_available() {
-            return Ok(ExecutionResult {
-                success: false,
-                exit_code: None,
-                stdout: String::new(),
-                stderr: String::new(),
-                error: Some("mono not available".to_string()),
-            });
-        }
+        let runtime = match self.active_runtime() {
+            Some(rt) => rt,
+            None => {
+                return Ok(ExecutionResult {
+                    success: false,
+                    exit_code: None,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    error: Some("No .NET runtime available".to_string()),
+                });
+            }
+        };
+
+        let cmd_name = match runtime {
+            RuntimeType::Mono => "mono",
+            RuntimeType::DotNet => "dotnet",
+        };
 
         // Use timeout command if available (Unix systems)
         let output = Command::new("timeout")
             .arg(format!("{}s", timeout_seconds))
-            .arg("mono")
+            .arg(cmd_name)
             .arg(assembly_path)
             .output();
 
@@ -341,7 +463,9 @@ mod tests {
     #[test]
     fn test_mono_runtime_creation() {
         let runtime = MonoRuntime::new();
+        // New runtime should have no cached version info and no runtime override
         assert!(runtime.version_info.is_none());
+        assert!(runtime.runtime_override.is_none());
     }
 
     #[test]

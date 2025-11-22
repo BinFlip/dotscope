@@ -502,6 +502,13 @@ impl ReflectionTestExecutor {
             });
         }
 
+        // Set the appropriate runtime based on which compiler was used
+        if let Some(ref compiler_type) = compilation_result.compiler_used {
+            self.runtime.set_runtime(
+                super::execution::RuntimeType::for_compiler(compiler_type),
+            );
+        }
+
         // Execute test program
         let execution_result = self.runtime.execute_assembly(&test_exe_path)?;
 
