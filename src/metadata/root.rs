@@ -56,7 +56,7 @@ const MIN_ROOT_HEADER_SIZE: usize = 36;
 const VERSION_LENGTH_OFFSET: usize = 12;
 
 /// Offset in the root header where the version string begins.
-const VERSION_STRING_OFFSET: usize = 16;
+const VERSION_STRING_OFFSET: u16 = 16;
 
 /// Size of the flags field following the version string.
 const FLAGS_FIELD_SIZE: usize = 2;
@@ -364,7 +364,7 @@ impl Root {
         }
 
         let version_string_length = read_le_at::<u32>(data, &mut { VERSION_LENGTH_OFFSET })?;
-        match u32::checked_add(version_string_length, VERSION_STRING_OFFSET as u32) {
+        match version_string_length.checked_add(u32::from(VERSION_STRING_OFFSET)) {
             Some(str_end) => {
                 let data_len = u32::try_from(data.len()).map_err(|_| {
                     malformed_error!("Root: data length too large [ECMA-335 §II.24.2.1]")
@@ -385,7 +385,7 @@ impl Root {
         for counter in 0..version_string_length {
             version_string.push(char::from(read_le_at::<u8>(
                 data,
-                &mut (VERSION_STRING_OFFSET + counter as usize),
+                &mut (usize::from(VERSION_STRING_OFFSET) + counter as usize),
             )?));
         }
 
@@ -415,7 +415,7 @@ impl Root {
 
         // Stream count is located after: version_string + FLAGS_FIELD_SIZE
         let mut stream_count_offset =
-            version_string.len() + VERSION_STRING_OFFSET + FLAGS_FIELD_SIZE;
+            version_string.len() + usize::from(VERSION_STRING_OFFSET) + FLAGS_FIELD_SIZE;
         let stream_count = read_le_at::<u16>(data, &mut stream_count_offset)?;
 
         // Validate stream count: must have at least one stream, no more than MAX_STREAM_COUNT
@@ -433,7 +433,7 @@ impl Root {
         let mut streams = Vec::with_capacity(stream_count as usize);
         // Stream directory starts after: version_string + FLAGS_FIELD_SIZE + STREAM_COUNT_FIELD_SIZE
         let mut stream_offset = version_string.len()
-            + VERSION_STRING_OFFSET
+            + usize::from(VERSION_STRING_OFFSET)
             + FLAGS_FIELD_SIZE
             + STREAM_COUNT_FIELD_SIZE;
         let mut streams_seen = [false; MAX_STREAM_COUNT as usize];
@@ -505,7 +505,9 @@ impl Root {
             length: u32::try_from(version_string.len()).map_err(|_| {
                 malformed_error!("Root: version string length too large [ECMA-335 §II.24.2.1]")
             })?,
-            flags: read_le::<u16>(&data[VERSION_STRING_OFFSET + version_string.len()..])?,
+            flags: read_le::<u16>(
+                &data[usize::from(VERSION_STRING_OFFSET) + version_string.len()..],
+            )?,
             stream_number: u16::try_from(streams.len())
                 .map_err(|_| malformed_error!("Root: too many streams [ECMA-335 §II.24.2.1]"))?,
             stream_headers: streams,

@@ -900,6 +900,7 @@ impl PermissionSet {
     /// * `arg_type` - The type code of the argument
     /// * `permission_class` - The permission class being parsed (for context)
     /// * `property_name` - The name of the property being parsed (for context)
+    ///
     /// Parses an argument value from the binary stream based on its ECMA-335 element type.
     ///
     /// # Type Code Reference (ECMA-335 II.23.1.16)
@@ -1257,7 +1258,7 @@ impl PermissionSet {
         F: Fn(&Permission) -> Option<Vec<String>>,
     {
         self.get_permission(security_classes::FILE_IO_PERMISSION)
-            .and_then(|perm| extractor(perm))
+            .and_then(extractor)
             .unwrap_or_default()
     }
 }

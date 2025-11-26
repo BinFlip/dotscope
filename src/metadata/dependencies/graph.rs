@@ -683,17 +683,17 @@ impl AssemblyDependencyGraph {
     /// };
     ///
     /// // First add succeeds
-    /// graph.add_dependency_with_source(source.clone(), dep.clone())?;
+    /// graph.add_dependency_with_source(&source, dep.clone())?;
     /// assert_eq!(graph.dependency_count(), 1);
     ///
     /// // Second add is prevented (duplicate)
-    /// graph.add_dependency_with_source(source.clone(), dep.clone())?;
+    /// graph.add_dependency_with_source(&source, dep.clone())?;
     /// assert_eq!(graph.dependency_count(), 1); // Still 1, not 2
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn add_dependency_with_source(
         &self,
-        source_identity: AssemblyIdentity,
+        source_identity: &AssemblyIdentity,
         dependency: AssemblyDependency,
     ) -> Result<()> {
         let target_identity = dependency.target_identity.clone();
@@ -716,7 +716,7 @@ impl AssemblyDependencyGraph {
         self.dependents
             .entry(target_identity.clone())
             .and_modify(|deps| {
-                if !deps.iter().any(|d| d == &source_identity) {
+                if !deps.iter().any(|d| d == source_identity) {
                     deps.push(source_identity.clone());
                 }
             })
@@ -726,14 +726,14 @@ impl AssemblyDependencyGraph {
             });
 
         // Update assembly count - handle case where source and target are the same (self-reference)
-        let new_assemblies = if source_is_new && target_is_new && source_identity == target_identity
-        {
-            // Self-reference: only one new assembly
-            1
-        } else {
-            // Different assemblies: count each new one
-            (source_is_new as usize) + (target_is_new as usize)
-        };
+        let new_assemblies =
+            if source_is_new && target_is_new && source_identity == &target_identity {
+                // Self-reference: only one new assembly
+                1
+            } else {
+                // Different assemblies: count each new one
+                usize::from(source_is_new) + usize::from(target_is_new)
+            };
 
         if new_assemblies > 0 {
             self.assembly_count
@@ -967,7 +967,7 @@ mod tests {
         let dependency = create_test_dependency("mscorlib", DependencyType::Reference);
 
         graph
-            .add_dependency_with_source(source.clone(), dependency)
+            .add_dependency_with_source(&source, dependency)
             .unwrap();
 
         assert!(!graph.is_empty());
@@ -986,9 +986,7 @@ mod tests {
         let mscorlib = create_test_identity("mscorlib", 1, 0); // Match the version from create_test_dependency
         let dependency = create_test_dependency("mscorlib", DependencyType::Reference);
 
-        graph
-            .add_dependency_with_source(app.clone(), dependency)
-            .unwrap();
+        graph.add_dependency_with_source(&app, dependency).unwrap();
 
         let dependents = graph.get_dependents(&mscorlib);
         assert_eq!(dependents.len(), 1);
@@ -1005,13 +1003,11 @@ mod tests {
         let system_core_dep = create_test_dependency("System.Core", DependencyType::Reference);
 
         graph
-            .add_dependency_with_source(app.clone(), mscorlib_dep)
+            .add_dependency_with_source(&app, mscorlib_dep)
             .unwrap();
+        graph.add_dependency_with_source(&app, system_dep).unwrap();
         graph
-            .add_dependency_with_source(app.clone(), system_dep)
-            .unwrap();
-        graph
-            .add_dependency_with_source(app.clone(), system_core_dep)
+            .add_dependency_with_source(&app, system_core_dep)
             .unwrap();
 
         assert_eq!(graph.assembly_count(), 4); // App + 3 dependencies
@@ -1035,7 +1031,9 @@ mod tests {
         let app = create_test_identity("App", 1, 0);
         let mscorlib_dep = create_test_dependency("mscorlib", DependencyType::Reference);
 
-        graph.add_dependency_with_source(app, mscorlib_dep).unwrap();
+        graph
+            .add_dependency_with_source(&app, mscorlib_dep)
+            .unwrap();
 
         let cycles = graph.find_cycles().unwrap();
         assert!(cycles.is_none());
@@ -1054,9 +1052,9 @@ mod tests {
         let c_dep = create_test_dependency("C", DependencyType::Reference);
         let a_dep = create_test_dependency("A", DependencyType::Reference);
 
-        graph.add_dependency_with_source(a, b_dep).unwrap();
-        graph.add_dependency_with_source(b, c_dep).unwrap();
-        graph.add_dependency_with_source(c, a_dep).unwrap();
+        graph.add_dependency_with_source(&a, b_dep).unwrap();
+        graph.add_dependency_with_source(&b, c_dep).unwrap();
+        graph.add_dependency_with_source(&c, a_dep).unwrap();
 
         let cycles = graph.find_cycles().unwrap();
         assert!(cycles.is_some());
@@ -1071,7 +1069,7 @@ mod tests {
         let a = create_test_identity("A", 1, 0);
         let self_dep = create_test_dependency("A", DependencyType::Reference);
 
-        graph.add_dependency_with_source(a, self_dep).unwrap();
+        graph.add_dependency_with_source(&a, self_dep).unwrap();
 
         let cycles = graph.find_cycles().unwrap();
         assert!(cycles.is_some());
@@ -1093,11 +1091,9 @@ mod tests {
         let lib_dep = create_test_dependency("Lib", DependencyType::Reference);
         let mscorlib_dep = create_test_dependency("mscorlib", DependencyType::Reference);
 
+        graph.add_dependency_with_source(&app, lib_dep).unwrap();
         graph
-            .add_dependency_with_source(app.clone(), lib_dep)
-            .unwrap();
-        graph
-            .add_dependency_with_source(lib.clone(), mscorlib_dep)
+            .add_dependency_with_source(&lib, mscorlib_dep)
             .unwrap();
 
         let order = graph.topological_order().unwrap();
@@ -1122,8 +1118,8 @@ mod tests {
         let b_dep = create_test_dependency("B", DependencyType::Reference);
         let a_dep = create_test_dependency("A", DependencyType::Reference);
 
-        graph.add_dependency_with_source(a, b_dep).unwrap();
-        graph.add_dependency_with_source(b, a_dep).unwrap();
+        graph.add_dependency_with_source(&a, b_dep).unwrap();
+        graph.add_dependency_with_source(&b, a_dep).unwrap();
 
         let result = graph.topological_order();
         assert!(result.is_ok());
@@ -1154,31 +1150,25 @@ mod tests {
         let _f = create_test_identity("F", 1, 0);
 
         graph
-            .add_dependency_with_source(
-                a.clone(),
-                create_test_dependency("B", DependencyType::Reference),
-            )
+            .add_dependency_with_source(&a, create_test_dependency("B", DependencyType::Reference))
             .unwrap();
         graph
-            .add_dependency_with_source(a, create_test_dependency("C", DependencyType::Reference))
+            .add_dependency_with_source(&a, create_test_dependency("C", DependencyType::Reference))
             .unwrap();
         graph
-            .add_dependency_with_source(
-                b.clone(),
-                create_test_dependency("D", DependencyType::Reference),
-            )
+            .add_dependency_with_source(&b, create_test_dependency("D", DependencyType::Reference))
             .unwrap();
         graph
-            .add_dependency_with_source(b, create_test_dependency("E", DependencyType::Reference))
+            .add_dependency_with_source(&b, create_test_dependency("E", DependencyType::Reference))
             .unwrap();
         graph
-            .add_dependency_with_source(c, create_test_dependency("E", DependencyType::Reference))
+            .add_dependency_with_source(&c, create_test_dependency("E", DependencyType::Reference))
             .unwrap();
         graph
-            .add_dependency_with_source(d, create_test_dependency("F", DependencyType::Reference))
+            .add_dependency_with_source(&d, create_test_dependency("F", DependencyType::Reference))
             .unwrap();
         graph
-            .add_dependency_with_source(e, create_test_dependency("F", DependencyType::Reference))
+            .add_dependency_with_source(&e, create_test_dependency("F", DependencyType::Reference))
             .unwrap();
 
         let order = graph.topological_order().unwrap();
@@ -1207,7 +1197,7 @@ mod tests {
         let app = create_test_identity("App", 1, 0);
         let dependency = create_test_dependency("mscorlib", DependencyType::Reference);
 
-        graph.add_dependency_with_source(app, dependency).unwrap();
+        graph.add_dependency_with_source(&app, dependency).unwrap();
 
         assert!(!graph.is_empty());
         assert_eq!(graph.dependency_count(), 1);
@@ -1231,7 +1221,7 @@ mod tests {
                 let app = create_test_identity(&format!("App{}", i), 1, 0);
                 let dependency = create_test_dependency("mscorlib", DependencyType::Reference);
                 graph_clone
-                    .add_dependency_with_source(app, dependency)
+                    .add_dependency_with_source(&app, dependency)
                     .unwrap();
             });
             handles.push(handle);
@@ -1261,11 +1251,9 @@ mod tests {
 
         // Add the same dependency twice
         graph
-            .add_dependency_with_source(app.clone(), dependency1.clone())
+            .add_dependency_with_source(&app, dependency1.clone())
             .unwrap();
-        graph
-            .add_dependency_with_source(app.clone(), dependency2)
-            .unwrap();
+        graph.add_dependency_with_source(&app, dependency2).unwrap();
 
         // Should only have 1 dependency, not 2
         assert_eq!(graph.dependency_count(), 1);
@@ -1294,9 +1282,7 @@ mod tests {
         // Override the target to match exactly
         self_dep.target_identity = app.clone();
 
-        graph
-            .add_dependency_with_source(app.clone(), self_dep)
-            .unwrap();
+        graph.add_dependency_with_source(&app, self_dep).unwrap();
 
         // Should count as only 1 assembly, not 2 (self-reference)
         assert_eq!(graph.assembly_count(), 1);
@@ -1313,16 +1299,12 @@ mod tests {
         let lib1_target = lib1_dep.target_identity.clone();
 
         // Add first dependency: MyApp -> Lib1 (2 new assemblies)
-        graph
-            .add_dependency_with_source(app.clone(), lib1_dep)
-            .unwrap();
+        graph.add_dependency_with_source(&app, lib1_dep).unwrap();
         assert_eq!(graph.assembly_count(), 2);
 
         // Add second dependency: MyApp -> Lib2 (1 new assembly, MyApp already exists)
         let lib2_dep = create_test_dependency("Lib2", DependencyType::Reference);
-        graph
-            .add_dependency_with_source(app.clone(), lib2_dep)
-            .unwrap();
+        graph.add_dependency_with_source(&app, lib2_dep).unwrap();
         assert_eq!(graph.assembly_count(), 3);
 
         // Add duplicate dependency: MyApp -> Lib1 again (0 new assemblies, duplicate)
@@ -1331,7 +1313,7 @@ mod tests {
         let mut lib1_dep2_fixed = lib1_dep2.clone();
         lib1_dep2_fixed.target_identity = lib1_target.clone();
         graph
-            .add_dependency_with_source(app.clone(), lib1_dep2_fixed)
+            .add_dependency_with_source(&app, lib1_dep2_fixed)
             .unwrap();
         assert_eq!(graph.assembly_count(), 3); // Still 3, duplicate prevented
     }

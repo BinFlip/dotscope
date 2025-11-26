@@ -675,11 +675,7 @@ impl Resource {
 
         match parser.read_prefixed_string_utf8() {
             Ok(s) if s == "***DEBUG***" => Ok(true),
-            Ok(_) => {
-                parser.seek(peek_pos)?;
-                Ok(false)
-            }
-            Err(_) => {
+            Ok(_) | Err(_) => {
                 parser.seek(peek_pos)?;
                 Ok(false)
             }

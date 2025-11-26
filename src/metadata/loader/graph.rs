@@ -355,8 +355,7 @@ impl<'a> LoaderGraph<'a> {
                     && self
                         .dependencies
                         .get(loader_key)
-                        .map(|deps| deps.iter().all(|dep| satisfied.contains(dep)))
-                        .unwrap_or(true)
+                        .is_none_or(|deps| deps.iter().all(|dep| satisfied.contains(dep)))
             })
             .cloned()
             .collect()

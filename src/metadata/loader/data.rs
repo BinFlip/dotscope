@@ -347,21 +347,21 @@ impl CilObjectData {
 /// Returns an error if import or export table parsing fails due to malformed data.
 fn load_native_tables(view: &CilAssemblyView) -> Result<(NativeImports, NativeExports)> {
     let native_imports = if let Some(owned_imports) = view.file().imports() {
-        if !owned_imports.is_empty() {
+        if owned_imports.is_empty() {
+            NativeImports::default()
+        } else {
             let is_pe32_plus = view.file().is_pe32_plus_format().unwrap_or(false);
             NativeImports::from_pe_imports(owned_imports, is_pe32_plus)?
-        } else {
-            NativeImports::default()
         }
     } else {
         NativeImports::default()
     };
 
     let native_exports = if let Some(owned_exports) = view.file().exports() {
-        if !owned_exports.is_empty() {
-            NativeExports::from_pe_exports(owned_exports)?
-        } else {
+        if owned_exports.is_empty() {
             NativeExports::default()
+        } else {
+            NativeExports::from_pe_exports(owned_exports)?
         }
     } else {
         NativeExports::default()

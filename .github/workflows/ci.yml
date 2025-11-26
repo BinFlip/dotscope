@@ -45,6 +45,14 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y mono-utils
 
+    - name: Install Mono (macOS)
+      if: runner.os == 'macOS'
+      run: brew install mono
+
+    - name: Install dotnet-ildasm tool (Windows fallback)
+      if: runner.os == 'Windows'
+      run: dotnet tool install --global dotnet-ildasm
+
     - name: Setup Rust cache
       uses: Swatinem/rust-cache@v2
       with:

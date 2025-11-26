@@ -541,8 +541,7 @@ impl std::fmt::Display for DependencyResolutionState {
                     f,
                     "ResolvedAsNativeLibrary({}, verified={})",
                     path.as_ref()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|| "unknown".to_string()),
+                        .map_or_else(|| "unknown".to_string(), |p| p.display().to_string()),
                     exports_verified
                 )
             }

@@ -411,7 +411,7 @@ impl CilType {
     /// call will succeed in setting the enclosing type; subsequent calls with the
     /// same or equivalent enclosing type will succeed, while calls with a different
     /// enclosing type will return an error.
-    pub fn set_enclosing_type(&self, enclosing_type: CilTypeRef) -> Result<()> {
+    pub fn set_enclosing_type(&self, enclosing_type: &CilTypeRef) -> Result<()> {
         match self.enclosing_type.set(enclosing_type.clone()) {
             Ok(()) => Ok(()),
             Err(_) => {
@@ -431,12 +431,9 @@ impl CilType {
                                 )))
                             }
                         }
-                        // Both weak references dropped - accept since we can't compare
-                        (None, None) => Ok(()),
-                        // Existing valid, new dropped - keep existing
-                        (Some(_), None) => Ok(()),
-                        // Existing dropped, new valid - suspicious but accept
-                        (None, Some(_)) => Ok(()),
+                        // Any combination where at least one is dropped - accept
+                        // since we can't compare or keep existing
+                        (None | Some(_), None) | (None, Some(_)) => Ok(()),
                     }
                 } else {
                     // This should be impossible with OnceLock

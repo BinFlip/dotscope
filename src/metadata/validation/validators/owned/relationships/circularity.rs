@@ -140,7 +140,7 @@ impl OwnedCircularityValidator {
             let token = type_entry.token;
             if !visited.contains(&token) {
                 self.check_inheritance_cycle_relationships(
-                    &type_entry,
+                    type_entry,
                     &mut visited,
                     &mut visiting,
                 )?;

@@ -262,7 +262,6 @@ impl ProjectLoader {
             // Use the configured validation or default to production validation
             let validation_config = self
                 .validation_config
-                .clone()
                 .unwrap_or_else(ValidationConfig::production);
             match CilAssemblyView::from_path_with_validation(&current_path, validation_config) {
                 Ok(view) => {

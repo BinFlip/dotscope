@@ -372,8 +372,7 @@ impl NativeImports {
         }
         import
             .ordinal
-            .map(|ord| format!("#{}", ord))
-            .unwrap_or_else(|| "unknown".to_string())
+            .map_or_else(|| "unknown".to_string(), |ord| format!("#{}", ord))
     }
 
     /// Add a DLL to the import table.

@@ -277,35 +277,37 @@ impl<'a> CustomDebugParser<'a> {
 
         let remaining = self.read_remaining_bytes();
 
-        if format == 0 {
-            // Raw uncompressed UTF-8 content
-            let content = String::from_utf8(remaining).map_err(|e| {
-                malformed_error!("EmbeddedSource contains invalid UTF-8: {}", e.utf8_error())
-            })?;
+        match format.cmp(&0) {
+            std::cmp::Ordering::Equal => {
+                // Raw uncompressed UTF-8 content
+                let content = String::from_utf8(remaining).map_err(|e| {
+                    malformed_error!("EmbeddedSource contains invalid UTF-8: {}", e.utf8_error())
+                })?;
 
-            Ok(CustomDebugInfo::EmbeddedSource {
-                filename: String::new(), // Set by caller from Document table
-                content,
-                was_compressed: false,
-            })
-        } else if format > 0 {
-            // Deflate-compressed content
-            // format value is the decompressed size
-            #[allow(clippy::cast_sign_loss)] // Safe: we checked format > 0
-            let decompressed_size = format as usize;
+                Ok(CustomDebugInfo::EmbeddedSource {
+                    filename: String::new(), // Set by caller from Document table
+                    content,
+                    was_compressed: false,
+                })
+            }
+            std::cmp::Ordering::Greater => {
+                // Deflate-compressed content
+                // format value is the decompressed size
+                #[allow(clippy::cast_sign_loss)] // Safe: we know format > 0 here
+                let decompressed_size = format as usize;
 
-            let content = self.decompress_deflate(&remaining, decompressed_size)?;
+                let content = Self::decompress_deflate(&remaining, decompressed_size)?;
 
-            Ok(CustomDebugInfo::EmbeddedSource {
-                filename: String::new(), // Set by caller from Document table
-                content,
-                was_compressed: true,
-            })
-        } else {
-            Err(malformed_error!(
+                Ok(CustomDebugInfo::EmbeddedSource {
+                    filename: String::new(), // Set by caller from Document table
+                    content,
+                    was_compressed: true,
+                })
+            }
+            std::cmp::Ordering::Less => Err(malformed_error!(
                 "EmbeddedSource has invalid format indicator: {} (expected >= 0)",
                 format
-            ))
+            )),
         }
     }
 
@@ -317,7 +319,7 @@ impl<'a> CustomDebugParser<'a> {
     ///
     /// # Returns
     /// The decompressed UTF-8 string
-    fn decompress_deflate(&self, compressed: &[u8], expected_size: usize) -> Result<String> {
+    fn decompress_deflate(compressed: &[u8], expected_size: usize) -> Result<String> {
         let mut decoder = flate2::read::DeflateDecoder::new(compressed);
         let mut decompressed = Vec::with_capacity(expected_size);
 

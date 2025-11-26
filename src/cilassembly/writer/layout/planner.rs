@@ -4154,10 +4154,6 @@ mod tests {
         }
     }
 
-    // ==========================================================================
-    // Static Calculation Tests
-    // ==========================================================================
-
     #[test]
     fn test_calculate_metadata_root_header_size() {
         let header_size = LayoutPlanner::calculate_metadata_root_header_size();
@@ -4169,7 +4165,7 @@ mod tests {
             header_size
         );
         assert!(
-            header_size % 4 == 0,
+            header_size.is_multiple_of(4),
             "Header size {} should be 4-byte aligned",
             header_size
         );
@@ -4186,7 +4182,7 @@ mod tests {
             stream_dir_size
         );
         assert!(
-            stream_dir_size % 4 == 0,
+            stream_dir_size.is_multiple_of(4),
             "Stream directory size {} should be 4-byte aligned",
             stream_dir_size
         );
@@ -4287,10 +4283,6 @@ mod tests {
         // 24 bytes fixed + 64 tables × 4 bytes = 280
         assert_eq!(header_size, 24 + 256);
     }
-
-    // ==========================================================================
-    // Integration Tests with Real Assemblies
-    // ==========================================================================
 
     #[test]
     fn test_planner_creation() -> Result<()> {
@@ -4436,10 +4428,6 @@ mod tests {
 
         Ok(())
     }
-
-    // ==========================================================================
-    // Edge Case Tests
-    // ==========================================================================
 
     #[test]
     fn test_file_offset_to_rva_section_boundary() {

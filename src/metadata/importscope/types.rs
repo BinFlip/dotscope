@@ -592,7 +592,7 @@ mod tests {
     fn test_import_kind_clone_and_copy() {
         let kind = ImportKind::ImportNamespace;
         let copied = kind;
-        let cloned = kind.clone();
+        let cloned = kind;
 
         assert_eq!(kind, copied);
         assert_eq!(kind, cloned);

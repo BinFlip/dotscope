@@ -293,7 +293,7 @@ impl<'a> ReferenceValidator<'a> {
             let ref_count = self
                 .scanner
                 .references_to(token)
-                .map_or(0, |refs| refs.len());
+                .map_or(0, std::collections::HashSet::len);
             let token_value = token.value();
             return Err(Error::ValidationCrossReferenceError {
                 message: format!(
@@ -331,11 +331,11 @@ impl<'a> ReferenceValidator<'a> {
         let incoming_count = self
             .scanner
             .references_to(token)
-            .map_or(0, |refs| refs.len());
+            .map_or(0, std::collections::HashSet::len);
         let outgoing_count = self
             .scanner
             .references_from(token)
-            .map_or(0, |refs| refs.len());
+            .map_or(0, std::collections::HashSet::len);
 
         analysis.total_tokens += 1;
         analysis.total_references += incoming_count + outgoing_count;

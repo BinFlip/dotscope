@@ -1008,7 +1008,7 @@ impl Method {
             self.parse_local_variables(&body, blobs, sigs, types)?;
         }
 
-        self.resolve_exception_handlers(&mut body, types)?;
+        Self::resolve_exception_handlers(&mut body, types)?;
         Ok(body)
     }
 
@@ -1082,11 +1082,7 @@ impl Method {
     ///
     /// # Errors
     /// Returns an error if an exception type cannot be resolved.
-    fn resolve_exception_handlers(
-        &self,
-        body: &mut MethodBody,
-        types: &Arc<TypeRegistry>,
-    ) -> Result<()> {
+    fn resolve_exception_handlers(body: &mut MethodBody, types: &Arc<TypeRegistry>) -> Result<()> {
         for (index, exception_handler) in body.exception_handlers.iter_mut().enumerate() {
             if exception_handler.flags == ExceptionHandlerFlags::EXCEPTION {
                 let type_token = Token::new(exception_handler.filter_offset);
