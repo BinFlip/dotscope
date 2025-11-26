@@ -70,7 +70,7 @@
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let runner = MonoTestRunner::new()?;
 //! let mut compiler = CSharpCompiler::new();
-//! let mut disassembler = MonoDisassembler::new();
+//! let mut disassembler = ILDisassembler::new();
 //!
 //! // Compile original assembly
 //! let arch = ArchConfig::x64();
@@ -214,7 +214,7 @@ pub mod runner;
 
 // Re-export main types for convenience
 pub use compilation::CSharpCompiler;
-pub use disassembly::MonoDisassembler;
+pub use disassembly::ILDisassembler;
 pub use execution::{MonoRuntime, RuntimeType};
 pub use reflection::{ReflectionTestBuilder, ReflectionTestExecutor};
 pub use runner::{ArchConfig, MonoTestRunner};
@@ -228,7 +228,7 @@ pub fn create_test_environment() -> MonoTestResult<TestEnvironment> {
         runner: MonoTestRunner::new()?,
         compiler: CSharpCompiler::new(),
         runtime: MonoRuntime::new(),
-        disassembler: MonoDisassembler::new(),
+        disassembler: ILDisassembler::new(),
         reflection_executor: ReflectionTestExecutor::new(),
     })
 }
@@ -238,7 +238,7 @@ pub struct TestEnvironment {
     pub runner: MonoTestRunner,
     pub compiler: CSharpCompiler,
     pub runtime: MonoRuntime,
-    pub disassembler: MonoDisassembler,
+    pub disassembler: ILDisassembler,
     pub reflection_executor: ReflectionTestExecutor,
 }
 

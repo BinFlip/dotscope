@@ -1,47 +1,206 @@
-//! IL disassembly verification using monodis
+//! IL disassembly verification using platform-native tools
 //!
-//! This module uses the Mono disassembler (monodis) to verify that dotscope-generated
-//! assemblies have valid IL metadata and can be properly disassembled. This catches
-//! structural issues that might not surface during execution.
+//! This module provides cross-platform IL disassembly verification for dotscope-generated
+//! assemblies. It automatically detects and uses the appropriate disassembler tool:
+//! - **Windows**: `ildasm.exe` from Windows SDK
+//! - **macOS/Linux**: `monodis` from Mono framework
+//!
+//! This catches structural issues that might not surface during execution.
 
 use crate::prelude::*;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Disassembler tool wrapper for monodis
-#[derive(Default)]
-pub struct MonoDisassembler {
-    available: Option<bool>,
+/// Disassembler backend type
+#[derive(Debug, Clone, PartialEq)]
+pub enum DisassemblerBackend {
+    /// Mono disassembler (monodis) - available on macOS/Linux
+    Monodis,
+    /// Microsoft IL Disassembler (ildasm.exe) - available on Windows with SDK
+    Ildasm(PathBuf),
+    /// Cross-platform .NET global tool (dotnet ildasm)
+    DotnetIldasm,
 }
 
-impl MonoDisassembler {
+impl DisassemblerBackend {
+    /// Get a display name for the backend
+    pub fn name(&self) -> &str {
+        match self {
+            DisassemblerBackend::Monodis => "monodis",
+            DisassemblerBackend::Ildasm(_) => "ildasm",
+            DisassemblerBackend::DotnetIldasm => "dotnet-ildasm",
+        }
+    }
+}
+
+/// IL Disassembler that automatically selects the appropriate backend
+#[derive(Default)]
+pub struct ILDisassembler {
+    backend: Option<DisassemblerBackend>,
+    detection_done: bool,
+}
+
+impl ILDisassembler {
     /// Create new disassembler instance
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Check if monodis is available
-    pub fn is_available(&mut self) -> bool {
-        if let Some(available) = self.available {
-            return available;
+    /// Detect and cache the available disassembler backend
+    fn detect_backend(&mut self) -> Option<&DisassemblerBackend> {
+        if self.detection_done {
+            return self.backend.as_ref();
         }
 
-        let available = Command::new("monodis").arg("--help").output().is_ok();
-        self.available = Some(available);
-        available
+        self.detection_done = true;
+
+        // On Windows, try ildasm.exe first (native SDK tool)
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(ildasm_path) = Self::find_ildasm() {
+                self.backend = Some(DisassemblerBackend::Ildasm(ildasm_path));
+                return self.backend.as_ref();
+            }
+        }
+
+        // Try monodis (available on macOS/Linux, sometimes on Windows via Mono)
+        if Command::new("monodis").arg("--help").output().is_ok() {
+            self.backend = Some(DisassemblerBackend::Monodis);
+            return self.backend.as_ref();
+        }
+
+        // Try dotnet-ildasm as cross-platform fallback
+        // This is a .NET global tool that works on any platform with dotnet SDK
+        if Self::is_dotnet_ildasm_available() {
+            self.backend = Some(DisassemblerBackend::DotnetIldasm);
+            return self.backend.as_ref();
+        }
+
+        // On non-Windows, also try ildasm as last resort (in case available via Wine or similar)
+        #[cfg(not(target_os = "windows"))]
+        {
+            if let Some(ildasm_path) = Self::find_ildasm() {
+                self.backend = Some(DisassemblerBackend::Ildasm(ildasm_path));
+                return self.backend.as_ref();
+            }
+        }
+
+        None
+    }
+
+    /// Check if dotnet-ildasm global tool is available
+    fn is_dotnet_ildasm_available() -> bool {
+        // Try running "dotnet ildasm --help" to check if the tool is installed
+        Command::new("dotnet")
+            .args(["ildasm", "--help"])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+
+    /// Find ildasm.exe on Windows
+    #[cfg(target_os = "windows")]
+    fn find_ildasm() -> Option<PathBuf> {
+        // Common paths where ildasm.exe might be found on Windows
+        let sdk_base = Path::new(r"C:\Program Files (x86)\Microsoft SDKs\Windows");
+
+        // Try different SDK versions in order of preference (newest first)
+        let sdk_versions = [
+            r"v10.0A\bin\NETFX 4.8.1 Tools",
+            r"v10.0A\bin\NETFX 4.8 Tools",
+            r"v10.0A\bin\NETFX 4.7.2 Tools",
+            r"v10.0A\bin\NETFX 4.7.1 Tools",
+            r"v10.0A\bin\NETFX 4.7 Tools",
+            r"v10.0A\bin\NETFX 4.6.2 Tools",
+            r"v10.0A\bin\NETFX 4.6.1 Tools",
+            r"v10.0A\bin\NETFX 4.6 Tools",
+            r"v8.1A\bin\NETFX 4.5.1 Tools",
+            r"v8.0A\bin\NETFX 4.0 Tools",
+        ];
+
+        for version in sdk_versions {
+            let ildasm_path = sdk_base.join(version).join("ildasm.exe");
+            if ildasm_path.exists() {
+                return Some(ildasm_path);
+            }
+
+            // Also check x64 subdirectory
+            let ildasm_path_x64 = sdk_base.join(version).join("x64").join("ildasm.exe");
+            if ildasm_path_x64.exists() {
+                return Some(ildasm_path_x64);
+            }
+        }
+
+        // Try to find via vswhere or PATH
+        if let Ok(output) = Command::new("where").arg("ildasm.exe").output() {
+            if output.status.success() {
+                let path_str = String::from_utf8_lossy(&output.stdout);
+                if let Some(first_line) = path_str.lines().next() {
+                    let path = PathBuf::from(first_line.trim());
+                    if path.exists() {
+                        return Some(path);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Find ildasm on non-Windows (unlikely but possible)
+    #[cfg(not(target_os = "windows"))]
+    fn find_ildasm() -> Option<PathBuf> {
+        // On non-Windows, ildasm might be available via .NET SDK tools or Wine
+        if let Ok(output) = Command::new("which").arg("ildasm").output() {
+            if output.status.success() {
+                let path_str = String::from_utf8_lossy(&output.stdout);
+                let path = PathBuf::from(path_str.trim());
+                if path.exists() {
+                    return Some(path);
+                }
+            }
+        }
+        None
+    }
+
+    /// Check if any disassembler is available
+    pub fn is_available(&mut self) -> bool {
+        self.detect_backend().is_some()
+    }
+
+    /// Get the active backend (if any)
+    pub fn active_backend(&mut self) -> Option<&DisassemblerBackend> {
+        self.detect_backend()
     }
 
     /// Perform basic disassembly of an assembly
     pub fn disassemble(&mut self, assembly_path: &Path) -> Result<DisassemblyResult> {
-        if !self.is_available() {
-            return Ok(DisassemblyResult {
-                success: false,
-                output: String::new(),
-                error: Some("monodis not available".to_string()),
-                available: false,
-            });
-        }
+        let backend = match self.detect_backend() {
+            Some(b) => b.clone(),
+            None => {
+                return Ok(DisassemblyResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(
+                        "No IL disassembler available (neither monodis nor ildasm)".to_string(),
+                    ),
+                    available: false,
+                    backend_used: None,
+                });
+            }
+        };
 
+        match &backend {
+            DisassemblerBackend::Monodis => self.disassemble_with_monodis(assembly_path),
+            DisassemblerBackend::Ildasm(path) => {
+                self.disassemble_with_ildasm(assembly_path, path.clone())
+            }
+            DisassemblerBackend::DotnetIldasm => self.disassemble_with_dotnet_ildasm(assembly_path),
+        }
+    }
+
+    /// Disassemble using monodis
+    fn disassemble_with_monodis(&self, assembly_path: &Path) -> Result<DisassemblyResult> {
         let output = Command::new("monodis")
             .arg(assembly_path)
             .output()
@@ -56,22 +215,105 @@ impl MonoDisassembler {
                 None
             },
             available: true,
+            backend_used: Some(DisassemblerBackend::Monodis),
         })
     }
 
-    /// Get specific information using monodis flags
-    pub fn get_info(&mut self, assembly_path: &Path, flags: &[&str]) -> Result<DisassemblyResult> {
-        if !self.is_available() {
-            return Ok(DisassemblyResult {
-                success: false,
-                output: String::new(),
-                error: Some("monodis not available".to_string()),
-                available: false,
-            });
+    /// Disassemble using ildasm.exe
+    fn disassemble_with_ildasm(
+        &self,
+        assembly_path: &Path,
+        ildasm_path: PathBuf,
+    ) -> Result<DisassemblyResult> {
+        // ildasm outputs to stdout with /TEXT flag
+        let output = Command::new(&ildasm_path)
+            .arg("/TEXT")
+            .arg("/NOBAR")
+            .arg(assembly_path)
+            .output()
+            .map_err(|e| Error::Error(format!("Failed to execute ildasm: {}", e)))?;
+
+        Ok(DisassemblyResult {
+            success: output.status.success(),
+            output: String::from_utf8_lossy(&output.stdout).to_string(),
+            error: if !output.status.success() {
+                Some(String::from_utf8_lossy(&output.stderr).to_string())
+            } else {
+                None
+            },
+            available: true,
+            backend_used: Some(DisassemblerBackend::Ildasm(ildasm_path)),
+        })
+    }
+
+    /// Disassemble using dotnet-ildasm global tool
+    fn disassemble_with_dotnet_ildasm(&self, assembly_path: &Path) -> Result<DisassemblyResult> {
+        // dotnet ildasm <assembly_path>
+        let output = Command::new("dotnet")
+            .arg("ildasm")
+            .arg(assembly_path)
+            .output()
+            .map_err(|e| Error::Error(format!("Failed to execute dotnet ildasm: {}", e)))?;
+
+        Ok(DisassemblyResult {
+            success: output.status.success(),
+            output: String::from_utf8_lossy(&output.stdout).to_string(),
+            error: if !output.status.success() {
+                Some(String::from_utf8_lossy(&output.stderr).to_string())
+            } else {
+                None
+            },
+            available: true,
+            backend_used: Some(DisassemblerBackend::DotnetIldasm),
+        })
+    }
+
+    /// Get specific information using backend-specific flags
+    pub fn get_info(
+        &mut self,
+        assembly_path: &Path,
+        info_type: InfoType,
+    ) -> Result<DisassemblyResult> {
+        let backend = match self.detect_backend() {
+            Some(b) => b.clone(),
+            None => {
+                return Ok(DisassemblyResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("No IL disassembler available".to_string()),
+                    available: false,
+                    backend_used: None,
+                });
+            }
+        };
+
+        match &backend {
+            DisassemblerBackend::Monodis => self.get_info_monodis(assembly_path, info_type),
+            DisassemblerBackend::Ildasm(path) => {
+                self.get_info_ildasm(assembly_path, path.clone(), info_type)
+            }
+            DisassemblerBackend::DotnetIldasm => {
+                self.get_info_dotnet_ildasm(assembly_path, info_type)
+            }
         }
+    }
+
+    /// Get info using monodis
+    fn get_info_monodis(
+        &self,
+        assembly_path: &Path,
+        info_type: InfoType,
+    ) -> Result<DisassemblyResult> {
+        let flags = match info_type {
+            InfoType::Basic => vec![],
+            InfoType::Methods => vec!["--method"],
+            InfoType::Types => vec!["--typedef"],
+            InfoType::Assembly => vec!["--assembly"],
+            InfoType::UserStrings => vec!["--userstrings"],
+        };
 
         let mut cmd = Command::new("monodis");
-        for flag in flags {
+        for flag in &flags {
             cmd.arg(flag);
         }
         cmd.arg(assembly_path);
@@ -89,6 +331,86 @@ impl MonoDisassembler {
                 None
             },
             available: true,
+            backend_used: Some(DisassemblerBackend::Monodis),
+        })
+    }
+
+    /// Get info using ildasm
+    fn get_info_ildasm(
+        &self,
+        assembly_path: &Path,
+        ildasm_path: PathBuf,
+        info_type: InfoType,
+    ) -> Result<DisassemblyResult> {
+        // ildasm uses different flags than monodis
+        let flags: Vec<&str> = match info_type {
+            InfoType::Basic => vec!["/TEXT", "/NOBAR"],
+            InfoType::Methods => vec!["/TEXT", "/NOBAR"], // ildasm includes methods in basic output
+            InfoType::Types => vec!["/TEXT", "/NOBAR", "/CLASSLIST"],
+            InfoType::Assembly => vec!["/TEXT", "/NOBAR", "/METADATA"],
+            InfoType::UserStrings => vec!["/TEXT", "/NOBAR", "/METADATA=STRINGSONLY"],
+        };
+
+        let mut cmd = Command::new(&ildasm_path);
+        for flag in &flags {
+            cmd.arg(flag);
+        }
+        cmd.arg(assembly_path);
+
+        let output = cmd
+            .output()
+            .map_err(|e| Error::Error(format!("Failed to execute ildasm: {}", e)))?;
+
+        Ok(DisassemblyResult {
+            success: output.status.success(),
+            output: String::from_utf8_lossy(&output.stdout).to_string(),
+            error: if !output.status.success() {
+                Some(String::from_utf8_lossy(&output.stderr).to_string())
+            } else {
+                None
+            },
+            available: true,
+            backend_used: Some(DisassemblerBackend::Ildasm(ildasm_path)),
+        })
+    }
+
+    /// Get info using dotnet-ildasm
+    fn get_info_dotnet_ildasm(
+        &self,
+        assembly_path: &Path,
+        info_type: InfoType,
+    ) -> Result<DisassemblyResult> {
+        // dotnet-ildasm has limited options compared to monodis/ildasm
+        // Most info types just use basic disassembly since it includes everything
+        let args: Vec<&str> = match info_type {
+            InfoType::Basic => vec![],
+            InfoType::Methods => vec![],  // Full output includes methods
+            InfoType::Types => vec![],    // Full output includes types
+            InfoType::Assembly => vec![], // Full output includes assembly info
+            InfoType::UserStrings => vec![], // dotnet-ildasm includes strings in output
+        };
+
+        let mut cmd = Command::new("dotnet");
+        cmd.arg("ildasm");
+        for arg in &args {
+            cmd.arg(arg);
+        }
+        cmd.arg(assembly_path);
+
+        let output = cmd
+            .output()
+            .map_err(|e| Error::Error(format!("Failed to execute dotnet ildasm: {}", e)))?;
+
+        Ok(DisassemblyResult {
+            success: output.status.success(),
+            output: String::from_utf8_lossy(&output.stdout).to_string(),
+            error: if !output.status.success() {
+                Some(String::from_utf8_lossy(&output.stderr).to_string())
+            } else {
+                None
+            },
+            available: true,
+            backend_used: Some(DisassemblerBackend::DotnetIldasm),
         })
     }
 
@@ -100,42 +422,51 @@ impl MonoDisassembler {
     ) -> Result<VerificationResult> {
         let mut result = VerificationResult::new();
 
-        if !self.is_available() {
-            result.monodis_available = false;
-            return Ok(result);
-        }
+        let backend = match self.detect_backend() {
+            Some(b) => {
+                result.disassembler_available = true;
+                result.backend_used = Some(b.name().to_string());
+                b.clone()
+            }
+            None => {
+                result.disassembler_available = false;
+                return Ok(result);
+            }
+        };
 
-        result.monodis_available = true;
-
-        // Test different disassembly options
+        // Test different info types
         let test_options = [
-            ("basic disassembly", vec![]),
-            ("method listing", vec!["--method"]),
-            ("type listing", vec!["--typedef"]),
-            ("assembly info", vec!["--assembly"]),
+            ("basic disassembly", InfoType::Basic),
+            ("method listing", InfoType::Methods),
+            ("type listing", InfoType::Types),
+            ("assembly info", InfoType::Assembly),
         ];
 
-        for (test_name, args) in test_options {
-            match self.get_info(file_path, &args) {
+        for (test_name, info_type) in test_options {
+            match self.get_info(file_path, info_type) {
                 Ok(disasm_result) if disasm_result.success => {
                     let output_len = disasm_result.output.len();
 
                     // Basic validation
                     if output_len < 50 {
                         let warning = format!(
-                            "monodis {} output unusually short ({} chars) for {} assembly - indicates corruption",
-                            test_name, output_len, arch_name
+                            "{} {} output unusually short ({} chars) for {} assembly - indicates corruption",
+                            backend.name(), test_name, output_len, arch_name
                         );
                         result.warnings.push(warning);
                     }
 
-                    // Check for error indicators
-                    if disasm_result.output.to_lowercase().contains("error")
-                        || disasm_result.output.to_lowercase().contains("invalid")
+                    // Check for error indicators (be careful: "error" might appear in legitimate IL)
+                    let lower_output = disasm_result.output.to_lowercase();
+                    if lower_output.contains("invalid metadata")
+                        || lower_output.contains("bad image format")
+                        || lower_output.contains("corrupt")
                     {
                         let warning = format!(
-                            "monodis {} output contains error indicators for {} assembly",
-                            test_name, arch_name
+                            "{} {} output contains error indicators for {} assembly",
+                            backend.name(),
+                            test_name,
+                            arch_name
                         );
                         result.warnings.push(warning);
                     }
@@ -305,7 +636,7 @@ impl MonoDisassembler {
 
     /// Get user strings from assembly
     pub fn get_user_strings(&mut self, assembly_path: &Path) -> Result<DisassemblyResult> {
-        self.get_info(assembly_path, &["--userstrings"])
+        self.get_info(assembly_path, InfoType::UserStrings)
     }
 
     /// Verify specific string exists in user strings
@@ -319,6 +650,21 @@ impl MonoDisassembler {
     }
 }
 
+/// Information type to retrieve from disassembler
+#[derive(Debug, Clone, Copy)]
+pub enum InfoType {
+    /// Basic full disassembly
+    Basic,
+    /// Method listing only
+    Methods,
+    /// Type listing only
+    Types,
+    /// Assembly metadata
+    Assembly,
+    /// User strings from #US heap
+    UserStrings,
+}
+
 /// Result of a disassembly operation
 #[derive(Debug, Clone)]
 pub struct DisassemblyResult {
@@ -326,6 +672,7 @@ pub struct DisassemblyResult {
     pub output: String,
     pub error: Option<String>,
     pub available: bool,
+    pub backend_used: Option<DisassemblerBackend>,
 }
 
 impl DisassemblyResult {
@@ -349,7 +696,10 @@ impl DisassemblyResult {
 #[derive(Debug, Default)]
 pub struct VerificationResult {
     pub success: bool,
-    pub monodis_available: bool,
+    /// Whether any IL disassembler is available
+    pub disassembler_available: bool,
+    /// Which backend was used (if any)
+    pub backend_used: Option<String>,
     pub basic_disassembly: Option<DisassemblyResult>,
     pub method_listing: Option<DisassemblyResult>,
     pub type_listing: Option<DisassemblyResult>,
@@ -365,15 +715,18 @@ impl VerificationResult {
 
     /// Check if verification was completely successful
     pub fn is_fully_successful(&self) -> bool {
-        self.success && self.monodis_available && self.failures.is_empty()
+        self.success && self.disassembler_available && self.failures.is_empty()
     }
 
     /// Get summary of verification status
     pub fn summary(&self) -> String {
-        if !self.monodis_available {
-            "monodis not available".to_string()
+        if !self.disassembler_available {
+            "No IL disassembler available".to_string()
         } else if self.is_fully_successful() {
-            "All verifications passed".to_string()
+            format!(
+                "All verifications passed (using {})",
+                self.backend_used.as_deref().unwrap_or("unknown")
+            )
         } else {
             format!(
                 "{} failures, {} warnings",
@@ -422,14 +775,13 @@ impl ILVerificationResult {
 
 #[cfg(test)]
 mod tests {
-    use crate::test::mono::disassembly::{
-        DisassemblyResult, ILVerificationResult, MonoDisassembler,
-    };
+    use super::*;
 
     #[test]
     fn test_disassembler_creation() {
-        let disasm = MonoDisassembler::new();
-        assert!(disasm.available.is_none());
+        let disasm = ILDisassembler::new();
+        assert!(!disasm.detection_done);
+        assert!(disasm.backend.is_none());
     }
 
     #[test]
@@ -439,6 +791,7 @@ mod tests {
             output: "Hello World".to_string(),
             error: None,
             available: true,
+            backend_used: Some(DisassemblerBackend::Monodis),
         };
 
         assert!(result.contains("Hello"));
@@ -458,5 +811,29 @@ mod tests {
 
         assert!(result.is_successful());
         assert_eq!(result.error_summary(), "All instructions match");
+    }
+
+    #[test]
+    fn test_backend_name() {
+        assert_eq!(DisassemblerBackend::Monodis.name(), "monodis");
+        assert_eq!(
+            DisassemblerBackend::Ildasm(PathBuf::from("test.exe")).name(),
+            "ildasm"
+        );
+    }
+
+    #[test]
+    fn test_verification_result_summary() {
+        let mut result = VerificationResult::new();
+        assert_eq!(result.summary(), "No IL disassembler available");
+
+        result.disassembler_available = true;
+        result.success = true;
+        result.backend_used = Some("monodis".to_string());
+        assert_eq!(result.summary(), "All verifications passed (using monodis)");
+
+        result.failures.push("test failure".to_string());
+        result.warnings.push("test warning".to_string());
+        assert_eq!(result.summary(), "1 failures, 1 warnings");
     }
 }
