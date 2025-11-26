@@ -37,32 +37,32 @@
 //!
 //! ## Basic Resource Data Encoding
 //!
-//! ```rust,ignore
-//! use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+//! ```
+//! use dotscope::metadata::resources::DotNetResourceEncoder;
 //!
 //! let mut encoder = DotNetResourceEncoder::new();
 //!
 //! // Add various resource types
-//! encoder.add_string_resource("AppName", "My Application")?;
-//! encoder.add_binary_resource("icon.png", &icon_data)?;
-//! encoder.add_xml_resource("config.xml", &xml_content)?;
+//! encoder.add_string("AppName", "My Application")?;
+//! encoder.add_int32("Version", 1)?;
+//! encoder.add_byte_array("IconData", &[0x89, 0x50, 0x4E, 0x47])?;
 //!
 //! // Generate encoded resource data
-//! let resource_data = encoder.encode()?;
+//! let resource_data = encoder.encode_dotnet_format()?;
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## .NET Resource File Creation
 //!
-//! ```rust,ignore
-//! use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+//! ```
+//! use dotscope::metadata::resources::DotNetResourceEncoder;
 //!
 //! let mut encoder = DotNetResourceEncoder::new();
 //!
 //! // Add strongly-typed resources
 //! encoder.add_string("WelcomeMessage", "Welcome to the application!")?;
 //! encoder.add_int32("MaxConnections", 100)?;
-//! encoder.add_byte_array("DefaultConfig", &config_bytes)?;
+//! encoder.add_byte_array("DefaultConfig", &[1, 2, 3, 4])?;
 //!
 //! // Generate .NET resource file format
 //! let resource_file = encoder.encode_dotnet_format()?;
@@ -146,8 +146,8 @@ fn compute_resource_hash(key: &str) -> u32 {
 ///
 /// # Usage Examples
 ///
-/// ```rust,ignore
-/// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+/// ```
+/// use dotscope::metadata::resources::DotNetResourceEncoder;
 ///
 /// let mut encoder = DotNetResourceEncoder::new();
 ///
@@ -155,7 +155,7 @@ fn compute_resource_hash(key: &str) -> u32 {
 /// encoder.add_string("WelcomeMessage", "Welcome to the application!")?;
 /// encoder.add_int32("MaxRetries", 3)?;
 /// encoder.add_boolean("DebugMode", true)?;
-/// encoder.add_byte_array("ConfigData", &config_bytes)?;
+/// encoder.add_byte_array("ConfigData", &[1, 2, 3, 4])?;
 ///
 /// // Generate .NET resource file
 /// let resource_file = encoder.encode_dotnet_format()?;
@@ -186,8 +186,8 @@ impl DotNetResourceEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    /// ```
+    /// use dotscope::metadata::resources::DotNetResourceEncoder;
     ///
     /// let mut encoder = DotNetResourceEncoder::new();
     /// assert_eq!(encoder.resource_count(), 0);
@@ -217,8 +217,8 @@ impl DotNetResourceEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    /// ```
+    /// use dotscope::metadata::resources::DotNetResourceEncoder;
     ///
     /// let mut encoder = DotNetResourceEncoder::new();
     /// encoder.add_string("ApplicationName", "My Application")?;
@@ -248,8 +248,8 @@ impl DotNetResourceEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    /// ```
+    /// use dotscope::metadata::resources::DotNetResourceEncoder;
     ///
     /// let mut encoder = DotNetResourceEncoder::new();
     /// encoder.add_int32("MaxConnections", 100)?;
@@ -279,8 +279,8 @@ impl DotNetResourceEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    /// ```
+    /// use dotscope::metadata::resources::DotNetResourceEncoder;
     ///
     /// let mut encoder = DotNetResourceEncoder::new();
     /// encoder.add_boolean("DebugMode", true)?;
@@ -305,16 +305,17 @@ impl DotNetResourceEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    /// ```
+    /// use dotscope::metadata::resources::DotNetResourceEncoder;
     ///
     /// let mut encoder = DotNetResourceEncoder::new();
     ///
     /// let config_data = vec![0x01, 0x02, 0x03, 0x04];
     /// encoder.add_byte_array("ConfigurationData", &config_data)?;
     ///
-    /// let icon_data = std::fs::read("icon.png")?;
-    /// encoder.add_byte_array("ApplicationIcon", &icon_data)?;
+    /// // For file data, read the file first
+    /// // let icon_data = std::fs::read("icon.png")?;
+    /// // encoder.add_byte_array("ApplicationIcon", &icon_data)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
@@ -342,12 +343,12 @@ impl DotNetResourceEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    /// ```
+    /// use dotscope::metadata::resources::DotNetResourceEncoder;
     ///
     /// let mut encoder = DotNetResourceEncoder::new();
     ///
-    /// let image_data = std::fs::read("large_image.png")?;
+    /// let image_data = vec![0x89, 0x50, 0x4E, 0x47]; // PNG header
     /// encoder.add_stream("BackgroundImage", &image_data)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
@@ -373,8 +374,8 @@ impl DotNetResourceEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    /// ```
+    /// use dotscope::metadata::resources::DotNetResourceEncoder;
     ///
     /// let mut encoder = DotNetResourceEncoder::new();
     /// encoder.add_byte("MaxRetries", 5)?;
@@ -402,8 +403,8 @@ impl DotNetResourceEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    /// ```
+    /// use dotscope::metadata::resources::DotNetResourceEncoder;
     ///
     /// let mut encoder = DotNetResourceEncoder::new();
     /// encoder.add_sbyte("TemperatureOffset", -10)?;
@@ -431,8 +432,8 @@ impl DotNetResourceEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    /// ```
+    /// use dotscope::metadata::resources::DotNetResourceEncoder;
     ///
     /// let mut encoder = DotNetResourceEncoder::new();
     /// encoder.add_char("Separator", ',')?;
@@ -461,8 +462,8 @@ impl DotNetResourceEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    /// ```
+    /// use dotscope::metadata::resources::DotNetResourceEncoder;
     ///
     /// let mut encoder = DotNetResourceEncoder::new();
     /// encoder.add_int16("PortNumber", 8080)?;
@@ -490,8 +491,8 @@ impl DotNetResourceEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    /// ```
+    /// use dotscope::metadata::resources::DotNetResourceEncoder;
     ///
     /// let mut encoder = DotNetResourceEncoder::new();
     /// encoder.add_uint16("MaxConnections", 65535)?;
@@ -519,8 +520,8 @@ impl DotNetResourceEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    /// ```
+    /// use dotscope::metadata::resources::DotNetResourceEncoder;
     ///
     /// let mut encoder = DotNetResourceEncoder::new();
     /// encoder.add_uint32("FileSize", 1024000)?;
@@ -548,8 +549,8 @@ impl DotNetResourceEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    /// ```
+    /// use dotscope::metadata::resources::DotNetResourceEncoder;
     ///
     /// let mut encoder = DotNetResourceEncoder::new();
     /// encoder.add_int64("TimestampTicks", 637500000000000000)?;
@@ -577,8 +578,8 @@ impl DotNetResourceEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    /// ```
+    /// use dotscope::metadata::resources::DotNetResourceEncoder;
     ///
     /// let mut encoder = DotNetResourceEncoder::new();
     /// encoder.add_uint64("MaxFileSize", 18446744073709551615)?;
@@ -606,8 +607,8 @@ impl DotNetResourceEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    /// ```
+    /// use dotscope::metadata::resources::DotNetResourceEncoder;
     ///
     /// let mut encoder = DotNetResourceEncoder::new();
     /// encoder.add_single("ScaleFactor", 1.5)?;
@@ -636,8 +637,8 @@ impl DotNetResourceEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    /// ```
+    /// use dotscope::metadata::resources::DotNetResourceEncoder;
     ///
     /// let mut encoder = DotNetResourceEncoder::new();
     /// encoder.add_double("PreciseValue", 3.14159265358979323846)?;
@@ -671,8 +672,8 @@ impl DotNetResourceEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    /// ```
+    /// use dotscope::metadata::resources::DotNetResourceEncoder;
     ///
     /// let mut encoder = DotNetResourceEncoder::new();
     ///
@@ -720,8 +721,8 @@ impl DotNetResourceEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    /// ```
+    /// use dotscope::metadata::resources::DotNetResourceEncoder;
     ///
     /// let mut encoder = DotNetResourceEncoder::new();
     ///
@@ -763,8 +764,8 @@ impl DotNetResourceEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    /// ```
+    /// use dotscope::metadata::resources::DotNetResourceEncoder;
     ///
     /// let mut encoder = DotNetResourceEncoder::new();
     ///
@@ -797,8 +798,8 @@ impl DotNetResourceEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    /// ```
+    /// use dotscope::metadata::resources::DotNetResourceEncoder;
     ///
     /// let mut encoder = DotNetResourceEncoder::new();
     /// assert_eq!(encoder.resource_count(), 0);
@@ -828,8 +829,8 @@ impl DotNetResourceEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::encoder::DotNetResourceEncoder;
+    /// ```
+    /// use dotscope::metadata::resources::DotNetResourceEncoder;
     ///
     /// let mut encoder = DotNetResourceEncoder::new();
     /// encoder.add_string("AppName", "My Application")?;
@@ -837,8 +838,8 @@ impl DotNetResourceEncoder {
     ///
     /// let resource_file = encoder.encode_dotnet_format()?;
     ///
-    /// // Save to file or embed in assembly
-    /// std::fs::write("resources.resources", &resource_file)?;
+    /// // The encoded data can be saved to a file or embedded in an assembly
+    /// assert!(!resource_file.is_empty());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn encode_dotnet_format(&self) -> Result<Vec<u8>> {

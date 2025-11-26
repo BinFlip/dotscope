@@ -1,14 +1,15 @@
-//! Disassembly verification utilities using monodis
+//! IL disassembly verification using monodis
 //!
-//! This module provides comprehensive disassembly verification for .NET assemblies,
-//! including IL instruction verification, method structure analysis, and customizable
-//! verification rules.
+//! This module uses the Mono disassembler (monodis) to verify that dotscope-generated
+//! assemblies have valid IL metadata and can be properly disassembled. This catches
+//! structural issues that might not surface during execution.
 
 use crate::prelude::*;
 use std::path::Path;
 use std::process::Command;
 
 /// Disassembler tool wrapper for monodis
+#[derive(Default)]
 pub struct MonoDisassembler {
     available: Option<bool>,
 }
@@ -16,7 +17,7 @@ pub struct MonoDisassembler {
 impl MonoDisassembler {
     /// Create new disassembler instance
     pub fn new() -> Self {
-        Self { available: None }
+        Self::default()
     }
 
     /// Check if monodis is available
@@ -345,7 +346,7 @@ impl DisassemblyResult {
 }
 
 /// Comprehensive verification result
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct VerificationResult {
     pub success: bool,
     pub monodis_available: bool,
@@ -359,16 +360,7 @@ pub struct VerificationResult {
 
 impl VerificationResult {
     pub fn new() -> Self {
-        Self {
-            success: false,
-            monodis_available: false,
-            basic_disassembly: None,
-            method_listing: None,
-            type_listing: None,
-            assembly_info: None,
-            warnings: Vec::new(),
-            failures: Vec::new(),
-        }
+        Self::default()
     }
 
     /// Check if verification was completely successful
@@ -428,62 +420,10 @@ impl ILVerificationResult {
     }
 }
 
-/// Verification rule builder for customizable verification
-pub struct VerificationRuleBuilder {
-    rules: Vec<VerificationRule>,
-}
-
-impl VerificationRuleBuilder {
-    pub fn new() -> Self {
-        Self { rules: Vec::new() }
-    }
-
-    /// Add rule to verify method exists
-    pub fn method_exists(mut self, method_name: &str) -> Self {
-        self.rules
-            .push(VerificationRule::MethodExists(method_name.to_string()));
-        self
-    }
-
-    /// Add rule to verify IL sequence
-    pub fn il_sequence(mut self, method_name: &str, instructions: Vec<&str>) -> Self {
-        self.rules.push(VerificationRule::ILSequence {
-            method_name: method_name.to_string(),
-            instructions: instructions.into_iter().map(|s| s.to_string()).collect(),
-        });
-        self
-    }
-
-    /// Add rule to verify string exists
-    pub fn user_string_exists(mut self, string_value: &str) -> Self {
-        self.rules
-            .push(VerificationRule::UserStringExists(string_value.to_string()));
-        self
-    }
-
-    /// Build the verification rules
-    pub fn build(self) -> Vec<VerificationRule> {
-        self.rules
-    }
-}
-
-/// Individual verification rule
-#[derive(Debug, Clone)]
-pub enum VerificationRule {
-    MethodExists(String),
-    ILSequence {
-        method_name: String,
-        instructions: Vec<String>,
-    },
-    UserStringExists(String),
-    OutputContains(String),
-    MinimumOutputLength(usize),
-}
-
 #[cfg(test)]
 mod tests {
     use crate::test::mono::disassembly::{
-        DisassemblyResult, ILVerificationResult, MonoDisassembler, VerificationRuleBuilder,
+        DisassemblyResult, ILVerificationResult, MonoDisassembler,
     };
 
     #[test]
@@ -504,17 +444,6 @@ mod tests {
         assert!(result.contains("Hello"));
         assert_eq!(result.output_length(), 11);
         assert_eq!(result.preview_lines(1), vec!["Hello World"]);
-    }
-
-    #[test]
-    fn test_verification_rule_builder() {
-        let rules = VerificationRuleBuilder::new()
-            .method_exists("TestMethod")
-            .il_sequence("TestMethod", vec!["ldarg.0", "ret"])
-            .user_string_exists("Hello World")
-            .build();
-
-        assert_eq!(rules.len(), 3);
     }
 
     #[test]

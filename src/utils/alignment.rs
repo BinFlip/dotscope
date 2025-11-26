@@ -102,6 +102,10 @@ pub fn align_to_4_bytes(value: u64) -> u64 {
 /// ```
 #[inline]
 pub fn align_to(value: u64, alignment: u64) -> u64 {
+    debug_assert!(
+        alignment.is_power_of_two(),
+        "alignment must be a power of 2, got {alignment}"
+    );
     (value + alignment - 1) & !(alignment - 1)
 }
 
@@ -185,5 +189,21 @@ mod tests {
             // Alignment never adds more than 3 bytes
             assert!(aligned - test_value < 4, "Alignment added too many bytes");
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "alignment must be a power of 2")]
+    #[cfg(debug_assertions)]
+    fn test_align_to_non_power_of_2_panics() {
+        // This should panic in debug builds because 3 is not a power of 2
+        let _ = align_to(100, 3);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn test_align_to_zero_alignment_panics() {
+        // Zero is not a power of 2, should panic
+        let result = std::panic::catch_unwind(|| align_to(100, 0));
+        assert!(result.is_err(), "align_to with 0 alignment should panic");
     }
 }

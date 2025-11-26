@@ -4,6 +4,8 @@
 //! marshalling for P/Invoke, COM interop, and Windows Runtime scenarios according to
 //! ECMA-335 II.23.2.9 and CoreCLR extensions.
 
+use crate::{Error, Result};
+
 #[allow(non_snake_case)]
 /// Native type constants as defined in ECMA-335 II.23.2.9 and `CoreCLR` extensions.
 ///
@@ -263,12 +265,16 @@ pub mod VARIANT_TYPE {
     pub const CLSID: u16 = 72;
 
     /// Vector modifier (0x1000) - One-dimensional array modifier
+    /// Binary: 0001_0000_0000_0000 (bit 12)
     pub const VECTOR: u16 = 0x1000;
     /// Array modifier (0x2000) - Multi-dimensional array modifier
+    /// Binary: 0010_0000_0000_0000 (bit 13)
     pub const ARRAY: u16 = 0x2000;
     /// By-reference modifier (0x4000) - Pass by reference modifier
+    /// Binary: 0100_0000_0000_0000 (bit 14)
     pub const BYREF: u16 = 0x4000;
     /// Type mask (0xfff) - Mask to extract base type from modifiers
+    /// Binary: 0000_1111_1111_1111 (lower 12 bits)
     pub const TYPEMASK: u16 = 0xfff;
 }
 
@@ -317,6 +323,144 @@ pub struct MarshallingInfo {
     pub primary_type: NativeType,
     /// Additional type information for complex marshalling scenarios
     pub additional_types: Vec<NativeType>,
+}
+
+impl std::fmt::Display for MarshallingInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.primary_type)?;
+        if !self.additional_types.is_empty() {
+            write!(f, " + [")?;
+            for (i, t) in self.additional_types.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{t}")?;
+            }
+            write!(f, "]")?;
+        }
+        Ok(())
+    }
+}
+
+impl MarshallingInfo {
+    /// Validates the marshalling info for encoding correctness.
+    ///
+    /// This method checks that the marshalling descriptor is valid and can be
+    /// correctly encoded and parsed back. It validates constraints such as:
+    ///
+    /// - **Struct**: `class_size` can only be set if `packing_size` is also set
+    ///   (due to sequential encoding format)
+    /// - **Array**: `num_element` can only be set if `num_param` is also set
+    ///   (due to sequential encoding format)
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if the marshalling info is valid
+    /// * `Err(Error::MarshallingEncodingError)` with a description of the validation error
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::MarshallingEncodingError`] if the marshalling descriptor
+    /// contains invalid combinations of optional parameters.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::marshalling::{MarshallingInfo, NativeType};
+    ///
+    /// // Valid: both parameters set
+    /// let valid = MarshallingInfo {
+    ///     primary_type: NativeType::Struct {
+    ///         packing_size: Some(4),
+    ///         class_size: Some(128),
+    ///     },
+    ///     additional_types: vec![],
+    /// };
+    /// assert!(valid.validate().is_ok());
+    ///
+    /// // Invalid: class_size without packing_size
+    /// let invalid = MarshallingInfo {
+    ///     primary_type: NativeType::Struct {
+    ///         packing_size: None,
+    ///         class_size: Some(128),
+    ///     },
+    ///     additional_types: vec![],
+    /// };
+    /// assert!(invalid.validate().is_err());
+    /// ```
+    pub fn validate(&self) -> Result<()> {
+        Self::validate_native_type(&self.primary_type)?;
+        for additional in &self.additional_types {
+            Self::validate_native_type(additional)?;
+        }
+        Ok(())
+    }
+
+    /// Validates a single native type for encoding correctness.
+    ///
+    /// This helper method recursively validates native types to ensure they meet
+    /// the sequential encoding constraints required by ECMA-335 marshalling descriptors.
+    ///
+    /// # Arguments
+    ///
+    /// * `native_type` - The native type to validate
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::MarshallingEncodingError`] if:
+    /// - `Struct` has `class_size` set without `packing_size`
+    /// - `Array` has `num_element` set without `num_param`
+    /// - Any nested type (in `FixedArray`, `Array`, or `Ptr`) is invalid
+    fn validate_native_type(native_type: &NativeType) -> Result<()> {
+        match native_type {
+            NativeType::Struct {
+                packing_size,
+                class_size,
+            } => {
+                // class_size can only be present if packing_size is also present
+                // due to sequential binary encoding format
+                if packing_size.is_none() && class_size.is_some() {
+                    return Err(Error::MarshallingEncodingError(
+                        "Struct: class_size cannot be set without packing_size \
+                         (sequential encoding constraint)"
+                            .to_string(),
+                    ));
+                }
+                Ok(())
+            }
+            NativeType::Array {
+                element_type,
+                num_param,
+                num_element,
+            } => {
+                // num_element can only be present if num_param is also present
+                // due to sequential binary encoding format
+                if num_param.is_none() && num_element.is_some() {
+                    return Err(Error::MarshallingEncodingError(
+                        "Array: num_element cannot be set without num_param \
+                         (sequential encoding constraint)"
+                            .to_string(),
+                    ));
+                }
+                // Recursively validate nested element type
+                Self::validate_native_type(element_type)?;
+                Ok(())
+            }
+            NativeType::FixedArray { element_type, .. } => {
+                if let Some(et) = element_type {
+                    Self::validate_native_type(et)?;
+                }
+                Ok(())
+            }
+            NativeType::Ptr { ref_type } => {
+                if let Some(rt) = ref_type {
+                    Self::validate_native_type(rt)?;
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 /// Represents a native type for marshalling between managed and unmanaged code.
@@ -566,6 +710,151 @@ pub enum NativeType {
     End,
 }
 
+impl std::fmt::Display for NativeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NativeType::Void => write!(f, "void"),
+            NativeType::Boolean => write!(f, "bool"),
+            NativeType::I1 => write!(f, "i1"),
+            NativeType::U1 => write!(f, "u1"),
+            NativeType::I2 => write!(f, "i2"),
+            NativeType::U2 => write!(f, "u2"),
+            NativeType::I4 => write!(f, "i4"),
+            NativeType::U4 => write!(f, "u4"),
+            NativeType::I8 => write!(f, "i8"),
+            NativeType::U8 => write!(f, "u8"),
+            NativeType::R4 => write!(f, "r4"),
+            NativeType::R8 => write!(f, "r8"),
+            NativeType::SysChar => write!(f, "syschar"),
+            NativeType::Variant => write!(f, "variant"),
+            NativeType::Currency => write!(f, "currency"),
+            NativeType::Decimal => write!(f, "decimal"),
+            NativeType::Date => write!(f, "date"),
+            NativeType::Int => write!(f, "int"),
+            NativeType::UInt => write!(f, "uint"),
+            NativeType::Error => write!(f, "error"),
+            NativeType::BStr => write!(f, "bstr"),
+            NativeType::LPStr { size_param_index } => {
+                write!(f, "lpstr")?;
+                if let Some(idx) = size_param_index {
+                    write!(f, "(size_param={idx})")?;
+                }
+                Ok(())
+            }
+            NativeType::LPWStr { size_param_index } => {
+                write!(f, "lpwstr")?;
+                if let Some(idx) = size_param_index {
+                    write!(f, "(size_param={idx})")?;
+                }
+                Ok(())
+            }
+            NativeType::LPTStr { size_param_index } => {
+                write!(f, "lptstr")?;
+                if let Some(idx) = size_param_index {
+                    write!(f, "(size_param={idx})")?;
+                }
+                Ok(())
+            }
+            NativeType::LPUtf8Str { size_param_index } => {
+                write!(f, "lputf8str")?;
+                if let Some(idx) = size_param_index {
+                    write!(f, "(size_param={idx})")?;
+                }
+                Ok(())
+            }
+            NativeType::FixedSysString { size } => write!(f, "fixed sysstring[{size}]"),
+            NativeType::AnsiBStr => write!(f, "ansi bstr"),
+            NativeType::TBStr => write!(f, "tbstr"),
+            NativeType::ByValStr { size } => write!(f, "byvalstr[{size}]"),
+            NativeType::VariantBool => write!(f, "variant bool"),
+            NativeType::FixedArray { size, element_type } => {
+                write!(f, "fixed array[{size}]")?;
+                if let Some(et) = element_type {
+                    write!(f, " of {et}")?;
+                }
+                Ok(())
+            }
+            NativeType::Array {
+                element_type,
+                num_param,
+                num_element,
+            } => {
+                write!(f, "array of {element_type}")?;
+                match (num_param, num_element) {
+                    (Some(p), Some(e)) => write!(f, "(param={p}, count={e})"),
+                    (Some(p), None) => write!(f, "(param={p})"),
+                    (None, Some(e)) => write!(f, "(count={e})"),
+                    (None, None) => Ok(()),
+                }
+            }
+            NativeType::SafeArray {
+                variant_type,
+                user_defined_name,
+            } => {
+                write!(f, "safearray(vt=0x{variant_type:04X})")?;
+                if let Some(name) = user_defined_name {
+                    write!(f, " of {name}")?;
+                }
+                Ok(())
+            }
+            NativeType::Ptr { ref_type } => {
+                write!(f, "ptr")?;
+                if let Some(rt) = ref_type {
+                    write!(f, " to {rt}")?;
+                }
+                Ok(())
+            }
+            NativeType::IUnknown => write!(f, "iunknown"),
+            NativeType::IDispatch => write!(f, "idispatch"),
+            NativeType::IInspectable => write!(f, "iinspectable"),
+            NativeType::Interface { iid_param_index } => {
+                write!(f, "interface")?;
+                if let Some(idx) = iid_param_index {
+                    write!(f, "(iid_param={idx})")?;
+                }
+                Ok(())
+            }
+            NativeType::Struct {
+                packing_size,
+                class_size,
+            } => {
+                write!(f, "struct")?;
+                match (packing_size, class_size) {
+                    (Some(p), Some(s)) => write!(f, "(pack={p}, size={s})"),
+                    (Some(p), None) => write!(f, "(pack={p})"),
+                    (None, Some(s)) => write!(f, "(size={s})"),
+                    (None, None) => Ok(()),
+                }
+            }
+            NativeType::NestedStruct => write!(f, "nested struct"),
+            NativeType::LPStruct => write!(f, "lpstruct"),
+            NativeType::CustomMarshaler {
+                guid,
+                native_type_name,
+                cookie,
+                type_reference,
+            } => {
+                write!(f, "custom marshaler({type_reference}")?;
+                if !guid.is_empty() {
+                    write!(f, ", guid={guid}")?;
+                }
+                if !native_type_name.is_empty() {
+                    write!(f, ", native={native_type_name}")?;
+                }
+                if !cookie.is_empty() {
+                    write!(f, ", cookie={cookie}")?;
+                }
+                write!(f, ")")
+            }
+            NativeType::ObjectRef => write!(f, "objectref"),
+            NativeType::Func => write!(f, "func"),
+            NativeType::AsAny => write!(f, "asany"),
+            NativeType::HString => write!(f, "hstring"),
+            NativeType::End => write!(f, "end"),
+        }
+    }
+}
+
 impl NativeType {
     /// Returns true if this type requires additional parameter data.
     ///
@@ -644,3 +933,145 @@ impl NativeType {
 /// In practice, .NET marshalling descriptors rarely exceed 10-15 levels of nesting.
 /// The limit of 50 provides substantial headroom for complex legitimate scenarios.
 pub const MAX_RECURSION_DEPTH: usize = 50;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_native_type_display_simple_types() {
+        assert_eq!(format!("{}", NativeType::Void), "void");
+        assert_eq!(format!("{}", NativeType::Boolean), "bool");
+        assert_eq!(format!("{}", NativeType::I4), "i4");
+        assert_eq!(format!("{}", NativeType::Int), "int");
+        assert_eq!(format!("{}", NativeType::BStr), "bstr");
+    }
+
+    #[test]
+    fn test_native_type_display_with_params() {
+        assert_eq!(
+            format!(
+                "{}",
+                NativeType::LPStr {
+                    size_param_index: Some(5)
+                }
+            ),
+            "lpstr(size_param=5)"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                NativeType::LPStr {
+                    size_param_index: None
+                }
+            ),
+            "lpstr"
+        );
+    }
+
+    #[test]
+    fn test_native_type_display_array() {
+        assert_eq!(
+            format!(
+                "{}",
+                NativeType::Array {
+                    element_type: Box::new(NativeType::I4),
+                    num_param: Some(3),
+                    num_element: Some(10),
+                }
+            ),
+            "array of i4(param=3, count=10)"
+        );
+    }
+
+    #[test]
+    fn test_native_type_display_struct() {
+        assert_eq!(
+            format!(
+                "{}",
+                NativeType::Struct {
+                    packing_size: Some(4),
+                    class_size: Some(128),
+                }
+            ),
+            "struct(pack=4, size=128)"
+        );
+    }
+
+    #[test]
+    fn test_marshalling_info_display() {
+        let info = MarshallingInfo {
+            primary_type: NativeType::I4,
+            additional_types: vec![],
+        };
+        assert_eq!(format!("{info}"), "i4");
+
+        let info_with_additional = MarshallingInfo {
+            primary_type: NativeType::LPStr {
+                size_param_index: None,
+            },
+            additional_types: vec![NativeType::Boolean, NativeType::I4],
+        };
+        assert_eq!(format!("{info_with_additional}"), "lpstr + [bool, i4]");
+    }
+
+    #[test]
+    fn test_marshalling_info_validate_valid() {
+        // Valid: both parameters set
+        let valid = MarshallingInfo {
+            primary_type: NativeType::Struct {
+                packing_size: Some(4),
+                class_size: Some(128),
+            },
+            additional_types: vec![],
+        };
+        assert!(valid.validate().is_ok());
+
+        // Valid: only packing_size
+        let valid2 = MarshallingInfo {
+            primary_type: NativeType::Struct {
+                packing_size: Some(4),
+                class_size: None,
+            },
+            additional_types: vec![],
+        };
+        assert!(valid2.validate().is_ok());
+
+        // Valid: neither set
+        let valid3 = MarshallingInfo {
+            primary_type: NativeType::Struct {
+                packing_size: None,
+                class_size: None,
+            },
+            additional_types: vec![],
+        };
+        assert!(valid3.validate().is_ok());
+    }
+
+    #[test]
+    fn test_marshalling_info_validate_invalid_struct() {
+        // Invalid: class_size without packing_size
+        let invalid = MarshallingInfo {
+            primary_type: NativeType::Struct {
+                packing_size: None,
+                class_size: Some(128),
+            },
+            additional_types: vec![],
+        };
+        assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn test_marshalling_info_validate_invalid_array() {
+        // Invalid: num_element without num_param
+        let invalid = MarshallingInfo {
+            primary_type: NativeType::Array {
+                element_type: Box::new(NativeType::I4),
+                num_param: None,
+                num_element: Some(10),
+            },
+            additional_types: vec![],
+        };
+        assert!(invalid.validate().is_err());
+    }
+}

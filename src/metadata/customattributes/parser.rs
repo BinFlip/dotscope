@@ -121,7 +121,7 @@ use crate::{
     metadata::{
         customattributes::types::{
             CustomAttributeArgument, CustomAttributeNamedArgument, CustomAttributeValue,
-            SERIALIZATION_TYPE,
+            NAMED_ARG_TYPE, SERIALIZATION_TYPE,
         },
         streams::Blob,
         tables::ParamRc,
@@ -151,8 +151,25 @@ const MAX_NAMED_ARGS: u16 = 1024;
 
 /// Maximum array length in custom attribute arguments.
 ///
-/// Arrays in custom attribute values should be reasonable in size. 65536 elements
-/// provides headroom for data-heavy attributes while preventing allocation bombs.
+/// # Rationale
+///
+/// This limit (65536 = 2^16 elements) serves two purposes:
+///
+/// 1. **Memory Safety**: Prevents allocation bombs where malformed metadata claims
+///    astronomical array sizes (e.g., 2^31 elements × 8 bytes = 16GB allocation).
+///    With this limit, the maximum allocation is ~512KB for 64-bit elements.
+///
+/// 2. **Practical Sufficiency**: Real-world custom attributes rarely contain large
+///    arrays. Even data-heavy attributes like `[Guid]` or permission sets typically
+///    use fixed-size data, not variable-length arrays of this magnitude.
+///
+/// # Value Choice
+///
+/// The value 65536 (2^16) was chosen because:
+/// - It's large enough for any legitimate use case encountered in practice
+/// - It keeps maximum allocation bounded to reasonable memory
+/// - It matches the maximum value representable by a u16, which is often used
+///   as an array length type in .NET metadata
 const MAX_ATTRIBUTE_ARRAY_LENGTH: i32 = 65536;
 
 /// Parse custom attribute blob data from the blob heap using constructor parameter information.
@@ -712,9 +729,13 @@ impl<'a> CustomAttributeParser<'a> {
                 self.parser.read_le::<f64>()?,
             ))),
             CilFlavor::I => {
+                // Native integers: size depends on target platform
+                // On 64-bit: read i64, isize is i64 - no truncation
+                // On 32-bit: read i32, isize is i32 - no truncation
+                // Note: Cross-platform parsing (32-bit assembly on 64-bit host) is not supported
                 if cfg!(target_pointer_width = "64") {
                     let val = self.parser.read_le::<i64>()?;
-                    #[allow(clippy::cast_possible_truncation)]
+                    #[allow(clippy::cast_possible_truncation)] // Safe: i64 == isize on 64-bit
                     Ok(Some(CustomAttributeArgument::I(val as isize)))
                 } else {
                     let val = self.parser.read_le::<i32>()?;
@@ -722,9 +743,13 @@ impl<'a> CustomAttributeParser<'a> {
                 }
             }
             CilFlavor::U => {
+                // Native integers: size depends on target platform
+                // On 64-bit: read u64, usize is u64 - no truncation
+                // On 32-bit: read u32, usize is u32 - no truncation
+                // Note: Cross-platform parsing (32-bit assembly on 64-bit host) is not supported
                 if cfg!(target_pointer_width = "64") {
                     let val = self.parser.read_le::<u64>()?;
-                    #[allow(clippy::cast_possible_truncation)]
+                    #[allow(clippy::cast_possible_truncation)] // Safe: u64 == usize on 64-bit
                     Ok(Some(CustomAttributeArgument::U(val as usize)))
                 } else {
                     let val = self.parser.read_le::<u32>()?;
@@ -793,8 +818,24 @@ impl<'a> CustomAttributeParser<'a> {
                 }
             }
             CilFlavor::ValueType => {
+                // ValueType enum resolution uses a multi-stage fallback strategy:
+                //
+                // Stage 1: Direct type resolution via TypeRegistry
+                //   - Look up the type by full name in the registry
+                //   - If found and it's an enum, use its defined underlying type size
+                //   - This is the most accurate method when the type is fully loaded
+                //
+                // Stage 2: Heuristic enum detection (fallback)
+                //   - Use EnumUtils to detect enums by name patterns or inheritance
+                //   - Infer underlying type size from available metadata
+                //   - Used when the type definition isn't directly available
+                //
+                // Stage 3: Error (no resolution possible)
+                //   - If neither stage succeeds, the type cannot be parsed
+                //   - Indicates missing assembly dependencies
                 let type_name = type_ref.fullname();
 
+                // Stage 1: Try direct type resolution via TypeRegistry
                 if let Some(registry) = &self.type_registry {
                     if let Some(resolved_type) = registry.resolve_type_global(&type_name) {
                         if EnumUtils::is_enum_type(&resolved_type, Some(registry)) {
@@ -805,7 +846,7 @@ impl<'a> CustomAttributeParser<'a> {
                     }
                 }
 
-                // Use centralized enum utilities as fallback
+                // Stage 2: Heuristic enum detection as fallback
                 let is_enum = if let Some(registry) = &self.type_registry {
                     EnumUtils::is_enum_type_by_name(&type_name, registry)
                 } else {
@@ -821,8 +862,7 @@ impl<'a> CustomAttributeParser<'a> {
 
                     self.parse_enum(type_name, underlying_type_size)
                 } else {
-                    // Early abort: if we can't resolve the type through TypeRegistry and it's not a known system type,
-                    // this indicates missing dependencies that should be loaded first
+                    // Stage 3: No resolution possible - missing dependencies
                     Err(malformed_error!(
                             "Cannot resolve ValueType '{}' - type not found in TypeRegistry. This indicates the assembly containing this type is not loaded yet.",
                             type_name
@@ -846,6 +886,7 @@ impl<'a> CustomAttributeParser<'a> {
                         // Try to get the base element type from the array type
                         if let Some(base_type) = type_ref.base() {
                             let base_type_ref = base_type.into();
+                            // Safe: array_length was validated as positive and <= MAX_ATTRIBUTE_ARRAY_LENGTH
                             #[allow(clippy::cast_sign_loss)]
                             let mut elements = Vec::with_capacity(array_length as usize);
 
@@ -906,11 +947,11 @@ impl<'a> CustomAttributeParser<'a> {
             return Ok(None);
         }
 
-        // Read field/property indicator
+        // Read field/property indicator per ECMA-335 §II.23.3
         let field_or_prop = self.parser.read_le::<u8>()?;
         let is_field = match field_or_prop {
-            0x53 => true,  // FIELD
-            0x54 => false, // PROPERTY
+            NAMED_ARG_TYPE::FIELD => true,
+            NAMED_ARG_TYPE::PROPERTY => false,
             0x00 => {
                 // 0x00 can appear as padding or end-of-data marker in some custom attributes
                 // This is sometimes used as a null terminator in malformed or legacy attributes
@@ -918,8 +959,10 @@ impl<'a> CustomAttributeParser<'a> {
             }
             _ => {
                 return Err(malformed_error!(
-                    "Invalid field/property indicator: 0x{:02X}",
-                    field_or_prop
+                    "Invalid field/property indicator: 0x{:02X} (expected 0x{:02X} for FIELD or 0x{:02X} for PROPERTY)",
+                    field_or_prop,
+                    NAMED_ARG_TYPE::FIELD,
+                    NAMED_ARG_TYPE::PROPERTY
                 ))
             }
         };
@@ -1135,6 +1178,7 @@ impl<'a> CustomAttributeParser<'a> {
                 }
                 WorkItem::BuildArray(count) => {
                     // Pop N elements from result stack and build array
+                    // Safe: count was validated as non-negative when BuildArray was pushed
                     #[allow(clippy::cast_sign_loss)]
                     let count_usize = count as usize;
 
@@ -1165,7 +1209,10 @@ impl<'a> CustomAttributeParser<'a> {
             ));
         }
 
-        Ok(result_stack.pop().unwrap())
+        // Safe: we just verified len() == 1, so pop() will return Some
+        result_stack
+            .pop()
+            .ok_or_else(|| malformed_error!("Internal error: result stack unexpectedly empty"))
     }
 
     /// Helper method to check if the current position contains string data.
@@ -1204,10 +1251,17 @@ impl<'a> CustomAttributeParser<'a> {
                 // Check if we have enough data for the string
                 let remaining_data = self.parser.len() - self.parser.pos();
                 if length as usize <= remaining_data {
-                    // Additional heuristic: for enum values, we expect exactly 4 bytes
-                    // For strings, we expect a length > 0 and <= reasonable size (< 1000 chars)
+                    // Heuristic: reject unreasonably large "lengths" that are likely
+                    // misinterpreted enum values. Custom attribute strings are typically
+                    // short (type names, messages, etc.). The 1000 char limit is
+                    // conservative but catches most false positives where an i32 enum
+                    // value is misread as a compressed length.
+                    //
+                    // LIMITATION: Legitimate strings > 1000 chars will be rejected by
+                    // this heuristic. This is acceptable as this method is only used
+                    // for ambiguous fallback parsing, not primary string parsing.
                     if length == 0 || length > 1000 {
-                        Ok(length == 0) // only accept empty strings, not large "lengths"
+                        Ok(length == 0) // Accept empty strings; reject large "lengths"
                     } else {
                         // Check if the next bytes could be valid UTF-8
                         let string_bytes = &self.parser.data()
@@ -1235,22 +1289,25 @@ impl<'a> CustomAttributeParser<'a> {
     /// as specified in the .NET metadata format.
     ///
     /// # Format
-    /// - **Null String**: Single 0xFF byte
+    /// - **Null String**: Single 0xFF byte → returns empty `String`
+    /// - **Empty String**: Compressed uint 0 → returns empty `String`
     /// - **Regular String**: Compressed length + UTF-8 bytes
-    /// - **Empty String**: Length 0 + no data bytes
     ///
-    /// # Error Recovery
-    /// If invalid UTF-8 is encountered, falls back to lossy conversion to ensure
-    /// parsing continues rather than failing completely on malformed string data.
+    /// # Design Note
+    ///
+    /// Both null strings (0xFF) and empty strings (length 0) return an empty Rust `String`,
+    /// since Rust's `String` type cannot represent null. This means the distinction between
+    /// null and empty is lost during parsing, but this is acceptable for the Rust API.
     ///
     /// # Returns
-    /// Parsed string (empty string for null marker or zero length)
+    /// Parsed string (empty `String` for both null marker and zero length)
     ///
     /// # Errors
     /// Returns [`crate::Error::Malformed`] if:
     /// - No data available for reading
     /// - Declared length exceeds available data
     /// - Compressed length parsing fails
+    /// - String data contains invalid UTF-8
     fn parse_string(&mut self) -> Result<String> {
         if !self.parser.has_more_data() {
             return Err(malformed_error!("No data available for string"));
@@ -1275,13 +1332,13 @@ impl<'a> CustomAttributeParser<'a> {
             for _ in 0..length {
                 bytes.push(self.parser.read_le::<u8>()?);
             }
-            match String::from_utf8(bytes) {
-                Ok(s) => Ok(s),
-                Err(e) => {
-                    let s = String::from_utf8_lossy(&e.into_bytes()).into_owned();
-                    Ok(s)
-                }
-            }
+            String::from_utf8(bytes).map_err(|e| {
+                malformed_error!(
+                    "Invalid UTF-8 in custom attribute string at position {}: {}",
+                    self.parser.pos() - length as usize,
+                    e.utf8_error()
+                )
+            })
         } else {
             Err(malformed_error!(
                 "String length {} exceeds available data {} (blob context: pos={}, len={}, first_byte=0x{:02X})",
@@ -1543,21 +1600,14 @@ mod tests {
             0x00, 0x00, // NumNamed = 0
         ];
 
-        // This test was failing due to parsing issues, so let's be more permissive
-        let result = parse_custom_attribute_data(blob_data, &method.params);
-        match result {
-            Ok(attr) => {
-                assert_eq!(attr.fixed_args.len(), 1);
-                match &attr.fixed_args[0] {
-                    CustomAttributeArgument::Type(val) => assert_eq!(val, "System.Int32"),
-                    CustomAttributeArgument::String(val) => assert_eq!(val, "System.Int32"),
-                    other => panic!("Expected Type or String argument, got: {other:?}"),
-                }
-            }
-            Err(_e) => {
-                // This test might fail due to parser issues - that's acceptable for now
-                // The important tests (basic functionality) should still pass
-            }
+        // Class types are parsed as Type arguments when they represent System.Type references
+        let result = parse_custom_attribute_data(blob_data, &method.params).unwrap();
+        assert_eq!(result.fixed_args.len(), 1);
+        // Parser may return either Type or String depending on context
+        match &result.fixed_args[0] {
+            CustomAttributeArgument::Type(val) => assert_eq!(val, "System.Int32"),
+            CustomAttributeArgument::String(val) => assert_eq!(val, "System.Int32"),
+            other => panic!("Expected Type or String argument, got: {other:?}"),
         }
     }
 

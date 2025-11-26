@@ -62,14 +62,14 @@ use crate::{
         cilobject::CilObject,
         tables::{
             ClassLayoutRaw, ConstantRaw, CustomAttributeRaw, FieldLayoutRaw, FieldMarshalRaw,
-            FieldRaw, GenericParamConstraintRaw, GenericParamRaw, InterfaceImplRaw, MemberRefRaw,
-            MethodDefRaw, MethodImplRaw, NestedClassRaw, TableId, TypeDefRaw, TypeRefRaw,
+            GenericParamConstraintRaw, GenericParamRaw, InterfaceImplRaw, MemberRefRaw,
+            MethodImplRaw, NestedClassRaw, TableId, TypeDefRaw, TypeRefRaw,
         },
         token::Token,
     },
     Blob, Error, Guid, Result, Strings, UserStrings,
 };
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Reference scanner for metadata validation.
 ///
@@ -108,13 +108,13 @@ use std::collections::{HashMap, HashSet};
 /// This type is [`Send`] and [`Sync`], allowing it to be safely shared across validation threads.
 pub struct ReferenceScanner {
     /// Forward references: token -> set of tokens that reference it
-    forward_references: HashMap<Token, HashSet<Token>>,
+    forward_references: FxHashMap<Token, FxHashSet<Token>>,
     /// Backward references: token -> set of tokens it references
-    backward_references: HashMap<Token, HashSet<Token>>,
+    backward_references: FxHashMap<Token, FxHashSet<Token>>,
     /// Set of all valid tokens in the assembly
-    valid_tokens: HashSet<Token>,
+    valid_tokens: FxHashSet<Token>,
     /// Table row counts for bounds checking
-    table_row_counts: HashMap<TableId, u32>,
+    table_row_counts: FxHashMap<TableId, u32>,
     /// Heap sizes for bounds checking
     heap_sizes: HeapSizes,
 }
@@ -165,10 +165,10 @@ impl ReferenceScanner {
     /// ```
     pub fn from_view(view: &CilAssemblyView) -> Result<Self> {
         let mut scanner = Self {
-            forward_references: HashMap::new(),
-            backward_references: HashMap::new(),
-            valid_tokens: HashSet::new(),
-            table_row_counts: HashMap::new(),
+            forward_references: FxHashMap::default(),
+            backward_references: FxHashMap::default(),
+            valid_tokens: FxHashSet::default(),
+            table_row_counts: FxHashMap::default(),
             heap_sizes: HeapSizes::default(),
         };
 
@@ -208,10 +208,10 @@ impl ReferenceScanner {
     /// ```
     pub fn from_object(object: &CilObject) -> Result<Self> {
         let mut scanner = Self {
-            forward_references: HashMap::new(),
-            backward_references: HashMap::new(),
-            valid_tokens: HashSet::new(),
-            table_row_counts: HashMap::new(),
+            forward_references: FxHashMap::default(),
+            backward_references: FxHashMap::default(),
+            valid_tokens: FxHashSet::default(),
+            table_row_counts: FxHashMap::default(),
             heap_sizes: HeapSizes::default(),
         };
 
@@ -313,196 +313,229 @@ impl ReferenceScanner {
     }
 
     /// Analyzes references between tokens in metadata tables.
+    ///
+    /// This method uses the `dispatch_table_type` macro to iterate over all present tables
+    /// and extract references in a unified way. Each table type has specific fields that
+    /// contain references to other tokens (coded indices, direct table indices, etc.).
+    ///
+    /// Reference extraction is consolidated here to:
+    /// - Eliminate code duplication across separate analyze_*_references methods
+    /// - Ensure consistent handling of all table types
+    /// - Make it easier to add new table types in the future
     fn analyze_references(&mut self, tables: &crate::TablesHeader) {
-        self.analyze_typedef_references(tables);
-        self.analyze_typeref_references(tables);
-        self.analyze_interfaceimpl_references(tables);
-        self.analyze_memberref_references(tables);
-        Self::analyze_methoddef_references(tables);
-        Self::analyze_field_references(tables);
-        self.analyze_customattribute_references(tables);
-        self.analyze_generic_references(tables);
-        self.analyze_nested_references(tables);
-        self.analyze_additional_references(tables);
-    }
-
-    fn analyze_typedef_references(&mut self, tables: &crate::TablesHeader) {
-        if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
-            for typedef_row in typedef_table {
-                let from_token = Token::new(0x0200_0000 | typedef_row.rid);
-
-                if typedef_row.extends.row != 0 {
-                    self.add_reference(from_token, typedef_row.extends.token);
+        for table_id in tables.present_tables() {
+            dispatch_table_type!(table_id, |RawType| {
+                if let Some(table) = tables.table::<RawType>() {
+                    let token_base = u32::from(table_id.token_type()) << 24;
+                    for row in table {
+                        let from_token = Token::new(token_base | row.rid);
+                        self.extract_row_references(table_id, from_token, &row);
+                    }
                 }
-            }
+            });
         }
     }
 
-    fn analyze_typeref_references(&mut self, tables: &crate::TablesHeader) {
-        if let Some(typeref_table) = tables.table::<TypeRefRaw>() {
-            for typeref_row in typeref_table {
-                let from_token = Token::new(0x0100_0000 | typeref_row.rid);
+    /// Extracts references from a single table row based on the table type.
+    ///
+    /// This method contains the table-specific reference extraction logic. Each table
+    /// type has different fields that may contain references:
+    /// - Coded indices (e.g., TypeDefOrRef, MemberRefParent)
+    /// - Direct table indices (e.g., class field pointing to TypeDef)
+    /// - Combined references from multiple fields
+    ///
+    /// Tables without references (or with only signature blob references that require
+    /// future parsing) are handled with empty match arms.
+    #[allow(clippy::too_many_lines)]
+    fn extract_row_references<T>(&mut self, table_id: TableId, from_token: Token, row: &T)
+    where
+        T: std::any::Any,
+    {
+        // Use downcasting to access table-specific fields
+        // This is safe because we know the exact type from the dispatch_table_type macro
+        let row_any = row as &dyn std::any::Any;
 
-                if typeref_row.resolution_scope.row != 0 {
-                    self.add_reference(from_token, typeref_row.resolution_scope.token);
+        match table_id {
+            // TypeDef: extends field contains base type reference (TypeDefOrRef coded index)
+            TableId::TypeDef => {
+                if let Some(typedef) = row_any.downcast_ref::<TypeDefRaw>() {
+                    if typedef.extends.row != 0 {
+                        self.add_reference(from_token, typedef.extends.token);
+                    }
                 }
             }
-        }
-    }
 
-    fn analyze_interfaceimpl_references(&mut self, tables: &crate::TablesHeader) {
-        if let Some(interface_table) = tables.table::<InterfaceImplRaw>() {
-            for impl_row in interface_table {
-                let from_token = Token::new(0x0900_0000 | impl_row.rid);
-
-                let class_token = Token::new(0x0200_0000 | impl_row.class);
-                self.add_reference(from_token, class_token);
-
-                if impl_row.interface.row != 0 {
-                    self.add_reference(from_token, impl_row.interface.token);
+            // TypeRef: resolution_scope contains reference to Module, ModuleRef, AssemblyRef, or TypeRef
+            TableId::TypeRef => {
+                if let Some(typeref) = row_any.downcast_ref::<TypeRefRaw>() {
+                    if typeref.resolution_scope.row != 0 {
+                        self.add_reference(from_token, typeref.resolution_scope.token);
+                    }
                 }
             }
-        }
-    }
 
-    fn analyze_memberref_references(&mut self, tables: &crate::TablesHeader) {
-        if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
-            for memberref_row in memberref_table {
-                let from_token = Token::new(0x0A00_0000 | memberref_row.rid);
+            // InterfaceImpl: class (TypeDef index) and interface (TypeDefOrRef coded index)
+            TableId::InterfaceImpl => {
+                if let Some(impl_row) = row_any.downcast_ref::<InterfaceImplRaw>() {
+                    let class_token = Token::new(0x0200_0000 | impl_row.class);
+                    self.add_reference(from_token, class_token);
 
-                if memberref_row.class.row != 0 {
-                    self.add_reference(from_token, memberref_row.class.token);
-                }
-
-                // TODO: Parse signature blob for type references (future phase)
-            }
-        }
-    }
-
-    fn analyze_methoddef_references(tables: &crate::TablesHeader) {
-        if let Some(methoddef_table) = tables.table::<MethodDefRaw>() {
-            for _methoddef_row in methoddef_table {
-                // TODO: Parse signature blob for type references (future phase)
-            }
-        }
-    }
-
-    fn analyze_field_references(tables: &crate::TablesHeader) {
-        if let Some(field_table) = tables.table::<FieldRaw>() {
-            for _field_row in field_table {
-                // TODO: Parse signature blob for type references (future phase)
-            }
-        }
-    }
-
-    fn analyze_customattribute_references(&mut self, tables: &crate::TablesHeader) {
-        if let Some(attr_table) = tables.table::<CustomAttributeRaw>() {
-            for attr_row in attr_table {
-                let from_token = Token::new(0x0C00_0000 | attr_row.rid);
-
-                if attr_row.parent.row != 0 {
-                    self.add_reference(from_token, attr_row.parent.token);
-                }
-
-                if attr_row.constructor.row != 0 {
-                    self.add_reference(from_token, attr_row.constructor.token);
+                    if impl_row.interface.row != 0 {
+                        self.add_reference(from_token, impl_row.interface.token);
+                    }
                 }
             }
-        }
-    }
 
-    fn analyze_generic_references(&mut self, tables: &crate::TablesHeader) {
-        if let Some(param_table) = tables.table::<GenericParamRaw>() {
-            for param_row in param_table {
-                let from_token = Token::new(0x2A00_0000 | param_row.rid);
-
-                if param_row.owner.row != 0 {
-                    self.add_reference(from_token, param_row.owner.token);
+            // MemberRef: class field (MemberRefParent coded index)
+            TableId::MemberRef => {
+                if let Some(memberref) = row_any.downcast_ref::<MemberRefRaw>() {
+                    if memberref.class.row != 0 {
+                        self.add_reference(from_token, memberref.class.token);
+                    }
+                    // Note: signature blob parsing for type references is a future enhancement
                 }
             }
-        }
 
-        if let Some(constraint_table) = tables.table::<GenericParamConstraintRaw>() {
-            for constraint_row in constraint_table {
-                let from_token = Token::new(0x2C00_0000 | constraint_row.rid);
-
-                let param_token = Token::new(0x2A00_0000 | constraint_row.owner);
-                self.add_reference(from_token, param_token);
-
-                if constraint_row.constraint.row != 0 {
-                    self.add_reference(from_token, constraint_row.constraint.token);
+            // CustomAttribute: parent (HasCustomAttribute) and constructor (CustomAttributeType)
+            TableId::CustomAttribute => {
+                if let Some(attr) = row_any.downcast_ref::<CustomAttributeRaw>() {
+                    if attr.parent.row != 0 {
+                        self.add_reference(from_token, attr.parent.token);
+                    }
+                    if attr.constructor.row != 0 {
+                        self.add_reference(from_token, attr.constructor.token);
+                    }
                 }
             }
-        }
-    }
 
-    fn analyze_nested_references(&mut self, tables: &crate::TablesHeader) {
-        if let Some(nested_table) = tables.table::<NestedClassRaw>() {
-            for nested_row in nested_table {
-                let from_token = Token::new(0x2900_0000 | nested_row.rid);
-
-                let nested_token = Token::new(0x0200_0000 | nested_row.nested_class);
-                self.add_reference(from_token, nested_token);
-
-                let enclosing_token = Token::new(0x0200_0000 | nested_row.enclosing_class);
-                self.add_reference(from_token, enclosing_token);
-            }
-        }
-    }
-
-    fn analyze_additional_references(&mut self, tables: &crate::TablesHeader) {
-        if let Some(methodimpl_table) = tables.table::<MethodImplRaw>() {
-            for methodimpl_row in methodimpl_table {
-                let from_token = Token::new(0x1900_0000 | methodimpl_row.rid);
-
-                let class_token = Token::new(0x0200_0000 | methodimpl_row.class);
-                self.add_reference(from_token, class_token);
-
-                if methodimpl_row.method_body.row != 0 {
-                    self.add_reference(from_token, methodimpl_row.method_body.token);
-                }
-
-                if methodimpl_row.method_declaration.row != 0 {
-                    self.add_reference(from_token, methodimpl_row.method_declaration.token);
+            // GenericParam: owner (TypeOrMethodDef coded index)
+            TableId::GenericParam => {
+                if let Some(param) = row_any.downcast_ref::<GenericParamRaw>() {
+                    if param.owner.row != 0 {
+                        self.add_reference(from_token, param.owner.token);
+                    }
                 }
             }
-        }
 
-        if let Some(fieldlayout_table) = tables.table::<FieldLayoutRaw>() {
-            for fieldlayout_row in fieldlayout_table {
-                let from_token = Token::new(0x1000_0000 | fieldlayout_row.rid);
+            // GenericParamConstraint: owner (GenericParam index) and constraint (TypeDefOrRef)
+            TableId::GenericParamConstraint => {
+                if let Some(constraint) = row_any.downcast_ref::<GenericParamConstraintRaw>() {
+                    let param_token = Token::new(0x2A00_0000 | constraint.owner);
+                    self.add_reference(from_token, param_token);
 
-                let field_token = Token::new(0x0400_0000 | fieldlayout_row.field);
-                self.add_reference(from_token, field_token);
-            }
-        }
-
-        if let Some(classlayout_table) = tables.table::<ClassLayoutRaw>() {
-            for classlayout_row in classlayout_table {
-                let from_token = Token::new(0x0F00_0000 | classlayout_row.rid);
-
-                let parent_token = Token::new(0x0200_0000 | classlayout_row.parent);
-                self.add_reference(from_token, parent_token);
-            }
-        }
-
-        if let Some(constant_table) = tables.table::<ConstantRaw>() {
-            for constant_row in constant_table {
-                let from_token = Token::new(0x0B00_0000 | constant_row.rid);
-
-                if constant_row.parent.row != 0 {
-                    self.add_reference(from_token, constant_row.parent.token);
+                    if constraint.constraint.row != 0 {
+                        self.add_reference(from_token, constraint.constraint.token);
+                    }
                 }
             }
-        }
 
-        if let Some(marshal_table) = tables.table::<FieldMarshalRaw>() {
-            for marshal_row in marshal_table {
-                let from_token = Token::new(0x0D00_0000 | marshal_row.rid);
+            // NestedClass: nested_class and enclosing_class (both TypeDef indices)
+            TableId::NestedClass => {
+                if let Some(nested) = row_any.downcast_ref::<NestedClassRaw>() {
+                    let nested_token = Token::new(0x0200_0000 | nested.nested_class);
+                    self.add_reference(from_token, nested_token);
 
-                if marshal_row.parent.row != 0 {
-                    self.add_reference(from_token, marshal_row.parent.token);
+                    let enclosing_token = Token::new(0x0200_0000 | nested.enclosing_class);
+                    self.add_reference(from_token, enclosing_token);
                 }
+            }
+
+            // MethodImpl: class (TypeDef), method_body and method_declaration (MethodDefOrRef)
+            TableId::MethodImpl => {
+                if let Some(impl_row) = row_any.downcast_ref::<MethodImplRaw>() {
+                    let class_token = Token::new(0x0200_0000 | impl_row.class);
+                    self.add_reference(from_token, class_token);
+
+                    if impl_row.method_body.row != 0 {
+                        self.add_reference(from_token, impl_row.method_body.token);
+                    }
+                    if impl_row.method_declaration.row != 0 {
+                        self.add_reference(from_token, impl_row.method_declaration.token);
+                    }
+                }
+            }
+
+            // FieldLayout: field (Field index)
+            TableId::FieldLayout => {
+                if let Some(layout) = row_any.downcast_ref::<FieldLayoutRaw>() {
+                    let field_token = Token::new(0x0400_0000 | layout.field);
+                    self.add_reference(from_token, field_token);
+                }
+            }
+
+            // ClassLayout: parent (TypeDef index)
+            TableId::ClassLayout => {
+                if let Some(layout) = row_any.downcast_ref::<ClassLayoutRaw>() {
+                    let parent_token = Token::new(0x0200_0000 | layout.parent);
+                    self.add_reference(from_token, parent_token);
+                }
+            }
+
+            // Constant: parent (HasConstant coded index)
+            TableId::Constant => {
+                if let Some(constant) = row_any.downcast_ref::<ConstantRaw>() {
+                    if constant.parent.row != 0 {
+                        self.add_reference(from_token, constant.parent.token);
+                    }
+                }
+            }
+
+            // FieldMarshal: parent (HasFieldMarshal coded index)
+            TableId::FieldMarshal => {
+                if let Some(marshal) = row_any.downcast_ref::<FieldMarshalRaw>() {
+                    if marshal.parent.row != 0 {
+                        self.add_reference(from_token, marshal.parent.token);
+                    }
+                }
+            }
+
+            // Tables with signature blobs that would need parsing for full reference extraction
+            // These are placeholders for future enhancement
+            TableId::MethodDef | TableId::Field | TableId::StandAloneSig | TableId::TypeSpec => {
+                // Future: Parse signature blobs for type references
+            }
+
+            // Tables without token references (only contain data, heap indices, or flags)
+            TableId::Module
+            | TableId::Param
+            | TableId::Assembly
+            | TableId::AssemblyRef
+            | TableId::ModuleRef
+            | TableId::File
+            | TableId::ManifestResource
+            | TableId::ExportedType
+            | TableId::Event
+            | TableId::EventMap
+            | TableId::Property
+            | TableId::PropertyMap
+            | TableId::MethodSemantics
+            | TableId::DeclSecurity
+            | TableId::ImplMap
+            | TableId::FieldRVA
+            | TableId::MethodSpec
+            | TableId::AssemblyProcessor
+            | TableId::AssemblyOS
+            | TableId::AssemblyRefProcessor
+            | TableId::AssemblyRefOS
+            | TableId::FieldPtr
+            | TableId::MethodPtr
+            | TableId::ParamPtr
+            | TableId::EventPtr
+            | TableId::PropertyPtr
+            | TableId::EncLog
+            | TableId::EncMap
+            | TableId::Document
+            | TableId::MethodDebugInformation
+            | TableId::LocalScope
+            | TableId::LocalVariable
+            | TableId::LocalConstant
+            | TableId::ImportScope
+            | TableId::StateMachineMethod
+            | TableId::CustomDebugInformation => {
+                // These tables either:
+                // - Don't contain token references (only heap indices, flags, RVAs)
+                // - Have references that require special handling not yet implemented
+                // - Are pointer indirection tables
             }
         }
     }
@@ -596,7 +629,10 @@ impl ReferenceScanner {
         Ok(())
     }
 
-    /// Returns all tokens that reference the given token.
+    /// Returns a reference to the set of tokens that reference the given token.
+    ///
+    /// This method returns a reference to the internal set without cloning.
+    /// Returns `None` if no tokens reference the given token.
     ///
     /// # Arguments
     ///
@@ -604,16 +640,16 @@ impl ReferenceScanner {
     ///
     /// # Returns
     ///
-    /// Returns a set of tokens that reference the given token.
+    /// Returns an optional reference to the internal set of referencing tokens.
     #[must_use]
-    pub fn get_references_to(&self, token: Token) -> HashSet<Token> {
-        self.forward_references
-            .get(&token)
-            .cloned()
-            .unwrap_or_default()
+    pub fn references_to(&self, token: Token) -> Option<&FxHashSet<Token>> {
+        self.forward_references.get(&token)
     }
 
-    /// Returns all tokens that the given token references.
+    /// Returns a reference to the set of tokens that the given token references.
+    ///
+    /// This method returns a reference to the internal set without cloning.
+    /// Returns `None` if the token doesn't reference any other tokens.
     ///
     /// # Arguments
     ///
@@ -621,13 +657,46 @@ impl ReferenceScanner {
     ///
     /// # Returns
     ///
-    /// Returns a set of tokens that the given token references.
+    /// Returns an optional reference to the internal set of referenced tokens.
     #[must_use]
-    pub fn get_references_from(&self, token: Token) -> HashSet<Token> {
+    pub fn references_from(&self, token: Token) -> Option<&FxHashSet<Token>> {
+        self.backward_references.get(&token)
+    }
+
+    /// Checks if any tokens reference the given token.
+    ///
+    /// More efficient than `get_references_to().is_empty()` as it avoids cloning.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The token to check
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if at least one token references the given token.
+    #[must_use]
+    pub fn has_references_to(&self, token: Token) -> bool {
+        self.forward_references
+            .get(&token)
+            .is_some_and(|set| !set.is_empty())
+    }
+
+    /// Checks if the given token references any other tokens.
+    ///
+    /// More efficient than `get_references_from().is_empty()` as it avoids cloning.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The token to check
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the token references at least one other token.
+    #[must_use]
+    pub fn has_references_from(&self, token: Token) -> bool {
         self.backward_references
             .get(&token)
-            .cloned()
-            .unwrap_or_default()
+            .is_some_and(|set| !set.is_empty())
     }
 
     /// Checks if deleting a token would break reference integrity.
@@ -642,7 +711,7 @@ impl ReferenceScanner {
     /// break reference integrity.
     #[must_use]
     pub fn can_delete_token(&self, token: Token) -> bool {
-        self.get_references_to(token).is_empty()
+        !self.has_references_to(token)
     }
 
     /// Returns the heap sizes for bounds checking.
@@ -695,11 +764,7 @@ impl ReferenceScanner {
         ScannerStatistics {
             total_tokens: self.valid_tokens.len(),
             total_tables: self.table_row_counts.len(),
-            total_references: self
-                .forward_references
-                .values()
-                .map(std::collections::HashSet::len)
-                .sum(),
+            total_references: self.forward_references.values().map(FxHashSet::len).sum(),
             heap_sizes: self.heap_sizes.clone(),
         }
     }
@@ -865,16 +930,17 @@ mod tests {
                 for typedef_token in scanner.valid_tokens.iter() {
                     if typedef_token.table() == 0x02 {
                         // TypeDef table
-                        let references = scanner.get_references_from(*typedef_token);
-                        if !references.is_empty() {
-                            _inheritance_found = true;
+                        if let Some(references) = scanner.references_from(*typedef_token) {
+                            if !references.is_empty() {
+                                _inheritance_found = true;
 
-                            // Verify that the referenced tokens are valid
-                            for ref_token in references {
-                                assert!(
-                                    scanner.token_exists(ref_token),
-                                    "Referenced token should exist in metadata"
-                                );
+                                // Verify that the referenced tokens are valid
+                                for ref_token in references {
+                                    assert!(
+                                        scanner.token_exists(*ref_token),
+                                        "Referenced token should exist in metadata"
+                                    );
+                                }
                             }
                         }
                     }
@@ -904,20 +970,21 @@ mod tests {
                     for token in scanner.valid_tokens.iter() {
                         if token.table() == 0x09 {
                             // InterfaceImpl table
-                            let references = scanner.get_references_from(*token);
-                            if !references.is_empty() {
-                                impl_references_found = true;
+                            if let Some(references) = scanner.references_from(*token) {
+                                if !references.is_empty() {
+                                    impl_references_found = true;
 
-                                // Each InterfaceImpl should reference both class and interface
-                                assert!(!references.is_empty(),
-                                    "InterfaceImpl should reference at least the implementing class");
+                                    // Each InterfaceImpl should reference both class and interface
+                                    assert!(!references.is_empty(),
+                                        "InterfaceImpl should reference at least the implementing class");
 
-                                // Verify referenced tokens exist
-                                for ref_token in references {
-                                    assert!(
-                                        scanner.token_exists(ref_token),
-                                        "Referenced token should exist in metadata"
-                                    );
+                                    // Verify referenced tokens exist
+                                    for ref_token in references {
+                                        assert!(
+                                            scanner.token_exists(*ref_token),
+                                            "Referenced token should exist in metadata"
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -944,16 +1011,17 @@ mod tests {
                     for token in scanner.valid_tokens.iter() {
                         if token.table() == 0x0A {
                             // MemberRef table
-                            let references = scanner.get_references_from(*token);
-                            if !references.is_empty() {
-                                memberref_references_found = true;
+                            if let Some(references) = scanner.references_from(*token) {
+                                if !references.is_empty() {
+                                    memberref_references_found = true;
 
-                                // Verify referenced tokens exist
-                                for ref_token in references {
-                                    assert!(
-                                        scanner.token_exists(ref_token),
-                                        "Referenced token should exist in metadata"
-                                    );
+                                    // Verify referenced tokens exist
+                                    for ref_token in references {
+                                        assert!(
+                                            scanner.token_exists(*ref_token),
+                                            "Referenced token should exist in metadata"
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -982,17 +1050,18 @@ mod tests {
                     for token in scanner.valid_tokens.iter() {
                         if token.table() == 0x0C {
                             // CustomAttribute table
-                            let references = scanner.get_references_from(*token);
-                            if !references.is_empty() {
-                                attr_references_found = true;
+                            if let Some(references) = scanner.references_from(*token) {
+                                if !references.is_empty() {
+                                    attr_references_found = true;
 
-                                // Each CustomAttribute should reference both parent and constructor
-                                // Verify referenced tokens exist
-                                for ref_token in references {
-                                    assert!(
-                                        scanner.token_exists(ref_token),
-                                        "Referenced token should exist in metadata"
-                                    );
+                                    // Each CustomAttribute should reference both parent and constructor
+                                    // Verify referenced tokens exist
+                                    for ref_token in references {
+                                        assert!(
+                                            scanner.token_exists(*ref_token),
+                                            "Referenced token should exist in metadata"
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -1021,27 +1090,28 @@ mod tests {
                     for token in scanner.valid_tokens.iter() {
                         if token.table() == 0x29 {
                             // NestedClass table
-                            let references = scanner.get_references_from(*token);
-                            if !references.is_empty() {
-                                nested_references_found = true;
+                            if let Some(references) = scanner.references_from(*token) {
+                                if !references.is_empty() {
+                                    nested_references_found = true;
 
-                                // Each NestedClass should reference both nested and enclosing types
-                                assert!(
-                                    references.len() >= 2,
-                                    "NestedClass should reference both nested and enclosing types"
-                                );
-
-                                // Verify all references are TypeDef tokens
-                                for ref_token in references {
+                                    // Each NestedClass should reference both nested and enclosing types
                                     assert!(
-                                        scanner.token_exists(ref_token),
-                                        "Referenced token should exist in metadata"
+                                        references.len() >= 2,
+                                        "NestedClass should reference both nested and enclosing types"
                                     );
-                                    assert_eq!(
-                                        ref_token.table(),
-                                        0x02,
-                                        "NestedClass should only reference TypeDef tokens"
-                                    );
+
+                                    // Verify all references are TypeDef tokens
+                                    for ref_token in references {
+                                        assert!(
+                                            scanner.token_exists(*ref_token),
+                                            "Referenced token should exist in metadata"
+                                        );
+                                        assert_eq!(
+                                            ref_token.table(),
+                                            0x02,
+                                            "NestedClass should only reference TypeDef tokens"
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -1070,22 +1140,23 @@ mod tests {
                     for token in scanner.valid_tokens.iter() {
                         if token.table() == 0x2A {
                             // GenericParam table
-                            let references = scanner.get_references_from(*token);
-                            if !references.is_empty() {
-                                generic_references_found = true;
+                            if let Some(references) = scanner.references_from(*token) {
+                                if !references.is_empty() {
+                                    generic_references_found = true;
 
-                                // Verify referenced tokens exist
-                                for ref_token in references {
-                                    assert!(
-                                        scanner.token_exists(ref_token),
-                                        "Referenced token should exist in metadata"
-                                    );
+                                    // Verify referenced tokens exist
+                                    for ref_token in references {
+                                        assert!(
+                                            scanner.token_exists(*ref_token),
+                                            "Referenced token should exist in metadata"
+                                        );
 
-                                    // Generic parameters should reference TypeDef or MethodDef
-                                    assert!(
-                                        ref_token.table() == 0x02 || ref_token.table() == 0x06,
-                                        "GenericParam should reference TypeDef or MethodDef"
-                                    );
+                                        // Generic parameters should reference TypeDef or MethodDef
+                                        assert!(
+                                            ref_token.table() == 0x02 || ref_token.table() == 0x06,
+                                            "GenericParam should reference TypeDef or MethodDef"
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -1109,9 +1180,9 @@ mod tests {
                 // Test that forward and backward references are consistent
                 for (to_token, from_tokens) in &scanner.forward_references {
                     for from_token in from_tokens {
-                        let backward_refs = scanner.get_references_from(*from_token);
+                        let backward_refs = scanner.references_from(*from_token);
                         assert!(
-                            backward_refs.contains(to_token),
+                            backward_refs.map_or(false, |refs| refs.contains(to_token)),
                             "Forward reference should have corresponding backward reference"
                         );
                     }
@@ -1119,9 +1190,9 @@ mod tests {
 
                 for (from_token, to_tokens) in &scanner.backward_references {
                     for to_token in to_tokens {
-                        let forward_refs = scanner.get_references_to(*to_token);
+                        let forward_refs = scanner.references_to(*to_token);
                         assert!(
-                            forward_refs.contains(from_token),
+                            forward_refs.map_or(false, |refs| refs.contains(from_token)),
                             "Backward reference should have corresponding forward reference"
                         );
                     }
@@ -1145,9 +1216,9 @@ mod tests {
                     for token in scanner.valid_tokens.iter().take(100) {
                         // Sample first 100 tokens
                         let can_delete = scanner.can_delete_token(*token);
-                        let references_to = scanner.get_references_to(*token);
+                        let has_incoming_refs = scanner.has_references_to(*token);
 
-                        if !references_to.is_empty() {
+                        if has_incoming_refs {
                             // Token is referenced by others, should not be deletable
                             assert!(
                                 !can_delete,

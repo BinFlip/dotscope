@@ -7,10 +7,13 @@ use crate::{
     cilassembly::{BuilderContext, CilAssembly},
     metadata::{
         cilassemblyview::CilAssemblyView,
-        tables::{CodedIndex, CodedIndexType, TableId},
+        tables::{
+            CodedIndex, CodedIndexType, CustomAttributeBuilder, FieldBuilder, GenericParamBuilder,
+            InterfaceImplBuilder, MemberRefBuilder, MethodSpecBuilder, NestedClassBuilder, TableId,
+            TypeDefBuilder,
+        },
         validation::ValidationConfig,
     },
-    prelude::*,
     test::{get_testfile_wb, TestAssembly},
     Error, Result,
 };

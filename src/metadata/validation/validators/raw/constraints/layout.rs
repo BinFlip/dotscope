@@ -82,7 +82,7 @@ use crate::{
     },
     Result,
 };
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 /// Foundation validator for field and class layout constraint integrity and consistency.
 ///
@@ -149,7 +149,7 @@ impl RawLayoutConstraintValidator {
             .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
 
         if let Some(field_layout_table) = tables.table::<FieldLayoutRaw>() {
-            let mut field_offsets: HashMap<usize, Vec<(u32, u32)>> = HashMap::new();
+            let mut field_offsets: FxHashMap<usize, Vec<(u32, u32)>> = FxHashMap::default();
 
             for field_layout in field_layout_table {
                 if field_layout.field == 0 {
@@ -313,7 +313,7 @@ impl RawLayoutConstraintValidator {
             tables.table::<FieldLayoutRaw>(),
             tables.table::<TypeDefRaw>(),
         ) {
-            let mut class_layouts: HashMap<u32, u32> = HashMap::new();
+            let mut class_layouts: FxHashMap<u32, u32> = FxHashMap::default();
             for class_layout in class_layout_table {
                 class_layouts.insert(class_layout.parent, class_layout.rid);
             }
@@ -542,7 +542,7 @@ impl RawLayoutConstraintValidator {
 
         if let Some(field_layout_table) = tables.table::<FieldLayoutRaw>() {
             let field_layouts: Vec<_> = field_layout_table.iter().collect();
-            let mut type_field_layouts: HashMap<u32, Vec<FieldLayoutRaw>> = HashMap::new();
+            let mut type_field_layouts: FxHashMap<u32, Vec<FieldLayoutRaw>> = FxHashMap::default();
 
             for field_layout in field_layouts {
                 let estimated_parent = field_layout.field / 10; // Very rough grouping

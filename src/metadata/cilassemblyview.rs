@@ -37,7 +37,7 @@
 //!
 //! ## Basic Raw Metadata Access
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::CilAssemblyView;
 //! use std::path::Path;
 //!
@@ -60,7 +60,7 @@
 //!
 //! ## Converting to Mutable Assembly
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::{CilAssemblyView, CilAssembly};
 //! use std::path::Path;
 //!
@@ -71,24 +71,24 @@
 //! let mut assembly = view.to_owned();
 //!
 //! // Now you can perform editing operations
-//! let string_index = assembly.add_string("New String")?;
+//! let string_index = assembly.string_add("New String")?;
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## Analyzing Raw Structures
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::CilAssemblyView;
 //! use std::path::Path;
 //!
 //! let view = CilAssemblyView::from_path(Path::new("assembly.dll"))?;
 //!
 //! // Direct access to CLR header
-//! let cor20 = view.with_data(|data| &data.cor20header);
+//! let cor20 = view.cor20header();
 //! println!("Runtime version: {}.{}", cor20.major_runtime_version, cor20.minor_runtime_version);
 //!
 //! // Raw metadata root access
-//! let root = view.with_data(|data| &data.metadata_root);
+//! let root = view.metadata_root();
 //! println!("Metadata signature: {:?}", root.signature);
 //! # Ok::<(), dotscope::Error>(())
 //! ```
@@ -115,10 +115,10 @@ use crate::{
     file::File,
     metadata::{
         cor20header::Cor20Header,
-        identity::{AssemblyIdentity, AssemblyVersion, Identity},
+        identity::{AssemblyIdentity, AssemblyVersion, Identity, ProcessorArchitecture},
         root::Root,
         streams::{Blob, Guid, StreamHeader, Strings, TablesHeader, UserStrings},
-        tables::AssemblyRaw,
+        tables::{AssemblyProcessorRaw, AssemblyRaw},
         validation::ValidationEngine,
     },
     Error, Result, ValidationConfig,
@@ -341,7 +341,7 @@ impl CilAssemblyView {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilAssemblyView;
     /// use std::path::Path;
     ///
@@ -357,7 +357,7 @@ impl CilAssemblyView {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn from_path(path: impl AsRef<Path>) -> Result<Self> {
-        Self::from_path_with_validation(path, ValidationConfig::disabled())
+        Self::from_path_with_validation(path, ValidationConfig::production())
     }
 
     /// Creates a new `CilAssemblyView` by loading a .NET assembly from a path with custom validation configuration.
@@ -386,7 +386,7 @@ impl CilAssemblyView {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::{CilAssemblyView, ValidationConfig};
     /// use std::path::Path;
     ///
@@ -428,7 +428,7 @@ impl CilAssemblyView {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilAssemblyView;
     ///
     /// let file_data = std::fs::read("assembly.dll")?;
@@ -436,7 +436,7 @@ impl CilAssemblyView {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn from_mem(data: Vec<u8>) -> Result<Self> {
-        Self::from_mem_with_validation(data, ValidationConfig::disabled())
+        Self::from_mem_with_validation(data, ValidationConfig::production())
     }
 
     /// Creates a new `CilAssemblyView` by parsing a .NET assembly from a memory buffer with custom validation configuration.
@@ -462,7 +462,7 @@ impl CilAssemblyView {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::{CilAssemblyView, ValidationConfig};
     ///
     /// let file_data = std::fs::read("assembly.dll")?;
@@ -509,7 +509,7 @@ impl CilAssemblyView {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn from_dotscope_file(file: File) -> Result<Self> {
-        Self::from_dotscope_file_with_validation(file, ValidationConfig::disabled())
+        Self::from_dotscope_file_with_validation(file, ValidationConfig::production())
     }
 
     /// Creates a CilAssemblyView from a dotscope::file::File with validation.
@@ -566,7 +566,7 @@ impl CilAssemblyView {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn from_std_file(file: std::fs::File) -> Result<Self> {
-        Self::from_std_file_with_validation(file, ValidationConfig::disabled())
+        Self::from_std_file_with_validation(file, ValidationConfig::production())
     }
 
     /// Creates a CilAssemblyView from an opened std::fs::File with validation.
@@ -621,7 +621,7 @@ impl CilAssemblyView {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn from_reader<R: std::io::Read>(reader: R) -> Result<Self> {
-        Self::from_reader_with_validation(reader, ValidationConfig::disabled())
+        Self::from_reader_with_validation(reader, ValidationConfig::production())
     }
 
     /// Creates a CilAssemblyView from any reader with validation.
@@ -810,7 +810,7 @@ impl CilAssemblyView {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilAssemblyView;
     /// use std::path::Path;
     ///
@@ -844,7 +844,7 @@ impl CilAssemblyView {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::{CilAssemblyView, ValidationConfig};
     /// use std::path::Path;
     ///
@@ -883,7 +883,7 @@ impl CilAssemblyView {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilAssemblyView;
     /// use std::path::Path;
     ///
@@ -901,6 +901,11 @@ impl CilAssemblyView {
                 if let Some(assembly_row) = assembly_table.iter().next() {
                     let assembly = assembly_row.to_owned(strings, blobs)?;
 
+                    let processor_architecture = tables
+                        .table::<AssemblyProcessorRaw>()
+                        .and_then(|proc_table| proc_table.iter().next())
+                        .and_then(|proc| ProcessorArchitecture::try_from(proc.processor).ok());
+
                     #[allow(clippy::cast_possible_truncation)]
                     return Ok(AssemblyIdentity {
                         name: assembly.name.clone(),
@@ -912,7 +917,7 @@ impl CilAssemblyView {
                         },
                         culture: assembly.culture.clone(),
                         strong_name: assembly.public_key.clone().map(Identity::PubKey),
-                        processor_architecture: None, // TODO: Extract from AssemblyOS/AssemblyProcessor if needed
+                        processor_architecture,
                     });
                 }
             }

@@ -46,7 +46,7 @@
 //!
 //! ## Basic Value Reading
 //!
-//! ```rust,no_run
+//! ```rust
 //! use dotscope::Parser;
 //!
 //! let data = [0x01, 0x02, 0x03, 0x04];
@@ -60,7 +60,7 @@
 //!
 //! ## Sequential Parsing with Navigation
 //!
-//! ```rust,no_run
+//! ```rust
 //! use dotscope::Parser;
 //!
 //! let data = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
@@ -79,7 +79,7 @@
 //!
 //! ## Metadata Structure Parsing
 //!
-//! ```rust,no_run
+//! ```rust
 //! use dotscope::Parser;
 //!
 //! // Example metadata with compressed integers
@@ -536,17 +536,24 @@ impl<'a> Parser<'a> {
         Ok(signed)
     }
 
-    /// Read a compressed token as defined in ECMA-335 II.23.2.4.
+    /// Read a compressed token as defined in ECMA-335 II.23.2.4 (TypeDefOrRefOrSpecEncoded).
     ///
-    /// Compressed tokens encode type references using 2 tag bits and the table index.
-    /// The tag bits determine which metadata table the token refers to:
-    /// - 0x0: `TypeDef` table
-    /// - 0x1: `TypeRef` table  
-    /// - 0x2: `TypeSpec` table
+    /// Compressed tokens encode type references using the 2 lowest bits as a tag and the
+    /// remaining bits as the table row index. The tag determines which metadata table:
+    ///
+    /// | Tag | Table | Token Prefix |
+    /// |-----|-------|--------------|
+    /// | 0x0 | TypeDef | 0x0200_0000 |
+    /// | 0x1 | TypeRef | 0x0100_0000 |
+    /// | 0x2 | TypeSpec | 0x1B00_0000 |
+    /// | 0x3 | (reserved/invalid) | - |
+    ///
+    /// Tag 0x3 is reserved and currently unused by the ECMA-335 specification.
+    /// Encountering this tag value indicates a malformed compressed token.
     ///
     /// # Errors
     /// Returns [`crate::Error::OutOfBounds`] if reading would exceed the data length or
-    /// [`crate::Error::Malformed`] for invalid token encoding.
+    /// [`crate::Error::Malformed`] if tag 0x3 is encountered (invalid encoding).
     ///
     /// # Examples
     ///
@@ -625,8 +632,13 @@ impl<'a> Parser<'a> {
                 break;
             }
 
+            // A u32 can hold at most 32 bits; after 4 bytes we've read 28 bits.
+            // A 5th continuation byte would push past 32 bits, causing overflow.
             if shift >= 32 {
-                return Err(malformed_error!("Invalid 7-bit encoded integer"));
+                return Err(malformed_error!(
+                    "7-bit encoded integer overflow: value exceeds u32 capacity after {} bits",
+                    shift
+                ));
             }
         }
 
@@ -676,8 +688,13 @@ impl<'a> Parser<'a> {
             self.position = end;
         }
 
-        String::from_utf8(string_data.to_vec()).map_err(|_| {
-            malformed_error!("Invalid string - {} - {} - {:?}", start, end, string_data)
+        String::from_utf8(string_data.to_vec()).map_err(|e| {
+            malformed_error!(
+                "Invalid UTF-8 string at offset {}-{}: {}",
+                start,
+                end,
+                e.utf8_error()
+            )
         })
     }
 
@@ -713,12 +730,12 @@ impl<'a> Parser<'a> {
         let string_data = &self.data[self.position..self.position + length];
         self.position += length;
 
-        String::from_utf8(string_data.to_vec()).map_err(|_| {
+        String::from_utf8(string_data.to_vec()).map_err(|e| {
             malformed_error!(
-                "Invalid string - {} - {} - {:?}",
+                "Invalid UTF-8 string at offset {}-{}: {}",
+                self.position - length,
                 self.position,
-                self.position + length,
-                string_data
+                e.utf8_error()
             )
         })
     }
@@ -810,14 +827,138 @@ impl<'a> Parser<'a> {
         let string_data = &self.data[self.position..self.position + length];
         self.position += length;
 
-        String::from_utf8(string_data.to_vec()).map_err(|_| {
+        String::from_utf8(string_data.to_vec()).map_err(|e| {
             malformed_error!(
-                "Invalid compressed string - {} - {} - {:?}",
+                "Invalid UTF-8 compressed string at offset {}-{}: {}",
+                self.position - length,
                 self.position,
-                self.position + length,
-                string_data
+                e.utf8_error()
             )
         })
+    }
+
+    /// Returns the number of bytes remaining from the current position.
+    ///
+    /// This is useful for checking available data before reading operations
+    /// or for implementing consistent bounds checking patterns.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    /// let data = [0x01, 0x02, 0x03, 0x04, 0x05];
+    /// let mut parser = Parser::new(&data);
+    ///
+    /// assert_eq!(parser.remaining(), 5);
+    /// parser.advance_by(2)?;
+    /// assert_eq!(parser.remaining(), 3);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn remaining(&self) -> usize {
+        self.data.len().saturating_sub(self.position)
+    }
+
+    /// Ensures that at least `needed` bytes are available from the current position.
+    ///
+    /// This method provides a standardized way to validate data availability before
+    /// performing read operations. It returns a descriptive error when insufficient
+    /// data is available.
+    ///
+    /// # Arguments
+    /// * `needed` - The number of bytes required from the current position
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::OutOfBounds`] if fewer than `needed` bytes remain.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    /// let data = [0x01, 0x02, 0x03];
+    /// let mut parser = Parser::new(&data);
+    ///
+    /// parser.ensure_remaining(3)?;  // OK
+    /// parser.advance()?;
+    /// parser.ensure_remaining(2)?;  // OK
+    /// // parser.ensure_remaining(3)?;  // Would fail - only 2 bytes remaining
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn ensure_remaining(&self, needed: usize) -> Result<()> {
+        if self.remaining() < needed {
+            return Err(out_of_bounds_error!());
+        }
+        Ok(())
+    }
+
+    /// Calculates an end position safely with overflow checking.
+    ///
+    /// Computes `self.position + length` while checking for arithmetic overflow
+    /// and ensuring the result doesn't exceed the data bounds.
+    ///
+    /// # Arguments
+    /// * `length` - The length to add to the current position
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::OutOfBounds`] if the calculation would overflow
+    /// or if the resulting position exceeds the data length.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    /// let data = [0x01, 0x02, 0x03, 0x04, 0x05];
+    /// let mut parser = Parser::new(&data);
+    ///
+    /// let end = parser.calc_end_position(3)?;
+    /// assert_eq!(end, 3);
+    ///
+    /// parser.seek(2)?;
+    /// let end = parser.calc_end_position(2)?;
+    /// assert_eq!(end, 4);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn calc_end_position(&self, length: usize) -> Result<usize> {
+        let end = self
+            .position
+            .checked_add(length)
+            .ok_or_else(|| out_of_bounds_error!())?;
+
+        if end > self.data.len() {
+            return Err(out_of_bounds_error!());
+        }
+
+        Ok(end)
+    }
+
+    /// Reads a slice of bytes of the specified length from the current position.
+    ///
+    /// This method performs bounds checking and advances the position after reading.
+    /// It's useful when you need to read a chunk of raw bytes rather than a specific type.
+    ///
+    /// # Arguments
+    /// * `length` - The number of bytes to read
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::OutOfBounds`] if reading `length` bytes would exceed the data.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    /// let data = [0x01, 0x02, 0x03, 0x04, 0x05];
+    /// let mut parser = Parser::new(&data);
+    ///
+    /// let chunk = parser.read_bytes(3)?;
+    /// assert_eq!(chunk, &[0x01, 0x02, 0x03]);
+    /// assert_eq!(parser.pos(), 3);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn read_bytes(&mut self, length: usize) -> Result<&'a [u8]> {
+        let end = self.calc_end_position(length)?;
+        let bytes = &self.data[self.position..end];
+        self.position = end;
+        Ok(bytes)
     }
 
     /// Read a length-prefixed UTF-16 string.

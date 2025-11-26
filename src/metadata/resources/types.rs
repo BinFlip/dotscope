@@ -114,46 +114,32 @@ use crate::{file::parser::Parser, utils::compressed_uint_size, Error::TypeError,
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResourceType {
     /// Null resource value (type code 0x00)
-    /* 0 */
     Null,
     /// UTF-8 string resource with length prefix (type code 0x01)
-    /* 1 */
     String(String),
     /// Boolean resource value, false=0, true=non-zero (type code 0x02)
-    /* 2 */
     Boolean(bool),
-    /// Single character resource as byte value (type code 0x03)
-    /* 3 */
+    /// Single character resource stored as UTF-16 code unit (type code 0x03)
     Char(char),
     /// Unsigned 8-bit integer resource (type code 0x04)
-    /* 4 */
     Byte(u8),
     /// Signed 8-bit integer resource (type code 0x05)
-    /* 5 */
     SByte(i8),
     /// Signed 16-bit integer resource, little-endian (type code 0x06)
-    /* 6 */
     Int16(i16),
     /// Unsigned 16-bit integer resource, little-endian (type code 0x07)
-    /* 7 */
     UInt16(u16),
     /// Signed 32-bit integer resource, little-endian (type code 0x08)
-    /* 8 */
     Int32(i32),
     /// Unsigned 32-bit integer resource, little-endian (type code 0x09)
-    /* 9 */
     UInt32(u32),
     /// Signed 64-bit integer resource, little-endian (type code 0x0A)
-    /* 0xA */
     Int64(i64),
     /// Unsigned 64-bit integer resource, little-endian (type code 0x0B)
-    /* 0xB */
     UInt64(u64),
     /// 32-bit floating point resource, little-endian (type code 0x0C)
-    /* 0xC */
     Single(f32),
     /// 64-bit floating point resource, little-endian (type code 0x0D)
-    /* 0xD */
     Double(f64),
     /// .NET Decimal resource value stored as raw bits (type code 0x0E)
     ///
@@ -177,7 +163,6 @@ pub enum ResourceType {
     /// # Example
     ///
     /// The value `3.261` would be represented as mantissa `3261` with scale `3`.
-    /* 0xE */
     Decimal {
         /// Low 32 bits of the 96-bit mantissa
         lo: i32,
@@ -210,7 +195,6 @@ pub enum ResourceType {
     /// ```
     ///
     /// To reconstruct a .NET DateTime, use `DateTime.FromBinary(binary_value)`.
-    /* 0xF */
     DateTime(i64),
     /// .NET TimeSpan resource value stored as ticks (type code 0x10)
     ///
@@ -235,19 +219,12 @@ pub enum ResourceType {
     /// ```
     ///
     /// To convert to seconds: `seconds = ticks / 10_000_000`
-    /* 0x10 */
     TimeSpan(i64),
-
-    // Type with special representation, like byte[] and Stream
     /// Byte array resource with length prefix (type code 0x20)
-    /* 0x20 */
     ByteArray(Vec<u8>),
     /// Stream resource with length prefix (type code 0x21)
-    /* 0x21 */
     Stream(Vec<u8>),
-    // User types - serialized using the binary formatter
     /// Marker for the beginning of user-defined types (type code 0x40+)
-    /* 0x40 */
     StartOfUserTypes,
 }
 
@@ -265,7 +242,7 @@ impl ResourceType {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```
     /// use dotscope::metadata::resources::ResourceType;
     ///
     /// let string_type = ResourceType::String("hello".to_string());
@@ -333,7 +310,7 @@ impl ResourceType {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```
     /// use dotscope::metadata::resources::ResourceType;
     ///
     /// let string_type = ResourceType::String("hello".to_string());
@@ -406,8 +383,8 @@ impl ResourceType {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::types::ResourceType;
+    /// ```
+    /// use dotscope::metadata::resources::ResourceType;
     ///
     /// let string_type = ResourceType::String("Hello".to_string());
     /// assert_eq!(string_type.type_code(), Some(0x01));
@@ -457,7 +434,7 @@ impl ResourceType {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```
     /// use dotscope::metadata::resources::ResourceType;
     ///
     /// let string_type = ResourceType::String("hello".to_string());
@@ -470,7 +447,7 @@ impl ResourceType {
     /// assert_eq!(bool_type.data_size(), Some(1)); // 1 byte for boolean
     ///
     /// let bytes_type = ResourceType::ByteArray(vec![1, 2, 3]);
-    /// assert_eq!(bytes_type.data_size(), Some(4)); // 1 byte length + 3 bytes data
+    /// assert_eq!(bytes_type.data_size(), Some(7)); // 4 bytes LE length + 3 bytes data
     /// ```
     #[must_use]
     pub fn data_size(&self) -> Option<u32> {
@@ -573,7 +550,18 @@ impl ResourceType {
                 Ok(ResourceType::String(parser.read_prefixed_string_utf8()?))
             }
             0x2 => Ok(ResourceType::Boolean(parser.read_le::<u8>()? > 0)),
-            0x3 => Ok(ResourceType::Char(parser.read_le::<u8>()?.into())),
+            0x3 => {
+                // ResourceTypeCode.Char - 2 bytes (UInt16)
+                // .NET writes chars as UInt16 (UTF-16 code unit), not as single byte
+                // See: ResourceWriter.WriteValue writes `(UInt16)(char)value`
+                //      ResourceReader._LoadObjectV2 reads `(char)_store.ReadUInt16()`
+                let code_unit = parser.read_le::<u16>()?;
+                Ok(ResourceType::Char(
+                    char::from_u32(code_unit as u32).ok_or_else(|| {
+                        TypeError("Invalid UTF-16 code unit for Char".to_string())
+                    })?,
+                ))
+            }
             0x4 => Ok(ResourceType::Byte(parser.read_le::<u8>()?)),
             0x5 => Ok(ResourceType::SByte(parser.read_le::<i8>()?)),
             0x6 => Ok(ResourceType::Int16(parser.read_le::<i16>()?)),
@@ -718,21 +706,25 @@ impl ResourceType {
     /// - Parser errors: If reading the underlying data fails
     pub fn from_type_name(type_name: &str, parser: &mut Parser) -> Result<Self> {
         match type_name {
-            "System.Null" => ResourceType::from_type_byte(0, parser),
-            "System.String" => ResourceType::from_type_byte(1, parser),
-            "System.Boolean" => ResourceType::from_type_byte(2, parser),
-            "System.Char" => ResourceType::from_type_byte(3, parser),
-            "System.Byte" => ResourceType::from_type_byte(4, parser),
-            "System.SByte" => ResourceType::from_type_byte(5, parser),
-            "System.Int16" => ResourceType::from_type_byte(6, parser),
-            "System.UInt16" => ResourceType::from_type_byte(7, parser),
-            "System.Int32" => ResourceType::from_type_byte(8, parser),
-            "System.UInt32" => ResourceType::from_type_byte(9, parser),
+            "System.Null" => ResourceType::from_type_byte(0x0, parser),
+            "System.String" => ResourceType::from_type_byte(0x1, parser),
+            "System.Boolean" => ResourceType::from_type_byte(0x2, parser),
+            "System.Char" => ResourceType::from_type_byte(0x3, parser),
+            "System.Byte" => ResourceType::from_type_byte(0x4, parser),
+            "System.SByte" => ResourceType::from_type_byte(0x5, parser),
+            "System.Int16" => ResourceType::from_type_byte(0x6, parser),
+            "System.UInt16" => ResourceType::from_type_byte(0x7, parser),
+            "System.Int32" => ResourceType::from_type_byte(0x8, parser),
+            "System.UInt32" => ResourceType::from_type_byte(0x9, parser),
             "System.Int64" => ResourceType::from_type_byte(0xA, parser),
             "System.UInt64" => ResourceType::from_type_byte(0xB, parser),
             "System.Single" => ResourceType::from_type_byte(0xC, parser),
             "System.Double" => ResourceType::from_type_byte(0xD, parser),
+            "System.Decimal" => ResourceType::from_type_byte(0xE, parser),
+            "System.DateTime" => ResourceType::from_type_byte(0xF, parser),
+            "System.TimeSpan" => ResourceType::from_type_byte(0x10, parser),
             "System.Byte[]" => ResourceType::from_type_byte(0x20, parser),
+            "System.IO.Stream" => ResourceType::from_type_byte(0x21, parser),
             _ => Err(TypeError(format!(
                 "TypeName - {type_name} is currently not supported"
             ))),
@@ -779,8 +771,8 @@ pub struct ResourceEntry {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::metadata::resources::parser::parse_dotnet_resource_ref;
+/// ```ignore
+/// use dotscope::metadata::resources::parse_dotnet_resource_ref;
 ///
 /// let resource_data = std::fs::read("MyApp.resources")?;
 /// let resources = parse_dotnet_resource_ref(&resource_data)?;
@@ -811,51 +803,36 @@ pub struct ResourceEntry {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResourceTypeRef<'a> {
     /// Null resource value (type code 0x00)
-    /* 0 */
     Null,
     /// UTF-8 string resource with borrowed data (type code 0x01)
-    /* 1 */
     String(&'a str),
     /// Boolean resource value, false=0, true=non-zero (type code 0x02)
-    /* 2 */
     Boolean(bool),
-    /// Single character resource as byte value (type code 0x03)
-    /* 3 */
+    /// Single character resource stored as UTF-16 code unit (type code 0x03)
     Char(char),
     /// Unsigned 8-bit integer resource (type code 0x04)
-    /* 4 */
     Byte(u8),
     /// Signed 8-bit integer resource (type code 0x05)
-    /* 5 */
     SByte(i8),
     /// Signed 16-bit integer resource, little-endian (type code 0x06)
-    /* 6 */
     Int16(i16),
     /// Unsigned 16-bit integer resource, little-endian (type code 0x07)
-    /* 7 */
     UInt16(u16),
     /// Signed 32-bit integer resource, little-endian (type code 0x08)
-    /* 8 */
     Int32(i32),
     /// Unsigned 32-bit integer resource, little-endian (type code 0x09)
-    /* 9 */
     UInt32(u32),
     /// Signed 64-bit integer resource, little-endian (type code 0x0A)
-    /* 0xA */
     Int64(i64),
     /// Unsigned 64-bit integer resource, little-endian (type code 0x0B)
-    /* 0xB */
     UInt64(u64),
     /// 32-bit floating point resource, little-endian (type code 0x0C)
-    /* 0xC */
     Single(f32),
     /// 64-bit floating point resource, little-endian (type code 0x0D)
-    /* 0xD */
     Double(f64),
     /// .NET Decimal resource value stored as raw bits (type code 0x0E)
     ///
     /// See [`ResourceType::Decimal`] for detailed documentation on the binary format.
-    /* 0xE */
     Decimal {
         /// Low 32 bits of the 96-bit mantissa
         lo: i32,
@@ -869,23 +846,16 @@ pub enum ResourceTypeRef<'a> {
     /// .NET DateTime resource value stored as binary ticks (type code 0x0F)
     ///
     /// See [`ResourceType::DateTime`] for detailed documentation on the binary format.
-    /* 0xF */
     DateTime(i64),
     /// .NET TimeSpan resource value stored as ticks (type code 0x10)
     ///
     /// See [`ResourceType::TimeSpan`] for detailed documentation on the binary format.
-    /* 0x10 */
     TimeSpan(i64),
-
-    // Type with special representation, like byte[] and Stream
     /// Byte array resource with borrowed data (type code 0x20)
-    /* 0x20 */
     ByteArray(&'a [u8]),
     /// Stream resource with borrowed data (type code 0x21)
-    /* 0x21 */
     Stream(&'a [u8]),
     /// Marker for the beginning of user-defined types (type code 0x40+)
-    /* 0x40 */
     StartOfUserTypes,
 }
 
@@ -902,8 +872,8 @@ pub enum ResourceTypeRef<'a> {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::metadata::resources::parser::Resource;
+/// ```ignore
+/// use dotscope::metadata::resources::Resource;
 ///
 /// let resource_data = std::fs::read("MyApp.resources")?;
 /// let mut resource = Resource::parse(&resource_data)?;
@@ -1016,7 +986,18 @@ impl<'a> ResourceTypeRef<'a> {
                 ))
             }
             0x2 => Ok(ResourceTypeRef::Boolean(parser.read_le::<u8>()? > 0)),
-            0x3 => Ok(ResourceTypeRef::Char(parser.read_le::<u8>()?.into())),
+            0x3 => {
+                // ResourceTypeCode.Char - 2 bytes (UInt16)
+                // .NET writes chars as UInt16 (UTF-16 code unit), not as single byte
+                // See: ResourceWriter.WriteValue writes `(UInt16)(char)value`
+                //      ResourceReader._LoadObjectV2 reads `(char)_store.ReadUInt16()`
+                let code_unit = parser.read_le::<u16>()?;
+                Ok(ResourceTypeRef::Char(
+                    char::from_u32(code_unit as u32).ok_or_else(|| {
+                        TypeError("Invalid UTF-16 code unit for Char".to_string())
+                    })?,
+                ))
+            }
             0x4 => Ok(ResourceTypeRef::Byte(parser.read_le::<u8>()?)),
             0x5 => Ok(ResourceTypeRef::SByte(parser.read_le::<i8>()?)),
             0x6 => Ok(ResourceTypeRef::Int16(parser.read_le::<i16>()?)),
@@ -1138,21 +1119,25 @@ impl<'a> ResourceTypeRef<'a> {
         data: &'a [u8],
     ) -> Result<Self> {
         match type_name {
-            "System.Null" => ResourceTypeRef::from_type_byte_ref(0, parser, data),
-            "System.String" => ResourceTypeRef::from_type_byte_ref(1, parser, data),
-            "System.Boolean" => ResourceTypeRef::from_type_byte_ref(2, parser, data),
-            "System.Char" => ResourceTypeRef::from_type_byte_ref(3, parser, data),
-            "System.Byte" => ResourceTypeRef::from_type_byte_ref(4, parser, data),
-            "System.SByte" => ResourceTypeRef::from_type_byte_ref(5, parser, data),
-            "System.Int16" => ResourceTypeRef::from_type_byte_ref(6, parser, data),
-            "System.UInt16" => ResourceTypeRef::from_type_byte_ref(7, parser, data),
-            "System.Int32" => ResourceTypeRef::from_type_byte_ref(8, parser, data),
-            "System.UInt32" => ResourceTypeRef::from_type_byte_ref(9, parser, data),
+            "System.Null" => ResourceTypeRef::from_type_byte_ref(0x0, parser, data),
+            "System.String" => ResourceTypeRef::from_type_byte_ref(0x1, parser, data),
+            "System.Boolean" => ResourceTypeRef::from_type_byte_ref(0x2, parser, data),
+            "System.Char" => ResourceTypeRef::from_type_byte_ref(0x3, parser, data),
+            "System.Byte" => ResourceTypeRef::from_type_byte_ref(0x4, parser, data),
+            "System.SByte" => ResourceTypeRef::from_type_byte_ref(0x5, parser, data),
+            "System.Int16" => ResourceTypeRef::from_type_byte_ref(0x6, parser, data),
+            "System.UInt16" => ResourceTypeRef::from_type_byte_ref(0x7, parser, data),
+            "System.Int32" => ResourceTypeRef::from_type_byte_ref(0x8, parser, data),
+            "System.UInt32" => ResourceTypeRef::from_type_byte_ref(0x9, parser, data),
             "System.Int64" => ResourceTypeRef::from_type_byte_ref(0xA, parser, data),
             "System.UInt64" => ResourceTypeRef::from_type_byte_ref(0xB, parser, data),
             "System.Single" => ResourceTypeRef::from_type_byte_ref(0xC, parser, data),
             "System.Double" => ResourceTypeRef::from_type_byte_ref(0xD, parser, data),
+            "System.Decimal" => ResourceTypeRef::from_type_byte_ref(0xE, parser, data),
+            "System.DateTime" => ResourceTypeRef::from_type_byte_ref(0xF, parser, data),
+            "System.TimeSpan" => ResourceTypeRef::from_type_byte_ref(0x10, parser, data),
             "System.Byte[]" => ResourceTypeRef::from_type_byte_ref(0x20, parser, data),
+            "System.IO.Stream" => ResourceTypeRef::from_type_byte_ref(0x21, parser, data),
             _ => Err(TypeError(format!(
                 "TypeName - {type_name} is currently not supported"
             ))),
@@ -1212,7 +1197,9 @@ mod tests {
 
     #[test]
     fn test_from_type_byte_char() {
-        let data = b"A";
+        // Char is stored as UInt16 (2 bytes) in .NET resource format
+        // 'A' = 0x0041 in UTF-16 LE
+        let data = &[0x41, 0x00];
         let mut parser = Parser::new(data);
         let result = ResourceType::from_type_byte(0x3, &mut parser).unwrap();
 
@@ -1220,6 +1207,17 @@ mod tests {
             assert_eq!(c, 'A');
         } else {
             panic!("Expected Char variant");
+        }
+
+        // Test non-ASCII char (e.g., '€' = U+20AC = 0x20AC in UTF-16 LE)
+        let data_euro = &[0xAC, 0x20];
+        let mut parser_euro = Parser::new(data_euro);
+        let result_euro = ResourceType::from_type_byte(0x3, &mut parser_euro).unwrap();
+
+        if let ResourceType::Char(c) = result_euro {
+            assert_eq!(c, '€');
+        } else {
+            panic!("Expected Char variant for euro sign");
         }
     }
 
@@ -1416,8 +1414,8 @@ mod tests {
         let mut parser = Parser::new(b"\x01");
         assert!(ResourceType::from_type_name("System.Boolean", &mut parser).is_ok());
 
-        // Char
-        let mut parser = Parser::new(b"A");
+        // Char (2 bytes - UInt16 in .NET)
+        let mut parser = Parser::new(&[0x41, 0x00]); // 'A' in UTF-16 LE
         assert!(ResourceType::from_type_name("System.Char", &mut parser).is_ok());
 
         // Byte

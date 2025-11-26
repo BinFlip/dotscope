@@ -17,7 +17,7 @@
 //!
 //! # Usage Examples
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::sequencepoints::{parse_sequence_points, SequencePoints};
 //!
 //! let blob: &[u8] = &[1, 10, 2, 0, 5];
@@ -85,6 +85,11 @@ use crate::{
     Result,
 };
 
+/// The magic line number that indicates a hidden sequence point.
+/// This value (0xFEEFEE) is used by .NET compilers to mark compiler-generated
+/// or non-user code that should not be shown in debuggers.
+pub const HIDDEN_SEQUENCE_POINT_LINE: u32 = 0x00FE_EFEE;
+
 /// Represents a single sequence point mapping IL offset to source code location.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SequencePoint {
@@ -100,6 +105,115 @@ pub struct SequencePoint {
     pub end_col: u16,
     /// True if this is a hidden sequence point (start_line == 0xFEEFEE).
     pub is_hidden: bool,
+}
+
+impl SequencePoint {
+    /// Creates a new sequence point with validation.
+    ///
+    /// This constructor validates that the source code range is valid and automatically
+    /// computes the `is_hidden` flag based on the start line.
+    ///
+    /// # Arguments
+    ///
+    /// * `il_offset` - Offset in the method's IL stream
+    /// * `start_line` - Starting line in the source file (1-based, or 0xFEEFEE for hidden)
+    /// * `start_col` - Starting column in the source file (1-based)
+    /// * `end_line` - Ending line in the source file (must be >= start_line for non-hidden)
+    /// * `end_col` - Ending column in the source file
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(SequencePoint)` if the parameters are valid, `None` otherwise.
+    ///
+    /// # Validation Rules
+    ///
+    /// For non-hidden sequence points:
+    /// - `end_line` must be greater than or equal to `start_line`
+    /// - When `end_line == start_line`, `end_col` must be greater than or equal to `start_col`
+    ///
+    /// Hidden sequence points (start_line == 0xFEEFEE) bypass range validation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::sequencepoints::SequencePoint;
+    ///
+    /// // Valid sequence point
+    /// let sp = SequencePoint::new(0, 10, 5, 10, 15);
+    /// assert!(sp.is_some());
+    /// assert!(!sp.unwrap().is_hidden);
+    ///
+    /// // Invalid: end_col < start_col on same line
+    /// let invalid = SequencePoint::new(0, 10, 15, 10, 5);
+    /// assert!(invalid.is_none());
+    ///
+    /// // Hidden sequence point (no range validation)
+    /// let hidden = SequencePoint::new(0, 0xFEEFEE, 0, 0xFEEFEE, 0);
+    /// assert!(hidden.is_some());
+    /// assert!(hidden.unwrap().is_hidden);
+    /// ```
+    #[must_use]
+    pub fn new(
+        il_offset: u32,
+        start_line: u32,
+        start_col: u16,
+        end_line: u32,
+        end_col: u16,
+    ) -> Option<Self> {
+        let is_hidden = start_line == HIDDEN_SEQUENCE_POINT_LINE;
+
+        // Validate source range for non-hidden sequence points
+        if !is_hidden {
+            // End line must be >= start line
+            if end_line < start_line {
+                return None;
+            }
+            // When on same line, end column must be >= start column
+            if end_line == start_line && end_col < start_col {
+                return None;
+            }
+        }
+
+        Some(Self {
+            il_offset,
+            start_line,
+            start_col,
+            end_line,
+            end_col,
+            is_hidden,
+        })
+    }
+
+    /// Creates a hidden sequence point at the given IL offset.
+    ///
+    /// Hidden sequence points are used to mark compiler-generated code that should
+    /// not be displayed in debuggers. They use the special line number 0xFEEFEE.
+    ///
+    /// # Arguments
+    ///
+    /// * `il_offset` - Offset in the method's IL stream
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::sequencepoints::{SequencePoint, HIDDEN_SEQUENCE_POINT_LINE};
+    ///
+    /// let hidden = SequencePoint::hidden(42);
+    /// assert!(hidden.is_hidden);
+    /// assert_eq!(hidden.il_offset, 42);
+    /// assert_eq!(hidden.start_line, HIDDEN_SEQUENCE_POINT_LINE);
+    /// ```
+    #[must_use]
+    pub fn hidden(il_offset: u32) -> Self {
+        Self {
+            il_offset,
+            start_line: HIDDEN_SEQUENCE_POINT_LINE,
+            start_col: 0,
+            end_line: HIDDEN_SEQUENCE_POINT_LINE,
+            end_col: 0,
+            is_hidden: true,
+        }
+    }
 }
 
 /// Collection of sequence points for a method.
@@ -274,7 +388,7 @@ pub fn parse_sequence_points(blob: &[u8]) -> Result<SequencePoints> {
         let end_line = start_line + end_line_delta;
         let end_col = start_col + end_col_delta;
 
-        let is_hidden = start_line == 0x00FE_EFEE;
+        let is_hidden = start_line == HIDDEN_SEQUENCE_POINT_LINE;
         points.push(SequencePoint {
             il_offset,
             start_line,
@@ -317,7 +431,7 @@ mod tests {
 
     #[test]
     fn parse_hidden_sequence_point() {
-        // il_offset=0, start_line=0xFEEFEE (hidden), start_col=0, end_line_delta=0, end_col_delta=0
+        // il_offset=0, start_line=HIDDEN_SEQUENCE_POINT_LINE, start_col=0, end_line_delta=0, end_col_delta=0
         // 0xFEEFEE as ECMA-335 compressed uint: [0xC0, 0xFE, 0xEF, 0xEE]
         // Only 5 fields needed: il_offset, start_line, start_col, end_line_delta, end_col_delta
         let blob: &[u8] = &[0, 0xC0, 0xFE, 0xEF, 0xEE, 0, 0, 0];
@@ -325,10 +439,10 @@ mod tests {
         if let Ok(points) = result {
             let sp = &points.0[0];
             assert!(sp.is_hidden);
-            assert_eq!(sp.start_line, 0xFEEFEE);
+            assert_eq!(sp.start_line, HIDDEN_SEQUENCE_POINT_LINE);
             assert_eq!(sp.il_offset, 0);
             assert_eq!(sp.start_col, 0);
-            assert_eq!(sp.end_line, 0xFEEFEE);
+            assert_eq!(sp.end_line, HIDDEN_SEQUENCE_POINT_LINE);
             assert_eq!(sp.end_col, 0);
         } else {
             panic!("Hidden sequence point parse failed: {result:?}");
@@ -356,5 +470,83 @@ mod tests {
         assert_eq!(sp1.start_col, 3); // 2 + 1 (delta for 1 is 2 in compressed int)
         assert_eq!(sp1.end_line, 11);
         assert_eq!(sp1.end_col, 5);
+    }
+
+    // Tests for SequencePoint::new constructor
+
+    #[test]
+    fn new_valid_single_line_sequence_point() {
+        let sp = SequencePoint::new(0, 10, 5, 10, 15);
+        assert!(sp.is_some());
+        let sp = sp.unwrap();
+        assert_eq!(sp.il_offset, 0);
+        assert_eq!(sp.start_line, 10);
+        assert_eq!(sp.start_col, 5);
+        assert_eq!(sp.end_line, 10);
+        assert_eq!(sp.end_col, 15);
+        assert!(!sp.is_hidden);
+    }
+
+    #[test]
+    fn new_valid_multi_line_sequence_point() {
+        let sp = SequencePoint::new(42, 10, 5, 15, 3);
+        assert!(sp.is_some());
+        let sp = sp.unwrap();
+        assert_eq!(sp.il_offset, 42);
+        assert_eq!(sp.start_line, 10);
+        assert_eq!(sp.start_col, 5);
+        assert_eq!(sp.end_line, 15);
+        assert_eq!(sp.end_col, 3);
+        assert!(!sp.is_hidden);
+    }
+
+    #[test]
+    fn new_invalid_end_line_before_start() {
+        let sp = SequencePoint::new(0, 10, 5, 5, 15);
+        assert!(sp.is_none(), "Should reject end_line < start_line");
+    }
+
+    #[test]
+    fn new_invalid_end_col_before_start_same_line() {
+        let sp = SequencePoint::new(0, 10, 15, 10, 5);
+        assert!(
+            sp.is_none(),
+            "Should reject end_col < start_col on same line"
+        );
+    }
+
+    #[test]
+    fn new_valid_end_col_equals_start_col() {
+        // Zero-width span is valid (cursor position)
+        let sp = SequencePoint::new(0, 10, 5, 10, 5);
+        assert!(sp.is_some());
+        let sp = sp.unwrap();
+        assert_eq!(sp.start_col, sp.end_col);
+    }
+
+    #[test]
+    fn new_hidden_sequence_point() {
+        let sp = SequencePoint::new(
+            0,
+            HIDDEN_SEQUENCE_POINT_LINE,
+            0,
+            HIDDEN_SEQUENCE_POINT_LINE,
+            0,
+        );
+        assert!(sp.is_some());
+        let sp = sp.unwrap();
+        assert!(sp.is_hidden);
+        assert_eq!(sp.start_line, HIDDEN_SEQUENCE_POINT_LINE);
+    }
+
+    #[test]
+    fn hidden_constructor() {
+        let sp = SequencePoint::hidden(42);
+        assert!(sp.is_hidden);
+        assert_eq!(sp.il_offset, 42);
+        assert_eq!(sp.start_line, HIDDEN_SEQUENCE_POINT_LINE);
+        assert_eq!(sp.start_col, 0);
+        assert_eq!(sp.end_line, HIDDEN_SEQUENCE_POINT_LINE);
+        assert_eq!(sp.end_col, 0);
     }
 }

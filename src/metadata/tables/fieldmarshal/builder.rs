@@ -107,6 +107,9 @@ use crate::{
 pub struct FieldMarshalBuilder {
     parent: Option<CodedIndex>,
     native_type: Option<Vec<u8>>,
+    /// Stores encoding errors from `native_type_spec` or `marshalling_info` methods
+    /// to be surfaced at `build()` time.
+    encoding_error: Option<Error>,
 }
 
 impl Default for FieldMarshalBuilder {
@@ -126,6 +129,7 @@ impl FieldMarshalBuilder {
         Self {
             parent: None,
             native_type: None,
+            encoding_error: None,
         }
     }
 
@@ -283,6 +287,10 @@ impl FieldMarshalBuilder {
     ///
     /// Self for method chaining.
     ///
+    /// # Note
+    ///
+    /// If encoding fails, the error is stored and will be returned when `build()` is called.
+    ///
     /// # Examples
     ///
     /// ```rust,ignore
@@ -312,8 +320,9 @@ impl FieldMarshalBuilder {
             additional_types: vec![],
         };
 
-        if let Ok(descriptor) = encode_marshalling_descriptor(&info) {
-            self.native_type = Some(descriptor);
+        match encode_marshalling_descriptor(&info) {
+            Ok(descriptor) => self.native_type = Some(descriptor),
+            Err(e) => self.encoding_error = Some(e),
         }
 
         self
@@ -332,6 +341,10 @@ impl FieldMarshalBuilder {
     /// # Returns
     ///
     /// Self for method chaining.
+    ///
+    /// # Note
+    ///
+    /// If encoding fails, the error is stored and will be returned when `build()` is called.
     ///
     /// # Examples
     ///
@@ -356,8 +369,9 @@ impl FieldMarshalBuilder {
     /// ```
     #[must_use]
     pub fn marshalling_info(mut self, info: &MarshallingInfo) -> Self {
-        if let Ok(descriptor) = encode_marshalling_descriptor(info) {
-            self.native_type = Some(descriptor);
+        match encode_marshalling_descriptor(info) {
+            Ok(descriptor) => self.native_type = Some(descriptor),
+            Err(e) => self.encoding_error = Some(e),
         }
 
         self
@@ -527,12 +541,17 @@ impl FieldMarshalBuilder {
     ///
     /// # Errors
     ///
+    /// - Returns error if encoding failed during `native_type_spec` or `marshalling_info`
     /// - Returns error if parent is not set
     /// - Returns error if native_type is not set or empty
     /// - Returns error if parent is not a valid HasFieldMarshal coded index
     /// - Returns error if blob operations fail
     /// - Returns error if table operations fail
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+        if let Some(encoding_error) = self.encoding_error {
+            return Err(encoding_error);
+        }
+
         let parent = self
             .parent
             .ok_or_else(|| Error::ModificationInvalidOperation {

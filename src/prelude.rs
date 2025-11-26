@@ -433,11 +433,19 @@ pub use crate::metadata::tables::{ImportScope, ImportScopeRc};
 /// user-written methods for seamless debugging experiences.
 pub use crate::metadata::tables::{StateMachineMethod, StateMachineMethodRc};
 
-/// Custom debugging information.
+/// Custom debugging information table types.
 ///
 /// Extensible debug information that can be defined by compilers or tools for specialized
 /// debugging scenarios beyond the standard Portable PDB format.
 pub use crate::metadata::tables::{CustomDebugInformation, CustomDebugInformationRc};
+
+/// Custom debug information parsing types.
+///
+/// Provides parsing capabilities for custom debug information blobs in Portable PDB format,
+/// including Source Link, Embedded Source, and Compilation Metadata formats.
+pub use crate::metadata::customdebuginformation::{
+    parse_custom_debug_blob, CustomDebugInfo, CustomDebugKind, CustomDebugParser,
+};
 
 // ================================================================================================
 // Raw Metadata Table Types
@@ -734,13 +742,12 @@ pub use crate::metadata::tables::{TypeDefBuilder, TypeRefBuilder, TypeSpecBuilde
 /// notification mechanisms, and declarative metadata annotations.
 pub use crate::metadata::tables::{
     AssemblyRefBuilder, ClassLayoutBuilder, ConstantBuilder, CustomAttributeBuilder,
-    DeclSecurityBuilder, DocumentBuilder, EventBuilder, EventMapBuilder, ExportedTypeBuilder,
-    FieldBuilder, FieldLayoutBuilder, FieldMarshalBuilder, FieldRVABuilder, FileBuilder,
-    GenericParamBuilder, GenericParamConstraintBuilder, ImplMapBuilder, InterfaceImplBuilder,
-    LocalScopeBuilder, LocalVariableBuilder, ManifestResourceBuilder, MemberRefBuilder,
-    MethodDebugInformationBuilder, MethodDefBuilder, MethodImplBuilder, MethodSemanticsBuilder,
-    MethodSpecBuilder, ModuleBuilder, ModuleRefBuilder, NestedClassBuilder, ParamBuilder,
-    PropertyBuilder, PropertyMapBuilder, StandAloneSigBuilder,
+    DeclSecurityBuilder, DocumentBuilder, EventMapBuilder, ExportedTypeBuilder, FieldBuilder,
+    FieldLayoutBuilder, FieldMarshalBuilder, FieldRVABuilder, FileBuilder, GenericParamBuilder,
+    GenericParamConstraintBuilder, ImplMapBuilder, InterfaceImplBuilder, LocalScopeBuilder,
+    LocalVariableBuilder, ManifestResourceBuilder, MemberRefBuilder, MethodDebugInformationBuilder,
+    MethodDefBuilder, MethodImplBuilder, MethodSemanticsBuilder, MethodSpecBuilder, ModuleBuilder,
+    ModuleRefBuilder, NestedClassBuilder, ParamBuilder, PropertyMapBuilder, StandAloneSigBuilder,
 };
 
 /// High-level builders for .NET constructs.
@@ -750,8 +757,8 @@ pub use crate::metadata::tables::{
 /// builders to provide convenient APIs for creating complete .NET types, interfaces, properties, events, and methods with full
 /// implementation details.
 pub use crate::cilassembly::{
-    ClassBuilder, EnumBuilder, EventBuilder as CilEventBuilder, InterfaceBuilder,
-    MethodBodyBuilder, MethodBuilder, PropertyBuilder as CilPropertyBuilder,
+    ClassBuilder, EnumBuilder, EventBuilder, InterfaceBuilder, MethodBodyBuilder, MethodBuilder,
+    PropertyBuilder,
 };
 
 /// Native PE import and export builders.

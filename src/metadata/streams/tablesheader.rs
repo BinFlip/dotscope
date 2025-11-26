@@ -297,7 +297,7 @@ use std::sync::Arc;
 use strum::IntoEnumIterator;
 
 use crate::{
-    impl_table_access,
+    create_table_match, impl_table_access,
     metadata::tables::{
         AssemblyOsRaw, AssemblyProcessorRaw, AssemblyRaw, AssemblyRefOsRaw,
         AssemblyRefProcessorRaw, AssemblyRefRaw, ClassLayoutRaw, ConstantRaw, CustomAttributeRaw,
@@ -1126,8 +1126,23 @@ impl<'a> TablesHeader<'a> {
         <Self as TableAccess<'a, T>>::table(self)
     }
 
-    /// Add a table to the tables header
-    // ToDo: table.size() needs a better fix than this.
+    /// Add a table to the tables header.
+    ///
+    /// This method creates a `MetadataTable` for the specified table type and stores it
+    /// in the internal tables collection. The method uses the `create_table_match!` macro
+    /// to generate the match expression, significantly reducing code duplication.
+    ///
+    /// # Arguments
+    /// * `data` - The raw bytes containing the table data
+    /// * `table_type` - The type of table to create
+    /// * `current_offset` - Mutable reference to track the current position in the data
+    ///
+    /// # Returns
+    /// * `Ok(())` - If the table was successfully created and stored
+    /// * `Err(...)` - If table parsing failed
+    // Note: table.size() returns u64, but we need usize for offset arithmetic.
+    // This cast is safe because metadata tables are bounded by the PE file size
+    // which is limited to ~4GB, well within usize range on all supported platforms.
     #[allow(clippy::cast_possible_truncation)]
     fn add_table(
         &mut self,
@@ -1141,390 +1156,113 @@ impl<'a> TablesHeader<'a> {
             return Ok(());
         }
 
-        let table = match table_type {
-            TableId::Module => {
-                let table = MetadataTable::<ModuleRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::Module(table)
-            }
-            TableId::TypeRef => {
-                let table = MetadataTable::<TypeRefRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::TypeRef(table)
-            }
-            TableId::TypeDef => {
-                let table = MetadataTable::<TypeDefRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::TypeDef(table)
-            }
-            TableId::FieldPtr => {
-                let table =
-                    MetadataTable::<FieldPtrRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::FieldPtr(table)
-            }
-            TableId::Field => {
-                let table = MetadataTable::<FieldRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::Field(table)
-            }
-            TableId::MethodPtr => {
-                let table =
-                    MetadataTable::<MethodPtrRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::MethodPtr(table)
-            }
-            TableId::MethodDef => {
-                let table =
-                    MetadataTable::<MethodDefRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::MethodDef(table)
-            }
-            TableId::ParamPtr => {
-                let table =
-                    MetadataTable::<ParamPtrRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::ParamPtr(table)
-            }
-            TableId::Param => {
-                let table = MetadataTable::<ParamRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::Param(table)
-            }
-            TableId::InterfaceImpl => {
-                let table =
-                    MetadataTable::<InterfaceImplRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::InterfaceImpl(table)
-            }
-            TableId::MemberRef => {
-                let table =
-                    MetadataTable::<MemberRefRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::MemberRef(table)
-            }
-            TableId::Constant => {
-                let table =
-                    MetadataTable::<ConstantRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::Constant(table)
-            }
-            TableId::CustomAttribute => {
-                let table =
-                    MetadataTable::<CustomAttributeRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::CustomAttribute(table)
-            }
-            TableId::FieldMarshal => {
-                let table =
-                    MetadataTable::<FieldMarshalRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::FieldMarshal(table)
-            }
-            TableId::DeclSecurity => {
-                let table =
-                    MetadataTable::<DeclSecurityRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::DeclSecurity(table)
-            }
-            TableId::Document => {
-                let table =
-                    MetadataTable::<DocumentRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::Document(table)
-            }
-            TableId::EncLog => {
-                let table = MetadataTable::<EncLogRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::EncLog(table)
-            }
-            TableId::EncMap => {
-                let table = MetadataTable::<EncMapRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::EncMap(table)
-            }
-            TableId::ClassLayout => {
-                let table =
-                    MetadataTable::<ClassLayoutRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::ClassLayout(table)
-            }
-            TableId::FieldLayout => {
-                let table =
-                    MetadataTable::<FieldLayoutRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::FieldLayout(table)
-            }
-            TableId::StandAloneSig => {
-                let table =
-                    MetadataTable::<StandAloneSigRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::StandAloneSig(table)
-            }
-            TableId::EventMap => {
-                let table =
-                    MetadataTable::<EventMapRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::EventMap(table)
-            }
-            TableId::EventPtr => {
-                let table =
-                    MetadataTable::<EventPtrRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::EventPtr(table)
-            }
-            TableId::Event => {
-                let table = MetadataTable::<EventRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::Event(table)
-            }
-            TableId::PropertyMap => {
-                let table =
-                    MetadataTable::<PropertyMapRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::PropertyMap(table)
-            }
-            TableId::PropertyPtr => {
-                let table =
-                    MetadataTable::<PropertyPtrRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::PropertyPtr(table)
-            }
-            TableId::Property => {
-                let table =
-                    MetadataTable::<PropertyRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::Property(table)
-            }
-            TableId::MethodSemantics => {
-                let table =
-                    MetadataTable::<MethodSemanticsRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::MethodSemantics(table)
-            }
-            TableId::MethodImpl => {
-                let table =
-                    MetadataTable::<MethodImplRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::MethodImpl(table)
-            }
-            TableId::ModuleRef => {
-                let table =
-                    MetadataTable::<ModuleRefRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::ModuleRef(table)
-            }
-            TableId::TypeSpec => {
-                let table =
-                    MetadataTable::<TypeSpecRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::TypeSpec(table)
-            }
-            TableId::ImplMap => {
-                let table = MetadataTable::<ImplMapRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::ImplMap(table)
-            }
-            TableId::FieldRVA => {
-                let table =
-                    MetadataTable::<FieldRvaRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::FieldRVA(table)
-            }
-            TableId::Assembly => {
-                let table =
-                    MetadataTable::<AssemblyRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::Assembly(table)
-            }
-            TableId::AssemblyProcessor => {
-                let table = MetadataTable::<AssemblyProcessorRaw>::new(
-                    data,
-                    t_info.rows,
-                    self.info.clone(),
-                )?;
-                *current_offset += table.size() as usize;
-
-                TableData::AssemblyProcessor(table)
-            }
-            TableId::AssemblyOS => {
-                let table =
-                    MetadataTable::<AssemblyOsRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::AssemblyOS(table)
-            }
-            TableId::AssemblyRef => {
-                let table =
-                    MetadataTable::<AssemblyRefRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::AssemblyRef(table)
-            }
-            TableId::AssemblyRefProcessor => {
-                let table = MetadataTable::<AssemblyRefProcessorRaw>::new(
-                    data,
-                    t_info.rows,
-                    self.info.clone(),
-                )?;
-                *current_offset += table.size() as usize;
-
-                TableData::AssemblyRefProcessor(table)
-            }
-            TableId::AssemblyRefOS => {
-                let table =
-                    MetadataTable::<AssemblyRefOsRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::AssemblyRefOS(table)
-            }
-            TableId::File => {
-                let table = MetadataTable::<FileRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::File(table)
-            }
-            TableId::ExportedType => {
-                let table =
-                    MetadataTable::<ExportedTypeRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::ExportedType(table)
-            }
-            TableId::ManifestResource => {
-                let table = MetadataTable::<ManifestResourceRaw>::new(
-                    data,
-                    t_info.rows,
-                    self.info.clone(),
-                )?;
-                *current_offset += table.size() as usize;
-
-                TableData::ManifestResource(table)
-            }
-            TableId::NestedClass => {
-                let table =
-                    MetadataTable::<NestedClassRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::NestedClass(table)
-            }
-            TableId::GenericParam => {
-                let table =
-                    MetadataTable::<GenericParamRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::GenericParam(table)
-            }
-            TableId::MethodSpec => {
-                let table =
-                    MetadataTable::<MethodSpecRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::MethodSpec(table)
-            }
-            TableId::GenericParamConstraint => {
-                let table = MetadataTable::<GenericParamConstraintRaw>::new(
-                    data,
-                    t_info.rows,
-                    self.info.clone(),
-                )?;
-                *current_offset += table.size() as usize;
-
-                TableData::GenericParamConstraint(table)
-            }
-            TableId::MethodDebugInformation => {
-                let table = MetadataTable::<MethodDebugInformationRaw>::new(
-                    data,
-                    t_info.rows,
-                    self.info.clone(),
-                )?;
-                *current_offset += table.size() as usize;
-
-                TableData::MethodDebugInformation(table)
-            }
-            TableId::LocalScope => {
-                let table =
-                    MetadataTable::<LocalScopeRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::LocalScope(table)
-            }
-            TableId::LocalVariable => {
-                let table =
-                    MetadataTable::<LocalVariableRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::LocalVariable(table)
-            }
-            TableId::LocalConstant => {
-                let table =
-                    MetadataTable::<LocalConstantRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::LocalConstant(table)
-            }
-            TableId::ImportScope => {
-                let table =
-                    MetadataTable::<ImportScopeRaw>::new(data, t_info.rows, self.info.clone())?;
-                *current_offset += table.size() as usize;
-
-                TableData::ImportScope(table)
-            }
-            TableId::StateMachineMethod => {
-                let table = MetadataTable::<StateMachineMethodRaw>::new(
-                    data,
-                    t_info.rows,
-                    self.info.clone(),
-                )?;
-                *current_offset += table.size() as usize;
-
-                TableData::StateMachineMethod(table)
-            }
-            TableId::CustomDebugInformation => {
-                let table = MetadataTable::<CustomDebugInformationRaw>::new(
-                    data,
-                    t_info.rows,
-                    self.info.clone(),
-                )?;
-                *current_offset += table.size() as usize;
-
-                TableData::CustomDebugInformation(table)
-            }
-        };
+        let table = create_table_match!(
+            table_type,
+            data,
+            t_info.rows,
+            self.info,
+            current_offset,
+            // Core Tables (0x00-0x09)
+            (TableId::Module, ModuleRaw, Module),
+            (TableId::TypeRef, TypeRefRaw, TypeRef),
+            (TableId::TypeDef, TypeDefRaw, TypeDef),
+            (TableId::FieldPtr, FieldPtrRaw, FieldPtr),
+            (TableId::Field, FieldRaw, Field),
+            (TableId::MethodPtr, MethodPtrRaw, MethodPtr),
+            (TableId::MethodDef, MethodDefRaw, MethodDef),
+            (TableId::ParamPtr, ParamPtrRaw, ParamPtr),
+            (TableId::Param, ParamRaw, Param),
+            (TableId::InterfaceImpl, InterfaceImplRaw, InterfaceImpl),
+            // Reference and Attribute Tables (0x0A-0x0E)
+            (TableId::MemberRef, MemberRefRaw, MemberRef),
+            (TableId::Constant, ConstantRaw, Constant),
+            (
+                TableId::CustomAttribute,
+                CustomAttributeRaw,
+                CustomAttribute
+            ),
+            (TableId::FieldMarshal, FieldMarshalRaw, FieldMarshal),
+            (TableId::DeclSecurity, DeclSecurityRaw, DeclSecurity),
+            // Layout and Signature Tables (0x0F-0x11)
+            (TableId::ClassLayout, ClassLayoutRaw, ClassLayout),
+            (TableId::FieldLayout, FieldLayoutRaw, FieldLayout),
+            (TableId::StandAloneSig, StandAloneSigRaw, StandAloneSig),
+            // Event Tables (0x12-0x14)
+            (TableId::EventMap, EventMapRaw, EventMap),
+            (TableId::EventPtr, EventPtrRaw, EventPtr),
+            (TableId::Event, EventRaw, Event),
+            // Property Tables (0x15-0x17)
+            (TableId::PropertyMap, PropertyMapRaw, PropertyMap),
+            (TableId::PropertyPtr, PropertyPtrRaw, PropertyPtr),
+            (TableId::Property, PropertyRaw, Property),
+            // Method Semantic Tables (0x18-0x19)
+            (
+                TableId::MethodSemantics,
+                MethodSemanticsRaw,
+                MethodSemantics
+            ),
+            (TableId::MethodImpl, MethodImplRaw, MethodImpl),
+            // Reference Tables (0x1A-0x1C)
+            (TableId::ModuleRef, ModuleRefRaw, ModuleRef),
+            (TableId::TypeSpec, TypeSpecRaw, TypeSpec),
+            (TableId::ImplMap, ImplMapRaw, ImplMap),
+            (TableId::FieldRVA, FieldRvaRaw, FieldRVA),
+            // Assembly Tables (0x20-0x28)
+            (TableId::Assembly, AssemblyRaw, Assembly),
+            (
+                TableId::AssemblyProcessor,
+                AssemblyProcessorRaw,
+                AssemblyProcessor
+            ),
+            (TableId::AssemblyOS, AssemblyOsRaw, AssemblyOS),
+            (TableId::AssemblyRef, AssemblyRefRaw, AssemblyRef),
+            (
+                TableId::AssemblyRefProcessor,
+                AssemblyRefProcessorRaw,
+                AssemblyRefProcessor
+            ),
+            (TableId::AssemblyRefOS, AssemblyRefOsRaw, AssemblyRefOS),
+            (TableId::File, FileRaw, File),
+            (TableId::ExportedType, ExportedTypeRaw, ExportedType),
+            (
+                TableId::ManifestResource,
+                ManifestResourceRaw,
+                ManifestResource
+            ),
+            (TableId::NestedClass, NestedClassRaw, NestedClass),
+            // Generic Tables (0x2A-0x2C)
+            (TableId::GenericParam, GenericParamRaw, GenericParam),
+            (TableId::MethodSpec, MethodSpecRaw, MethodSpec),
+            (
+                TableId::GenericParamConstraint,
+                GenericParamConstraintRaw,
+                GenericParamConstraint
+            ),
+            // Debug Information Tables (0x30-0x37)
+            (TableId::Document, DocumentRaw, Document),
+            (
+                TableId::MethodDebugInformation,
+                MethodDebugInformationRaw,
+                MethodDebugInformation
+            ),
+            (TableId::LocalScope, LocalScopeRaw, LocalScope),
+            (TableId::LocalVariable, LocalVariableRaw, LocalVariable),
+            (TableId::LocalConstant, LocalConstantRaw, LocalConstant),
+            (TableId::ImportScope, ImportScopeRaw, ImportScope),
+            (
+                TableId::StateMachineMethod,
+                StateMachineMethodRaw,
+                StateMachineMethod
+            ),
+            (
+                TableId::CustomDebugInformation,
+                CustomDebugInformationRaw,
+                CustomDebugInformation
+            ),
+            // Edit-and-Continue Tables (0x1E-0x1F)
+            (TableId::EncLog, EncLogRaw, EncLog),
+            (TableId::EncMap, EncMapRaw, EncMap),
+        );
 
         self.tables.insert(table_type as usize, Some(table));
         Ok(())
@@ -1886,5 +1624,121 @@ mod tests {
         let header = TablesHeader::from(data).unwrap();
 
         verify_tableheader(&header);
+    }
+
+    #[test]
+    fn test_tables_header_too_short() {
+        // Header must be at least 24 bytes
+        let data = [0u8; 20];
+        assert!(TablesHeader::from(&data).is_err());
+    }
+
+    #[test]
+    fn test_tables_header_invalid_reserved() {
+        // Reserved byte must be 0
+        #[rustfmt::skip]
+        let data = [
+            0x00, 0x00, 0x00, 0x01, // reserved (invalid - should be 0), major_version, minor_version, heap_sizes
+            0x01,                   // reserved (invalid - should be 0)
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // valid bitmask (8 bytes)
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // sorted bitmask (8 bytes)
+        ];
+        assert!(TablesHeader::from(&data).is_err());
+    }
+
+    #[test]
+    fn test_tables_header_empty_tables() {
+        // Valid header with no tables present (valid bitmask = 0)
+        #[rustfmt::skip]
+        let data = [
+            0x00, 0x00, 0x02, 0x00, // reserved, major_version=2, minor_version=0, heap_sizes
+            0x00,                   // reserved
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // valid bitmask = 0 (no tables)
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // sorted bitmask
+        ];
+        // Note: This may fail due to row count parsing - depends on exact header format requirements
+        let result = TablesHeader::from(&data);
+        // Empty valid bitmask means no tables, which should be accepted
+        // but may require row counts, so we just verify it doesn't panic
+        let _ = result;
+    }
+
+    #[test]
+    fn test_has_table() {
+        let data = include_bytes!("../../../tests/samples/WB_STREAM_TABLES_O-0x6C_S-0x59EB4.bin");
+        let header = TablesHeader::from(data).unwrap();
+
+        // Module table (0x00) should always be present
+        assert!(header.has_table(TableId::Module));
+
+        // TypeDef table (0x02) should be present in most assemblies
+        assert!(header.has_table(TableId::TypeDef));
+    }
+
+    #[test]
+    fn test_has_table_by_id() {
+        let data = include_bytes!("../../../tests/samples/WB_STREAM_TABLES_O-0x6C_S-0x59EB4.bin");
+        let header = TablesHeader::from(data).unwrap();
+
+        // Module table (0x00) should always be present
+        assert!(header.has_table_by_id(0x00));
+
+        // TypeDef table (0x02)
+        assert!(header.has_table_by_id(0x02));
+
+        // Invalid table ID > 63 should return false
+        assert!(!header.has_table_by_id(64));
+        assert!(!header.has_table_by_id(255));
+    }
+
+    #[test]
+    fn test_table_count() {
+        let data = include_bytes!("../../../tests/samples/WB_STREAM_TABLES_O-0x6C_S-0x59EB4.bin");
+        let header = TablesHeader::from(data).unwrap();
+
+        // table_count should match the number of bits set in the valid bitmask
+        let count = header.table_count();
+        assert!(count > 0);
+        assert!(count <= 64); // Maximum possible tables
+
+        // Verify count matches bit count in valid field
+        let bit_count = header.valid.count_ones();
+        assert_eq!(count, bit_count);
+    }
+
+    #[test]
+    fn test_table_summary() {
+        let data = include_bytes!("../../../tests/samples/WB_STREAM_TABLES_O-0x6C_S-0x59EB4.bin");
+        let header = TablesHeader::from(data).unwrap();
+
+        let summaries = header.table_summary();
+
+        // Should have same number of summaries as tables
+        assert_eq!(summaries.len(), header.table_count() as usize);
+
+        // Each summary should have valid data
+        for summary in &summaries {
+            // Table ID should be a valid enum variant
+            assert!((summary.table_id as u8) < 64);
+            // This table should be marked as present
+            assert!(header.has_table(summary.table_id));
+        }
+    }
+
+    #[test]
+    fn test_type_safe_table_access() {
+        let data = include_bytes!("../../../tests/samples/WB_STREAM_TABLES_O-0x6C_S-0x59EB4.bin");
+        let header = TablesHeader::from(data).unwrap();
+
+        // Access Module table with type-safe generic method
+        let module_table = header.table::<ModuleRaw>();
+        assert!(module_table.is_some());
+        let module = module_table.unwrap();
+        assert_eq!(module.row_count, 1); // Module table should have exactly 1 row
+
+        // Access TypeDef table
+        let typedef_table = header.table::<TypeDefRaw>();
+        assert!(typedef_table.is_some());
+        assert!(typedef_table.unwrap().row_count > 0);
     }
 }

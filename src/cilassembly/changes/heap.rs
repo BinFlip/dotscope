@@ -405,19 +405,19 @@ impl HeapChanges<String> {
     /// When strings are modified, this uses the FINAL modified sizes for proper indexing.
     pub fn string_items_with_indices(&self) -> impl Iterator<Item = (u32, &String)> {
         let mut current_index = self.next_index;
+
         // Calculate total size of all items using FINAL sizes (after modifications)
         let total_size: u32 = self
             .appended_items
             .iter()
-            .map(|original_string| {
-                // Calculate the API index for this appended item
-                let mut api_index = self.next_index;
-                for item in self.appended_items.iter().rev() {
-                    api_index -= u32::try_from(item.len() + 1).unwrap_or(0);
-                    if std::ptr::eq(item, original_string) {
-                        break;
-                    }
-                }
+            .enumerate()
+            .map(|(vec_index, original_string)| {
+                // Get the API index from pre-computed indices
+                let api_index = self
+                    .appended_item_indices
+                    .get(vec_index)
+                    .copied()
+                    .unwrap_or(0);
 
                 // Check if this string is modified and use the final size
                 if let Some(modified_string) = self.get_modification(api_index) {
@@ -429,19 +429,16 @@ impl HeapChanges<String> {
             .sum();
         current_index -= total_size;
 
-        self.appended_items
-            .iter()
-            .scan(current_index, |index, item| {
+        self.appended_items.iter().enumerate().scan(
+            current_index,
+            move |index, (vec_index, item)| {
                 let current = *index;
 
-                // Calculate the API index for this item
-                let mut api_index = self.next_index;
-                for rev_item in self.appended_items.iter().rev() {
-                    api_index -= u32::try_from(rev_item.len() + 1).unwrap_or(0);
-                    if std::ptr::eq(rev_item, item) {
-                        break;
-                    }
-                }
+                let api_index = self
+                    .appended_item_indices
+                    .get(vec_index)
+                    .copied()
+                    .unwrap_or(0);
 
                 // Use final size (modified or original) for index advancement
                 let final_size = if let Some(modified_string) = self.get_modification(api_index) {
@@ -452,7 +449,8 @@ impl HeapChanges<String> {
 
                 *index += final_size;
                 Some((current, item))
-            })
+            },
+        )
     }
 
     /// Returns an iterator over all added user strings with their correct byte indices.
@@ -466,8 +464,8 @@ impl HeapChanges<String> {
             .appended_items
             .iter()
             .map(|s| {
-                // UTF-16 encoding: each character can be 2 or 4 bytes
-                let utf16_bytes: usize = s.encode_utf16().map(|_| 2).sum(); // Simplified: assume BMP only
+                // UTF-16 encoding: each code unit is 2 bytes (encode_utf16 handles surrogate pairs)
+                let utf16_bytes: usize = s.encode_utf16().count() * 2;
 
                 // Total length includes UTF-16 data + terminal byte (1 byte)
                 let total_length = utf16_bytes + 1;
@@ -485,7 +483,7 @@ impl HeapChanges<String> {
             .scan(current_index, |index, item| {
                 let current = *index;
                 // Calculate the size of this userstring entry
-                let utf16_bytes: usize = item.encode_utf16().map(|_| 2).sum();
+                let utf16_bytes: usize = item.encode_utf16().count() * 2;
                 let total_length = utf16_bytes + 1;
                 let compressed_length_size = compressed_uint_size(total_length);
                 *index += u32::try_from(
@@ -504,8 +502,8 @@ impl HeapChanges<String> {
         self.appended_items
             .iter()
             .map(|s| {
-                // UTF-16 encoding: each character can be 2 or 4 bytes
-                let utf16_bytes: usize = s.encode_utf16().map(|_| 2).sum(); // Simplified: assume BMP only
+                // UTF-16 encoding: each code unit is 2 bytes (encode_utf16 handles surrogate pairs)
+                let utf16_bytes: usize = s.encode_utf16().count() * 2;
 
                 // Total length includes UTF-16 data + terminal byte (1 byte)
                 let total_length = utf16_bytes + 1;

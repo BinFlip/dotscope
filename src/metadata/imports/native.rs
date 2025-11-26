@@ -151,6 +151,10 @@ pub struct NativeImports {
 
     /// Base RVA for import table structures
     import_table_base_rva: u32,
+
+    /// Whether this is a PE32+ (64-bit) image.
+    /// Affects IAT entry size: 4 bytes for PE32, 8 bytes for PE32+.
+    is_pe32_plus: bool,
 }
 
 /// Import descriptor for a single DLL.
@@ -226,6 +230,52 @@ impl NativeImports {
             iat_entries: HashMap::new(),
             next_iat_rva: 0x1000,          // Default IAT base address
             import_table_base_rva: 0x2000, // Default import table base
+            is_pe32_plus: false,           // Default to PE32 (32-bit)
+        }
+    }
+
+    /// Sets whether this is a PE32+ (64-bit) image.
+    ///
+    /// This affects the IAT entry size:
+    /// - PE32 (32-bit): 4 bytes per entry
+    /// - PE32+ (64-bit): 8 bytes per entry
+    ///
+    /// # Arguments
+    /// * `is_pe32_plus` - `true` for 64-bit PE32+, `false` for 32-bit PE32
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::imports::NativeImports;
+    ///
+    /// let mut imports = NativeImports::new();
+    /// imports.set_pe_format(true); // Configure for 64-bit
+    /// assert!(imports.is_pe32_plus());
+    /// ```
+    pub fn set_pe_format(&mut self, is_pe32_plus: bool) {
+        self.is_pe32_plus = is_pe32_plus;
+    }
+
+    /// Returns whether this is configured for PE32+ (64-bit) format.
+    ///
+    /// # Returns
+    /// `true` if configured for PE32+ (64-bit), `false` for PE32 (32-bit).
+    #[must_use]
+    pub fn is_pe32_plus(&self) -> bool {
+        self.is_pe32_plus
+    }
+
+    /// Returns the IAT entry size in bytes based on the PE format.
+    ///
+    /// # Returns
+    /// - 4 bytes for PE32 (32-bit)
+    /// - 8 bytes for PE32+ (64-bit)
+    #[must_use]
+    pub fn iat_entry_size(&self) -> u32 {
+        if self.is_pe32_plus {
+            8
+        } else {
+            4
         }
     }
 
@@ -233,6 +283,7 @@ impl NativeImports {
     ///
     /// # Arguments
     /// * `pe_imports` - Slice of PE import entries to process
+    /// * `is_pe32_plus` - `true` for PE32+ (64-bit), `false` for PE32 (32-bit)
     ///
     /// # Returns
     /// Returns a configured NativeImports instance with all import descriptors,
@@ -257,12 +308,18 @@ impl NativeImports {
     ///     },
     /// ];
     ///
-    /// let native_imports = NativeImports::from_pe_imports(&pe_imports)?;
+    /// // For 32-bit PE files
+    /// let native_imports = NativeImports::from_pe_imports(&pe_imports, false)?;
     /// assert_eq!(native_imports.dll_count(), 1);
+    ///
+    /// // For 64-bit PE files
+    /// let native_imports_64 = NativeImports::from_pe_imports(&pe_imports, true)?;
+    /// assert!(native_imports_64.is_pe32_plus());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn from_pe_imports(pe_imports: &[Import]) -> Result<Self> {
-        let mut scanner = Self::new();
+    pub fn from_pe_imports(pe_imports: &[Import], is_pe32_plus: bool) -> Result<Self> {
+        let mut native = Self::new();
+        native.is_pe32_plus = is_pe32_plus;
 
         let mut imports_by_dll: HashMap<&str, Vec<&Import>> = HashMap::new();
         for import in pe_imports {
@@ -270,8 +327,10 @@ impl NativeImports {
         }
 
         for (dll_name, dll_imports) in imports_by_dll {
+            let dll_name_owned = dll_name.to_owned();
+
             let mut descriptor = ImportDescriptor {
-                dll_name: dll_name.to_owned(),
+                dll_name: dll_name_owned.clone(),
                 original_first_thunk: 0,
                 first_thunk: 0,
                 functions: Vec::with_capacity(dll_imports.len()),
@@ -280,37 +339,41 @@ impl NativeImports {
             };
 
             for pe_import in dll_imports {
-                scanner.iat_entries.insert(
+                let function_identifier = Self::build_function_identifier(pe_import);
+
+                native.iat_entries.insert(
                     pe_import.rva,
                     ImportAddressEntry {
                         rva: pe_import.rva,
-                        dll_name: dll_name.to_owned(),
-                        function_identifier: if let Some(ref name) = pe_import.name {
-                            if name.is_empty() {
-                                if let Some(ord) = pe_import.ordinal {
-                                    format!("#{}", ord)
-                                } else {
-                                    "unknown".to_string()
-                                }
-                            } else {
-                                name.clone()
-                            }
-                        } else if let Some(ord) = pe_import.ordinal {
-                            format!("#{}", ord)
-                        } else {
-                            "unknown".to_string()
-                        },
-                        original_value: 0, // Not available from current PE Import
+                        dll_name: dll_name_owned.clone(),
+                        function_identifier,
+                        original_value: 0,
                     },
                 );
 
-                descriptor.functions.push((*pe_import).clone());
+                descriptor.functions.push(pe_import.clone());
             }
 
-            scanner.descriptors.insert(dll_name.to_owned(), descriptor);
+            native.descriptors.insert(dll_name_owned, descriptor);
         }
 
-        Ok(scanner)
+        Ok(native)
+    }
+
+    /// Builds a function identifier string from an import entry.
+    ///
+    /// Returns the function name if available, otherwise formats the ordinal,
+    /// or "unknown" if neither is available.
+    fn build_function_identifier(import: &Import) -> String {
+        if let Some(ref name) = import.name {
+            if !name.is_empty() {
+                return name.clone();
+            }
+        }
+        import
+            .ordinal
+            .map(|ord| format!("#{}", ord))
+            .unwrap_or_else(|| "unknown".to_string())
     }
 
     /// Add a DLL to the import table.
@@ -416,7 +479,6 @@ impl NativeImports {
         }
 
         let iat_rva = self.allocate_iat_rva();
-        let descriptor = self.descriptors.get_mut(dll_name).unwrap();
 
         let function = Import {
             dll: dll_name.to_owned(),
@@ -434,6 +496,7 @@ impl NativeImports {
             original_value: 0,
         };
 
+        let descriptor = self.descriptors.get_mut(dll_name).unwrap();
         descriptor.functions.push(function);
         self.iat_entries.insert(iat_rva, iat_entry);
 
@@ -1030,10 +1093,11 @@ impl NativeImports {
     /// Allocate a new IAT RVA.
     ///
     /// Returns the next available RVA for IAT allocation and increments
-    /// the internal counter. Used internally when adding new function imports.
+    /// the internal counter by the appropriate entry size (4 bytes for PE32,
+    /// 8 bytes for PE32+). Used internally when adding new function imports.
     fn allocate_iat_rva(&mut self) -> u32 {
         let rva = self.next_iat_rva;
-        self.next_iat_rva += 4; // Each IAT entry is 4 bytes (PE32) - TODO: make this configurable for PE32+
+        self.next_iat_rva += self.iat_entry_size();
         rva
     }
 }

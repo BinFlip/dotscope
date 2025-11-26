@@ -467,13 +467,28 @@ impl PermissionSet {
     ///
     /// ## Arguments
     /// * 'data' - The data slice to parse
+    ///
+    /// ## Error Context
+    /// All parsing errors include context about which stage of parsing failed:
+    /// - Permission count reading
+    /// - Class name extraction
+    /// - Blob boundary validation
+    /// - Property parsing
     fn parse_binary_format(data: &[u8]) -> Result<(PermissionSetFormat, Vec<Permission>)> {
         let mut parser = Parser::new(data);
 
         // Binary format starts with '.' (0x2E) - skip the format marker
-        parser.advance()?;
+        parser.advance().map_err(|e| {
+            malformed_error!("Failed to read format marker in permission set: {}", e)
+        })?;
 
-        let permission_count = parser.read_compressed_uint()?;
+        let permission_count = parser.read_compressed_uint().map_err(|e| {
+            malformed_error!(
+                "Failed to read permission count at position {}: {}",
+                parser.pos(),
+                e
+            )
+        })?;
         if permission_count > MAX_PERMISSIONS {
             return Err(malformed_error!(
                 "Permission set has too many permissions: {} (max: {})",
@@ -483,83 +498,114 @@ impl PermissionSet {
         }
 
         let mut permissions = Vec::with_capacity(permission_count as usize);
-        for _ in 0..permission_count {
-            let class_name_length = parser.read_compressed_uint()? as usize;
+        for perm_index in 0..permission_count {
+            let class_name_length = parser.read_compressed_uint().map_err(|e| {
+                malformed_error!(
+                    "Failed to read class name length for permission {} at position {}: {}",
+                    perm_index,
+                    parser.pos(),
+                    e
+                )
+            })? as usize;
             let class_name = if class_name_length > 0 {
-                let start = parser.pos();
-                let Some(end) = usize::checked_add(start, class_name_length) else {
-                    return Err(out_of_bounds_error!());
-                };
-
-                if end >= data.len() {
-                    return Err(out_of_bounds_error!());
-                }
-
-                parser.advance_by(class_name_length)?;
-
-                let name_bytes = &data[start..end];
+                // Use standardized bounds checking via read_bytes
+                let name_bytes = parser.read_bytes(class_name_length).map_err(|_| {
+                    malformed_error!(
+                        "Permission {}: class name length {} exceeds available data at position {}",
+                        perm_index,
+                        class_name_length,
+                        parser.pos()
+                    )
+                })?;
                 String::from_utf8_lossy(name_bytes).to_string()
             } else {
                 String::new()
             };
 
-            let assembly_name = if class_name.starts_with("System.Security.Permissions.")
-                || class_name.starts_with("System.Security.")
-                || class_name.starts_with("System.Net.")
-            {
-                "mscorlib".to_string() // For .NET Framework
-                                       // "System.Private.CoreLib".to_string() // For newer .NET
-            } else if class_name.starts_with("System.Data.") {
-                "System.Data".to_string()
-            } else if class_name.starts_with("System.Xml.") {
-                "System.Xml".to_string()
-            } else {
-                "Unknown".to_string()
-            };
+            let assembly_name = Self::resolve_assembly_name_from_class(&class_name);
 
-            let blob_length = parser.read_compressed_uint()? as usize;
+            let blob_length = parser.read_compressed_uint().map_err(|e| {
+                malformed_error!(
+                    "Permission '{}': failed to read blob length at position {}: {}",
+                    class_name,
+                    parser.pos(),
+                    e
+                )
+            })? as usize;
             let mut named_arguments = Vec::new();
             if blob_length > 0 {
-                let Some(blob_end) = blob_length.checked_add(parser.pos()) else {
-                    return Err(malformed_error!(
-                        "Blob end overflow - {} + {}",
+                // Use standardized bounds checking via calc_end_position
+                let blob_end = parser.calc_end_position(blob_length).map_err(|_| {
+                    malformed_error!(
+                        "Permission '{}': blob length {} at position {} exceeds available data (total: {})",
+                        class_name,
                         blob_length,
-                        parser.pos()
-                    ));
-                };
-
-                if blob_end > data.len() {
-                    return Err(malformed_error!(
-                        "Blob end position {} exceeds data length {}",
-                        blob_end,
+                        parser.pos(),
                         data.len()
-                    ));
-                }
+                    )
+                })?;
 
-                let property_count = parser.read_compressed_uint()? as usize;
-                for _ in 0..property_count {
+                let property_count = parser.read_compressed_uint().map_err(|e| {
+                    malformed_error!(
+                        "Permission '{}': failed to read property count at position {}: {}",
+                        class_name,
+                        parser.pos(),
+                        e
+                    )
+                })? as usize;
+                for prop_index in 0..property_count {
                     // Read the field/property marker
-                    let _ = parser.read_le::<u8>()?;
+                    let _ = parser.read_le::<u8>().map_err(|e| {
+                        malformed_error!(
+                            "Permission '{}', property {}: failed to read field/property marker: {}",
+                            class_name,
+                            prop_index,
+                            e
+                        )
+                    })?;
 
-                    let prop_type = parser.read_le::<u8>()?;
-                    let name_length = parser.read_compressed_uint()? as usize;
+                    let prop_type = parser.read_le::<u8>().map_err(|e| {
+                        malformed_error!(
+                            "Permission '{}', property {}: failed to read property type: {}",
+                            class_name,
+                            prop_index,
+                            e
+                        )
+                    })?;
+                    let name_length = parser.read_compressed_uint().map_err(|e| {
+                        malformed_error!(
+                            "Permission '{}', property {}: failed to read name length: {}",
+                            class_name,
+                            prop_index,
+                            e
+                        )
+                    })? as usize;
 
+                    // Use standardized bounds checking via read_bytes
                     let prop_name = if name_length > 0 {
-                        let start = parser.pos();
-                        parser.advance_by(name_length)?;
-
-                        let name_bytes = &data[start..start + name_length];
+                        let name_bytes = parser.read_bytes(name_length).map_err(|_| {
+                            malformed_error!(
+                                "Permission '{}', property {}: name length {} exceeds available data",
+                                class_name,
+                                prop_index,
+                                name_length
+                            )
+                        })?;
                         String::from_utf8_lossy(name_bytes).to_string()
                     } else {
                         String::new()
                     };
 
-                    let (arg_type, value) = Self::parse_argument_value(
-                        &mut parser,
-                        prop_type,
-                        &class_name,
-                        &prop_name,
-                    )?;
+                    let (arg_type, value) =
+                        Self::parse_argument_value(&mut parser, prop_type, &class_name, &prop_name)
+                            .map_err(|e| {
+                                malformed_error!(
+                            "Permission '{}', property '{}': failed to parse argument value: {}",
+                            class_name,
+                            prop_name,
+                            e
+                        )
+                            })?;
 
                     named_arguments.push(NamedArgument {
                         name: prop_name,
@@ -601,6 +647,27 @@ impl PermissionSet {
     ///
     /// ## Arguments
     /// * 'data' - The data slice to parse
+    ///
+    /// ## Current Limitations
+    ///
+    /// This parser has some known limitations:
+    ///
+    /// - **Attribute-only parsing**: The parser only extracts permission data from XML
+    ///   attributes. Text content within elements (e.g., `<IPermission>text content</IPermission>`)
+    ///   is not processed. Most .NET permission sets use attribute-based encoding, so this
+    ///   covers the common cases.
+    ///
+    /// - **Flat structure**: Nested permission elements beyond `<IPermission>` within
+    ///   `<PermissionSet>` are not parsed. Complex hierarchical permission structures
+    ///   may not be fully represented.
+    ///
+    /// - **Simple type inference**: Argument types are inferred from string values using
+    ///   basic heuristics (boolean detection, numeric parsing). Explicit type declarations
+    ///   in the XML are not used.
+    ///
+    /// These limitations exist because the primary use case is analyzing existing .NET
+    /// assemblies rather than generating permission XML from scratch. For most security
+    /// analysis scenarios, attribute-based parsing is sufficient.
     fn parse_xml_format(data: &[u8]) -> Result<(PermissionSetFormat, Vec<Permission>)> {
         if data.len() < 5 {
             return Err(malformed_error!("XML data too short"));
@@ -833,6 +900,28 @@ impl PermissionSet {
     /// * `arg_type` - The type code of the argument
     /// * `permission_class` - The permission class being parsed (for context)
     /// * `property_name` - The name of the property being parsed (for context)
+    /// Parses an argument value from the binary stream based on its ECMA-335 element type.
+    ///
+    /// # Type Code Reference (ECMA-335 II.23.1.16)
+    ///
+    /// | Code | Type      | Size   |
+    /// |------|-----------|--------|
+    /// | 0x02 | Boolean   | 1 byte |
+    /// | 0x03 | Char      | 2 bytes (UTF-16) |
+    /// | 0x04 | SByte     | 1 byte |
+    /// | 0x05 | Byte      | 1 byte |
+    /// | 0x06 | Int16     | 2 bytes |
+    /// | 0x07 | UInt16    | 2 bytes |
+    /// | 0x08 | Int32     | 4 bytes |
+    /// | 0x09 | UInt32    | 4 bytes |
+    /// | 0x0A | Int64     | 8 bytes |
+    /// | 0x0B | UInt64    | 8 bytes |
+    /// | 0x0C | Single    | 4 bytes |
+    /// | 0x0D | Double    | 8 bytes |
+    /// | 0x0E | String    | compressed length + UTF-8 |
+    /// | 0x50 | Type      | compressed length + UTF-8 type name |
+    /// | 0x51 | Object    | type tag + value |
+    /// | 0x55 | Enum      | type name + underlying value |
     fn parse_argument_value(
         parser: &mut Parser,
         arg_type: u8,
@@ -840,22 +929,93 @@ impl PermissionSet {
         property_name: &str,
     ) -> Result<(ArgumentType, ArgumentValue)> {
         match arg_type {
-            // Boolean
+            // ELEMENT_TYPE_BOOLEAN (0x02)
             0x02 => {
                 let value = parser.read_le::<u8>()? != 0;
                 Ok((ArgumentType::Boolean, ArgumentValue::Boolean(value)))
             }
-            // Int32
+            // ELEMENT_TYPE_CHAR (0x03)
+            0x03 => {
+                let value = parser.read_le::<u16>()?;
+                let ch = char::from_u32(u32::from(value)).unwrap_or('\u{FFFD}');
+                Ok((ArgumentType::Char, ArgumentValue::Char(ch)))
+            }
+            // ELEMENT_TYPE_I1 - SByte (0x04)
             0x04 => {
-                let value = parser.read_compressed_int()?;
+                let value = parser.read_le::<i8>()?;
+                Ok((ArgumentType::SByte, ArgumentValue::SByte(value)))
+            }
+            // ELEMENT_TYPE_U1 - Byte (0x05)
+            0x05 => {
+                let value = parser.read_le::<u8>()?;
+                Ok((ArgumentType::Byte, ArgumentValue::Byte(value)))
+            }
+            // ELEMENT_TYPE_I2 - Int16 (0x06)
+            0x06 => {
+                let value = parser.read_le::<i16>()?;
+                Ok((ArgumentType::Int16, ArgumentValue::Int16(value)))
+            }
+            // ELEMENT_TYPE_U2 - UInt16 (0x07)
+            0x07 => {
+                let value = parser.read_le::<u16>()?;
+                Ok((ArgumentType::UInt16, ArgumentValue::UInt16(value)))
+            }
+            // ELEMENT_TYPE_I4 - Int32 (0x08)
+            0x08 => {
+                let value = parser.read_le::<i32>()?;
                 Ok((ArgumentType::Int32, ArgumentValue::Int32(value)))
             }
-            // String
+            // ELEMENT_TYPE_U4 - UInt32 (0x09)
+            0x09 => {
+                let value = parser.read_le::<u32>()?;
+                Ok((ArgumentType::UInt32, ArgumentValue::UInt32(value)))
+            }
+            // ELEMENT_TYPE_I8 - Int64 (0x0A)
+            0x0A => {
+                let value = parser.read_le::<i64>()?;
+                Ok((ArgumentType::Int64, ArgumentValue::Int64(value)))
+            }
+            // ELEMENT_TYPE_U8 - UInt64 (0x0B)
+            0x0B => {
+                let value = parser.read_le::<u64>()?;
+                Ok((ArgumentType::UInt64, ArgumentValue::UInt64(value)))
+            }
+            // ELEMENT_TYPE_R4 - Single/float (0x0C)
+            0x0C => {
+                let value = parser.read_le::<f32>()?;
+                Ok((ArgumentType::Single, ArgumentValue::Single(value)))
+            }
+            // ELEMENT_TYPE_R8 - Double (0x0D)
+            0x0D => {
+                let value = parser.read_le::<f64>()?;
+                Ok((ArgumentType::Double, ArgumentValue::Double(value)))
+            }
+            // ELEMENT_TYPE_STRING (0x0E)
             0x0E => {
                 let value = parser.read_compressed_string_utf8()?;
                 Ok((ArgumentType::String, ArgumentValue::String(value)))
             }
-            // Enum (0x55 = 85)
+            // SERIALIZATION_TYPE_TYPE (0x50) - System.Type
+            0x50 => {
+                let type_name = parser.read_compressed_string_utf8()?;
+                Ok((ArgumentType::Type, ArgumentValue::Type(type_name)))
+            }
+            // SERIALIZATION_TYPE_TAGGED_OBJECT (0x51) - boxed object
+            0x51 => {
+                // Read the actual type tag, then recursively parse the value
+                let inner_type = parser.read_le::<u8>()?;
+                let (_inner_arg_type, inner_value) = Self::parse_argument_value(
+                    parser,
+                    inner_type,
+                    permission_class,
+                    property_name,
+                )?;
+                Ok((
+                    ArgumentType::Object,
+                    ArgumentValue::Object(Box::new(inner_value)),
+                ))
+            }
+            // SERIALIZATION_TYPE_ENUM (0x55)
             0x55 => {
                 let type_name = parser.read_compressed_string_utf8()?;
 
@@ -881,7 +1041,11 @@ impl PermissionSet {
                     ArgumentValue::String(EnumUtils::format_enum_value(&type_name, enum_value)),
                 ))
             }
-            _ => Err(malformed_error!("Unknown argument type: {}", arg_type)),
+            // Unknown type - return as Unknown variant
+            _ => Ok((
+                ArgumentType::Unknown(arg_type),
+                ArgumentValue::Null, // Can't parse unknown types, use Null as placeholder
+            )),
         }
     }
 
@@ -956,6 +1120,70 @@ impl PermissionSet {
         self.contains_permission(security_classes::ENVIRONMENT_PERMISSION)
     }
 
+    /// Check if this permission set contains security permissions
+    ///
+    /// Security permissions (`System.Security.Permissions.SecurityPermission`) control
+    /// access to security-sensitive operations like skipping verification, controlling
+    /// policy, and executing unmanaged code.
+    #[must_use]
+    pub fn has_security(&self) -> bool {
+        self.contains_permission(security_classes::SECURITY_PERMISSION)
+    }
+
+    /// Check if this permission set contains UI permissions
+    ///
+    /// UI permissions (`System.Security.Permissions.UIPermission`) control access to
+    /// user interface operations like clipboard access and window creation.
+    #[must_use]
+    pub fn has_ui(&self) -> bool {
+        self.contains_permission(security_classes::UI_PERMISSION)
+    }
+
+    /// Check if this permission set contains DNS permissions
+    ///
+    /// DNS permissions (`System.Net.DnsPermission`) control access to DNS resolution
+    /// operations.
+    #[must_use]
+    pub fn has_dns(&self) -> bool {
+        self.contains_permission(security_classes::DNS_PERMISSION)
+    }
+
+    /// Check if this permission set contains socket permissions
+    ///
+    /// Socket permissions (`System.Net.SocketPermission`) control access to low-level
+    /// socket networking operations.
+    #[must_use]
+    pub fn has_socket(&self) -> bool {
+        self.contains_permission(security_classes::SOCKET_PERMISSION)
+    }
+
+    /// Check if this permission set contains web permissions
+    ///
+    /// Web permissions (`System.Net.WebPermission`) control access to web-based
+    /// networking operations via HTTP/HTTPS.
+    #[must_use]
+    pub fn has_web(&self) -> bool {
+        self.contains_permission(security_classes::WEB_PERMISSION)
+    }
+
+    /// Check if this permission set contains isolated storage permissions
+    ///
+    /// Isolated storage permissions (`System.Security.Permissions.IsolatedStorageFilePermission`)
+    /// control access to the .NET isolated storage system.
+    #[must_use]
+    pub fn has_isolated_storage(&self) -> bool {
+        self.contains_permission(security_classes::STORAGE_PERMISSION)
+    }
+
+    /// Check if this permission set contains key container permissions
+    ///
+    /// Key container permissions (`System.Security.Permissions.KeyContainerPermission`)
+    /// control access to cryptographic key containers.
+    #[must_use]
+    pub fn has_key_container(&self) -> bool {
+        self.contains_permission(security_classes::KEY_CONTAINER_PERMISSION)
+    }
+
     /// Check if this permission set grants full trust
     ///
     /// Full trust is typically indicated by an unrestricted `SecurityPermission`
@@ -1009,29 +1237,28 @@ impl PermissionSet {
     /// Get all file paths that this permission set grants read access to
     #[must_use]
     pub fn get_all_file_read_paths(&self) -> Vec<String> {
-        let mut paths = Vec::new();
-
-        if let Some(permission) = self.get_permission(security_classes::FILE_IO_PERMISSION) {
-            if let Some(read_paths) = permission.get_file_read_paths() {
-                paths.extend(read_paths);
-            }
-        }
-
-        paths
+        self.collect_file_io_paths(Permission::get_file_read_paths)
     }
 
     /// Get all file paths that this permission set grants write access to
     #[must_use]
     pub fn get_all_file_write_paths(&self) -> Vec<String> {
-        let mut paths = Vec::new();
+        self.collect_file_io_paths(Permission::get_file_write_paths)
+    }
 
-        if let Some(permission) = self.get_permission(security_classes::FILE_IO_PERMISSION) {
-            if let Some(write_paths) = permission.get_file_write_paths() {
-                paths.extend(write_paths);
-            }
-        }
-
-        paths
+    /// Internal helper to collect file paths from FileIOPermission using a path extractor.
+    ///
+    /// This method consolidates the common pattern of:
+    /// 1. Getting the FileIOPermission (if present)
+    /// 2. Extracting paths using the provided extractor function
+    /// 3. Returning the collected paths
+    fn collect_file_io_paths<F>(&self, extractor: F) -> Vec<String>
+    where
+        F: Fn(&Permission) -> Option<Vec<String>>,
+    {
+        self.get_permission(security_classes::FILE_IO_PERMISSION)
+            .and_then(|perm| extractor(perm))
+            .unwrap_or_default()
     }
 }
 
@@ -1482,13 +1709,14 @@ mod tests {
         data.extend_from_slice(prop_name1);
         data.push(0x01); // true
 
-        // Property 2: Int32
+        // Property 2: Int32 (type code 0x08, not 0x04 which is SByte)
         data.push(0x54); // Field marker
-        data.push(0x04); // Int32 type
+        data.push(0x08); // Int32 type (ELEMENT_TYPE_I4)
         let prop_name2 = b"Flags";
         data.push(prop_name2.len() as u8);
         data.extend_from_slice(prop_name2);
-        data.push(0x0E); // Value 7 encoded as compressed signed int (7 * 2 = 14 = 0x0E)
+        // Int32 is now read as little-endian 4-byte value, not compressed
+        data.extend_from_slice(&7i32.to_le_bytes()); // Value 7
 
         // Set the actual blob length
         let blob_length = data.len() - blob_start;
@@ -1558,6 +1786,8 @@ mod tests {
 
     #[test]
     fn test_binary_format_unknown_argument_type() {
+        // Unknown argument types are now handled gracefully with ArgumentType::Unknown
+        // and ArgumentValue::Null instead of returning an error
         let mut data = vec![b'.', 0x01]; // '.' + 1 permission
 
         let class_name = b"TestPermission";
@@ -1577,7 +1807,19 @@ mod tests {
         data[blob_start - 1] = blob_length as u8;
 
         let result = PermissionSet::new(&data);
-        assert!(result.is_err());
+        // Now succeeds with Unknown type and Null value
+        assert!(result.is_ok());
+        let permission_set = result.unwrap();
+        assert_eq!(permission_set.permissions.len(), 1);
+        assert_eq!(permission_set.permissions[0].named_arguments.len(), 1);
+        assert!(matches!(
+            permission_set.permissions[0].named_arguments[0].arg_type,
+            ArgumentType::Unknown(0xFF)
+        ));
+        assert!(matches!(
+            permission_set.permissions[0].named_arguments[0].value,
+            ArgumentValue::Null
+        ));
     }
 
     #[test]
@@ -1992,9 +2234,12 @@ mod tests {
         let result = PermissionSet::new(&data);
         assert!(result.is_err());
 
-        // Verify the error message contains bounds information
+        // Verify the error message contains bounds information (updated to match new error context format)
         let error_msg = format!("{}", result.unwrap_err());
-        assert!(error_msg.contains("Blob end position"));
-        assert!(error_msg.contains("exceeds data length"));
+        assert!(
+            error_msg.contains("blob length") && error_msg.contains("exceeds available data"),
+            "Expected error about blob bounds, got: {}",
+            error_msg
+        );
     }
 }

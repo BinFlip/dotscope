@@ -86,7 +86,7 @@ use crate::{
     },
     Error, Result,
 };
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Foundation validator for circular dependencies in type systems, methods, and references.
 ///
@@ -144,15 +144,12 @@ impl OwnedTypeCircularityValidator {
     /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
     /// - Type inherits from itself directly or indirectly
     /// - Inheritance chain forms a cycle through multiple types
-    fn validate_inheritance_circularity(
-        &self,
-        context: &OwnedValidationContext,
-        target_types: &[CilTypeRc],
-    ) -> Result<()> {
-        let mut visited = HashMap::new();
-        let mut visiting = HashSet::new();
+    fn validate_inheritance_circularity(&self, context: &OwnedValidationContext) -> Result<()> {
+        let mut visited = FxHashMap::default();
+        let mut visiting = FxHashSet::default();
 
-        for type_rc in target_types {
+        // Use cached all_types from context
+        for type_rc in context.all_types() {
             let token = type_rc.token;
             // Only skip if we've already visited this type
             // The check inside the recursive function will handle re-traversal at greater depths
@@ -197,8 +194,8 @@ impl OwnedTypeCircularityValidator {
     fn check_inheritance_cycle_and_depth(
         &self,
         type_rc: &CilTypeRc,
-        visited: &mut HashMap<Token, usize>,
-        visiting: &mut HashSet<Token>,
+        visited: &mut FxHashMap<Token, usize>,
+        visiting: &mut FxHashSet<Token>,
         context: &OwnedValidationContext,
         depth: usize,
     ) -> Result<()> {
@@ -268,28 +265,18 @@ impl OwnedTypeCircularityValidator {
     ///
     /// * `Ok(())` - No nested type circular dependencies found
     /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Nested type circularity detected
-    fn validate_nested_type_circularity(&self, target_types: &[CilTypeRc]) -> Result<()> {
-        let mut visited = HashSet::new();
-        let mut visiting = HashSet::new();
+    fn validate_nested_type_circularity(&self, context: &OwnedValidationContext) -> Result<()> {
+        let mut visited = FxHashSet::default();
+        let mut visiting = FxHashSet::default();
 
-        let mut nested_relationships = HashMap::new();
-        for type_rc in target_types {
-            let token = type_rc.token;
-            let mut nested_tokens = Vec::new();
-            for (_, nested_ref) in type_rc.nested_types.iter() {
-                if let Some(nested_type) = nested_ref.upgrade() {
-                    nested_tokens.push(nested_type.token);
-                }
-            }
-            nested_relationships.insert(token, nested_tokens);
-        }
+        let nested_relationships = context.nested_relationships();
 
-        for type_rc in target_types {
+        for type_rc in context.all_types() {
             let token = type_rc.token;
             if !visited.contains(&token) {
                 self.check_nested_type_cycle(
                     token,
-                    &nested_relationships,
+                    nested_relationships,
                     &mut visited,
                     &mut visiting,
                 )?;
@@ -314,9 +301,9 @@ impl OwnedTypeCircularityValidator {
     fn check_nested_type_cycle(
         &self,
         token: Token,
-        nested_relationships: &HashMap<Token, Vec<Token>>,
-        visited: &mut HashSet<Token>,
-        visiting: &mut HashSet<Token>,
+        nested_relationships: &FxHashMap<Token, Vec<Token>>,
+        visited: &mut FxHashSet<Token>,
+        visiting: &mut FxHashSet<Token>,
     ) -> Result<()> {
         if visited.contains(&token) {
             return Ok(());
@@ -369,30 +356,23 @@ impl OwnedTypeCircularityValidator {
     /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Interface circularity detected
     fn validate_interface_implementation_circularity(
         &self,
-        target_types: &[CilTypeRc],
+        context: &OwnedValidationContext,
     ) -> Result<()> {
-        let mut visited = HashSet::new();
-        let mut visiting = HashSet::new();
+        let mut visited = FxHashSet::default();
+        let mut visiting = FxHashSet::default();
 
-        let mut interface_relationships = HashMap::new();
-        for type_rc in target_types {
+        // Use cached interface relationships from context
+        // Note: The context cache contains ALL types' interface implementations,
+        // but we only check cycles for interface types (interfaces implementing other interfaces)
+        let interface_relationships = context.interface_relationships();
+
+        // Only check interface types for interface implementation cycles
+        for type_rc in context.all_types() {
             let token = type_rc.token;
-            if type_rc.flavor() == &CilFlavor::Interface {
-                let mut implemented_interfaces = Vec::new();
-                for (_, interface_ref) in type_rc.interfaces.iter() {
-                    if let Some(interface_type) = interface_ref.upgrade() {
-                        implemented_interfaces.push(interface_type.token);
-                    }
-                }
-                interface_relationships.insert(token, implemented_interfaces);
-            }
-        }
-
-        for token in interface_relationships.keys() {
-            if !visited.contains(token) {
+            if type_rc.flavor() == &CilFlavor::Interface && !visited.contains(&token) {
                 self.check_interface_implementation_cycle(
-                    *token,
-                    &interface_relationships,
+                    token,
+                    interface_relationships,
                     &mut visited,
                     &mut visiting,
                 )?;
@@ -417,9 +397,9 @@ impl OwnedTypeCircularityValidator {
     fn check_interface_implementation_cycle(
         &self,
         token: Token,
-        interface_relationships: &HashMap<Token, Vec<Token>>,
-        visited: &mut HashSet<Token>,
-        visiting: &mut HashSet<Token>,
+        interface_relationships: &FxHashMap<Token, Vec<Token>>,
+        visited: &mut FxHashSet<Token>,
+        visiting: &mut FxHashSet<Token>,
     ) -> Result<()> {
         if visited.contains(&token) {
             return Ok(());
@@ -458,11 +438,9 @@ impl OwnedTypeCircularityValidator {
 
 impl OwnedValidator for OwnedTypeCircularityValidator {
     fn validate_owned(&self, context: &OwnedValidationContext) -> Result<()> {
-        let all_types = context.object().types().all_types();
-
-        self.validate_inheritance_circularity(context, &all_types)?;
-        self.validate_nested_type_circularity(&all_types)?;
-        self.validate_interface_implementation_circularity(&all_types)?;
+        self.validate_inheritance_circularity(context)?;
+        self.validate_nested_type_circularity(context)?;
+        self.validate_interface_implementation_circularity(context)?;
 
         Ok(())
     }

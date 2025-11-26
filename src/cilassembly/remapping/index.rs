@@ -64,7 +64,7 @@
 //! - [`crate::cilassembly::write`] - Binary output generation system
 //! - [`crate::metadata::cilassemblyview::CilAssemblyView`] - Original assembly data
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     cilassembly::{remapping::RidRemapper, AssemblyChanges, HeapChanges, TableModifications},
@@ -129,14 +129,22 @@ use crate::{
 /// optimized for single-threaded batch processing.
 #[derive(Debug, Clone)]
 pub struct IndexRemapper {
-    /// String heap: Original index -> Final index  
+    /// String heap: Original index -> Final index
     pub string_map: HashMap<u32, u32>,
+    /// String heap: Removed indices (returns None when queried)
+    pub string_removed: HashSet<u32>,
     /// Blob heap: Original index -> Final index
     pub blob_map: HashMap<u32, u32>,
+    /// Blob heap: Removed indices (returns None when queried)
+    pub blob_removed: HashSet<u32>,
     /// GUID heap: Original index -> Final index
     pub guid_map: HashMap<u32, u32>,
+    /// GUID heap: Removed indices (returns None when queried)
+    pub guid_removed: HashSet<u32>,
     /// UserString heap: Original index -> Final index
     pub userstring_map: HashMap<u32, u32>,
+    /// UserString heap: Removed indices (returns None when queried)
+    pub userstring_removed: HashSet<u32>,
     /// Per-table RID mapping: Original RID -> Final RID (None = deleted)
     pub table_maps: HashMap<TableId, RidRemapper>,
 }
@@ -166,9 +174,13 @@ impl IndexRemapper {
     pub fn build_from_changes(changes: &AssemblyChanges, original_view: &CilAssemblyView) -> Self {
         let mut remapper = Self {
             string_map: HashMap::new(),
+            string_removed: HashSet::new(),
             blob_map: HashMap::new(),
+            blob_removed: HashSet::new(),
             guid_map: HashMap::new(),
+            guid_removed: HashSet::new(),
             userstring_map: HashMap::new(),
+            userstring_removed: HashSet::new(),
             table_maps: HashMap::new(),
         };
 
@@ -187,21 +199,25 @@ impl IndexRemapper {
     ///
     /// * `changes` - The [`crate::cilassembly::changes::AssemblyChanges`] to analyze
     /// * `original_view` - The original assembly view for baseline heap sizes
-    fn build_heap_remapping(&mut self, changes: &AssemblyChanges, original_view: &CilAssemblyView) {
+    fn build_heap_remapping(
+        &mut self,
+        changes: &AssemblyChanges,
+        _original_view: &CilAssemblyView,
+    ) {
         if changes.string_heap_changes.has_changes() {
-            self.build_string_mapping(&changes.string_heap_changes, original_view);
+            self.build_string_mapping(&changes.string_heap_changes);
         }
 
         if changes.blob_heap_changes.has_changes() {
-            self.build_blob_mapping(&changes.blob_heap_changes, original_view);
+            self.build_blob_mapping(&changes.blob_heap_changes);
         }
 
         if changes.guid_heap_changes.has_changes() {
-            self.build_guid_mapping(&changes.guid_heap_changes, original_view);
+            self.build_guid_mapping(&changes.guid_heap_changes);
         }
 
         if changes.userstring_heap_changes.has_changes() {
-            self.build_userstring_mapping(&changes.userstring_heap_changes, original_view);
+            self.build_userstring_mapping(&changes.userstring_heap_changes);
         }
     }
 
@@ -241,210 +257,111 @@ impl IndexRemapper {
 
     /// Build string heap index mapping.
     ///
-    /// This method builds the mapping for string heap indices, accounting for:
-    /// - Removed items (causing heap compaction)
-    /// - Modified items (in-place updates)  
-    /// - Appended items (new additions)
+    /// String heap indices are byte offsets into the heap, not sequential entry numbers.
+    /// This method builds mappings for:
+    /// - Removed items: No mapping (returns None when queried)
+    /// - Original items: Identity mapping (byte offset unchanged, data zeroed in place)
+    /// - Appended items: Mapped to their assigned byte offsets
     ///
-    /// The mapping ensures that references point to the correct final indices
-    /// after heap compaction is applied.
-    fn build_string_mapping(
-        &mut self,
-        string_changes: &HeapChanges<String>,
-        original_view: &CilAssemblyView,
-    ) {
-        let original_size = original_view
-            .streams()
-            .iter()
-            .find(|stream| stream.name == "#Strings")
-            .map_or(1, |stream| stream.size);
-
-        // Build mapping with heap compaction
-        let mut final_index = 1u32; // Final indices start at 1 (0 is reserved)
-
-        // Map original items, skipping removed ones and compacting the heap
-        for original_index in 1..=original_size {
-            if !string_changes.removed_indices.contains(&original_index) {
-                // Item is not removed, so it gets mapped to the next final index
-                self.string_map.insert(original_index, final_index);
-                final_index += 1;
-            }
-            // Removed items get no mapping (they will be skipped)
+    /// Note: The string heap writer zeros out removed items in place rather than
+    /// compacting the heap, so original byte offsets remain valid.
+    fn build_string_mapping(&mut self, string_changes: &HeapChanges<String>) {
+        // Store removed indices for lookup
+        for &removed_index in &string_changes.removed_indices {
+            self.string_removed.insert(removed_index);
         }
 
-        // Map appended items to their final indices
-        for (i, _) in string_changes.appended_items.iter().enumerate() {
-            let original_appended_index = original_size + 1 + u32::try_from(i).unwrap_or(0);
-            self.string_map.insert(original_appended_index, final_index);
-            final_index += 1;
+        // Map appended items to their assigned byte offsets
+        // The HeapChanges tracks the byte offset for each appended item
+        for (vec_index, _) in string_changes.appended_items.iter().enumerate() {
+            if let Some(assigned_index) = string_changes.get_appended_item_index(vec_index) {
+                // Appended items use identity mapping - the assigned index IS the final index
+                self.string_map.insert(assigned_index, assigned_index);
+            }
         }
     }
 
     /// Build blob heap index mapping.
     ///
-    /// This method builds the mapping for blob heap indices, accounting for:
-    /// - Removed items (causing heap compaction)
-    /// - Modified items (in-place updates)  
-    /// - Appended items (new additions)
+    /// Blob heap indices are byte offsets into the heap, not sequential entry numbers.
+    /// This method builds mappings for:
+    /// - Removed items: No mapping (returns None when queried)
+    /// - Original items: Identity mapping (byte offset unchanged, data zeroed in place)
+    /// - Appended items: Mapped to their assigned byte offsets
     ///
-    /// The mapping ensures that references point to the correct final indices
-    /// after heap compaction is applied.
-    fn build_blob_mapping(
-        &mut self,
-        blob_changes: &HeapChanges<Vec<u8>>,
-        original_view: &CilAssemblyView,
-    ) {
-        // Determine the original number of blob entries
-        // When next_index is set to something meaningful (> 1), use it for the original size
-        let original_count = if blob_changes.next_index > 1 && blob_changes.next_index < 10000 {
-            // Small/medium values likely represent entry count (test scenarios)
-            // The next_index in HeapChanges::new() represents the original heap size before any appends
-            blob_changes.next_index
-        } else {
-            // Large values represent byte sizes (real assemblies like WindowsBase.dll with 77816 bytes)
-            // For real assemblies, use the actual stream size
-            original_view
-                .streams()
-                .iter()
-                .find(|stream| stream.name == "#Blob")
-                .map_or(1, |stream| stream.size)
-        };
+    /// Note: The blob heap writer zeros out removed items in place rather than
+    /// compacting the heap, so original byte offsets remain valid.
+    fn build_blob_mapping(&mut self, blob_changes: &HeapChanges<Vec<u8>>) {
+        // For removed indices, we explicitly do NOT add them to the map.
+        // When map_blob_index is called for a removed index, it will return None.
+        // The removed_indices set is checked by the caller.
 
-        // Build mapping with heap compaction
-        let mut final_index = 1u32; // Final indices start at 1 (0 is reserved)
-
-        // Map original items, skipping removed ones and compacting the heap
-        for original_index in 1..=original_count {
-            if !blob_changes.removed_indices.contains(&original_index) {
-                // Item is not removed, so it gets mapped to the next final index
-                self.blob_map.insert(original_index, final_index);
-                final_index += 1;
-            }
-            // Removed items get no mapping (they will be skipped)
+        // Store removed indices for lookup
+        for &removed_index in &blob_changes.removed_indices {
+            // Mark as removed by not adding to map - the map_blob_index method
+            // will check removed_indices and return None
+            self.blob_removed.insert(removed_index);
         }
 
-        // Map appended items to their final indices
-        for (i, _) in blob_changes.appended_items.iter().enumerate() {
-            let original_appended_index = original_count + 1 + u32::try_from(i).unwrap_or(0);
-            self.blob_map.insert(original_appended_index, final_index);
-            final_index += 1;
+        // Map appended items to their assigned byte offsets
+        // The HeapChanges tracks the byte offset for each appended item
+        for (vec_index, _) in blob_changes.appended_items.iter().enumerate() {
+            if let Some(assigned_index) = blob_changes.get_appended_item_index(vec_index) {
+                // Appended items use identity mapping - the assigned index IS the final index
+                self.blob_map.insert(assigned_index, assigned_index);
+            }
         }
     }
 
     /// Build GUID heap index mapping.
     ///
-    /// This method builds the mapping for GUID heap indices, accounting for:
-    /// - Removed items (causing heap compaction)
-    /// - Modified items (in-place updates)  
-    /// - Appended items (new additions)
+    /// GUID heap indices are 1-based entry numbers (each GUID is exactly 16 bytes).
+    /// This method builds mappings for:
+    /// - Removed items: No mapping (returns None when queried)
+    /// - Original items: Identity mapping (entry position unchanged, data zeroed in place)
+    /// - Appended items: Mapped to their assigned entry indices
     ///
-    /// The mapping ensures that references point to the correct final indices
-    /// after heap compaction is applied.
-    fn build_guid_mapping(
-        &mut self,
-        guid_changes: &HeapChanges<[u8; 16]>,
-        original_view: &CilAssemblyView,
-    ) {
-        // Determine the original number of GUID entries
-        // When next_index is set to something meaningful (> 0), use it for the original size
-        // For test scenarios, next_index might represent entry count directly
-        let original_count = if guid_changes.next_index > 0 && guid_changes.next_index < 1000 {
-            // Small values likely represent entry count (test scenarios)
-            // The next_index in HeapChanges::new() represents the original heap size before any appends
-            guid_changes.next_index
-        } else {
-            // Large values or zero represent byte sizes (real assemblies)
-            original_view
-                .streams()
-                .iter()
-                .find(|stream| stream.name == "#GUID")
-                .map_or(0, |stream| stream.size / 16) // GUID entries are exactly 16 bytes each
-        };
-
-        // Build mapping with heap compaction
-        let mut final_index = 1u32; // Final indices start at 1 (0 is reserved)
-
-        // Map original items, skipping removed ones and compacting the heap
-        for original_index in 1..=original_count {
-            if !guid_changes.removed_indices.contains(&original_index) {
-                // Item is not removed, so it gets mapped to the next final index
-                self.guid_map.insert(original_index, final_index);
-                final_index += 1;
-            }
-            // Removed items get no mapping (they will be skipped)
+    /// Note: The GUID heap writer zeros out removed items in place rather than
+    /// compacting the heap, so original entry indices remain valid.
+    fn build_guid_mapping(&mut self, guid_changes: &HeapChanges<[u8; 16]>) {
+        // Store removed indices for lookup
+        for &removed_index in &guid_changes.removed_indices {
+            self.guid_removed.insert(removed_index);
         }
 
-        // Map appended items to their final indices
-        for (i, _) in guid_changes.appended_items.iter().enumerate() {
-            let original_appended_index = original_count + 1 + u32::try_from(i).unwrap_or(0);
-            self.guid_map.insert(original_appended_index, final_index);
-            final_index += 1;
+        // Map appended items to their assigned entry indices
+        // The HeapChanges tracks the entry index for each appended item
+        for (vec_index, _) in guid_changes.appended_items.iter().enumerate() {
+            if let Some(assigned_index) = guid_changes.get_appended_item_index(vec_index) {
+                // Appended items use identity mapping - the assigned index IS the final index
+                self.guid_map.insert(assigned_index, assigned_index);
+            }
         }
     }
 
     /// Build UserString heap index mapping.
     ///
-    /// This method builds the mapping for user string heap indices, accounting for:
-    /// Build UserString heap index mapping with support for both logical and byte offset scenarios.
+    /// UserString heap indices are byte offsets into the heap, not sequential entry numbers.
+    /// This method builds mappings for:
+    /// - Removed items: No mapping (returns None when queried)
+    /// - Original items: Identity mapping (byte offset unchanged, data zeroed in place)
+    /// - Appended items: Mapped to their assigned byte offsets
     ///
-    /// This handles two different scenarios:
-    /// 1. Test/logical scenarios: Small indices (< 1000) treated as logical entry numbers with compaction
-    /// 2. Real-world scenarios: Large indices treated as byte offsets, handled by heap builder during write
-    fn build_userstring_mapping(
-        &mut self,
-        userstring_changes: &HeapChanges<String>,
-        original_view: &CilAssemblyView,
-    ) {
-        // Determine if this is a logical index scenario (tests) or byte offset scenario (real world)
-        let is_logical_scenario = userstring_changes.next_index < 1000
-            && userstring_changes
-                .appended_items
-                .iter()
-                .all(|item| item.len() < 100); // Simple heuristic
-
-        if is_logical_scenario {
-            // Handle logical index scenario with compaction (for tests)
-            self.build_logical_userstring_mapping(userstring_changes, original_view);
-        } else {
-            // Handle byte offset scenario - mappings will be applied during heap building
-            // Create identity mappings for now, actual mappings handled by heap builder
-            for (vec_index, _) in userstring_changes.appended_items.iter().enumerate() {
-                if let Some(original_index) = userstring_changes.get_appended_item_index(vec_index)
-                {
-                    self.userstring_map.insert(original_index, original_index);
-                }
-            }
-        }
-    }
-
-    /// Handle logical userstring index mapping with heap compaction (test scenarios).
-    fn build_logical_userstring_mapping(
-        &mut self,
-        userstring_changes: &HeapChanges<String>,
-        _original_view: &CilAssemblyView,
-    ) {
-        // For logical scenarios, treat next_index as entry count
-        let original_count = userstring_changes.next_index;
-
-        // Build mapping with heap compaction
-        let mut final_index = 1u32; // Final indices start at 1 (0 is reserved)
-
-        // Map original items, skipping removed ones and compacting the heap
-        for original_index in 1..=original_count {
-            if !userstring_changes.removed_indices.contains(&original_index) {
-                // Item is not removed, so it gets mapped to the next final index
-                self.userstring_map.insert(original_index, final_index);
-                final_index += 1;
-            }
-            // Removed items get no mapping (they will be skipped)
+    /// Note: The UserString heap writer zeros out removed items in place rather than
+    /// compacting the heap, so original byte offsets remain valid.
+    fn build_userstring_mapping(&mut self, userstring_changes: &HeapChanges<String>) {
+        // Store removed indices for lookup
+        for &removed_index in &userstring_changes.removed_indices {
+            self.userstring_removed.insert(removed_index);
         }
 
-        // Map appended items to their final indices
-        for (i, _) in userstring_changes.appended_items.iter().enumerate() {
-            let original_appended_index = original_count + 1 + u32::try_from(i).unwrap_or(0);
-            self.userstring_map
-                .insert(original_appended_index, final_index);
-            final_index += 1;
+        // Map appended items to their assigned byte offsets
+        // The HeapChanges tracks the byte offset for each appended item
+        for (vec_index, _) in userstring_changes.appended_items.iter().enumerate() {
+            if let Some(assigned_index) = userstring_changes.get_appended_item_index(vec_index) {
+                // Appended items use identity mapping - the assigned index IS the final index
+                self.userstring_map.insert(assigned_index, assigned_index);
+            }
         }
     }
 
@@ -778,44 +695,88 @@ impl IndexRemapper {
 
     /// Get the final index for a string heap index.
     ///
-    /// Looks up the final index mapping for a string heap index. This is used
-    /// to update cross-references during binary generation.
+    /// String heap indices are byte offsets. For byte-offset heaps:
+    /// - Removed indices return `None`
+    /// - Non-removed indices return identity mapping (same index)
+    /// - Appended items return their assigned byte offset
     ///
     /// # Arguments
     ///
-    /// * `original_index` - The original string heap index to map
+    /// * `original_index` - The original string heap byte offset to map
     ///
     /// # Returns
     ///
-    /// `Some(final_index)` if the index has a mapping, `None` if not found.
+    /// `Some(final_index)` if the index is valid, `None` if removed.
     pub fn map_string_index(&self, original_index: u32) -> Option<u32> {
-        self.string_map.get(&original_index).copied()
+        if self.string_removed.contains(&original_index) {
+            None
+        } else if let Some(&mapped) = self.string_map.get(&original_index) {
+            Some(mapped)
+        } else {
+            // Identity mapping for non-removed, non-appended indices
+            Some(original_index)
+        }
     }
 
     /// Get the final index for a blob heap index.
     ///
-    /// Looks up the final index mapping for a blob heap index. This is used
-    /// to update cross-references during binary generation.
+    /// Blob heap indices are byte offsets. For byte-offset heaps:
+    /// - Removed indices return `None`
+    /// - Non-removed indices return identity mapping (same index)
+    /// - Appended items return their assigned byte offset
     ///
     /// # Arguments
     ///
-    /// * `original_index` - The original blob heap index to map
+    /// * `original_index` - The original blob heap byte offset to map
     ///
     /// # Returns
     ///
-    /// `Some(final_index)` if the index has a mapping, `None` if not found.
+    /// `Some(final_index)` if the index is valid, `None` if removed.
     pub fn map_blob_index(&self, original_index: u32) -> Option<u32> {
-        self.blob_map.get(&original_index).copied()
+        if self.blob_removed.contains(&original_index) {
+            None
+        } else if let Some(&mapped) = self.blob_map.get(&original_index) {
+            Some(mapped)
+        } else {
+            // Identity mapping for non-removed, non-appended indices
+            Some(original_index)
+        }
     }
 
     /// Get the final index for a GUID heap index.
+    ///
+    /// GUID heap uses 1-based entry indices (not byte offsets).
+    /// Returns `None` if the index was removed.
+    ///
+    /// This method is part of the public API for cross-reference updates and external
+    /// consumers that need to remap GUID indices after assembly modifications.
     pub fn map_guid_index(&self, original_index: u32) -> Option<u32> {
-        self.guid_map.get(&original_index).copied()
+        if self.guid_removed.contains(&original_index) {
+            None
+        } else if let Some(&mapped) = self.guid_map.get(&original_index) {
+            Some(mapped)
+        } else {
+            // Identity mapping for non-removed, non-appended indices
+            Some(original_index)
+        }
     }
 
     /// Get the final index for a UserString heap index.
+    ///
+    /// UserString heap indices are byte offsets (like blob heap).
+    /// Returns `None` if the index was removed.
+    ///
+    /// This method is part of the public API for cross-reference updates and external
+    /// consumers that need to remap UserString indices after assembly modifications.
     pub fn map_userstring_index(&self, original_index: u32) -> Option<u32> {
-        self.userstring_map.get(&original_index).copied()
+        if self.userstring_removed.contains(&original_index) {
+            None
+        } else if let Some(&mapped) = self.userstring_map.get(&original_index) {
+            Some(mapped)
+        } else {
+            // Identity mapping for non-removed, non-appended indices
+            Some(original_index)
+        }
     }
 
     /// Get the RID remapper for a specific table.
@@ -1000,15 +961,17 @@ mod tests {
         if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut changes = AssemblyChanges::empty();
 
-            // Add string changes
+            // Add string changes with properly assigned byte offsets
             let mut string_changes = HeapChanges::new(203731);
             string_changes.appended_items.push("Test".to_string());
+            string_changes.appended_item_indices.push(203731); // Byte offset for appended string
             string_changes.next_index = 203732;
             changes.string_heap_changes = string_changes;
 
-            // Add blob changes
+            // Add blob changes with properly assigned byte offsets
             let mut blob_changes = HeapChanges::new(77816);
             blob_changes.appended_items.push(vec![0xAB, 0xCD]);
+            blob_changes.appended_item_indices.push(77816); // Byte offset for appended blob
             blob_changes.next_index = 77817;
             changes.blob_heap_changes = blob_changes;
 
@@ -1022,52 +985,59 @@ mod tests {
 
             let remapper = IndexRemapper::build_from_changes(&changes, &view);
 
-            // Verify all mappings were created
+            // Verify appended item mappings were created
             assert!(!remapper.string_map.is_empty());
             assert!(!remapper.blob_map.is_empty());
             assert!(!remapper.table_maps.is_empty());
 
-            // Test specific mappings
-            assert_eq!(remapper.map_string_index(203732), Some(203732));
-            assert_eq!(remapper.map_blob_index(77817), Some(77817));
+            // Test specific mappings - appended items use identity mapping
+            assert_eq!(remapper.map_string_index(203731), Some(203731));
+            assert_eq!(remapper.map_blob_index(77816), Some(77816));
             assert!(remapper.get_table_remapper(TableId::TypeDef).is_some());
+
+            // Non-appended, non-removed indices also use identity mapping
+            assert_eq!(remapper.map_string_index(100), Some(100));
+            assert_eq!(remapper.map_blob_index(50), Some(50));
         }
     }
 
     #[test]
-    fn test_heap_compaction_with_removed_items() {
+    fn test_heap_identity_mapping_with_removed_items() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut changes = AssemblyChanges::empty();
 
             // Create string heap changes with removed items
-            let mut string_changes = HeapChanges::new(10); // Small heap for testing
-            string_changes.removed_indices.insert(2); // Remove index 2
-            string_changes.removed_indices.insert(5); // Remove index 5
-            string_changes.removed_indices.insert(8); // Remove index 8
+            let mut string_changes = HeapChanges::new(10); // Original heap byte size
+            string_changes.removed_indices.insert(2); // Remove item at byte offset 2
+            string_changes.removed_indices.insert(5); // Remove item at byte offset 5
+            string_changes.removed_indices.insert(8); // Remove item at byte offset 8
+                                                      // Appended items get assigned byte offsets starting after original heap
             string_changes.appended_items.push("NewString1".to_string());
+            string_changes.appended_item_indices.push(10); // Assigned byte offset 10
             string_changes.appended_items.push("NewString2".to_string());
+            string_changes.appended_item_indices.push(21); // Assigned byte offset 21
+            string_changes.next_index = 32; // Updated next_index
             changes.string_heap_changes = string_changes;
 
             let remapper = IndexRemapper::build_from_changes(&changes, &view);
 
-            // Verify heap compaction - removed items should not be mapped
+            // Verify removed items return None
             assert_eq!(remapper.map_string_index(2), None); // Removed
             assert_eq!(remapper.map_string_index(5), None); // Removed
             assert_eq!(remapper.map_string_index(8), None); // Removed
 
-            // Verify remaining items are compacted sequentially
-            assert_eq!(remapper.map_string_index(1), Some(1)); // First item
-            assert_eq!(remapper.map_string_index(3), Some(2)); // Compacted down from 3->2
-            assert_eq!(remapper.map_string_index(4), Some(3)); // Compacted down from 4->3
-            assert_eq!(remapper.map_string_index(6), Some(4)); // Compacted down from 6->4
-            assert_eq!(remapper.map_string_index(7), Some(5)); // Compacted down from 7->5
-            assert_eq!(remapper.map_string_index(9), Some(6)); // Compacted down from 9->6
-            assert_eq!(remapper.map_string_index(10), Some(7)); // Compacted down from 10->7
+            // Verify non-removed items use identity mapping (byte offsets stay the same)
+            assert_eq!(remapper.map_string_index(1), Some(1)); // Identity
+            assert_eq!(remapper.map_string_index(3), Some(3)); // Identity
+            assert_eq!(remapper.map_string_index(4), Some(4)); // Identity
+            assert_eq!(remapper.map_string_index(6), Some(6)); // Identity
+            assert_eq!(remapper.map_string_index(7), Some(7)); // Identity
+            assert_eq!(remapper.map_string_index(9), Some(9)); // Identity
 
-            // Verify appended items get sequential indices after compacted originals
-            assert_eq!(remapper.map_string_index(11), Some(8)); // First new string
-            assert_eq!(remapper.map_string_index(12), Some(9)); // Second new string
+            // Verify appended items use their assigned byte offsets (identity mapping)
+            assert_eq!(remapper.map_string_index(10), Some(10)); // First new string
+            assert_eq!(remapper.map_string_index(21), Some(21)); // Second new string
         }
     }
 
@@ -1118,11 +1088,11 @@ mod tests {
                 if let Some(TableDataOwned::TypeDef(typedef_data)) =
                     operations[0].operation.get_row_data()
                 {
-                    // String indices should be remapped according to heap compaction
-                    // Original index 50 should stay 50 (no removal before it)
+                    // String indices use identity mapping (no compaction)
+                    // Original index 50 stays 50 (not removed)
                     assert_eq!(typedef_data.type_name, 50);
-                    // Original index 100 should be compacted down (removals at 60, 90)
-                    assert_eq!(typedef_data.type_namespace, 98); // 100 - 2 removed items before it
+                    // Original index 100 stays 100 (not removed, identity mapping)
+                    assert_eq!(typedef_data.type_namespace, 100);
 
                     // Table RIDs should remain unchanged if no table remapping
                     assert_eq!(typedef_data.field_list, 25);
@@ -1137,65 +1107,73 @@ mod tests {
     }
 
     #[test]
-    fn test_multiple_heap_compaction_scenarios() {
+    fn test_multiple_heap_identity_mapping() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
             let mut changes = AssemblyChanges::empty();
 
-            // Test blob heap compaction
+            // Test blob heap - byte offset based, identity mapping
             let mut blob_changes = HeapChanges::new(20);
             blob_changes.removed_indices.insert(3);
             blob_changes.removed_indices.insert(7);
             blob_changes.removed_indices.insert(15);
+            // Appended items with assigned byte offsets
             blob_changes.appended_items.push(vec![0x01, 0x02]);
+            blob_changes.appended_item_indices.push(20);
             blob_changes.appended_items.push(vec![0x03, 0x04]);
+            blob_changes.appended_item_indices.push(23);
+            blob_changes.next_index = 26;
             changes.blob_heap_changes = blob_changes;
 
-            // Test GUID heap compaction
-            let mut guid_changes = HeapChanges::new(5);
+            // Test GUID heap - 1-based entry indices, identity mapping
+            let mut guid_changes = HeapChanges::new(80); // 5 GUIDs = 80 bytes
             guid_changes.removed_indices.insert(2);
             guid_changes.removed_indices.insert(4);
             guid_changes.appended_items.push([0xFF; 16]);
+            guid_changes.appended_item_indices.push(6); // 6th GUID entry
+            guid_changes.next_index = 96;
             changes.guid_heap_changes = guid_changes;
 
-            // Test user string heap compaction
+            // Test user string heap - byte offset based, identity mapping
             let mut userstring_changes = HeapChanges::new(15);
             userstring_changes.removed_indices.insert(1);
             userstring_changes.removed_indices.insert(10);
             userstring_changes
                 .appended_items
                 .push("UserString1".to_string());
+            userstring_changes.appended_item_indices.push(15);
+            userstring_changes.next_index = 38;
             changes.userstring_heap_changes = userstring_changes;
 
             let remapper = IndexRemapper::build_from_changes(&changes, &view);
 
-            // Verify blob heap compaction
+            // Verify blob heap - identity mapping, removed returns None
             assert_eq!(remapper.map_blob_index(3), None); // Removed
             assert_eq!(remapper.map_blob_index(7), None); // Removed
             assert_eq!(remapper.map_blob_index(15), None); // Removed
-            assert_eq!(remapper.map_blob_index(1), Some(1)); // Index 1 -> 1
-            assert_eq!(remapper.map_blob_index(2), Some(2)); // Index 2 -> 2
-            assert_eq!(remapper.map_blob_index(4), Some(3)); // Index 4 -> 3 (after removal of 3)
-            assert_eq!(remapper.map_blob_index(5), Some(4)); // Index 5 -> 4
-            assert_eq!(remapper.map_blob_index(6), Some(5)); // Index 6 -> 5
-            assert_eq!(remapper.map_blob_index(8), Some(6)); // Index 8 -> 6 (after removal of 7)
+            assert_eq!(remapper.map_blob_index(1), Some(1)); // Identity
+            assert_eq!(remapper.map_blob_index(2), Some(2)); // Identity
+            assert_eq!(remapper.map_blob_index(4), Some(4)); // Identity
+            assert_eq!(remapper.map_blob_index(5), Some(5)); // Identity
+            assert_eq!(remapper.map_blob_index(6), Some(6)); // Identity
+            assert_eq!(remapper.map_blob_index(8), Some(8)); // Identity
+            assert_eq!(remapper.map_blob_index(20), Some(20)); // Appended, identity
 
-            // Verify GUID heap compaction
+            // Verify GUID heap - identity mapping, removed returns None
             assert_eq!(remapper.map_guid_index(2), None); // Removed
             assert_eq!(remapper.map_guid_index(4), None); // Removed
-            assert_eq!(remapper.map_guid_index(1), Some(1)); // Index 1 -> 1
-            assert_eq!(remapper.map_guid_index(3), Some(2)); // Index 3 -> 2 (after removal of 2)
-            assert_eq!(remapper.map_guid_index(5), Some(3)); // Index 5 -> 3 (after removal of 4)
+            assert_eq!(remapper.map_guid_index(1), Some(1)); // Identity
+            assert_eq!(remapper.map_guid_index(3), Some(3)); // Identity
+            assert_eq!(remapper.map_guid_index(5), Some(5)); // Identity
+            assert_eq!(remapper.map_guid_index(6), Some(6)); // Appended, identity
 
-            // Verify user string heap compaction
+            // Verify user string heap - identity mapping, removed returns None
             assert_eq!(remapper.map_userstring_index(1), None); // Removed
             assert_eq!(remapper.map_userstring_index(10), None); // Removed
-            assert_eq!(remapper.map_userstring_index(2), Some(1)); // Index 2 -> 1 (after removal of 1)
-            assert_eq!(remapper.map_userstring_index(5), Some(4)); // Index 5 -> 4
-            assert_eq!(remapper.map_userstring_index(11), Some(9)); // Index 11 -> 9 (after removal of 1 and 10)
-
-            // Verify appended items get correct final indices
-            assert_eq!(remapper.map_userstring_index(16), Some(14)); // First appended user string (after 13 remaining entries)
+            assert_eq!(remapper.map_userstring_index(2), Some(2)); // Identity
+            assert_eq!(remapper.map_userstring_index(5), Some(5)); // Identity
+            assert_eq!(remapper.map_userstring_index(11), Some(11)); // Identity
+            assert_eq!(remapper.map_userstring_index(15), Some(15)); // Appended, identity
         }
     }
 
@@ -1218,17 +1196,18 @@ mod tests {
 
             let remapper = IndexRemapper::build_from_changes(&changes, &view);
 
-            // All heap maps should be empty since no items to map
+            // All heap maps should be empty since no appended items were added
             assert!(remapper.string_map.is_empty());
             assert!(remapper.blob_map.is_empty());
             assert!(remapper.guid_map.is_empty());
             assert!(remapper.userstring_map.is_empty());
 
-            // Querying non-existent indices should return None
-            assert_eq!(remapper.map_string_index(1), None);
-            assert_eq!(remapper.map_blob_index(1), None);
-            assert_eq!(remapper.map_guid_index(1), None);
-            assert_eq!(remapper.map_userstring_index(1), None);
+            // With identity mapping, non-removed indices return identity mapping (not None)
+            // Querying any index that isn't explicitly in removed set returns identity mapping
+            assert_eq!(remapper.map_string_index(1), Some(1));
+            assert_eq!(remapper.map_blob_index(1), Some(1));
+            assert_eq!(remapper.map_guid_index(1), Some(1));
+            assert_eq!(remapper.map_userstring_index(1), Some(1));
         }
     }
 
@@ -1243,20 +1222,25 @@ mod tests {
             for i in 1..=5 {
                 string_changes.removed_indices.insert(i);
             }
+            // Appended item gets assigned byte offset at original_heap_size
             string_changes
                 .appended_items
                 .push("OnlyNewString".to_string());
+            string_changes.appended_item_indices.push(5); // Byte offset 5
             changes.string_heap_changes = string_changes;
 
             let remapper = IndexRemapper::build_from_changes(&changes, &view);
 
-            // All original indices should be unmapped (None)
+            // All removed indices should return None
             for i in 1..=5 {
                 assert_eq!(remapper.map_string_index(i), None);
             }
 
-            // Only the new string should be mapped
-            assert_eq!(remapper.map_string_index(6), Some(1)); // First (and only) final index
+            // The new string at byte offset 5 uses identity mapping
+            assert_eq!(remapper.map_string_index(5), None); // But 5 was also removed - removed takes precedence
+
+            // Non-removed, non-appended indices use identity mapping
+            assert_eq!(remapper.map_string_index(6), Some(6)); // Identity mapping
         }
     }
 
@@ -1320,8 +1304,8 @@ mod tests {
                 if let Some(TableDataOwned::CustomAttribute(attr_data)) =
                     operations[0].operation.get_row_data()
                 {
-                    // Blob index should be compacted (150 -> 148, accounting for 2 removed items before it)
-                    assert_eq!(attr_data.value, 148);
+                    // Blob index uses identity mapping (150 stays 150, removed items are zeroed in place)
+                    assert_eq!(attr_data.value, 150);
 
                     // CodedIndex references should be updated for RID remapping (RID 15 -> 14 after deleting RID 10)
                     assert_eq!(attr_data.parent.row, 14);
@@ -1341,11 +1325,11 @@ mod tests {
 
             // Simulate a large heap with many removals (performance test)
             let mut string_changes = HeapChanges::new(10000);
-            // Remove every 10th item to create significant compaction
+            // Remove every 10th item (removed items are zeroed in place, no compaction)
             for i in (10..10000).step_by(10) {
                 string_changes.removed_indices.insert(i);
             }
-            // Add many new strings
+            // Add many new strings (they would be appended at byte offsets beyond original heap)
             for i in 0..1000 {
                 string_changes.appended_items.push(format!("TestString{i}"));
             }
@@ -1355,11 +1339,11 @@ mod tests {
             let remapper = IndexRemapper::build_from_changes(&changes, &view);
             let build_time = start.elapsed();
 
-            // Verify some mappings work correctly
-            assert_eq!(remapper.map_string_index(5), Some(5)); // Before first removal
+            // Verify identity mapping works correctly (no compaction)
+            assert_eq!(remapper.map_string_index(5), Some(5)); // Not removed, identity
             assert_eq!(remapper.map_string_index(10), None); // Removed
-            assert_eq!(remapper.map_string_index(15), Some(14)); // Compacted (15 - 1 removal)
-            assert_eq!(remapper.map_string_index(25), Some(23)); // Compacted (25 - 2 removals)
+            assert_eq!(remapper.map_string_index(15), Some(15)); // Not removed, identity
+            assert_eq!(remapper.map_string_index(25), Some(25)); // Not removed, identity
 
             // Test that performance is reasonable (should complete in well under 1 second)
             assert!(

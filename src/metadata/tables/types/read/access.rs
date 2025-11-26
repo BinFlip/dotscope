@@ -67,3 +67,51 @@ macro_rules! impl_table_access {
         }
     };
 }
+
+/// Generate the complete match expression for creating metadata tables in `TablesHeader::add_table()`.
+///
+/// This macro eliminates the repetitive match arm patterns that would otherwise
+/// require ~380 lines of nearly identical code. It generates a complete match expression
+/// that handles all table types, where each arm:
+/// 1. Creates a `MetadataTable` of the specified type
+/// 2. Updates the offset by the table's size
+/// 3. Wraps the table in the appropriate `TableData` variant
+///
+/// # Arguments
+/// * `$table_type_var` - The variable containing the `TableId` to match against
+/// * `$data` - The data slice to parse from
+/// * `$rows` - The number of rows in the table
+/// * `$info` - The `TableInfo` for column size calculation
+/// * `$offset` - Mutable reference to the current offset
+/// * `$(($id:path, $raw:ty, $variant:ident)),*` - List of (TableId variant, Raw type, TableData variant) tuples
+///
+/// # Size Calculation
+/// The macro casts `table.size()` (which returns `u64`) to `usize` for offset arithmetic.
+/// This is safe because:
+/// - PE files are limited to ~4GB, constraining maximum metadata size
+/// - On 64-bit systems, `usize` can hold any valid table size
+/// - On 32-bit systems, the 4GB PE limit ensures no truncation occurs
+///
+/// # Example
+/// ```rust,ignore
+/// let table = create_table_match!(
+///     table_type, data, t_info.rows, self.info.clone(), current_offset,
+///     (TableId::Module, ModuleRaw, Module),
+///     (TableId::TypeRef, TypeRefRaw, TypeRef),
+///     // ... additional entries
+/// );
+/// ```
+#[macro_export]
+macro_rules! create_table_match {
+    ($table_type_var:expr, $data:expr, $rows:expr, $info:expr, $offset:expr, $(($id:path, $raw:ty, $variant:ident)),* $(,)?) => {
+        match $table_type_var {
+            $(
+                $id => {
+                    let table = MetadataTable::<$raw>::new($data, $rows, $info.clone())?;
+                    *$offset += table.size() as usize;
+                    TableData::$variant(table)
+                }
+            )*
+        }
+    };
+}

@@ -531,6 +531,19 @@ impl NativeExports {
             return Err(Error::Error("Forwarder target cannot be empty".to_string()));
         }
 
+        if !target.contains('.') {
+            return Err(Error::Error(format!(
+                "Forwarder target '{}' must be in format 'DllName.FunctionName' or 'DllName.#Ordinal'",
+                target
+            )));
+        }
+
+        if target.contains('\0') {
+            return Err(Error::Error(
+                "Forwarder target cannot contain null bytes".to_string(),
+            ));
+        }
+
         if self.functions.contains_key(&ordinal) || self.forwarders.contains_key(&ordinal) {
             return Err(Error::Error(format!("Ordinal {ordinal} is already in use")));
         }
@@ -1024,6 +1037,44 @@ impl NativeExports {
         self.export_table_base_rva = base_rva;
     }
 
+    /// Set the DLL name for the export directory.
+    ///
+    /// Updates the DLL name used in the PE export directory. This is the name
+    /// that will appear in the export table when the PE file is written.
+    ///
+    /// # Arguments
+    /// * `dll_name` - New DLL name to use (e.g., "MyLibrary.dll")
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::exports::NativeExports;
+    ///
+    /// let mut exports = NativeExports::new("OldName.dll");
+    /// assert_eq!(exports.dll_name(), "OldName.dll");
+    ///
+    /// exports.set_dll_name("NewName.dll");
+    /// assert_eq!(exports.dll_name(), "NewName.dll");
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the DLL name is empty or contains invalid characters.
+    pub fn set_dll_name(&mut self, dll_name: &str) -> Result<()> {
+        if dll_name.is_empty() {
+            return Err(Error::Error("DLL name cannot be empty".to_string()));
+        }
+
+        if dll_name.contains('\0') {
+            return Err(Error::Error(
+                "DLL name cannot contain null bytes".to_string(),
+            ));
+        }
+
+        self.directory.dll_name = dll_name.to_owned();
+        Ok(())
+    }
+
     /// Get the export directory.
     ///
     /// Returns a reference to the export directory metadata.
@@ -1066,34 +1117,6 @@ impl ExportFunction {
     #[must_use]
     pub fn is_forwarder(&self) -> bool {
         self.is_forwarder
-    }
-
-    /// Get the forwarder target if this is a forwarder.
-    ///
-    /// Returns the forwarder target string if this export is a forwarder,
-    /// or `None` if it's a regular function export.
-    ///
-    /// Note: This method is for API consistency. Regular functions don't
-    /// have forwarder targets, so this always returns `None` for `ExportFunction`.
-    /// Use `ExportForwarder::target` for actual forwarder targets.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use dotscope::metadata::exports::ExportFunction;
-    ///
-    /// let function = ExportFunction {
-    ///     ordinal: 1,
-    ///     name: Some("MyFunction".to_string()),
-    ///     address: 0x1000,
-    ///     is_forwarder: false,
-    /// };
-    ///
-    /// assert_eq!(function.get_forwarder_target(), None);
-    /// ```
-    #[must_use]
-    pub fn get_forwarder_target(&self) -> Option<&str> {
-        None // ExportFunction doesn't have forwarder targets
     }
 }
 
@@ -1284,19 +1307,6 @@ mod tests {
     }
 
     #[test]
-    fn export_function_is_forwarder_works() {
-        let function = ExportFunction {
-            ordinal: 1,
-            name: Some("TestFunc".to_string()),
-            address: 0x1000,
-            is_forwarder: false,
-        };
-
-        assert!(!function.is_forwarder());
-        assert_eq!(function.get_forwarder_target(), None);
-    }
-
-    #[test]
     fn mixed_functions_and_forwarders() {
         let mut exports = NativeExports::new("Test.dll");
 
@@ -1312,5 +1322,80 @@ mod tests {
 
         let names = exports.get_exported_function_names();
         assert_eq!(names.len(), 2); // Only named exports
+    }
+
+    #[test]
+    fn set_dll_name_works() {
+        let mut exports = NativeExports::new("OldName.dll");
+        assert_eq!(exports.dll_name(), "OldName.dll");
+
+        exports.set_dll_name("NewName.dll").unwrap();
+        assert_eq!(exports.dll_name(), "NewName.dll");
+
+        // Check that directory is also updated
+        assert_eq!(exports.directory().dll_name, "NewName.dll");
+    }
+
+    #[test]
+    fn set_dll_name_empty_fails() {
+        let mut exports = NativeExports::new("Original.dll");
+        let result = exports.set_dll_name("");
+        assert!(result.is_err());
+
+        // Original name should be unchanged
+        assert_eq!(exports.dll_name(), "Original.dll");
+    }
+
+    #[test]
+    fn set_dll_name_with_null_byte_fails() {
+        let mut exports = NativeExports::new("Original.dll");
+        let result = exports.set_dll_name("Invalid\0Name.dll");
+        assert!(result.is_err());
+
+        // Original name should be unchanged
+        assert_eq!(exports.dll_name(), "Original.dll");
+    }
+
+    #[test]
+    fn add_forwarder_invalid_format_fails() {
+        let mut exports = NativeExports::new("Test.dll");
+
+        // Missing dot separator
+        let result = exports.add_forwarder("BadForward", 1, "kernel32GetTick");
+        assert!(result.is_err());
+
+        // Should have no forwarders
+        assert_eq!(exports.forwarder_count(), 0);
+    }
+
+    #[test]
+    fn add_forwarder_with_null_byte_fails() {
+        let mut exports = NativeExports::new("Test.dll");
+
+        let result = exports.add_forwarder("BadForward", 1, "kernel32\0.dll.GetTick");
+        assert!(result.is_err());
+
+        // Should have no forwarders
+        assert_eq!(exports.forwarder_count(), 0);
+    }
+
+    #[test]
+    fn add_forwarder_valid_formats() {
+        let mut exports = NativeExports::new("Test.dll");
+
+        // Valid format: DllName.FunctionName
+        exports
+            .add_forwarder("Forward1", 1, "kernel32.dll.GetCurrentProcessId")
+            .unwrap();
+
+        // Valid format: DllName.#Ordinal
+        exports
+            .add_forwarder("Forward2", 2, "user32.dll.#120")
+            .unwrap();
+
+        // Valid format: Simple name.function
+        exports.add_forwarder("Forward3", 3, "api.Func").unwrap();
+
+        assert_eq!(exports.forwarder_count(), 3);
     }
 }

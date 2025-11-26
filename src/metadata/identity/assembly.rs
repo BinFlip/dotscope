@@ -4,6 +4,18 @@
 //! for .NET assemblies according to ECMA-335 specifications. It serves as the
 //! foundation for cross-assembly resolution and multi-assembly project management.
 //!
+//! # ECMA-335 References
+//!
+//! This module implements identity concepts defined in the ECMA-335 specification:
+//! - **Section II.6.1**: Overview of assemblies - defines assembly identity components
+//! - **Section II.6.2.1**: Assembly versioning - four-part version number semantics
+//! - **Section II.6.2.1.3**: Public key and token - strong name identity format
+//! - **Section II.6.2.3**: Processor architecture - platform-specific assembly targeting
+//! - **Section II.22.2**: Assembly table - assembly metadata structure
+//! - **Section II.22.5**: AssemblyRef table - assembly reference structure
+//!
+//! See: <https://ecma-international.org/publications-and-standards/standards/ecma-335/>
+//!
 //! # Key Components
 //!
 //! - [`AssemblyIdentity`] - Complete assembly identification with name, version, culture, and strong name
@@ -96,12 +108,12 @@
 //! Assembly identities can be safely shared across threads and used as keys in
 //! concurrent collections like [`DashMap`] and [`HashMap`].
 
-use std::{fmt, str::FromStr};
+use std::{fmt, fmt::Write as _, str::FromStr, sync::atomic::Ordering};
 
 use crate::{
     metadata::{
         identity::cryptographic::Identity,
-        tables::{Assembly, AssemblyRef},
+        tables::{Assembly, AssemblyHashAlgorithm, AssemblyRef},
     },
     Error, Result,
 };
@@ -120,11 +132,31 @@ use crate::{
 /// - **Strong Name**: Cryptographic identity for verification and security
 /// - **Architecture**: Target processor architecture specification
 ///
+/// # Equality Semantics
+///
+/// **Important**: The [`strong_name`](Self::strong_name) field is **excluded** from equality
+/// comparison and hashing. This is an intentional design decision that enables:
+///
+/// - Assemblies with different strong name representations (Token vs PubKey vs EcmaKey)
+///   to be considered equal for dependency resolution purposes
+/// - Consistent [`HashMap`](std::collections::HashMap) behavior when the same assembly
+///   is referenced with different key formats
+/// - Matching dependencies by name+version+culture+architecture regardless of how
+///   the strong name is stored in metadata
+///
+/// Two `AssemblyIdentity` instances are equal if and only if their `name`, `version`,
+/// `culture`, and `processor_architecture` fields are equal. The `strong_name` field
+/// is ignored in both `PartialEq` and `Hash` implementations.
+///
+/// If you need to compare strong names, access the `strong_name` field directly or use
+/// a custom comparison function.
+///
 /// # Uniqueness
 ///
-/// Two assemblies with identical identity components are considered the same assembly.
-/// The combination of all components provides sufficient uniqueness for practical
-/// assembly identification and resolution scenarios.
+/// Two assemblies with identical identity components (excluding strong name) are
+/// considered the same assembly. The combination of name, version, culture, and
+/// architecture provides sufficient uniqueness for practical assembly identification
+/// and resolution scenarios.
 ///
 /// # Examples
 ///
@@ -315,6 +347,12 @@ pub enum ProcessorArchitecture {
     ///
     /// Platform-specific assemblies for modern 64-bit Intel and AMD processors.
     /// Common for performance-critical code requiring 64-bit optimizations.
+    ///
+    /// # Parsing Alias
+    ///
+    /// Both "AMD64" and "x64" are accepted when parsing, but the canonical display
+    /// name is "AMD64". This means `ProcessorArchitecture::parse("x64")` returns
+    /// `AMD64`, which displays as "AMD64", not "x64".
     AMD64,
 
     /// ARM processor architecture.
@@ -399,19 +437,29 @@ impl AssemblyIdentity {
     /// let assembly_ref = // ... loaded from metadata
     /// let identity = AssemblyIdentity::from_assembly_ref(&assembly_ref);
     /// ```
-    #[allow(clippy::cast_possible_truncation)]
     pub fn from_assembly_ref(assembly_ref: &AssemblyRef) -> Self {
+        // Extract processor architecture from the AssemblyRefProcessor table data if present.
+        // A value of 0 typically means MSIL/AnyCPU (architecture-neutral), but we only
+        // set the architecture if a non-zero processor value is present to distinguish
+        // between "no processor info" and "explicitly MSIL".
+        let processor_value = assembly_ref.processor.load(Ordering::Relaxed);
+        let processor_architecture = if processor_value != 0 {
+            ProcessorArchitecture::try_from(processor_value).ok()
+        } else {
+            None
+        };
+
         Self {
             name: assembly_ref.name.clone(),
-            version: AssemblyVersion::new(
-                assembly_ref.major_version as u16,
-                assembly_ref.minor_version as u16,
-                assembly_ref.build_number as u16,
-                assembly_ref.revision_number as u16,
+            version: Self::version_from_u32(
+                assembly_ref.major_version,
+                assembly_ref.minor_version,
+                assembly_ref.build_number,
+                assembly_ref.revision_number,
             ),
             culture: assembly_ref.culture.clone(),
             strong_name: assembly_ref.identifier.clone(),
-            processor_architecture: None, // TODO: Extract from processor field if available
+            processor_architecture,
         }
     }
 
@@ -436,23 +484,42 @@ impl AssemblyIdentity {
     /// let assembly = // ... loaded from metadata
     /// let identity = AssemblyIdentity::from_assembly(&assembly);
     /// ```
-    #[allow(clippy::cast_possible_truncation)]
     pub fn from_assembly(assembly: &Assembly) -> Self {
+        // Note: Processor architecture for the Assembly table is stored in the separate
+        // AssemblyProcessor table (0x21), not in the Assembly flags. This table is rarely
+        // used in modern .NET assemblies which typically use AnyCPU compilation.
+        // The AssemblyProcessor table would need to be correlated separately if needed.
         Self {
             name: assembly.name.clone(),
-            version: AssemblyVersion::new(
-                assembly.major_version as u16,
-                assembly.minor_version as u16,
-                assembly.build_number as u16,
-                assembly.revision_number as u16,
+            version: Self::version_from_u32(
+                assembly.major_version,
+                assembly.minor_version,
+                assembly.build_number,
+                assembly.revision_number,
             ),
             culture: assembly.culture.clone(),
             strong_name: assembly
                 .public_key
                 .as_ref()
                 .and_then(|key| Identity::from(key, true).ok()),
-            processor_architecture: None, // TODO: Extract from flags if available
+            processor_architecture: None,
         }
+    }
+
+    /// Create an `AssemblyVersion` from u32 components with saturating conversion.
+    ///
+    /// Per ECMA-335, assembly version components should fit within u16 range (0-65535).
+    /// However, the metadata stores them as u32 for alignment. This method uses
+    /// saturating conversion (`u16::try_from` with `unwrap_or(u16::MAX)`) to handle
+    /// potentially malformed metadata gracefully without panicking.
+    #[inline]
+    fn version_from_u32(major: u32, minor: u32, build: u32, revision: u32) -> AssemblyVersion {
+        AssemblyVersion::new(
+            u16::try_from(major).unwrap_or(u16::MAX),
+            u16::try_from(minor).unwrap_or(u16::MAX),
+            u16::try_from(build).unwrap_or(u16::MAX),
+            u16::try_from(revision).unwrap_or(u16::MAX),
+        )
     }
 
     /// Parse assembly identity from display name string.
@@ -499,15 +566,16 @@ impl AssemblyIdentity {
         let mut strong_name = None;
         let mut processor_architecture = None;
 
-        // Split on commas and process each part
         let parts: Vec<&str> = display_name.split(',').map(str::trim).collect();
 
         if parts.is_empty() {
             return Err(Error::Error("Empty assembly display name".to_string()));
         }
 
-        // First part is always the assembly name
         let name = parts[0].to_string();
+        if name.is_empty() {
+            return Err(Error::Error("Assembly name cannot be empty".to_string()));
+        }
 
         // Process optional components
         for part in parts.iter().skip(1) {
@@ -519,19 +587,26 @@ impl AssemblyIdentity {
                 }
             } else if let Some(value) = part.strip_prefix("PublicKeyToken=") {
                 if value != "null" && !value.is_empty() {
-                    // Parse hex token to bytes and create Identity
-                    if let Ok(token_bytes) = hex::decode(value) {
-                        if token_bytes.len() == 8 {
-                            // Convert 8 bytes to u64 token
-                            let mut token_array = [0u8; 8];
-                            token_array.copy_from_slice(&token_bytes);
-                            let token = u64::from_le_bytes(token_array);
-                            strong_name = Some(Identity::Token(token));
-                        }
+                    let token_bytes = hex::decode(value).map_err(|e| {
+                        Error::Error(format!("Invalid hex in PublicKeyToken '{}': {}", value, e))
+                    })?;
+
+                    if token_bytes.len() != 8 {
+                        return Err(Error::Error(format!(
+                            "PublicKeyToken must be exactly 8 bytes (16 hex characters), got {} bytes from '{}'",
+                            token_bytes.len(),
+                            value
+                        )));
                     }
+
+                    // Convert 8 bytes to u64 token
+                    let mut token_array = [0u8; 8];
+                    token_array.copy_from_slice(&token_bytes);
+                    let token = u64::from_le_bytes(token_array);
+                    strong_name = Some(Identity::Token(token));
                 }
             } else if let Some(value) = part.strip_prefix("ProcessorArchitecture=") {
-                processor_architecture = ProcessorArchitecture::parse(value).ok();
+                processor_architecture = Some(ProcessorArchitecture::parse(value)?);
             }
         }
 
@@ -572,28 +647,61 @@ impl AssemblyIdentity {
     /// ```
     #[must_use]
     pub fn display_name(&self) -> String {
-        let mut parts = vec![self.name.clone()];
+        // Pre-allocate with estimated capacity to minimize reallocations
+        // Typical format: "Name, Version=x.x.x.x, Culture=neutral, PublicKeyToken=xxxxxxxxxxxxxxxx"
+        let mut result = String::with_capacity(self.name.len() + 80);
 
-        // Add version
-        parts.push(format!("Version={}", self.version));
+        result.push_str(&self.name);
 
-        // Add culture
+        let _ = write!(result, ", Version={}", self.version);
+
         let culture_str = self.culture.as_deref().unwrap_or("neutral");
-        parts.push(format!("Culture={}", culture_str));
+        let _ = write!(result, ", Culture={}", culture_str);
 
-        // Add public key token
-        let token_str = match &self.strong_name {
-            Some(Identity::Token(token)) => format!("{:016x}", token),
-            Some(Identity::PubKey(_) | Identity::EcmaKey(_)) | None => "null".to_string(),
-        };
-        parts.push(format!("PublicKeyToken={}", token_str));
+        // For PubKey and EcmaKey variants, compute the token using SHA1 (the standard algorithm)
+        // Note: Tokens are stored as u64 little-endian internally, but displayed as hex bytes
+        // in their natural order (first byte of the u64 comes first in the hex string).
+        // This matches the .NET display name format where "b77a5c561934e089" represents
+        // the bytes [0xb7, 0x7a, 0x5c, 0x56, 0x19, 0x34, 0xe0, 0x89].
+        result.push_str(", PublicKeyToken=");
+        match &self.strong_name {
+            Some(Identity::Token(token)) => {
+                let bytes = token.to_le_bytes();
+                let _ = write!(
+                    result,
+                    "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+                    bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]
+                );
+            }
+            Some(identity @ (Identity::PubKey(_) | Identity::EcmaKey(_))) => {
+                match identity.to_token(AssemblyHashAlgorithm::SHA1) {
+                    Ok(token) => {
+                        let bytes = token.to_le_bytes();
+                        let _ = write!(
+                            result,
+                            "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+                            bytes[0],
+                            bytes[1],
+                            bytes[2],
+                            bytes[3],
+                            bytes[4],
+                            bytes[5],
+                            bytes[6],
+                            bytes[7]
+                        );
+                    }
+                    Err(_) => result.push_str("null"),
+                }
+            }
+            None => result.push_str("null"),
+        }
 
         // Add processor architecture if specified
         if let Some(arch) = &self.processor_architecture {
-            parts.push(format!("ProcessorArchitecture={}", arch));
+            let _ = write!(result, ", ProcessorArchitecture={}", arch);
         }
 
-        parts.join(", ")
+        result
     }
 
     /// Get the simple assembly name without version or culture information.
@@ -637,12 +745,38 @@ impl AssemblyIdentity {
 }
 
 impl AssemblyVersion {
+    /// Sentinel value representing an unknown or unspecified version.
+    ///
+    /// This constant (0.0.0.0) is used when version information is not available, such as when
+    /// creating assembly identities from `ModuleRef` or `File` table entries where
+    /// version information is not stored in the metadata.
+    ///
+    /// Use [`is_unknown()`](Self::is_unknown) to check if a version represents this sentinel.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::identity::AssemblyVersion;
+    ///
+    /// let unknown = AssemblyVersion::UNKNOWN;
+    /// assert!(unknown.is_unknown());
+    ///
+    /// let known = AssemblyVersion::new(1, 0, 0, 0);
+    /// assert!(!known.is_unknown());
+    /// ```
+    pub const UNKNOWN: Self = Self {
+        major: 0,
+        minor: 0,
+        build: 0,
+        revision: 0,
+    };
+
     /// Create a new assembly version with the specified components.
     ///
     /// # Arguments
     ///
     /// * `major` - Major version component
-    /// * `minor` - Minor version component  
+    /// * `minor` - Minor version component
     /// * `build` - Build version component
     /// * `revision` - Revision version component
     ///
@@ -652,7 +786,7 @@ impl AssemblyVersion {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use dotscope::metadata::identity::AssemblyVersion;
     ///
     /// let version = AssemblyVersion::new(1, 2, 3, 4);
@@ -667,6 +801,33 @@ impl AssemblyVersion {
             build,
             revision,
         }
+    }
+
+    /// Check if this version represents an unknown/unspecified version.
+    ///
+    /// Returns `true` if this version equals [`UNKNOWN`](Self::UNKNOWN) (0.0.0.0).
+    /// This is useful for detecting dependencies where version information could not
+    /// be determined from the metadata, such as `ModuleRef` or `File` entries.
+    ///
+    /// # Note
+    ///
+    /// While version 0.0.0.0 is technically a valid .NET version, it is extremely
+    /// rare in practice. This method treats it as a sentinel for "version unknown".
+    /// If you need to distinguish between "truly version 0.0.0.0" and "unknown",
+    /// consider using additional context from the dependency source.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::identity::AssemblyVersion;
+    ///
+    /// assert!(AssemblyVersion::UNKNOWN.is_unknown());
+    /// assert!(AssemblyVersion::new(0, 0, 0, 0).is_unknown());
+    /// assert!(!AssemblyVersion::new(1, 0, 0, 0).is_unknown());
+    /// ```
+    #[must_use]
+    pub const fn is_unknown(&self) -> bool {
+        self.major == 0 && self.minor == 0 && self.build == 0 && self.revision == 0
     }
 
     /// Parse assembly version from string representation.
@@ -732,7 +893,7 @@ impl ProcessorArchitecture {
     /// - "MSIL" or "msil" - Microsoft Intermediate Language
     /// - "x86" or "X86" - 32-bit Intel x86
     /// - "IA64" or "ia64" - Intel Itanium 64-bit
-    /// - "AMD64" or "amd64" or "x64" - 64-bit x86-64
+    /// - "AMD64" or "amd64" or "x64" - 64-bit x86-64 (note: "x64" is an alias, displays as "AMD64")
     /// - "ARM" or "arm" - ARM architecture
     /// - "ARM64" or "arm64" - 64-bit ARM architecture
     ///
@@ -748,7 +909,7 @@ impl ProcessorArchitecture {
     /// # Errors
     /// Returns an error if the architecture string is not recognized.
     pub fn parse(arch_str: &str) -> Result<Self> {
-        match arch_str.to_lowercase().as_str() {
+        match arch_str.trim().to_lowercase().as_str() {
             "msil" => Ok(Self::MSIL),
             "x86" => Ok(Self::X86),
             "ia64" => Ok(Self::IA64),
@@ -756,8 +917,8 @@ impl ProcessorArchitecture {
             "arm" => Ok(Self::ARM),
             "arm64" => Ok(Self::ARM64),
             _ => Err(Error::Error(format!(
-                "Unknown processor architecture: {}",
-                arch_str
+                "Unknown processor architecture: '{}'",
+                arch_str.trim()
             ))),
         }
     }
@@ -827,6 +988,66 @@ impl FromStr for ProcessorArchitecture {
 
     fn from_str(s: &str) -> Result<Self> {
         Self::parse(s)
+    }
+}
+
+impl TryFrom<u32> for ProcessorArchitecture {
+    type Error = Error;
+
+    /// Convert a processor ID from the AssemblyProcessor table to ProcessorArchitecture.
+    ///
+    /// The AssemblyProcessor table uses processor ID values that align with PE/COFF
+    /// machine types. This implementation maps those values to the .NET ProcessorArchitecture enum.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - The processor value from the AssemblyProcessor table
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(ProcessorArchitecture)` - Successfully mapped processor architecture
+    /// * `Err(Error)` - Unknown or unsupported processor ID
+    ///
+    /// # Processor ID Mapping
+    ///
+    /// Based on PE/COFF specification (IMAGE_FILE_MACHINE_* constants):
+    /// - `0x0000` - IMAGE_FILE_MACHINE_UNKNOWN (treated as MSIL/AnyCPU)
+    /// - `0x014C` - IMAGE_FILE_MACHINE_I386 (x86)
+    /// - `0x0200` - IMAGE_FILE_MACHINE_IA64 (Intel Itanium)
+    /// - `0x8664` - IMAGE_FILE_MACHINE_AMD64 (x86-64)
+    /// - `0x01C0` - IMAGE_FILE_MACHINE_ARM (32-bit ARM)
+    /// - `0xAA64` - IMAGE_FILE_MACHINE_ARM64 (64-bit ARM)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::identity::ProcessorArchitecture;
+    ///
+    /// // x86 processor
+    /// let arch = ProcessorArchitecture::try_from(0x014C)?;
+    /// assert_eq!(arch, ProcessorArchitecture::X86);
+    ///
+    /// // AMD64/x64 processor
+    /// let arch = ProcessorArchitecture::try_from(0x8664)?;
+    /// assert_eq!(arch, ProcessorArchitecture::AMD64);
+    ///
+    /// // Unknown processor type
+    /// assert!(ProcessorArchitecture::try_from(0xFFFF).is_err());
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    fn try_from(value: u32) -> Result<Self> {
+        match value {
+            0x0000 => Ok(Self::MSIL),
+            0x014C => Ok(Self::X86),
+            0x0200 => Ok(Self::IA64),
+            0x8664 => Ok(Self::AMD64),
+            0x01C0 => Ok(Self::ARM),
+            0xAA64 => Ok(Self::ARM64),
+            _ => Err(Error::Error(format!(
+                "Unknown processor architecture ID: 0x{:04X}",
+                value
+            ))),
+        }
     }
 }
 
@@ -968,6 +1189,21 @@ mod tests {
     }
 
     #[test]
+    fn test_processor_architecture_parse_whitespace() {
+        // Whitespace should be trimmed
+        assert_eq!(
+            ProcessorArchitecture::parse(" x86 ").unwrap(),
+            ProcessorArchitecture::X86
+        );
+        assert_eq!(
+            ProcessorArchitecture::parse("\tAMD64\n").unwrap(),
+            ProcessorArchitecture::AMD64
+        );
+        // Whitespace-only should fail
+        assert!(ProcessorArchitecture::parse("   ").is_err());
+    }
+
+    #[test]
     fn test_processor_architecture_display() {
         assert_eq!(ProcessorArchitecture::MSIL.to_string(), "MSIL");
         assert_eq!(ProcessorArchitecture::X86.to_string(), "x86");
@@ -1063,11 +1299,86 @@ mod tests {
     }
 
     #[test]
-    fn test_assembly_identity_parse_empty_returns_empty_name() {
-        // Note: An empty string currently produces an identity with an empty name
-        // This is documented behavior - the parser does not reject empty names
-        let identity = AssemblyIdentity::parse("").unwrap();
-        assert_eq!(identity.name, "");
+    fn test_assembly_identity_parse_empty_returns_error() {
+        // Empty assembly names are invalid per ECMA-335
+        let result = AssemblyIdentity::parse("");
+        assert!(result.is_err());
+
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("cannot be empty"),
+            "Error message should mention empty name: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_assembly_identity_parse_whitespace_only_returns_error() {
+        // Whitespace-only assembly names should also be rejected (trim happens first)
+        let result = AssemblyIdentity::parse("   ");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_assembly_identity_parse_invalid_hex_token() {
+        // Invalid hex characters in PublicKeyToken should return an error
+        let result =
+            AssemblyIdentity::parse("MyLib, Version=1.0.0.0, PublicKeyToken=xyz_not_hex_123");
+        assert!(result.is_err());
+
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Invalid hex"),
+            "Error message should mention invalid hex: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_assembly_identity_parse_wrong_length_token() {
+        // Wrong length PublicKeyToken (not 8 bytes) should return an error
+        let result = AssemblyIdentity::parse(
+            "MyLib, Version=1.0.0.0, PublicKeyToken=b77a5c56", // Only 4 bytes
+        );
+        assert!(result.is_err());
+
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("8 bytes"),
+            "Error message should mention expected length: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_assembly_identity_parse_too_long_token() {
+        // Too long PublicKeyToken should return an error
+        let result = AssemblyIdentity::parse(
+            "MyLib, Version=1.0.0.0, PublicKeyToken=b77a5c561934e089aabbccdd", // 12 bytes
+        );
+        assert!(result.is_err());
+
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("8 bytes"),
+            "Error message should mention expected length: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_assembly_identity_parse_invalid_processor_architecture() {
+        // Invalid ProcessorArchitecture should return an error
+        let result =
+            AssemblyIdentity::parse("MyLib, Version=1.0.0.0, ProcessorArchitecture=PowerPC");
+        assert!(result.is_err());
+
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Unknown processor architecture"),
+            "Error message should mention unknown architecture: {}",
+            err_msg
+        );
     }
 
     #[test]
@@ -1099,6 +1410,59 @@ mod tests {
 
         let display = identity.display_name();
         assert!(display.contains("Culture=fr-FR"));
+    }
+
+    #[test]
+    fn test_assembly_identity_display_name_with_pubkey() {
+        // Test that PubKey variants compute and display their token
+        let pubkey_data = vec![
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        ];
+        let identity = AssemblyIdentity::new(
+            "StrongLib",
+            AssemblyVersion::new(1, 0, 0, 0),
+            None,
+            Some(Identity::PubKey(pubkey_data)),
+            None,
+        );
+
+        let display = identity.display_name();
+        // Should NOT contain "null" for PublicKeyToken since we have a PubKey
+        assert!(
+            !display.contains("PublicKeyToken=null"),
+            "PubKey should compute a token, not show null: {}",
+            display
+        );
+        // Should contain a 16-character hex token
+        assert!(
+            display.contains("PublicKeyToken="),
+            "Should have PublicKeyToken in display: {}",
+            display
+        );
+    }
+
+    #[test]
+    fn test_assembly_identity_display_name_with_ecma_key() {
+        // Test that EcmaKey variants compute and display their token
+        let ecma_data = vec![
+            0x06, 0x28, 0xAC, 0x03, 0x00, 0x06, 0x7A, 0x06, 0x6F, 0xAB, 0x02, 0x00, 0x0A, 0x0B,
+            0x17, 0x6A,
+        ];
+        let identity = AssemblyIdentity::new(
+            "FrameworkLib",
+            AssemblyVersion::new(4, 0, 0, 0),
+            None,
+            Some(Identity::EcmaKey(ecma_data)),
+            None,
+        );
+
+        let display = identity.display_name();
+        // Should NOT contain "null" for PublicKeyToken since we have an EcmaKey
+        assert!(
+            !display.contains("PublicKeyToken=null"),
+            "EcmaKey should compute a token, not show null: {}",
+            display
+        );
     }
 
     #[test]
@@ -1275,5 +1639,165 @@ mod tests {
             original.processor_architecture,
             parsed.processor_architecture
         );
+    }
+
+    #[test]
+    fn test_assembly_identity_roundtrip_with_token() {
+        // Test round-trip with a token-based strong name
+        // The token value should be fully preserved through parse/display cycles
+        let original = AssemblyIdentity::new(
+            "StrongLib",
+            AssemblyVersion::new(1, 2, 3, 4),
+            Some("en-US".to_string()),
+            Some(Identity::Token(0xb77a5c561934e089)),
+            Some(ProcessorArchitecture::X86),
+        );
+
+        let display = original.display_name();
+        let parsed = AssemblyIdentity::parse(&display).unwrap();
+
+        assert_eq!(original.name, parsed.name);
+        assert_eq!(original.version, parsed.version);
+        assert_eq!(original.culture, parsed.culture);
+        assert_eq!(
+            original.processor_architecture,
+            parsed.processor_architecture
+        );
+
+        // Strong name should be fully preserved
+        assert_eq!(original.strong_name, parsed.strong_name);
+
+        // Verify the display string is stable (same after multiple roundtrips)
+        let display2 = parsed.display_name();
+        assert_eq!(
+            display, display2,
+            "Display string should be stable across roundtrips"
+        );
+
+        // Parse again and verify everything is still equal
+        let parsed2 = AssemblyIdentity::parse(&display2).unwrap();
+        assert_eq!(parsed.strong_name, parsed2.strong_name);
+    }
+
+    #[test]
+    fn test_assembly_identity_token_format_consistency() {
+        // Test that tokens parsed from standard .NET format work correctly
+        // The standard format is big-endian hex (e.g., "b77a5c561934e089")
+        let identity = AssemblyIdentity::parse(
+            "mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089",
+        )
+        .unwrap();
+
+        // Verify the token was parsed
+        assert!(identity.strong_name.is_some());
+        if let Some(Identity::Token(token)) = identity.strong_name {
+            // The token bytes "b77a5c561934e089" interpreted as little-endian
+            let expected = u64::from_le_bytes([0xb7, 0x7a, 0x5c, 0x56, 0x19, 0x34, 0xe0, 0x89]);
+            assert_eq!(token, expected);
+        }
+    }
+
+    #[test]
+    fn test_assembly_identity_parse_extra_whitespace() {
+        // Parts are trimmed, so extra whitespace around commas should work
+        let identity = AssemblyIdentity::parse(
+            "MyLib ,  Version=1.0.0.0 ,  Culture=neutral ,  PublicKeyToken=null",
+        )
+        .unwrap();
+
+        assert_eq!(identity.name, "MyLib");
+        assert_eq!(identity.version, AssemblyVersion::new(1, 0, 0, 0));
+    }
+
+    #[test]
+    fn test_assembly_identity_parse_case_insensitive_culture() {
+        // Culture value should be preserved as-is (case-sensitive)
+        let identity = AssemblyIdentity::parse("MyLib, Version=1.0.0.0, Culture=EN-us").unwrap();
+        assert_eq!(identity.culture, Some("EN-us".to_string()));
+    }
+
+    #[test]
+    fn test_assembly_identity_parse_unknown_fields_ignored() {
+        // Unknown fields should be silently ignored
+        let identity =
+            AssemblyIdentity::parse("MyLib, Version=1.0.0.0, UnknownField=value, Culture=neutral")
+                .unwrap();
+
+        assert_eq!(identity.name, "MyLib");
+        assert_eq!(identity.version, AssemblyVersion::new(1, 0, 0, 0));
+        assert!(identity.culture.is_none());
+    }
+
+    #[test]
+    fn test_assembly_version_unknown_sentinel() {
+        let unknown = AssemblyVersion::UNKNOWN;
+        assert!(unknown.is_unknown());
+        assert_eq!(unknown.major, 0);
+        assert_eq!(unknown.minor, 0);
+        assert_eq!(unknown.build, 0);
+        assert_eq!(unknown.revision, 0);
+
+        let not_unknown = AssemblyVersion::new(0, 0, 0, 1);
+        assert!(!not_unknown.is_unknown());
+    }
+
+    #[test]
+    fn test_processor_architecture_full_coverage() {
+        // This test ensures all ProcessorArchitecture variants are covered by both
+        // parse() and try_from(), and that Display outputs match parse() inputs.
+        // If a new variant is added, this test will fail until both implementations
+        // are updated.
+        let all_variants = [
+            (ProcessorArchitecture::MSIL, "MSIL", 0x0000_u32),
+            (ProcessorArchitecture::X86, "x86", 0x014C),
+            (ProcessorArchitecture::IA64, "IA64", 0x0200),
+            (ProcessorArchitecture::AMD64, "AMD64", 0x8664),
+            (ProcessorArchitecture::ARM, "ARM", 0x01C0),
+            (ProcessorArchitecture::ARM64, "ARM64", 0xAA64),
+        ];
+
+        for (expected_arch, display_name, machine_code) in all_variants {
+            // Test parse() accepts the display name (case-insensitive)
+            let parsed = ProcessorArchitecture::parse(display_name)
+                .unwrap_or_else(|_| panic!("Failed to parse '{}'", display_name));
+            assert_eq!(
+                parsed, expected_arch,
+                "parse('{}') returned wrong variant",
+                display_name
+            );
+
+            // Test parse() accepts lowercase version
+            let parsed_lower = ProcessorArchitecture::parse(&display_name.to_lowercase())
+                .unwrap_or_else(|_| panic!("Failed to parse lowercase '{}'", display_name));
+            assert_eq!(
+                parsed_lower, expected_arch,
+                "parse('{}') lowercase returned wrong variant",
+                display_name
+            );
+
+            // Test try_from() accepts the machine code
+            let from_code = ProcessorArchitecture::try_from(machine_code)
+                .unwrap_or_else(|_| panic!("Failed try_from(0x{:04X})", machine_code));
+            assert_eq!(
+                from_code, expected_arch,
+                "try_from(0x{:04X}) returned wrong variant",
+                machine_code
+            );
+
+            // Test Display outputs the expected name
+            let displayed = expected_arch.to_string();
+            // Display should output a name that can be parsed back
+            let roundtrip = ProcessorArchitecture::parse(&displayed)
+                .unwrap_or_else(|_| panic!("Failed to roundtrip '{}'", displayed));
+            assert_eq!(
+                roundtrip, expected_arch,
+                "Display roundtrip failed for {:?}",
+                expected_arch
+            );
+        }
+
+        // Also test the x64 alias for AMD64
+        let x64_parsed = ProcessorArchitecture::parse("x64").unwrap();
+        assert_eq!(x64_parsed, ProcessorArchitecture::AMD64);
     }
 }

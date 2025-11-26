@@ -1,235 +1,18 @@
-//! Import declaration type definitions for Portable PDB debugging metadata.
+//! Type definitions for import declarations in Portable PDB debugging metadata.
 //!
-//! This module defines comprehensive type-safe representations for import declarations used in
-//! Portable PDB files. These types provide structured access to import information that defines
-//! namespace and type visibility within debugging scopes, enabling accurate symbol resolution
-//! and context-aware debugging experiences in .NET development environments.
+//! This module provides the core types for representing parsed import declarations.
+//! See the parent module [`crate::metadata::importscope`] for the complete format
+//! specification and usage examples.
 //!
-//! # Architecture
+//! # Types
 //!
-//! The type system implements a discriminated union approach using Rust enums to represent
-//! the different categories of import declarations supported by the Portable PDB specification.
-//! Each variant contains the specific data fields required for that import type, ensuring
-//! type safety and preventing invalid combinations of import parameters.
-//!
-//! ## Core Design Principles
-//!
-//! - **Type Safety**: Strong typing prevents invalid import parameter combinations
-//! - **Memory Efficiency**: Owned string data minimizes allocation overhead
-//! - **Iteration Support**: Complete iterator implementation for collection processing
-//! - **Thread Safety**: All types support concurrent access and sharing
-//!
-//! # Key Components
-//!
-//! ## Primary Types
-//!
-//! - [`crate::metadata::importscope::types::ImportKind`] - Enumeration of all 9 supported import declaration types
-//! - [`crate::metadata::importscope::types::ImportDeclaration`] - Type-safe representation of individual import declarations
-//! - [`crate::metadata::importscope::types::ImportsInfo`] - Complete container for import scope with full iteration support
-//!
-//! ## Import Classification System
-//!
-//! Import declarations are classified into four main categories:
-//!
-//! ### Namespace Imports
-//! - **Direct Namespace**: Using statements for entire namespaces
-//! - **Assembly Namespace**: Namespace imports from specific assemblies
-//! - **XML Namespace**: XML namespace imports with alias support
-//!
-//! ### Type Imports
-//! - **Specific Types**: Direct imports of individual types from external assemblies
-//!
-//! ### Alias Definitions
-//! - **Assembly Aliases**: Local names for external assembly references
-//! - **Namespace Aliases**: Local names for namespace hierarchies
-//! - **Type Aliases**: Local names for specific type references
-//! - **Combined Aliases**: Assembly-qualified namespace aliases
-//!
-//! ### Reference Imports
-//! - **Assembly Reference Aliases**: Import aliases from ancestor scopes
-//!
-//! # Import Declaration Types
-//!
-//! The Portable PDB format supports 9 distinct import declaration types according to the
-//! official specification. Each type has specific parameter requirements and semantic meaning:
-//!
-//! ## Basic Import Types (1-3)
-//!
-//! 1. **ImportNamespace**: Direct namespace using statements
-//!    ```text
-//!    using System.Collections.Generic;
-//!    ```
-//!
-//! 2. **ImportAssemblyNamespace**: Assembly-qualified namespace imports
-//!    ```text
-//!    using System.Linq from MyAssembly;
-//!    ```
-//!
-//! 3. **ImportType**: Specific type member imports
-//!    ```text
-//!    using Console = System.Console;
-//!    ```
-//!
-//! ## Advanced Import Types (4-5)
-//!
-//! 4. **ImportXmlNamespace**: XML namespace imports with prefix
-//!    ```text
-//!    Imports <xmlns:ns="http://example.com">
-//!    ```
-//!
-//! 5. **ImportAssemblyReferenceAlias**: Assembly reference aliases from ancestor scopes
-//!    ```text
-//!    extern alias MyAlias;
-//!    ```
-//!
-//! ## Alias Definition Types (6-9)
-//!
-//! 6. **DefineAssemblyAlias**: Assembly alias definitions
-//!    ```text
-//!    extern alias CoreLib;
-//!    ```
-//!
-//! 7. **DefineNamespaceAlias**: Namespace alias definitions
-//!    ```text
-//!    using Collections = System.Collections;
-//!    ```
-//!
-//! 8. **DefineAssemblyNamespaceAlias**: Assembly-qualified namespace aliases
-//!    ```text
-//!    using MyCollections = System.Collections from SpecialAssembly;
-//!    ```
-//!
-//! 9. **DefineTypeAlias**: Type alias definitions
-//!    ```text
-//!    using StringList = System.Collections.Generic.List<string>;
-//!    ```
-//!
-//! # Usage Examples
-//!
-//! ## Working with Import Kinds
-//!
-//! ```rust
-//! use dotscope::metadata::importscope::ImportKind;
-//!
-//! // Parse kind from binary data
-//! let kind = ImportKind::from_u32(1).expect("Valid import kind");
-//! assert_eq!(kind, ImportKind::ImportNamespace);
-//!
-//! // Check kind properties
-//! match kind {
-//!     ImportKind::ImportNamespace => println!("Basic namespace import"),
-//!     ImportKind::DefineAssemblyAlias => println!("Assembly alias definition"),
-//!     _ => println!("Other import type"),
-//! }
-//! ```
-//!
-//! ## Processing Import Declarations
-//!
-//! ```rust
-//! use dotscope::metadata::importscope::{ImportDeclaration, ImportsInfo};
-//! use dotscope::metadata::token::Token;
-//!
-//! // Create sample import declarations
-//! let namespace_import = ImportDeclaration::ImportNamespace {
-//!     namespace: "System.Collections.Generic".to_string(),
-//! };
-//!
-//! let type_import = ImportDeclaration::ImportType {
-//!     type_ref: Token::new(0x01000001),
-//! };
-//!
-//! let assembly_import = ImportDeclaration::ImportAssemblyNamespace {
-//!     assembly_ref: Token::new(0x23000001),
-//!     namespace: "System.Linq".to_string(),
-//! };
-//!
-//! // Create imports container
-//! let imports = ImportsInfo::with_declarations(vec![
-//!     namespace_import,
-//!     type_import,
-//!     assembly_import,
-//! ]);
-//!
-//! // Process imports by category
-//! for declaration in &imports {
-//!     match declaration {
-//!         ImportDeclaration::ImportNamespace { namespace } => {
-//!             println!("Using namespace: {}", namespace);
-//!         }
-//!         ImportDeclaration::ImportType { type_ref } => {
-//!             println!("Importing type: {:?}", type_ref);
-//!         }
-//!         ImportDeclaration::ImportAssemblyNamespace { assembly_ref, namespace } => {
-//!             println!("Using {} from assembly {:?}", namespace, assembly_ref);
-//!         }
-//!         _ => println!("Other import declaration"),
-//!     }
-//! }
-//! ```
-//!
-//! ## Working with Alias Declarations
-//!
-//! ```rust
-//! use dotscope::metadata::importscope::ImportDeclaration;
-//! use dotscope::metadata::token::Token;
-//!
-//! // Assembly alias definition
-//! let assembly_alias = ImportDeclaration::DefineAssemblyAlias {
-//!     alias: "CoreLib".to_string(),
-//!     assembly_ref: Token::new(0x23000001),
-//! };
-//!
-//! // Namespace alias definition
-//! let namespace_alias = ImportDeclaration::DefineNamespaceAlias {
-//!     alias: "Collections".to_string(),
-//!     namespace: "System.Collections.Generic".to_string(),
-//! };
-//!
-//! // Type alias definition
-//! let type_alias = ImportDeclaration::DefineTypeAlias {
-//!     alias: "StringList".to_string(),
-//!     type_ref: Token::new(0x02000001),
-//! };
-//!
-//! // Process alias declarations for scope building
-//! for alias_decl in [assembly_alias, namespace_alias, type_alias] {
-//!     match alias_decl {
-//!         ImportDeclaration::DefineAssemblyAlias { alias, assembly_ref } => {
-//!             println!("Assembly alias '{}' -> {:?}", alias, assembly_ref);
-//!         }
-//!         ImportDeclaration::DefineNamespaceAlias { alias, namespace } => {
-//!             println!("Namespace alias '{}' -> {}", alias, namespace);
-//!         }
-//!         ImportDeclaration::DefineTypeAlias { alias, type_ref } => {
-//!             println!("Type alias '{}' -> {:?}", alias, type_ref);
-//!         }
-//!         _ => unreachable!(),
-//!     }
-//! }
-//! ```
+//! - [`ImportKind`] - Enumeration of the 9 import declaration types (values 1-9)
+//! - [`ImportDeclaration`] - Type-safe representation of individual import declarations
+//! - [`ImportsInfo`] - Container for a collection of import declarations
 //!
 //! # Thread Safety
 //!
-//! All types in this module are thread-safe and implement [`std::marker::Send`] and [`std::marker::Sync`].
-//! The import declaration types contain only owned data (strings and primitive tokens) and can be
-//! safely shared across threads. The iterator implementations are also thread-safe, enabling
-//! concurrent processing of import declarations.
-//!
-//! # Integration
-//!
-//! This module integrates with:
-//! - [`crate::metadata::importscope::parser`] - Binary parsing of imports blobs using these types
-//! - [`crate::metadata::tables`] - ImportScope table processing and metadata token resolution
-//! - [`crate::metadata::token`] - Metadata token representation for type and assembly references
-//! - [`crate::metadata::typesystem`] - Type system integration for import resolution
-//! - [`crate::metadata::streams`] - String and blob heap integration for data resolution
-//!
-//! # Standards Compliance
-//!
-//! - **Portable PDB**: Full compliance with Portable PDB import scope specification
-//! - **ECMA-335**: Compatible with .NET metadata standards for debugging information
-//! - **Type Safety**: Prevents invalid combinations of import parameters through strong typing
-//! - **Memory Safety**: Owned data eliminates lifetime management complexity
+//! All types are [`Send`] and [`Sync`], containing only owned data.
 
 use crate::metadata::token::Token;
 
@@ -289,16 +72,18 @@ pub enum ImportKind {
 impl ImportKind {
     /// Create an `ImportKind` from a compressed unsigned integer value.
     ///
+    /// This method accepts `u32` to match the output of compressed integer parsing
+    /// functions used in the binary parser, even though valid values (1-9) fit in a `u8`.
+    ///
     /// # Arguments
-    /// * `value` - The kind value from the imports blob (1-9)
+    ///
+    /// * `value` - The kind value from the imports blob. Valid values are 1-9;
+    ///   values outside this range return `None`.
     ///
     /// # Returns
-    /// * [`Some`](ImportKind) - Valid import kind
-    /// * [`None`] - Invalid or unsupported kind value
     ///
-    /// # Thread Safety
-    ///
-    /// This method is thread-safe and can be called concurrently from multiple threads.
+    /// * [`Some`](ImportKind) - Valid import kind for values 1-9
+    /// * [`None`] - Invalid or unsupported kind value (0, or 10+)
     #[must_use]
     pub fn from_u32(value: u32) -> Option<Self> {
         match value {
@@ -313,6 +98,24 @@ impl ImportKind {
             9 => Some(ImportKind::DefineTypeAlias),
             _ => None,
         }
+    }
+
+    /// Create an `ImportKind` from a `u8` value.
+    ///
+    /// Convenience method for creating an import kind from a single byte value.
+    /// This is useful when working with raw byte data directly.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - The kind value (1-9 are valid)
+    ///
+    /// # Returns
+    ///
+    /// * [`Some`](ImportKind) - Valid import kind for values 1-9
+    /// * [`None`] - Invalid or unsupported kind value
+    #[must_use]
+    pub fn from_u8(value: u8) -> Option<Self> {
+        Self::from_u32(u32::from(value))
     }
 }
 
@@ -568,10 +371,71 @@ mod tests {
     }
 
     #[test]
+    fn test_import_kind_from_u32_all_values() {
+        // Test all valid import kinds (1-9)
+        assert_eq!(ImportKind::from_u32(1), Some(ImportKind::ImportNamespace));
+        assert_eq!(
+            ImportKind::from_u32(2),
+            Some(ImportKind::ImportAssemblyNamespace)
+        );
+        assert_eq!(ImportKind::from_u32(3), Some(ImportKind::ImportType));
+        assert_eq!(
+            ImportKind::from_u32(4),
+            Some(ImportKind::ImportXmlNamespace)
+        );
+        assert_eq!(
+            ImportKind::from_u32(5),
+            Some(ImportKind::ImportAssemblyReferenceAlias)
+        );
+        assert_eq!(
+            ImportKind::from_u32(6),
+            Some(ImportKind::DefineAssemblyAlias)
+        );
+        assert_eq!(
+            ImportKind::from_u32(7),
+            Some(ImportKind::DefineNamespaceAlias)
+        );
+        assert_eq!(
+            ImportKind::from_u32(8),
+            Some(ImportKind::DefineAssemblyNamespaceAlias)
+        );
+        assert_eq!(ImportKind::from_u32(9), Some(ImportKind::DefineTypeAlias));
+    }
+
+    #[test]
     fn test_import_kind_values() {
         assert_eq!(ImportKind::ImportNamespace as u8, 1);
         assert_eq!(ImportKind::ImportAssemblyNamespace as u8, 2);
+        assert_eq!(ImportKind::ImportType as u8, 3);
+        assert_eq!(ImportKind::ImportXmlNamespace as u8, 4);
+        assert_eq!(ImportKind::ImportAssemblyReferenceAlias as u8, 5);
+        assert_eq!(ImportKind::DefineAssemblyAlias as u8, 6);
+        assert_eq!(ImportKind::DefineNamespaceAlias as u8, 7);
+        assert_eq!(ImportKind::DefineAssemblyNamespaceAlias as u8, 8);
         assert_eq!(ImportKind::DefineTypeAlias as u8, 9);
+    }
+
+    #[test]
+    fn test_import_kind_from_u8() {
+        // Test all valid import kinds (1-9)
+        assert_eq!(ImportKind::from_u8(1), Some(ImportKind::ImportNamespace));
+        assert_eq!(ImportKind::from_u8(9), Some(ImportKind::DefineTypeAlias));
+
+        // Test invalid values
+        assert_eq!(ImportKind::from_u8(0), None);
+        assert_eq!(ImportKind::from_u8(10), None);
+        assert_eq!(ImportKind::from_u8(255), None);
+
+        // Verify consistency with from_u32
+        for i in 0u8..=255 {
+            assert_eq!(ImportKind::from_u8(i), ImportKind::from_u32(u32::from(i)));
+        }
+    }
+
+    #[test]
+    fn test_import_kind_equality() {
+        assert_eq!(ImportKind::ImportNamespace, ImportKind::ImportNamespace);
+        assert_ne!(ImportKind::ImportNamespace, ImportKind::ImportType);
     }
 
     #[test]
@@ -582,6 +446,16 @@ mod tests {
     }
 
     #[test]
+    fn test_imports_info_default() {
+        let info: ImportsInfo = Default::default();
+        assert!(info.is_empty());
+        assert_eq!(info.len(), 0);
+
+        // Default should be equivalent to new()
+        assert_eq!(info, ImportsInfo::new());
+    }
+
+    #[test]
     fn test_imports_info_with_declarations() {
         let decl = ImportDeclaration::ImportNamespace {
             namespace: "System".to_string(),
@@ -589,5 +463,138 @@ mod tests {
         let info = ImportsInfo::with_declarations(vec![decl]);
         assert!(!info.is_empty());
         assert_eq!(info.len(), 1);
+    }
+
+    #[test]
+    fn test_imports_info_iter() {
+        let decl1 = ImportDeclaration::ImportNamespace {
+            namespace: "System".to_string(),
+        };
+        let decl2 = ImportDeclaration::ImportNamespace {
+            namespace: "System.Collections".to_string(),
+        };
+        let info = ImportsInfo::with_declarations(vec![decl1, decl2]);
+
+        let mut iter = info.iter();
+        assert!(iter.next().is_some());
+        assert!(iter.next().is_some());
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn test_imports_info_into_iter_borrowed() {
+        let decl = ImportDeclaration::ImportNamespace {
+            namespace: "System".to_string(),
+        };
+        let info = ImportsInfo::with_declarations(vec![decl]);
+
+        let mut count = 0;
+        for _declaration in &info {
+            count += 1;
+        }
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_imports_info_into_iter_owned() {
+        let decl = ImportDeclaration::ImportNamespace {
+            namespace: "System".to_string(),
+        };
+        let info = ImportsInfo::with_declarations(vec![decl]);
+
+        let mut count = 0;
+        for _declaration in info {
+            count += 1;
+        }
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_import_declaration_equality_simple() {
+        let decl1 = ImportDeclaration::ImportNamespace {
+            namespace: "System".to_string(),
+        };
+        let decl2 = ImportDeclaration::ImportNamespace {
+            namespace: "System".to_string(),
+        };
+        let decl3 = ImportDeclaration::ImportNamespace {
+            namespace: "System.Collections".to_string(),
+        };
+
+        assert_eq!(decl1, decl2);
+        assert_ne!(decl1, decl3);
+    }
+
+    #[test]
+    fn test_import_declaration_equality_with_tokens() {
+        let decl1 = ImportDeclaration::ImportAssemblyNamespace {
+            assembly_ref: Token::new(0x23000001),
+            namespace: "System".to_string(),
+        };
+        let decl2 = ImportDeclaration::ImportAssemblyNamespace {
+            assembly_ref: Token::new(0x23000001),
+            namespace: "System".to_string(),
+        };
+        let decl3 = ImportDeclaration::ImportAssemblyNamespace {
+            assembly_ref: Token::new(0x23000002),
+            namespace: "System".to_string(),
+        };
+
+        assert_eq!(decl1, decl2);
+        assert_ne!(decl1, decl3);
+    }
+
+    #[test]
+    fn test_import_declaration_equality_different_variants() {
+        let decl1 = ImportDeclaration::ImportNamespace {
+            namespace: "System".to_string(),
+        };
+        let decl2 = ImportDeclaration::ImportType {
+            type_ref: Token::new(0x01000001),
+        };
+
+        assert_ne!(decl1, decl2);
+    }
+
+    #[test]
+    fn test_imports_info_equality() {
+        let decl1 = ImportDeclaration::ImportNamespace {
+            namespace: "System".to_string(),
+        };
+        let decl2 = ImportDeclaration::ImportNamespace {
+            namespace: "System".to_string(),
+        };
+
+        let info1 = ImportsInfo::with_declarations(vec![decl1]);
+        let info2 = ImportsInfo::with_declarations(vec![decl2]);
+
+        assert_eq!(info1, info2);
+
+        let decl3 = ImportDeclaration::ImportNamespace {
+            namespace: "System.Collections".to_string(),
+        };
+        let info3 = ImportsInfo::with_declarations(vec![decl3]);
+        assert_ne!(info1, info3);
+    }
+
+    #[test]
+    fn test_import_declaration_clone() {
+        let original = ImportDeclaration::DefineAssemblyAlias {
+            alias: "CoreLib".to_string(),
+            assembly_ref: Token::new(0x23000001),
+        };
+        let cloned = original.clone();
+
+        assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn test_import_kind_clone_and_copy() {
+        let kind = ImportKind::ImportNamespace;
+        let copied = kind;
+        let cloned = kind.clone();
+
+        assert_eq!(kind, copied);
+        assert_eq!(kind, cloned);
     }
 }

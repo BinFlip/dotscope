@@ -16,7 +16,7 @@
 //! - **Performance**: Optimized for high-throughput parallel processing scenarios
 
 use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicUsize, Ordering},
     Condvar, Mutex,
 };
 
@@ -43,7 +43,7 @@ use crate::{Error, Result};
 /// use std::sync::Arc;
 /// use std::thread;
 ///
-/// let barrier = Arc::new(FailFastBarrier::new(3));
+/// let barrier = Arc::new(FailFastBarrier::new(3)?);
 /// let mut handles = vec![];
 ///
 /// for i in 0..3 {
@@ -52,14 +52,14 @@ use crate::{Error, Result};
 ///         // Simulate some work
 ///         if i == 1 {
 ///             // Thread 1 fails and breaks the barrier
-///             barrier_clone.break_barrier();
+///             barrier_clone.break_barrier("Simulated failure");
 ///             return Err("Simulated failure");
 ///         }
-///         
+///
 ///         // Try to wait for all threads
 ///         match barrier_clone.wait() {
 ///             Ok(()) => Ok("Success"),
-///             Err(()) => Err("Barrier was broken by another thread"),
+///             Err(_) => Err("Barrier was broken by another thread"),
 ///         }
 ///     });
 ///     handles.push(handle);
@@ -79,12 +79,10 @@ pub struct FailFastBarrier {
     count: usize,
     /// Current number of threads that have reached the barrier
     arrived: AtomicUsize,
-    /// Whether the barrier has been broken due to failure
-    broken: AtomicBool,
     /// Condition variable for blocking/waking threads
     condvar: Condvar,
-    /// Mutex for coordination and error message storage
-    mutex: Mutex<Option<String>>,
+    /// Mutex protecting broken state: None = not broken, Some(msg) = broken with error message
+    state: Mutex<Option<String>>,
 }
 
 impl FailFastBarrier {
@@ -94,27 +92,33 @@ impl FailFastBarrier {
     ///
     /// * `count` - The number of threads that must reach the barrier before any are released
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `count` is 0, as this would result in a barrier that can never be satisfied.
+    /// Returns an error if `count` is 0, as a zero-count barrier can never be satisfied.
     ///
     /// # Examples
     ///
     /// ```rust,ignore
     /// use dotscope::utils::synchronization::FailFastBarrier;
     ///
-    /// let barrier = FailFastBarrier::new(4); // Wait for 4 threads
+    /// let barrier = FailFastBarrier::new(4)?; // Wait for 4 threads
+    ///
+    /// // Zero count returns an error
+    /// assert!(FailFastBarrier::new(0).is_err());
     /// ```
-    pub fn new(count: usize) -> Self {
-        assert!(count > 0, "FailFastBarrier count must be greater than 0");
+    pub fn new(count: usize) -> Result<Self> {
+        if count == 0 {
+            return Err(Error::Error(
+                "FailFastBarrier count must be greater than 0".to_string(),
+            ));
+        }
 
-        Self {
+        Ok(Self {
             count,
             arrived: AtomicUsize::new(0),
-            broken: AtomicBool::new(false),
             condvar: Condvar::new(),
-            mutex: Mutex::new(None),
-        }
+            state: Mutex::new(None),
+        })
     }
 
     /// Wait for all threads to reach the barrier, or until the barrier is broken.
@@ -140,7 +144,7 @@ impl FailFastBarrier {
     /// use std::sync::Arc;
     /// use std::thread;
     ///
-    /// let barrier = Arc::new(FailFastBarrier::new(2));
+    /// let barrier = Arc::new(FailFastBarrier::new(2)?);
     /// let barrier_clone = Arc::clone(&barrier);
     ///
     /// let handle = thread::spawn(move || {
@@ -156,42 +160,32 @@ impl FailFastBarrier {
     /// ```
     pub fn wait(&self) -> Result<()> {
         // Check if already broken
-        if self.broken.load(Ordering::Acquire) {
-            let guard = self.mutex.lock().unwrap();
-            if let Some(error_msg) = &*guard {
-                return Err(Error::Error(format!("Barrier was broken: {}", error_msg)));
+        {
+            let guard = self.state.lock().unwrap();
+            if let Some(msg) = guard.as_ref() {
+                return Err(Error::Error(format!("Barrier was broken: {}", msg)));
             }
-            return Err(Error::Error(
-                "Barrier was broken by another thread".to_string(),
-            ));
         }
 
         let arrived_count = self.arrived.fetch_add(1, Ordering::AcqRel) + 1;
 
         if arrived_count == self.count {
             // Last thread to arrive - wake everyone up
-            let _guard = self.mutex.lock().unwrap();
+            let _guard = self.state.lock().unwrap();
             self.condvar.notify_all();
             Ok(())
         } else {
             // Wait for others or until broken
-            let guard = self.mutex.lock().unwrap();
+            let guard = self.state.lock().unwrap();
             let guard = self
                 .condvar
-                .wait_while(guard, |_| {
-                    !self.broken.load(Ordering::Acquire)
-                        && self.arrived.load(Ordering::Acquire) < self.count
+                .wait_while(guard, |state| {
+                    state.is_none() && self.arrived.load(Ordering::Acquire) < self.count
                 })
                 .unwrap();
 
-            if self.broken.load(Ordering::Acquire) {
-                if let Some(error_msg) = &*guard {
-                    Err(Error::Error(format!("Barrier was broken: {}", error_msg)))
-                } else {
-                    Err(Error::Error(
-                        "Barrier was broken by another thread".to_string(),
-                    ))
-                }
+            if let Some(msg) = guard.as_ref() {
+                Err(Error::Error(format!("Barrier was broken: {}", msg)))
             } else {
                 Ok(())
             }
@@ -220,14 +214,14 @@ impl FailFastBarrier {
     /// use std::sync::Arc;
     /// use std::thread;
     ///
-    /// let barrier = Arc::new(FailFastBarrier::new(3));
+    /// let barrier = Arc::new(FailFastBarrier::new(3)?);
     ///
     /// // Thread that will fail and break the barrier
     /// let barrier_clone = Arc::clone(&barrier);
     /// thread::spawn(move || {
     ///     // Simulate work that fails
     ///     thread::sleep(std::time::Duration::from_millis(100));
-    ///     
+    ///
     ///     // Break the barrier on failure
     ///     barrier_clone.break_barrier("Assembly failed to parse due to invalid metadata");
     /// });
@@ -238,11 +232,15 @@ impl FailFastBarrier {
     ///     Err(err) => println!("Barrier was broken: {}", err),
     /// }
     /// ```
-    pub fn break_barrier(&self, error_message: &str) {
-        self.broken.store(true, Ordering::Release);
-        if let Ok(mut guard_rw) = self.mutex.lock() {
-            *guard_rw = Some(error_message.to_string());
+    pub fn break_barrier(&self, error_message: impl Into<String>) {
+        if let Ok(mut guard) = self.state.lock() {
+            // Only set message if not already broken (preserve first error)
+            if guard.is_none() {
+                *guard = Some(error_message.into());
+            }
         }
+        // Note: if mutex is poisoned, we can't set the error message,
+        // but notify_all will still wake waiting threads (they'll see poisoned mutex)
 
         self.condvar.notify_all();
     }
@@ -258,14 +256,17 @@ impl FailFastBarrier {
     /// ```rust,ignore
     /// use dotscope::utils::synchronization::FailFastBarrier;
     ///
-    /// let barrier = FailFastBarrier::new(2);
+    /// let barrier = FailFastBarrier::new(2)?;
     /// assert!(!barrier.is_broken());
     ///
-    /// barrier.break_barrier();
+    /// barrier.break_barrier("test");
     /// assert!(barrier.is_broken());
     /// ```
     pub fn is_broken(&self) -> bool {
-        self.broken.load(Ordering::Acquire)
+        self.state
+            .lock()
+            .map(|guard| guard.is_some())
+            .unwrap_or(true) // If poisoned, consider it broken
     }
 }
 
@@ -278,7 +279,7 @@ mod tests {
 
     #[test]
     fn test_normal_barrier_operation() {
-        let barrier = Arc::new(FailFastBarrier::new(3));
+        let barrier = Arc::new(FailFastBarrier::new(3).unwrap());
         let mut handles = vec![];
 
         for _ in 0..3 {
@@ -295,7 +296,7 @@ mod tests {
 
     #[test]
     fn test_barrier_break() {
-        let barrier = Arc::new(FailFastBarrier::new(3));
+        let barrier = Arc::new(FailFastBarrier::new(3).unwrap());
         let mut handles = vec![];
 
         // Start 2 threads that will wait
@@ -322,7 +323,7 @@ mod tests {
 
     #[test]
     fn test_is_broken() {
-        let barrier = FailFastBarrier::new(2);
+        let barrier = FailFastBarrier::new(2).unwrap();
         assert!(!barrier.is_broken());
 
         barrier.break_barrier("Test break");
@@ -330,8 +331,28 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "FailFastBarrier count must be greater than 0")]
-    fn test_zero_count_panics() {
-        FailFastBarrier::new(0);
+    fn test_zero_count_returns_error() {
+        let result = FailFastBarrier::new(0);
+        assert!(result.is_err());
+        assert!(result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("count must be greater than 0"));
+    }
+
+    #[test]
+    fn test_break_barrier_with_string() {
+        // Test that break_barrier works with both &str and String
+        let barrier = FailFastBarrier::new(2).unwrap();
+
+        // Works with &str
+        barrier.break_barrier("test error");
+        assert!(barrier.is_broken());
+
+        // Also works with String (no extra allocation needed)
+        let barrier2 = FailFastBarrier::new(2).unwrap();
+        barrier2.break_barrier(String::from("owned error"));
+        assert!(barrier2.is_broken());
     }
 }

@@ -119,26 +119,29 @@ impl HeapBuilder for GuidHeapBuilder<'_> {
 
         // Process original GUIDs if available
         if let Some(guid_heap) = self.assembly.view().guids() {
-            for (original_index, original_guid) in guid_heap.iter() {
-                let original_index =
-                    u32::try_from(original_index).map_err(|_| Error::WriteLayoutFailed {
+            for (logical_index, original_guid) in guid_heap.iter() {
+                // The iterator returns 1-based logical indices (1, 2, 3, ...)
+                // HeapChanges uses byte offsets, so convert: byte_offset = (logical_index - 1) * 16
+                let logical_index =
+                    u32::try_from(logical_index).map_err(|_| Error::WriteLayoutFailed {
                         message: "GUID heap index exceeds u32 range".to_string(),
                     })?;
+                let byte_offset = (logical_index - 1) * 16;
 
-                if guid_changes.is_removed(original_index) {
+                if guid_changes.is_removed(byte_offset) {
                     // GUID is removed - no mapping entry
                     continue;
                 }
-                if let Some(modified_guid) = guid_changes.get_modification(original_index) {
+                if let Some(modified_guid) = guid_changes.get_modification(byte_offset) {
                     // GUID is modified - add modified version
                     self.index_mappings
-                        .insert(original_index, final_index_position);
+                        .insert(byte_offset, final_index_position);
                     final_heap.extend_from_slice(modified_guid);
                     final_index_position += 16;
                 } else {
                     // GUID is unchanged - add original version
                     self.index_mappings
-                        .insert(original_index, final_index_position);
+                        .insert(byte_offset, final_index_position);
                     final_heap.extend_from_slice(&original_guid.to_bytes());
                     final_index_position += 16;
                 }
@@ -146,34 +149,27 @@ impl HeapBuilder for GuidHeapBuilder<'_> {
         }
 
         // Handle appended GUIDs, applying any modifications or removals
+        // Appended items have their byte offset stored in appended_item_indices
+        for (vec_index, original_guid) in guid_changes.appended_items.iter().enumerate() {
+            // Get the byte offset assigned when this GUID was appended
+            let byte_offset = guid_changes
+                .get_appended_item_index(vec_index)
+                .ok_or_else(|| {
+                    malformed_error!("Appended GUID missing index at vec position {}", vec_index)
+                })?;
 
-        // First, calculate the logical index for each appended GUID
-        // GUID heap uses 1-based logical indices, not byte offsets
-        let original_heap_size = guid_changes.next_index
-            - (u32::try_from(guid_changes.appended_items.len())
-                .map_err(|_| malformed_error!("Appended GUIDs count exceeds u32 range"))?
-                * 16);
-        let existing_guid_count = original_heap_size / 16;
-
-        for (appended_index, original_guid) in guid_changes.appended_items.iter().enumerate() {
-            // Calculate the logical GUID index (1-based sequential)
-            let logical_guid_index = existing_guid_count
-                + u32::try_from(appended_index)
-                    .map_err(|_| malformed_error!("Appended GUID index exceeds u32 range"))?
-                + 1;
-
-            if guid_changes.removed_indices.contains(&logical_guid_index) {
-            } else if let Some(modified_guid) = guid_changes.modified_items.get(&logical_guid_index)
-            {
-                // Convert logical index to byte offset for index mapping
-                let byte_offset = (logical_guid_index - 1) * 16;
+            if guid_changes.is_removed(byte_offset) {
+                // GUID is removed - no mapping entry
+                continue;
+            }
+            if let Some(modified_guid) = guid_changes.get_modification(byte_offset) {
+                // GUID is modified - add modified version
                 self.index_mappings
                     .insert(byte_offset, final_index_position);
                 final_heap.extend_from_slice(modified_guid);
                 final_index_position += 16;
             } else {
-                // Convert logical index to byte offset for index mapping
-                let byte_offset = (logical_guid_index - 1) * 16;
+                // GUID is unchanged - add original version
                 self.index_mappings
                     .insert(byte_offset, final_index_position);
                 final_heap.extend_from_slice(original_guid);

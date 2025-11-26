@@ -41,6 +41,16 @@
 //! assert_eq!(compressed_uint_size(70000), 4);
 //! ```
 
+// ECMA-335 compressed integer encoding thresholds
+/// Maximum value encodable in a single byte (0xxxxxxx pattern)
+const SINGLE_BYTE_MAX: u32 = 0x7F;
+/// Maximum value encodable in two bytes (10xxxxxx pattern)
+const TWO_BYTE_MAX: u32 = 0x3FFF;
+/// High bit marker for two-byte encoding
+const TWO_BYTE_MARKER: u8 = 0x80;
+/// High bit marker for four-byte encoding
+const FOUR_BYTE_MARKER: u8 = 0xC0;
+
 /// Encodes an unsigned integer using ECMA-335 compressed integer format.
 ///
 /// This function implements the compressed unsigned integer encoding specified in
@@ -73,16 +83,16 @@
 /// ```
 #[allow(clippy::cast_possible_truncation)]
 pub fn write_compressed_uint(value: u32, buffer: &mut Vec<u8>) {
-    if value < 0x80 {
+    if value <= SINGLE_BYTE_MAX {
         // Single byte: 0xxxxxxx
         buffer.push(value as u8);
-    } else if value < 0x4000 {
+    } else if value <= TWO_BYTE_MAX {
         // Two bytes: 10xxxxxx xxxxxxxx
-        buffer.push(0x80 | ((value >> 8) as u8));
+        buffer.push(TWO_BYTE_MARKER | ((value >> 8) as u8));
         buffer.push(value as u8);
     } else {
         // Four bytes: 110xxxxx xxxxxxxx xxxxxxxx xxxxxxxx
-        buffer.push(0xC0 | ((value >> 24) as u8));
+        buffer.push(FOUR_BYTE_MARKER | ((value >> 24) as u8));
         buffer.push((value >> 16) as u8);
         buffer.push((value >> 8) as u8);
         buffer.push(value as u8);
@@ -116,9 +126,9 @@ pub fn write_compressed_uint(value: u32, buffer: &mut Vec<u8>) {
 /// assert_eq!(compressed_uint_size(70000), 4);
 /// ```
 pub fn compressed_uint_size(value: usize) -> u64 {
-    if value < 0x80 {
+    if value <= SINGLE_BYTE_MAX as usize {
         1
-    } else if value < 0x4000 {
+    } else if value <= TWO_BYTE_MAX as usize {
         2
     } else {
         4

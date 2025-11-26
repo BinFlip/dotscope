@@ -64,7 +64,7 @@
 //!
 //! ## Resource Data Access
 //!
-//! ```rust,ignore
+//! ```ignore
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -75,7 +75,7 @@
 //! if let Some(resource) = resources.get("MyResource.xml") {
 //!     if let Some(data) = resources.get_data(&resource) {
 //!         println!("Resource data: {} bytes", data.len());
-//!         
+//!
 //!         // Process the resource data
 //!         match std::str::from_utf8(data) {
 //!             Ok(text) => println!("Text resource content: {}", text),
@@ -201,7 +201,7 @@ use crate::{file::File, metadata::tables::ManifestResourceRc};
 ///
 /// ## Basic Resource Management
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
@@ -211,7 +211,7 @@ use crate::{file::File, metadata::tables::ManifestResourceRc};
 /// // Check if assembly has resources
 /// if !resources.is_empty() {
 ///     println!("Assembly has {} resources", resources.len());
-///     
+///
 ///     // Access specific resource
 ///     if let Some(resource) = resources.get("MyResource") {
 ///         println!("Found resource: {} ({} bytes)",
@@ -223,7 +223,7 @@ use crate::{file::File, metadata::tables::ManifestResourceRc};
 ///
 /// ## Resource Data Processing
 ///
-/// ```rust,ignore
+/// ```ignore
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
@@ -232,11 +232,11 @@ use crate::{file::File, metadata::tables::ManifestResourceRc};
 ///
 /// for resource_entry in resources.iter() {
 ///     let resource = resource_entry.value();
-///     
+///
 ///     if let Some(data) = resources.get_data(&resource) {
 ///         println!("Processing resource: {} ({} bytes)",
 ///                  resource.name, data.len());
-///         
+///
 ///         // Determine resource type based on content
 ///         if data.starts_with(b"<?xml") {
 ///             println!("  - XML resource");
@@ -270,7 +270,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```ignore
     /// use dotscope::metadata::resources::Resources;
     /// use std::sync::Arc;
     ///
@@ -303,7 +303,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -338,7 +338,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -385,7 +385,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -394,12 +394,12 @@ impl Resources {
     ///
     /// for resource_entry in resources.iter() {
     ///     let resource = resource_entry.value();
-    ///     
+    ///
     ///     match resources.get_data(&resource) {
     ///         Some(data) => {
     ///             println!("Resource '{}': {} bytes of data available",
     ///                      resource.name, data.len());
-    ///             
+    ///
     ///             // Analyze resource content
     ///             if let Ok(text) = std::str::from_utf8(data) {
     ///                 if text.len() <= 100 {
@@ -446,7 +446,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -508,7 +508,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```ignore
     /// // This is typically called internally during metadata loading
     /// let resource = ManifestResourceRc::new(/* ... */);
     /// resources.insert(resource);
@@ -528,7 +528,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -559,7 +559,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```ignore
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -570,7 +570,7 @@ impl Resources {
     ///     println!("This assembly has no embedded resources");
     /// } else {
     ///     println!("This assembly has {} resources", resources.len());
-    ///     
+    ///
     ///     // Process resources...
     ///     for resource_entry in resources.iter() {
     ///         let resource = resource_entry.value();
@@ -597,7 +597,7 @@ impl Resources {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -639,26 +639,333 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn test_string_roundtrip() {
+    // ==================================================================================
+    // Test Helper Macros - Reduce duplication between owned and borrowed variant tests
+    // ==================================================================================
+
+    /// Helper trait to abstract over owned (ResourceType) and borrowed (ResourceTypeRef) variants.
+    /// This allows writing generic test code that works with both.
+    trait ResourceData {
+        fn as_string(&self) -> Option<&str>;
+        fn as_bool(&self) -> Option<bool>;
+        fn as_byte(&self) -> Option<u8>;
+        fn as_sbyte(&self) -> Option<i8>;
+        fn as_char(&self) -> Option<char>;
+        fn as_int16(&self) -> Option<i16>;
+        fn as_uint16(&self) -> Option<u16>;
+        fn as_int32(&self) -> Option<i32>;
+        fn as_uint32(&self) -> Option<u32>;
+        fn as_int64(&self) -> Option<i64>;
+        fn as_uint64(&self) -> Option<u64>;
+        fn as_single(&self) -> Option<f32>;
+        fn as_double(&self) -> Option<f64>;
+        fn as_bytes(&self) -> Option<&[u8]>;
+        fn as_stream(&self) -> Option<&[u8]>;
+        fn as_decimal(&self) -> Option<(i32, i32, i32, i32)>;
+        fn as_datetime(&self) -> Option<i64>;
+        fn as_timespan(&self) -> Option<i64>;
+    }
+
+    impl ResourceData for ResourceType {
+        fn as_string(&self) -> Option<&str> {
+            match self {
+                ResourceType::String(s) => Some(s),
+                _ => None,
+            }
+        }
+        fn as_bool(&self) -> Option<bool> {
+            match self {
+                ResourceType::Boolean(b) => Some(*b),
+                _ => None,
+            }
+        }
+        fn as_byte(&self) -> Option<u8> {
+            match self {
+                ResourceType::Byte(b) => Some(*b),
+                _ => None,
+            }
+        }
+        fn as_sbyte(&self) -> Option<i8> {
+            match self {
+                ResourceType::SByte(b) => Some(*b),
+                _ => None,
+            }
+        }
+        fn as_char(&self) -> Option<char> {
+            match self {
+                ResourceType::Char(c) => Some(*c),
+                _ => None,
+            }
+        }
+        fn as_int16(&self) -> Option<i16> {
+            match self {
+                ResourceType::Int16(i) => Some(*i),
+                _ => None,
+            }
+        }
+        fn as_uint16(&self) -> Option<u16> {
+            match self {
+                ResourceType::UInt16(i) => Some(*i),
+                _ => None,
+            }
+        }
+        fn as_int32(&self) -> Option<i32> {
+            match self {
+                ResourceType::Int32(i) => Some(*i),
+                _ => None,
+            }
+        }
+        fn as_uint32(&self) -> Option<u32> {
+            match self {
+                ResourceType::UInt32(i) => Some(*i),
+                _ => None,
+            }
+        }
+        fn as_int64(&self) -> Option<i64> {
+            match self {
+                ResourceType::Int64(i) => Some(*i),
+                _ => None,
+            }
+        }
+        fn as_uint64(&self) -> Option<u64> {
+            match self {
+                ResourceType::UInt64(i) => Some(*i),
+                _ => None,
+            }
+        }
+        fn as_single(&self) -> Option<f32> {
+            match self {
+                ResourceType::Single(f) => Some(*f),
+                _ => None,
+            }
+        }
+        fn as_double(&self) -> Option<f64> {
+            match self {
+                ResourceType::Double(f) => Some(*f),
+                _ => None,
+            }
+        }
+        fn as_bytes(&self) -> Option<&[u8]> {
+            match self {
+                ResourceType::ByteArray(b) => Some(b),
+                _ => None,
+            }
+        }
+        fn as_stream(&self) -> Option<&[u8]> {
+            match self {
+                ResourceType::Stream(b) => Some(b),
+                _ => None,
+            }
+        }
+        fn as_decimal(&self) -> Option<(i32, i32, i32, i32)> {
+            match self {
+                ResourceType::Decimal { lo, mid, hi, flags } => Some((*lo, *mid, *hi, *flags)),
+                _ => None,
+            }
+        }
+        fn as_datetime(&self) -> Option<i64> {
+            match self {
+                ResourceType::DateTime(dt) => Some(*dt),
+                _ => None,
+            }
+        }
+        fn as_timespan(&self) -> Option<i64> {
+            match self {
+                ResourceType::TimeSpan(ts) => Some(*ts),
+                _ => None,
+            }
+        }
+    }
+
+    impl ResourceData for ResourceTypeRef<'_> {
+        fn as_string(&self) -> Option<&str> {
+            match self {
+                ResourceTypeRef::String(s) => Some(s),
+                _ => None,
+            }
+        }
+        fn as_bool(&self) -> Option<bool> {
+            match self {
+                ResourceTypeRef::Boolean(b) => Some(*b),
+                _ => None,
+            }
+        }
+        fn as_byte(&self) -> Option<u8> {
+            match self {
+                ResourceTypeRef::Byte(b) => Some(*b),
+                _ => None,
+            }
+        }
+        fn as_sbyte(&self) -> Option<i8> {
+            match self {
+                ResourceTypeRef::SByte(b) => Some(*b),
+                _ => None,
+            }
+        }
+        fn as_char(&self) -> Option<char> {
+            match self {
+                ResourceTypeRef::Char(c) => Some(*c),
+                _ => None,
+            }
+        }
+        fn as_int16(&self) -> Option<i16> {
+            match self {
+                ResourceTypeRef::Int16(i) => Some(*i),
+                _ => None,
+            }
+        }
+        fn as_uint16(&self) -> Option<u16> {
+            match self {
+                ResourceTypeRef::UInt16(i) => Some(*i),
+                _ => None,
+            }
+        }
+        fn as_int32(&self) -> Option<i32> {
+            match self {
+                ResourceTypeRef::Int32(i) => Some(*i),
+                _ => None,
+            }
+        }
+        fn as_uint32(&self) -> Option<u32> {
+            match self {
+                ResourceTypeRef::UInt32(i) => Some(*i),
+                _ => None,
+            }
+        }
+        fn as_int64(&self) -> Option<i64> {
+            match self {
+                ResourceTypeRef::Int64(i) => Some(*i),
+                _ => None,
+            }
+        }
+        fn as_uint64(&self) -> Option<u64> {
+            match self {
+                ResourceTypeRef::UInt64(i) => Some(*i),
+                _ => None,
+            }
+        }
+        fn as_single(&self) -> Option<f32> {
+            match self {
+                ResourceTypeRef::Single(f) => Some(*f),
+                _ => None,
+            }
+        }
+        fn as_double(&self) -> Option<f64> {
+            match self {
+                ResourceTypeRef::Double(f) => Some(*f),
+                _ => None,
+            }
+        }
+        fn as_bytes(&self) -> Option<&[u8]> {
+            match self {
+                ResourceTypeRef::ByteArray(b) => Some(b),
+                _ => None,
+            }
+        }
+        fn as_stream(&self) -> Option<&[u8]> {
+            match self {
+                ResourceTypeRef::Stream(b) => Some(b),
+                _ => None,
+            }
+        }
+        fn as_decimal(&self) -> Option<(i32, i32, i32, i32)> {
+            match self {
+                ResourceTypeRef::Decimal { lo, mid, hi, flags } => Some((*lo, *mid, *hi, *flags)),
+                _ => None,
+            }
+        }
+        fn as_datetime(&self) -> Option<i64> {
+            match self {
+                ResourceTypeRef::DateTime(dt) => Some(*dt),
+                _ => None,
+            }
+        }
+        fn as_timespan(&self) -> Option<i64> {
+            match self {
+                ResourceTypeRef::TimeSpan(ts) => Some(*ts),
+                _ => None,
+            }
+        }
+    }
+
+    /// Macro to generate both owned and ref variants of a test
+    macro_rules! test_both_variants {
+        ($test_name:ident, $body:expr) => {
+            paste::paste! {
+                #[test]
+                fn [<$test_name _owned>]() {
+                    let test_fn = $body;
+                    test_fn(false);
+                }
+
+                #[test]
+                fn [<$test_name _ref>]() {
+                    let test_fn = $body;
+                    test_fn(true);
+                }
+            }
+        };
+    }
+
+    /// Helper to parse resources in either owned or ref mode
+    fn parse_resources<'a>(
+        data: &'a [u8],
+        use_ref: bool,
+    ) -> (
+        Option<BTreeMap<String, ResourceEntry>>,
+        Option<BTreeMap<String, ResourceEntryRef<'a>>>,
+    ) {
+        if use_ref {
+            (None, Some(parse_dotnet_resource_ref(data).unwrap()))
+        } else {
+            (Some(parse_dotnet_resource(data).unwrap()), None)
+        }
+    }
+
+    /// Helper macro to get resource data from either owned or ref map
+    macro_rules! get_resource_data {
+        ($owned:expr, $borrowed:expr, $key:expr) => {
+            if let Some(ref map) = $owned {
+                &map[$key].data as &dyn ResourceData
+            } else if let Some(ref map) = $borrowed {
+                &map[$key].data as &dyn ResourceData
+            } else {
+                panic!("No resource map available")
+            }
+        };
+    }
+
+    /// Helper macro to get resource count from either owned or ref map
+    macro_rules! get_resource_count {
+        ($owned:expr, $borrowed:expr) => {
+            if let Some(ref map) = $owned {
+                map.len()
+            } else if let Some(ref map) = $borrowed {
+                map.len()
+            } else {
+                panic!("No resource map available")
+            }
+        };
+    }
+
+    // ==================================================================================
+    // Unified Tests - Each test runs for both owned and borrowed variants
+    // ==================================================================================
+
+    test_both_variants!(test_string_roundtrip, |use_ref: bool| {
         let mut encoder = DotNetResourceEncoder::new();
         encoder.add_string("TestString", "Hello, World!").unwrap();
 
         let encoded_data = encoder.encode_dotnet_format().unwrap();
-        let parsed_resources = parse_dotnet_resource(&encoded_data).unwrap();
+        let (owned, borrowed) = parse_resources(&encoded_data, use_ref);
 
-        assert_eq!(parsed_resources.len(), 1);
-        assert!(parsed_resources.contains_key("TestString"));
+        assert_eq!(get_resource_count!(owned, borrowed), 1);
 
-        let resource = &parsed_resources["TestString"];
-        match &resource.data {
-            ResourceType::String(s) => assert_eq!(s, "Hello, World!"),
-            _ => panic!("Expected string resource"),
-        }
-    }
+        let data = get_resource_data!(owned, borrowed, "TestString");
+        assert_eq!(data.as_string().unwrap(), "Hello, World!");
+    });
 
-    #[test]
-    fn test_multiple_types_roundtrip() {
+    test_both_variants!(test_multiple_types_roundtrip, |use_ref: bool| {
         let mut encoder = DotNetResourceEncoder::new();
         encoder.add_string("StringRes", "Test").unwrap();
         encoder.add_int32("IntRes", 42).unwrap();
@@ -666,37 +973,36 @@ mod tests {
         encoder.add_byte_array("ByteRes", &[1, 2, 3, 4]).unwrap();
 
         let encoded_data = encoder.encode_dotnet_format().unwrap();
-        let parsed_resources = parse_dotnet_resource(&encoded_data).unwrap();
+        let (owned, borrowed) = parse_resources(&encoded_data, use_ref);
 
-        assert_eq!(parsed_resources.len(), 4);
+        assert_eq!(get_resource_count!(owned, borrowed), 4);
 
-        // Check each resource type
-        match &parsed_resources["StringRes"].data {
-            ResourceType::String(s) => assert_eq!(s, "Test"),
-            _ => panic!("Expected string resource"),
-        }
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "StringRes")
+                .as_string()
+                .unwrap(),
+            "Test"
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "IntRes")
+                .as_int32()
+                .unwrap(),
+            42
+        );
+        assert!(get_resource_data!(owned, borrowed, "BoolRes")
+            .as_bool()
+            .unwrap());
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "ByteRes")
+                .as_bytes()
+                .unwrap(),
+            &[1, 2, 3, 4]
+        );
+    });
 
-        match &parsed_resources["IntRes"].data {
-            ResourceType::Int32(i) => assert_eq!(*i, 42),
-            _ => panic!("Expected int32 resource"),
-        }
-
-        match &parsed_resources["BoolRes"].data {
-            ResourceType::Boolean(b) => assert!(*b),
-            _ => panic!("Expected boolean resource"),
-        }
-
-        match &parsed_resources["ByteRes"].data {
-            ResourceType::ByteArray(data) => assert_eq!(data, &[1, 2, 3, 4]),
-            _ => panic!("Expected byte array resource"),
-        }
-    }
-
-    #[test]
-    fn test_all_primitive_types_roundtrip() {
+    test_both_variants!(test_all_primitive_types_roundtrip, |use_ref: bool| {
         let mut encoder = DotNetResourceEncoder::new();
 
-        // Add all supported primitive types
         encoder.add_boolean("bool_true", true).unwrap();
         encoder.add_boolean("bool_false", false).unwrap();
         encoder.add_byte("byte_val", 255).unwrap();
@@ -720,82 +1026,91 @@ mod tests {
             .unwrap();
 
         let encoded_data = encoder.encode_dotnet_format().unwrap();
-        let parsed_resources = parse_dotnet_resource(&encoded_data).unwrap();
+        let (owned, borrowed) = parse_resources(&encoded_data, use_ref);
 
-        assert_eq!(parsed_resources.len(), 13);
+        assert_eq!(get_resource_count!(owned, borrowed), 13);
 
-        // Verify all types
-        match &parsed_resources["bool_true"].data {
-            ResourceType::Boolean(b) => assert!(*b),
-            _ => panic!("Expected boolean resource"),
-        }
+        assert!(get_resource_data!(owned, borrowed, "bool_true")
+            .as_bool()
+            .unwrap());
+        assert!(!get_resource_data!(owned, borrowed, "bool_false")
+            .as_bool()
+            .unwrap());
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "byte_val")
+                .as_byte()
+                .unwrap(),
+            255
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "sbyte_val")
+                .as_sbyte()
+                .unwrap(),
+            -128
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "char_val")
+                .as_char()
+                .unwrap(),
+            'A'
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "int16_val")
+                .as_int16()
+                .unwrap(),
+            -32768
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "uint16_val")
+                .as_uint16()
+                .unwrap(),
+            65535
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "int32_val")
+                .as_int32()
+                .unwrap(),
+            -2147483648
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "uint32_val")
+                .as_uint32()
+                .unwrap(),
+            4294967295
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "int64_val")
+                .as_int64()
+                .unwrap(),
+            -9223372036854775808i64
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "uint64_val")
+                .as_uint64()
+                .unwrap(),
+            18446744073709551615u64
+        );
+        assert!(
+            (get_resource_data!(owned, borrowed, "single_val")
+                .as_single()
+                .unwrap()
+                - std::f32::consts::PI)
+                .abs()
+                < 1e-5
+        );
+        assert!(
+            (get_resource_data!(owned, borrowed, "double_val")
+                .as_double()
+                .unwrap()
+                - std::f64::consts::E)
+                .abs()
+                < 1e-14
+        );
+    });
 
-        match &parsed_resources["bool_false"].data {
-            ResourceType::Boolean(b) => assert!(!(*b)),
-            _ => panic!("Expected boolean resource"),
-        }
-
-        match &parsed_resources["byte_val"].data {
-            ResourceType::Byte(b) => assert_eq!(*b, 255),
-            _ => panic!("Expected byte resource"),
-        }
-
-        match &parsed_resources["sbyte_val"].data {
-            ResourceType::SByte(b) => assert_eq!(*b, -128),
-            _ => panic!("Expected sbyte resource"),
-        }
-
-        match &parsed_resources["char_val"].data {
-            ResourceType::Char(c) => assert_eq!(*c, 'A'),
-            _ => panic!("Expected char resource"),
-        }
-
-        match &parsed_resources["int16_val"].data {
-            ResourceType::Int16(i) => assert_eq!(*i, -32768),
-            _ => panic!("Expected int16 resource"),
-        }
-
-        match &parsed_resources["uint16_val"].data {
-            ResourceType::UInt16(i) => assert_eq!(*i, 65535),
-            _ => panic!("Expected uint16 resource"),
-        }
-
-        match &parsed_resources["int32_val"].data {
-            ResourceType::Int32(i) => assert_eq!(*i, -2147483648),
-            _ => panic!("Expected int32 resource"),
-        }
-
-        match &parsed_resources["uint32_val"].data {
-            ResourceType::UInt32(i) => assert_eq!(*i, 4294967295),
-            _ => panic!("Expected uint32 resource"),
-        }
-
-        match &parsed_resources["int64_val"].data {
-            ResourceType::Int64(i) => assert_eq!(*i, -9223372036854775808i64),
-            _ => panic!("Expected int64 resource"),
-        }
-
-        match &parsed_resources["uint64_val"].data {
-            ResourceType::UInt64(i) => assert_eq!(*i, 18446744073709551615u64),
-            _ => panic!("Expected uint64 resource"),
-        }
-
-        match &parsed_resources["single_val"].data {
-            ResourceType::Single(f) => assert!((f - std::f32::consts::PI).abs() < 1e-5),
-            _ => panic!("Expected single resource"),
-        }
-
-        match &parsed_resources["double_val"].data {
-            ResourceType::Double(f) => assert!((f - std::f64::consts::E).abs() < 1e-14),
-            _ => panic!("Expected double resource"),
-        }
-    }
-
-    #[test]
-    fn test_string_edge_cases_roundtrip() {
+    test_both_variants!(test_string_edge_cases_roundtrip, |use_ref: bool| {
         let mut encoder = DotNetResourceEncoder::new();
 
-        // Test various string edge cases - simpler version
         encoder.add_string("empty", "").unwrap();
         encoder.add_string("single_char", "X").unwrap();
         encoder.add_string("basic_ascii", "Hello World").unwrap();
@@ -805,41 +1120,45 @@ mod tests {
         encoder.add_string("special_chars", "\n\r\t\\\"'").unwrap();
 
         let encoded_data = encoder.encode_dotnet_format().unwrap();
-        let parsed_resources = parse_dotnet_resource(&encoded_data).unwrap();
+        let (owned, borrowed) = parse_resources(&encoded_data, use_ref);
 
-        assert_eq!(parsed_resources.len(), 5);
+        assert_eq!(get_resource_count!(owned, borrowed), 5);
 
-        match &parsed_resources["empty"].data {
-            ResourceType::String(s) => assert_eq!(s, ""),
-            _ => panic!("Expected string resource"),
-        }
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "empty")
+                .as_string()
+                .unwrap(),
+            ""
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "single_char")
+                .as_string()
+                .unwrap(),
+            "X"
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "basic_ascii")
+                .as_string()
+                .unwrap(),
+            "Hello World"
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "medium_string")
+                .as_string()
+                .unwrap(),
+            &"A".repeat(100)
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "special_chars")
+                .as_string()
+                .unwrap(),
+            "\n\r\t\\\"'"
+        );
+    });
 
-        match &parsed_resources["single_char"].data {
-            ResourceType::String(s) => assert_eq!(s, "X"),
-            _ => panic!("Expected string resource"),
-        }
-
-        match &parsed_resources["basic_ascii"].data {
-            ResourceType::String(s) => assert_eq!(s, "Hello World"),
-            _ => panic!("Expected string resource"),
-        }
-
-        match &parsed_resources["medium_string"].data {
-            ResourceType::String(s) => assert_eq!(s, &"A".repeat(100)),
-            _ => panic!("Expected string resource"),
-        }
-
-        match &parsed_resources["special_chars"].data {
-            ResourceType::String(s) => assert_eq!(s, "\n\r\t\\\"'"),
-            _ => panic!("Expected string resource"),
-        }
-    }
-
-    #[test]
-    fn test_byte_array_edge_cases_roundtrip() {
+    test_both_variants!(test_byte_array_edge_cases_roundtrip, |use_ref: bool| {
         let mut encoder = DotNetResourceEncoder::new();
 
-        // Test various byte array edge cases
         encoder.add_byte_array("empty", &[]).unwrap();
         encoder.add_byte_array("single_byte", &[42]).unwrap();
         encoder.add_byte_array("all_zeros", &[0; 100]).unwrap();
@@ -852,354 +1171,277 @@ mod tests {
             .unwrap();
 
         let encoded_data = encoder.encode_dotnet_format().unwrap();
-        let parsed_resources = parse_dotnet_resource(&encoded_data).unwrap();
+        let (owned, borrowed) = parse_resources(&encoded_data, use_ref);
 
-        assert_eq!(parsed_resources.len(), 6);
+        assert_eq!(get_resource_count!(owned, borrowed), 6);
 
-        match &parsed_resources["empty"].data {
-            ResourceType::ByteArray(data) => assert_eq!(data.len(), 0),
-            _ => panic!("Expected byte array resource"),
-        }
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "empty")
+                .as_bytes()
+                .unwrap()
+                .len(),
+            0
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "single_byte")
+                .as_bytes()
+                .unwrap(),
+            &[42]
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "all_zeros")
+                .as_bytes()
+                .unwrap(),
+            &[0; 100]
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "all_ones")
+                .as_bytes()
+                .unwrap(),
+            &[255; 50]
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "pattern")
+                .as_bytes()
+                .unwrap(),
+            &(0u8..=255).collect::<Vec<_>>()[..]
+        );
 
-        match &parsed_resources["single_byte"].data {
-            ResourceType::ByteArray(data) => assert_eq!(data, &[42]),
-            _ => panic!("Expected byte array resource"),
-        }
+        let large_bytes = get_resource_data!(owned, borrowed, "large")
+            .as_bytes()
+            .unwrap();
+        assert_eq!(large_bytes.len(), 10000);
+        assert!(large_bytes.iter().all(|&b| b == 123));
+    });
 
-        match &parsed_resources["all_zeros"].data {
-            ResourceType::ByteArray(data) => assert_eq!(data, &[0; 100]),
-            _ => panic!("Expected byte array resource"),
-        }
-
-        match &parsed_resources["all_ones"].data {
-            ResourceType::ByteArray(data) => assert_eq!(data, &[255; 50]),
-            _ => panic!("Expected byte array resource"),
-        }
-
-        match &parsed_resources["pattern"].data {
-            ResourceType::ByteArray(data) => assert_eq!(data, &(0u8..=255).collect::<Vec<_>>()),
-            _ => panic!("Expected byte array resource"),
-        }
-
-        match &parsed_resources["large"].data {
-            ResourceType::ByteArray(data) => {
-                assert_eq!(data.len(), 10000);
-                assert!(data.iter().all(|&b| b == 123));
-            }
-            _ => panic!("Expected byte array resource"),
-        }
-    }
-
-    #[test]
-    fn test_stream_roundtrip() {
-        // Test that Stream resources encode with type code 0x21 and decode correctly
+    test_both_variants!(test_stream_roundtrip, |use_ref: bool| {
         let mut encoder = DotNetResourceEncoder::new();
 
         encoder.add_stream("empty_stream", &[]).unwrap();
         encoder
             .add_stream("image_data", &[0x89, 0x50, 0x4E, 0x47])
-            .unwrap(); // PNG magic
+            .unwrap();
         encoder
             .add_stream("large_stream", &vec![0xAB; 5000])
             .unwrap();
 
         let encoded_data = encoder.encode_dotnet_format().unwrap();
-        let parsed_resources = parse_dotnet_resource(&encoded_data).unwrap();
+        let (owned, borrowed) = parse_resources(&encoded_data, use_ref);
 
-        assert_eq!(parsed_resources.len(), 3);
+        assert_eq!(get_resource_count!(owned, borrowed), 3);
 
-        match &parsed_resources["empty_stream"].data {
-            ResourceType::Stream(data) => assert_eq!(data.len(), 0),
-            _ => panic!("Expected Stream resource"),
-        }
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "empty_stream")
+                .as_stream()
+                .unwrap()
+                .len(),
+            0
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "image_data")
+                .as_stream()
+                .unwrap(),
+            &[0x89, 0x50, 0x4E, 0x47]
+        );
 
-        match &parsed_resources["image_data"].data {
-            ResourceType::Stream(data) => assert_eq!(data, &[0x89, 0x50, 0x4E, 0x47]),
-            _ => panic!("Expected Stream resource"),
-        }
+        let large_stream = get_resource_data!(owned, borrowed, "large_stream")
+            .as_stream()
+            .unwrap();
+        assert_eq!(large_stream.len(), 5000);
+        assert!(large_stream.iter().all(|&b| b == 0xAB));
+    });
 
-        match &parsed_resources["large_stream"].data {
-            ResourceType::Stream(data) => {
-                assert_eq!(data.len(), 5000);
-                assert!(data.iter().all(|&b| b == 0xAB));
-            }
-            _ => panic!("Expected Stream resource"),
-        }
-    }
-
-    #[test]
-    fn test_decimal_roundtrip() {
-        // Test Decimal resource encoding/decoding roundtrip
+    test_both_variants!(test_decimal_roundtrip, |use_ref: bool| {
         let mut encoder = DotNetResourceEncoder::new();
 
-        // Test case 1: Simple positive decimal 3.261 (mantissa=3261, scale=3)
-        // flags = 0x00030000 (scale 3 in bits 16-23)
         encoder
             .add_decimal("positive", 3261, 0, 0, 0x0003_0000)
             .unwrap();
-
-        // Test case 2: Negative decimal -123.45 (mantissa=12345, scale=2)
-        // flags = 0x80020000 (sign bit + scale 2)
         #[allow(clippy::cast_possible_wrap)]
         encoder
             .add_decimal("negative", 12345, 0, 0, 0x8002_0000_u32 as i32)
             .unwrap();
-
-        // Test case 3: Large decimal using all mantissa parts
         encoder
             .add_decimal("large", i32::MAX, i32::MAX, 100, 0x0000_0000)
             .unwrap();
-
-        // Test case 4: Zero
         encoder.add_decimal("zero", 0, 0, 0, 0).unwrap();
-
-        // Test case 5: Maximum scale (28)
         encoder
             .add_decimal("max_scale", 1, 0, 0, 0x001C_0000)
             .unwrap();
 
         let encoded_data = encoder.encode_dotnet_format().unwrap();
-        let parsed_resources = parse_dotnet_resource(&encoded_data).unwrap();
+        let (owned, borrowed) = parse_resources(&encoded_data, use_ref);
 
-        assert_eq!(parsed_resources.len(), 5);
+        assert_eq!(get_resource_count!(owned, borrowed), 5);
 
-        match &parsed_resources["positive"].data {
-            ResourceType::Decimal { lo, mid, hi, flags } => {
-                assert_eq!(*lo, 3261);
-                assert_eq!(*mid, 0);
-                assert_eq!(*hi, 0);
-                assert_eq!(*flags, 0x0003_0000);
-            }
-            _ => panic!("Expected Decimal resource"),
-        }
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "positive")
+                .as_decimal()
+                .unwrap(),
+            (3261, 0, 0, 0x0003_0000)
+        );
+        #[allow(clippy::cast_possible_wrap)]
+        let expected_neg_flags = 0x8002_0000_u32 as i32;
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "negative")
+                .as_decimal()
+                .unwrap(),
+            (12345, 0, 0, expected_neg_flags)
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "large")
+                .as_decimal()
+                .unwrap(),
+            (i32::MAX, i32::MAX, 100, 0)
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "zero")
+                .as_decimal()
+                .unwrap(),
+            (0, 0, 0, 0)
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "max_scale")
+                .as_decimal()
+                .unwrap(),
+            (1, 0, 0, 0x001C_0000)
+        );
+    });
 
-        match &parsed_resources["negative"].data {
-            ResourceType::Decimal { lo, mid, hi, flags } => {
-                assert_eq!(*lo, 12345);
-                assert_eq!(*mid, 0);
-                assert_eq!(*hi, 0);
-                #[allow(clippy::cast_possible_wrap)]
-                let expected_flags = 0x8002_0000_u32 as i32;
-                assert_eq!(*flags, expected_flags);
-            }
-            _ => panic!("Expected Decimal resource"),
-        }
-
-        match &parsed_resources["large"].data {
-            ResourceType::Decimal { lo, mid, hi, flags } => {
-                assert_eq!(*lo, i32::MAX);
-                assert_eq!(*mid, i32::MAX);
-                assert_eq!(*hi, 100);
-                assert_eq!(*flags, 0);
-            }
-            _ => panic!("Expected Decimal resource"),
-        }
-
-        match &parsed_resources["zero"].data {
-            ResourceType::Decimal { lo, mid, hi, flags } => {
-                assert_eq!(*lo, 0);
-                assert_eq!(*mid, 0);
-                assert_eq!(*hi, 0);
-                assert_eq!(*flags, 0);
-            }
-            _ => panic!("Expected Decimal resource"),
-        }
-
-        match &parsed_resources["max_scale"].data {
-            ResourceType::Decimal { lo, mid, hi, flags } => {
-                assert_eq!(*lo, 1);
-                assert_eq!(*mid, 0);
-                assert_eq!(*hi, 0);
-                assert_eq!(*flags, 0x001C_0000); // Scale 28
-            }
-            _ => panic!("Expected Decimal resource"),
-        }
-    }
-
-    #[test]
-    fn test_datetime_roundtrip() {
-        // Test DateTime resource encoding/decoding roundtrip
+    test_both_variants!(test_datetime_roundtrip, |use_ref: bool| {
         let mut encoder = DotNetResourceEncoder::new();
 
-        // Test case 1: Specific date with UTC kind
-        // Ticks for 2024-01-01 00:00:00 UTC
         let ticks_2024: i64 = 638_396_736_000_000_000;
-        let utc_kind: i64 = 1 << 62; // UTC = 1
+        let utc_kind: i64 = 1 << 62;
+        let local_kind: i64 = 2 << 62;
+        let large_ticks: i64 = 3_155_378_975_999_999_999;
+
         encoder
             .add_datetime("utc_date", ticks_2024 | utc_kind)
             .unwrap();
-
-        // Test case 2: Date with Local kind
-        let local_kind: i64 = 2 << 62; // Local = 2
         encoder
             .add_datetime("local_date", ticks_2024 | local_kind)
             .unwrap();
-
-        // Test case 3: Date with Unspecified kind
         encoder
             .add_datetime("unspecified_date", ticks_2024)
             .unwrap();
-
-        // Test case 4: Minimum DateTime (01/01/0001)
         encoder.add_datetime("min_date", 0).unwrap();
-
-        // Test case 5: Large ticks value
-        let large_ticks: i64 = 3_155_378_975_999_999_999; // Near max valid ticks
         encoder.add_datetime("large_date", large_ticks).unwrap();
 
         let encoded_data = encoder.encode_dotnet_format().unwrap();
-        let parsed_resources = parse_dotnet_resource(&encoded_data).unwrap();
+        let (owned, borrowed) = parse_resources(&encoded_data, use_ref);
 
-        assert_eq!(parsed_resources.len(), 5);
+        assert_eq!(get_resource_count!(owned, borrowed), 5);
 
-        match &parsed_resources["utc_date"].data {
-            ResourceType::DateTime(binary) => {
-                assert_eq!(*binary, ticks_2024 | utc_kind);
-                // Verify we can extract components
-                let extracted_ticks = *binary & 0x3FFF_FFFF_FFFF_FFFF;
-                let extracted_kind = (*binary >> 62) & 0x3;
-                assert_eq!(extracted_ticks, ticks_2024);
-                assert_eq!(extracted_kind, 1); // UTC
-            }
-            _ => panic!("Expected DateTime resource"),
-        }
+        let utc_binary = get_resource_data!(owned, borrowed, "utc_date")
+            .as_datetime()
+            .unwrap();
+        assert_eq!(utc_binary, ticks_2024 | utc_kind);
+        assert_eq!((utc_binary >> 62) & 0x3, 1); // UTC kind
 
-        match &parsed_resources["local_date"].data {
-            ResourceType::DateTime(binary) => {
-                let extracted_kind = (*binary >> 62) & 0x3;
-                assert_eq!(extracted_kind, 2); // Local
-            }
-            _ => panic!("Expected DateTime resource"),
-        }
+        let local_binary = get_resource_data!(owned, borrowed, "local_date")
+            .as_datetime()
+            .unwrap();
+        assert_eq!((local_binary >> 62) & 0x3, 2); // Local kind
 
-        match &parsed_resources["unspecified_date"].data {
-            ResourceType::DateTime(binary) => {
-                let extracted_kind = (*binary >> 62) & 0x3;
-                assert_eq!(extracted_kind, 0); // Unspecified
-            }
-            _ => panic!("Expected DateTime resource"),
-        }
+        let unspec_binary = get_resource_data!(owned, borrowed, "unspecified_date")
+            .as_datetime()
+            .unwrap();
+        assert_eq!((unspec_binary >> 62) & 0x3, 0); // Unspecified kind
 
-        match &parsed_resources["min_date"].data {
-            ResourceType::DateTime(binary) => {
-                assert_eq!(*binary, 0);
-            }
-            _ => panic!("Expected DateTime resource"),
-        }
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "min_date")
+                .as_datetime()
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "large_date")
+                .as_datetime()
+                .unwrap(),
+            large_ticks
+        );
+    });
 
-        match &parsed_resources["large_date"].data {
-            ResourceType::DateTime(binary) => {
-                assert_eq!(*binary, large_ticks);
-            }
-            _ => panic!("Expected DateTime resource"),
-        }
-    }
-
-    #[test]
-    fn test_timespan_roundtrip() {
-        // Test TimeSpan resource encoding/decoding roundtrip
+    test_both_variants!(test_timespan_roundtrip, |use_ref: bool| {
         let mut encoder = DotNetResourceEncoder::new();
 
-        // Constants for tick conversions
         const TICKS_PER_MILLISECOND: i64 = 10_000;
         const TICKS_PER_SECOND: i64 = 10_000_000;
         const TICKS_PER_MINUTE: i64 = 600_000_000;
         const TICKS_PER_HOUR: i64 = 36_000_000_000;
         const TICKS_PER_DAY: i64 = 864_000_000_000;
 
-        // Test case 1: 1 hour
         encoder.add_timespan("one_hour", TICKS_PER_HOUR).unwrap();
-
-        // Test case 2: 30 seconds
         encoder
             .add_timespan("thirty_seconds", 30 * TICKS_PER_SECOND)
             .unwrap();
-
-        // Test case 3: Negative 5 minutes
         encoder
             .add_timespan("negative_5min", -5 * TICKS_PER_MINUTE)
             .unwrap();
-
-        // Test case 4: Zero timespan
         encoder.add_timespan("zero", 0).unwrap();
 
-        // Test case 5: 1 day, 2 hours, 3 minutes, 4 seconds, 5 milliseconds
         let complex_span = TICKS_PER_DAY
             + 2 * TICKS_PER_HOUR
             + 3 * TICKS_PER_MINUTE
             + 4 * TICKS_PER_SECOND
             + 5 * TICKS_PER_MILLISECOND;
         encoder.add_timespan("complex", complex_span).unwrap();
-
-        // Test case 6: Maximum i64 value
         encoder.add_timespan("max", i64::MAX).unwrap();
-
-        // Test case 7: Minimum i64 value
         encoder.add_timespan("min", i64::MIN).unwrap();
 
         let encoded_data = encoder.encode_dotnet_format().unwrap();
-        let parsed_resources = parse_dotnet_resource(&encoded_data).unwrap();
+        let (owned, borrowed) = parse_resources(&encoded_data, use_ref);
 
-        assert_eq!(parsed_resources.len(), 7);
+        assert_eq!(get_resource_count!(owned, borrowed), 7);
 
-        match &parsed_resources["one_hour"].data {
-            ResourceType::TimeSpan(ticks) => {
-                assert_eq!(*ticks, TICKS_PER_HOUR);
-                // Verify conversion to hours
-                assert_eq!(*ticks / TICKS_PER_HOUR, 1);
-            }
-            _ => panic!("Expected TimeSpan resource"),
-        }
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "one_hour")
+                .as_timespan()
+                .unwrap(),
+            TICKS_PER_HOUR
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "thirty_seconds")
+                .as_timespan()
+                .unwrap(),
+            30 * TICKS_PER_SECOND
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "negative_5min")
+                .as_timespan()
+                .unwrap(),
+            -5 * TICKS_PER_MINUTE
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "zero")
+                .as_timespan()
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "complex")
+                .as_timespan()
+                .unwrap(),
+            complex_span
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "max")
+                .as_timespan()
+                .unwrap(),
+            i64::MAX
+        );
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "min")
+                .as_timespan()
+                .unwrap(),
+            i64::MIN
+        );
+    });
 
-        match &parsed_resources["thirty_seconds"].data {
-            ResourceType::TimeSpan(ticks) => {
-                assert_eq!(*ticks, 30 * TICKS_PER_SECOND);
-            }
-            _ => panic!("Expected TimeSpan resource"),
-        }
-
-        match &parsed_resources["negative_5min"].data {
-            ResourceType::TimeSpan(ticks) => {
-                assert_eq!(*ticks, -5 * TICKS_PER_MINUTE);
-                assert!(*ticks < 0); // Verify negative
-            }
-            _ => panic!("Expected TimeSpan resource"),
-        }
-
-        match &parsed_resources["zero"].data {
-            ResourceType::TimeSpan(ticks) => {
-                assert_eq!(*ticks, 0);
-            }
-            _ => panic!("Expected TimeSpan resource"),
-        }
-
-        match &parsed_resources["complex"].data {
-            ResourceType::TimeSpan(ticks) => {
-                assert_eq!(*ticks, complex_span);
-            }
-            _ => panic!("Expected TimeSpan resource"),
-        }
-
-        match &parsed_resources["max"].data {
-            ResourceType::TimeSpan(ticks) => {
-                assert_eq!(*ticks, i64::MAX);
-            }
-            _ => panic!("Expected TimeSpan resource"),
-        }
-
-        match &parsed_resources["min"].data {
-            ResourceType::TimeSpan(ticks) => {
-                assert_eq!(*ticks, i64::MIN);
-            }
-            _ => panic!("Expected TimeSpan resource"),
-        }
-    }
-
-    #[test]
-    fn test_mixed_large_resource_set_roundtrip() {
+    test_both_variants!(test_mixed_large_resource_set_roundtrip, |use_ref: bool| {
         let mut encoder = DotNetResourceEncoder::new();
 
-        // Create a large mixed resource set (100 resources of various types)
         for i in 0..100 {
             match i % 13 {
                 0 => encoder
@@ -1252,188 +1494,34 @@ mod tests {
         }
 
         let encoded_data = encoder.encode_dotnet_format().unwrap();
-        let parsed_resources = parse_dotnet_resource(&encoded_data).unwrap();
+        let (owned, borrowed) = parse_resources(&encoded_data, use_ref);
 
-        assert_eq!(parsed_resources.len(), 100);
+        assert_eq!(get_resource_count!(owned, borrowed), 100);
 
-        // Verify a few key resources to ensure integrity
-        match &parsed_resources["str_0"].data {
-            ResourceType::String(s) => assert_eq!(s, "String value 0"),
-            _ => panic!("Expected string resource"),
-        }
+        assert_eq!(
+            get_resource_data!(owned, borrowed, "str_0")
+                .as_string()
+                .unwrap(),
+            "String value 0"
+        );
+        assert!(!get_resource_data!(owned, borrowed, "bool_1")
+            .as_bool()
+            .unwrap());
 
-        // i=1 creates bool_1, 1 % 2 != 0 so false
-        match &parsed_resources["bool_1"].data {
-            ResourceType::Boolean(b) => assert!(!(*b)),
-            _ => panic!("Expected boolean resource"),
-        }
-
-        match &parsed_resources["bytes_64"].data {
-            ResourceType::ByteArray(data) => {
-                assert_eq!(data.len(), 64 % 20 + 1); // 5 bytes
-                assert!(data.iter().all(|&b| b == 64));
-            }
-            _ => panic!("Expected byte array resource"),
-        }
-    }
-
-    #[test]
-    fn test_string_roundtrip_ref() {
-        let mut encoder = DotNetResourceEncoder::new();
-        encoder.add_string("TestString", "Hello, World!").unwrap();
-
-        let encoded_data = encoder.encode_dotnet_format().unwrap();
-        let parsed_resources = parse_dotnet_resource_ref(&encoded_data).unwrap();
-
-        assert_eq!(parsed_resources.len(), 1);
-        assert!(parsed_resources.contains_key("TestString"));
-
-        let resource = &parsed_resources["TestString"];
-        match &resource.data {
-            ResourceTypeRef::String(s) => assert_eq!(*s, "Hello, World!"),
-            _ => panic!("Expected string resource"),
-        }
-    }
-
-    #[test]
-    fn test_multiple_types_roundtrip_ref() {
-        let mut encoder = DotNetResourceEncoder::new();
-        encoder.add_string("StringRes", "Test").unwrap();
-        encoder.add_int32("IntRes", 42).unwrap();
-        encoder.add_boolean("BoolRes", true).unwrap();
-        encoder.add_byte_array("ByteRes", &[1, 2, 3, 4]).unwrap();
-
-        let encoded_data = encoder.encode_dotnet_format().unwrap();
-        let parsed_resources = parse_dotnet_resource_ref(&encoded_data).unwrap();
-
-        assert_eq!(parsed_resources.len(), 4);
-
-        // Check each resource type - all with borrowed data
-        match &parsed_resources["StringRes"].data {
-            ResourceTypeRef::String(s) => assert_eq!(*s, "Test"),
-            _ => panic!("Expected string resource"),
-        }
-
-        match &parsed_resources["IntRes"].data {
-            ResourceTypeRef::Int32(i) => assert_eq!(*i, 42),
-            _ => panic!("Expected int32 resource"),
-        }
-
-        match &parsed_resources["BoolRes"].data {
-            ResourceTypeRef::Boolean(b) => assert!(*b),
-            _ => panic!("Expected boolean resource"),
-        }
-
-        match &parsed_resources["ByteRes"].data {
-            ResourceTypeRef::ByteArray(data) => assert_eq!(*data, &[1, 2, 3, 4]),
-            _ => panic!("Expected byte array resource"),
-        }
-    }
-
-    #[test]
-    fn test_all_primitive_types_roundtrip_ref() {
-        let mut encoder = DotNetResourceEncoder::new();
-
-        // Add all supported primitive types
-        encoder.add_boolean("bool_true", true).unwrap();
-        encoder.add_boolean("bool_false", false).unwrap();
-        encoder.add_byte("byte_val", 255).unwrap();
-        encoder.add_sbyte("sbyte_val", -128).unwrap();
-        encoder.add_char("char_val", 'A').unwrap();
-        encoder.add_int16("int16_val", -32768).unwrap();
-        encoder.add_uint16("uint16_val", 65535).unwrap();
-        encoder.add_int32("int32_val", -2147483648).unwrap();
-        encoder.add_uint32("uint32_val", 4294967295).unwrap();
-        encoder
-            .add_int64("int64_val", -9223372036854775808i64)
+        let bytes_64 = get_resource_data!(owned, borrowed, "bytes_64")
+            .as_bytes()
             .unwrap();
-        encoder
-            .add_uint64("uint64_val", 18446744073709551615u64)
-            .unwrap();
-        encoder
-            .add_single("single_val", std::f32::consts::PI)
-            .unwrap();
-        encoder
-            .add_double("double_val", std::f64::consts::E)
-            .unwrap();
+        assert_eq!(bytes_64.len(), 64 % 20 + 1);
+        assert!(bytes_64.iter().all(|&b| b == 64));
+    });
 
-        let encoded_data = encoder.encode_dotnet_format().unwrap();
-        let parsed_resources = parse_dotnet_resource_ref(&encoded_data).unwrap();
-
-        assert_eq!(parsed_resources.len(), 13);
-
-        // Verify all types
-        match &parsed_resources["bool_true"].data {
-            ResourceTypeRef::Boolean(b) => assert!(*b),
-            _ => panic!("Expected boolean resource"),
-        }
-
-        match &parsed_resources["bool_false"].data {
-            ResourceTypeRef::Boolean(b) => assert!(!(*b)),
-            _ => panic!("Expected boolean resource"),
-        }
-
-        match &parsed_resources["byte_val"].data {
-            ResourceTypeRef::Byte(b) => assert_eq!(*b, 255),
-            _ => panic!("Expected byte resource"),
-        }
-
-        match &parsed_resources["sbyte_val"].data {
-            ResourceTypeRef::SByte(b) => assert_eq!(*b, -128),
-            _ => panic!("Expected sbyte resource"),
-        }
-
-        match &parsed_resources["char_val"].data {
-            ResourceTypeRef::Char(c) => assert_eq!(*c, 'A'),
-            _ => panic!("Expected char resource"),
-        }
-
-        match &parsed_resources["int16_val"].data {
-            ResourceTypeRef::Int16(i) => assert_eq!(*i, -32768),
-            _ => panic!("Expected int16 resource"),
-        }
-
-        match &parsed_resources["uint16_val"].data {
-            ResourceTypeRef::UInt16(i) => assert_eq!(*i, 65535),
-            _ => panic!("Expected uint16 resource"),
-        }
-
-        match &parsed_resources["int32_val"].data {
-            ResourceTypeRef::Int32(i) => assert_eq!(*i, -2147483648),
-            _ => panic!("Expected int32 resource"),
-        }
-
-        match &parsed_resources["uint32_val"].data {
-            ResourceTypeRef::UInt32(i) => assert_eq!(*i, 4294967295),
-            _ => panic!("Expected uint32 resource"),
-        }
-
-        match &parsed_resources["int64_val"].data {
-            ResourceTypeRef::Int64(i) => assert_eq!(*i, -9223372036854775808i64),
-            _ => panic!("Expected int64 resource"),
-        }
-
-        match &parsed_resources["uint64_val"].data {
-            ResourceTypeRef::UInt64(i) => assert_eq!(*i, 18446744073709551615u64),
-            _ => panic!("Expected uint64 resource"),
-        }
-
-        match &parsed_resources["single_val"].data {
-            ResourceTypeRef::Single(f) => assert!((f - std::f32::consts::PI).abs() < 1e-5),
-            _ => panic!("Expected single resource"),
-        }
-
-        match &parsed_resources["double_val"].data {
-            ResourceTypeRef::Double(f) => assert!((f - std::f64::consts::E).abs() < 1e-14),
-            _ => panic!("Expected double resource"),
-        }
-    }
+    // ==================================================================================
+    // Zero-Copy Specific Tests - These only apply to the ref variant
+    // ==================================================================================
 
     #[test]
     fn test_large_byte_array_zero_copy() {
         let mut encoder = DotNetResourceEncoder::new();
-
-        // Create a large byte array (10 MB)
         let large_data = vec![0xAB; 10 * 1024 * 1024];
         encoder
             .add_byte_array("LargeResource", &large_data)
@@ -1446,11 +1534,9 @@ mod tests {
 
         match &parsed_resources["LargeResource"].data {
             ResourceTypeRef::ByteArray(bytes) => {
-                // Verify size
                 assert_eq!(bytes.len(), 10 * 1024 * 1024);
 
-                // Verify data is borrowed (not copied) by checking pointer location
-                // The bytes should point into the encoded_data buffer
+                // Verify zero-copy: bytes should point into encoded_data buffer
                 let encoded_ptr = encoded_data.as_ptr() as usize;
                 let bytes_ptr = bytes.as_ptr() as usize;
                 assert!(
@@ -1458,7 +1544,6 @@ mod tests {
                     "Bytes should be borrowed from encoded_data buffer (zero-copy)"
                 );
 
-                // Verify first and last bytes
                 assert_eq!(bytes[0], 0xAB);
                 assert_eq!(bytes[bytes.len() - 1], 0xAB);
             }
@@ -1481,7 +1566,7 @@ mod tests {
 
         match &parsed_resources["TestString"].data {
             ResourceTypeRef::String(s) => {
-                // Verify the string is borrowed from encoded_data
+                // Verify zero-copy: string should point into encoded_data buffer
                 let encoded_ptr = encoded_data.as_ptr() as usize;
                 let str_ptr = s.as_ptr() as usize;
                 assert!(
@@ -1497,7 +1582,6 @@ mod tests {
 
     #[test]
     fn test_owned_vs_ref_equivalence() {
-        // Verify that owned and borrowed variants produce equivalent results
         let mut encoder = DotNetResourceEncoder::new();
         encoder.add_string("str", "Hello").unwrap();
         encoder.add_int32("int", 42).unwrap();
@@ -1505,13 +1589,9 @@ mod tests {
 
         let encoded_data = encoder.encode_dotnet_format().unwrap();
 
-        // Parse with owned variant
         let owned = parse_dotnet_resource(&encoded_data).unwrap();
-
-        // Parse with ref variant
         let borrowed = parse_dotnet_resource_ref(&encoded_data).unwrap();
 
-        // Both should have same number of resources
         assert_eq!(owned.len(), borrowed.len());
 
         // String comparison
@@ -1536,52 +1616,6 @@ mod tests {
                 assert_eq!(b1.as_slice(), *b2);
             }
             _ => panic!("Type mismatch"),
-        }
-    }
-
-    #[test]
-    fn test_mixed_large_resource_set_ref() {
-        let mut encoder = DotNetResourceEncoder::new();
-
-        // Create a mixed resource set
-        for i in 0..50 {
-            match i % 5 {
-                0 => encoder
-                    .add_string(&format!("str_{i}"), &format!("String value {i}"))
-                    .unwrap(),
-                1 => encoder
-                    .add_boolean(&format!("bool_{i}"), i % 2 == 0)
-                    .unwrap(),
-                2 => encoder
-                    .add_int32(&format!("int_{i}"), i as i32 * 100)
-                    .unwrap(),
-                3 => encoder
-                    .add_byte_array(&format!("bytes_{i}"), &vec![i as u8; i % 20 + 1])
-                    .unwrap(),
-                4 => encoder
-                    .add_double(&format!("double_{i}"), i as f64 * std::f64::consts::PI)
-                    .unwrap(),
-                _ => unreachable!(),
-            }
-        }
-
-        let encoded_data = encoder.encode_dotnet_format().unwrap();
-        let parsed_resources = parse_dotnet_resource_ref(&encoded_data).unwrap();
-
-        assert_eq!(parsed_resources.len(), 50);
-
-        // Verify a few sample resources
-        match &parsed_resources["str_0"].data {
-            ResourceTypeRef::String(s) => assert_eq!(*s, "String value 0"),
-            _ => panic!("Expected string resource"),
-        }
-
-        match &parsed_resources["bytes_13"].data {
-            ResourceTypeRef::ByteArray(data) => {
-                assert_eq!(data.len(), 14); // 13 % 20 + 1 = 14
-                assert!(data.iter().all(|&b| b == 13));
-            }
-            _ => panic!("Expected byte array resource"),
         }
     }
 }

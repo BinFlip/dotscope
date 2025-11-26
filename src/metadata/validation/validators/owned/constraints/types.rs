@@ -145,7 +145,7 @@ impl OwnedTypeConstraintValidator {
         &self,
         context: &OwnedValidationContext,
     ) -> Result<()> {
-        for type_entry in context.object().types().all_types() {
+        for type_entry in context.all_types() {
             // Check for invalid generic parameter constraint combinations
             if type_entry.generic_params.count() > 0 {
                 self.validate_type_generic_constraints(&type_entry)?;
@@ -363,10 +363,8 @@ impl OwnedTypeConstraintValidator {
         &self,
         context: &OwnedValidationContext,
     ) -> Result<()> {
-        let types = context.object().types();
-
         // For each type, check if it properly satisfies constraints when used as a generic argument
-        for type_entry in types.all_types() {
+        for type_entry in context.all_types() {
             // Check base type constraint satisfaction
             if let Some(base_type) = type_entry.base() {
                 Self::validate_inheritance_constraints(&type_entry, &base_type);

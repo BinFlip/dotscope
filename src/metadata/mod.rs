@@ -54,7 +54,7 @@
 //!
 //! ## Basic Assembly Loading and Analysis
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -78,7 +78,7 @@
 //!
 //! ## Method Analysis and IL Code Inspection
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!

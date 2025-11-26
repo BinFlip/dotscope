@@ -201,9 +201,7 @@ impl OwnedTypeOwnershipValidator {
     /// Ensures that all members defined in a type are properly owned and that their
     /// signatures and accessibility are consistent with ownership rules.
     fn validate_member_ownership(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
-
-        for type_entry in types.all_types() {
+        for type_entry in context.all_types() {
             // Validate method ownership - basic checks using available APIs
             for (_, method_ref) in type_entry.methods.iter() {
                 if let Some(method) = method_ref.upgrade() {
@@ -294,9 +292,7 @@ impl OwnedTypeOwnershipValidator {
     /// * `Ok(())` - All generic parameter ownership relationships are valid
     /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Ownership violations found
     fn validate_generic_parameter_ownership(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
-
-        for type_entry in types.all_types() {
+        for type_entry in context.all_types() {
             // Validate generic parameter ownership
             if type_entry.generic_params.count() > 0 {
                 let mut param_names = HashSet::new();

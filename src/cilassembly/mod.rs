@@ -333,7 +333,10 @@ impl CilAssembly {
         let added_guid_count = u32::try_from(guid_changes.appended_items.len()).unwrap_or(0);
         let sequential_index = existing_guid_count + added_guid_count + 1;
 
-        guid_changes.appended_items.push(*guid);
+        // Store the byte offset for the heap builder to use
+        // byte_offset = (sequential_index - 1) * 16 = (existing_guid_count + added_guid_count) * 16
+        let byte_offset = guid_changes.next_index;
+        guid_changes.append_item_with_index(*guid, byte_offset);
         // GUIDs are fixed 16 bytes each
         guid_changes.next_index += 16;
 
@@ -522,16 +525,19 @@ impl CilAssembly {
     ///
     /// # Arguments
     ///
-    /// * `index` - The heap index to modify (1-based, following ECMA-335 conventions)
+    /// * `index` - The heap index to modify (1-based sequential index, following ECMA-335 conventions)
     /// * `new_guid` - The new 16-byte GUID to store at that index
     ///
     /// # Errors
     ///
     /// Currently always succeeds, but returns `Result` for future extensibility.
     pub fn guid_update(&mut self, index: u32, new_guid: &[u8; 16]) -> Result<()> {
+        // Convert 1-based sequential index to byte offset for HeapChanges lookup
+        // GUID heap uses byte offsets internally: byte_offset = (index - 1) * 16
+        let byte_offset = (index.saturating_sub(1)) * 16;
         self.changes
             .guid_heap_changes
-            .add_modification(index, *new_guid);
+            .add_modification(byte_offset, *new_guid);
         Ok(())
     }
 
@@ -539,14 +545,19 @@ impl CilAssembly {
     ///
     /// # Arguments
     ///
-    /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
+    /// * `index` - The heap index to remove (1-based sequential index, following ECMA-335 conventions)
     /// * `strategy` - How to handle existing references to this GUID
     ///
     /// # Errors
     ///
     /// Currently always succeeds, but returns `Result` for future extensibility.
     pub fn guid_remove(&mut self, index: u32, strategy: ReferenceHandlingStrategy) -> Result<()> {
-        self.changes.guid_heap_changes.add_removal(index, strategy);
+        // Convert 1-based sequential index to byte offset for HeapChanges lookup
+        // GUID heap uses byte offsets internally: byte_offset = (index - 1) * 16
+        let byte_offset = (index.saturating_sub(1)) * 16;
+        self.changes
+            .guid_heap_changes
+            .add_removal(byte_offset, strategy);
         Ok(())
     }
 

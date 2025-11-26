@@ -7,16 +7,18 @@
 
 use std::sync::Arc;
 
-use crate::metadata::{
-    dependencies::{
-        AssemblyDependency, AssemblyDependencyGraph, DependencyResolutionState, DependencySource,
-        DependencyType, VersionRequirement,
+use crate::{
+    metadata::{
+        dependencies::{
+            AssemblyDependency, AssemblyDependencyGraph, DependencyResolutionState,
+            DependencySource, DependencyType, VersionRequirement,
+        },
+        identity::{AssemblyIdentity, AssemblyVersion, Identity, ProcessorArchitecture},
+        loader::LoaderContext,
+        tables::{AssemblyRefRaw, File, FileRaw, ModuleRef, ModuleRefRaw},
     },
-    identity::{AssemblyIdentity, AssemblyVersion, Identity},
-    loader::LoaderContext,
-    tables::{AssemblyRefRaw, File, FileRaw, ModuleRef, ModuleRefRaw},
+    Error, Result,
 };
-use crate::Result;
 
 /// Perform dependency analysis on a loaded assembly context.
 ///
@@ -613,18 +615,26 @@ impl DependencyAnalyzer {
 
     /// Create an assembly identity for a module reference.
     ///
-    /// Since ModuleRef entries only contain module names, we need to create
-    /// placeholder assembly identities. In a full implementation, this would
-    /// involve resolving the module to its containing assembly.
+    /// Since `ModuleRef` entries only contain module names without version information,
+    /// this creates an assembly identity with [`AssemblyVersion::UNKNOWN`]. Use
+    /// [`AssemblyVersion::is_unknown()`] to detect these dependencies that lack
+    /// version information.
     ///
     /// # Arguments
+    ///
     /// * `module_ref` - The ModuleRef entry to create identity for
     ///
     /// # Returns
-    /// AssemblyIdentity representing the target assembly containing the module
+    ///
+    /// `AssemblyIdentity` with the module name and `UNKNOWN` version. The version
+    /// can be checked with [`AssemblyVersion::is_unknown()`] to identify dependencies
+    /// where version binding analysis may not be possible.
+    ///
+    /// # Note
+    ///
+    /// In a full implementation, this could be extended to resolve the module to its
+    /// containing assembly by loading and inspecting the referenced file.
     fn create_module_assembly_identity(module_ref: &ModuleRef) -> AssemblyIdentity {
-        // For now, create a placeholder identity based on the module name
-        // In a full implementation, this would resolve to the actual assembly
         let assembly_name = if let Some(name_without_ext) = module_ref.name.strip_suffix(".dll") {
             name_without_ext.to_string()
         } else if let Some(name_without_ext) = module_ref.name.strip_suffix(".exe") {
@@ -637,7 +647,7 @@ impl DependencyAnalyzer {
 
         AssemblyIdentity {
             name: assembly_name,
-            version: AssemblyVersion::new(0, 0, 0, 0), // Unknown version
+            version: AssemblyVersion::UNKNOWN,
             culture: None,
             strong_name: None,
             processor_architecture: None,
@@ -706,17 +716,21 @@ impl DependencyAnalyzer {
 
     /// Create an assembly identity for a file reference.
     ///
-    /// Since File entries may represent components of multi-file assemblies
-    /// or external files, we create appropriate identities based on context.
+    /// Since `File` entries in multi-file assemblies only contain file names without
+    /// version information, this creates an assembly identity with [`AssemblyVersion::UNKNOWN`].
+    /// Use [`AssemblyVersion::is_unknown()`] to detect these dependencies.
     ///
     /// # Arguments
+    ///
     /// * `file_ref` - The File entry to create identity for
     ///
     /// # Returns
-    /// AssemblyIdentity representing the target assembly containing the file
+    ///
+    /// `AssemblyIdentity` with the file name (sans extension) and `UNKNOWN` version.
+    /// For most File entries in multi-file assemblies, the actual version should match
+    /// the containing assembly's version, but this information is not available in the
+    /// File table itself.
     fn create_file_assembly_identity(file_ref: &File) -> AssemblyIdentity {
-        // For File entries, create identity based on the file name
-        // In most cases, files are part of the same assembly (multi-file assemblies)
         let assembly_name = if let Some(name_without_ext) = file_ref.name.strip_suffix(".dll") {
             name_without_ext.to_string()
         } else if let Some(name_without_ext) = file_ref.name.strip_suffix(".exe") {
@@ -724,16 +738,14 @@ impl DependencyAnalyzer {
         } else if let Some(name_without_ext) = file_ref.name.strip_suffix(".netmodule") {
             name_without_ext.to_string()
         } else if let Some(name_without_ext) = file_ref.name.strip_suffix(".resources") {
-            // For resource files, use the base name
             name_without_ext.to_string()
         } else {
-            // Use the file name as-is for other types
             file_ref.name.clone()
         };
 
         AssemblyIdentity {
             name: assembly_name,
-            version: AssemblyVersion::new(0, 0, 0, 0), // Unknown version
+            version: AssemblyVersion::UNKNOWN,
             culture: None,
             strong_name: None,
             processor_architecture: None,
@@ -747,44 +759,53 @@ impl DependencyAnalyzer {
     /// needed for dependency relationships.
     ///
     /// # Arguments
+    ///
     /// * `context` - Loader context with loaded assembly metadata
     ///
     /// # Returns
-    /// AssemblyIdentity representing the current assembly being analyzed
+    ///
+    /// * `Ok(AssemblyIdentity)` - The identity of the assembly being analyzed
+    /// * `Err(_)` - Assembly metadata not yet loaded in the context
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the assembly metadata has not been loaded into the context.
+    /// This ensures that dependency analysis only proceeds when valid assembly information
+    /// is available, preventing the creation of dependencies with incorrect source identities.
     fn extract_current_assembly_identity(context: &LoaderContext) -> Result<AssemblyIdentity> {
-        // Try to get the assembly from the context
-        if let Some(assembly_lock) = context.assembly.get() {
-            // Convert public key data to Identity if present
-            let strong_name = if let Some(ref public_key_data) = assembly_lock.public_key {
-                Some(Identity::from(public_key_data, true)?)
-            } else {
-                None
-            };
+        let assembly_lock = context.assembly.get().ok_or_else(|| {
+            Error::Error(
+                "Cannot extract assembly identity: assembly metadata not yet loaded. \
+                 Dependency analysis requires the Assembly table to be loaded first."
+                    .to_string(),
+            )
+        })?;
 
-            // Extract identity from the loaded assembly metadata
-            #[allow(clippy::cast_possible_truncation)]
-            Ok(AssemblyIdentity {
-                name: assembly_lock.name.clone(),
-                version: AssemblyVersion::new(
-                    assembly_lock.major_version as u16,
-                    assembly_lock.minor_version as u16,
-                    assembly_lock.build_number as u16,
-                    assembly_lock.revision_number as u16,
-                ),
-                culture: assembly_lock.culture.clone(),
-                strong_name,
-                processor_architecture: None, // TODO: Extract from processor info if available
-            })
+        // Convert public key data to Identity if present
+        let strong_name = if let Some(ref public_key_data) = assembly_lock.public_key {
+            Some(Identity::from(public_key_data, true)?)
         } else {
-            // Fallback to placeholder if assembly is not yet loaded
-            Ok(AssemblyIdentity {
-                name: "UnknownAssembly".to_string(),
-                version: AssemblyVersion::new(0, 0, 0, 0),
-                culture: None,
-                strong_name: None,
-                processor_architecture: None,
-            })
-        }
+            None
+        };
+
+        // Extract identity from the loaded assembly metadata
+        #[allow(clippy::cast_possible_truncation)]
+        Ok(AssemblyIdentity {
+            name: assembly_lock.name.clone(),
+            version: AssemblyVersion::new(
+                assembly_lock.major_version as u16,
+                assembly_lock.minor_version as u16,
+                assembly_lock.build_number as u16,
+                assembly_lock.revision_number as u16,
+            ),
+            culture: assembly_lock.culture.clone(),
+            strong_name,
+            // Note: This table is rarely present in modern .NET assemblies which use AnyCPU
+            processor_architecture: context
+                .assembly_processor
+                .get()
+                .and_then(|proc| ProcessorArchitecture::try_from(proc.processor).ok()),
+        })
     }
 }
 
@@ -861,6 +882,12 @@ mod tests {
     use super::*;
     use crate::test::helpers::dependencies::{create_test_file, create_test_module_ref};
 
+    /// Helper function to create a test analyzer with default settings
+    fn create_test_analyzer() -> DependencyAnalyzer {
+        let graph = Arc::new(AssemblyDependencyGraph::new());
+        DependencyAnalyzer::new(graph)
+    }
+
     #[test]
     fn test_dependency_analyzer_creation() {
         let graph = Arc::new(AssemblyDependencyGraph::new());
@@ -936,7 +963,8 @@ mod tests {
         let dll_module = create_test_module_ref("TestLibrary.dll");
         let identity = DependencyAnalyzer::create_module_assembly_identity(&dll_module);
         assert_eq!(identity.name, "TestLibrary");
-        assert_eq!(identity.version, AssemblyVersion::new(0, 0, 0, 0));
+        assert_eq!(identity.version, AssemblyVersion::UNKNOWN);
+        assert!(identity.version.is_unknown());
 
         // Test .exe module
         let exe_module = create_test_module_ref("Application.exe");
@@ -1020,7 +1048,8 @@ mod tests {
         let dll_file = create_test_file("TestLibrary.dll");
         let identity = DependencyAnalyzer::create_file_assembly_identity(&dll_file);
         assert_eq!(identity.name, "TestLibrary");
-        assert_eq!(identity.version, AssemblyVersion::new(0, 0, 0, 0));
+        assert_eq!(identity.version, AssemblyVersion::UNKNOWN);
+        assert!(identity.version.is_unknown());
 
         // Test .exe file
         let exe_file = create_test_file("Application.exe");

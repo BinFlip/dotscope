@@ -141,7 +141,7 @@ use std::sync::Arc;
 
 use crate::{
     metadata::{
-        signatures::{SignatureMethodSpec, TypeSignature},
+        signatures::{SignatureMethod, SignatureMethodSpec, TypeSignature},
         tables::MethodSpec,
         token::Token,
         typesystem::{
@@ -470,6 +470,62 @@ impl TypeResolver {
         self.resolve_with_depth(signature, 0)
     }
 
+    /// Formats a type name with generic arity marker.
+    ///
+    /// If the name doesn't already contain a backtick (`), appends the generic arity
+    /// in the format `Name`N` where N is the number of type arguments.
+    ///
+    /// # Arguments
+    /// * `base_name` - The original type name
+    /// * `arg_count` - The number of generic type arguments
+    ///
+    /// # Returns
+    /// The name with generic arity marker, or the original name if already present.
+    fn format_generic_name(base_name: &str, arg_count: usize) -> String {
+        if base_name.contains('`') {
+            base_name.to_string()
+        } else {
+            format!("{}`{}", base_name, arg_count)
+        }
+    }
+
+    /// Formats a stable name for function pointer types based on signature characteristics.
+    ///
+    /// Generates a deterministic name based on the function signature's calling convention,
+    /// parameter count, and return type rather than relying on unstable pointer addresses.
+    /// This produces reproducible names across runs and platforms.
+    ///
+    /// # Arguments
+    /// * `signature` - The method signature to derive the name from
+    ///
+    /// # Returns
+    /// A deterministic string like `FnPtr_stdcall_2_void` representing the signature.
+    fn format_fnptr_name(signature: &SignatureMethod) -> String {
+        let calling_convention = if signature.stdcall {
+            "stdcall"
+        } else if signature.cdecl {
+            "cdecl"
+        } else if signature.thiscall {
+            "thiscall"
+        } else if signature.fastcall {
+            "fastcall"
+        } else {
+            "default"
+        };
+
+        let param_count = signature.params.len();
+        let return_info = format!("{:?}", signature.return_type.base).replace(' ', "");
+
+        // Truncate return_info to avoid extremely long names
+        let return_short = if return_info.len() > 16 {
+            &return_info[..16]
+        } else {
+            &return_info
+        };
+
+        format!("FnPtr_{calling_convention}_{param_count}_{return_short}")
+    }
+
     /// Internal recursive resolver with depth tracking and overflow protection.
     ///
     /// This method performs the actual resolution work while tracking recursion
@@ -693,7 +749,7 @@ impl TypeResolver {
                 Ok(byref_type)
             }
             TypeSignature::FnPtr(fn_ptr) => {
-                let name = format!("FunctionPointer_{:X}", std::ptr::from_ref(fn_ptr) as usize);
+                let name = Self::format_fnptr_name(fn_ptr);
 
                 let fnptr_type = self.registry.get_or_create_type(&CompleteTypeSpec {
                     token_init: self.token_init.take(),
@@ -735,14 +791,8 @@ impl TypeResolver {
 
                 let base_type = self.resolve_with_depth(base_sig, depth + 1)?;
 
-                // Build name like List<T1,T2>
                 let namespace = base_type.namespace.clone();
-                let mut name = base_type.name.clone();
-                if !name.contains('`') {
-                    // If the base type name doesn't include the arity marker,
-                    // add it (e.g., "List" -> "List`1")
-                    name = format!("{}`{}", name, type_args.len());
-                }
+                let name = Self::format_generic_name(&base_type.name, type_args.len());
 
                 // Use the base type's source instead of the current assembly source
                 // Generic instantiations should inherit the source from their base type
@@ -1096,7 +1146,8 @@ mod tests {
         let fn_ptr_sig = TypeSignature::FnPtr(Box::new(method_sig));
 
         let fn_ptr = resolver.resolve(&fn_ptr_sig).unwrap();
-        assert!(fn_ptr.name.starts_with("FunctionPointer_"));
+        // Name format changed from pointer-based to deterministic signature-based
+        assert!(fn_ptr.name.starts_with("FnPtr_"));
         assert_eq!(fn_ptr.namespace, "");
         assert!(matches!(*fn_ptr.flavor(), CilFlavor::FnPtr { .. }));
     }

@@ -784,7 +784,7 @@ impl TypeBuilder {
     /// # Errors
     /// Returns an error if the function pointer type cannot be created.
     pub fn function_pointer(mut self, signature: SignatureMethod) -> Result<Self> {
-        let name = format!("FunctionPointer_{:X}", &raw const signature as usize);
+        let name = Self::format_fnptr_name(&signature);
 
         let fn_ptr_type = self.registry.get_or_create_type(&CompleteTypeSpec {
             token_init: self.token_init.take(),
@@ -872,12 +872,7 @@ impl TypeBuilder {
         F: FnOnce(Arc<TypeRegistry>) -> Result<Vec<CilTypeRc>>,
     {
         if let Some(base_type) = self.current_type.take() {
-            // Extract or create a name with arity
-            let mut name = base_type.name.clone();
-            if !name.contains('`') {
-                name = format!("{name}`{arg_count}");
-            }
-
+            let name = Self::format_generic_name(&base_type.name, arg_count);
             let namespace = base_type.namespace.clone();
             let generic_type = self.registry.get_or_create_type(&CompleteTypeSpec {
                 token_init: self.token_init.take(),
@@ -931,6 +926,67 @@ impl TypeBuilder {
             self.current_type = Some(generic_type);
         }
         Ok(self)
+    }
+
+    /// Formats a type name with generic arity marker.
+    ///
+    /// If the name doesn't already contain a backtick (`), appends the generic arity
+    /// in the format `Name`N` where N is the number of type arguments.
+    ///
+    /// # Arguments
+    /// * `base_name` - The original type name
+    /// * `arg_count` - The number of generic type arguments
+    ///
+    /// # Returns
+    /// The name with generic arity marker, or the original name if already present.
+    ///
+    /// # Examples
+    /// - `"List"` with 1 arg becomes `"List`1"`
+    /// - `"Dictionary"` with 2 args becomes `"Dictionary`2"`
+    /// - `"List`1"` with 1 arg stays `"List`1"`
+    fn format_generic_name(base_name: &str, arg_count: usize) -> String {
+        if base_name.contains('`') {
+            base_name.to_string()
+        } else {
+            format!("{base_name}`{arg_count}")
+        }
+    }
+
+    /// Formats a stable name for function pointer types based on signature characteristics.
+    ///
+    /// Generates a deterministic name based on the function signature's calling convention,
+    /// parameter count, and return type rather than relying on unstable pointer addresses.
+    /// This produces reproducible names across runs and platforms.
+    ///
+    /// # Arguments
+    /// * `signature` - The method signature to derive the name from
+    ///
+    /// # Returns
+    /// A deterministic string like `FnPtr_stdcall_2_void` representing the signature.
+    fn format_fnptr_name(signature: &SignatureMethod) -> String {
+        let calling_convention = if signature.stdcall {
+            "stdcall"
+        } else if signature.cdecl {
+            "cdecl"
+        } else if signature.thiscall {
+            "thiscall"
+        } else if signature.fastcall {
+            "fastcall"
+        } else {
+            "default"
+        };
+
+        let param_count = signature.params.len();
+        let return_info = format!("{:?}", signature.return_type.base).replace(' ', "");
+
+        // Truncate return_info to avoid extremely long names
+        let return_short = if return_info.len() > 16 {
+            &return_info[..16]
+        } else {
+            &return_info
+        };
+
+        format!("FnPtr_{calling_convention}_{param_count}_{return_short}")
     }
 
     /// Finalizes the type construction and returns the built type.
@@ -1254,7 +1310,8 @@ mod tests {
             .build()
             .unwrap();
 
-        assert!(fn_ptr.name.starts_with("FunctionPointer_"));
+        // Name format changed from pointer-based to deterministic signature-based
+        assert!(fn_ptr.name.starts_with("FnPtr_"));
         if let CilFlavor::FnPtr { signature: sig } = fn_ptr.flavor() {
             assert!(!sig.has_this);
             assert_eq!(sig.params.len(), 0);

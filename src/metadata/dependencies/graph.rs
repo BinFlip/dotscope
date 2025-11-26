@@ -5,7 +5,10 @@
 //! for multi-assembly scenarios.
 
 use std::collections::{hash_map::Entry, HashMap, HashSet, VecDeque};
-use std::sync::{Arc, RwLock};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, RwLock,
+};
 
 use dashmap::DashMap;
 
@@ -63,38 +66,30 @@ enum Color {
 ///
 /// ## Basic Dependency Tracking
 ///
-/// ```rust,ignore
-/// use dotscope::metadata::dependencies::{AssemblyDependencyGraph, AssemblyDependency};
+/// ```rust
+/// use dotscope::metadata::dependencies::AssemblyDependencyGraph;
 ///
-/// let mut graph = AssemblyDependencyGraph::new();
+/// let graph = AssemblyDependencyGraph::new();
+/// assert!(graph.is_empty());
+/// assert_eq!(graph.assembly_count(), 0);
 ///
-/// // Add dependencies as they're discovered during metadata loading
-/// graph.add_dependency(dependency1)?;
-/// graph.add_dependency(dependency2)?;
-///
-/// // Check for circular dependencies
-/// if let Some(cycle) = graph.find_cycles()? {
-///     eprintln!("Circular dependency detected: {:?}", cycle);
-/// }
+/// // Check for circular dependencies (empty graph has no cycles)
+/// let cycles = graph.find_cycles()?;
+/// assert!(cycles.is_none());
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// ## Loading Order Generation  
 ///
-/// ```rust,ignore
-/// // Generate optimal loading order
+/// ```rust
+/// use dotscope::metadata::dependencies::AssemblyDependencyGraph;
+///
+/// // Generate optimal loading order (empty graph)
+/// let graph = AssemblyDependencyGraph::new();
 /// let load_order = graph.topological_order()?;
-/// for identity in load_order {
-///     println!("Load assembly: {}", identity.display_name());
-/// }
+/// assert!(load_order.is_empty());
+/// # Ok::<(), dotscope::Error>(())
 /// ```
-///
-/// # Performance Characteristics
-///
-/// - **Add Dependency**: O(1) average case with hash maps
-/// - **Cycle Detection**: O(V + E) using DFS-based algorithms  
-/// - **Topological Sort**: O(V + E) using SCC-based approach with Tarjan's algorithm
-/// - **Memory Usage**: O(V + E) where V = assemblies, E = dependencies
-/// - **Concurrency**: Lock-free for reads, minimal locking for writes
 ///
 /// # Thread Safety
 ///
@@ -110,7 +105,7 @@ pub struct AssemblyDependencyGraph {
     /// This is the primary data structure for dependency traversal.
     dependencies: Arc<DashMap<AssemblyIdentity, Vec<AssemblyDependency>>>,
 
-    /// Reverse dependency mapping: assembly -> [dependents]  
+    /// Reverse dependency mapping: assembly -> [dependents]
     ///
     /// Maps each assembly to the list of assemblies that depend on it.
     /// This enables efficient "reverse lookup" queries and validation.
@@ -129,6 +124,12 @@ pub struct AssemblyDependencyGraph {
     ///
     /// `None` = not yet computed, `Some(vec)` = computed (empty vec means no cycles)
     cached_cycles: Arc<RwLock<Option<Vec<AssemblyIdentity>>>>,
+
+    /// Cached count of unique assemblies in the graph
+    ///
+    /// Tracks the total number of unique assemblies (both sources and targets).
+    /// Updated atomically when assemblies are added or removed.
+    assembly_count: Arc<AtomicUsize>,
 }
 
 impl AssemblyDependencyGraph {
@@ -143,11 +144,12 @@ impl AssemblyDependencyGraph {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use dotscope::metadata::dependencies::AssemblyDependencyGraph;
     ///
     /// let graph = AssemblyDependencyGraph::new();
     /// assert_eq!(graph.assembly_count(), 0);
+    /// assert!(graph.is_empty());
     /// ```
     #[must_use]
     pub fn new() -> Self {
@@ -156,6 +158,7 @@ impl AssemblyDependencyGraph {
             dependents: Arc::new(DashMap::new()),
             cached_topology: Arc::new(RwLock::new(None)),
             cached_cycles: Arc::new(RwLock::new(None)),
+            assembly_count: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -172,14 +175,18 @@ impl AssemblyDependencyGraph {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::dependencies::{AssemblyDependencyGraph, AssemblyIdentity};
+    /// ```rust
+    /// use dotscope::metadata::dependencies::AssemblyDependencyGraph;
+    /// use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
     ///
     /// let graph = AssemblyDependencyGraph::new();
-    /// let identity = AssemblyIdentity::parse("MyApp, Version=1.0.0.0")?;
+    /// let identity = AssemblyIdentity::new(
+    ///     "MyApp".to_string(),
+    ///     AssemblyVersion::new(1, 0, 0, 0),
+    ///     None, None, None,
+    /// );
     /// let deps = graph.get_dependencies(&identity);
-    /// println!("MyApp depends on {} assemblies", deps.len());
-    /// # Ok::<(), String>(())
+    /// assert!(deps.is_empty()); // No dependencies in empty graph
     /// ```
     #[must_use]
     pub fn get_dependencies(&self, assembly: &AssemblyIdentity) -> Vec<AssemblyDependency> {
@@ -202,9 +209,18 @@ impl AssemblyDependencyGraph {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// let dependents = graph.get_dependents(&mscorlib_identity);
-    /// println!("{} assemblies depend on mscorlib", dependents.len());
+    /// ```rust
+    /// use dotscope::metadata::dependencies::AssemblyDependencyGraph;
+    /// use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
+    ///
+    /// let graph = AssemblyDependencyGraph::new();
+    /// let mscorlib = AssemblyIdentity::new(
+    ///     "mscorlib".to_string(),
+    ///     AssemblyVersion::new(4, 0, 0, 0),
+    ///     None, None, None,
+    /// );
+    /// let dependents = graph.get_dependents(&mscorlib);
+    /// assert!(dependents.is_empty()); // No dependents in empty graph
     /// ```
     #[must_use]
     pub fn get_dependents(&self, assembly: &AssemblyIdentity) -> Vec<AssemblyIdentity> {
@@ -221,21 +237,21 @@ impl AssemblyDependencyGraph {
     ///
     /// # Returns
     /// Total number of unique assemblies tracked in the graph
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::dependencies::AssemblyDependencyGraph;
+    ///
+    /// let graph = AssemblyDependencyGraph::new();
+    /// assert_eq!(graph.assembly_count(), 0);
+    ///
+    /// // After adding dependencies, count is updated automatically
+    /// // (see add_dependency_with_source for examples)
+    /// ```
     #[must_use]
     pub fn assembly_count(&self) -> usize {
-        let mut assemblies = HashSet::new();
-
-        // Add all source assemblies
-        for entry in self.dependencies.iter() {
-            assemblies.insert(entry.key().clone());
-        }
-
-        // Add all target assemblies
-        for entry in self.dependents.iter() {
-            assemblies.insert(entry.key().clone());
-        }
-
-        assemblies.len()
+        self.assembly_count.load(Ordering::Relaxed)
     }
 
     /// Get the total number of dependency relationships in the graph.
@@ -601,6 +617,7 @@ impl AssemblyDependencyGraph {
     pub fn clear(&self) {
         self.dependencies.clear();
         self.dependents.clear();
+        self.assembly_count.store(0, Ordering::Relaxed);
         self.invalidate_caches();
     }
 
@@ -610,16 +627,70 @@ impl AssemblyDependencyGraph {
     /// is explicitly provided, avoiding the need for identity extraction.
     /// This is the preferred method for adding dependencies.
     ///
+    /// Duplicate dependencies (same source → same target) are automatically
+    /// prevented to maintain graph integrity and accurate counts.
+    ///
     /// # Arguments
     /// * `source_identity` - The identity of the source assembly
     /// * `dependency` - The dependency relationship to add
     ///
     /// # Returns
-    /// * `Ok(())` - Dependency added successfully
+    /// * `Ok(())` - Dependency added successfully (or already exists)
     /// * `Err(_)` - Error occurred during dependency addition
     ///
     /// # Errors
     /// Returns an error if the dependency cannot be added.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::sync::Arc;
+    /// use dotscope::metadata::dependencies::{AssemblyDependencyGraph, AssemblyDependency, DependencyType, VersionRequirement, DependencyResolutionState};
+    /// use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
+    /// use dotscope::metadata::tables::AssemblyRef;
+    ///
+    /// let graph = AssemblyDependencyGraph::new();
+    /// let source = AssemblyIdentity::new("MyApp".to_string(), AssemblyVersion::new(1, 0, 0, 0), None, None, None);
+    /// let target = AssemblyIdentity::new("MyLib".to_string(), AssemblyVersion::new(2, 0, 0, 0), None, None, None);
+    ///
+    /// let assembly_ref = Arc::new(AssemblyRef {
+    ///     rid: 1,
+    ///     token: dotscope::metadata::token::Token::new(0x23000001),
+    ///     offset: 0,
+    ///     name: "MyLib".to_string(),
+    ///     culture: None,
+    ///     major_version: 2,
+    ///     minor_version: 0,
+    ///     build_number: 0,
+    ///     revision_number: 0,
+    ///     flags: 0,
+    ///     identifier: None,
+    ///     hash: None,
+    ///     os_platform_id: std::sync::atomic::AtomicU32::new(0),
+    ///     os_major_version: std::sync::atomic::AtomicU32::new(0),
+    ///     os_minor_version: std::sync::atomic::AtomicU32::new(0),
+    ///     processor: std::sync::atomic::AtomicU32::new(0),
+    ///     custom_attributes: Arc::new(boxcar::Vec::new()),
+    /// });
+    ///
+    /// let dep = AssemblyDependency {
+    ///     source: dotscope::metadata::dependencies::DependencySource::AssemblyRef(assembly_ref),
+    ///     target_identity: target,
+    ///     dependency_type: DependencyType::Reference,
+    ///     version_requirement: VersionRequirement::Compatible,
+    ///     is_optional: false,
+    ///     resolution_state: DependencyResolutionState::Unresolved,
+    /// };
+    ///
+    /// // First add succeeds
+    /// graph.add_dependency_with_source(source.clone(), dep.clone())?;
+    /// assert_eq!(graph.dependency_count(), 1);
+    ///
+    /// // Second add is prevented (duplicate)
+    /// graph.add_dependency_with_source(source.clone(), dep.clone())?;
+    /// assert_eq!(graph.dependency_count(), 1); // Still 1, not 2
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     pub fn add_dependency_with_source(
         &self,
         source_identity: AssemblyIdentity,
@@ -627,17 +698,47 @@ impl AssemblyDependencyGraph {
     ) -> Result<()> {
         let target_identity = dependency.target_identity.clone();
 
-        // Add forward dependency (source depends on target)
+        let mut source_is_new = false;
+        let mut target_is_new = false;
+
         self.dependencies
             .entry(source_identity.clone())
-            .or_default()
-            .push(dependency);
+            .and_modify(|deps| {
+                if !deps.iter().any(|d| d.target_identity == target_identity) {
+                    deps.push(dependency.clone());
+                }
+            })
+            .or_insert_with(|| {
+                source_is_new = true;
+                vec![dependency]
+            });
 
-        // Add reverse dependency (target is depended on by source)
         self.dependents
-            .entry(target_identity)
-            .or_default()
-            .push(source_identity);
+            .entry(target_identity.clone())
+            .and_modify(|deps| {
+                if !deps.iter().any(|d| d == &source_identity) {
+                    deps.push(source_identity.clone());
+                }
+            })
+            .or_insert_with(|| {
+                target_is_new = true;
+                vec![source_identity.clone()]
+            });
+
+        // Update assembly count - handle case where source and target are the same (self-reference)
+        let new_assemblies = if source_is_new && target_is_new && source_identity == target_identity
+        {
+            // Self-reference: only one new assembly
+            1
+        } else {
+            // Different assemblies: count each new one
+            (source_is_new as usize) + (target_is_new as usize)
+        };
+
+        if new_assemblies > 0 {
+            self.assembly_count
+                .fetch_add(new_assemblies, Ordering::Relaxed);
+        }
 
         // Invalidate cached results
         self.invalidate_caches();
@@ -1148,5 +1249,90 @@ mod tests {
         // Verify cycle detection works with concurrent data
         let cycles = graph.find_cycles().unwrap();
         assert!(cycles.is_none());
+    }
+
+    #[test]
+    fn test_duplicate_dependency_prevention() {
+        let graph = AssemblyDependencyGraph::new();
+        let app = create_test_identity("MyApp", 1, 0);
+
+        let dependency1 = create_test_dependency("MyLib", DependencyType::Reference);
+        let dependency2 = create_test_dependency("MyLib", DependencyType::Reference);
+
+        // Add the same dependency twice
+        graph
+            .add_dependency_with_source(app.clone(), dependency1.clone())
+            .unwrap();
+        graph
+            .add_dependency_with_source(app.clone(), dependency2)
+            .unwrap();
+
+        // Should only have 1 dependency, not 2
+        assert_eq!(graph.dependency_count(), 1);
+
+        // Verify the dependency was actually added
+        let deps = graph.get_dependencies(&app);
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].target_identity.name, "MyLib");
+
+        // Verify reverse dependency only has 1 entry (check using target from dependency)
+        let target = &dependency1.target_identity;
+        let dependents = graph.get_dependents(target);
+        assert_eq!(dependents.len(), 1);
+        assert_eq!(dependents[0].name, "MyApp");
+    }
+
+    #[test]
+    fn test_assembly_count_with_self_reference() {
+        let graph = AssemblyDependencyGraph::new();
+
+        // Create a self-referencing dependency (MyApp depends on MyApp)
+        let app = create_test_identity("MyApp", 1, 0);
+
+        // Create dependency where target is the same as source
+        let mut self_dep = create_test_dependency("MyApp", DependencyType::Reference);
+        // Override the target to match exactly
+        self_dep.target_identity = app.clone();
+
+        graph
+            .add_dependency_with_source(app.clone(), self_dep)
+            .unwrap();
+
+        // Should count as only 1 assembly, not 2 (self-reference)
+        assert_eq!(graph.assembly_count(), 1);
+        assert_eq!(graph.dependency_count(), 1);
+    }
+
+    #[test]
+    fn test_assembly_count_increments_correctly() {
+        let graph = AssemblyDependencyGraph::new();
+        assert_eq!(graph.assembly_count(), 0);
+
+        let app = create_test_identity("MyApp", 1, 0);
+        let lib1_dep = create_test_dependency("Lib1", DependencyType::Reference);
+        let lib1_target = lib1_dep.target_identity.clone();
+
+        // Add first dependency: MyApp -> Lib1 (2 new assemblies)
+        graph
+            .add_dependency_with_source(app.clone(), lib1_dep)
+            .unwrap();
+        assert_eq!(graph.assembly_count(), 2);
+
+        // Add second dependency: MyApp -> Lib2 (1 new assembly, MyApp already exists)
+        let lib2_dep = create_test_dependency("Lib2", DependencyType::Reference);
+        graph
+            .add_dependency_with_source(app.clone(), lib2_dep)
+            .unwrap();
+        assert_eq!(graph.assembly_count(), 3);
+
+        // Add duplicate dependency: MyApp -> Lib1 again (0 new assemblies, duplicate)
+        let lib1_dep2 = create_test_dependency("Lib1", DependencyType::Reference);
+        // Override to use exact same target identity
+        let mut lib1_dep2_fixed = lib1_dep2.clone();
+        lib1_dep2_fixed.target_identity = lib1_target.clone();
+        graph
+            .add_dependency_with_source(app.clone(), lib1_dep2_fixed)
+            .unwrap();
+        assert_eq!(graph.assembly_count(), 3); // Still 3, duplicate prevented
     }
 }

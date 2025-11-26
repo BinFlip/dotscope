@@ -43,7 +43,7 @@
 //! This type is [`Send`] and [`Sync`] as it contains no mutable state and operates
 //! purely on the input data.
 
-use crate::{cilassembly::TableOperation, Result};
+use crate::{cilassembly::TableOperation, Error, Result};
 use std::collections::HashMap;
 
 /// Trait for conflict resolution strategies.
@@ -214,6 +214,14 @@ impl ConflictResolver for LastWriteWinsResolver {
     /// for each conflicted RID based on timestamp ordering. For each conflict, the
     /// operation with the latest timestamp is selected as the winner.
     ///
+    /// # Tie-Breaking Behavior
+    ///
+    /// When two operations have identical timestamps:
+    /// - For `MultipleOperationsOnRid`: The first operation encountered with the maximum
+    ///   timestamp wins (deterministic based on vector order).
+    /// - For `InsertDeleteConflict`: Insert operations win over Delete operations when
+    ///   timestamps are equal (using `>=` comparison). This favors data preservation.
+    ///
     /// # Arguments
     ///
     /// * `conflicts` - Array of [`Conflict`] instances to resolve
@@ -243,6 +251,23 @@ impl ConflictResolver for LastWriteWinsResolver {
                     insert_op,
                     delete_op,
                 } => {
+                    if !insert_op.is_insert() {
+                        return Err(Error::ConflictResolutionError {
+                            details: format!(
+                                "InsertDeleteConflict for RID {}: insert_op is not an Insert operation",
+                                rid
+                            ),
+                        });
+                    }
+                    if !delete_op.is_delete() {
+                        return Err(Error::ConflictResolutionError {
+                            details: format!(
+                                "InsertDeleteConflict for RID {}: delete_op is not a Delete operation",
+                                rid
+                            ),
+                        });
+                    }
+
                     let winning_op = if insert_op.timestamp >= delete_op.timestamp {
                         insert_op
                     } else {
@@ -307,6 +332,61 @@ mod tests {
     }
 
     #[test]
+    fn test_last_write_wins_resolver_single_operation_in_conflict() {
+        // Edge case: only one operation in the conflict vector
+        let operations = vec![{
+            let mut op = TableOperation::new(Operation::Delete(50));
+            op.timestamp = 5000;
+            op
+        }];
+
+        let conflict = Conflict::MultipleOperationsOnRid {
+            rid: 50,
+            operations,
+        };
+
+        let resolver = LastWriteWinsResolver;
+        let result = resolver.resolve_conflict(&[conflict]).unwrap();
+
+        assert!(result.operations.contains_key(&50));
+        if let Some(OperationResolution::UseOperation(op)) = result.operations.get(&50) {
+            assert!(matches!(op.operation, Operation::Delete(50)));
+            assert_eq!(op.timestamp, 5000);
+        } else {
+            panic!("Expected UseOperation resolution");
+        }
+    }
+
+    #[test]
+    fn test_last_write_wins_resolver_equal_timestamps() {
+        // Edge case: equal timestamps - should still resolve (first one with max_by_key)
+        let operations = vec![
+            {
+                let mut op = TableOperation::new(Operation::Insert(100, create_test_row()));
+                op.timestamp = 1000;
+                op
+            },
+            {
+                let mut op = TableOperation::new(Operation::Update(100, create_test_row()));
+                op.timestamp = 1000; // Same timestamp
+                op
+            },
+        ];
+
+        let conflict = Conflict::MultipleOperationsOnRid {
+            rid: 100,
+            operations,
+        };
+
+        let resolver = LastWriteWinsResolver;
+        let result = resolver.resolve_conflict(&[conflict]);
+        assert!(result.is_ok(), "Should handle equal timestamps");
+
+        let resolution = result.unwrap();
+        assert!(resolution.operations.contains_key(&100));
+    }
+
+    #[test]
     fn test_last_write_wins_resolver_insert_delete_conflict() {
         let insert_op = {
             let mut op = TableOperation::new(Operation::Insert(100, create_test_row()));
@@ -339,11 +419,274 @@ mod tests {
             if let Some(OperationResolution::UseOperation(op)) = resolution.operations.get(&100) {
                 assert!(
                     matches!(op.operation, Operation::Delete(100)),
-                    "Should use Delete operation"
+                    "Should use Delete operation (later timestamp)"
                 );
             } else {
                 panic!("Expected UseOperation resolution");
             }
         }
+    }
+
+    #[test]
+    fn test_last_write_wins_resolver_insert_wins_over_delete() {
+        // Insert has later timestamp, so insert should win
+        let insert_op = {
+            let mut op = TableOperation::new(Operation::Insert(100, create_test_row()));
+            op.timestamp = 3000; // Later timestamp
+            op
+        };
+
+        let delete_op = {
+            let mut op = TableOperation::new(Operation::Delete(100));
+            op.timestamp = 1000; // Earlier timestamp
+            op
+        };
+
+        let conflict = Conflict::InsertDeleteConflict {
+            rid: 100,
+            insert_op,
+            delete_op,
+        };
+
+        let resolver = LastWriteWinsResolver;
+        let result = resolver.resolve_conflict(&[conflict]).unwrap();
+
+        if let Some(OperationResolution::UseOperation(op)) = result.operations.get(&100) {
+            assert!(
+                matches!(op.operation, Operation::Insert(100, _)),
+                "Should use Insert operation (later timestamp)"
+            );
+        } else {
+            panic!("Expected UseOperation resolution");
+        }
+    }
+
+    #[test]
+    fn test_last_write_wins_resolver_insert_delete_equal_timestamps() {
+        // Equal timestamps - insert should win (>= comparison favors insert)
+        let insert_op = {
+            let mut op = TableOperation::new(Operation::Insert(100, create_test_row()));
+            op.timestamp = 1000;
+            op
+        };
+
+        let delete_op = {
+            let mut op = TableOperation::new(Operation::Delete(100));
+            op.timestamp = 1000; // Same timestamp
+            op
+        };
+
+        let conflict = Conflict::InsertDeleteConflict {
+            rid: 100,
+            insert_op,
+            delete_op,
+        };
+
+        let resolver = LastWriteWinsResolver;
+        let result = resolver.resolve_conflict(&[conflict]).unwrap();
+
+        if let Some(OperationResolution::UseOperation(op)) = result.operations.get(&100) {
+            // With >= comparison, insert wins on ties
+            assert!(
+                matches!(op.operation, Operation::Insert(100, _)),
+                "Insert should win on equal timestamps"
+            );
+        } else {
+            panic!("Expected UseOperation resolution");
+        }
+    }
+
+    #[test]
+    fn test_last_write_wins_resolver_empty_conflict_vector() {
+        let resolver = LastWriteWinsResolver;
+        let result = resolver.resolve_conflict(&[]);
+        assert!(result.is_ok());
+
+        let resolution = result.unwrap();
+        assert!(
+            resolution.operations.is_empty(),
+            "Empty conflicts should produce empty resolution"
+        );
+    }
+
+    #[test]
+    fn test_last_write_wins_resolver_multiple_conflicts() {
+        // Multiple conflicts for different RIDs
+        let conflict1 = Conflict::MultipleOperationsOnRid {
+            rid: 10,
+            operations: vec![{
+                let mut op = TableOperation::new(Operation::Delete(10));
+                op.timestamp = 1000;
+                op
+            }],
+        };
+
+        let conflict2 = Conflict::InsertDeleteConflict {
+            rid: 20,
+            insert_op: {
+                let mut op = TableOperation::new(Operation::Insert(20, create_test_row()));
+                op.timestamp = 2000;
+                op
+            },
+            delete_op: {
+                let mut op = TableOperation::new(Operation::Delete(20));
+                op.timestamp = 1000;
+                op
+            },
+        };
+
+        let resolver = LastWriteWinsResolver;
+        let result = resolver.resolve_conflict(&[conflict1, conflict2]).unwrap();
+
+        // Both RIDs should be resolved
+        assert!(result.operations.contains_key(&10));
+        assert!(result.operations.contains_key(&20));
+
+        // RID 10: Delete (only operation)
+        if let Some(OperationResolution::UseOperation(op)) = result.operations.get(&10) {
+            assert!(matches!(op.operation, Operation::Delete(10)));
+        }
+
+        // RID 20: Insert wins (later timestamp)
+        if let Some(OperationResolution::UseOperation(op)) = result.operations.get(&20) {
+            assert!(matches!(op.operation, Operation::Insert(20, _)));
+        }
+    }
+
+    #[test]
+    fn test_resolution_default() {
+        let resolution = Resolution::default();
+        assert!(resolution.operations.is_empty());
+    }
+
+    #[test]
+    fn test_operation_resolution_variants() {
+        let row_data = create_test_row();
+
+        // UseOperation variant
+        let use_op = OperationResolution::UseOperation(TableOperation::new(Operation::Delete(1)));
+        assert!(matches!(use_op, OperationResolution::UseOperation(_)));
+
+        // UseLatest variant
+        let use_latest = OperationResolution::UseLatest;
+        assert!(matches!(use_latest, OperationResolution::UseLatest));
+
+        // Merge variant
+        let merge = OperationResolution::Merge(vec![
+            TableOperation::new(Operation::Insert(1, row_data.clone())),
+            TableOperation::new(Operation::Update(1, row_data)),
+        ]);
+        if let OperationResolution::Merge(ops) = merge {
+            assert_eq!(ops.len(), 2);
+        }
+
+        // Reject variant
+        let reject = OperationResolution::Reject("Conflict cannot be resolved".to_string());
+        if let OperationResolution::Reject(msg) = reject {
+            assert_eq!(msg, "Conflict cannot be resolved");
+        }
+    }
+
+    #[test]
+    fn test_insert_delete_conflict_validation_invalid_insert_op() {
+        // insert_op is actually a Delete - should fail validation
+        let insert_op = {
+            let mut op = TableOperation::new(Operation::Delete(100));
+            op.timestamp = 1000;
+            op
+        };
+
+        let delete_op = {
+            let mut op = TableOperation::new(Operation::Delete(100));
+            op.timestamp = 2000;
+            op
+        };
+
+        let conflict = Conflict::InsertDeleteConflict {
+            rid: 100,
+            insert_op,
+            delete_op,
+        };
+
+        let resolver = LastWriteWinsResolver;
+        let result = resolver.resolve_conflict(&[conflict]);
+        assert!(result.is_err(), "Should fail when insert_op is not Insert");
+
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("insert_op is not an Insert operation"),
+            "Error message should indicate invalid insert_op"
+        );
+    }
+
+    #[test]
+    fn test_insert_delete_conflict_validation_invalid_delete_op() {
+        // delete_op is actually an Insert - should fail validation
+        let insert_op = {
+            let mut op = TableOperation::new(Operation::Insert(100, create_test_row()));
+            op.timestamp = 1000;
+            op
+        };
+
+        let delete_op = {
+            let mut op = TableOperation::new(Operation::Insert(100, create_test_row()));
+            op.timestamp = 2000;
+            op
+        };
+
+        let conflict = Conflict::InsertDeleteConflict {
+            rid: 100,
+            insert_op,
+            delete_op,
+        };
+
+        let resolver = LastWriteWinsResolver;
+        let result = resolver.resolve_conflict(&[conflict]);
+        assert!(result.is_err(), "Should fail when delete_op is not Delete");
+
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("delete_op is not a Delete operation"),
+            "Error message should indicate invalid delete_op"
+        );
+    }
+
+    #[test]
+    fn test_insert_delete_conflict_validation_update_operations() {
+        // Both operations are Update - should fail on insert_op validation first
+        let insert_op = {
+            let mut op = TableOperation::new(Operation::Update(100, create_test_row()));
+            op.timestamp = 1000;
+            op
+        };
+
+        let delete_op = {
+            let mut op = TableOperation::new(Operation::Update(100, create_test_row()));
+            op.timestamp = 2000;
+            op
+        };
+
+        let conflict = Conflict::InsertDeleteConflict {
+            rid: 100,
+            insert_op,
+            delete_op,
+        };
+
+        let resolver = LastWriteWinsResolver;
+        let result = resolver.resolve_conflict(&[conflict]);
+        assert!(
+            result.is_err(),
+            "Should fail when operations are not correct types"
+        );
+
+        // Should fail on insert_op validation first
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("insert_op is not an Insert operation"),
+            "Error should indicate insert_op validation failed first"
+        );
     }
 }

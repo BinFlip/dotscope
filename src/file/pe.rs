@@ -44,7 +44,20 @@ use std::io::Write;
 
 /// PE file format constants
 pub mod constants {
-    /// Size of the COR20 header in bytes (ECMA-335 specification)
+    /// Size of the COR20 (.NET CLR) header in bytes per ECMA-335 §II.25.3.3.
+    ///
+    /// The COR20 header (also known as CLI header or CLR runtime header) is a fixed-size
+    /// 72-byte structure that describes the .NET assembly's metadata location, entry point,
+    /// and runtime requirements. This size has remained constant across all .NET versions.
+    ///
+    /// Key fields within the 72-byte header:
+    /// - Bytes 0-3: Header size (always 72)
+    /// - Bytes 4-5: Major runtime version
+    /// - Bytes 6-7: Minor runtime version
+    /// - Bytes 8-15: Metadata RVA and size
+    /// - Bytes 16-19: Flags
+    /// - Bytes 20-23: Entry point token
+    /// - Remaining bytes: Resources, strong name, code manager, etc.
     pub const COR20_HEADER_SIZE: u32 = 72;
 
     /// Section characteristic: IMAGE_SCN_MEM_EXECUTE
@@ -372,6 +385,9 @@ impl Pe {
     /// # Errors
     ///
     /// Returns an error if the PE structure contains invalid data or if conversion fails.
+    /// Validation includes:
+    /// - Presence of optional header
+    /// - Image base is non-zero
     pub fn from_goblin_pe(goblin_pe: &goblin::pe::PE) -> Result<Self> {
         let dos_header = DosHeader::from_goblin(&goblin_pe.header.dos_header);
         let coff_header = CoffHeader::from_goblin(&goblin_pe.header.coff_header);
@@ -384,6 +400,10 @@ impl Pe {
 
         if optional_header.is_none() {
             return Err(malformed_error!("File does not have an OptionalHeader"));
+        }
+
+        if goblin_pe.image_base == 0 {
+            return Err(malformed_error!("PE has invalid zero image base"));
         }
 
         let sections = goblin_pe
@@ -902,7 +922,17 @@ impl OptionalHeader {
     }
 
     fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
-        let is_pe32_plus = self.standard_fields.magic != 0x10b;
+        let is_pe32_plus = match self.standard_fields.magic {
+            0x10b => false, // PE32
+            0x20b => true,  // PE32+
+            magic => {
+                return Err(malformed_error!(
+                    "Invalid PE optional header magic: 0x{:x} (expected 0x10b or 0x20b)",
+                    magic
+                ))
+            }
+        };
+
         self.standard_fields.write_to(writer)?;
         self.windows_fields.write_to(writer, is_pe32_plus)?;
         self.data_directories.write_to(writer)?;
@@ -1318,10 +1348,24 @@ impl SectionTable {
 
     /// Sets the section name.
     ///
-    /// # Arguments  
-    /// * `name` - New section name (will be truncated to 8 bytes if longer)
-    pub fn set_name(&mut self, name: String) {
+    /// PE section names are limited to 8 bytes per the PE specification.
+    /// This method validates the name length before setting it.
+    ///
+    /// # Arguments
+    /// * `name` - New section name (must be 8 bytes or less)
+    ///
+    /// # Errors
+    /// Returns an error if the name exceeds 8 bytes.
+    pub fn set_name(&mut self, name: String) -> Result<()> {
+        if name.len() > 8 {
+            return Err(malformed_error!(
+                "Section name '{}' exceeds 8-byte PE limit ({} bytes)",
+                name,
+                name.len()
+            ));
+        }
         self.name = name;
+        Ok(())
     }
 
     /// Writes a section header as a standalone 40-byte header.

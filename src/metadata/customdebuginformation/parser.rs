@@ -27,29 +27,35 @@
 //!
 //! # Supported Debug Information Formats
 //!
-//! ## Source Link Format
+//! ## Source Link Format (GUID: CC110556-A091-4D38-9FEC-25AB9A351A6A)
 //! ```text
-//! SourceLinkBlob ::= [compressed_length] utf8_json_document
+//! SourceLinkBlob ::= utf8_json_document
 //! ```
-//! Contains JSON mapping source files to repository URLs for debugging.
+//! Contains raw UTF-8 JSON mapping source files to repository URLs for debugging.
+//! No length prefix - the entire blob is the JSON document.
 //!
-//! ## Embedded Source Format  
+//! ## Embedded Source Format (GUID: 0E8A571B-6926-466E-B4AD-8AB04611F5FE)
 //! ```text
-//! EmbeddedSourceBlob ::= [compressed_length] utf8_source_content
+//! EmbeddedSourceBlob ::= int32_format content_bytes
 //! ```
-//! Contains complete source file content embedded in the debug information.
+//! Where `int32_format` is:
+//! - `0`: Content is raw uncompressed UTF-8
+//! - `> 0`: Content is deflate-compressed, value is decompressed size in bytes
 //!
-//! ## Compilation Metadata Format
-//! ```text
-//! CompilationMetadataBlob ::= [compressed_length] utf8_metadata_json
-//! ```
-//! Contains compiler and build environment metadata.
+//! **Note**: The filename is NOT in this blob. It comes from the parent Document row
+//! in the CustomDebugInformation table.
 //!
-//! ## Compilation Options Format
+//! ## Compilation Metadata Format (GUID: B5FEEC05-8CD0-4A83-96DA-466284BB4BD8)
 //! ```text
-//! CompilationOptionsBlob ::= [compressed_length] utf8_options_json
+//! CompilationMetadataBlob ::= utf8_metadata_text
 //! ```
-//! Contains compiler options and flags used during compilation.
+//! Contains raw UTF-8 text with compiler and build environment metadata.
+//!
+//! ## Compilation Options Format (GUID: B1C2ABE1-8BF0-497A-A9B1-02FA8571E544)
+//! ```text
+//! CompilationOptionsBlob ::= utf8_options_text
+//! ```
+//! Contains raw UTF-8 text with compiler options and flags.
 //!
 //! ## Unknown Formats
 //! For unrecognized GUIDs, the blob is returned as raw bytes for future extension.
@@ -58,27 +64,19 @@
 //!
 //! ## Basic Debug Information Parsing
 //!
-//! ```rust,ignore
+//! ```rust
 //! use dotscope::metadata::customdebuginformation::{parse_custom_debug_blob, CustomDebugKind, CustomDebugInfo};
 //!
-//! # fn get_debug_data() -> (dotscope::metadata::customdebuginformation::CustomDebugKind, &'static [u8]) {
-//! #     (CustomDebugKind::SourceLink, b"{\"documents\":{}}")
-//! # }
-//! let (kind, blob_data) = get_debug_data();
+//! let kind = CustomDebugKind::SourceLink;
+//! let blob_data = b"{\"documents\":{}}";
 //!
 //! let debug_info = parse_custom_debug_blob(blob_data, kind)?;
 //! match debug_info {
 //!     CustomDebugInfo::SourceLink { document } => {
 //!         println!("Source Link JSON: {}", document);
-//!         
-//!         // Parse JSON for source mapping analysis
-//!         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&document) {
-//!             if let Some(documents) = json.get("documents") {
-//!                 println!("Source documents: {}", documents);
-//!             }
-//!         }
+//!         assert!(document.contains("documents"));
 //!     }
-//!     CustomDebugInfo::EmbeddedSource { filename, content } => {
+//!     CustomDebugInfo::EmbeddedSource { filename, content, .. } => {
 //!         println!("Embedded source: {} ({} bytes)", filename, content.len());
 //!     }
 //!     CustomDebugInfo::Unknown { kind, data } => {
@@ -86,47 +84,43 @@
 //!     }
 //!     _ => println!("Other debug info type"),
 //! }
-//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## Advanced Parser Usage
 //!
-//! ```rust,ignore
-//! use dotscope::metadata::customdebuginformation::parser::CustomDebugParser;
-//! use dotscope::metadata::customdebuginformation::CustomDebugKind;
+//! ```rust
+//! use dotscope::metadata::customdebuginformation::{CustomDebugParser, CustomDebugKind};
 //!
-//! # fn get_blob_data() -> &'static [u8] { b"example debug data" }
-//! let blob_data = get_blob_data();
+//! let blob_data = b"compiler: csc 4.0";
 //! let kind = CustomDebugKind::CompilationMetadata;
 //!
 //! // Create parser with specific debug kind
 //! let mut parser = CustomDebugParser::new(blob_data, kind);
-//! let debug_info = parser.parse_debug_info();
+//! let debug_info = parser.parse_debug_info()?;
 //!
 //! // Process parsed information
 //! println!("Parsed debug info: {:?}", debug_info);
-//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## Working with Multiple Debug Entries
 //!
-//! ```rust,ignore
-//! use dotscope::metadata::customdebuginformation::{parse_custom_debug_blob, CustomDebugInfo};
-//! use dotscope::CilObject;
+//! ```rust
+//! use dotscope::metadata::customdebuginformation::{parse_custom_debug_blob, CustomDebugInfo, CustomDebugKind};
 //!
-//! let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
-//!
-//! # fn get_debug_entries() -> Vec<(dotscope::metadata::customdebuginformation::CustomDebugKind, Vec<u8>)> {
-//! #     vec![]
-//! # }
-//! let debug_entries = get_debug_entries();
+//! // Simulate multiple debug entries from an assembly
+//! let debug_entries: Vec<(CustomDebugKind, Vec<u8>)> = vec![
+//!     (CustomDebugKind::SourceLink, b"{\"documents\":{}}".to_vec()),
+//!     (CustomDebugKind::CompilationMetadata, b"compiler: csc".to_vec()),
+//! ];
 //!
 //! for (kind, blob_data) in debug_entries {
 //!     match parse_custom_debug_blob(&blob_data, kind)? {
 //!         CustomDebugInfo::SourceLink { document } => {
-//!             println!("Found Source Link configuration");
+//!             println!("Found Source Link configuration: {}", document.len());
 //!         }
-//!         CustomDebugInfo::EmbeddedSource { filename, content } => {
+//!         CustomDebugInfo::EmbeddedSource { filename, content, .. } => {
 //!             println!("Found embedded source: {}", filename);
 //!         }
 //!         CustomDebugInfo::CompilationMetadata { metadata } => {
@@ -175,8 +169,11 @@
 //! - **GUID Standards**: Correct GUID interpretation according to RFC 4122
 //! - **JSON Format**: Proper handling of JSON-based debug information formats
 
+use std::io::Read;
+
 use crate::{
     file::parser::Parser,
+    malformed_error,
     metadata::customdebuginformation::types::{CustomDebugInfo, CustomDebugKind},
     Result,
 };
@@ -226,59 +223,161 @@ impl<'a> CustomDebugParser<'a> {
     /// # Errors
     /// This method returns an error in the following cases:
     /// - **Truncated Data**: Insufficient data for expected format
-    /// - **Invalid UTF-8**: String data that cannot be decoded as UTF-8
+    /// - **Invalid UTF-8**: String data that cannot be decoded as UTF-8 (strict validation)
     /// - **Malformed Blob**: Invalid blob structure for the specified kind
-    pub fn parse_debug_info(&mut self) -> CustomDebugInfo {
+    /// - **Decompression Failure**: Deflate decompression failed for EmbeddedSource
+    pub fn parse_debug_info(&mut self) -> Result<CustomDebugInfo> {
         match self.kind {
             CustomDebugKind::SourceLink => {
-                let document = self.read_utf8_string();
-                CustomDebugInfo::SourceLink { document }
+                let document = self.read_utf8_string()?;
+                Ok(CustomDebugInfo::SourceLink { document })
             }
             CustomDebugKind::EmbeddedSource => {
-                // For embedded source, we need to handle the filename and content
-                // For now, treat the entire blob as content
-                let content = self.read_utf8_string();
-                CustomDebugInfo::EmbeddedSource {
-                    filename: String::new(), // TODO: Extract filename if available
-                    content,
-                }
+                // Parse according to Portable PDB specification:
+                // - int32 format: 0 = raw UTF-8, >0 = deflate compressed (value = decompressed size)
+                // - bytes content: source file content
+                self.parse_embedded_source()
             }
             CustomDebugKind::CompilationMetadata => {
-                let metadata = self.read_utf8_string();
-                CustomDebugInfo::CompilationMetadata { metadata }
+                let metadata = self.read_utf8_string()?;
+                Ok(CustomDebugInfo::CompilationMetadata { metadata })
             }
             CustomDebugKind::CompilationOptions => {
-                let options = self.read_utf8_string();
-                CustomDebugInfo::CompilationOptions { options }
+                let options = self.read_utf8_string()?;
+                Ok(CustomDebugInfo::CompilationOptions { options })
             }
             CustomDebugKind::Unknown(_) => {
                 // For unknown kinds, return the raw data
-                let remaining_data = &self.parser.data()[self.parser.pos()..];
-                let data = remaining_data.to_vec();
-                CustomDebugInfo::Unknown {
+                let remaining_data = self.read_remaining_bytes();
+                Ok(CustomDebugInfo::Unknown {
                     kind: self.kind,
-                    data,
-                }
+                    data: remaining_data,
+                })
             }
         }
     }
 
-    /// Read a UTF-8 string from the blob, optionally prefixed with compressed length.
+    /// Parse an EmbeddedSource blob according to the Portable PDB specification.
     ///
-    /// Many custom debug information formats store UTF-8 strings with an optional
-    /// compressed length prefix. This method handles both cases.
-    fn read_utf8_string(&mut self) -> String {
-        // ToDo: Try to read compressed length first
-        //       For many formats, the blob contains the raw UTF-8 string
-        //       Some formats may have a compressed length prefix
-        if self.parser.has_more_data() {
-            let remaining_data = &self.parser.data()[self.parser.pos()..];
-
-            // Try to decode as UTF-8
-            String::from_utf8_lossy(remaining_data).into_owned()
-        } else {
-            String::new()
+    /// # Format
+    /// - **int32 format**: Compression indicator (0 = raw, >0 = deflate with decompressed size)
+    /// - **bytes content**: UTF-8 source content (raw or deflate-compressed)
+    ///
+    /// # Note
+    /// The filename is NOT in the blob - it comes from the parent Document row.
+    fn parse_embedded_source(&mut self) -> Result<CustomDebugInfo> {
+        if self.parser.len() < 4 {
+            return Err(malformed_error!(
+                "EmbeddedSource blob too small: {} bytes (minimum 4 required)",
+                self.parser.len()
+            ));
         }
+
+        let format = self.parser.read_le::<i32>()?;
+
+        let remaining = self.read_remaining_bytes();
+
+        if format == 0 {
+            // Raw uncompressed UTF-8 content
+            let content = String::from_utf8(remaining).map_err(|e| {
+                malformed_error!("EmbeddedSource contains invalid UTF-8: {}", e.utf8_error())
+            })?;
+
+            Ok(CustomDebugInfo::EmbeddedSource {
+                filename: String::new(), // Set by caller from Document table
+                content,
+                was_compressed: false,
+            })
+        } else if format > 0 {
+            // Deflate-compressed content
+            // format value is the decompressed size
+            #[allow(clippy::cast_sign_loss)] // Safe: we checked format > 0
+            let decompressed_size = format as usize;
+
+            let content = self.decompress_deflate(&remaining, decompressed_size)?;
+
+            Ok(CustomDebugInfo::EmbeddedSource {
+                filename: String::new(), // Set by caller from Document table
+                content,
+                was_compressed: true,
+            })
+        } else {
+            Err(malformed_error!(
+                "EmbeddedSource has invalid format indicator: {} (expected >= 0)",
+                format
+            ))
+        }
+    }
+
+    /// Decompress deflate-compressed data.
+    ///
+    /// # Arguments
+    /// * `compressed` - The compressed byte data
+    /// * `expected_size` - The expected decompressed size (for validation)
+    ///
+    /// # Returns
+    /// The decompressed UTF-8 string
+    fn decompress_deflate(&self, compressed: &[u8], expected_size: usize) -> Result<String> {
+        let mut decoder = flate2::read::DeflateDecoder::new(compressed);
+        let mut decompressed = Vec::with_capacity(expected_size);
+
+        decoder
+            .read_to_end(&mut decompressed)
+            .map_err(|e| malformed_error!("Failed to decompress EmbeddedSource: {}", e))?;
+
+        if decompressed.len() != expected_size {
+            return Err(malformed_error!(
+                "EmbeddedSource decompressed size mismatch: expected {}, got {}",
+                expected_size,
+                decompressed.len()
+            ));
+        }
+
+        String::from_utf8(decompressed).map_err(|e| {
+            malformed_error!(
+                "EmbeddedSource decompressed content is not valid UTF-8: {}",
+                e.utf8_error()
+            )
+        })
+    }
+
+    /// Read remaining data as a UTF-8 string with strict validation.
+    ///
+    /// This method reads all remaining bytes and attempts to decode them as UTF-8.
+    /// Unlike lossy conversion, this returns an error if the data contains invalid UTF-8,
+    /// ensuring data integrity and allowing the caller to handle encoding issues explicitly.
+    ///
+    /// # Errors
+    /// Returns an error if the remaining data is not valid UTF-8.
+    fn read_utf8_string(&mut self) -> Result<String> {
+        let remaining = self.read_remaining_bytes();
+
+        if remaining.is_empty() {
+            return Ok(String::new());
+        }
+
+        String::from_utf8(remaining).map_err(|e| {
+            malformed_error!(
+                "Custom debug information contains invalid UTF-8 at byte {}: {}",
+                e.utf8_error().valid_up_to(),
+                e.utf8_error()
+            )
+        })
+    }
+
+    /// Read all remaining bytes from the parser.
+    ///
+    /// This is a safe helper that handles bounds checking and returns an owned copy
+    /// of the remaining data.
+    fn read_remaining_bytes(&mut self) -> Vec<u8> {
+        let pos = self.parser.pos();
+        let len = self.parser.len();
+
+        if pos >= len {
+            return Vec::new();
+        }
+
+        self.parser.data()[pos..len].to_vec()
     }
 }
 
@@ -300,12 +399,12 @@ impl<'a> CustomDebugParser<'a> {
 /// This function returns an error in the following cases:
 /// - **Invalid Format**: Malformed or truncated debug information blob
 /// - **Encoding Error**: String data that cannot be decoded as UTF-8
-/// - **Unknown Format**: Unsupported blob format for the specified kind
+/// - **Decompression Error**: EmbeddedSource deflate decompression failed
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::metadata::customdebuginformation::{parse_custom_debug_blob, CustomDebugKind};
+/// ```rust
+/// use dotscope::metadata::customdebuginformation::{parse_custom_debug_blob, CustomDebugKind, CustomDebugInfo};
 ///
 /// let kind = CustomDebugKind::SourceLink;
 /// let blob_data = b"{\"documents\":{}}"; // Source Link JSON
@@ -317,6 +416,7 @@ impl<'a> CustomDebugParser<'a> {
 ///     }
 ///     _ => println!("Unexpected debug info type"),
 /// }
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// # Thread Safety
@@ -331,7 +431,7 @@ pub fn parse_custom_debug_blob(data: &[u8], kind: CustomDebugKind) -> Result<Cus
     }
 
     let mut parser = CustomDebugParser::new(data, kind);
-    Ok(parser.parse_debug_info())
+    parser.parse_debug_info()
 }
 
 #[cfg(test)]
@@ -387,6 +487,99 @@ mod tests {
                 assert_eq!(parsed_data, b"raw data");
             }
             _ => panic!("Expected Unknown variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_embedded_source_uncompressed() {
+        let kind = CustomDebugKind::EmbeddedSource;
+        // Format: int32 (0 = uncompressed) + UTF-8 content
+        let mut data = Vec::new();
+        data.extend_from_slice(&0i32.to_le_bytes()); // format = 0 (uncompressed)
+        data.extend_from_slice(b"// Hello, world!\nclass Test {}");
+
+        let result = parse_custom_debug_blob(&data, kind).unwrap();
+
+        match result {
+            CustomDebugInfo::EmbeddedSource {
+                filename,
+                content,
+                was_compressed,
+            } => {
+                assert!(
+                    filename.is_empty(),
+                    "Filename should be empty (set by caller)"
+                );
+                assert_eq!(content, "// Hello, world!\nclass Test {}");
+                assert!(!was_compressed);
+            }
+            _ => panic!("Expected EmbeddedSource variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_embedded_source_too_small() {
+        let kind = CustomDebugKind::EmbeddedSource;
+        // Only 3 bytes - not enough for int32 format indicator
+        let data = [0x00, 0x00, 0x00];
+
+        let result = parse_custom_debug_blob(&data, kind);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("too small"));
+    }
+
+    #[test]
+    fn test_parse_embedded_source_negative_format() {
+        let kind = CustomDebugKind::EmbeddedSource;
+        // Negative format indicator is invalid
+        let mut data = Vec::new();
+        data.extend_from_slice(&(-1i32).to_le_bytes());
+        data.extend_from_slice(b"content");
+
+        let result = parse_custom_debug_blob(&data, kind);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("invalid format indicator"));
+    }
+
+    #[test]
+    fn test_parse_invalid_utf8_returns_error() {
+        let kind = CustomDebugKind::SourceLink;
+        // Invalid UTF-8 sequence
+        let data = [0xFF, 0xFE, 0x00, 0x01];
+
+        let result = parse_custom_debug_blob(&data, kind);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("invalid UTF-8"));
+    }
+
+    #[test]
+    fn test_parse_compilation_metadata() {
+        let kind = CustomDebugKind::CompilationMetadata;
+        let data = b"compiler: csc 4.0";
+        let result = parse_custom_debug_blob(data, kind).unwrap();
+
+        match result {
+            CustomDebugInfo::CompilationMetadata { metadata } => {
+                assert_eq!(metadata, "compiler: csc 4.0");
+            }
+            _ => panic!("Expected CompilationMetadata variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_compilation_options() {
+        let kind = CustomDebugKind::CompilationOptions;
+        let data = b"/optimize+ /debug:full";
+        let result = parse_custom_debug_blob(data, kind).unwrap();
+
+        match result {
+            CustomDebugInfo::CompilationOptions { options } => {
+                assert_eq!(options, "/optimize+ /debug:full");
+            }
+            _ => panic!("Expected CompilationOptions variant"),
         }
     }
 }

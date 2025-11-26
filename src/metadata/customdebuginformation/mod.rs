@@ -30,31 +30,31 @@
 //!
 //! ## Basic Custom Debug Information Parsing
 //!
-//! ```rust,ignore
-//! use dotscope::metadata::customdebuginformation::{parse_custom_debug_blob, CustomDebugInfo};
-//! use dotscope::CilObject;
+//! ```rust
+//! use dotscope::metadata::customdebuginformation::{parse_custom_debug_blob, CustomDebugInfo, CustomDebugKind};
 //!
-//! let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
+//! // Parse a Source Link blob
+//! let kind = CustomDebugKind::SourceLink;
+//! let blob_data = b"{\"documents\":{}}";
+//! let debug_info = parse_custom_debug_blob(blob_data, kind)?;
 //!
-//! # fn get_custom_debug_data() -> (uuid::Uuid, &'static [u8]) {
-//! #     (uuid::Uuid::new_v4(), &[0x01, 0x02, 0x03])
-//! # }
-//! let (guid, blob_data) = get_custom_debug_data();
-//!
-//! if let Some(blob_heap) = assembly.blob() {
-//!     let debug_info = parse_custom_debug_blob(blob_data, &guid, blob_heap)?;
-//!     
-//!     // Process different types of debug information
-//!     match debug_info {
-//!         CustomDebugInfo::SourceLink { url } => {
-//!             println!("Source link: {}", url);
-//!         }
-//!         CustomDebugInfo::EmbeddedSource { filename, content } => {
-//!             println!("Embedded source: {} ({} bytes)", filename, content.len());
-//!         }
-//!         CustomDebugInfo::Unknown { kind, data } => {
-//!             println!("Unknown debug info type: {:?} ({} bytes)", kind, data.len());
-//!         }
+//! // Process different types of debug information
+//! match debug_info {
+//!     CustomDebugInfo::SourceLink { document } => {
+//!         println!("Source link JSON: {}", document);
+//!     }
+//!     CustomDebugInfo::EmbeddedSource { filename, content, was_compressed } => {
+//!         println!("Embedded source: {} ({} bytes, compressed: {})",
+//!                  filename, content.len(), was_compressed);
+//!     }
+//!     CustomDebugInfo::CompilationMetadata { metadata } => {
+//!         println!("Compilation metadata: {}", metadata);
+//!     }
+//!     CustomDebugInfo::CompilationOptions { options } => {
+//!         println!("Compilation options: {}", options);
+//!     }
+//!     CustomDebugInfo::Unknown { kind, data } => {
+//!         println!("Unknown debug info type: {} ({} bytes)", kind, data.len());
 //!     }
 //! }
 //! # Ok::<(), dotscope::Error>(())
@@ -62,53 +62,48 @@
 //!
 //! ## Working with Source Link Information
 //!
-//! ```rust,ignore
-//! use dotscope::metadata::customdebuginformation::{CustomDebugInfo, CustomDebugKind};
+//! ```rust
+//! use dotscope::metadata::customdebuginformation::{parse_custom_debug_blob, CustomDebugInfo, CustomDebugKind};
 //!
-//! # fn get_debug_info() -> dotscope::metadata::customdebuginformation::CustomDebugInfo {
-//! #     CustomDebugInfo::SourceLink { url: "https://example.com".to_string() }
-//! # }
-//! let debug_info = get_debug_info();
+//! // Source Link JSON contains repository URL mappings
+//! let kind = CustomDebugKind::SourceLink;
+//! let blob_data = br#"{"documents":{"C:\\src\\*.cs":"https://raw.githubusercontent.com/user/repo/*"}}"#;
+//! let debug_info = parse_custom_debug_blob(blob_data, kind)?;
 //!
-//! if let CustomDebugInfo::SourceLink { url } = debug_info {
-//!     println!("Source repository: {}", url);
-//!     
-//!     // Extract domain from URL for security analysis
-//!     if let Ok(parsed_url) = url::Url::parse(&url) {
-//!         if let Some(host) = parsed_url.host_str() {
-//!             println!("Source host: {}", host);
-//!         }
-//!     }
+//! if let CustomDebugInfo::SourceLink { document } = debug_info {
+//!     println!("Source Link JSON: {}", document);
+//!
+//!     // The document contains JSON that can be parsed with any JSON library
+//!     assert!(document.contains("documents"));
+//!     assert!(document.contains("github"));
 //! }
-//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## Processing Embedded Source Files
 //!
-//! ```rust,ignore
-//! use dotscope::metadata::customdebuginformation::CustomDebugInfo;
+//! ```rust
+//! use dotscope::metadata::customdebuginformation::{parse_custom_debug_blob, CustomDebugInfo, CustomDebugKind};
 //!
-//! # fn get_embedded_source() -> dotscope::metadata::customdebuginformation::CustomDebugInfo {
-//! #     CustomDebugInfo::EmbeddedSource {
-//! #         filename: "Program.cs".to_string(),
-//! #         content: b"using System;".to_vec()
-//! #     }
-//! # }
-//! let debug_info = get_embedded_source();
+//! // Embedded source blob: int32 format (0=raw, >0=compressed size) + content
+//! let kind = CustomDebugKind::EmbeddedSource;
+//! let mut blob_data = Vec::new();
+//! blob_data.extend_from_slice(&0i32.to_le_bytes()); // format = 0 (uncompressed)
+//! blob_data.extend_from_slice(b"using System;\n\nclass Program { }");
+//! let debug_info = parse_custom_debug_blob(&blob_data, kind)?;
 //!
-//! if let CustomDebugInfo::EmbeddedSource { filename, content } = debug_info {
-//!     println!("Embedded file: {}", filename);
+//! if let CustomDebugInfo::EmbeddedSource { filename, content, was_compressed } = debug_info {
+//!     // Note: filename comes from Document table, not the blob
 //!     println!("File size: {} bytes", content.len());
-//!     
-//!     // Check for source code content
-//!     if let Ok(source_text) = std::str::from_utf8(&content) {
-//!         let line_count = source_text.lines().count();
-//!         println!("Source lines: {}", line_count);
-//!     } else {
-//!         println!("Binary embedded file");
-//!     }
+//!     println!("Was compressed: {}", was_compressed);
+//!
+//!     // Count lines in the source
+//!     let line_count = content.lines().count();
+//!     println!("Source lines: {}", line_count);
+//!     assert_eq!(line_count, 3);
+//!     assert!(!was_compressed);
 //! }
-//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Error Handling
@@ -147,8 +142,6 @@
 mod parser;
 mod types;
 
-// Re-export the main parsing function
-pub use parser::parse_custom_debug_blob;
-
 // Re-export all types
-pub use types::{CustomDebugInfo, CustomDebugKind};
+pub use parser::{parse_custom_debug_blob, CustomDebugParser};
+pub use types::{debug_guids, CustomDebugInfo, CustomDebugKind};

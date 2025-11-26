@@ -726,24 +726,67 @@ impl From<u16> for SecurityAction {
 /// In the binary format, argument types are encoded as single bytes with additional
 /// data for complex types like enums and arrays. The encoding follows the .NET
 /// binary serialization format for custom attributes.
+///
+/// # Type Code Mapping
+///
+/// The following ECMA-335 element type codes are supported:
+///
+/// | Type Code | Hex  | ArgumentType |
+/// |-----------|------|--------------|
+/// | BOOLEAN   | 0x02 | `Boolean`    |
+/// | CHAR      | 0x03 | `Char`       |
+/// | I1        | 0x04 | `SByte`      |
+/// | U1        | 0x05 | `Byte`       |
+/// | I2        | 0x06 | `Int16`      |
+/// | U2        | 0x07 | `UInt16`     |
+/// | I4        | 0x08 | `Int32`      |
+/// | U4        | 0x09 | `UInt32`     |
+/// | I8        | 0x0A | `Int64`      |
+/// | U8        | 0x0B | `UInt64`     |
+/// | R4        | 0x0C | `Single`     |
+/// | R8        | 0x0D | `Double`     |
+/// | STRING    | 0x0E | `String`     |
+/// | OBJECT    | 0x51 | `Object`     |
+/// | SZARRAY   | 0x1D | `Array`      |
+/// | ENUM      | 0x55 | `Enum`       |
 #[derive(Debug, Clone, PartialEq)]
 pub enum ArgumentType {
-    /// Boolean (true/false)
+    /// Boolean (true/false) - `System.Boolean`
     Boolean,
-    /// 32-bit integer
+    /// Single UTF-16 character - `System.Char`
+    Char,
+    /// Signed 8-bit integer - `System.SByte`
+    SByte,
+    /// Unsigned 8-bit integer - `System.Byte`
+    Byte,
+    /// Signed 16-bit integer - `System.Int16`
+    Int16,
+    /// Unsigned 16-bit integer - `System.UInt16`
+    UInt16,
+    /// Signed 32-bit integer - `System.Int32`
     Int32,
-    /// 64-bit integer
+    /// Unsigned 32-bit integer - `System.UInt32`
+    UInt32,
+    /// Signed 64-bit integer - `System.Int64`
     Int64,
-    /// String value
+    /// Unsigned 64-bit integer - `System.UInt64`
+    UInt64,
+    /// 32-bit floating point - `System.Single`
+    Single,
+    /// 64-bit floating point - `System.Double`
+    Double,
+    /// String value - `System.String`
     String,
-    /// Type reference - represents a CLR type
+    /// Type reference - `System.Type`
     Type,
-    /// Enumeration value (stored as string name and integer value)
+    /// Boxed object - `System.Object` (serialized with type tag)
+    Object,
+    /// Enumeration value (stored with type name)
     /// The string parameter represents the enum type name
     Enum(String),
     /// Array of another type
     Array(Box<ArgumentType>),
-    /// Unknown type
+    /// Unknown type - preserves the raw type byte for unrecognized types
     Unknown(u8),
 }
 
@@ -757,9 +800,15 @@ pub enum ArgumentType {
 ///
 /// Each variant preserves the original .NET type semantics:
 /// - `Boolean`: True/false values from permission flags
-/// - `Int32`/`Int64`: Numeric values for permissions and flags
+/// - `Char`: Single UTF-16 character values
+/// - `SByte`/`Byte`: 8-bit integer values
+/// - `Int16`/`UInt16`: 16-bit integer values
+/// - `Int32`/`UInt32`: 32-bit integer values (common for flags)
+/// - `Int64`/`UInt64`: 64-bit integer values
+/// - `Single`/`Double`: Floating-point values
 /// - `String`: File paths, registry keys, and other text data
-/// - `Type`: Full type names for type-based permissions  
+/// - `Type`: Full type names for type-based permissions
+/// - `Object`: Boxed values with runtime type information
 /// - `Enum`: Enumeration values with type information
 /// - `Array`: Collections of homogeneous values
 /// - `Null`: Explicit null values in permission arguments
@@ -778,6 +827,9 @@ pub enum ArgumentType {
 /// // Boolean permission settings
 /// let unrestricted = ArgumentValue::Boolean(true);
 ///
+/// // Floating-point value
+/// let threshold = ArgumentValue::Double(0.95);
+///
 /// // Array of paths
 /// let multiple_paths = ArgumentValue::Array(vec![
 ///     ArgumentValue::String("C:\\Data1".to_string()),
@@ -791,16 +843,36 @@ pub enum ArgumentType {
 /// C# syntax, making it useful for security analysis and reporting.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ArgumentValue {
-    /// Boolean value
+    /// Boolean value - `System.Boolean`
     Boolean(bool),
-    /// 32-bit integer
+    /// Single UTF-16 character - `System.Char`
+    Char(char),
+    /// Signed 8-bit integer - `System.SByte`
+    SByte(i8),
+    /// Unsigned 8-bit integer - `System.Byte`
+    Byte(u8),
+    /// Signed 16-bit integer - `System.Int16`
+    Int16(i16),
+    /// Unsigned 16-bit integer - `System.UInt16`
+    UInt16(u16),
+    /// Signed 32-bit integer - `System.Int32`
     Int32(i32),
-    /// 64-bit integer
+    /// Unsigned 32-bit integer - `System.UInt32`
+    UInt32(u32),
+    /// Signed 64-bit integer - `System.Int64`
     Int64(i64),
-    /// String value
+    /// Unsigned 64-bit integer - `System.UInt64`
+    UInt64(u64),
+    /// 32-bit floating point - `System.Single`
+    Single(f32),
+    /// 64-bit floating point - `System.Double`
+    Double(f64),
+    /// String value - `System.String`
     String(String),
-    /// Type reference - full name of the type
+    /// Type reference - full name of the type - `System.Type`
     Type(String),
+    /// Boxed object value - `System.Object` (contains the actual value)
+    Object(Box<ArgumentValue>),
     /// Enumeration value - type name and integer value
     Enum(String, i32),
     /// Array of values
@@ -813,10 +885,20 @@ impl fmt::Display for ArgumentValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ArgumentValue::Boolean(v) => write!(f, "{v}"),
+            ArgumentValue::Char(v) => write!(f, "'{v}'"),
+            ArgumentValue::SByte(v) => write!(f, "{v}"),
+            ArgumentValue::Byte(v) => write!(f, "{v}"),
+            ArgumentValue::Int16(v) => write!(f, "{v}"),
+            ArgumentValue::UInt16(v) => write!(f, "{v}"),
             ArgumentValue::Int32(v) => write!(f, "{v}"),
-            ArgumentValue::Int64(v) => write!(f, "{v}"),
+            ArgumentValue::UInt32(v) => write!(f, "{v}u"),
+            ArgumentValue::Int64(v) => write!(f, "{v}L"),
+            ArgumentValue::UInt64(v) => write!(f, "{v}uL"),
+            ArgumentValue::Single(v) => write!(f, "{v}f"),
+            ArgumentValue::Double(v) => write!(f, "{v}d"),
             ArgumentValue::String(v) => write!(f, "\"{v}\""),
             ArgumentValue::Type(v) => write!(f, "typeof({v})"),
+            ArgumentValue::Object(v) => write!(f, "object({v})"),
             ArgumentValue::Enum(t, v) => write!(f, "{t}({v})"),
             ArgumentValue::Array(v) => {
                 write!(f, "[")?;
@@ -1230,6 +1312,25 @@ bitflags! {
     ///
     /// These flags correspond to the SecurityPermissionFlag enumeration in .NET and determine
     /// what security-sensitive operations code is allowed to perform.
+    ///
+    /// # Backing Type Choice
+    ///
+    /// This type uses `i32` as its backing type rather than `u32` for the following reasons:
+    ///
+    /// 1. **CLR Compatibility**: The .NET Framework's `SecurityPermissionFlag` enum is defined
+    ///    as a signed 32-bit integer (`int` in C#, `System.Int32` in IL). Using `i32` maintains
+    ///    binary compatibility when parsing permission data from .NET assemblies.
+    ///
+    /// 2. **Serialization Format**: In .NET permission set binary format, these flags are
+    ///    serialized as signed 32-bit integers. Using `i32` allows direct casting without
+    ///    sign conversion issues.
+    ///
+    /// 3. **Enum Underlying Type**: .NET enums default to `int` (signed) unless explicitly
+    ///    declared otherwise. `SecurityPermissionFlag` follows this convention.
+    ///
+    /// Note: All flag values are positive and fit within the positive range of `i32`, so
+    /// there's no practical difference in the flag operations themselves. The choice of `i32`
+    /// over `u32` is purely for .NET interoperability.
     pub struct SecurityPermissionFlags: i32 {
         /// Enables code execution. Required for any code to run.
         /// This is the most basic permission required in the runtime.

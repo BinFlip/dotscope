@@ -1044,6 +1044,10 @@ fn test_method_with_exception_handling_roundtrip() -> Result<()> {
             let mut context = BuilderContext::new(CilAssembly::new(fresh_view));
 
             // Create a method with exception handlers (simplified version)
+            // Code layout:
+            // offset 0-3: try block (ldarg_0, ldc_i4_2, div, stloc_0) = 4 bytes
+            // offset 4-5: handler block (ldloc_0, ret) = 2 bytes
+            // Total: 6 bytes
             let _method_token = MethodBuilder::new("TestMethodWithExceptions")
                 .public()
                 .static_method()
@@ -1051,16 +1055,16 @@ fn test_method_with_exception_handling_roundtrip() -> Result<()> {
                 .returns(TypeSignature::I4)
                 .implementation(|body| {
                     body.local("result", TypeSignature::I4)
-                        .catch_handler(0, 10, 10, 5, None) // Simple catch handler
-                        .finally_handler(0, 15, 15, 3) // Finally block
+                        .catch_handler(0, 4, 4, 2, None) // Try: 4 bytes, Handler: 2 bytes
                         .implementation(|asm| {
-                            // Simplified method body without unsupported instructions
-                            asm.ldarg_0()? // Load parameter
-                                .ldc_i4_2()? // Load 2
-                                .div()? // Divide (could throw)
-                                .stloc_0()? // Store result
-                                .ldloc_0()? // Load result
-                                .ret()?; // Return
+                            // Try block: 4 bytes
+                            asm.ldarg_0()? // offset 0: Load parameter
+                                .ldc_i4_2()? // offset 1: Load 2
+                                .div()? // offset 2: Divide (could throw)
+                                .stloc_0()?; // offset 3: Store result
+                                             // Handler block: 2 bytes
+                            asm.ldloc_0()? // offset 4: Load result
+                                .ret()?; // offset 5: Return
                             Ok(())
                         })
                 })

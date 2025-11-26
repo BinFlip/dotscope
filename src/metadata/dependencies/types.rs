@@ -92,7 +92,7 @@ pub enum DependencySource {
     /// metadata including version, culture, and strong name information.
     AssemblyRef(AssemblyRefRc),
 
-    /// Dependency from a `ModuleRef` table entry  
+    /// Dependency from a `ModuleRef` table entry
     ///
     /// Represents a reference to an external module, typically in multi-module
     /// assemblies or for P/Invoke scenarios. Less common in modern .NET applications.
@@ -105,6 +105,48 @@ pub enum DependencySource {
     /// for completeness and assembly integrity verification.
     File(FileRc),
 }
+
+impl PartialEq for DependencySource {
+    /// Compare dependency sources for equality.
+    ///
+    /// Two dependency sources are considered equal if they refer to the same
+    /// dependency, based on the identifying metadata:
+    /// - **AssemblyRef**: Same name, version, culture, and public key token
+    /// - **ModuleRef**: Same module name
+    /// - **File**: Same file name
+    ///
+    /// Different source types are never equal.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::dependencies::DependencySource;
+    ///
+    /// // Two AssemblyRef sources to the same assembly are equal
+    /// assert_eq!(source1, source2);
+    ///
+    /// // AssemblyRef and ModuleRef are never equal
+    /// assert_ne!(assembly_source, module_source);
+    /// ```
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (DependencySource::AssemblyRef(a), DependencySource::AssemblyRef(b)) => {
+                a.name == b.name
+                    && a.major_version == b.major_version
+                    && a.minor_version == b.minor_version
+                    && a.build_number == b.build_number
+                    && a.revision_number == b.revision_number
+                    && a.culture == b.culture
+                    && a.identifier == b.identifier
+            }
+            (DependencySource::ModuleRef(a), DependencySource::ModuleRef(b)) => a.name == b.name,
+            (DependencySource::File(a), DependencySource::File(b)) => a.name == b.name,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for DependencySource {}
 
 /// Classification of dependency relationship types.
 ///
@@ -207,6 +249,74 @@ pub enum VersionRequirement {
     /// versions are acceptable. This is useful for assemblies that require
     /// specific functionality introduced in a particular version.
     Minimum(AssemblyVersion),
+}
+
+impl VersionRequirement {
+    /// Get the strictness level of this version requirement.
+    ///
+    /// Returns a numeric value representing how strict the requirement is,
+    /// with higher values being more restrictive:
+    /// - Exact: 3 (most strict)
+    /// - Minimum: 2
+    /// - Compatible: 1
+    /// - Any: 0 (least strict)
+    ///
+    /// # Returns
+    /// Strictness level as u8
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::dependencies::VersionRequirement;
+    ///
+    /// assert!(VersionRequirement::Exact.strictness() > VersionRequirement::Compatible.strictness());
+    /// assert!(VersionRequirement::Compatible.strictness() > VersionRequirement::Any.strictness());
+    /// ```
+    #[must_use]
+    pub const fn strictness(&self) -> u8 {
+        match self {
+            VersionRequirement::Exact => 3,
+            VersionRequirement::Minimum(_) => 2,
+            VersionRequirement::Compatible => 1,
+            VersionRequirement::Any => 0,
+        }
+    }
+}
+
+impl PartialOrd for VersionRequirement {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for VersionRequirement {
+    /// Compare version requirements by strictness.
+    ///
+    /// Ordering is based on strictness level:
+    /// Exact > Minimum > Compatible > Any
+    ///
+    /// For Minimum requirements with different versions, the higher
+    /// minimum version is considered more strict.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::dependencies::VersionRequirement;
+    /// use dotscope::metadata::identity::AssemblyVersion;
+    ///
+    /// assert!(VersionRequirement::Exact > VersionRequirement::Compatible);
+    /// assert!(VersionRequirement::Compatible > VersionRequirement::Any);
+    ///
+    /// let min_v1 = VersionRequirement::Minimum(AssemblyVersion::new(1, 0, 0, 0));
+    /// let min_v2 = VersionRequirement::Minimum(AssemblyVersion::new(2, 0, 0, 0));
+    /// assert!(min_v2 > min_v1);
+    /// ```
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (VersionRequirement::Minimum(v1), VersionRequirement::Minimum(v2)) => v1.cmp(v2),
+            _ => self.strictness().cmp(&other.strictness()),
+        }
+    }
 }
 
 impl DependencySource {
@@ -325,6 +435,15 @@ pub enum DependencyResolutionState {
 /// Provides configuration and environmental information needed for
 /// dependency resolution attempts. This includes search paths,
 /// version policies, and resolution strategies.
+///
+/// # Status
+///
+/// **Note:** This type is currently defined but not yet used in the implementation.
+/// Full dependency resolution functionality is planned for a future release. The
+/// type is exported to allow forward compatibility and early integration planning.
+///
+/// **TODO:** Implement dependency resolution system that uses this context.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct DependencyResolveContext {
     /// Assembly search paths for resolution
@@ -334,7 +453,9 @@ pub struct DependencyResolveContext {
     pub check_gac: bool,
 
     /// Version binding policies to apply
-    pub version_policies: Vec<String>, // Simplified for now
+    ///
+    /// **TODO:** Replace with proper version policy type when implementing resolution
+    pub version_policies: Vec<String>,
 }
 
 impl Default for DependencyResolveContext {
@@ -343,6 +464,106 @@ impl Default for DependencyResolveContext {
             search_paths: vec![],
             check_gac: true,
             version_policies: vec![],
+        }
+    }
+}
+
+impl std::fmt::Display for DependencyType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DependencyType::Reference => write!(f, "Reference"),
+            DependencyType::Friend => write!(f, "Friend"),
+            DependencyType::TypeForwarding => write!(f, "TypeForwarding"),
+            DependencyType::Resource => write!(f, "Resource"),
+            DependencyType::NativeLibrary => write!(f, "NativeLibrary"),
+        }
+    }
+}
+
+impl std::fmt::Display for VersionRequirement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VersionRequirement::Exact => write!(f, "Exact"),
+            VersionRequirement::Compatible => write!(f, "Compatible"),
+            VersionRequirement::Any => write!(f, "Any"),
+            VersionRequirement::Minimum(version) => {
+                write!(f, "Minimum({})", version)
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for DependencySource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DependencySource::AssemblyRef(assembly_ref) => {
+                write!(f, "AssemblyRef({})", assembly_ref.name)
+            }
+            DependencySource::ModuleRef(module_ref) => {
+                write!(f, "ModuleRef({})", module_ref.name)
+            }
+            DependencySource::File(file) => {
+                write!(f, "File({})", file.name)
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for AssemblyDependency {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} -> {} ({}{})",
+            self.source.display_name(),
+            self.target_identity.name,
+            self.dependency_type,
+            if self.is_optional { ", optional" } else { "" }
+        )
+    }
+}
+
+impl std::fmt::Display for DependencyResolutionState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DependencyResolutionState::Unresolved => write!(f, "Unresolved"),
+            DependencyResolutionState::ResolvedAsAssembly { identity, verified } => {
+                write!(
+                    f,
+                    "ResolvedAsAssembly({}, verified={})",
+                    identity.name, verified
+                )
+            }
+            DependencyResolutionState::ResolvedAsNativeLibrary {
+                path,
+                exports_verified,
+            } => {
+                write!(
+                    f,
+                    "ResolvedAsNativeLibrary({}, verified={})",
+                    path.as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    exports_verified
+                )
+            }
+            DependencyResolutionState::ResolvedAsResource {
+                resource_type,
+                size_bytes,
+            } => {
+                write!(
+                    f,
+                    "ResolvedAsResource({}, {} bytes)",
+                    resource_type,
+                    size_bytes
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "unknown".to_string())
+                )
+            }
+            DependencyResolutionState::ResolutionFailed {
+                error, is_fatal, ..
+            } => {
+                write!(f, "ResolutionFailed({}, fatal={})", error, is_fatal)
+            }
         }
     }
 }
@@ -389,5 +610,46 @@ mod tests {
             }
             _ => panic!("Expected Minimum version requirement"),
         }
+    }
+
+    #[test]
+    fn test_dependency_type_display() {
+        assert_eq!(DependencyType::Reference.to_string(), "Reference");
+        assert_eq!(DependencyType::Friend.to_string(), "Friend");
+        assert_eq!(DependencyType::TypeForwarding.to_string(), "TypeForwarding");
+        assert_eq!(DependencyType::Resource.to_string(), "Resource");
+        assert_eq!(DependencyType::NativeLibrary.to_string(), "NativeLibrary");
+    }
+
+    #[test]
+    fn test_version_requirement_display() {
+        assert_eq!(VersionRequirement::Exact.to_string(), "Exact");
+        assert_eq!(VersionRequirement::Compatible.to_string(), "Compatible");
+        assert_eq!(VersionRequirement::Any.to_string(), "Any");
+
+        let version = AssemblyVersion::new(1, 2, 3, 4);
+        let req = VersionRequirement::Minimum(version);
+        assert_eq!(req.to_string(), "Minimum(1.2.3.4)");
+    }
+
+    #[test]
+    fn test_dependency_source_display() {
+        let assembly_ref = create_test_assembly_ref("TestLib");
+        let source = DependencySource::AssemblyRef(assembly_ref);
+        assert_eq!(source.to_string(), "AssemblyRef(TestLib)");
+    }
+
+    #[test]
+    fn test_dependency_resolution_state_display() {
+        let state = DependencyResolutionState::Unresolved;
+        assert_eq!(state.to_string(), "Unresolved");
+
+        let resolved = DependencyResolutionState::ResolutionFailed {
+            error: "Not found".to_string(),
+            is_fatal: true,
+            suggestions: vec![],
+        };
+        assert!(resolved.to_string().contains("ResolutionFailed"));
+        assert!(resolved.to_string().contains("fatal=true"));
     }
 }

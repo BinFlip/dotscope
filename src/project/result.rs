@@ -1,15 +1,15 @@
 //! Project loading result types and statistics.
 //!
-//! This module provides unified result types for both legacy and new project loading APIs,
-//! consolidating the various result and statistics types into a coherent interface.
+//! This module provides result types for project loading operations, tracking
+//! successfully loaded assemblies, failures, and missing dependencies.
 
 use crate::{metadata::identity::AssemblyIdentity, project::CilProject};
 
-/// Unified result of a project loading operation.
+/// Result of a project loading operation.
 ///
-/// This type consolidates the functionality of the legacy `LoadResult` and the new
-/// `ProjectLoadResult` types, providing a single interface for project loading results
-/// regardless of which API was used to perform the loading.
+/// Contains the loaded project along with statistics about the loading process,
+/// including which assemblies were successfully loaded, which failed, and which
+/// dependencies could not be found.
 ///
 /// # Usage
 ///
@@ -108,27 +108,6 @@ impl ProjectResult {
         self.failed_loads.push((file_path.clone(), error_message));
         self.missing_dependencies.push(file_path);
         self.failed_count += 1;
-    }
-
-    /// Create a ProjectResult from legacy LoadResult data.
-    pub(crate) fn from_legacy(
-        project: CilProject,
-        loaded_assemblies: Vec<AssemblyIdentity>,
-        missing_dependencies: Vec<String>,
-        loaded_count: usize,
-        failed_count: usize,
-    ) -> Self {
-        Self {
-            project,
-            loaded_assemblies,
-            missing_dependencies: missing_dependencies.clone(),
-            failed_loads: missing_dependencies
-                .into_iter()
-                .map(|dep| (dep.clone(), "Dependency not found".to_string()))
-                .collect(),
-            loaded_count,
-            failed_count,
-        }
     }
 }
 

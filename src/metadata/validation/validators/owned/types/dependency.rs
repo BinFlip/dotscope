@@ -81,10 +81,8 @@ use crate::{
     Error, Result,
 };
 use rayon::prelude::*;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::sync::Arc;
 
 /// Foundation validator for dependency relationships between types, assemblies, and metadata elements.
 ///
@@ -336,11 +334,11 @@ impl OwnedTypeDependencyValidator {
         &self,
         context: &OwnedValidationContext,
     ) -> Result<()> {
-        let mut visited = HashSet::new();
-        let mut visiting = HashSet::new();
+        let mut visited = FxHashSet::default();
+        let mut visiting = FxHashSet::default();
 
         // Build dependency graph only for target assembly types
-        let mut dependency_graph: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut dependency_graph: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
         for type_rc in context.target_assembly_types() {
             let type_key = Arc::as_ptr(type_rc) as usize;
             let mut dependencies = Vec::new();
@@ -403,9 +401,9 @@ impl OwnedTypeDependencyValidator {
     fn check_dependency_path_accessibility(
         &self,
         type_key: usize,
-        dependency_graph: &HashMap<usize, Vec<usize>>,
-        visited: &mut HashSet<usize>,
-        visiting: &mut HashSet<usize>,
+        dependency_graph: &FxHashMap<usize, Vec<usize>>,
+        visited: &mut FxHashSet<usize>,
+        visiting: &mut FxHashSet<usize>,
         all_types: &[CilTypeRc],
     ) -> Result<()> {
         // If already completely processed, skip

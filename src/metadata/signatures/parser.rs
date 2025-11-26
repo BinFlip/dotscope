@@ -128,6 +128,57 @@ use crate::{
     Result,
 };
 
+/// Signature marker bytes as defined in ECMA-335 II.23.2.
+///
+/// These constants identify the signature type at the start of a signature blob.
+/// Note: These overlap numerically with ELEMENT_TYPE but have different semantic meaning
+/// in the context of signature headers vs type encoding.
+#[allow(non_snake_case)]
+pub mod SIGNATURE_HEADER {
+    /// Field signature header (ECMA-335 II.23.2.4)
+    pub const FIELD: u8 = 0x06;
+    /// Local variable signature header (ECMA-335 II.23.2.6)
+    pub const LOCAL_SIG: u8 = 0x07;
+    /// Property signature header flag (ECMA-335 II.23.2.5)
+    pub const PROPERTY: u8 = 0x08;
+    /// Method specification signature header (ECMA-335 II.23.2.15)
+    pub const GENRICINST: u8 = 0x0A;
+}
+
+/// Calling convention flags as defined in ECMA-335 II.23.2.1 for **method signature encoding**.
+///
+/// These constants are used to decode the calling convention byte in method signatures
+/// stored in the blob heap. The low 4 bits (0x0F mask) encode the calling convention kind,
+/// while the high bits encode flags like HASTHIS, EXPLICITTHIS, and GENERIC.
+///
+/// **Important**: These are distinct from [`crate::metadata::tables::PInvokeAttributes`] constants,
+/// which use a different encoding (0x0100-0x0500 range) for P/Invoke calling conventions in the
+/// ImplMap metadata table. This module is for signature parsing, not P/Invoke metadata.
+#[allow(non_snake_case)]
+pub mod CALLING_CONVENTION {
+    /// Default managed calling convention
+    pub const DEFAULT: u8 = 0x00;
+    /// C-style calling convention (cdecl)
+    pub const C: u8 = 0x01;
+    /// Standard calling convention (stdcall)
+    pub const STDCALL: u8 = 0x02;
+    /// This calling convention (thiscall)
+    pub const THISCALL: u8 = 0x03;
+    /// Fast calling convention (fastcall)
+    pub const FASTCALL: u8 = 0x04;
+    /// Variable argument calling convention
+    pub const VARARG: u8 = 0x05;
+
+    /// Mask for extracting the calling convention kind from the convention byte
+    pub const KIND_MASK: u8 = 0x0F;
+    /// Flag indicating method has generic parameters
+    pub const GENERIC: u8 = 0x10;
+    /// Flag indicating method has implicit 'this' parameter
+    pub const HASTHIS: u8 = 0x20;
+    /// Flag indicating 'this' parameter is explicitly in the signature
+    pub const EXPLICITTHIS: u8 = 0x40;
+}
+
 /// Maximum nesting depth for signature parsing to prevent stack overflow.
 ///
 /// This limit protects against malformed signatures that could cause excessive memory usage
@@ -502,6 +553,26 @@ impl<'a> SignatureParser<'a> {
                             }
 
                             let num_lo_bounds = self.parser.read_compressed_uint()?;
+
+                            // Validate that lower bound count doesn't exceed dimensions
+                            // ECMA-335 II.23.2.13: NumLoBouns can be greater than NumSizes
+                            // but each lower bound should correspond to a rank dimension
+                            if num_lo_bounds > rank {
+                                return Err(malformed_error!(
+                                    "Array signature has more lower bounds ({}) than dimensions (rank {})",
+                                    num_lo_bounds,
+                                    rank
+                                ));
+                            }
+
+                            // Extend dimensions array if needed for lower bounds
+                            while dimensions.len() < num_lo_bounds as usize {
+                                dimensions.push(ArrayDimensions {
+                                    size: None,
+                                    lower_bound: None,
+                                });
+                            }
+
                             for i in 0..num_lo_bounds {
                                 if let Some(dimension) = dimensions.get_mut(i as usize) {
                                     dimension.lower_bound =
@@ -1000,22 +1071,30 @@ impl<'a> SignatureParser<'a> {
     ///
     /// # ECMA-335 References
     /// - **Partition II, Section 23.2.1**: `MethodDefSig`
-    /// - **Partition II, Section 23.2.2**: `MethodRefSig`  
+    /// - **Partition II, Section 23.2.2**: `MethodRefSig`
     /// - **Partition II, Section 23.2.3**: `StandAloneMethodSig`
     /// - **Partition I, Section 14.3**: Calling conventions
+    ///
+    /// # Implementation Notes
+    /// This method uses `parse_method_parameters` internally to handle the complex
+    /// logic of parsing fixed parameters and optional varargs separated by SENTINEL.
     pub fn parse_method_signature(&mut self) -> Result<SignatureMethod> {
         let convention_byte = self.parser.read_le::<u8>()?;
 
+        // Extract the calling convention kind from the low 4 bits (mask 0x0F)
+        // ECMA-335 II.23.2.1: The low 4 bits encode the calling convention
+        let calling_convention_kind = convention_byte & CALLING_CONVENTION::KIND_MASK;
+
         let mut method = SignatureMethod {
-            has_this: convention_byte & 0x20 != 0,
-            explicit_this: convention_byte & 0x40 != 0,
-            default: convention_byte == 0,
-            vararg: convention_byte & 0x5 != 0,
-            cdecl: convention_byte & 0x1 != 0,
-            stdcall: convention_byte & 0x2 != 0,
-            thiscall: convention_byte & 0x3 != 0,
-            fastcall: convention_byte & 0x4 != 0,
-            param_count_generic: if convention_byte & 0x10 != 0 {
+            has_this: convention_byte & CALLING_CONVENTION::HASTHIS != 0,
+            explicit_this: convention_byte & CALLING_CONVENTION::EXPLICITTHIS != 0,
+            default: calling_convention_kind == CALLING_CONVENTION::DEFAULT,
+            vararg: calling_convention_kind == CALLING_CONVENTION::VARARG,
+            cdecl: calling_convention_kind == CALLING_CONVENTION::C,
+            stdcall: calling_convention_kind == CALLING_CONVENTION::STDCALL,
+            thiscall: calling_convention_kind == CALLING_CONVENTION::THISCALL,
+            fastcall: calling_convention_kind == CALLING_CONVENTION::FASTCALL,
+            param_count_generic: if convention_byte & CALLING_CONVENTION::GENERIC != 0 {
                 let gen_count = self.parser.read_compressed_uint()?;
                 if gen_count > MAX_GENERIC_ARGS {
                     return Err(malformed_error!(
@@ -1044,36 +1123,67 @@ impl<'a> SignatureParser<'a> {
             varargs: Vec::new(),
         };
 
-        let mut hit_sentinel = false;
-        for _ in 0..method.param_count {
-            if self.parser.peek_byte()? == 0x41 {
-                // 0x41 == SENTINEL, indicates that Param is over, and next is the vararg param list for the remaining elements
+        // Parse fixed parameters and varargs using the helper method
+        let (params, varargs) = self.parse_method_parameters(method.param_count)?;
+        method.params = params;
+        method.varargs = varargs;
 
+        Ok(method)
+    }
+
+    /// Parse method parameters, handling both fixed parameters and optional varargs.
+    ///
+    /// This helper method encapsulates the complex logic of parsing method parameters,
+    /// including detection of the SENTINEL marker that separates fixed parameters from
+    /// variable arguments in vararg methods.
+    ///
+    /// # Parameters
+    /// - `param_count`: The declared number of fixed parameters in the signature
+    ///
+    /// # Returns
+    /// A tuple containing:
+    /// - `Vec<SignatureParameter>`: Fixed parameters
+    /// - `Vec<SignatureParameter>`: Variable arguments (empty if not a vararg method)
+    ///
+    /// # ECMA-335 Reference
+    /// According to ECMA-335 II.23.2.1:
+    /// - `param_count` only includes fixed parameters, not varargs
+    /// - SENTINEL (0x41) separates fixed parameters from varargs
+    /// - Varargs continue until END (0x00) or end of data
+    fn parse_method_parameters(
+        &mut self,
+        param_count: u32,
+    ) -> Result<(Vec<SignatureParameter>, Vec<SignatureParameter>)> {
+        let mut params = Vec::with_capacity(param_count as usize);
+        let mut varargs = Vec::new();
+
+        // Parse fixed parameters, watching for SENTINEL marker
+        let mut hit_sentinel = false;
+        for _ in 0..param_count {
+            if self.parser.peek_byte()? == ELEMENT_TYPE::SENTINEL {
+                // SENTINEL indicates fixed params are over, vararg list follows
                 self.parser.advance()?;
                 hit_sentinel = true;
                 break;
             }
-
-            method.params.push(self.parse_param()?);
+            params.push(self.parse_param()?);
         }
 
-        // After SENTINEL, parse varargs until we hit END (0x00) or run out of data
-        // According to ECMA-335 II.23.2.1, param_count only includes fixed parameters,
-        // not the vararg list. We must check for END marker to know when varargs finish.
+        // Parse varargs if SENTINEL was encountered
         if hit_sentinel {
             while self.parser.has_more_data() && self.parser.peek_byte()? != ELEMENT_TYPE::END {
-                if method.varargs.len() >= MAX_SIGNATURE_PARAMS as usize {
+                if varargs.len() >= MAX_SIGNATURE_PARAMS as usize {
                     return Err(malformed_error!(
                         "Method signature has too many varargs: {} (max: {})",
-                        method.varargs.len(),
+                        varargs.len(),
                         MAX_SIGNATURE_PARAMS
                     ));
                 }
-                method.varargs.push(self.parse_param()?);
+                varargs.push(self.parse_param()?);
             }
         }
 
-        Ok(method)
+        Ok((params, varargs))
     }
 
     /// Parse a field signature from the signature blob according to ECMA-335 II.23.2.4.
@@ -1197,11 +1307,11 @@ impl<'a> SignatureParser<'a> {
     /// for field signature encoding and supports all standard field type scenarios.
     pub fn parse_field_signature(&mut self) -> Result<SignatureField> {
         let head_byte = self.parser.read_le::<u8>()?;
-        if head_byte != 0x06 {
-            // 0x06 == FIELD
+        if head_byte != SIGNATURE_HEADER::FIELD {
             return Err(malformed_error!(
-                "SignatureField - invalid start - {}",
-                head_byte
+                "SignatureField - invalid start - {} (expected {})",
+                head_byte,
+                SIGNATURE_HEADER::FIELD
             ));
         }
 
@@ -1359,14 +1469,15 @@ impl<'a> SignatureParser<'a> {
     /// for property signature encoding and supports all standard property scenarios.
     pub fn parse_property_signature(&mut self) -> Result<SignatureProperty> {
         let head_byte = self.parser.read_le::<u8>()?;
-        if (head_byte & 0x08) == 0 {
+        if (head_byte & SIGNATURE_HEADER::PROPERTY) == 0 {
             return Err(malformed_error!(
-                "SignatureProperty - invalid start - {}",
-                head_byte
+                "SignatureProperty - invalid start - {} (expected PROPERTY bit {})",
+                head_byte,
+                SIGNATURE_HEADER::PROPERTY
             ));
         }
 
-        let has_this = (head_byte & 0x20) != 0;
+        let has_this = (head_byte & CALLING_CONVENTION::HASTHIS) != 0;
 
         let param_count = self.parser.read_compressed_uint()?;
         if param_count > MAX_SIGNATURE_PARAMS {
@@ -1550,10 +1661,11 @@ impl<'a> SignatureParser<'a> {
     /// for local variable signature encoding and supports all standard local variable scenarios.
     pub fn parse_local_var_signature(&mut self) -> Result<SignatureLocalVariables> {
         let head_byte = self.parser.read_le::<u8>()?;
-        if head_byte != 0x07 {
+        if head_byte != SIGNATURE_HEADER::LOCAL_SIG {
             return Err(malformed_error!(
-                "SignatureLocalVar - invalid start - {}",
-                head_byte
+                "SignatureLocalVar - invalid start - {} (expected {})",
+                head_byte,
+                SIGNATURE_HEADER::LOCAL_SIG
             ));
         }
 
@@ -1568,64 +1680,104 @@ impl<'a> SignatureParser<'a> {
 
         let mut locals = Vec::with_capacity(count as usize);
         for _ in 0..count {
-            // Slighly different, not all custom_mods are following each other, but rather costom_mod -> contstraint -> custom_mod -> ...
-
-            // TYPED_BY_REF
-            if self.parser.peek_byte()? == 0x16 {
-                locals.push(SignatureLocalVariable {
-                    modifiers: Vec::new(),
-                    is_byref: false,
-                    is_pinned: false,
-                    base: TypeSignature::TypedByRef,
-                });
-                self.parser.advance()?;
-
-                continue;
-            }
-
-            let mut custom_mods = Vec::new();
-            let mut pinned = false;
-
-            while self.parser.has_more_data() {
-                match self.parser.peek_byte()? {
-                    0x1F | 0x20 => {
-                        let is_required = self.parser.peek_byte()? == 0x1F;
-                        self.parser.advance()?;
-                        let modifier_token = self.parser.read_compressed_token()?;
-                        custom_mods.push(CustomModifier {
-                            is_required,
-                            modifier_type: modifier_token,
-                        });
-                    }
-                    0x45 => {
-                        // PINNED constraint (ELEMENT_TYPE_PINNED) - II.23.2.9
-                        // This is a constraint that applies to the entire local variable,
-                        // not to individual custom modifiers, per ECMA-335 specification.
-                        self.parser.advance()?;
-                        pinned = true;
-                    }
-                    _ => break,
-                }
-            }
-
-            let by_ref = if self.parser.peek_byte()? == 0x10 {
-                self.parser.advance()?;
-                true
-            } else {
-                false
-            };
-
-            let type_sig = self.parse_type()?;
-
-            locals.push(SignatureLocalVariable {
-                modifiers: custom_mods,
-                is_byref: by_ref,
-                is_pinned: pinned,
-                base: type_sig,
-            });
+            locals.push(self.parse_single_local_variable()?);
         }
 
         Ok(SignatureLocalVariables { locals })
+    }
+
+    /// Parse a single local variable with its constraints and modifiers.
+    ///
+    /// This helper method handles the parsing of individual local variables according to
+    /// ECMA-335 II.23.2.6. Local variables can have custom modifiers, PINNED constraints,
+    /// and BYREF modifiers in a specific order.
+    ///
+    /// # Local Variable Grammar
+    /// ```text
+    /// LocalVarSig ::= LOCAL_SIG Count (TYPEDBYREF | ([CustomMod]* [Constraint]* [BYREF] Type))
+    /// Constraint  ::= ELEMENT_TYPE_PINNED
+    /// ```
+    ///
+    /// Note that unlike method parameters, local variable modifiers and constraints can be
+    /// interleaved: custom_mod -> constraint -> custom_mod -> ...
+    ///
+    /// # Returns
+    /// A `SignatureLocalVariable` containing:
+    /// - Custom modifiers (modreq/modopt)
+    /// - Whether the variable is pinned
+    /// - Whether the variable is byref
+    /// - The variable's type signature
+    fn parse_single_local_variable(&mut self) -> Result<SignatureLocalVariable> {
+        // TYPEDBYREF special case - no modifiers or constraints allowed
+        if self.parser.peek_byte()? == ELEMENT_TYPE::TYPEDBYREF {
+            self.parser.advance()?;
+            return Ok(SignatureLocalVariable {
+                modifiers: Vec::new(),
+                is_byref: false,
+                is_pinned: false,
+                base: TypeSignature::TypedByRef,
+            });
+        }
+
+        // Parse interleaved custom modifiers and constraints
+        let (custom_mods, pinned) = self.parse_local_var_constraints()?;
+
+        // Parse optional BYREF
+        let by_ref = if self.parser.peek_byte()? == ELEMENT_TYPE::BYREF {
+            self.parser.advance()?;
+            true
+        } else {
+            false
+        };
+
+        // Parse the type
+        let type_sig = self.parse_type()?;
+
+        Ok(SignatureLocalVariable {
+            modifiers: custom_mods,
+            is_byref: by_ref,
+            is_pinned: pinned,
+            base: type_sig,
+        })
+    }
+
+    /// Parse local variable constraints and custom modifiers.
+    ///
+    /// This helper method separates the concern of parsing the interleaved sequence of
+    /// custom modifiers (CMOD_REQD/CMOD_OPT) and constraints (PINNED) that can appear
+    /// before a local variable's type.
+    ///
+    /// # Returns
+    /// A tuple containing:
+    /// - `Vec<CustomModifier>`: The custom modifiers found
+    /// - `bool`: Whether the PINNED constraint was present
+    fn parse_local_var_constraints(&mut self) -> Result<(Vec<CustomModifier>, bool)> {
+        let mut custom_mods = Vec::new();
+        let mut pinned = false;
+
+        while self.parser.has_more_data() {
+            match self.parser.peek_byte()? {
+                ELEMENT_TYPE::CMOD_REQD | ELEMENT_TYPE::CMOD_OPT => {
+                    let is_required = self.parser.peek_byte()? == ELEMENT_TYPE::CMOD_REQD;
+                    self.parser.advance()?;
+                    let modifier_token = self.parser.read_compressed_token()?;
+                    custom_mods.push(CustomModifier {
+                        is_required,
+                        modifier_type: modifier_token,
+                    });
+                }
+                ELEMENT_TYPE::PINNED => {
+                    // PINNED constraint (ELEMENT_TYPE_PINNED) - II.23.2.9
+                    // This constraint applies to the entire local variable,
+                    // not to individual custom modifiers.
+                    self.parser.advance()?;
+                    pinned = true;
+                }
+                _ => break,
+            }
+        }
+
+        Ok((custom_mods, pinned))
     }
 
     /// Parse a type specification signature from the signature blob according to ECMA-335 II.23.2.14.

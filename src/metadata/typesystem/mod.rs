@@ -51,8 +51,8 @@ use std::{
 };
 
 pub use base::{
-    ArrayDimensions, CilFlavor, CilModifier, CilTypeRef, CilTypeRefList, CilTypeReference,
-    ELEMENT_TYPE,
+    ArrayDimensions, CilFlavor, CilModifier, CilTypeRef, CilTypeRefList, CilTypeRefListIter,
+    CilTypeReference, ELEMENT_TYPE,
 };
 pub use builder::TypeBuilder;
 pub use encoder::TypeSignatureEncoder;
@@ -67,8 +67,8 @@ use crate::{
         method::MethodRefList,
         security::Security,
         tables::{
-            EventList, FieldList, GenericParamList, MethodSpecList, PropertyList, TableId,
-            TypeAttributes,
+            EventList, FieldList, GenericParamList, MethodSpec, MethodSpecList, PropertyList,
+            TableId, TypeAttributes,
         },
         token::Token,
     },
@@ -331,7 +331,17 @@ impl CilType {
                             Ok(())
                         }
                         (None, Some(_new_ref)) => {
-                            // This is suspicious - existing dropped but new is valid
+                            // The existing weak reference was dropped but the new one is valid.
+                            // This is an edge case that could indicate:
+                            // 1. The original base type was garbage collected
+                            // 2. There's a race condition in type construction
+                            //
+                            // We accept this case since:
+                            // - We can't compare against the dropped reference
+                            // - The type system allows base types to be GC'd
+                            // - Rejecting would cause false negatives in valid scenarios
+                            //
+                            // Future: Consider logging this case for debugging if needed
                             Ok(())
                         }
                     }
@@ -389,19 +399,53 @@ impl CilType {
     /// * `enclosing_type` - The enclosing type that contains this nested type
     ///
     /// # Returns
-    /// * `Ok(())` if the enclosing type was set successfully
-    /// * `Err(_)` if an enclosing type was already set for this type
+    /// * `Ok(())` if the enclosing type was set successfully or an equivalent type was already set
+    /// * `Err(_)` if a different enclosing type was already set for this type
     ///
     /// # Errors
-    /// Returns an error if an enclosing type was already set for this type.
+    /// Returns an error if an enclosing type was already set with a different value.
     ///
     /// # Thread Safety
     ///
     /// This method is thread-safe and can be called concurrently. Only the first
-    /// call will succeed in setting the enclosing type.
+    /// call will succeed in setting the enclosing type; subsequent calls with the
+    /// same or equivalent enclosing type will succeed, while calls with a different
+    /// enclosing type will return an error.
     pub fn set_enclosing_type(&self, enclosing_type: CilTypeRef) -> Result<()> {
-        let _ = self.enclosing_type.set(enclosing_type);
-        Ok(())
+        match self.enclosing_type.set(enclosing_type.clone()) {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                // Check if the existing enclosing type is equivalent
+                if let Some(existing) = self.enclosing_type.get() {
+                    match (existing.upgrade(), enclosing_type.upgrade()) {
+                        (Some(existing_ref), Some(new_ref)) => {
+                            if existing_ref.token == new_ref.token
+                                || existing_ref.is_structurally_equivalent(&new_ref)
+                            {
+                                Ok(())
+                            } else {
+                                Err(Error::Error(format!(
+                                    "Enclosing type was already set with different value: existing {} vs new {}",
+                                    existing_ref.fullname(),
+                                    new_ref.fullname()
+                                )))
+                            }
+                        }
+                        // Both weak references dropped - accept since we can't compare
+                        (None, None) => Ok(()),
+                        // Existing valid, new dropped - keep existing
+                        (Some(_), None) => Ok(()),
+                        // Existing dropped, new valid - suspicious but accept
+                        (None, Some(_)) => Ok(()),
+                    }
+                } else {
+                    // This should be impossible with OnceLock
+                    Err(Error::Error(
+                        "Impossible OnceLock state detected in set_enclosing_type".to_string(),
+                    ))
+                }
+            }
+        }
     }
 
     /// Access the enclosing type for nested types, if it exists.
@@ -523,7 +567,20 @@ impl CilType {
         self.flavor.get_or_init(|| self.compute_flavor())
     }
 
-    /// Compute the type flavor based on flags, inheritance chain, and intelligent heuristics
+    /// Compute the type flavor based on flags, inheritance chain, and intelligent heuristics.
+    ///
+    /// This method implements the core type classification logic, determining whether a type
+    /// is a class, interface, value type, enum, delegate, etc. The classification follows
+    /// these rules in priority order:
+    ///
+    /// 1. **ECMA-335 Interface flag** - Types with the Interface attribute are always interfaces
+    /// 2. **System primitive types** - Well-known System namespace types get direct classification
+    /// 3. **Inheritance chain analysis** - Types inheriting from ValueType, Enum, etc.
+    /// 4. **Attribute-based heuristics** - Layout flags, sealed/abstract combinations
+    /// 5. **Default** - Unclassified types default to Class
+    ///
+    /// # Returns
+    /// The computed `CilFlavor` representing this type's classification.
     fn compute_flavor(&self) -> CilFlavor {
         // 1. ECMA-335 definitive classification - Interface flag takes precedence
         if self.flags & TypeAttributes::INTERFACE != 0 {
@@ -533,21 +590,22 @@ impl CilType {
         // 2. System primitive types (exact namespace/name matching)
         // Keep these for performance - they're well-defined and unchanging
         if self.namespace == "System" {
+            // Check primitive value types and special value types
             match self.name.as_str() {
+                // Primitive value types
                 "Boolean" | "Char" | "SByte" | "Byte" | "Int16" | "UInt16" | "Int32" | "UInt32"
                 | "Int64" | "UInt64" | "Single" | "Double" | "IntPtr" | "UIntPtr" | "Decimal" => {
-                    return CilFlavor::ValueType
+                    return CilFlavor::ValueType;
                 }
-
+                // Special value types (base types themselves)
                 "ValueType" | "Enum" => return CilFlavor::ValueType,
+                // Well-known reference types
                 "Object" => return CilFlavor::Object,
                 "String" => return CilFlavor::String,
                 "Void" => return CilFlavor::Void,
-
                 // Delegate types are classes with special semantics
                 "Delegate" | "MulticastDelegate" => return CilFlavor::Class,
-
-                _ => {} // Continue with inheritance analysis
+                _ => {}
             }
         }
 
@@ -565,7 +623,16 @@ impl CilType {
         CilFlavor::Class
     }
 
-    /// Classify type by analyzing inheritance chain with enhanced logic
+    /// Classify type by analyzing its immediate inheritance chain.
+    ///
+    /// Examines the direct base type and performs limited traversal to identify
+    /// well-known .NET framework types that determine classification. Uses cached
+    /// flavor values when available to avoid infinite recursion.
+    ///
+    /// # Returns
+    /// * `Some(CilFlavor::ValueType)` - If the type inherits from System.ValueType or System.Enum
+    /// * `Some(CilFlavor::Class)` - If the type inherits from System.Delegate or has an interface base
+    /// * `None` - If classification cannot be determined from inheritance
     fn classify_by_inheritance(&self) -> Option<CilFlavor> {
         if let Some(base_type) = self.base() {
             let base_fullname = base_type.fullname();
@@ -605,9 +672,29 @@ impl CilType {
         None
     }
 
-    /// Analyze inheritance chain transitively without forcing computation
+    /// Analyze inheritance chain transitively without forcing computation.
+    ///
+    /// Traverses up the inheritance hierarchy looking for well-known system types
+    /// like `System.ValueType`, `System.Enum`, `System.Delegate`, etc. to determine
+    /// the correct type flavor without recursively computing flavors (which could
+    /// cause infinite recursion).
+    ///
+    /// # Arguments
+    /// * `base_type` - The base type to start analysis from
+    ///
+    /// # Returns
+    /// * `Some(CilFlavor)` - If a definitive classification is found in the inheritance chain
+    /// * `None` - If no classification can be determined from the chain
     fn analyze_transitive_inheritance(base_type: &CilType) -> Option<CilFlavor> {
-        const MAX_INHERITANCE_DEPTH: usize = 10; // Prevent infinite loops
+        /// Maximum depth to traverse in the inheritance chain.
+        ///
+        /// This limit prevents infinite loops in case of circular inheritance
+        /// (which shouldn't occur in valid assemblies but could in malformed ones).
+        /// The value of 10 is chosen because:
+        /// - Most .NET type hierarchies are shallow (< 5 levels)
+        /// - Deep hierarchies beyond 10 levels are extremely rare
+        /// - The limit ensures bounded performance even with malformed input
+        const MAX_INHERITANCE_DEPTH: usize = 10;
 
         // Look up the inheritance chain without computing flavors (avoid infinite recursion)
         let mut current = base_type.base();
@@ -642,7 +729,22 @@ impl CilType {
         None
     }
 
-    /// Classify type using TypeAttributes flags and intelligent heuristics
+    /// Classify type using TypeAttributes flags and pattern-based heuristics.
+    ///
+    /// When inheritance analysis doesn't provide a definitive classification, this method
+    /// uses type attributes and structural characteristics to infer the type category.
+    /// This is particularly useful for types where base type information is unavailable.
+    ///
+    /// # Classification Heuristics
+    /// - Sealed types with no methods but with fields → likely ValueType
+    /// - Sequential/Explicit layout + sealed + not abstract → likely ValueType
+    /// - Abstract + not sealed → Class
+    /// - Has enum characteristics (single `value__` field) → ValueType
+    /// - Has delegate characteristics (Invoke/BeginInvoke/EndInvoke) → Class
+    ///
+    /// # Returns
+    /// * `Some(CilFlavor)` - If a heuristic matches
+    /// * `None` - If no heuristic applies
     fn classify_by_attributes(&self) -> Option<CilFlavor> {
         // ECMA-335 attribute-based classification
 
@@ -684,7 +786,17 @@ impl CilType {
         None
     }
 
-    /// Check if type has enum-like characteristics
+    /// Check if this type exhibits characteristics typical of .NET enumerations.
+    ///
+    /// Enums in .NET have a specific structural pattern:
+    /// - They are sealed (cannot be inherited)
+    /// - They have exactly one instance field named `value__` (the underlying value)
+    /// - They may have static fields representing the enum values
+    ///
+    /// This heuristic identifies enums even when base type information is unavailable.
+    ///
+    /// # Returns
+    /// `true` if the type matches the enum pattern, `false` otherwise.
     fn has_enum_characteristics(&self) -> bool {
         // Enums typically:
         // 1. Are sealed
@@ -710,7 +822,16 @@ impl CilType {
         instance_fields == 1 && has_value_field
     }
 
-    /// Check if type has delegate-like characteristics  
+    /// Check if this type exhibits characteristics typical of .NET delegates.
+    ///
+    /// Delegates in .NET are sealed classes with a specific method signature pattern:
+    /// - They have an `Invoke` method (synchronous invocation)
+    /// - They have `BeginInvoke` and `EndInvoke` methods (asynchronous invocation)
+    ///
+    /// This heuristic identifies delegates even when base type information is unavailable.
+    ///
+    /// # Returns
+    /// `true` if the type matches the delegate pattern, `false` otherwise.
     fn has_delegate_characteristics(&self) -> bool {
         // Delegates typically:
         // 1. Are sealed classes
@@ -743,24 +864,48 @@ impl CilType {
     /// Returns the full name (Namespace.Name) of the type.
     ///
     /// Combines the namespace and name to create a fully qualified type name,
-    /// which is useful for type lookup and identification.
+    /// which is useful for type lookup and identification. For nested types,
+    /// uses "/" separators as per .NET runtime convention.
     ///
     /// # Returns
-    /// A string containing the full name in the format "Namespace.Name"
+    /// A string containing the full name in the format:
+    /// - `"Namespace.Name"` for top-level types
+    /// - `"Namespace.Outer/Inner"` for nested types
+    ///
+    /// # Caching
+    /// The result is cached after first computation for performance.
     pub fn fullname(&self) -> String {
         if let Some(cached) = self.fullname.get() {
             return cached.clone();
         }
 
+        let fullname = self.compute_fullname();
+        let _ = self.fullname.set(fullname.clone());
+        fullname
+    }
+
+    /// Computes the full name by traversing the enclosing type hierarchy.
+    ///
+    /// This is the core implementation separated from caching logic for clarity.
+    fn compute_fullname(&self) -> String {
+        let path_components = self.collect_type_path();
+
+        if path_components.len() > 1 {
+            // This is a nested type - use "/" separators like .NET runtime
+            self.format_nested_fullname(&path_components)
+        } else {
+            // This is a top-level type - use traditional "." separator
+            self.format_toplevel_fullname()
+        }
+    }
+
+    /// Collects the type path from innermost (self) to outermost enclosing type.
+    ///
+    /// Returns components in outermost-to-innermost order (reversed during collection).
+    fn collect_type_path(&self) -> Vec<String> {
         let mut path_components = Vec::new();
 
-        // Handle empty names with placeholders to prevent malformed paths
-        let name = if self.name.is_empty() {
-            format!("<unnamed_{:08X}>", self.token.value())
-        } else {
-            self.name.clone()
-        };
-        path_components.push(name);
+        path_components.push(self.safe_type_name());
 
         let mut visited_tokens = HashSet::new();
         visited_tokens.insert(self.token);
@@ -768,53 +913,51 @@ impl CilType {
         let mut current_type = self.enclosing_type();
         while let Some(enclosing) = current_type {
             if visited_tokens.contains(&enclosing.token) {
-                // Found a cycle, stop here to prevent infinite loop
-                break;
+                break; // Cycle detected
             }
-
             visited_tokens.insert(enclosing.token);
 
-            // Handle empty enclosing type names with placeholders
-            let enclosing_name = if enclosing.name.is_empty() {
-                format!("<unnamed_{:08X}>", enclosing.token.value())
-            } else {
-                enclosing.name.clone()
-            };
-            path_components.push(enclosing_name);
-
+            path_components.push(Self::safe_name_for(&enclosing.name, enclosing.token));
             current_type = enclosing.enclosing_type();
         }
 
-        // Reverse to get from outermost to innermost
+        // Reverse to get outermost-to-innermost order
         path_components.reverse();
+        path_components
+    }
 
-        // Build the final name with namespace prefix and "/" separators for nesting
-        let fullname = if path_components.len() > 1 {
-            // This is a nested type - use "/" separators like .NET runtime
-            let nested_path = path_components.join("/");
-            if self.namespace.is_empty() {
-                nested_path
-            } else {
-                format!("{}.{}", self.namespace, nested_path)
-            }
+    /// Returns a safe type name, using a placeholder for empty names.
+    fn safe_type_name(&self) -> String {
+        Self::safe_name_for(&self.name, self.token)
+    }
+
+    /// Returns a safe name string, using a token-based placeholder if empty.
+    fn safe_name_for(name: &str, token: Token) -> String {
+        if name.is_empty() {
+            format!("<unnamed_{:08X}>", token.value())
         } else {
-            // This is a top-level type - use traditional "." separator
-            let type_name = if self.name.is_empty() {
-                format!("<unnamed_{:08X}>", self.token.value())
-            } else {
-                self.name.clone()
-            };
+            name.to_string()
+        }
+    }
 
-            if self.namespace.is_empty() {
-                type_name
-            } else {
-                format!("{}.{}", self.namespace, type_name)
-            }
-        };
+    /// Formats the full name for a nested type using "/" separators.
+    fn format_nested_fullname(&self, path_components: &[String]) -> String {
+        let nested_path = path_components.join("/");
+        if self.namespace.is_empty() {
+            nested_path
+        } else {
+            format!("{}.{}", self.namespace, nested_path)
+        }
+    }
 
-        // Cache the result for future calls
-        let _ = self.fullname.set(fullname.clone());
-        fullname
+    /// Formats the full name for a top-level type using "." separator.
+    fn format_toplevel_fullname(&self) -> String {
+        let type_name = self.safe_type_name();
+        if self.namespace.is_empty() {
+            type_name
+        } else {
+            format!("{}.{}", self.namespace, type_name)
+        }
     }
 
     /// Checks if this type was created from a TypeRef table entry.
@@ -871,7 +1014,6 @@ impl CilType {
 
     /// Check if this type is assignable to the target type according to .NET rules
     fn is_assignable_to(&self, target: &CilType) -> bool {
-        // Handle primitive type compatibility
         if self.flavor().is_primitive() && target.flavor().is_primitive() {
             return self.flavor().is_compatible_with(target.flavor());
         }
@@ -955,7 +1097,6 @@ impl CilType {
     /// ## Returns
     /// `true` if the types are structurally equivalent and can be deduplicated
     pub fn is_structurally_equivalent(&self, other: &CilType) -> bool {
-        // Basic identity must match
         if self.namespace != other.namespace
             || self.name != other.name
             || *self.flavor() != *other.flavor()
@@ -967,22 +1108,18 @@ impl CilType {
             return false;
         }
 
-        // External source comparison
         if !self.external_sources_equivalent(other) {
             return false;
         }
 
-        // Generic arguments comparison for generic instances
         if !self.generic_args_equivalent(other) {
             return false;
         }
 
-        // Generic parameters comparison for generic definitions
         if !self.generic_params_equivalent(other) {
             return false;
         }
 
-        // Base type comparison for derived types
         self.base_types_equivalent(other)
     }
 
@@ -1012,7 +1149,6 @@ impl CilType {
     fn type_sources_equivalent(source1: &CilTypeReference, source2: &CilTypeReference) -> bool {
         match (source1, source2) {
             (CilTypeReference::AssemblyRef(ar1), CilTypeReference::AssemblyRef(ar2)) => {
-                // First try direct token comparison (same metadata table)
                 if ar1.token == ar2.token {
                     return true;
                 }
@@ -1022,7 +1158,6 @@ impl CilType {
                 // This prevents type conflicts while still allowing cross-assembly resolution
                 ar1.name == ar2.name
                     && ar1.identifier == ar2.identifier
-                    // Only consider versions equivalent if they're exactly the same
                     && ar1.major_version == ar2.major_version
                     && ar1.minor_version == ar2.minor_version
                     && ar1.build_number == ar2.build_number
@@ -1038,73 +1173,62 @@ impl CilType {
         }
     }
 
-    /// Compare generic arguments for equivalence
+    /// Compare generic arguments for equivalence.
+    ///
+    /// Two types have equivalent generic arguments if they have the same number
+    /// of arguments and each corresponding argument has the same token. This
+    /// comparison is token-based for efficiency.
     fn generic_args_equivalent(&self, other: &CilType) -> bool {
-        // Must have same number of generic arguments
-        if self.generic_args.count() != other.generic_args.count() {
+        let count = self.generic_args.count();
+        if count != other.generic_args.count() {
             return false;
         }
 
-        // Compare each generic argument
-        for i in 0..self.generic_args.count() {
-            let arg1 = self.generic_args.get(i);
-            let arg2 = other.generic_args.get(i);
-
-            match (arg1, arg2) {
-                (Some(a1), Some(a2)) => {
-                    if a1.generic_args.count() != a2.generic_args.count() {
-                        return false;
-                    }
-
-                    // Compare inner generic argument types
-                    for j in 0..a1.generic_args.count() {
-                        let inner1 = a1.generic_args.get(j);
-                        let inner2 = a2.generic_args.get(j);
-
-                        match (inner1, inner2) {
-                            (Some(i1), Some(i2)) => {
-                                if i1.token() != i2.token() {
-                                    return false;
-                                }
-                            }
-                            (None, None) => {}
-                            _ => return false,
-                        }
-                    }
-                }
-                (None, None) => {}
-                _ => return false,
-            }
-        }
-
-        true
+        (0..count).all(
+            |i| match (self.generic_args.get(i), other.generic_args.get(i)) {
+                (Some(a1), Some(a2)) => Self::method_specs_equivalent(a1, a2),
+                (None, None) => true,
+                _ => false,
+            },
+        )
     }
 
-    /// Compare generic parameters for equivalence
-    fn generic_params_equivalent(&self, other: &CilType) -> bool {
-        // Must have same number of generic parameters
-        if self.generic_params.count() != other.generic_params.count() {
+    /// Compare two MethodSpec entries for generic argument equivalence.
+    ///
+    /// MethodSpecs are equivalent if they have the same number of inner generic
+    /// arguments and all corresponding inner arguments have matching tokens.
+    fn method_specs_equivalent(spec1: &MethodSpec, spec2: &MethodSpec) -> bool {
+        let inner_count = spec1.generic_args.count();
+        if inner_count != spec2.generic_args.count() {
             return false;
         }
 
-        // Compare each generic parameter
-        for i in 0..self.generic_params.count() {
-            let param1 = self.generic_params.get(i);
-            let param2 = other.generic_params.get(i);
+        (0..inner_count).all(
+            |j| match (spec1.generic_args.get(j), spec2.generic_args.get(j)) {
+                (Some(i1), Some(i2)) => i1.token() == i2.token(),
+                (None, None) => true,
+                _ => false,
+            },
+        )
+    }
 
-            match (param1, param2) {
-                (Some(p1), Some(p2)) => {
-                    // Compare parameter names and numbers
-                    if p1.name != p2.name || p1.number != p2.number {
-                        return false;
-                    }
-                }
-                (None, None) => {}
-                _ => return false,
-            }
+    /// Compare generic parameters for equivalence.
+    ///
+    /// Two types have equivalent generic parameters if they have the same number
+    /// of parameters and each corresponding parameter has the same name and number.
+    fn generic_params_equivalent(&self, other: &CilType) -> bool {
+        let count = self.generic_params.count();
+        if count != other.generic_params.count() {
+            return false;
         }
 
-        true
+        (0..count).all(
+            |i| match (self.generic_params.get(i), other.generic_params.get(i)) {
+                (Some(p1), Some(p2)) => p1.name == p2.name && p1.number == p2.number,
+                (None, None) => true,
+                _ => false,
+            },
+        )
     }
 
     /// Compare base types for equivalence
@@ -1136,12 +1260,21 @@ impl CilType {
     /// checking both direct name matches and nested type patterns.
     ///
     /// # Arguments
-    /// * `base_fullname` - The full name of the potential base type to check against
+    /// * `base_fullname` - The full name of the potential base type to check against.
+    ///   Must be a non-empty, valid type name.
+    ///
+    /// # Returns
+    /// * `true` - If this type is an array of the specified base type
+    /// * `false` - If this is not an array type, the base name is empty, or there's no match
     ///
     /// # Examples
     /// - `MyClass[]` is an array of `MyClass`
     /// - `AdjustmentRule[]` is an array of `TimeZoneInfo/AdjustmentRule`
     pub fn is_array_of(&self, base_fullname: &str) -> bool {
+        if base_fullname.is_empty() || base_fullname.trim().is_empty() {
+            return false;
+        }
+
         if let Some(element_name) = self.fullname().strip_suffix("[]") {
             base_fullname == element_name || base_fullname.ends_with(&format!("/{}", element_name))
         } else {
@@ -1156,12 +1289,21 @@ impl CilType {
     /// checking both direct name matches and nested type patterns.
     ///
     /// # Arguments
-    /// * `base_fullname` - The full name of the potential target type to check against
+    /// * `base_fullname` - The full name of the potential target type to check against.
+    ///   Must be a non-empty, valid type name.
     ///
-    /// # Examples  
+    /// # Returns
+    /// * `true` - If this type is a pointer to the specified base type
+    /// * `false` - If this is not a pointer type, the base name is empty, or there's no match
+    ///
+    /// # Examples
     /// - `EventData*` is a pointer to `EventData`
     /// - `MyStruct*` is a pointer to `OuterClass/MyStruct`
     pub fn is_pointer_to(&self, base_fullname: &str) -> bool {
+        if base_fullname.is_empty() || base_fullname.trim().is_empty() {
+            return false;
+        }
+
         if let Some(element_name) = self.fullname().strip_suffix('*') {
             base_fullname == element_name || base_fullname.ends_with(&format!("/{}", element_name))
         } else {
@@ -1175,12 +1317,21 @@ impl CilType {
     /// share a common base name, indicating a generic instantiation relationship.
     ///
     /// # Arguments
-    /// * `base_fullname` - The full name of the potential generic base type to check against
+    /// * `base_fullname` - The full name of the potential generic base type to check against.
+    ///   Must be a non-empty, valid type name.
+    ///
+    /// # Returns
+    /// * `true` - If the types share a generic relationship
+    /// * `false` - If there's no generic relationship, or the base name is empty
     ///
     /// # Examples
     /// - `List<int>` has a generic relationship with `List<T>`
     /// - `Dictionary<string, int>` has a generic relationship with `Dictionary<K, V>`
     pub fn is_generic_of(&self, base_fullname: &str) -> bool {
+        if base_fullname.is_empty() || base_fullname.trim().is_empty() {
+            return false;
+        }
+
         let derived_fullname = self.fullname();
         (derived_fullname.contains('`') || base_fullname.contains('`'))
             && (derived_fullname.starts_with(base_fullname.split('`').next().unwrap_or(""))

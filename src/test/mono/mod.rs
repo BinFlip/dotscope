@@ -1,18 +1,27 @@
-//! Mono runtime verification framework for .NET assembly testing
+//! .NET assembly verification framework for dotscope testing
 //!
-//! This module provides shared utilities for testing .NET assemblies against the Mono runtime,
-//! extracted from common functionality in integration tests. It offers a comprehensive toolkit
-//! for creating, modifying, and verifying .NET assemblies with customizable test scenarios.
+//! This module provides utilities for verifying that .NET assemblies generated or modified
+//! by dotscope are valid and executable. It uses official .NET tools (dotnet CLI, Mono runtime,
+//! monodis) to validate that our binary output is correct and interoperable with the .NET ecosystem.
+//!
+//! # Purpose
+//!
+//! When dotscope modifies or generates .NET assemblies, we need to verify that:
+//! 1. The resulting binaries are structurally valid (can be loaded by .NET runtimes)
+//! 2. Added/modified code executes correctly (methods can be called via reflection)
+//! 3. Metadata is properly formatted (monodis can disassemble without errors)
+//!
+//! This framework automates these verification steps across multiple platforms and architectures.
 //!
 //! # Architecture
 //!
-//! The framework is organized into several specialized modules:
+//! The framework is organized into specialized modules:
 //!
-//! - **`runner`** - Test orchestration and temporary folder management
-//! - **`compilation`** - C# compilation utilities with platform support
-//! - **`execution`** - Mono runtime testing and compatibility verification
-//! - **`disassembly`** - Disassembly verification using monodis
-//! - **`reflection`** - Dynamic testing framework with reflection-based method invocation
+//! - **`runner`** - Test orchestration, temporary folder management, and architecture configuration
+//! - **`compilation`** - C# compilation using available compilers (dotnet CLI, csc, mcs)
+//! - **`execution`** - Assembly execution via .NET runtime (dotnet) or Mono
+//! - **`disassembly`** - IL disassembly verification using monodis
+//! - **`reflection`** - Dynamic method invocation tests via .NET reflection
 //!
 //! # Usage Examples
 //!
@@ -145,7 +154,7 @@
 //!
 //! let results = runner.run_for_all_architectures(|arch, temp_path| {
 //!     println!("Testing {} architecture", arch.name);
-//!     
+//!
 //!     // 1. Compile original program
 //!     let mut compiler = CSharpCompiler::new();
 //!     let exe_path = temp_path.join(format!("test_{}.exe", arch.filename_component()));
@@ -154,54 +163,48 @@
 //!         &exe_path,
 //!         arch
 //!     )?;
-//!     
+//!
 //!     if !compilation.is_success() {
 //!         return Err(dotscope::Error::Error("Compilation failed".to_string()));
 //!     }
-//!     
+//!
 //!     // 2. Test original execution
 //!     let mut runtime = MonoRuntime::new();
-//!     let original_result = runtime.test_original_executable(&exe_path)?;
-//!     
+//!     let original_result = runtime.execute_assembly(&exe_path)?;
+//!
 //!     // 3. Create modified assembly (your custom modifications here)
 //!     let modified_path = temp_path.join(format!("modified_{}.exe", arch.filename_component()));
 //!     std::fs::copy(&exe_path, &modified_path)?;
-//!     
+//!
 //!     // 4. Test mono compatibility
-//!     let compat_result = runtime.test_compatibility(&modified_path, &arch.name)?;
-//!     
+//!     let compat_result = runtime.test_compatibility(&modified_path)?;
+//!
 //!     // 5. Verify disassembly
 //!     let mut disassembler = MonoDisassembler::new();
 //!     let verification = disassembler.test_verification(&modified_path, &arch.name)?;
-//!     
+//!
 //!     Ok((original_result, compat_result, verification))
 //! })?;
 //!
-//! // Print summary
-//! MonoTestRunner::print_summary(&results);
+//! // Check if all tests passed
+//! assert!(MonoTestRunner::all_tests_passed(&results));
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! # Customization and Extension
+//! # Platform Support
 //!
-//! The framework is designed to be highly customizable:
+//! The framework automatically adapts to the available tools on each platform:
 //!
-//! - **Custom Architectures**: Define your own `ArchConfig` for specific platform requirements
-//! - **Verification Rules**: Use `VerificationRuleBuilder` for custom disassembly validation
-//! - **Reflection Tests**: Build complex test scenarios with `ReflectionTestBuilder`
+//! - **Windows**: Uses csc.exe or dotnet CLI for compilation, .NET runtime for execution
+//! - **macOS/Linux**: Uses dotnet CLI or mcs for compilation, dotnet or mono for execution
+//! - **ARM64**: Uses AnyCPU configuration for cross-architecture compatibility
+//!
+//! # Customization
+//!
+//! - **Custom Architectures**: Define `ArchConfig` for specific platform requirements
+//! - **Reflection Tests**: Build test scenarios with `ReflectionTestBuilder`
 //! - **Error Handling**: All operations return `Result` types for robust error handling
-//!
-//! # Integration with Existing Tests
-//!
-//! This framework is specifically designed to refactor and improve existing mono.rs and mono2.rs
-//! integration tests by providing:
-//!
-//! - Reduced code duplication
-//! - Consistent error handling and logging
-//! - Extensible test scenario patterns
-//! - Better separation of concerns
-//! - Reusable components for future tests
 
 pub mod compilation;
 pub mod disassembly;
@@ -356,7 +359,7 @@ impl TestEnvironment {
             }
 
             // 4. Test compatibility
-            match self.runtime.test_compatibility(&modified_path, &arch.name) {
+            match self.runtime.test_compatibility(&modified_path) {
                 Ok(compat_result) if compat_result.is_fully_compatible() => {
                     arch_result.compatibility_success = true;
                 }
@@ -470,85 +473,6 @@ impl CompleteTestResult {
             && self.reflection_success
             && self.errors.is_empty()
     }
-
-    /// Get success rate as percentage
-    pub fn success_rate(&self) -> f32 {
-        let total_tests = 6; // Number of test categories
-        let successful_tests = [
-            self.compilation_success,
-            self.modification_success,
-            self.execution_success,
-            self.compatibility_success,
-            self.disassembly_success,
-            self.reflection_success,
-        ]
-        .iter()
-        .filter(|&&success| success)
-        .count();
-
-        (successful_tests as f32 / total_tests as f32) * 100.0
-    }
-
-    /// Print detailed test results
-    pub fn print_detailed_results(&self) {
-        println!("📊 {} Architecture Results:", self.architecture.name);
-        println!(
-            "   Compilation:     {}",
-            if self.compilation_success {
-                "✅ PASS"
-            } else {
-                "❌ FAIL"
-            }
-        );
-        println!(
-            "   Modification:    {}",
-            if self.modification_success {
-                "✅ PASS"
-            } else {
-                "❌ FAIL"
-            }
-        );
-        println!(
-            "   Execution:       {}",
-            if self.execution_success {
-                "✅ PASS"
-            } else {
-                "❌ FAIL"
-            }
-        );
-        println!(
-            "   Compatibility:   {}",
-            if self.compatibility_success {
-                "✅ PASS"
-            } else {
-                "❌ FAIL"
-            }
-        );
-        println!(
-            "   Disassembly:     {}",
-            if self.disassembly_success {
-                "✅ PASS"
-            } else {
-                "❌ FAIL"
-            }
-        );
-        println!(
-            "   Reflection:      {}",
-            if self.reflection_success {
-                "✅ PASS"
-            } else {
-                "❌ FAIL"
-            }
-        );
-        println!("   Success Rate:    {:.1}%", self.success_rate());
-
-        if !self.errors.is_empty() {
-            println!("   Errors:");
-            for error in &self.errors {
-                println!("     • {}", error);
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -576,7 +500,6 @@ mod tests {
         };
 
         assert!(!result.is_fully_successful());
-        assert_eq!(result.success_rate(), 50.0); // 3 out of 6 successful
     }
 
     #[test]

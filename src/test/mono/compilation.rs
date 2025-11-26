@@ -1,7 +1,8 @@
-//! C# compilation utilities for mono testing
+//! C# compilation utilities
 //!
-//! This module handles compilation of C# source code to .NET assemblies
-//! with platform-specific flags and comprehensive error handling.
+//! This module handles compilation of C# source code to .NET assemblies using
+//! available compilers (dotnet CLI, csc, or mcs). It automatically detects which
+//! compiler is available and handles platform-specific compilation flags.
 
 use crate::prelude::*;
 use crate::test::mono::runner::ArchConfig;
@@ -20,6 +21,7 @@ pub enum CompilerType {
 }
 
 /// C# compiler configuration and utilities
+#[derive(Default)]
 pub struct CSharpCompiler {
     available_compiler: Option<CompilerType>,
 }
@@ -27,9 +29,7 @@ pub struct CSharpCompiler {
 impl CSharpCompiler {
     /// Create new compiler instance
     pub fn new() -> Self {
-        Self {
-            available_compiler: None,
-        }
+        Self::default()
     }
 
     /// Detect and return the available compiler type
@@ -350,11 +350,6 @@ impl CSharpCompiler {
 
         Ok(results)
     }
-
-    /// Check if Mono C# compiler (mcs) is available as fallback  
-    pub fn mcs_available() -> bool {
-        Command::new("mcs").arg("--help").output().is_ok()
-    }
 }
 
 /// Result of a compilation operation
@@ -478,12 +473,6 @@ mod tests {
             result.try_executable_path().unwrap(),
             Path::new("/test/path.exe")
         );
-    }
-
-    #[test]
-    fn test_mcs_availability() {
-        // This will vary by system, but should not panic
-        let _ = CSharpCompiler::mcs_available();
     }
 
     #[test]

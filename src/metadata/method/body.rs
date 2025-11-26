@@ -104,6 +104,7 @@
 //! - ECMA-335 6th Edition, Partition II, Section 25.4.6 - Exception Handling Data Sections
 
 use crate::{
+    malformed_error,
     metadata::method::{ExceptionHandler, ExceptionHandlerFlags, MethodBodyFlags, SectionFlags},
     utils::{read_le, read_le_at},
     Result,
@@ -112,6 +113,76 @@ use crate::{
 /// Maximum number of exception handlers allowed per method.
 /// Real-world methods typically have < 20 handlers.
 const MAX_EXCEPTION_HANDLERS: usize = 1024;
+
+/// Validates that an exception handler's offsets and lengths are within the method body bounds.
+///
+/// # Arguments
+/// * `handler` - The exception handler to validate
+/// * `code_size` - The size of the method's IL code in bytes
+/// * `handler_index` - The index of the handler (for error messages)
+///
+/// # Errors
+/// Returns an error if any offset or region extends beyond the method body.
+fn validate_exception_handler_bounds(
+    handler: &ExceptionHandler,
+    code_size: u32,
+    handler_index: usize,
+) -> Result<()> {
+    let try_end = handler
+        .try_offset
+        .checked_add(handler.try_length)
+        .ok_or_else(|| {
+            malformed_error!(
+                "Exception handler {} try region overflow: offset {} + length {} overflows u32",
+                handler_index,
+                handler.try_offset,
+                handler.try_length
+            )
+        })?;
+
+    if try_end > code_size {
+        return Err(malformed_error!(
+            "Exception handler {} try region [{}, {}) exceeds method code size {}",
+            handler_index,
+            handler.try_offset,
+            try_end,
+            code_size
+        ));
+    }
+
+    let handler_end = handler
+        .handler_offset
+        .checked_add(handler.handler_length)
+        .ok_or_else(|| {
+            malformed_error!(
+                "Exception handler {} handler region overflow: offset {} + length {} overflows u32",
+                handler_index,
+                handler.handler_offset,
+                handler.handler_length
+            )
+        })?;
+
+    if handler_end > code_size {
+        return Err(malformed_error!(
+            "Exception handler {} handler region [{}, {}) exceeds method code size {}",
+            handler_index,
+            handler.handler_offset,
+            handler_end,
+            code_size
+        ));
+    }
+
+    if handler.flags.contains(ExceptionHandlerFlags::FILTER) && handler.filter_offset >= code_size {
+        return Err(malformed_error!(
+            "Exception handler {} filter offset {} exceeds method code size {}",
+            handler_index,
+            handler.filter_offset,
+            code_size
+        ));
+    }
+
+    Ok(())
+}
 
 /// Describes one method that has been compiled to CIL bytecode.
 ///
@@ -302,17 +373,21 @@ impl MethodBody {
 
                             cursor += 4;
 
-                            for _ in 0..handler_count {
+                            for handler_idx in 0..handler_count {
+                                let flags_u32 = read_le_at::<u32>(data, &mut cursor)?;
+                                if flags_u32 > 0xFFFF {
+                                    return Err(malformed_error!(
+                                        "Exception handler {} has invalid flags with upper bits set: 0x{:08X}",
+                                        handler_idx,
+                                        flags_u32
+                                    ));
+                                }
+                                #[allow(clippy::cast_possible_truncation)]
+                                let flags =
+                                    ExceptionHandlerFlags::from_bits_truncate(flags_u32 as u16);
+
                                 exception_handlers.push(ExceptionHandler {
-                                    // Intentionally truncating u32 to u16 for exception handler flags
-                                    #[allow(clippy::cast_possible_truncation)]
-                                    flags: ExceptionHandlerFlags::from_bits_truncate(read_le_at::<
-                                        u32,
-                                    >(
-                                        data,
-                                        &mut cursor,
-                                    )?
-                                        as u16),
+                                    flags,
                                     try_offset: read_le_at::<u32>(data, &mut cursor)?,
                                     try_length: read_le_at::<u32>(data, &mut cursor)?,
                                     handler_offset: read_le_at::<u32>(data, &mut cursor)?,
@@ -365,6 +440,10 @@ impl MethodBody {
                             break;
                         }
                     }
+                }
+
+                for (index, handler) in exception_handlers.iter().enumerate() {
+                    validate_exception_handler_bounds(handler, size_code, index)?;
                 }
 
                 Ok(MethodBody {

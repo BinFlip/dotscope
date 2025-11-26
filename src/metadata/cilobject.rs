@@ -57,7 +57,7 @@
 //!
 //! ## Basic Assembly Loading and Analysis
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -82,7 +82,7 @@
 //!
 //! ## Memory-based Analysis
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::CilObject;
 //!
 //! // Load from memory buffer (e.g., downloaded or embedded)
@@ -106,7 +106,7 @@
 //!
 //! ## Custom Validation Settings
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::{CilObject, ValidationConfig};
 //! use std::path::Path;
 //!
@@ -126,7 +126,7 @@
 //!
 //! ## Comprehensive Metadata Analysis
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -135,8 +135,8 @@
 //! // Analyze imports and exports
 //! let imports = assembly.imports();
 //! let exports = assembly.exports();
-//! println!("Imports: {} items", imports.len());
-//! println!("Exports: {} items", exports.len());
+//! println!("Imports: {} items", imports.total_count());
+//! println!("Exports: {} items", exports.total_count());
 //!
 //! // Access embedded resources
 //! let resources = assembly.resources();
@@ -214,7 +214,7 @@ use crate::{
 ///
 /// # Usage Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
@@ -228,7 +228,8 @@ use crate::{
 /// println!("Number of types: {}", assembly.types().len());
 ///
 /// // Examine methods
-/// for method in assembly.methods().values() {
+/// for entry in assembly.methods().iter() {
+///     let method = entry.value();
 ///     println!("Method: {} (RVA: {:X})", method.name, method.rva.unwrap_or(0));
 /// }
 ///
@@ -273,7 +274,7 @@ impl CilObject {
     ///
     /// # Usage Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -297,7 +298,7 @@ impl CilObject {
     ///
     /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn from_path(path: impl AsRef<Path>) -> Result<Self> {
-        Self::from_path_with_validation(path, ValidationConfig::disabled())
+        Self::from_path_with_validation(path, ValidationConfig::production())
     }
 
     /// Creates a new `CilObject` by parsing a .NET assembly from a path with custom validation configuration.
@@ -312,7 +313,7 @@ impl CilObject {
     ///
     /// # Usage Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::{CilObject, ValidationConfig};
     /// use std::path::Path;
     ///
@@ -374,7 +375,7 @@ impl CilObject {
     ///
     /// # Usage Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     ///
     /// // Load assembly from file into memory then parse
@@ -396,7 +397,7 @@ impl CilObject {
     ///
     /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn from_mem(data: Vec<u8>) -> Result<Self> {
-        Self::from_mem_with_validation(data, ValidationConfig::disabled())
+        Self::from_mem_with_validation(data, ValidationConfig::production())
     }
 
     /// Creates a new `CilObject` by parsing a .NET assembly from a memory buffer with custom validation configuration.
@@ -411,7 +412,7 @@ impl CilObject {
     ///
     /// # Usage Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::{CilObject, ValidationConfig};
     ///
     /// let file_data = std::fs::read("tests/samples/mono_2.0/mscorlib.dll")?;
@@ -475,7 +476,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn from_dotscope_file(file: File) -> Result<Self> {
-        Self::from_dotscope_file_with_validation(file, ValidationConfig::disabled())
+        Self::from_dotscope_file_with_validation(file, ValidationConfig::production())
     }
 
     /// Creates a CilObject from a dotscope::file::File with validation.
@@ -538,7 +539,7 @@ impl CilObject {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn from_std_file(file: std::fs::File) -> Result<Self> {
-        Self::from_std_file_with_validation(file, ValidationConfig::disabled())
+        Self::from_std_file_with_validation(file, ValidationConfig::production())
     }
 
     /// Creates a CilObject from an opened std::fs::File with validation.
@@ -593,7 +594,7 @@ impl CilObject {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn from_reader<R: std::io::Read>(reader: R) -> Result<Self> {
-        Self::from_reader_with_validation(reader, ValidationConfig::disabled())
+        Self::from_reader_with_validation(reader, ValidationConfig::production())
     }
 
     /// Creates a CilObject from any reader with validation.
@@ -646,7 +647,7 @@ impl CilObject {
     ///
     /// # Usage Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::{CilObject, CilAssemblyView};
     /// use std::path::Path;
     ///
@@ -672,7 +673,7 @@ impl CilObject {
     ///
     /// Returns an error if the assembly cannot be processed or validated.
     pub fn from_view(assembly_view: CilAssemblyView) -> Result<Self> {
-        Self::from_view_with_validation(assembly_view, ValidationConfig::disabled())
+        Self::from_view_with_validation(assembly_view, ValidationConfig::production())
     }
 
     /// Creates a new `CilObject` from an existing `CilAssemblyView` with custom validation configuration.
@@ -764,7 +765,7 @@ impl CilObject {
     ///
     /// # Usage Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     ///
     /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
@@ -794,7 +795,7 @@ impl CilObject {
     ///
     /// # Usage Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     ///
     /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
@@ -1074,7 +1075,7 @@ impl CilObject {
     ///
     /// # Usage
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::CilObject;
     /// # fn security_example() -> dotscope::Result<()> {
     /// let assembly = CilObject::from_path("example.dll")?;
@@ -1196,7 +1197,7 @@ impl CilObject {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -1213,12 +1214,16 @@ impl CilObject {
     ///
     /// # Multi-Assembly Usage
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::collections::HashMap;
-    /// use std::path::Path;
+    /// use std::path::PathBuf;
     ///
     /// let mut assemblies = HashMap::new();
+    /// let assembly_paths = vec![
+    ///     PathBuf::from("tests/samples/mono_2.0/mscorlib.dll"),
+    ///     PathBuf::from("tests/samples/mono_2.0/System.dll"),
+    /// ];
     ///
     /// for path in assembly_paths {
     ///     let assembly = CilObject::from_path(&path)?;

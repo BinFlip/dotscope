@@ -164,7 +164,7 @@ use std::fmt;
 ///
 /// # Fields
 ///
-/// * `name` - The name of the property or field (e.g., "Read", "Write", "`PathDiscovery`")
+/// * `name` - The name of the property or field (e.g., "Read", "Write", "PathDiscovery")
 /// * `arg_type` - The data type of the argument
 /// * `value` - The actual value assigned to the property or field
 ///
@@ -238,7 +238,7 @@ impl NamedArgument {
     /// Returns the name of this named argument.
     ///
     /// The name typically corresponds to a property or field name on the permission class,
-    /// such as "Read", "Write", "`PathDiscovery`" for file permissions, or "Flags" for
+    /// such as "Read", "Write", "PathDiscovery" for file permissions, or "Flags" for
     /// security permissions.
     ///
     /// # Examples
@@ -405,7 +405,7 @@ impl NamedArgument {
     /// ```
     #[must_use]
     pub fn is_integer(&self) -> bool {
-        matches!(self.arg_type, ArgumentType::Int32) || matches!(self.arg_type, ArgumentType::Int64)
+        matches!(self.arg_type, ArgumentType::Int32 | ArgumentType::Int64)
     }
 }
 

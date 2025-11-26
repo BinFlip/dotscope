@@ -175,9 +175,22 @@ impl Physical {
             Err(error) => return Err(FileError(error)),
         };
 
+        // SAFETY: Mmap::map() requires that the file descriptor remains valid for the lifetime
+        // of the mapping. Here, `file` is a local variable that goes out of scope after
+        // Mmap::map() completes. This is safe because:
+        // 1. memmap2's Mmap duplicates the file descriptor internally (on Unix via dup())
+        // 2. On Windows, the mapping handle keeps the file open
+        // 3. The Mmap struct owns the mapping and cleans it up on drop
+        // 4. We only create a read-only mapping, so no data races with other processes
         let mmap = match unsafe { Mmap::map(&file) } {
             Ok(mmap) => mmap,
-            Err(error) => return Err(Error(error.to_string())),
+            Err(error) => {
+                return Err(Error(format!(
+                    "Failed to memory-map file: {} ({})",
+                    error,
+                    error.kind()
+                )))
+            }
         };
 
         Ok(Physical { data: mmap })
@@ -208,10 +221,18 @@ impl Physical {
     /// ```
     #[allow(clippy::needless_pass_by_value)]
     pub fn from_std_file(file: fs::File) -> Result<Physical> {
-        // Note: We take ownership of `file` even though we only borrow it for Mmap::map().
-        // This is intentional - the file handle must remain alive for the duration of the mmap,
-        // and Mmap internally keeps the file alive. Taking by value matches std library conventions.
-        let mmap = unsafe { Mmap::map(&file) }.map_err(|error| Error(error.to_string()))?;
+        // SAFETY: Same invariants as Physical::new() apply here. We take ownership of `file`
+        // even though Mmap::map() only borrows it. The file handle can safely go out of scope
+        // after mapping because memmap2 duplicates the file descriptor internally.
+        // Taking by value matches std library conventions and ensures the caller doesn't
+        // accidentally close the file while the mapping exists (though that would be safe too).
+        let mmap = unsafe { Mmap::map(&file) }.map_err(|error| {
+            Error(format!(
+                "Failed to memory-map file: {} ({})",
+                error,
+                error.kind()
+            ))
+        })?;
 
         Ok(Physical { data: mmap })
     }

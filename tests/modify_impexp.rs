@@ -19,15 +19,10 @@ fn test_native_imports_with_minimal_changes() -> Result<()> {
     let _test_string_index = context.string_add("TestString")?;
 
     // Add native imports
-    let import_result = NativeImportsBuilder::new()
-        .add_dll("kernel32.dll")
-        .add_function("kernel32.dll", "GetCurrentProcessId")
-        .build(&mut context);
-
-    assert!(
-        import_result.is_ok(),
-        "Native import builder should succeed"
-    );
+    NativeImportsBuilder::new()
+        .add_dll("kernel32.dll")?
+        .add_function("kernel32.dll", "GetCurrentProcessId")?
+        .build(&mut context)?;
 
     let temp_file = tempfile::NamedTempFile::new()?;
     let temp_path = temp_file.path();
@@ -73,19 +68,14 @@ fn add_native_imports_to_crafted_2() -> Result<()> {
     let _test_string_index = context.string_add("NativeImportTest")?;
 
     // Step 2: Add native imports using NativeImportsBuilder
-    let import_result = NativeImportsBuilder::new()
-        .add_dll("kernel32.dll")
-        .add_function("kernel32.dll", "GetCurrentProcessId")
-        .add_function("kernel32.dll", "ExitProcess")
-        .add_dll("user32.dll")
-        .add_function("user32.dll", "MessageBoxW")
-        .add_function("user32.dll", "GetActiveWindow")
-        .build(&mut context);
-
-    assert!(
-        import_result.is_ok(),
-        "Native import builder should succeed"
-    );
+    NativeImportsBuilder::new()
+        .add_dll("kernel32.dll")?
+        .add_function("kernel32.dll", "GetCurrentProcessId")?
+        .add_function("kernel32.dll", "ExitProcess")?
+        .add_dll("user32.dll")?
+        .add_function("user32.dll", "MessageBoxW")?
+        .add_function("user32.dll", "GetActiveWindow")?
+        .build(&mut context)?;
 
     // Step 3: Write to a temporary file
     let temp_file = tempfile::NamedTempFile::new()?;
@@ -385,16 +375,11 @@ fn add_both_imports_and_exports_to_crafted_2() -> Result<()> {
     // Step 2: Add both native imports and exports
 
     // Add imports
-    let import_result = NativeImportsBuilder::new()
-        .add_dll("kernel32.dll")
-        .add_function("kernel32.dll", "GetCurrentProcessId")
-        .add_function("kernel32.dll", "GetModuleHandleW")
-        .build(&mut context);
-
-    assert!(
-        import_result.is_ok(),
-        "Native import builder should succeed"
-    );
+    NativeImportsBuilder::new()
+        .add_dll("kernel32.dll")?
+        .add_function("kernel32.dll", "GetCurrentProcessId")?
+        .add_function("kernel32.dll", "GetModuleHandleW")?
+        .build(&mut context)?;
 
     // Add exports
     let export_result = NativeExportsBuilder::new("MixedLibrary.dll")
@@ -578,14 +563,10 @@ fn round_trip_preserve_existing_data() -> Result<()> {
     let _test_string_index = context.string_add("PreserveDataTest")?;
 
     // Step 2: Add native functionality
-    let import_result = NativeImportsBuilder::new()
-        .add_dll("kernel32.dll")
-        .add_function("kernel32.dll", "GetCurrentProcessId")
-        .build(&mut context);
-    assert!(
-        import_result.is_ok(),
-        "Native import builder should succeed"
-    );
+    NativeImportsBuilder::new()
+        .add_dll("kernel32.dll")?
+        .add_function("kernel32.dll", "GetCurrentProcessId")?
+        .build(&mut context)?;
 
     // Step 3: Write and reload
     let temp_file = tempfile::NamedTempFile::new()?;
@@ -705,16 +686,14 @@ fn test_import_table_format_validation() -> Result<()> {
     // Add imports that should generate a valid import table
     let _test_string_index = context.string_add("ImportFormatTest")?;
 
-    let import_result = NativeImportsBuilder::new()
-        .add_dll("kernel32.dll")
-        .add_function("kernel32.dll", "GetCurrentProcessId")
-        .add_function("kernel32.dll", "ExitProcess")
-        .add_dll("user32.dll")
-        .add_function("user32.dll", "MessageBoxW")
-        .add_function("user32.dll", "GetActiveWindow")
-        .build(&mut context);
-
-    assert!(import_result.is_ok(), "Import builder should succeed");
+    NativeImportsBuilder::new()
+        .add_dll("kernel32.dll")?
+        .add_function("kernel32.dll", "GetCurrentProcessId")?
+        .add_function("kernel32.dll", "ExitProcess")?
+        .add_dll("user32.dll")?
+        .add_function("user32.dll", "MessageBoxW")?
+        .add_function("user32.dll", "GetActiveWindow")?
+        .build(&mut context)?;
 
     let temp_file = tempfile::NamedTempFile::new()?;
     let temp_path = temp_file.path();

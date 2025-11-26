@@ -509,7 +509,140 @@ pub struct ExceptionHandler {
     /// 1. Receives the exception object and execution context
     /// 2. Executes custom logic to test the exception
     /// 3. Returns true (1) to handle or false (0) to continue unwinding
+    ///
+    /// # Dual Purpose (ECMA-335 II.25.4.6)
+    ///
+    /// This field has different meanings depending on the handler type:
+    /// - **FILTER handlers**: Contains the IL byte offset where the filter expression begins
+    /// - **EXCEPTION handlers**: Initially contains the TypeDef/TypeRef/TypeSpec token for the
+    ///   caught exception type (before resolution). After type resolution via
+    ///   [`Method::parse()`][crate::metadata::method::Method::parse], this is cleared to 0
+    ///   and the resolved type is stored in the [`handler`][Self::handler] field.
+    /// - **FINALLY/FAULT handlers**: Should be 0 (unused)
+    ///
+    /// For type-safe access, use the [`get_filter_offset()`][Self::get_filter_offset] and
+    /// [`get_class_token()`][Self::get_class_token] accessor methods.
     pub filter_offset: u32,
+}
+
+impl ExceptionHandler {
+    /// Returns the filter expression offset for FILTER handlers.
+    ///
+    /// For FILTER exception handlers, this returns the IL byte offset where the
+    /// filter expression code begins. The filter expression evaluates whether
+    /// this handler should process the current exception.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(offset)` if this is a FILTER handler
+    /// - `None` for all other handler types (EXCEPTION, FINALLY, FAULT)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::method::{ExceptionHandler, ExceptionHandlerFlags};
+    ///
+    /// let handler = ExceptionHandler {
+    ///     flags: ExceptionHandlerFlags::FILTER,
+    ///     try_offset: 0,
+    ///     try_length: 10,
+    ///     handler_offset: 20,
+    ///     handler_length: 5,
+    ///     handler: None,
+    ///     filter_offset: 15,
+    /// };
+    ///
+    /// assert_eq!(handler.get_filter_offset(), Some(15));
+    /// ```
+    #[must_use]
+    pub fn get_filter_offset(&self) -> Option<u32> {
+        if self.flags.contains(ExceptionHandlerFlags::FILTER) {
+            Some(self.filter_offset)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the class token for unresolved EXCEPTION handlers.
+    ///
+    /// For EXCEPTION (catch) handlers that have not yet been resolved, this returns
+    /// the raw TypeDef/TypeRef/TypeSpec token that identifies the exception type
+    /// to catch.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(token)` if this is an EXCEPTION handler with a non-zero token
+    ///   (i.e., before type resolution)
+    /// - `None` if this is not an EXCEPTION handler, or if the type has already
+    ///   been resolved (token cleared to 0)
+    ///
+    /// # Note
+    ///
+    /// After [`Method::parse()`][crate::metadata::method::Method::parse] is called,
+    /// the class token is resolved to an actual type reference stored in the
+    /// [`handler`][Self::handler] field, and this method will return `None`.
+    /// Use the `handler` field to access the resolved type.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::method::{ExceptionHandler, ExceptionHandlerFlags};
+    ///
+    /// // Before type resolution
+    /// let handler = ExceptionHandler {
+    ///     flags: ExceptionHandlerFlags::EXCEPTION,
+    ///     try_offset: 0,
+    ///     try_length: 10,
+    ///     handler_offset: 10,
+    ///     handler_length: 5,
+    ///     handler: None,
+    ///     filter_offset: 0x01000001, // TypeRef token
+    /// };
+    ///
+    /// assert_eq!(handler.get_class_token(), Some(0x01000001));
+    /// ```
+    #[must_use]
+    pub fn get_class_token(&self) -> Option<u32> {
+        // EXCEPTION is 0x0000, so we check that this is a catch handler and has a non-zero token
+        if self.is_catch() && self.filter_offset != 0 {
+            Some(self.filter_offset)
+        } else {
+            None
+        }
+    }
+
+    /// Returns true if this handler catches a specific exception type.
+    ///
+    /// This is a convenience method to check if the handler is an EXCEPTION
+    /// handler (catch block) as opposed to FILTER, FINALLY, or FAULT.
+    ///
+    /// Since `EXCEPTION = 0x0000`, this checks that none of the other handler
+    /// type flags (FILTER, FINALLY, FAULT) are set.
+    #[must_use]
+    pub fn is_catch(&self) -> bool {
+        // EXCEPTION is 0x0000, so we check that no other flags are set
+        !self.flags.contains(ExceptionHandlerFlags::FILTER)
+            && !self.flags.contains(ExceptionHandlerFlags::FINALLY)
+            && !self.flags.contains(ExceptionHandlerFlags::FAULT)
+    }
+
+    /// Returns true if this handler is a finally block.
+    #[must_use]
+    pub fn is_finally(&self) -> bool {
+        self.flags.contains(ExceptionHandlerFlags::FINALLY)
+    }
+
+    /// Returns true if this handler is a fault block.
+    #[must_use]
+    pub fn is_fault(&self) -> bool {
+        self.flags.contains(ExceptionHandlerFlags::FAULT)
+    }
+
+    /// Returns true if this handler uses a filter expression.
+    #[must_use]
+    pub fn is_filter(&self) -> bool {
+        self.flags.contains(ExceptionHandlerFlags::FILTER)
+    }
 }
 
 /// Encodes exception handlers according to ECMA-335 II.25.4.6.
@@ -521,6 +654,21 @@ pub struct ExceptionHandler {
 /// Format selection:
 /// - Small format: if all offsets and lengths fit in 16 bits
 /// - Fat format: if any offset or length requires 32 bits
+///
+/// # Limitations
+///
+/// **Warning**: This function cannot fully encode `EXCEPTION` (catch) handlers. The type token
+/// for catch clauses is written as `0` because the original metadata token is not preserved
+/// in [`ExceptionHandler`]. This means:
+///
+/// - **Round-trip operations** (read method → modify → write back) will produce invalid
+///   exception handlers for catch blocks
+/// - **FILTER, FINALLY, and FAULT handlers** encode correctly as they don't require type tokens
+/// - Use this function only for **newly created handlers** where type tokens will be resolved
+///   separately, or for handlers that don't catch specific exception types
+///
+/// To properly support round-trip encoding of catch handlers, the `ExceptionHandler` struct
+/// would need to preserve the original `ClassToken` value from parsing.
 ///
 /// # Arguments
 ///
@@ -749,5 +897,143 @@ mod tests {
         // Should successfully encode filter handler
         assert_eq!(result.len(), 16); // Small format
         assert_eq!(result[0], 0x01); // Small format flag
+    }
+
+    // Tests for ExceptionHandler accessor methods (MTH-L008)
+
+    #[test]
+    fn test_exception_handler_get_filter_offset() {
+        // FILTER handler should return Some
+        let filter_handler = ExceptionHandler {
+            flags: ExceptionHandlerFlags::FILTER,
+            try_offset: 0,
+            try_length: 10,
+            handler_offset: 20,
+            handler_length: 5,
+            handler: None,
+            filter_offset: 15,
+        };
+        assert_eq!(filter_handler.get_filter_offset(), Some(15));
+
+        // Non-FILTER handlers should return None
+        let finally_handler = ExceptionHandler {
+            flags: ExceptionHandlerFlags::FINALLY,
+            try_offset: 0,
+            try_length: 10,
+            handler_offset: 10,
+            handler_length: 5,
+            handler: None,
+            filter_offset: 0,
+        };
+        assert_eq!(finally_handler.get_filter_offset(), None);
+
+        let exception_handler = ExceptionHandler {
+            flags: ExceptionHandlerFlags::EXCEPTION,
+            try_offset: 0,
+            try_length: 10,
+            handler_offset: 10,
+            handler_length: 5,
+            handler: None,
+            filter_offset: 0x01000001, // Type token
+        };
+        assert_eq!(exception_handler.get_filter_offset(), None);
+    }
+
+    #[test]
+    fn test_exception_handler_get_class_token() {
+        // EXCEPTION handler with non-zero token should return Some
+        let unresolved_catch = ExceptionHandler {
+            flags: ExceptionHandlerFlags::EXCEPTION,
+            try_offset: 0,
+            try_length: 10,
+            handler_offset: 10,
+            handler_length: 5,
+            handler: None,
+            filter_offset: 0x01000001, // TypeRef token
+        };
+        assert_eq!(unresolved_catch.get_class_token(), Some(0x01000001));
+
+        // EXCEPTION handler with zero token (resolved) should return None
+        let resolved_catch = ExceptionHandler {
+            flags: ExceptionHandlerFlags::EXCEPTION,
+            try_offset: 0,
+            try_length: 10,
+            handler_offset: 10,
+            handler_length: 5,
+            handler: None, // Would have resolved type in real scenario
+            filter_offset: 0,
+        };
+        assert_eq!(resolved_catch.get_class_token(), None);
+
+        // Non-EXCEPTION handlers should return None
+        let filter_handler = ExceptionHandler {
+            flags: ExceptionHandlerFlags::FILTER,
+            try_offset: 0,
+            try_length: 10,
+            handler_offset: 20,
+            handler_length: 5,
+            handler: None,
+            filter_offset: 15,
+        };
+        assert_eq!(filter_handler.get_class_token(), None);
+    }
+
+    #[test]
+    fn test_exception_handler_type_checks() {
+        let catch_handler = ExceptionHandler {
+            flags: ExceptionHandlerFlags::EXCEPTION,
+            try_offset: 0,
+            try_length: 10,
+            handler_offset: 10,
+            handler_length: 5,
+            handler: None,
+            filter_offset: 0,
+        };
+        assert!(catch_handler.is_catch());
+        assert!(!catch_handler.is_finally());
+        assert!(!catch_handler.is_fault());
+        assert!(!catch_handler.is_filter());
+
+        let finally_handler = ExceptionHandler {
+            flags: ExceptionHandlerFlags::FINALLY,
+            try_offset: 0,
+            try_length: 10,
+            handler_offset: 10,
+            handler_length: 5,
+            handler: None,
+            filter_offset: 0,
+        };
+        assert!(!finally_handler.is_catch());
+        assert!(finally_handler.is_finally());
+        assert!(!finally_handler.is_fault());
+        assert!(!finally_handler.is_filter());
+
+        let fault_handler = ExceptionHandler {
+            flags: ExceptionHandlerFlags::FAULT,
+            try_offset: 0,
+            try_length: 10,
+            handler_offset: 10,
+            handler_length: 5,
+            handler: None,
+            filter_offset: 0,
+        };
+        assert!(!fault_handler.is_catch());
+        assert!(!fault_handler.is_finally());
+        assert!(fault_handler.is_fault());
+        assert!(!fault_handler.is_filter());
+
+        let filter_handler = ExceptionHandler {
+            flags: ExceptionHandlerFlags::FILTER,
+            try_offset: 0,
+            try_length: 10,
+            handler_offset: 20,
+            handler_length: 5,
+            handler: None,
+            filter_offset: 15,
+        };
+        assert!(!filter_handler.is_catch());
+        assert!(!filter_handler.is_finally());
+        assert!(!filter_handler.is_fault());
+        assert!(filter_handler.is_filter());
     }
 }

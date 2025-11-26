@@ -145,9 +145,7 @@ impl OwnedFieldValidator {
     /// - Field signatures contain unresolved types (Unknown type signatures)
     /// - Field modifiers have invalid tokens
     fn validate_field_signatures(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
-
-        for type_entry in types.all_types() {
+        for type_entry in context.all_types() {
             for (_, field) in type_entry.fields.iter() {
                 if field.name.is_empty() {
                     let token_value = field.token.value();
@@ -206,9 +204,7 @@ impl OwnedFieldValidator {
     /// - Field access levels contain invalid values
     /// - Literal fields are not marked as static (ECMA-335 requirement)
     fn validate_field_accessibility(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
-
-        for type_entry in types.all_types() {
+        for type_entry in context.all_types() {
             for (_, field) in type_entry.fields.iter() {
                 let access_level = field.flags & FieldAttributes::FIELD_ACCESS_MASK;
 
@@ -275,9 +271,7 @@ impl OwnedFieldValidator {
     /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
     /// - RTSpecialName flag is set without SpecialName flag
     fn validate_special_attributes(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
-
-        for type_entry in types.all_types() {
+        for type_entry in context.all_types() {
             for (_, field) in type_entry.fields.iter() {
                 // Check HasDefault flag consistency
                 if field.flags & 0x1000 != 0 { // HAS_DEFAULT flag
@@ -350,9 +344,7 @@ impl OwnedFieldValidator {
     /// - Backing fields are not marked as private
     /// - Field names contain null characters
     fn validate_field_naming(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
-
-        for type_entry in types.all_types() {
+        for type_entry in context.all_types() {
             for (_, field) in type_entry.fields.iter() {
                 if field.name.starts_with('<') && field.name.ends_with(">k__BackingField") {
                     let access_level = field.flags & FieldAttributes::FIELD_ACCESS_MASK;

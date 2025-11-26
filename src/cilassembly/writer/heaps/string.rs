@@ -101,18 +101,13 @@ impl HeapBuilder for StringHeapBuilder<'_> {
                 }
             }
 
-            // Handle appended items
-            for original_string in &string_changes.appended_items {
-                let original_heap_index = {
-                    let mut calculated_index = string_changes.next_index;
-                    for item in string_changes.appended_items.iter().rev() {
-                        calculated_index -= u32::try_from(item.len() + 1).unwrap_or(0);
-                        if std::ptr::eq(item, original_string) {
-                            break;
-                        }
-                    }
-                    calculated_index
-                };
+            // Handle appended items using pre-computed indices
+            for (vec_index, original_string) in string_changes.appended_items.iter().enumerate() {
+                let original_heap_index = string_changes
+                    .appended_item_indices
+                    .get(vec_index)
+                    .copied()
+                    .unwrap_or(0);
 
                 if !string_changes.is_removed(original_heap_index) {
                     let final_string = string_changes
@@ -196,40 +191,23 @@ impl HeapBuilder for StringHeapBuilder<'_> {
             // Step 3: Append new strings at the end, applying any modifications or removals
             let mut current_append_index = u32::try_from(original_heap_data.len())
                 .map_err(|_| malformed_error!("Original heap size exceeds u32 range"))?;
+
             for new_string in &string_changes.appended_items {
-                // Check if this newly added string has been modified or removed
-                if string_changes
+                let is_removed = string_changes
                     .removed_indices
-                    .contains(&current_append_index)
-                {
-                } else if let Some(modified_string) =
-                    string_changes.modified_items.get(&current_append_index)
-                {
-                    final_heap.extend_from_slice(modified_string.as_bytes());
-                    final_heap.push(0);
-                } else {
-                    final_heap.extend_from_slice(new_string.as_bytes());
+                    .contains(&current_append_index);
+                let modified_string = string_changes.modified_items.get(&current_append_index);
+
+                // Write the string (unless removed)
+                if !is_removed {
+                    let string_to_write = modified_string.unwrap_or(new_string);
+                    final_heap.extend_from_slice(string_to_write.as_bytes());
                     final_heap.push(0);
                 }
 
-                // Update the current append index for the next string
-                current_append_index += if string_changes
-                    .modified_items
-                    .contains_key(&current_append_index)
-                {
-                    u32::try_from(string_changes.modified_items[&current_append_index].len())
-                        .map_err(|_| malformed_error!("Modified string length exceeds u32 range"))?
-                        + 1
-                } else if !string_changes
-                    .removed_indices
-                    .contains(&current_append_index)
-                {
-                    u32::try_from(new_string.len())
-                        .map_err(|_| malformed_error!("New string length exceeds u32 range"))?
-                        + 1
-                } else {
-                    0 // Removed strings don't consume space
-                };
+                // Advance index based on string size (original size for index tracking)
+                current_append_index += u32::try_from(new_string.len() + 1)
+                    .map_err(|_| malformed_error!("String length exceeds u32 range"))?;
             }
 
             // Apply 4-byte alignment padding
@@ -241,9 +219,6 @@ impl HeapBuilder for StringHeapBuilder<'_> {
         }
 
         // Fallback: build from scratch if no original strings heap
-        let mut min_index = u32::MAX;
-        let mut max_index = 0u32;
-
         if let Some(strings_heap) = self.assembly.view().strings() {
             // Phase 1: Process all original strings with modifications/removals
             for (original_index, original_string) in strings_heap.iter() {
@@ -251,13 +226,6 @@ impl HeapBuilder for StringHeapBuilder<'_> {
                     u32::try_from(original_index).map_err(|_| Error::WriteLayoutFailed {
                         message: "String heap index exceeds u32 range".to_string(),
                     })?;
-
-                if original_index < min_index {
-                    min_index = original_index;
-                }
-                if original_index > max_index {
-                    max_index = original_index;
-                }
 
                 if string_changes.is_removed(original_index) {
                     // String is removed - no mapping entry
@@ -290,21 +258,13 @@ impl HeapBuilder for StringHeapBuilder<'_> {
             }
         }
 
-        // Handle appended strings
-        for original_string in &string_changes.appended_items {
-            let original_heap_index = {
-                let mut calculated_index = string_changes.next_index;
-                for item in string_changes.appended_items.iter().rev() {
-                    calculated_index -=
-                        u32::try_from(item.len() + 1).map_err(|_| Error::WriteLayoutFailed {
-                            message: "String item size exceeds u32 range".to_string(),
-                        })?;
-                    if std::ptr::eq(item, original_string) {
-                        break;
-                    }
-                }
-                calculated_index
-            };
+        // Handle appended strings using pre-computed indices
+        for (vec_index, original_string) in string_changes.appended_items.iter().enumerate() {
+            let original_heap_index = string_changes
+                .appended_item_indices
+                .get(vec_index)
+                .copied()
+                .unwrap_or(0);
 
             if !string_changes.is_removed(original_heap_index) {
                 let final_string = string_changes

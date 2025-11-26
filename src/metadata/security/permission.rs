@@ -610,27 +610,7 @@ impl Permission {
     /// how the permission was originally configured.
     #[must_use]
     pub fn get_file_read_paths(&self) -> Option<Vec<String>> {
-        if !self.is_file_io() {
-            return None;
-        }
-
-        if let Some(arg) = self.get_argument("Read") {
-            match &arg.value {
-                ArgumentValue::String(s) => Some(vec![s.clone()]),
-                ArgumentValue::Array(arr) => {
-                    let mut paths = Vec::new();
-                    for value in arr {
-                        if let ArgumentValue::String(s) = value {
-                            paths.push(s.clone());
-                        }
-                    }
-                    Some(paths)
-                }
-                _ => None,
-            }
-        } else {
-            None
-        }
+        self.extract_file_io_paths("Read")
     }
 
     /// Extracts file paths granted write access from a `FileIOPermission`.
@@ -673,27 +653,7 @@ impl Permission {
     /// in security-sensitive contexts.
     #[must_use]
     pub fn get_file_write_paths(&self) -> Option<Vec<String>> {
-        if !self.is_file_io() {
-            return None;
-        }
-
-        if let Some(arg) = self.get_argument("Write") {
-            match &arg.value {
-                ArgumentValue::String(s) => Some(vec![s.clone()]),
-                ArgumentValue::Array(arr) => {
-                    let mut paths = Vec::new();
-                    for value in arr {
-                        if let ArgumentValue::String(s) = value {
-                            paths.push(s.clone());
-                        }
-                    }
-                    Some(paths)
-                }
-                _ => None,
-            }
-        } else {
-            None
-        }
+        self.extract_file_io_paths("Write")
     }
 
     /// Extracts file paths granted path discovery access from a `FileIOPermission`.
@@ -736,27 +696,46 @@ impl Permission {
     /// such as installers or configuration utilities.
     #[must_use]
     pub fn get_file_path_discovery(&self) -> Option<Vec<String>> {
+        self.extract_file_io_paths("PathDiscovery")
+    }
+
+    /// Internal helper to extract file paths from a `FileIOPermission` argument.
+    ///
+    /// This method consolidates the common logic for extracting file paths from
+    /// various `FileIOPermission` arguments (Read, Write, PathDiscovery, Append).
+    /// It handles both single string values and arrays of strings.
+    ///
+    /// # Arguments
+    ///
+    /// * `arg_name` - The name of the argument to extract paths from
+    ///
+    /// # Returns
+    ///
+    /// - `Some(Vec<String>)` if this is a `FileIOPermission` with the specified argument
+    /// - `None` if this is not a `FileIOPermission` or the argument is missing/invalid
+    fn extract_file_io_paths(&self, arg_name: &str) -> Option<Vec<String>> {
         if !self.is_file_io() {
             return None;
         }
 
-        if let Some(arg) = self.get_argument("PathDiscovery") {
-            match &arg.value {
+        self.get_argument(arg_name)
+            .and_then(|arg| match &arg.value {
                 ArgumentValue::String(s) => Some(vec![s.clone()]),
                 ArgumentValue::Array(arr) => {
-                    let mut paths = Vec::new();
-                    for value in arr {
-                        if let ArgumentValue::String(s) = value {
-                            paths.push(s.clone());
-                        }
-                    }
+                    let paths: Vec<String> = arr
+                        .iter()
+                        .filter_map(|value| {
+                            if let ArgumentValue::String(s) = value {
+                                Some(s.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
                     Some(paths)
                 }
                 _ => None,
-            }
-        } else {
-            None
-        }
+            })
     }
 
     /// Determines if this permission grants unrestricted access.
@@ -887,72 +866,166 @@ impl Permission {
     ///
     /// # Supported Flag Names
     ///
-    /// - `"Execution"` - Basic code execution rights
-    /// - `"SkipVerification"` - Ability to skip IL verification
-    /// - `"Assertion"` - Permission assertion capabilities
-    /// - `"UnmanagedCode"` - Unmanaged code execution (maps to multiple internal flags)
-    /// - `"UnsafeCode"` - Direct unsafe code execution
-    /// - `"ControlAppDomains"` - Application domain control
-    /// - `"ControlPolicy"` - Security policy manipulation
-    /// - `"Serialization"` - Object serialization rights
-    /// - `"ControlThread"` - Thread lifecycle control
-    /// - `"ControlEvidence"` - Evidence manipulation
-    /// - `"ControlPrincipal"` - Principal object control
-    /// - `"Infrastructure"` - Infrastructure services access
-    /// - `"Binding"` - Assembly binding control
-    /// - `"Remoting"` - Remoting infrastructure access
-    /// - `"ControlDomain"` - Domain-level control
-    /// - `"Reflection"` - Reflection capabilities
-    /// - `"AllFlags"` - All available permissions
+    /// The following flag names are recognized (case-sensitive):
+    ///
+    /// | Flag Name | Description | Maps To |
+    /// |-----------|-------------|---------|
+    /// | `"NoFlags"` | No permissions | Empty flags |
+    /// | `"Execution"` | Basic code execution rights | `SECURITY_FLAG_EXECUTION` |
+    /// | `"SkipVerification"` | Ability to skip IL verification | `SECURITY_FLAG_SKIP_VERIFICATION` |
+    /// | `"Assertion"` | Permission assertion capabilities | `SECURITY_FLAG_ASSERTION` |
+    /// | `"UnmanagedCode"` | Unmanaged code execution | `SECURITY_FLAG_UNSAFE_CODE` + `SECURITY_FLAG_SKIP_VERIFICATION` |
+    /// | `"UnsafeCode"` | Direct unsafe code execution | `SECURITY_FLAG_UNSAFE_CODE` |
+    /// | `"ControlAppDomains"` | Application domain control | `SECURITY_FLAG_CONTROL_APPDOMAINS` |
+    /// | `"ControlPolicy"` | Security policy manipulation | `SECURITY_FLAG_CONTROL_POLICY` |
+    /// | `"Serialization"` | Object serialization rights | `SECURITY_FLAG_SERIALIZATION` |
+    /// | `"ControlThread"` | Thread lifecycle control | `SECURITY_FLAG_CONTROL_THREAD` |
+    /// | `"ControlEvidence"` | Evidence manipulation | `SECURITY_FLAG_CONTROL_EVIDENCE` |
+    /// | `"ControlPrincipal"` | Principal object control | `SECURITY_FLAG_CONTROL_PRINCIPAL` |
+    /// | `"Infrastructure"` | Infrastructure services access | `SECURITY_FLAG_INFRASTRUCTURE` |
+    /// | `"BindingRedirects"` | Assembly binding redirects | `SECURITY_FLAG_BINDING` |
+    /// | `"Binding"` | Assembly binding control (legacy) | `SECURITY_FLAG_BINDING` |
+    /// | `"Remoting"` | Remoting infrastructure access | `SECURITY_FLAG_REMOTING` |
+    /// | `"RemotingConfiguration"` | Remoting configuration | `SECURITY_FLAG_REMOTING` |
+    /// | `"ControlDomainPolicy"` | Domain-level policy control | `SECURITY_FLAG_CONTROL_DOMAIN` |
+    /// | `"ControlDomain"` | Domain-level control (legacy) | `SECURITY_FLAG_CONTROL_DOMAIN` |
+    /// | `"Reflection"` | Reflection capabilities | `SECURITY_FLAG_REFLECTION` |
+    /// | `"AllFlags"` | All available permissions | All flags set |
+    ///
+    /// # UnmanagedCode Flag Combination Rationale
+    ///
+    /// The `"UnmanagedCode"` flag maps to both `SECURITY_FLAG_UNSAFE_CODE` and
+    /// `SECURITY_FLAG_SKIP_VERIFICATION` because in the .NET Framework security model,
+    /// executing unmanaged code inherently requires the ability to bypass IL verification.
+    /// Unmanaged code operates outside the CLR's type safety guarantees, so granting
+    /// unmanaged code permission implicitly grants verification skip permission.
+    /// This combination reflects the actual security implications in .NET Framework 1.0-4.x.
     ///
     /// # Format Examples
     ///
     /// - `"Execution"` - Single flag
-    /// - `"Execution,UnmanagedCode"` - Multiple flags
+    /// - `"Execution, UnmanagedCode"` - Multiple flags (whitespace around commas is trimmed)
     /// - `"AllFlags"` - All permissions
+    /// - `"NoFlags"` - Empty permission set
+    ///
+    /// # Unknown Flag Handling
     ///
     /// Unknown flag names are silently ignored to maintain compatibility with
-    /// future .NET Framework versions that may introduce new flags.
+    /// future .NET Framework versions that may introduce new flags. This is intentional:
+    /// when analyzing assemblies built with newer .NET versions, we want to parse
+    /// what we can rather than fail entirely.
     fn parse_flags_from_string(flags_str: &str) -> SecurityPermissionFlags {
+        /// Lookup table for flag name to SecurityPermissionFlags mapping.
+        /// Using a static array for O(n) lookup is acceptable here since:
+        /// 1. The table is small (20 entries)
+        /// 2. This function is not called in hot paths
+        /// 3. Linear search has good cache locality for small arrays
+        const FLAG_MAPPINGS: &[(&str, SecurityPermissionFlags)] = &[
+            ("NoFlags", SecurityPermissionFlags::empty()),
+            (
+                "Execution",
+                SecurityPermissionFlags::SECURITY_FLAG_EXECUTION,
+            ),
+            (
+                "SkipVerification",
+                SecurityPermissionFlags::SECURITY_FLAG_SKIP_VERIFICATION,
+            ),
+            (
+                "Assertion",
+                SecurityPermissionFlags::SECURITY_FLAG_ASSERTION,
+            ),
+            (
+                "UnsafeCode",
+                SecurityPermissionFlags::SECURITY_FLAG_UNSAFE_CODE,
+            ),
+            (
+                "ControlAppDomain",
+                SecurityPermissionFlags::SECURITY_FLAG_CONTROL_APPDOMAINS,
+            ),
+            (
+                "ControlAppDomains",
+                SecurityPermissionFlags::SECURITY_FLAG_CONTROL_APPDOMAINS,
+            ),
+            (
+                "ControlPolicy",
+                SecurityPermissionFlags::SECURITY_FLAG_CONTROL_POLICY,
+            ),
+            (
+                "SerializationFormatter",
+                SecurityPermissionFlags::SECURITY_FLAG_SERIALIZATION,
+            ),
+            (
+                "Serialization",
+                SecurityPermissionFlags::SECURITY_FLAG_SERIALIZATION,
+            ),
+            (
+                "ControlThread",
+                SecurityPermissionFlags::SECURITY_FLAG_CONTROL_THREAD,
+            ),
+            (
+                "ControlEvidence",
+                SecurityPermissionFlags::SECURITY_FLAG_CONTROL_EVIDENCE,
+            ),
+            (
+                "ControlPrincipal",
+                SecurityPermissionFlags::SECURITY_FLAG_CONTROL_PRINCIPAL,
+            ),
+            (
+                "Infrastructure",
+                SecurityPermissionFlags::SECURITY_FLAG_INFRASTRUCTURE,
+            ),
+            (
+                "BindingRedirects",
+                SecurityPermissionFlags::SECURITY_FLAG_BINDING,
+            ),
+            ("Binding", SecurityPermissionFlags::SECURITY_FLAG_BINDING),
+            (
+                "RemotingConfiguration",
+                SecurityPermissionFlags::SECURITY_FLAG_REMOTING,
+            ),
+            ("Remoting", SecurityPermissionFlags::SECURITY_FLAG_REMOTING),
+            (
+                "ControlDomainPolicy",
+                SecurityPermissionFlags::SECURITY_FLAG_CONTROL_DOMAIN,
+            ),
+            (
+                "ControlDomain",
+                SecurityPermissionFlags::SECURITY_FLAG_CONTROL_DOMAIN,
+            ),
+            (
+                "Reflection",
+                SecurityPermissionFlags::SECURITY_FLAG_REFLECTION,
+            ),
+        ];
+
         let mut flags = SecurityPermissionFlags::empty();
 
+        // Handle special "AllFlags" case
         if flags_str == "AllFlags" {
             return SecurityPermissionFlags::all();
         }
 
         // Parse comma-separated flag names
         for flag_name in flags_str.split(',').map(str::trim) {
-            match flag_name {
-                "Execution" => flags |= SecurityPermissionFlags::SECURITY_FLAG_EXECUTION,
-                "SkipVerification" => {
-                    flags |= SecurityPermissionFlags::SECURITY_FLAG_SKIP_VERIFICATION;
-                }
-                "Assertion" => flags |= SecurityPermissionFlags::SECURITY_FLAG_ASSERTION,
-                "UnmanagedCode" => {
-                    // UnmanagedCode is typically a combination of several flags in older .NET
-                    flags |= SecurityPermissionFlags::SECURITY_FLAG_UNSAFE_CODE;
-                    flags |= SecurityPermissionFlags::SECURITY_FLAG_SKIP_VERIFICATION;
-                }
-                "UnsafeCode" => flags |= SecurityPermissionFlags::SECURITY_FLAG_UNSAFE_CODE,
-                "ControlAppDomains" => {
-                    flags |= SecurityPermissionFlags::SECURITY_FLAG_CONTROL_APPDOMAINS;
-                }
-                "ControlPolicy" => flags |= SecurityPermissionFlags::SECURITY_FLAG_CONTROL_POLICY,
-                "Serialization" => flags |= SecurityPermissionFlags::SECURITY_FLAG_SERIALIZATION,
-                "ControlThread" => flags |= SecurityPermissionFlags::SECURITY_FLAG_CONTROL_THREAD,
-                "ControlEvidence" => {
-                    flags |= SecurityPermissionFlags::SECURITY_FLAG_CONTROL_EVIDENCE;
-                }
-                "ControlPrincipal" => {
-                    flags |= SecurityPermissionFlags::SECURITY_FLAG_CONTROL_PRINCIPAL;
-                }
-                "Infrastructure" => flags |= SecurityPermissionFlags::SECURITY_FLAG_INFRASTRUCTURE,
-                "Binding" => flags |= SecurityPermissionFlags::SECURITY_FLAG_BINDING,
-                "Remoting" => flags |= SecurityPermissionFlags::SECURITY_FLAG_REMOTING,
-                "ControlDomain" => flags |= SecurityPermissionFlags::SECURITY_FLAG_CONTROL_DOMAIN,
-                "Reflection" => flags |= SecurityPermissionFlags::SECURITY_FLAG_REFLECTION,
-                _ => {} // Ignore unknown flags
+            // Skip empty segments (e.g., from "Flag1,,Flag2")
+            if flag_name.is_empty() {
+                continue;
             }
+
+            // Special case: UnmanagedCode maps to multiple flags
+            // See documentation above for rationale
+            if flag_name == "UnmanagedCode" {
+                flags |= SecurityPermissionFlags::SECURITY_FLAG_UNSAFE_CODE;
+                flags |= SecurityPermissionFlags::SECURITY_FLAG_SKIP_VERIFICATION;
+                continue;
+            }
+
+            // Look up flag in the mapping table
+            if let Some((_, flag_value)) = FLAG_MAPPINGS.iter().find(|(name, _)| *name == flag_name)
+            {
+                flags |= *flag_value;
+            }
+            // Unknown flags are silently ignored for forward compatibility
         }
 
         flags

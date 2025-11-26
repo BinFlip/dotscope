@@ -1,8 +1,8 @@
-//! Dynamic testing framework using .NET reflection
+//! Reflection-based method invocation testing
 //!
-//! This module provides utilities for creating and executing dynamic tests
-//! that use .NET reflection to invoke methods in modified assemblies,
-//! with customizable test scenarios and parameter validation.
+//! This module generates and executes C# test programs that use .NET reflection
+//! to invoke methods in dotscope-modified assemblies. This validates that methods
+//! added or modified by dotscope are correctly callable at runtime.
 
 use crate::prelude::*;
 use crate::test::mono::compilation::CSharpCompiler;
@@ -18,9 +18,8 @@ pub struct ReflectionTestBuilder {
     expected_exit_code: i32,
 }
 
-impl ReflectionTestBuilder {
-    /// Create new reflection test builder
-    pub fn new() -> Self {
+impl Default for ReflectionTestBuilder {
+    fn default() -> Self {
         Self {
             assembly_path: None,
             test_cases: Vec::new(),
@@ -28,6 +27,13 @@ impl ReflectionTestBuilder {
             custom_setup_code: Vec::new(),
             expected_exit_code: 0,
         }
+    }
+}
+
+impl ReflectionTestBuilder {
+    /// Create new reflection test builder
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Set the assembly path to test
@@ -468,6 +474,7 @@ impl From<bool> for ExpectedValue {
 }
 
 /// Reflection test executor
+#[derive(Default)]
 pub struct ReflectionTestExecutor {
     compiler: CSharpCompiler,
     runtime: MonoRuntime,
@@ -476,10 +483,7 @@ pub struct ReflectionTestExecutor {
 impl ReflectionTestExecutor {
     /// Create new test executor
     pub fn new() -> Self {
-        Self {
-            compiler: CSharpCompiler::new(),
-            runtime: MonoRuntime::new(),
-        }
+        Self::default()
     }
 
     /// Execute reflection test program
@@ -597,57 +601,10 @@ impl ReflectionTestResult {
     }
 }
 
-/// Pre-built test scenarios
-pub mod scenarios {
-    use crate::test::mono::reflection::ReflectionTestBuilder;
-
-    /// Simple method addition test (from mono.rs pattern)
-    pub fn simple_addition_test() -> String {
-        ReflectionTestBuilder::new()
-            .test_method("DotScopeAddedMethod")
-            .description("Addition 5 + 7 = 12")
-            .parameters(vec![5, 7])
-            .expect(12)
-            .and()
-            .test_method("DotScopeAddedMethod")
-            .description("Addition 100 + 200 = 300")
-            .parameters(vec![100, 200])
-            .expect(300)
-            .and()
-            .test_method("DotScopeAddedMethod")
-            .description("Addition -10 + 25 = 15")
-            .parameters(vec![-10, 25])
-            .expect(15)
-            .build()
-    }
-
-    /// String method test (from mono2.rs pattern)
-    pub fn string_method_test() -> String {
-        ReflectionTestBuilder::new()
-            .test_method("PrintModifiedMessage")
-            .description("String modification test")
-            .expect_no_throw()
-            .and()
-            .test_method("TestExceptionHandler")
-            .description("Exception handler test")
-            .expect("Exception handler test PASSED!")
-            .build()
-    }
-
-    /// Custom test with validation
-    pub fn custom_validation_test(method_name: &str, validation_code: &str) -> String {
-        ReflectionTestBuilder::new()
-            .test_method(method_name)
-            .description(&format!("Custom test for {}", method_name))
-            .with_custom_validation(validation_code)
-            .build()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::test::mono::reflection::{
-        scenarios, ExpectedValue, ParameterValue, ReflectionTestBuilder, ReflectionTestResult,
+        ExpectedValue, ParameterValue, ReflectionTestBuilder, ReflectionTestResult,
     };
 
     #[test]
@@ -684,16 +641,6 @@ mod tests {
         let int_expected = ExpectedValue::Int32(42);
         let validation = int_expected.generate_validation_code(result_var, test_name);
         assert!(validation.contains("AssertEqual(42"));
-    }
-
-    #[test]
-    fn test_scenarios() {
-        let addition_test = scenarios::simple_addition_test();
-        assert!(addition_test.contains("DotScopeAddedMethod"));
-        assert!(addition_test.contains("5, 7"));
-
-        let string_test = scenarios::string_method_test();
-        assert!(string_test.contains("PrintModifiedMessage"));
     }
 
     #[test]
