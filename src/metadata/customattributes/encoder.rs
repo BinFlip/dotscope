@@ -338,9 +338,14 @@ pub fn encode_custom_attribute_argument(
             // platform. Cross-platform encoding (e.g., encoding a 32-bit assembly on
             // a 64-bit host) is not currently supported. The assembly would need to
             // specify its target platform, which is not available in this context.
-            if cfg!(target_pointer_width = "32") {
-                buffer.extend_from_slice(&(*value as i32).to_le_bytes());
-            } else {
+            #[cfg(target_pointer_width = "32")]
+            {
+                buffer.extend_from_slice(
+                    &i32::try_from(*value).unwrap_or(*value as i32).to_le_bytes(),
+                );
+            }
+            #[cfg(not(target_pointer_width = "32"))]
+            {
                 buffer.extend_from_slice(&(*value as i64).to_le_bytes());
             }
         }
@@ -350,9 +355,14 @@ pub fn encode_custom_attribute_argument(
             // - 64-bit platforms: encoded as 8 bytes (u64)
             //
             // LIMITATION: Same cross-platform limitation as I (signed native int).
-            if cfg!(target_pointer_width = "32") {
-                buffer.extend_from_slice(&(*value as u32).to_le_bytes());
-            } else {
+            #[cfg(target_pointer_width = "32")]
+            {
+                buffer.extend_from_slice(
+                    &u32::try_from(*value).unwrap_or(*value as u32).to_le_bytes(),
+                );
+            }
+            #[cfg(not(target_pointer_width = "32"))]
+            {
                 buffer.extend_from_slice(&(*value as u64).to_le_bytes());
             }
         }

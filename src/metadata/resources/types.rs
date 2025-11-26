@@ -557,7 +557,7 @@ impl ResourceType {
                 //      ResourceReader._LoadObjectV2 reads `(char)_store.ReadUInt16()`
                 let code_unit = parser.read_le::<u16>()?;
                 Ok(ResourceType::Char(
-                    char::from_u32(code_unit as u32).ok_or_else(|| {
+                    char::from_u32(u32::from(code_unit)).ok_or_else(|| {
                         TypeError("Invalid UTF-16 code unit for Char".to_string())
                     })?,
                 ))
@@ -993,7 +993,7 @@ impl<'a> ResourceTypeRef<'a> {
                 //      ResourceReader._LoadObjectV2 reads `(char)_store.ReadUInt16()`
                 let code_unit = parser.read_le::<u16>()?;
                 Ok(ResourceTypeRef::Char(
-                    char::from_u32(code_unit as u32).ok_or_else(|| {
+                    char::from_u32(u32::from(code_unit)).ok_or_else(|| {
                         TypeError("Invalid UTF-16 code unit for Char".to_string())
                     })?,
                 ))

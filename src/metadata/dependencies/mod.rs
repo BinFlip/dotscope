@@ -124,11 +124,11 @@ mod tests {
         // Add dependencies through the analyzer's graph
         analyzer
             .dependency_graph()
-            .add_dependency_with_source(app.clone(), system_dep)
+            .add_dependency_with_source(&app, system_dep)
             .unwrap();
         analyzer
             .dependency_graph()
-            .add_dependency_with_source(app.clone(), core_dep)
+            .add_dependency_with_source(&app, core_dep)
             .unwrap();
 
         // Verify the integration
@@ -186,9 +186,9 @@ mod tests {
             resolution_state: DependencyResolutionState::Unresolved,
         };
 
-        graph.add_dependency_with_source(a, b_dep).unwrap();
-        graph.add_dependency_with_source(b, c_dep).unwrap();
-        graph.add_dependency_with_source(c, a_dep).unwrap();
+        graph.add_dependency_with_source(&a, b_dep).unwrap();
+        graph.add_dependency_with_source(&b, c_dep).unwrap();
+        graph.add_dependency_with_source(&c, a_dep).unwrap();
 
         // Verify cycle detection works across different dependency types
         let cycles = graph.find_cycles().unwrap();
@@ -223,10 +223,10 @@ mod tests {
 
                 // Add multiple dependencies per thread
                 graph_clone
-                    .add_dependency_with_source(app.clone(), lib_dep)
+                    .add_dependency_with_source(&app, lib_dep)
                     .unwrap();
                 graph_clone
-                    .add_dependency_with_source(app, core_dep)
+                    .add_dependency_with_source(&app, core_dep)
                     .unwrap();
             });
             handles.push(handle);

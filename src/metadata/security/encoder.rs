@@ -442,7 +442,7 @@ impl PermissionSetEncoder {
                             .extend_from_slice(&(*value as u16).to_le_bytes());
                     }
                     ArgumentValue::SByte(value) => {
-                        self.buffer.push(*value as u8);
+                        self.buffer.push(value.to_ne_bytes()[0]);
                     }
                     ArgumentValue::Byte(value) => {
                         self.buffer.push(*value);
@@ -471,11 +471,7 @@ impl PermissionSetEncoder {
                     ArgumentValue::Double(value) => {
                         self.buffer.extend_from_slice(&value.to_le_bytes());
                     }
-                    ArgumentValue::String(value) => {
-                        let value_index = string_table[value];
-                        write_compressed_uint(value_index, &mut self.buffer);
-                    }
-                    ArgumentValue::Type(value) => {
+                    ArgumentValue::String(value) | ArgumentValue::Type(value) => {
                         let value_index = string_table[value];
                         write_compressed_uint(value_index, &mut self.buffer);
                     }
@@ -637,7 +633,7 @@ impl PermissionSetEncoder {
                 blob.extend_from_slice(&(*v as u16).to_le_bytes());
             }
             ArgumentValue::SByte(v) => {
-                blob.push(*v as u8);
+                blob.push(v.to_ne_bytes()[0]);
             }
             ArgumentValue::Byte(v) => {
                 blob.push(*v);
@@ -788,10 +784,9 @@ impl PermissionSetEncoder {
                 ArgumentValue::UInt64(v) => v.to_string(),
                 ArgumentValue::Single(v) => v.to_string(),
                 ArgumentValue::Double(v) => v.to_string(),
-                ArgumentValue::String(v) => v.clone(),
-                ArgumentValue::Type(v) => v.clone(),
+                ArgumentValue::String(v) | ArgumentValue::Type(v) => v.clone(),
                 ArgumentValue::Enum(type_name, v) => format!("{}.{}", type_name, v),
-                ArgumentValue::Object(inner) => format!("{}", inner),
+                ArgumentValue::Object(inner) => inner.to_string(),
                 ArgumentValue::Array(elements) => {
                     // Format array as comma-separated values
                     elements
@@ -1013,7 +1008,7 @@ mod tests {
             named_arguments: vec![NamedArgument {
                 name: "DoubleValue".to_string(),
                 arg_type: ArgumentType::Double,
-                value: ArgumentValue::Double(3.14159),
+                value: ArgumentValue::Double(std::f64::consts::PI),
             }],
         }];
 

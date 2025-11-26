@@ -490,13 +490,13 @@ impl ReferenceScanner {
             }
 
             // Tables with signature blobs that would need parsing for full reference extraction
-            // These are placeholders for future enhancement
-            TableId::MethodDef | TableId::Field | TableId::StandAloneSig | TableId::TypeSpec => {
-                // Future: Parse signature blobs for type references
-            }
-
-            // Tables without token references (only contain data, heap indices, or flags)
-            TableId::Module
+            // These are placeholders for future enhancement, plus tables without token references
+            // (only contain data, heap indices, or flags)
+            TableId::MethodDef
+            | TableId::Field
+            | TableId::StandAloneSig
+            | TableId::TypeSpec
+            | TableId::Module
             | TableId::Param
             | TableId::Assembly
             | TableId::AssemblyRef
@@ -533,6 +533,7 @@ impl ReferenceScanner {
             | TableId::StateMachineMethod
             | TableId::CustomDebugInformation => {
                 // These tables either:
+                // - Have signature blobs that need parsing for type references (future enhancement)
                 // - Don't contain token references (only heap indices, flags, RVAs)
                 // - Have references that require special handling not yet implemented
                 // - Are pointer indirection tables
@@ -1182,7 +1183,7 @@ mod tests {
                     for from_token in from_tokens {
                         let backward_refs = scanner.references_from(*from_token);
                         assert!(
-                            backward_refs.map_or(false, |refs| refs.contains(to_token)),
+                            backward_refs.is_some_and(|refs| refs.contains(to_token)),
                             "Forward reference should have corresponding backward reference"
                         );
                     }
@@ -1192,7 +1193,7 @@ mod tests {
                     for to_token in to_tokens {
                         let forward_refs = scanner.references_to(*to_token);
                         assert!(
-                            forward_refs.map_or(false, |refs| refs.contains(from_token)),
+                            forward_refs.is_some_and(|refs| refs.contains(from_token)),
                             "Backward reference should have corresponding forward reference"
                         );
                     }

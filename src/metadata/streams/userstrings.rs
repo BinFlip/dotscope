@@ -161,6 +161,11 @@ impl<'a> UserStrings<'a> {
     /// This method performs unaligned memory access which is well-supported on all modern
     /// platforms (x86/x64, aarch64/ARMv8, most ARMv7+). On platforms without hardware
     /// unaligned access support, there may be a performance penalty but no correctness issues.
+    ///
+    /// # Panics
+    /// This function will not panic under normal circumstances - the internal `unwrap()` is
+    /// used on a raw pointer conversion that is guaranteed to succeed when the input slice
+    /// is valid.
     pub fn get(&self, index: usize) -> Result<&'a U16Str> {
         if index >= self.data.len() {
             return Err(out_of_bounds_error!());

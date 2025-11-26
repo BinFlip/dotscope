@@ -639,10 +639,6 @@ mod tests {
 
     use super::*;
 
-    // ==================================================================================
-    // Test Helper Macros - Reduce duplication between owned and borrowed variant tests
-    // ==================================================================================
-
     /// Helper trait to abstract over owned (ResourceType) and borrowed (ResourceTypeRef) variants.
     /// This allows writing generic test code that works with both.
     trait ResourceData {
@@ -907,14 +903,14 @@ mod tests {
         };
     }
 
-    /// Helper to parse resources in either owned or ref mode
-    fn parse_resources<'a>(
-        data: &'a [u8],
-        use_ref: bool,
-    ) -> (
+    /// Return type for parse_resources helper
+    type ParsedResources<'a> = (
         Option<BTreeMap<String, ResourceEntry>>,
         Option<BTreeMap<String, ResourceEntryRef<'a>>>,
-    ) {
+    );
+
+    /// Helper to parse resources in either owned or ref mode
+    fn parse_resources<'a>(data: &'a [u8], use_ref: bool) -> ParsedResources<'a> {
         if use_ref {
             (None, Some(parse_dotnet_resource_ref(data).unwrap()))
         } else {
@@ -947,10 +943,6 @@ mod tests {
             }
         };
     }
-
-    // ==================================================================================
-    // Unified Tests - Each test runs for both owned and borrowed variants
-    // ==================================================================================
 
     test_both_variants!(test_string_roundtrip, |use_ref: bool| {
         let mut encoder = DotNetResourceEncoder::new();

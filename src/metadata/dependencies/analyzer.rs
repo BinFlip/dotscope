@@ -211,7 +211,7 @@ impl DependencyAnalyzer {
 
                     // Add to dependency graph with explicit source identity
                     self.graph
-                        .add_dependency_with_source(source_identity.clone(), dependency)?;
+                        .add_dependency_with_source(&source_identity, dependency)?;
                 }
             }
         }
@@ -288,7 +288,7 @@ impl DependencyAnalyzer {
                             };
 
                             self.graph
-                                .add_dependency_with_source(source_identity.clone(), dependency)?;
+                                .add_dependency_with_source(&source_identity, dependency)?;
                         }
                         ModuleRefType::ExternalAssemblyModule => {
                             // Module from external assembly - create cross-assembly dependency
@@ -305,7 +305,7 @@ impl DependencyAnalyzer {
                             };
 
                             self.graph
-                                .add_dependency_with_source(source_identity.clone(), dependency)?;
+                                .add_dependency_with_source(&source_identity, dependency)?;
                         }
                         ModuleRefType::Unknown => {
                             // Unknown module type - create dependency for completeness with warning
@@ -322,7 +322,7 @@ impl DependencyAnalyzer {
                             };
 
                             self.graph
-                                .add_dependency_with_source(source_identity.clone(), dependency)?;
+                                .add_dependency_with_source(&source_identity, dependency)?;
                         }
                     }
                 }
@@ -397,7 +397,7 @@ impl DependencyAnalyzer {
                             };
 
                             self.graph
-                                .add_dependency_with_source(source_identity.clone(), dependency)?;
+                                .add_dependency_with_source(&source_identity, dependency)?;
                         }
                         FileRefType::ResourceFile => {
                             // Resource files (.resources, .resx, etc.)
@@ -414,7 +414,7 @@ impl DependencyAnalyzer {
                             };
 
                             self.graph
-                                .add_dependency_with_source(source_identity.clone(), dependency)?;
+                                .add_dependency_with_source(&source_identity, dependency)?;
                         }
                         FileRefType::ExternalAssemblyFile => {
                             // File from external assembly
@@ -430,7 +430,7 @@ impl DependencyAnalyzer {
                             };
 
                             self.graph
-                                .add_dependency_with_source(source_identity.clone(), dependency)?;
+                                .add_dependency_with_source(&source_identity, dependency)?;
                         }
                         FileRefType::DocumentationFile => {
                             // Documentation files (.xml, .pdb, etc.)
@@ -450,7 +450,7 @@ impl DependencyAnalyzer {
                             };
 
                             self.graph
-                                .add_dependency_with_source(source_identity.clone(), dependency)?;
+                                .add_dependency_with_source(&source_identity, dependency)?;
                         }
                     }
                 }

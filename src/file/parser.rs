@@ -922,7 +922,7 @@ impl<'a> Parser<'a> {
         let end = self
             .position
             .checked_add(length)
-            .ok_or_else(|| out_of_bounds_error!())?;
+            .ok_or(out_of_bounds_error!())?;
 
         if end > self.data.len() {
             return Err(out_of_bounds_error!());

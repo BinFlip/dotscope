@@ -148,7 +148,7 @@ impl OwnedTypeConstraintValidator {
         for type_entry in context.all_types() {
             // Check for invalid generic parameter constraint combinations
             if type_entry.generic_params.count() > 0 {
-                self.validate_type_generic_constraints(&type_entry)?;
+                self.validate_type_generic_constraints(type_entry)?;
             }
         }
 
@@ -367,13 +367,13 @@ impl OwnedTypeConstraintValidator {
         for type_entry in context.all_types() {
             // Check base type constraint satisfaction
             if let Some(base_type) = type_entry.base() {
-                Self::validate_inheritance_constraints(&type_entry, &base_type);
+                Self::validate_inheritance_constraints(type_entry, &base_type);
             }
 
             // Check interface implementation constraint satisfaction
             for (_, interface_ref) in type_entry.interfaces.iter() {
                 if let Some(interface_type) = interface_ref.upgrade() {
-                    self.validate_interface_constraint_satisfaction(&type_entry, &interface_type)?;
+                    self.validate_interface_constraint_satisfaction(type_entry, &interface_type)?;
                 }
             }
         }

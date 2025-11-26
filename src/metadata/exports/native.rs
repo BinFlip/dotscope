@@ -1071,7 +1071,7 @@ impl NativeExports {
             ));
         }
 
-        self.directory.dll_name = dll_name.to_owned();
+        dll_name.clone_into(&mut self.directory.dll_name);
         Ok(())
     }
 
