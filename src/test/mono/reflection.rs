@@ -7,6 +7,7 @@
 use crate::prelude::*;
 use crate::test::mono::compilation::CSharpCompiler;
 use crate::test::mono::execution::MonoRuntime;
+use crate::test::mono::runner::ArchConfig;
 use std::path::Path;
 
 /// Dynamic test program builder using reflection
@@ -487,19 +488,35 @@ impl ReflectionTestExecutor {
     }
 
     /// Execute reflection test program
+    ///
+    /// This uses AnyCPU architecture for the test harness. For architecture-specific
+    /// testing (e.g., loading x86 assemblies), use `execute_test_with_arch` instead.
     pub fn execute_test(
         &mut self,
         test_program: &str,
         temp_dir: &Path,
     ) -> Result<ReflectionTestResult> {
-        // Compile test program
-        // Use AnyCPU architecture for maximum compatibility across CI environments
+        self.execute_test_with_arch(test_program, temp_dir, &ArchConfig::anycpu())
+    }
+
+    /// Execute reflection test program with a specific architecture
+    ///
+    /// The reflection test harness must be compiled with the same architecture as
+    /// the assembly being tested. For example, a 64-bit .NET process cannot load
+    /// a 32-bit assembly via reflection, and vice versa.
+    pub fn execute_test_with_arch(
+        &mut self,
+        test_program: &str,
+        temp_dir: &Path,
+        arch: &ArchConfig,
+    ) -> Result<ReflectionTestResult> {
+        // Compile test program with the specified architecture
+        // The architecture MUST match the assembly being tested - a 64-bit process
+        // cannot load 32-bit assemblies and vice versa.
         let test_exe_path = temp_dir.join("reflection_test.exe");
-        let compilation_result = self.compiler.compile_executable(
-            test_program,
-            &test_exe_path,
-            &super::runner::ArchConfig::anycpu(),
-        )?;
+        let compilation_result =
+            self.compiler
+                .compile_executable(test_program, &test_exe_path, arch)?;
 
         if !compilation_result.success {
             return Ok(ReflectionTestResult {

@@ -395,12 +395,16 @@ impl TestEnvironment {
 
             // 6. Test reflection
             // Execute the reflection test from the modified directory so .NET can
-            // properly resolve assembly references during reflection calls
+            // properly resolve assembly references during reflection calls.
+            // IMPORTANT: The reflection test harness must be compiled with the SAME
+            // architecture as the assembly being tested. A 64-bit .NET process cannot
+            // load 32-bit assemblies via reflection, and vice versa.
             let reflection_test = create_reflection_test(&modified_path);
-            match self
-                .reflection_executor
-                .execute_test(&reflection_test, &modified_dir)
-            {
+            match self.reflection_executor.execute_test_with_arch(
+                &reflection_test,
+                &modified_dir,
+                &arch,
+            ) {
                 Ok(refl_result) if refl_result.is_successful() => {
                     arch_result.reflection_success = true;
                 }
