@@ -319,116 +319,75 @@ impl CilTypeRef {
         self.weak_ref.strong_count() > 0
     }
 
-    // ToDo: These accessors are inefficient, creating copies in exchange for a clean API.
-    /// Gets the token of the referenced type if it's still alive.
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Convenience Accessors
+    // ─────────────────────────────────────────────────────────────────────────────
+    //
+    // The following accessor methods provide convenient access to commonly-used
+    // type properties without requiring explicit weak reference management.
+    //
+    // ## Performance Considerations
+    //
+    // These methods upgrade the weak reference on each call and clone the returned
+    // value. For better performance when accessing multiple fields:
+    //
+    // ```rust,ignore
+    // // Preferred: Single upgrade, multiple field accesses
+    // if let Some(type_ref) = weak_ref.upgrade() {
+    //     let name = &type_ref.name;
+    //     let namespace = &type_ref.namespace;
+    //     let token = type_ref.token;
+    // }
+    //
+    // // Less efficient: Multiple upgrades and clones
+    // let name = weak_ref.name();       // upgrades + clones
+    // let namespace = weak_ref.namespace(); // upgrades + clones again
+    // ```
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// Gets the token of the referenced type, or [`None`] if dropped.
     ///
-    /// This is a convenience method that upgrades the weak reference and extracts
-    /// the token. Returns [`None`] if the type has been dropped.
-    ///
-    /// ## Performance Note
-    ///
-    /// This method creates a temporary strong reference and copies the token value.
-    /// For better performance when accessing multiple fields, consider using
-    /// [`upgrade()`](Self::upgrade) once and accessing fields directly.
-    ///
-    /// ## Returns
-    ///
-    /// The token of the referenced type, or [`None`] if the type is no longer alive.
+    /// See the [Convenience Accessors](#convenience-accessors) section above for performance notes.
     #[must_use]
     pub fn token(&self) -> Option<Token> {
         self.upgrade().map(|t| t.token)
     }
 
-    /// Gets the name of the referenced type if it's still alive.
+    /// Gets a clone of the name, or [`None`] if dropped.
     ///
-    /// This is a convenience method that upgrades the weak reference and clones
-    /// the name. Returns [`None`] if the type has been dropped.
-    ///
-    /// ## Performance Note
-    ///
-    /// This method creates a temporary strong reference and clones the name string.
-    /// For better performance when accessing multiple fields, consider using
-    /// [`upgrade()`](Self::upgrade) once and accessing fields directly.
-    ///
-    /// ## Returns
-    ///
-    /// A clone of the name of the referenced type, or [`None`] if the type is no longer alive.
+    /// See the [Convenience Accessors](#convenience-accessors) section above for performance notes.
     #[must_use]
     pub fn name(&self) -> Option<String> {
         self.upgrade().map(|t| t.name.clone())
     }
 
-    /// Gets the namespace of the referenced type if it's still alive.
+    /// Gets a clone of the namespace, or [`None`] if dropped.
     ///
-    /// This is a convenience method that upgrades the weak reference and clones
-    /// the namespace. Returns [`None`] if the type has been dropped.
-    ///
-    /// ## Performance Note
-    ///
-    /// This method creates a temporary strong reference and clones the namespace string.
-    /// For better performance when accessing multiple fields, consider using
-    /// [`upgrade()`](Self::upgrade) once and accessing fields directly.
-    ///
-    /// ## Returns
-    ///
-    /// A clone of the namespace of the referenced type, or [`None`] if the type is no longer alive.
+    /// See the [Convenience Accessors](#convenience-accessors) section above for performance notes.
     #[must_use]
     pub fn namespace(&self) -> Option<String> {
         self.upgrade().map(|t| t.namespace.clone())
     }
 
-    /// Gets the nested types collection of the referenced type if it's still alive.
+    /// Gets a clone of the nested types collection, or [`None`] if dropped.
     ///
-    /// This is a convenience method that upgrades the weak reference and clones
-    /// the nested types collection. Returns [`None`] if the type has been dropped.
-    ///
-    /// ## Performance Note
-    ///
-    /// This method creates a temporary strong reference and clones the collection.
-    /// For better performance when accessing multiple fields, consider using
-    /// [`upgrade()`](Self::upgrade) once and accessing fields directly.
-    ///
-    /// ## Returns
-    ///
-    /// A clone of the nested types collection, or [`None`] if the type is no longer alive.
+    /// See the [Convenience Accessors](#convenience-accessors) section above for performance notes.
     #[must_use]
     pub fn nested_types(&self) -> Option<CilTypeRefList> {
         self.upgrade().map(|t| t.nested_types.clone())
     }
 
-    /// Gets the generic parameters collection of the referenced type if it's still alive.
+    /// Gets a clone of the generic parameters, or [`None`] if dropped.
     ///
-    /// This is a convenience method that upgrades the weak reference and clones
-    /// the generic parameters collection. Returns [`None`] if the type has been dropped.
-    ///
-    /// ## Performance Note
-    ///
-    /// This method creates a temporary strong reference and clones the collection.
-    /// For better performance when accessing multiple fields, consider using
-    /// [`upgrade()`](Self::upgrade) once and accessing fields directly.
-    ///
-    /// ## Returns
-    ///
-    /// A clone of the generic parameters collection, or [`None`] if the type is no longer alive.
+    /// See the [Convenience Accessors](#convenience-accessors) section above for performance notes.
     #[must_use]
     pub fn generic_params(&self) -> Option<GenericParamList> {
         self.upgrade().map(|t| t.generic_params.clone())
     }
 
-    /// Gets the generic arguments collection of the referenced type if it's still alive.
+    /// Gets a clone of the generic arguments, or [`None`] if dropped.
     ///
-    /// This is a convenience method that upgrades the weak reference and clones
-    /// the generic arguments collection. Returns [`None`] if the type has been dropped.
-    ///
-    /// ## Performance Note
-    ///
-    /// This method creates a temporary strong reference and clones the collection.
-    /// For better performance when accessing multiple fields, consider using
-    /// [`upgrade()`](Self::upgrade) once and accessing fields directly.
-    ///
-    /// ## Returns
-    ///
-    /// A clone of the generic arguments collection, or [`None`] if the type is no longer alive.
+    /// See the [Convenience Accessors](#convenience-accessors) section above for performance notes.
     #[must_use]
     pub fn generic_args(&self) -> Option<MethodSpecList> {
         self.upgrade().map(|t| t.generic_args.clone())
@@ -516,6 +475,68 @@ impl CilTypeRef {
 impl From<CilTypeRc> for CilTypeRef {
     fn from(strong_ref: CilTypeRc) -> Self {
         Self::new(&strong_ref)
+    }
+}
+
+/// Iterator over a [`CilTypeRefList`], yielding references to [`CilTypeRef`] items.
+///
+/// This iterator provides ergonomic access to type reference collections without
+/// requiring manual index-based loops. It integrates with Rust's standard iterator
+/// ecosystem, enabling use of methods like `filter()`, `map()`, `collect()`, etc.
+///
+/// ## Example
+///
+/// ```rust,ignore
+/// use dotscope::metadata::typesystem::CilTypeRefListIter;
+///
+/// // Iterate over nested types
+/// for type_ref in CilTypeRefListIter::new(&nested_types) {
+///     if let Some(resolved) = type_ref.upgrade() {
+///         println!("Found nested type: {}", resolved.name);
+///     }
+/// }
+///
+/// // Use iterator adapters
+/// let valid_types: Vec<_> = CilTypeRefListIter::new(&types)
+///     .filter_map(|r| r.upgrade())
+///     .collect();
+/// ```
+pub struct CilTypeRefListIter<'a> {
+    list: &'a CilTypeRefList,
+    index: usize,
+}
+
+impl<'a> CilTypeRefListIter<'a> {
+    /// Creates a new iterator over the given type reference list.
+    #[must_use]
+    pub fn new(list: &'a CilTypeRefList) -> Self {
+        Self { list, index: 0 }
+    }
+}
+
+impl<'a> Iterator for CilTypeRefListIter<'a> {
+    type Item = &'a CilTypeRef;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index < self.list.count() {
+            // boxcar::Vec returns Option from get(), and we need to handle it
+            let result = self.list.get(self.index);
+            self.index += 1;
+            result
+        } else {
+            None
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.list.count().saturating_sub(self.index);
+        (remaining, Some(remaining))
+    }
+}
+
+impl ExactSizeIterator for CilTypeRefListIter<'_> {
+    fn len(&self) -> usize {
+        self.list.count().saturating_sub(self.index)
     }
 }
 

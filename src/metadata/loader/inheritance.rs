@@ -32,10 +32,17 @@ impl MetadataLoader for InheritanceResolver {
     /// including TypeRef, TypeDef, and TypeSpec (generic instantiations) that could
     /// not be resolved during initial loading due to circular dependencies.
     ///
+    /// # Arguments
+    ///
+    /// * `context` - The loader context containing type registries and metadata tables.
+    ///
     /// # Returns
     ///
-    /// * `Ok(())` - All inheritance relationships resolved successfully
-    /// * `Err(_)` - Critical inheritance resolution failure
+    /// `Ok(())` if all inheritance relationships are resolved successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a required type reference was dropped during resolution.
     fn load(&self, context: &LoaderContext) -> Result<()> {
         if let Some(header) = context.meta {
             if let Some(typedef_table) = header.table::<TypeDefRaw>() {
@@ -79,15 +86,23 @@ impl MetadataLoader for InheritanceResolver {
         Ok(())
     }
 
-    /// Returns None since this is a special loader not tied to a specific table.
+    /// Returns the table ID for this loader.
+    ///
+    /// # Returns
+    ///
+    /// `None` since this is a special cross-table loader not tied to a specific table.
     fn table_id(&self) -> Option<TableId> {
         None
     }
 
-    /// Returns dependencies for inheritance resolution.
+    /// Returns the tables this loader depends on.
     ///
     /// This resolver must run after all type-related tables are loaded to ensure
     /// all type references can be properly resolved.
+    ///
+    /// # Returns
+    ///
+    /// A static slice of `TableId`s that must be loaded before this resolver runs.
     fn dependencies(&self) -> &'static [TableId] {
         &[
             TableId::TypeDef,

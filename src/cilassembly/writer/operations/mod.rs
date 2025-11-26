@@ -90,9 +90,9 @@
 //! # };
 //! // Build complete operation set
 //! let mut operations = OperationSet::new();
-//! operations.copy_operations.push(copy_headers);
-//! operations.zero_operations.push(clear_old_metadata);
-//! operations.write_operations.push(write_new_strings);
+//! operations.copy.push(copy_headers);
+//! operations.zero.push(clear_old_metadata);
+//! operations.write.push(write_new_strings);
 //!
 //! // Validate for conflicts before execution
 //! operations.validate()?;
@@ -464,11 +464,11 @@ impl OperationSet {
     /// let mut operations = OperationSet::new();
     /// assert_eq!(operations.operation_count(), 0);
     ///
-    /// # operations.copy_operations.push(CopyOperation {
+    /// # operations.copy.push(CopyOperation {
     /// #     source_offset: 0, target_offset: 0, size: 100,
     /// #     description: "Test".to_string(),
     /// # });
-    /// # operations.write_operations.push(WriteOperation {
+    /// # operations.write.push(WriteOperation {
     /// #     offset: 200, data: vec![1, 2, 3],
     /// #     component: "Test".to_string(),
     /// # });
@@ -502,14 +502,14 @@ impl OperationSet {
     ///
     /// let mut operations = OperationSet::new();
     ///
-    /// operations.copy_operations.push(CopyOperation {
+    /// operations.copy.push(CopyOperation {
     ///     source_offset: 0,
     ///     target_offset: 1000,
     ///     size: 512,
     ///     description: "Copy PE headers".to_string(),
     /// });
     ///
-    /// operations.copy_operations.push(CopyOperation {
+    /// operations.copy.push(CopyOperation {
     ///     source_offset: 2000,
     ///     target_offset: 3000,
     ///     size: 1024,
@@ -546,13 +546,13 @@ impl OperationSet {
     ///
     /// let mut operations = OperationSet::new();
     ///
-    /// operations.zero_operations.push(ZeroOperation {
+    /// operations.zero.push(ZeroOperation {
     ///     offset: 2000,
     ///     size: 256,
     ///     reason: "Clear old #Strings heap".to_string(),
     /// });
     ///
-    /// operations.zero_operations.push(ZeroOperation {
+    /// operations.zero.push(ZeroOperation {
     ///     offset: 3000,
     ///     size: 128,
     ///     reason: "Clear old #Blob heap".to_string(),
@@ -588,13 +588,13 @@ impl OperationSet {
     ///
     /// let mut operations = OperationSet::new();
     ///
-    /// operations.write_operations.push(WriteOperation {
+    /// operations.write.push(WriteOperation {
     ///     offset: 5000,
     ///     data: b"BSJB\x01\x00\x01\x00".to_vec(), // 8 bytes
     ///     component: "Metadata signature".to_string(),
     /// });
     ///
-    /// operations.write_operations.push(WriteOperation {
+    /// operations.write.push(WriteOperation {
     ///     offset: 6000,
     ///     data: b"\x00System\x00Console\x00".to_vec(), // 16 bytes
     ///     component: "New strings".to_string(),
@@ -647,14 +647,14 @@ impl OperationSet {
     ///
     /// let mut operations = OperationSet::new();
     ///
-    /// operations.copy_operations.push(CopyOperation {
+    /// operations.copy.push(CopyOperation {
     ///     source_offset: 0,
     ///     target_offset: 1000,
     ///     size: 100,
     ///     description: "Copy PE headers".to_string(),
     /// });
     ///
-    /// operations.write_operations.push(WriteOperation {
+    /// operations.write.push(WriteOperation {
     ///     offset: 2000, // No overlap with copy operation (1000-1100)
     ///     data: vec![0xBE, 0xEF],
     ///     component: "New metadata".to_string(),
@@ -671,14 +671,14 @@ impl OperationSet {
     ///
     /// let mut operations = OperationSet::new();
     ///
-    /// operations.copy_operations.push(CopyOperation {
+    /// operations.copy.push(CopyOperation {
     ///     source_offset: 0,
     ///     target_offset: 1000,
     ///     size: 200, // Covers 1000-1200
     ///     description: "Copy large section".to_string(),
     /// });
     ///
-    /// operations.write_operations.push(WriteOperation {
+    /// operations.write.push(WriteOperation {
     ///     offset: 1100, // Overlaps with copy operation!
     ///     data: vec![0xDE, 0xAD, 0xBE, 0xEF],
     ///     component: "Conflicting write".to_string(),
@@ -756,12 +756,12 @@ impl OperationSet {
     ///
     /// let mut operations = OperationSet::new();
     ///
-    /// operations.copy_operations.push(CopyOperation {
+    /// operations.copy.push(CopyOperation {
     ///     source_offset: 0, target_offset: 1000, size: 512,
     ///     description: "Copy headers".to_string(),
     /// });
     ///
-    /// operations.write_operations.push(WriteOperation {
+    /// operations.write.push(WriteOperation {
     ///     offset: 2000, data: vec![0; 256],
     ///     component: "New metadata".to_string(),
     /// });

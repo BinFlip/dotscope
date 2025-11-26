@@ -491,7 +491,7 @@ impl InstructionAssembler {
     /// Load an argument by its index using the full form instruction, which
     /// supports the complete range of argument indices (0-65535).
     ///
-    /// **Opcode**: `0x09`
+    /// **Opcode**: `0xFE 0x09`
     /// **Stack**: `... → ..., argN`
     ///
     /// # Parameters
@@ -587,7 +587,7 @@ impl InstructionAssembler {
 
     /// Load local variable by index (full form).
     ///
-    /// **Opcode**: `0x0C`
+    /// **Opcode**: `0xFE 0x0C`
     /// **Stack**: `... → ..., localN`
     ///
     /// # Errors
@@ -667,7 +667,7 @@ impl InstructionAssembler {
 
     /// Store value into local variable by index (full form).
     ///
-    /// **Opcode**: `0x0E`
+    /// **Opcode**: `0xFE 0x0E`
     /// **Stack**: `..., value → ...`
     ///
     /// # Errors
@@ -1691,6 +1691,24 @@ impl InstructionAssembler {
     /// Returns an error if instruction encoding fails.
     pub fn endfinally(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("endfinally", None)?;
+        Ok(self)
+    }
+
+    /// End filter clause and transfer control to the exception handler.
+    ///
+    /// This instruction terminates the filter clause of an exception handler.
+    /// The value on the stack determines whether the handler will execute:
+    /// - Non-zero (typically 1): Execute the handler
+    /// - Zero: Continue searching for another handler
+    ///
+    /// **Opcode**: `0xFE 0x11`
+    /// **Stack**: `..., value → ...`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
+    pub fn endfilter(&mut self) -> Result<&mut Self> {
+        self.encoder.emit_instruction("endfilter", None)?;
         Ok(self)
     }
 

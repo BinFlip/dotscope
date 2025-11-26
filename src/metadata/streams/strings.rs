@@ -760,8 +760,19 @@ impl<'a> Strings<'a> {
             return Err(out_of_bounds_error!());
         }
 
-        // ToDo: Potentially cache this? 'expensive' verifications performed on each lookup. If the same
-        //       String is accessed repeatedly, then this could be an issue
+        // Performance note: Each call performs O(n) operations:
+        // 1. Scan for null terminator (CStr::from_bytes_until_nul)
+        // 2. UTF-8 validation (to_str)
+        //
+        // Caching was considered but rejected because:
+        // - Adding interior mutability would break the zero-copy design philosophy
+        // - Memory overhead of cache may exceed benefits for typical usage patterns
+        // - Most strings are accessed once during initial parsing
+        // - Callers can cache at their level if repeated access is needed
+        //
+        // If profiling shows this is a bottleneck, callers should:
+        // 1. Cache results at the call site for repeated access
+        // 2. Use the iterator for bulk processing (avoids repeated bounds checks)
         match CStr::from_bytes_until_nul(&self.data[index..]) {
             Ok(result) => match result.to_str() {
                 Ok(result) => Ok(result),

@@ -142,13 +142,13 @@ pub(crate) struct CilObjectData {
     pub decl_security: DeclSecurityMap,
 
     /// Primary module definition for this assembly.
-    pub module: Arc<OnceLock<ModuleRc>>,
+    pub module: OnceLock<ModuleRc>,
     /// Assembly definition containing version and identity information.
-    pub assembly: Arc<OnceLock<AssemblyRc>>,
+    pub assembly: OnceLock<AssemblyRc>,
     /// Operating system requirements for the assembly.
-    pub assembly_os: Arc<OnceLock<AssemblyOsRc>>,
+    pub assembly_os: OnceLock<AssemblyOsRc>,
     /// Processor architecture requirements for the assembly.
-    pub assembly_processor: Arc<OnceLock<AssemblyProcessorRc>>,
+    pub assembly_processor: OnceLock<AssemblyProcessorRc>,
 
     /// Central type registry managing all type definitions and references.
     pub types: Arc<TypeRegistry>,
@@ -210,7 +210,7 @@ impl CilObjectData {
     /// let cil_data = CilObjectData::from_assembly_view(&view, None)?;
     ///
     /// // Or with ProjectContext for multi-assembly coordination
-    /// let project_context = ProjectContext::new(3); // for 3 assemblies
+    /// let project_context = ProjectContext::new(3)?; // for 3 assemblies
     /// let cil_data = CilObjectData::from_assembly_view(&view, Some(&project_context))?;
     ///
     /// // Metadata is now ready for use
@@ -235,10 +235,10 @@ impl CilObjectData {
             refs_member: SkipMap::default(),
             refs_file: SkipMap::default(),
             decl_security: SkipMap::default(),
-            module: Arc::new(OnceLock::new()),
-            assembly: Arc::new(OnceLock::new()),
-            assembly_os: Arc::new(OnceLock::new()),
-            assembly_processor: Arc::new(OnceLock::new()),
+            module: OnceLock::new(),
+            assembly: OnceLock::new(),
+            assembly_os: OnceLock::new(),
+            assembly_processor: OnceLock::new(),
             types: Arc::new(TypeRegistry::new(identity.clone())?),
             import_container: UnifiedImportContainer::new(),
             export_container: UnifiedExportContainer::new(),
@@ -247,7 +247,9 @@ impl CilObjectData {
             resources: Resources::new(view.file().clone()),
         };
 
-        cil_object.load_native_tables(view)?;
+        let (native_imports, native_exports) = load_native_tables(view)?;
+        *cil_object.import_container.native_mut() = native_imports;
+        *cil_object.export_container.native_mut() = native_exports;
 
         if let Some(context) = project_context {
             context.register_and_wait_stage1(identity, cil_object.types.clone())?;
@@ -324,38 +326,46 @@ impl CilObjectData {
 
         Ok(cil_object)
     }
+}
 
-    /// Load native PE import and export tables from CilAssemblyView.
-    ///
-    /// This method adapts the existing native table loading to work with CilAssemblyView
-    /// instead of direct file access. It preserves the same functionality while using
-    /// the new data access pattern.
-    ///
-    /// # Arguments
-    /// * `view` - Reference to the CilAssemblyView containing the file
-    ///
-    /// # Returns
-    /// Result indicating success or failure of the loading operation.
-    ///
-    /// # Errors
-    /// Returns error if:
-    /// - Import/export table parsing fails
-    /// - Native container population fails
-    fn load_native_tables(&mut self, view: &CilAssemblyView) -> Result<()> {
-        if let Some(owned_imports) = view.file().imports() {
-            if !owned_imports.is_empty() {
-                let native_imports = NativeImports::from_pe_imports(owned_imports)?;
-                *self.import_container.native_mut() = native_imports;
-            }
+/// Loads native PE import and export tables from a CilAssemblyView.
+///
+/// This standalone function extracts native imports and exports from the PE file
+/// structure, returning them as a tuple for integration into the import/export containers.
+///
+/// # Arguments
+///
+/// * `view` - Reference to the CilAssemblyView containing the PE file data.
+///
+/// # Returns
+///
+/// A tuple of `(NativeImports, NativeExports)` containing the parsed native tables.
+/// Returns default (empty) containers if the PE file has no imports or exports.
+///
+/// # Errors
+///
+/// Returns an error if import or export table parsing fails due to malformed data.
+fn load_native_tables(view: &CilAssemblyView) -> Result<(NativeImports, NativeExports)> {
+    let native_imports = if let Some(owned_imports) = view.file().imports() {
+        if !owned_imports.is_empty() {
+            let is_pe32_plus = view.file().is_pe32_plus_format().unwrap_or(false);
+            NativeImports::from_pe_imports(owned_imports, is_pe32_plus)?
+        } else {
+            NativeImports::default()
         }
+    } else {
+        NativeImports::default()
+    };
 
-        if let Some(owned_exports) = view.file().exports() {
-            if !owned_exports.is_empty() {
-                let native_exports = NativeExports::from_pe_exports(owned_exports)?;
-                *self.export_container.native_mut() = native_exports;
-            }
+    let native_exports = if let Some(owned_exports) = view.file().exports() {
+        if !owned_exports.is_empty() {
+            NativeExports::from_pe_exports(owned_exports)?
+        } else {
+            NativeExports::default()
         }
+    } else {
+        NativeExports::default()
+    };
 
-        Ok(())
-    }
+    Ok((native_imports, native_exports))
 }

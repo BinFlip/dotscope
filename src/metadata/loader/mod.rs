@@ -458,6 +458,8 @@ fn build_dependency_graph(
 ///
 /// * `context` - The [`LoaderContext`] containing metadata streams and storage for loaded table data.
 ///   This context is shared across all loaders and provides thread-safe access to parsed metadata.
+/// * `project_context` - Optional [`ProjectContext`] for coordinating multi-assembly parallel loading.
+///   When provided, enables barrier synchronization between assemblies to handle circular type references.
 ///
 /// # Returns
 ///

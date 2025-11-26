@@ -162,7 +162,10 @@
 //! - **Invalid Format**: Malformed import declaration encoding
 //! - **Missing References**: Unresolvable type or assembly references
 //! - **Truncated Data**: Incomplete import declaration data
-//! - **Encoding Errors**: Invalid UTF-8 strings in namespace or type names
+//!
+//! Note: Invalid UTF-8 sequences in namespace or type names are handled using lossy
+//! conversion (replacement with U+FFFD) rather than returning errors. This matches
+//! the behavior of other parsers in the codebase.
 //!
 //! # Performance Considerations
 //!

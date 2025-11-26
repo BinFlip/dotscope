@@ -290,6 +290,7 @@ use crate::{utils::read_le, Result};
 /// - [ECMA-335 II.24.2.2](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Stream header format specification
 /// - [`crate::metadata::streams`]: Overview of metadata stream architecture
 /// - [`crate::metadata::root`]: Metadata root and stream directory parsing
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamHeader {
     /// Byte offset from the metadata root to the start of this stream's data.
     ///

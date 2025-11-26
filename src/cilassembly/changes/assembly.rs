@@ -197,11 +197,6 @@ impl AssemblyChanges {
                         + 1; // +1 for null terminator
                     actual_end = actual_end.max(string_end);
                 }
-                let _stream_size = view
-                    .streams()
-                    .iter()
-                    .find(|stream| stream.name == stream_name)
-                    .map_or(1, |stream| stream.size);
                 actual_end
             } else {
                 1

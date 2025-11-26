@@ -401,7 +401,8 @@ impl RawHeapValidator {
             let mut guid_count = 0;
 
             // Validate accessibility through iteration
-            for (offset, guid_data) in guids.iter() {
+            // Note: The GUID iterator returns (1-based index, GUID), not byte offsets
+            for (one_based_index, guid_data) in guids.iter() {
                 guid_count += 1;
 
                 // Verify GUID data is properly accessible
@@ -410,31 +411,27 @@ impl RawHeapValidator {
                 // GUID format validation: ensure it's exactly 16 bytes
                 if guid_bytes.len() != 16 {
                     return Err(malformed_error!(
-                        "GUID at offset {} has invalid length {} (expected 16 bytes)",
-                        offset,
+                        "GUID at index {} has invalid length {} (expected 16 bytes)",
+                        one_based_index,
                         guid_bytes.len()
                     ));
                 }
 
-                // Verify 1-based indexing access works correctly
-                // GUID heap uses 1-based indexing, and offsets are in increments of 16
-                let one_based_index = (offset / 16) + 1;
+                // Verify 1-based indexing access returns the same GUID
                 match guids.get(one_based_index) {
                     Ok(indexed_guid) => {
                         let indexed_bytes = indexed_guid.to_bytes();
                         if indexed_bytes != guid_bytes {
                             return Err(malformed_error!(
-                                "GUID heap consistency error: iterator and indexed access return different data for index {} (offset {})",
-                                one_based_index,
-                                offset
+                                "GUID heap consistency error: iterator and indexed access return different data for index {}",
+                                one_based_index
                             ));
                         }
                     }
                     Err(_) => {
                         return Err(malformed_error!(
-                            "GUID heap access error: cannot access GUID at 1-based index {} (offset {})",
-                            one_based_index,
-                            offset
+                            "GUID heap access error: cannot access GUID at 1-based index {}",
+                            one_based_index
                         ));
                     }
                 }

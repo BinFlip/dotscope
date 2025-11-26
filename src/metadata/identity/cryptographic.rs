@@ -4,6 +4,12 @@
 //! according to ECMA-335 specifications. It supports both full public key storage and compact
 //! token-based identity through standardized hashing algorithms (MD5, SHA1).
 //!
+//! # ECMA-335 References
+//!
+//! - **Section II.6.2.1.3**: PublicKeyToken - defines how tokens are computed from public keys
+//! - **Section II.6.3**: Referencing assemblies - describes strong name verification
+//! - **Section II.22.2**: Assembly.HashAlgId - defines supported hash algorithm identifiers
+//!
 //! # Identity Types
 //!
 //! .NET assemblies can be identified in two ways:
@@ -12,8 +18,8 @@
 //!
 //! # Supported Hash Algorithms
 //!
-//! - **MD5**: Legacy hash algorithm still supported for compatibility
-//! - **SHA1**: Standard hash algorithm used by most .NET tools
+//! - **MD5**: Legacy hash algorithm (0x8003) still supported for compatibility
+//! - **SHA1**: Standard hash algorithm (0x8004) used by most .NET tools
 //! - **Custom**: Framework for additional algorithms (future extension)
 //!
 //! # Examples
@@ -67,7 +73,7 @@
 use md5::{Digest, Md5};
 use sha1::Sha1;
 
-use crate::{metadata::tables::AssemblyHashAlgorithm, utils::read_le, Result};
+use crate::{metadata::tables::AssemblyHashAlgorithm, utils::read_le, Error, Result};
 
 /// Assembly identity representation for .NET CIL assemblies.
 ///
@@ -242,7 +248,7 @@ impl Identity {
     /// # Algorithm Support
     /// - **MD5** ([`crate::metadata::tables::AssemblyHashAlgorithm::MD5`]): Legacy algorithm, 16-byte hash
     /// - **SHA1** ([`crate::metadata::tables::AssemblyHashAlgorithm::SHA1`]): Standard algorithm, 20-byte hash
-    /// - **Others**: Will panic with `unimplemented!()` for unsupported algorithms
+    /// - **Others**: Returns an error for unsupported algorithms
     ///
     /// # Token Extraction
     /// The token is always the **last 8 bytes** of the hash result, interpreted as
@@ -255,10 +261,9 @@ impl Identity {
     /// 64-bit token value suitable for assembly identification and comparison.
     ///
     /// # Errors
-    /// Returns [`crate::Error::OutOfBounds`] if hash result cannot be read as `u64`.
-    ///
-    /// # Panics
-    /// Panics with `unimplemented!()` for unsupported hash algorithms.
+    /// Returns an error if:
+    /// - The hash algorithm is not supported (only MD5 and SHA1 are implemented)
+    /// - The hash result cannot be read as a little-endian u64
     ///
     /// # Examples
     ///
@@ -288,45 +293,50 @@ impl Identity {
     /// Hash operations are stateless and do not modify the identity instance.
     pub fn to_token(&self, algo: u32) -> Result<u64> {
         match &self {
-            Identity::PubKey(data) => match algo {
-                AssemblyHashAlgorithm::MD5 => {
-                    let mut hasher = Md5::new();
-                    hasher.update(data);
-
-                    let result = hasher.finalize();
-
-                    read_le::<u64>(&result[result.len() - 8..])
-                }
-                AssemblyHashAlgorithm::SHA1 => {
-                    let mut hasher = Sha1::new();
-                    hasher.update(data);
-
-                    let result = hasher.finalize();
-
-                    read_le::<u64>(&result[result.len() - 8..])
-                }
-                _ => unimplemented!(),
-            },
-            Identity::EcmaKey(data) => match algo {
-                AssemblyHashAlgorithm::MD5 => {
-                    let mut hasher = Md5::new();
-                    hasher.update(data);
-
-                    let result = hasher.finalize();
-
-                    read_le::<u64>(&result[result.len() - 8..])
-                }
-                AssemblyHashAlgorithm::SHA1 => {
-                    let mut hasher = Sha1::new();
-                    hasher.update(data);
-
-                    let result = hasher.finalize();
-
-                    read_le::<u64>(&result[result.len() - 8..])
-                }
-                _ => unimplemented!(),
-            },
+            Identity::PubKey(data) | Identity::EcmaKey(data) => {
+                Self::compute_token_from_data(data, algo)
+            }
             Identity::Token(token) => Ok(*token),
+        }
+    }
+
+    /// Compute a token from raw key data using the specified hash algorithm.
+    ///
+    /// This is a helper method that performs the actual hashing operation for
+    /// public key and ECMA key data. The token is computed as the last 8 bytes
+    /// of the hash result, interpreted as a little-endian 64-bit integer.
+    ///
+    /// # Arguments
+    /// * `data` - Raw key data to hash
+    /// * `algo` - Hash algorithm identifier from [`AssemblyHashAlgorithm`]
+    ///
+    /// # Returns
+    /// 64-bit token value derived from the hash.
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The hash algorithm is not supported (only MD5 and SHA1 are implemented)
+    /// - The hash result cannot be read as a little-endian u64
+    fn compute_token_from_data(data: &[u8], algo: u32) -> Result<u64> {
+        match algo {
+            AssemblyHashAlgorithm::MD5 => {
+                let mut hasher = Md5::new();
+                hasher.update(data);
+                let result = hasher.finalize();
+                read_le::<u64>(&result[result.len() - 8..])
+            }
+            AssemblyHashAlgorithm::SHA1 => {
+                let mut hasher = Sha1::new();
+                hasher.update(data);
+                let result = hasher.finalize();
+                read_le::<u64>(&result[result.len() - 8..])
+            }
+            _ => Err(Error::Error(format!(
+                "Unsupported hash algorithm: 0x{:08X}. Only MD5 (0x{:08X}) and SHA1 (0x{:08X}) are supported.",
+                algo,
+                AssemblyHashAlgorithm::MD5,
+                AssemblyHashAlgorithm::SHA1
+            ))),
         }
     }
 }
@@ -344,13 +354,10 @@ mod tests {
         ];
         let identity = Identity::from(&data, true).unwrap();
 
-        match identity {
-            Identity::PubKey(pubkey_data) => {
-                assert_eq!(pubkey_data, data);
-            }
-            Identity::Token(_) => panic!("Expected PubKey variant"),
-            Identity::EcmaKey(_) => panic!("Expected PubKey variant"),
-        }
+        let Identity::PubKey(pubkey_data) = identity else {
+            panic!("Expected PubKey variant, got {:?}", identity);
+        };
+        assert_eq!(pubkey_data, data);
     }
 
     #[test]
@@ -362,14 +369,11 @@ mod tests {
         ];
         let identity = Identity::from(&data, true).unwrap();
 
-        match identity {
-            Identity::EcmaKey(ecma_data) => {
-                assert_eq!(ecma_data, data);
-                assert_eq!(ecma_data.len(), 16);
-            }
-            Identity::PubKey(_) => panic!("Expected EcmaKey variant"),
-            Identity::Token(_) => panic!("Expected EcmaKey variant"),
-        }
+        let Identity::EcmaKey(ecma_data) = identity else {
+            panic!("Expected EcmaKey variant, got {:?}", identity);
+        };
+        assert_eq!(ecma_data, data);
+        assert_eq!(ecma_data.len(), 16);
     }
 
     #[test]
@@ -377,14 +381,11 @@ mod tests {
         let data = vec![0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0];
         let identity = Identity::from(&data, false).unwrap();
 
-        match identity {
-            Identity::Token(token) => {
-                // Token should be little-endian interpretation of the bytes
-                assert_eq!(token, 0xF0DEBC9A78563412);
-            }
-            Identity::PubKey(_) => panic!("Expected Token variant"),
-            Identity::EcmaKey(_) => panic!("Expected Token variant"),
-        }
+        let Identity::Token(token) = identity else {
+            panic!("Expected Token variant, got {:?}", identity);
+        };
+        // Token should be little-endian interpretation of the bytes
+        assert_eq!(token, 0xF0DEBC9A78563412);
     }
 
     #[test]
@@ -392,13 +393,10 @@ mod tests {
         let data = vec![];
         let identity = Identity::from(&data, true).unwrap();
 
-        match identity {
-            Identity::PubKey(pubkey_data) => {
-                assert!(pubkey_data.is_empty());
-            }
-            Identity::Token(_) => panic!("Expected PubKey variant"),
-            Identity::EcmaKey(_) => panic!("Expected PubKey variant"),
-        }
+        let Identity::PubKey(pubkey_data) = identity else {
+            panic!("Expected PubKey variant, got {:?}", identity);
+        };
+        assert!(pubkey_data.is_empty());
     }
 
     #[test]
@@ -460,13 +458,33 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "not implemented")]
     fn test_to_token_unsupported_algorithm() {
         let pubkey_data = vec![1, 2, 3, 4, 5, 6, 7, 8];
         let identity = Identity::PubKey(pubkey_data);
 
-        // Using an unsupported algorithm should panic with unimplemented!()
-        let _ = identity.to_token(0x9999);
+        // Using an unsupported algorithm should return an error
+        let result = identity.to_token(0x9999);
+        assert!(result.is_err());
+
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Unsupported hash algorithm"),
+            "Error message should mention unsupported algorithm: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_to_token_unsupported_algorithm_ecma_key() {
+        // Test that EcmaKey also returns an error for unsupported algorithms
+        let ecma_data = vec![
+            0x06, 0x28, 0xAC, 0x03, 0x00, 0x06, 0x7A, 0x06, 0x6F, 0xAB, 0x02, 0x00, 0x0A, 0x0B,
+            0x17, 0x6A,
+        ];
+        let identity = Identity::EcmaKey(ecma_data);
+
+        let result = identity.to_token(0x9999);
+        assert!(result.is_err());
     }
 
     #[test]

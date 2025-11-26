@@ -421,4 +421,50 @@ impl CodedIndex {
             },
         }
     }
+
+    /// Creates a null (empty) `CodedIndex` for the specified coded index type.
+    ///
+    /// A null coded index represents the absence of a reference, encoded as 0 in the
+    /// binary format per ECMA-335. This is commonly used for:
+    /// - TypeDef.Extends field for `System.Object` and interfaces (no base class)
+    /// - Optional cross-references that may not be present
+    ///
+    /// ## Arguments
+    ///
+    /// * `ci_type` - The [`CodedIndexType`] defining the context for the null reference
+    ///
+    /// ## Returns
+    ///
+    /// A [`CodedIndex`] with row 0 and the first table in the coded index type's table list
+    /// as the tag, which encodes to 0 in the binary format.
+    ///
+    /// ## Example
+    ///
+    /// ```rust,ignore
+    /// use crate::metadata::tables::{CodedIndex, CodedIndexType};
+    ///
+    /// // Create a null TypeDefOrRef (no base class)
+    /// let null_extends = CodedIndex::null(CodedIndexType::TypeDefOrRef);
+    /// assert!(null_extends.is_null());
+    /// ```
+    #[must_use]
+    pub fn null(ci_type: CodedIndexType) -> CodedIndex {
+        // The first table in the coded index type's table list has tag 0,
+        // so (row=0, tag=0) encodes to 0 in the binary format
+        let first_table = ci_type.tables()[0];
+        CodedIndex::new(first_table, 0, ci_type)
+    }
+
+    /// Returns `true` if this coded index represents a null reference.
+    ///
+    /// A coded index is null when its row is 0, indicating no target row.
+    /// Per ECMA-335, row 0 is reserved and indicates a null/empty reference.
+    ///
+    /// ## Returns
+    ///
+    /// `true` if the row index is 0 (null reference), `false` otherwise.
+    #[must_use]
+    pub fn is_null(&self) -> bool {
+        self.row == 0
+    }
 }

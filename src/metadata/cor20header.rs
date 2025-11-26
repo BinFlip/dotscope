@@ -28,7 +28,7 @@
 //!
 //! ## Basic Header Parsing
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::cor20header::Cor20Header;
 //!
 //! // Parse CLI header from PE file data
@@ -46,7 +46,7 @@
 //!
 //! ## Runtime Flag Analysis
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::cor20header::Cor20Header;
 //!
 //! let header_bytes: &[u8] = &[/* CLI header data */];
@@ -112,7 +112,7 @@ use crate::{file::parser::Parser, Result};
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::cor20header::Cor20Header;
 ///
 /// // Parse from PE file's CLI header
@@ -140,6 +140,7 @@ use crate::{file::parser::Parser, Result};
 ///
 /// [`Cor20Header`] is [`std::marker::Send`] and [`std::marker::Sync`] as it contains only primitive types.
 /// Instances can be safely shared across threads and accessed concurrently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Cor20Header {
     /// Size of the CLI header in bytes (always 72).
     pub cb: u32,
@@ -211,7 +212,7 @@ impl Cor20Header {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::cor20header::Cor20Header;
     ///
     /// // Read CLI header from PE file
@@ -243,7 +244,7 @@ impl Cor20Header {
         let cb = parser.read_le::<u32>()?;
         if cb != 72 {
             return Err(malformed_error!(
-                "Invalid CLR header size: expected 72, got {}",
+                "Cor20Header: invalid CLR header size: expected 72, got {} [ECMA-335 §II.25.3.3]",
                 cb
             ));
         }
@@ -252,7 +253,7 @@ impl Cor20Header {
         let minor_runtime_version = parser.read_le::<u16>()?;
         if major_runtime_version == 0 || major_runtime_version > 10 {
             return Err(malformed_error!(
-                "Invalid major runtime version: {}",
+                "Cor20Header: invalid major runtime version: {} [ECMA-335 §II.25.3.3]",
                 major_runtime_version
             ));
         }
@@ -260,15 +261,19 @@ impl Cor20Header {
         let meta_data_rva = parser.read_le::<u32>()?;
 
         if meta_data_rva == 0 {
-            return Err(malformed_error!("Metadata RVA cannot be zero"));
+            return Err(malformed_error!(
+                "Cor20Header: metadata RVA cannot be zero [ECMA-335 §II.25.3.3]"
+            ));
         }
 
         let meta_data_size = parser.read_le::<u32>()?;
         if meta_data_size == 0 {
-            return Err(malformed_error!("Metadata size cannot be zero"));
+            return Err(malformed_error!(
+                "Cor20Header: metadata size cannot be zero [ECMA-335 §II.25.3.3]"
+            ));
         } else if meta_data_size > 0x1000_0000 {
             return Err(malformed_error!(
-                "Metadata size {} exceeds reasonable limit (256MB)",
+                "Cor20Header: metadata size {} exceeds reasonable limit (256MB) [ECMA-335 §II.25.3.3]",
                 meta_data_size
             ));
         }
@@ -276,7 +281,7 @@ impl Cor20Header {
         let flags = parser.read_le::<u32>()?;
         if flags & !VALID_FLAGS != 0 {
             return Err(malformed_error!(
-                "Invalid CLR flags: 0x{:08X} contains undefined bits",
+                "Cor20Header: invalid CLR flags: 0x{:08X} contains undefined bits [ECMA-335 §II.25.3.3]",
                 flags
             ));
         }
@@ -288,7 +293,11 @@ impl Cor20Header {
         let resource_rva = parser.read_le::<u32>()?;
         let resource_size = parser.read_le::<u32>()?;
         if (resource_rva == 0 && resource_size != 0) || (resource_rva != 0 && resource_size == 0) {
-            return Err(malformed_error!("Resource values are invalid"));
+            return Err(malformed_error!(
+                "Cor20Header: resource RVA/size mismatch (RVA={}, size={}) [ECMA-335 §II.25.3.3]",
+                resource_rva,
+                resource_size
+            ));
         }
 
         // Read and validate strong name signature RVA/size pair
@@ -297,7 +306,11 @@ impl Cor20Header {
         if (strong_name_signature_rva == 0 && strong_name_signature_size != 0)
             || (strong_name_signature_rva != 0 && strong_name_signature_size == 0)
         {
-            return Err(malformed_error!("Strong name values are invalid"));
+            return Err(malformed_error!(
+                "Cor20Header: strong name RVA/size mismatch (RVA={}, size={}) [ECMA-335 §II.25.3.3]",
+                strong_name_signature_rva,
+                strong_name_signature_size
+            ));
         }
 
         // Read and validate reserved fields (must be zero per ECMA-335)
@@ -305,7 +318,7 @@ impl Cor20Header {
         let code_manager_table_size = parser.read_le::<u32>()?;
         if code_manager_table_rva != 0 || code_manager_table_size != 0 {
             return Err(malformed_error!(
-                "Code Manager Table fields must be zero (reserved)"
+                "Cor20Header: Code Manager Table fields must be zero (reserved) [ECMA-335 §II.25.3.3]"
             ));
         }
 
@@ -315,7 +328,11 @@ impl Cor20Header {
         if (vtable_fixups_rva == 0 && vtable_fixups_size != 0)
             || (vtable_fixups_rva != 0 && vtable_fixups_size == 0)
         {
-            return Err(malformed_error!("VTable fixups are invalid"));
+            return Err(malformed_error!(
+                "Cor20Header: VTable fixups RVA/size mismatch (RVA={}, size={}) [ECMA-335 §II.25.3.3]",
+                vtable_fixups_rva,
+                vtable_fixups_size
+            ));
         }
 
         // Read and validate reserved fields (must be zero per ECMA-335)
@@ -323,7 +340,7 @@ impl Cor20Header {
         let export_address_table_jmp_size = parser.read_le::<u32>()?;
         if export_address_table_jmp_rva != 0 || export_address_table_jmp_size != 0 {
             return Err(malformed_error!(
-                "Export Address Table Jump fields must be zero (reserved)"
+                "Cor20Header: Export Address Table Jump fields must be zero (reserved) [ECMA-335 §II.25.3.3]"
             ));
         }
 
@@ -431,11 +448,13 @@ mod tests {
             0x00, 0x00, 0x00, 0x00  // managed_native_header_size = 0
         ];
 
-        let result = Cor20Header::read(&header_bytes);
-        assert!(result.is_err());
-        if let Err(e) = result {
-            assert!(e.to_string().contains("Metadata RVA cannot be zero"));
-        }
+        let err =
+            Cor20Header::read(&header_bytes).expect_err("Expected error for zero metadata RVA");
+        assert!(
+            err.to_string().contains("metadata RVA cannot be zero"),
+            "Expected error about metadata RVA, got: {}",
+            err
+        );
     }
 
     #[test]
@@ -463,11 +482,13 @@ mod tests {
             0x00, 0x00, 0x00, 0x00  // managed_native_header_size = 0
         ];
 
-        let result = Cor20Header::read(&header_bytes);
-        assert!(result.is_err());
-        if let Err(e) = result {
-            assert!(e.to_string().contains("Metadata size cannot be zero"));
-        }
+        let err =
+            Cor20Header::read(&header_bytes).expect_err("Expected error for zero metadata size");
+        assert!(
+            err.to_string().contains("metadata size cannot be zero"),
+            "Expected error about metadata size, got: {}",
+            err
+        );
     }
 
     #[test]
@@ -495,11 +516,13 @@ mod tests {
             0x00, 0x00, 0x00, 0x00  // managed_native_header_size = 0
         ];
 
-        let result = Cor20Header::read(&header_bytes);
-        assert!(result.is_err());
-        if let Err(e) = result {
-            assert!(e.to_string().contains("Invalid CLR flags"));
-        }
+        let err =
+            Cor20Header::read(&header_bytes).expect_err("Expected error for invalid CLR flags");
+        assert!(
+            err.to_string().contains("invalid CLR flags"),
+            "Expected error about invalid CLR flags, got: {}",
+            err
+        );
     }
 
     #[test]
@@ -527,11 +550,13 @@ mod tests {
             0x00, 0x00, 0x00, 0x00  // managed_native_header_size = 0
         ];
 
-        let result = Cor20Header::read(&header_bytes);
-        assert!(result.is_err());
-        if let Err(e) = result {
-            assert!(e.to_string().contains("Strong name values are invalid"));
-        }
+        let err =
+            Cor20Header::read(&header_bytes).expect_err("Expected error for invalid strong name");
+        assert!(
+            err.to_string().contains("strong name RVA/size mismatch"),
+            "Expected error about strong name mismatch, got: {}",
+            err
+        );
     }
 
     #[test]
@@ -559,10 +584,12 @@ mod tests {
             0x00, 0x00, 0x00, 0x00  // managed_native_header_size = 0
         ];
 
-        let result = Cor20Header::read(&header_bytes);
-        assert!(result.is_err());
-        if let Err(e) = result {
-            assert!(e.to_string().contains("VTable fixups are invalid"));
-        }
+        let err =
+            Cor20Header::read(&header_bytes).expect_err("Expected error for invalid VTable fixups");
+        assert!(
+            err.to_string().contains("VTable fixups RVA/size mismatch"),
+            "Expected error about VTable fixups mismatch, got: {}",
+            err
+        );
     }
 }

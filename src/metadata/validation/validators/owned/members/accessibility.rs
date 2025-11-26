@@ -146,8 +146,7 @@ impl OwnedAccessibilityValidator {
     /// - Nested types have inappropriate visibility flags
     /// - Interfaces are marked as sealed (invalid combination)
     fn validate_type_accessibility(&self, context: &OwnedValidationContext) -> Result<()> {
-        for entry in context.object().types().iter() {
-            let type_entry = entry.value();
+        for type_entry in context.all_types() {
             let visibility = type_entry.flags & TypeAttributes::VISIBILITY_MASK;
 
             match visibility {
@@ -229,8 +228,7 @@ impl OwnedAccessibilityValidator {
     /// - Methods have empty names
     /// - Literal fields are not marked as static (ECMA-335 requirement)
     fn validate_member_accessibility(&self, context: &OwnedValidationContext) -> Result<()> {
-        for entry in context.object().types().iter() {
-            let type_entry = entry.value();
+        for type_entry in context.all_types() {
             let type_visibility = type_entry.flags & TypeAttributes::VISIBILITY_MASK;
 
             for (_, method_ref) in type_entry.methods.iter() {
@@ -298,8 +296,7 @@ impl OwnedAccessibilityValidator {
     /// - Interfaces contain non-static fields
     /// - Interfaces contain non-constant fields
     fn validate_interface_accessibility(&self, context: &OwnedValidationContext) -> Result<()> {
-        for entry in context.object().types().iter() {
-            let type_entry = entry.value();
+        for type_entry in context.all_types() {
             for (_, interface_ref) in type_entry.interfaces.iter() {
                 let type_visibility = type_entry.flags & TypeAttributes::VISIBILITY_MASK;
                 if let Some(interface_type) = interface_ref.upgrade() {
@@ -376,8 +373,7 @@ impl OwnedAccessibilityValidator {
     /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if inheritance accessibility patterns are violated
     /// (specific violations depend on resolved type hierarchy analysis).
     fn validate_inheritance_accessibility(context: &OwnedValidationContext) {
-        for entry in context.object().types().iter() {
-            let type_entry = entry.value();
+        for type_entry in context.all_types() {
             // ToDo: For complete inheritance validation, we need to resolve
             // base type references and check accessibility consistency
 

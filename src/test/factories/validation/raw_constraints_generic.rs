@@ -4,14 +4,16 @@
 //! for creating test assemblies with various generic constraint validation scenarios.
 
 use crate::{
-    cilassembly::CilAssembly,
+    cilassembly::{BuilderContext, CilAssembly},
     metadata::{
         cilassemblyview::CilAssemblyView,
-        tables::{CodedIndex, CodedIndexType, GenericParamConstraintRaw, TableDataOwned, TableId},
+        tables::{
+            CodedIndex, CodedIndexType, GenericParamBuilder, GenericParamConstraintRaw,
+            TableDataOwned, TableId, TypeDefBuilder,
+        },
         token::Token,
         validation::ValidationConfig,
     },
-    prelude::*,
     test::{get_testfile_wb, TestAssembly},
     Error, Result,
 };

@@ -28,7 +28,7 @@ struct LabeledExceptionHandler {
     flags: ExceptionHandlerFlags,
     /// Label marking the start of the protected try block
     try_start_label: String,
-    /// Label marking the end of the protected try block  
+    /// Label marking the end of the protected try block
     try_end_label: String,
     /// Label marking the start of the handler block
     handler_start_label: String,
@@ -36,6 +36,8 @@ struct LabeledExceptionHandler {
     handler_end_label: String,
     /// The exception type for typed handlers
     handler_type: Option<CilTypeRc>,
+    /// Label marking the start of the filter expression (for FILTER handlers only)
+    filter_start_label: Option<String>,
 }
 
 /// Type alias for method body implementation closures
@@ -110,6 +112,15 @@ fn resolve_labeled_exception_handler(
     let try_length = try_end_offset - try_start_offset;
     let handler_length = handler_end_offset - handler_start_offset;
 
+    // Resolve filter offset for FILTER handlers
+    let filter_offset = if let Some(filter_label) = &labeled_handler.filter_start_label {
+        assembler
+            .get_label_position(filter_label)
+            .ok_or_else(|| Error::UndefinedLabel(filter_label.clone()))?
+    } else {
+        0
+    };
+
     // Create the regular exception handler
     Ok(ExceptionHandler {
         flags: labeled_handler.flags,
@@ -118,8 +129,87 @@ fn resolve_labeled_exception_handler(
         handler_offset: handler_start_offset,
         handler_length,
         handler: labeled_handler.handler_type.clone(),
-        filter_offset: 0, // Filter handlers not implemented yet
+        filter_offset,
     })
+}
+
+/// Validates exception handler ranges against the method body code size.
+///
+/// This function ensures that all exception handlers have valid byte ranges that fit
+/// within the method body according to ECMA-335 requirements:
+///
+/// 1. Try block range must be within the code: `try_offset + try_length <= code_size`
+/// 2. Handler block range must be within the code: `handler_offset + handler_length <= code_size`
+/// 3. For FILTER handlers: `filter_offset < code_size` (filter must start within code)
+///
+/// # Parameters
+///
+/// * `handlers` - The exception handlers to validate
+/// * `code_size` - The total size of the method body IL code in bytes
+///
+/// # Returns
+///
+/// `Ok(())` if all handlers have valid ranges.
+///
+/// # Errors
+///
+/// Returns an error if any handler has an invalid range that would exceed the code size.
+fn validate_exception_handler_ranges(handlers: &[ExceptionHandler], code_size: u32) -> Result<()> {
+    for (index, handler) in handlers.iter().enumerate() {
+        // Validate try block range
+        let try_end = handler
+            .try_offset
+            .checked_add(handler.try_length)
+            .ok_or_else(|| Error::ModificationInvalidOperation {
+                details: format!(
+                    "Exception handler {}: try block range overflow (offset {} + length {})",
+                    index, handler.try_offset, handler.try_length
+                ),
+            })?;
+
+        if try_end > code_size {
+            return Err(Error::ModificationInvalidOperation {
+                details: format!(
+                    "Exception handler {}: try block exceeds code size (offset {} + length {} = {}, code size = {})",
+                    index, handler.try_offset, handler.try_length, try_end, code_size
+                ),
+            });
+        }
+
+        // Validate handler block range
+        let handler_end = handler
+            .handler_offset
+            .checked_add(handler.handler_length)
+            .ok_or_else(|| Error::ModificationInvalidOperation {
+                details: format!(
+                    "Exception handler {}: handler block range overflow (offset {} + length {})",
+                    index, handler.handler_offset, handler.handler_length
+                ),
+            })?;
+
+        if handler_end > code_size {
+            return Err(Error::ModificationInvalidOperation {
+                details: format!(
+                    "Exception handler {}: handler block exceeds code size (offset {} + length {} = {}, code size = {})",
+                    index, handler.handler_offset, handler.handler_length, handler_end, code_size
+                ),
+            });
+        }
+
+        // Validate filter offset for FILTER handlers
+        if handler.flags.contains(ExceptionHandlerFlags::FILTER)
+            && handler.filter_offset >= code_size
+        {
+            return Err(Error::ModificationInvalidOperation {
+                details: format!(
+                    "Exception handler {}: filter offset {} exceeds code size {}",
+                    index, handler.filter_offset, code_size
+                ),
+            });
+        }
+    }
+
+    Ok(())
 }
 
 /// Builder for creating method body implementations.
@@ -459,6 +549,7 @@ impl MethodBodyBuilder {
             handler_start_label: handler_start_label.to_string(),
             handler_end_label: handler_end_label.to_string(),
             handler_type: None,
+            filter_start_label: None,
         };
         self.labeled_exception_handlers.push(handler);
         self
@@ -505,6 +596,62 @@ impl MethodBodyBuilder {
             handler_start_label: handler_start_label.to_string(),
             handler_end_label: handler_end_label.to_string(),
             handler_type: exception_type,
+            filter_start_label: None,
+        };
+        self.labeled_exception_handlers.push(handler);
+        self
+    }
+
+    /// Add a filter handler using labels for automatic offset calculation.
+    ///
+    /// Filter handlers use a custom filter expression to determine whether to handle
+    /// an exception. The filter expression must leave a boolean value on the stack:
+    /// - Non-zero (true): The handler will process the exception
+    /// - Zero (false): The exception continues to propagate
+    ///
+    /// # Arguments
+    ///
+    /// * `try_start_label` - Label marking the start of the protected try block
+    /// * `try_end_label` - Label marking the end of the protected try block
+    /// * `filter_start_label` - Label marking the start of the filter expression
+    /// * `handler_start_label` - Label marking the start of the handler block
+    /// * `handler_end_label` - Label marking the end of the handler block
+    ///
+    /// # Filter Expression
+    ///
+    /// The filter expression code (between `filter_start_label` and `handler_start_label`)
+    /// receives the exception object on the stack and must evaluate to a boolean.
+    /// Use `endfilter` instruction to complete the filter evaluation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::MethodBodyBuilder;
+    ///
+    /// let body_builder = MethodBodyBuilder::new()
+    ///     .filter_handler_with_labels(
+    ///         "try_start", "try_end",
+    ///         "filter_start",
+    ///         "handler_start", "handler_end"
+    ///     );
+    /// ```
+    #[must_use]
+    pub fn filter_handler_with_labels(
+        mut self,
+        try_start_label: &str,
+        try_end_label: &str,
+        filter_start_label: &str,
+        handler_start_label: &str,
+        handler_end_label: &str,
+    ) -> Self {
+        let handler = LabeledExceptionHandler {
+            flags: ExceptionHandlerFlags::FILTER,
+            try_start_label: try_start_label.to_string(),
+            try_end_label: try_end_label.to_string(),
+            handler_start_label: handler_start_label.to_string(),
+            handler_end_label: handler_end_label.to_string(),
+            handler_type: None,
+            filter_start_label: Some(filter_start_label.to_string()),
         };
         self.labeled_exception_handlers.push(handler);
         self
@@ -675,6 +822,9 @@ impl MethodBodyBuilder {
 
         // Add exception handler section if needed
         if has_exceptions {
+            // Validate exception handler ranges before encoding
+            validate_exception_handler_ranges(&all_exception_handlers, code_size)?;
+
             // Align to 4-byte boundary before exception handler section (ECMA-335 requirement)
             while body.len() % 4 != 0 {
                 body.push(0x00);
@@ -815,11 +965,25 @@ mod tests {
     #[test]
     fn test_method_body_with_exception_handlers() -> Result<()> {
         let mut context = get_test_context()?;
+        // Create a method with enough code to accommodate exception handlers
+        // Try block: offset 0, length 5 (covers nop, nop, nop, nop, nop)
+        // Handler block: offset 5, length 3 (covers nop, nop, nop for finally)
+        // Total code: 9 bytes
         let (body_bytes, _local_sig_token) = MethodBodyBuilder::new()
-            .catch_handler(0, 10, 10, 5, None) // Simple catch-all handler
-            .finally_handler(0, 15, 15, 3) // Finally block
+            .finally_handler(0, 5, 5, 3) // Finally block - try covers 5 bytes, handler is 3 bytes
             .implementation(|asm| {
-                asm.ldc_i4_1()?.ret()?;
+                // Try block: 5 bytes of nops
+                asm.nop()?; // offset 0
+                asm.nop()?; // offset 1
+                asm.nop()?; // offset 2
+                asm.nop()?; // offset 3
+                asm.nop()?; // offset 4
+                            // Finally handler block: 3 bytes
+                asm.nop()?; // offset 5 - finally code
+                asm.nop()?; // offset 6
+                asm.endfinally()?; // offset 7 - end finally
+                                   // After the protected region
+                asm.ret()?; // offset 8 - return point
                 Ok(())
             })
             .build(&mut context)?;
@@ -828,6 +992,57 @@ mod tests {
         assert!(!body_bytes.is_empty());
         // Fat format should be used when exception handlers are present
         assert!(body_bytes.len() >= 12); // Fat header is larger than tiny header
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_filter_handler_with_labels() -> Result<()> {
+        let mut context = get_test_context()?;
+
+        // Create a method with a filter exception handler
+        // Note: This test verifies the filter handler structure is built correctly.
+        // The CLR pushes exception objects at filter/handler entry points, but our
+        // stack tracking doesn't model this. We use nop instead of pop to avoid
+        // stack underflow errors in testing.
+        let (body_bytes, _local_sig_token) = MethodBodyBuilder::new()
+            .filter_handler_with_labels(
+                "try_start",
+                "try_end",
+                "filter_start",
+                "handler_start",
+                "handler_end",
+            )
+            .implementation(|asm| {
+                // Try block
+                asm.label("try_start")?;
+                asm.nop()?;
+                asm.nop()?;
+                asm.leave_s("try_end")?;
+
+                // Filter expression - must evaluate to int32 for endfilter
+                // In real code: pop exception, evaluate, push result
+                // Here we just push 1 (accept) to test structure
+                asm.label("filter_start")?;
+                asm.ldc_i4_1()?; // Return true (handle this exception)
+                asm.endfilter()?;
+
+                // Handler block
+                asm.label("handler_start")?;
+                asm.nop()?; // Handler code would go here
+                asm.leave_s("handler_end")?;
+
+                // End labels and return
+                asm.label("handler_end")?;
+                asm.label("try_end")?;
+                asm.ret()?;
+                Ok(())
+            })
+            .build(&mut context)?;
+
+        // Should create method body with fat format due to exception handlers
+        assert!(!body_bytes.is_empty());
+        assert!(body_bytes.len() >= 12); // Fat header required for exception handlers
 
         Ok(())
     }

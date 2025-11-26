@@ -31,8 +31,8 @@
 //!
 //! ## High-Level Resource Parsing
 //!
-//! ```rust,ignore
-//! use dotscope::metadata::resources::parser::parse_dotnet_resource;
+//! ```ignore
+//! use dotscope::metadata::resources::parse_dotnet_resource;
 //!
 //! // Parse complete resource file
 //! let resource_data = /* ... resource file bytes ... */;
@@ -50,8 +50,8 @@
 //!
 //! ## Low-Level Resource Analysis
 //!
-//! ```rust,ignore
-//! use dotscope::metadata::resources::parser::Resource;
+//! ```ignore
+//! use dotscope::metadata::resources::Resource;
 //!
 //! // Parse resource header and examine structure
 //! let resource_data = /* ... resource file bytes ... */;
@@ -126,8 +126,8 @@ const MAX_RESOURCES: u32 = 1_000_000;
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::metadata::resources::parser::parse_dotnet_resource;
+/// ```ignore
+/// use dotscope::metadata::resources::parse_dotnet_resource;
 ///
 /// let resource_data = std::fs::read("MyApp.resources")?;
 /// let resources = parse_dotnet_resource(&resource_data)?;
@@ -183,8 +183,8 @@ pub fn parse_dotnet_resource(data: &[u8]) -> Result<BTreeMap<String, ResourceEnt
 ///
 /// ## Basic Usage
 ///
-/// ```rust,ignore
-/// use dotscope::metadata::resources::parser::parse_dotnet_resource_ref;
+/// ```ignore
+/// use dotscope::metadata::resources::parse_dotnet_resource_ref;
 /// use dotscope::metadata::resources::ResourceTypeRef;
 ///
 /// let resource_data = std::fs::read("MyApp.resources")?;
@@ -209,8 +209,8 @@ pub fn parse_dotnet_resource(data: &[u8]) -> Result<BTreeMap<String, ResourceEnt
 ///
 /// ## Extracting Embedded ZIP Archives
 ///
-/// ```rust,ignore
-/// use dotscope::metadata::resources::parser::parse_dotnet_resource_ref;
+/// ```ignore
+/// use dotscope::metadata::resources::parse_dotnet_resource_ref;
 /// use dotscope::metadata::resources::ResourceTypeRef;
 ///
 /// let resource_data = std::fs::read("MyApp.resources")?;
@@ -278,8 +278,8 @@ pub fn parse_dotnet_resource_ref(data: &[u8]) -> Result<BTreeMap<String, Resourc
 ///
 /// ## Format Analysis
 ///
-/// ```rust,ignore
-/// use dotscope::metadata::resources::parser::Resource;
+/// ```ignore
+/// use dotscope::metadata::resources::Resource;
 ///
 /// let resource_data = std::fs::read("MyApp.resources")?;
 /// let resource = Resource::parse(&resource_data)?;
@@ -301,8 +301,8 @@ pub fn parse_dotnet_resource_ref(data: &[u8]) -> Result<BTreeMap<String, Resourc
 ///
 /// ## Custom Resource Processing
 ///
-/// ```rust,ignore
-/// use dotscope::metadata::resources::parser::Resource;
+/// ```ignore
+/// use dotscope::metadata::resources::Resource;
 ///
 /// let resource_data = std::fs::read("MyApp.resources")?;
 /// let mut resource = Resource::parse(&resource_data)?;
@@ -430,8 +430,8 @@ impl Resource {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::parser::Resource;
+    /// ```ignore
+    /// use dotscope::metadata::resources::Resource;
     ///
     /// let resource_data = std::fs::read("MyApp.resources")?;
     /// let resource = Resource::parse(&resource_data)?;
@@ -454,14 +454,73 @@ impl Resource {
     /// - **Array Bounds**: Ensures hash and position arrays match resource count
     pub fn parse(data: &[u8]) -> Result<Self> {
         if data.len() < 12 {
-            // Need at least magic + header version + skip bytes + basic header
             return Err(malformed_error!("Resource data too small"));
         }
 
         let mut parser = Parser::new(data);
-        let is_embedded_resource;
 
-        // Auto-detect format: embedded resource (size + magic) vs standalone (.resources file)
+        // Step 1: Detect format and validate magic number
+        let is_embedded_resource = Self::parse_and_validate_magic(&mut parser, data)?;
+
+        // Step 2: Parse resource manager header
+        let (res_mgr_header_version, header_size, reader_type, resource_set_type) =
+            Self::parse_resource_manager_header(&mut parser)?;
+
+        // Step 3: Initialize result struct with header data
+        let mut res = Resource {
+            res_mgr_header_version,
+            header_size,
+            reader_type,
+            resource_set_type,
+            is_embedded_resource,
+            rr_header_offset: parser.pos(),
+            ..Default::default()
+        };
+
+        // Step 4: Parse RuntimeResourceReader header
+        Self::parse_runtime_reader_header(&mut parser, data, &mut res)?;
+
+        // Step 5: Parse type table
+        Self::parse_type_table(&mut parser, &mut res)?;
+
+        // Step 6: Handle padding/alignment
+        res.padding = Self::skip_padding(&mut parser, data)?;
+
+        // Step 7: Parse hash and position tables
+        Self::parse_lookup_tables(&mut parser, &mut res)?;
+
+        // Step 8: Read data section offset and record name section start
+        res.data_section_offset = parser.read_le::<u32>()? as usize;
+        res.name_section_offset = parser.pos();
+
+        Ok(res)
+    }
+
+    /// Detect resource format (embedded vs standalone) and validate magic number.
+    ///
+    /// .NET resources can appear in two formats:
+    /// - **Embedded**: `[size: u32][magic: u32][header...]` - Used when resources are embedded in assemblies
+    /// - **Standalone**: `[magic: u32][header...]` - Used for standalone `.resources` files
+    ///
+    /// This method reads the first 8 bytes to detect which format is being used and
+    /// validates that the magic number (0xBEEFCACE) is present.
+    ///
+    /// # Arguments
+    ///
+    /// * `parser` - Parser positioned at the start of the resource data
+    /// * `data` - Complete resource data buffer (used for size validation)
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(true)` - Embedded resource format detected (parser positioned after magic)
+    /// * `Ok(false)` - Standalone format detected (parser positioned after magic)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Neither format's magic number is found at the expected position
+    /// - Embedded format has invalid size (too large or too small)
+    fn parse_and_validate_magic(parser: &mut Parser, data: &[u8]) -> Result<bool> {
         let first_u32 = parser.read_le::<u32>()?;
         let second_u32 = parser.read_le::<u32>()?;
 
@@ -471,23 +530,56 @@ impl Resource {
             if size > (data.len() - 4) || size < 8 {
                 return Err(malformed_error!("Invalid embedded resource size: {}", size));
             }
-            is_embedded_resource = true;
-            // parser is already positioned after magic number
+            Ok(true)
         } else if first_u32 == RESOURCE_MAGIC {
             // Standalone .resources file format: [magic][header...]
             parser.seek(4)?; // Reset to after magic number
-            is_embedded_resource = false;
+            Ok(false)
         } else {
-            return Err(malformed_error!(
-                "Invalid resource format - no magic number found"
-            ));
+            Err(malformed_error!(
+                "Invalid resource format - expected magic 0x{:08X}, found 0x{:08X}/0x{:08X}",
+                RESOURCE_MAGIC,
+                first_u32,
+                second_u32
+            ))
         }
+    }
 
-        let res_mgr_header_version = parser.read_le::<u32>()?;
+    /// Parse the Resource Manager header section.
+    ///
+    /// The Resource Manager header contains version information and type strings that
+    /// identify the reader and resource set classes used to parse the file.
+    ///
+    /// # Header Format
+    ///
+    /// ```text
+    /// [version: u32]           - Header version (1 = V1 format with type strings)
+    /// [num_bytes_to_skip: u32] - For V1: ignored; For V2+: bytes to skip
+    /// [reader_type: string]    - V1 only: IResourceReader implementation class name
+    /// [resource_set_type: string] - V1 only: ResourceSet implementation class name
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `parser` - Parser positioned after the magic number
+    ///
+    /// # Returns
+    ///
+    /// A tuple of `(version, header_size, reader_type, resource_set_type)`.
+    /// For V2+ formats, `reader_type` and `resource_set_type` will be empty strings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The skip bytes value exceeds 1GB (sanity check)
+    /// - The reader type is not a supported implementation
+    /// - String reading fails due to malformed data
+    fn parse_resource_manager_header(parser: &mut Parser) -> Result<(u32, u32, String, String)> {
+        let version = parser.read_le::<u32>()?;
         let num_bytes_to_skip = parser.read_le::<u32>()?;
 
-        let (reader_type, resource_set_type) = if res_mgr_header_version > 1 {
-            // For future versions, skip the specified number of bytes
+        if version > 1 {
+            // Future version: skip the specified number of bytes
             if num_bytes_to_skip > (1 << 30) {
                 return Err(malformed_error!(
                     "Invalid skip bytes: {}",
@@ -495,7 +587,7 @@ impl Resource {
                 ));
             }
             parser.advance_by(num_bytes_to_skip as usize)?;
-            (String::new(), String::new())
+            Ok((version, num_bytes_to_skip, String::new(), String::new()))
         } else {
             // V1 header: read reader type and resource set type
             let reader_type = parser.read_prefixed_string_utf8()?;
@@ -505,21 +597,39 @@ impl Resource {
                 return Err(malformed_error!("Unsupported reader type: {}", reader_type));
             }
 
-            (reader_type, resource_set_type)
-        };
+            Ok((version, num_bytes_to_skip, reader_type, resource_set_type))
+        }
+    }
 
-        let mut res: Resource = Resource {
-            res_mgr_header_version,
-            header_size: num_bytes_to_skip,
-            reader_type,
-            resource_set_type,
-            is_embedded_resource,
-            ..Default::default()
-        };
-
-        res.rr_header_offset = parser.pos();
-
-        // Read RuntimeResourceReader header
+    /// Parse the `RuntimeResourceReader` header section.
+    ///
+    /// This section contains the resource reader version, optional debug information,
+    /// and the total count of resources in the file.
+    ///
+    /// # Header Format
+    ///
+    /// ```text
+    /// [rr_version: u32]        - RuntimeResourceReader version (1 or 2)
+    /// ["***DEBUG***": string]  - V2 only, optional: Present in debug builds
+    /// [resource_count: u32]    - Number of resources in this file
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `parser` - Parser positioned at the start of the RR header
+    /// * `data` - Complete resource data buffer (used for bounds checking)
+    /// * `res` - Resource struct to populate with parsed values
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The RR version is not 1 or 2
+    /// - The resource count exceeds `MAX_RESOURCES` (1,000,000)
+    fn parse_runtime_reader_header(
+        parser: &mut Parser,
+        data: &[u8],
+        res: &mut Resource,
+    ) -> Result<()> {
         res.rr_version = parser.read_le::<u32>()?;
 
         if res.rr_version != 1 && res.rr_version != 2 {
@@ -529,20 +639,11 @@ impl Resource {
             ));
         }
 
-        // Check for debug string in V2 debug builds
+        // Check for debug string in V2 debug builds ("***DEBUG***")
         if res.rr_version == 2 && (data.len() - parser.pos()) >= 11 {
-            // Check if next bytes look like "***DEBUG***"
-            let peek_pos = parser.pos();
-            if let Ok(debug_string) = parser.read_prefixed_string_utf8() {
-                if debug_string == "***DEBUG***" {
-                    res.is_debug = true;
-                } else {
-                    parser.seek(peek_pos)?;
-                }
-            } else {
-                parser.seek(peek_pos)?;
-            }
+            res.is_debug = Self::try_parse_debug_marker(parser)?;
         }
+
         res.resource_count = parser.read_le::<u32>()?;
         if res.resource_count > MAX_RESOURCES {
             return Err(malformed_error!(
@@ -552,7 +653,65 @@ impl Resource {
             ));
         }
 
+        Ok(())
+    }
+
+    /// Try to parse the optional `"***DEBUG***"` marker in V2 resources.
+    ///
+    /// In V2 debug builds, .NET includes a debug marker string immediately after the
+    /// RR version number. This method attempts to read and identify this marker using
+    /// a peek-and-restore pattern to avoid consuming data if the marker isn't present.
+    ///
+    /// # Arguments
+    ///
+    /// * `parser` - Parser positioned where the debug marker might be
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(true)` - Debug marker was found and consumed
+    /// * `Ok(false)` - No debug marker present (parser position restored)
+    fn try_parse_debug_marker(parser: &mut Parser) -> Result<bool> {
+        let peek_pos = parser.pos();
+
+        match parser.read_prefixed_string_utf8() {
+            Ok(s) if s == "***DEBUG***" => Ok(true),
+            Ok(_) => {
+                parser.seek(peek_pos)?;
+                Ok(false)
+            }
+            Err(_) => {
+                parser.seek(peek_pos)?;
+                Ok(false)
+            }
+        }
+    }
+
+    /// Parse the type name table.
+    ///
+    /// The type table contains fully-qualified .NET type names for all resource types
+    /// used in this file. Resources reference these types by index when their type
+    /// code indicates a user-defined type.
+    ///
+    /// # Table Format
+    ///
+    /// ```text
+    /// [type_count: u32]        - Number of type names in the table
+    /// [type_name: string]...   - Length-prefixed UTF-8 type names (repeated type_count times)
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `parser` - Parser positioned at the start of the type table
+    /// * `res` - Resource struct to populate with parsed type names
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The type count exceeds `MAX_RESOURCE_TYPES` (4,096)
+    /// - Any type name string is malformed
+    fn parse_type_table(parser: &mut Parser, res: &mut Resource) -> Result<()> {
         let type_count = parser.read_le::<u32>()?;
+
         if type_count > MAX_RESOURCE_TYPES {
             return Err(malformed_error!(
                 "Resource file has too many types: {} (max: {})",
@@ -560,61 +719,141 @@ impl Resource {
                 MAX_RESOURCE_TYPES
             ));
         }
+
+        res.type_names.reserve(type_count as usize);
         for _ in 0..type_count {
             res.type_names.push(parser.read_prefixed_string_utf8()?);
         }
 
-        // Align to 8-byte boundary exactly as per .NET Framework implementation
-        // From .NET source: "Skip over alignment stuff. All public .resources files
-        // should be aligned. No need to verify the byte values."
-        let pos = parser.pos();
-        let align_bytes = pos & 7;
+        Ok(())
+    }
+
+    /// Skip padding bytes to align to 8-byte boundary, plus any explicit PAD patterns.
+    ///
+    /// .NET resource files require 8-byte alignment after the type table before the
+    /// hash/position arrays. Some implementations also include explicit "PAD" byte
+    /// patterns for additional alignment or debugging purposes.
+    ///
+    /// # Alignment Strategy
+    ///
+    /// 1. First, skip bytes to reach 8-byte alignment boundary
+    /// 2. Then, skip any explicit "PAD" patterns that may follow
+    ///
+    /// # Arguments
+    ///
+    /// * `parser` - Parser positioned after the type table
+    /// * `data` - Complete resource data buffer (used for PAD pattern detection)
+    ///
+    /// # Returns
+    ///
+    /// The total number of padding bytes skipped (alignment + PAD patterns).
+    fn skip_padding(parser: &mut Parser, data: &[u8]) -> Result<usize> {
         let mut padding_count = 0;
 
+        // Standard 8-byte alignment
+        let align_bytes = parser.pos() & 7;
         if align_bytes != 0 {
             let padding_to_skip = 8 - align_bytes;
-            padding_count = padding_to_skip;
+            padding_count += padding_to_skip;
             parser.advance_by(padding_to_skip)?;
         }
 
-        // Check for additional PAD pattern bytes that may exist in the file
-        // Some .NET resource files include explicit PAD patterns beyond 8-byte alignment
-        while parser.pos() < data.len() - 4 {
-            let peek_bytes = &data[parser.pos()..parser.pos() + 3.min(data.len() - parser.pos())];
-            if peek_bytes.len() >= 3
-                && peek_bytes[0] == b'P'
-                && peek_bytes[1] == b'A'
-                && peek_bytes[2] == b'D'
-            {
-                // Found PAD pattern, skip it
+        // Check for additional explicit PAD patterns (some .NET implementations add these)
+        padding_count += Self::skip_pad_patterns(parser, data)?;
+
+        Ok(padding_count)
+    }
+
+    /// Skip any explicit "PAD" byte patterns in the resource file.
+    ///
+    /// Some .NET resource file implementations include explicit "PAD" ASCII patterns
+    /// beyond standard 8-byte alignment. This method detects and skips these patterns.
+    ///
+    /// # Supported Patterns
+    ///
+    /// - `"PAD"` (3 bytes) - Basic padding marker
+    /// - `"PADP"` (4 bytes) - Extended padding with 'P' continuation
+    /// - `"PAD\0"` (4 bytes) - Null-terminated padding marker
+    ///
+    /// Multiple consecutive PAD patterns are handled (the loop continues until
+    /// a non-PAD sequence is encountered).
+    ///
+    /// # Arguments
+    ///
+    /// * `parser` - Parser positioned where PAD patterns might begin
+    /// * `data` - Complete resource data buffer (used for pattern detection)
+    ///
+    /// # Returns
+    ///
+    /// The total number of PAD pattern bytes skipped.
+    fn skip_pad_patterns(parser: &mut Parser, data: &[u8]) -> Result<usize> {
+        let mut padding_count = 0;
+
+        while parser.pos() + 4 <= data.len() {
+            let pos = parser.pos();
+            let remaining = data.len() - pos;
+
+            // Need at least 3 bytes to check for "PAD"
+            if remaining < 3 {
+                break;
+            }
+
+            // Check for "PAD" pattern
+            if data[pos] == b'P' && data[pos + 1] == b'A' && data[pos + 2] == b'D' {
                 parser.advance_by(3)?;
                 padding_count += 3;
-                // Check for additional padding byte after PAD
-                if parser.pos() < data.len()
-                    && (data[parser.pos()] == b'P' || data[parser.pos()] == 0)
-                {
-                    parser.advance()?;
-                    padding_count += 1;
+
+                // Check for additional padding byte after PAD ('P' or '\0')
+                if parser.pos() < data.len() {
+                    let next_byte = data[parser.pos()];
+                    if next_byte == b'P' || next_byte == 0 {
+                        parser.advance()?;
+                        padding_count += 1;
+                    }
                 }
             } else {
                 break;
             }
         }
 
-        res.padding = padding_count;
+        Ok(padding_count)
+    }
 
-        for _ in 0..res.resource_count {
+    /// Parse the name hash and position lookup tables.
+    ///
+    /// These tables enable efficient resource lookup by name. The hash table contains
+    /// pre-computed hash values for each resource name, and the position table contains
+    /// offsets into the name section where each resource's name and data pointer are stored.
+    ///
+    /// # Table Format
+    ///
+    /// ```text
+    /// [name_hash: u32]...      - Hash values (repeated resource_count times)
+    /// [name_position: u32]...  - Name section offsets (repeated resource_count times)
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `parser` - Parser positioned after padding, at the start of the hash table
+    /// * `res` - Resource struct to populate with hash and position arrays
+    ///
+    /// # Notes
+    ///
+    /// The arrays are pre-allocated using `reserve()` to avoid reallocation during parsing.
+    fn parse_lookup_tables(parser: &mut Parser, res: &mut Resource) -> Result<()> {
+        let count = res.resource_count as usize;
+
+        res.name_hashes.reserve(count);
+        for _ in 0..count {
             res.name_hashes.push(parser.read_le::<u32>()?);
         }
 
-        for _ in 0..res.resource_count {
+        res.name_positions.reserve(count);
+        for _ in 0..count {
             res.name_positions.push(parser.read_le::<u32>()?);
         }
 
-        res.data_section_offset = parser.read_le::<u32>()? as usize;
-        res.name_section_offset = parser.pos();
-
-        Ok(res)
+        Ok(())
     }
 
     /// Parse all resources into a name-indexed collection with full type resolution.
@@ -654,8 +893,8 @@ impl Resource {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::parser::Resource;
+    /// ```ignore
+    /// use dotscope::metadata::resources::Resource;
     ///
     /// let resource_data = std::fs::read("MyApp.resources")?;
     /// let mut resource = Resource::parse(&resource_data)?;
@@ -664,7 +903,7 @@ impl Resource {
     /// println!("Found {} resources:", resources.len());
     /// for (name, entry) in &resources {
     ///     println!("Resource: {} (Hash: 0x{:08X})", name, entry.name_hash);
-    ///     
+    ///
     ///     match &entry.data {
     ///         ResourceType::String(s) => {
     ///             println!("  String: '{}'", s);
@@ -692,10 +931,20 @@ impl Resource {
     /// - **Byte Arrays**: Raw binary data with length prefixes
     /// - **Custom Objects**: Serialized .NET objects (parsing depends on type)
     pub fn read_resources(&mut self, data: &[u8]) -> Result<BTreeMap<String, ResourceEntry>> {
+        let count = self.resource_count as usize;
+        if self.name_hashes.len() != count || self.name_positions.len() != count {
+            return Err(malformed_error!(
+                "Resource count {} doesn't match hash/position array lengths ({}/{})",
+                self.resource_count,
+                self.name_hashes.len(),
+                self.name_positions.len()
+            ));
+        }
+
         let mut resources = BTreeMap::new();
         let mut parser = Parser::new(data);
 
-        for i in 0..self.resource_count as usize {
+        for i in 0..count {
             let name_pos = self.name_section_offset + self.name_positions[i] as usize;
             parser.seek(name_pos)?;
 
@@ -807,8 +1056,8 @@ impl Resource {
     ///
     /// ## Basic Zero-Copy Usage
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::parser::Resource;
+    /// ```ignore
+    /// use dotscope::metadata::resources::Resource;
     /// use dotscope::metadata::resources::ResourceTypeRef;
     ///
     /// let resource_data = std::fs::read("MyApp.resources")?;
@@ -841,8 +1090,8 @@ impl Resource {
     ///
     /// ## Extracting Embedded ZIP Archives
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::resources::parser::Resource;
+    /// ```ignore
+    /// use dotscope::metadata::resources::Resource;
     /// use dotscope::metadata::resources::ResourceTypeRef;
     ///
     /// let resource_data = std::fs::read("MyApp.resources")?;
@@ -873,10 +1122,20 @@ impl Resource {
         &mut self,
         data: &'a [u8],
     ) -> Result<BTreeMap<String, ResourceEntryRef<'a>>> {
+        let count = self.resource_count as usize;
+        if self.name_hashes.len() != count || self.name_positions.len() != count {
+            return Err(malformed_error!(
+                "Resource count {} doesn't match hash/position array lengths ({}/{})",
+                self.resource_count,
+                self.name_hashes.len(),
+                self.name_positions.len()
+            ));
+        }
+
         let mut resources = BTreeMap::new();
         let mut parser = Parser::new(data);
 
-        for i in 0..self.resource_count as usize {
+        for i in 0..count {
             let name_pos = self.name_section_offset + self.name_positions[i] as usize;
             parser.seek(name_pos)?;
 

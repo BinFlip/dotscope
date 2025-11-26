@@ -201,7 +201,7 @@ pub trait CilIO: Sized {
     ///
     /// This type must be convertible from a byte slice and is used for reading
     /// binary data in both little-endian and big-endian formats.
-    type Bytes: Sized + for<'a> TryFrom<&'a [u8]>;
+    type Bytes: Sized + AsRef<[u8]> + for<'a> TryFrom<&'a [u8]>;
 
     /// Read T from a byte buffer in little-endian
     fn from_le_bytes(bytes: Self::Bytes) -> Self;
@@ -814,10 +814,7 @@ pub fn write_le_at<T: CilIO>(data: &mut [u8], offset: &mut usize, value: T) -> R
     }
 
     let bytes = value.to_le_bytes();
-    let bytes_ref: &[u8] =
-        unsafe { std::slice::from_raw_parts((&raw const bytes).cast::<u8>(), type_len) };
-
-    data[*offset..*offset + type_len].copy_from_slice(bytes_ref);
+    data[*offset..*offset + type_len].copy_from_slice(bytes.as_ref());
     *offset += type_len;
 
     Ok(())
@@ -960,10 +957,7 @@ pub fn write_be_at<T: CilIO>(data: &mut [u8], offset: &mut usize, value: T) -> R
     }
 
     let bytes = value.to_be_bytes();
-    let bytes_ref: &[u8] =
-        unsafe { std::slice::from_raw_parts((&raw const bytes).cast::<u8>(), type_len) };
-
-    data[*offset..*offset + type_len].copy_from_slice(bytes_ref);
+    data[*offset..*offset + type_len].copy_from_slice(bytes.as_ref());
     *offset += type_len;
 
     Ok(())

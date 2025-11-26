@@ -136,6 +136,32 @@ mod tests {
         create_method_with_params, get_test_type_registry,
     };
 
+    /// Helper macro to assert that two `CustomAttributeArgument` values match and are equal.
+    ///
+    /// This reduces boilerplate in roundtrip tests by providing a single macro that handles
+    /// the pattern matching and equality check for any argument variant.
+    ///
+    /// # Usage
+    /// ```ignore
+    /// assert_arg_eq!(parsed, original, I4, "context message");
+    /// ```
+    macro_rules! assert_arg_eq {
+        ($parsed:expr, $original:expr, $variant:ident, $msg:expr) => {
+            match (&$parsed, &$original) {
+                (CustomAttributeArgument::$variant(p), CustomAttributeArgument::$variant(o)) => {
+                    assert_eq!(p, o, "{}", $msg);
+                }
+                _ => panic!(
+                    "{}: expected {} variant, got {:?} vs {:?}",
+                    $msg,
+                    stringify!($variant),
+                    $parsed,
+                    $original
+                ),
+            }
+        };
+    }
+
     #[test]
     fn test_roundtrip_empty_custom_attribute() {
         let original = CustomAttributeValue {
@@ -174,24 +200,18 @@ mod tests {
 
         // Verify
         assert_eq!(parsed.fixed_args.len(), 2);
-        match (&parsed.fixed_args[0], &original.fixed_args[0]) {
-            (
-                CustomAttributeArgument::Bool(parsed_val),
-                CustomAttributeArgument::Bool(orig_val),
-            ) => {
-                assert_eq!(parsed_val, orig_val);
-            }
-            _ => panic!("Type mismatch in boolean argument"),
-        }
-        match (&parsed.fixed_args[1], &original.fixed_args[1]) {
-            (
-                CustomAttributeArgument::Bool(parsed_val),
-                CustomAttributeArgument::Bool(orig_val),
-            ) => {
-                assert_eq!(parsed_val, orig_val);
-            }
-            _ => panic!("Type mismatch in boolean argument"),
-        }
+        assert_arg_eq!(
+            parsed.fixed_args[0],
+            original.fixed_args[0],
+            Bool,
+            "Bool arg 0"
+        );
+        assert_arg_eq!(
+            parsed.fixed_args[1],
+            original.fixed_args[1],
+            Bool,
+            "Bool arg 1"
+        );
     }
 
     #[test]
@@ -229,39 +249,15 @@ mod tests {
         // Verify
         assert_eq!(parsed.fixed_args.len(), 8);
 
-        // Check each integer type
-        match (&parsed.fixed_args[0], &original.fixed_args[0]) {
-            (CustomAttributeArgument::I1(p), CustomAttributeArgument::I1(o)) => assert_eq!(p, o),
-            _ => panic!("I1 type mismatch"),
-        }
-        match (&parsed.fixed_args[1], &original.fixed_args[1]) {
-            (CustomAttributeArgument::U1(p), CustomAttributeArgument::U1(o)) => assert_eq!(p, o),
-            _ => panic!("U1 type mismatch"),
-        }
-        match (&parsed.fixed_args[2], &original.fixed_args[2]) {
-            (CustomAttributeArgument::I2(p), CustomAttributeArgument::I2(o)) => assert_eq!(p, o),
-            _ => panic!("I2 type mismatch"),
-        }
-        match (&parsed.fixed_args[3], &original.fixed_args[3]) {
-            (CustomAttributeArgument::U2(p), CustomAttributeArgument::U2(o)) => assert_eq!(p, o),
-            _ => panic!("U2 type mismatch"),
-        }
-        match (&parsed.fixed_args[4], &original.fixed_args[4]) {
-            (CustomAttributeArgument::I4(p), CustomAttributeArgument::I4(o)) => assert_eq!(p, o),
-            _ => panic!("I4 type mismatch"),
-        }
-        match (&parsed.fixed_args[5], &original.fixed_args[5]) {
-            (CustomAttributeArgument::U4(p), CustomAttributeArgument::U4(o)) => assert_eq!(p, o),
-            _ => panic!("U4 type mismatch"),
-        }
-        match (&parsed.fixed_args[6], &original.fixed_args[6]) {
-            (CustomAttributeArgument::I8(p), CustomAttributeArgument::I8(o)) => assert_eq!(p, o),
-            _ => panic!("I8 type mismatch"),
-        }
-        match (&parsed.fixed_args[7], &original.fixed_args[7]) {
-            (CustomAttributeArgument::U8(p), CustomAttributeArgument::U8(o)) => assert_eq!(p, o),
-            _ => panic!("U8 type mismatch"),
-        }
+        // Check each integer type using helper macro
+        assert_arg_eq!(parsed.fixed_args[0], original.fixed_args[0], I1, "I1");
+        assert_arg_eq!(parsed.fixed_args[1], original.fixed_args[1], U1, "U1");
+        assert_arg_eq!(parsed.fixed_args[2], original.fixed_args[2], I2, "I2");
+        assert_arg_eq!(parsed.fixed_args[3], original.fixed_args[3], U2, "U2");
+        assert_arg_eq!(parsed.fixed_args[4], original.fixed_args[4], I4, "I4");
+        assert_arg_eq!(parsed.fixed_args[5], original.fixed_args[5], U4, "U4");
+        assert_arg_eq!(parsed.fixed_args[6], original.fixed_args[6], I8, "I8");
+        assert_arg_eq!(parsed.fixed_args[7], original.fixed_args[7], U8, "U8");
     }
 
     #[test]

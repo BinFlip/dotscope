@@ -60,7 +60,7 @@
 //!
 //! ```rust,ignore
 //! use dotscope::project::CilProject;
-//! use dotscope::metadata::cilobject::CilObject;
+//! use dotscope::CilObject;
 //! use std::path::Path;
 //!
 //! let project = CilProject::new();
@@ -121,19 +121,20 @@ pub use result::ProjectResult;
 /// # Examples
 ///
 /// ```rust,ignore
-/// use dotscope::metadata::project::CilProject;
+/// use dotscope::project::CilProject;
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
-/// let mut project = CilProject::new();
+/// let project = CilProject::new();
 ///
 /// // Add assemblies to the project
 /// let assembly = CilObject::from_path(Path::new("example.dll"))?;
 /// project.add_assembly(assembly)?;
 ///
-/// // Create global resolver for cross-assembly lookup
-/// let resolver = project.create_global_resolver(&assembly_identity, None, None);
-/// let string_type = resolver.resolve_type_by_name("System.String");
+/// // Look up types across all loaded assemblies
+/// if let Some(string_type) = project.get_type_by_name("System.String") {
+///     println!("Found type: {}", string_type.name);
+/// }
 ///
 /// println!("Project contains {} assemblies", project.assembly_count());
 /// # Ok::<(), dotscope::Error>(())
@@ -167,7 +168,7 @@ impl CilProject {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use dotscope::metadata::project::CilProject;
+    /// use dotscope::project::CilProject;
     ///
     /// let project = CilProject::new();
     /// assert_eq!(project.assembly_count(), 0);
@@ -192,7 +193,6 @@ impl CilProject {
     /// # Returns
     /// The actual type definition if found, None otherwise
     pub fn get_type_by_name(&self, full_name: &str) -> Option<CilTypeRc> {
-        let typedef_match = None;
         let mut typeref_match = None;
 
         // Search through all assemblies for matching types
@@ -221,8 +221,8 @@ impl CilProject {
             }
         }
 
-        // Prefer TypeDef over TypeRef, but return TypeRef if no TypeDef found
-        typedef_match.or(typeref_match)
+        // Return TypeRef if no TypeDef was found
+        typeref_match
     }
 
     /// Get all types defined in a specific assembly.
@@ -268,7 +268,7 @@ impl CilProject {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use dotscope::metadata::project::CilProject;
+    /// use dotscope::project::CilProject;
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///

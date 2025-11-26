@@ -183,11 +183,11 @@ pub(crate) struct LoaderContext<'a> {
 
     // === Assembly and Module Tables ===
     /// Assembly definition (single entry per assembly).
-    pub assembly: &'a Arc<OnceLock<AssemblyRc>>,
+    pub assembly: &'a OnceLock<AssemblyRc>,
     /// Assembly operating system information.
-    pub assembly_os: &'a Arc<OnceLock<AssemblyOsRc>>,
+    pub assembly_os: &'a OnceLock<AssemblyOsRc>,
     /// Assembly processor architecture information.
-    pub assembly_processor: &'a Arc<OnceLock<AssemblyProcessorRc>>,
+    pub assembly_processor: &'a OnceLock<AssemblyProcessorRc>,
     /// Assembly references to external assemblies.
     pub assembly_ref: &'a AssemblyRefMap,
     /// Operating system information for assembly references.
@@ -195,7 +195,7 @@ pub(crate) struct LoaderContext<'a> {
     /// Processor information for assembly references.
     pub assembly_ref_processor: AssemblyRefProcessorMap,
     /// Module definition (primary module of the assembly).
-    pub module: &'a Arc<OnceLock<ModuleRc>>,
+    pub module: &'a OnceLock<ModuleRc>,
     /// Module references to external modules.
     pub module_ref: &'a ModuleRefMap,
 

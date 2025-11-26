@@ -88,18 +88,15 @@ use crate::{
         tables::TypeAttributes,
         typesystem::{CilFlavor, CilType, CilTypeRc, CilTypeRefList},
         validation::{
-            context::{OwnedValidationContext, ValidationContext},
+            context::{MethodTypeMapping, OwnedValidationContext, ValidationContext},
             traits::OwnedValidator,
         },
     },
     Error, Result,
 };
 use rayon::prelude::*;
-use std::{
-    collections::{HashMap, HashSet},
-    mem,
-    sync::Arc,
-};
+use rustc_hash::FxHashSet;
+use std::{mem, sync::Arc};
 
 /// Foundation validator for inheritance hierarchies, circular dependencies, interface implementation, and method inheritance.
 ///
@@ -140,66 +137,6 @@ use std::{
 /// operates on thread-safe [`crate::metadata::method::MethodMap`] and [`crate::metadata::typesystem::CilType`] references.
 pub struct OwnedInheritanceValidator;
 
-/// Fast method-to-type mapping for efficient method ownership lookup
-struct MethodTypeMapping {
-    /// Maps method address to the type address that owns it
-    method_to_type: HashMap<usize, usize>,
-    /// Maps type address to all method addresses it owns
-    type_to_methods: HashMap<usize, Vec<usize>>,
-    /// Maps method address to Arc<Method> for lookup
-    address_to_method: HashMap<usize, Arc<Method>>,
-}
-
-impl MethodTypeMapping {
-    /// Builds the method-to-type mapping for fast lookups using cross-assembly safe addresses
-    fn new(target_types: Vec<CilTypeRc>) -> Self {
-        let mut method_to_type = HashMap::new();
-        let mut type_to_methods: HashMap<usize, Vec<usize>> = HashMap::new();
-        let mut address_to_method = HashMap::new();
-
-        for type_entry in target_types {
-            let type_address = Arc::as_ptr(&type_entry) as usize;
-            let mut type_methods = Vec::new();
-
-            for (_, method_ref) in type_entry.methods.iter() {
-                if let Some(method_rc) = method_ref.upgrade() {
-                    let method_address = Arc::as_ptr(&method_rc) as usize;
-                    method_to_type.insert(method_address, type_address);
-                    address_to_method.insert(method_address, Arc::clone(&method_rc));
-                    type_methods.push(method_address);
-                }
-            }
-
-            if !type_methods.is_empty() {
-                type_to_methods.insert(type_address, type_methods);
-            }
-        }
-
-        Self {
-            method_to_type,
-            type_to_methods,
-            address_to_method,
-        }
-    }
-
-    /// Fast check if a method belongs to a specific type (O(1) lookup)
-    fn method_belongs_to_type(&self, method_address: usize, type_address: usize) -> bool {
-        self.method_to_type.get(&method_address) == Some(&type_address)
-    }
-
-    /// Get all methods for a specific type (O(1) lookup)
-    fn get_type_methods(&self, type_address: usize) -> &[usize] {
-        self.type_to_methods
-            .get(&type_address)
-            .map_or(&[], Vec::as_slice)
-    }
-
-    /// Get method by address (O(1) lookup)
-    fn get_method(&self, method_address: usize) -> Option<&Arc<Method>> {
-        self.address_to_method.get(&method_address)
-    }
-}
-
 impl OwnedInheritanceValidator {
     /// Creates a new inheritance validator instance.
     ///
@@ -229,8 +166,8 @@ impl OwnedInheritanceValidator {
         &self,
         context: &OwnedValidationContext,
     ) -> Result<()> {
-        let mut visited = HashSet::new();
-        let mut visiting = HashSet::new();
+        let mut visited = FxHashSet::default();
+        let mut visiting = FxHashSet::default();
 
         for type_entry in context.target_assembly_types() {
             if !visited.contains(&type_entry.token.value()) {
@@ -248,8 +185,8 @@ impl OwnedInheritanceValidator {
     fn check_inheritance_cycles(
         &self,
         type_entry: &CilType,
-        visited: &mut HashSet<u32>,
-        visiting: &mut HashSet<u32>,
+        visited: &mut FxHashSet<u32>,
+        visiting: &mut FxHashSet<u32>,
         context: &OwnedValidationContext,
         depth: usize,
     ) -> Result<()> {
@@ -740,7 +677,7 @@ impl OwnedInheritanceValidator {
 
     /// Validates that multiple interface implementations are compatible.
     fn validate_interface_compatibility(interfaces: &CilTypeRefList) {
-        let mut interface_names = HashSet::new();
+        let mut interface_names = std::collections::HashSet::new();
 
         for (_, interface_ref) in interfaces.iter() {
             if let Some(interface_type) = interface_ref.upgrade() {
@@ -785,12 +722,11 @@ impl OwnedInheritanceValidator {
     /// This method is thread-safe and operates on immutable resolved metadata structures.
     /// All method and type data is accessed through thread-safe collections.
     fn validate_method_inheritance(&self, context: &OwnedValidationContext) -> Result<()> {
-        let all_types = context.object().types().all_types();
-        let method_mapping = MethodTypeMapping::new(all_types);
+        let method_mapping = context.method_type_mapping();
 
         for type_entry in context.target_assembly_types() {
             if let Some(base_type) = type_entry.base() {
-                self.validate_basic_method_overrides(type_entry, &base_type, &method_mapping)?;
+                self.validate_basic_method_overrides(type_entry, &base_type, method_mapping)?;
             }
         }
 

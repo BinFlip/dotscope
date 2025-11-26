@@ -23,10 +23,11 @@ use crate::{
     metadata::{
         signatures::{
             CustomModifier, SignatureField, SignatureLocalVariables, SignatureMethod,
-            SignatureParameter, SignatureProperty, SignatureTypeSpec,
+            SignatureParameter, SignatureProperty, SignatureTypeSpec, CALLING_CONVENTION,
+            SIGNATURE_HEADER,
         },
         token::Token,
-        typesystem::TypeSignatureEncoder,
+        typesystem::{TypeSignatureEncoder, ELEMENT_TYPE},
     },
     utils::write_compressed_uint,
     Error, Result,
@@ -50,16 +51,17 @@ use crate::{
 /// - TypeDef: `(rid << 2) | 0`
 /// - TypeRef: `(rid << 2) | 1`  
 /// - TypeSpec: `(rid << 2) | 2`
-fn encode_custom_modifier(modifier: &CustomModifier, buffer: &mut Vec<u8>) {
+fn encode_custom_modifier(modifier: &CustomModifier, buffer: &mut Vec<u8>) -> Result<()> {
     let modifier_type = if modifier.is_required {
-        0x1F // ELEMENT_TYPE_CMOD_REQD
+        ELEMENT_TYPE::CMOD_REQD
     } else {
-        0x20 // ELEMENT_TYPE_CMOD_OPT
+        ELEMENT_TYPE::CMOD_OPT
     };
     buffer.push(modifier_type);
 
-    let coded_index = encode_type_def_or_ref_coded_index(modifier.modifier_type);
+    let coded_index = encode_type_def_or_ref_coded_index(modifier.modifier_type)?;
     write_compressed_uint(coded_index, buffer);
+    Ok(())
 }
 
 /// Encodes a token as a TypeDefOrRef coded index according to ECMA-335 §II.24.2.6.
@@ -75,21 +77,29 @@ fn encode_custom_modifier(modifier: &CustomModifier, buffer: &mut Vec<u8>) {
 ///
 /// # Returns
 ///
-/// The TypeDefOrRef coded index value ready for compressed integer encoding.
-fn encode_type_def_or_ref_coded_index(token: Token) -> u32 {
+/// Returns `Ok` with the TypeDefOrRef coded index value ready for compressed integer encoding,
+/// or `Err` if the token is not from a valid table for TypeDefOrRef encoding.
+///
+/// # Errors
+///
+/// Returns [`crate::Error::ModificationInvalidOperation`] if the token's table is not
+/// TypeDef (0x02), TypeRef (0x01), or TypeSpec (0x1B).
+fn encode_type_def_or_ref_coded_index(token: Token) -> Result<u32> {
     let table_id = token.table();
     let rid = token.row();
 
     match table_id {
-        0x02 => rid << 2,       // TypeDef
-        0x01 => (rid << 2) | 1, // TypeRef
-        0x1B => (rid << 2) | 2, // TypeSpec
-        _ => {
-            // Invalid token type for TypeDefOrRef coded index
-            // For now, default to TypeRef encoding to prevent crashes
-            // TODO: Return proper error when we add error handling
-            (rid << 2) | 1
-        }
+        0x02 => Ok(rid << 2),       // TypeDef
+        0x01 => Ok((rid << 2) | 1), // TypeRef
+        0x1B => Ok((rid << 2) | 2), // TypeSpec
+        _ => Err(Error::ModificationInvalidOperation {
+            details: format!(
+                "Invalid token table 0x{:02X} for TypeDefOrRef coded index. \
+                Expected TypeDef (0x02), TypeRef (0x01), or TypeSpec (0x1B). Token: 0x{:08X}",
+                table_id,
+                token.value()
+            ),
+        }),
     }
 }
 
@@ -113,12 +123,12 @@ fn encode_type_def_or_ref_coded_index(token: Token) -> u32 {
 /// ```
 fn encode_parameter(parameter: &SignatureParameter, buffer: &mut Vec<u8>) -> Result<()> {
     for modifier in &parameter.modifiers {
-        encode_custom_modifier(modifier, buffer);
+        encode_custom_modifier(modifier, buffer)?;
     }
 
     // Encode BYREF marker if this is a by-reference parameter
     if parameter.by_ref {
-        buffer.push(0x10); // ELEMENT_TYPE_BYREF
+        buffer.push(ELEMENT_TYPE::BYREF);
     }
 
     TypeSignatureEncoder::encode_type_signature(&parameter.base, buffer)?;
@@ -166,26 +176,43 @@ fn encode_parameter(parameter: &SignatureParameter, buffer: &mut Vec<u8>) -> Res
 pub fn encode_method_signature(signature: &SignatureMethod) -> Result<Vec<u8>> {
     let mut buffer = Vec::new();
 
-    let mut calling_convention = 0x00; // DEFAULT
-    if signature.vararg {
-        calling_convention = 0x05; // VARARG
+    // Encode the calling convention kind (stored in low 4 bits)
+    // Priority: check most specific conventions first to handle mutual exclusivity
+    let mut calling_convention = if signature.vararg {
+        CALLING_CONVENTION::VARARG
+    } else if signature.fastcall {
+        CALLING_CONVENTION::FASTCALL
+    } else if signature.thiscall {
+        CALLING_CONVENTION::THISCALL
+    } else if signature.stdcall {
+        CALLING_CONVENTION::STDCALL
     } else if signature.cdecl {
-        calling_convention = 0x01; // C
-    } else if signature.default {
-        calling_convention = 0x00; // DEFAULT
-    }
+        CALLING_CONVENTION::C
+    } else {
+        CALLING_CONVENTION::DEFAULT
+    };
 
     // Add HASTHIS flag if this is an instance method
     if signature.has_this {
-        calling_convention |= 0x20; // HASTHIS
+        calling_convention |= CALLING_CONVENTION::HASTHIS;
     }
 
     // Add EXPLICITTHIS flag if explicit this parameter
     if signature.explicit_this {
-        calling_convention |= 0x40; // EXPLICITTHIS
+        calling_convention |= CALLING_CONVENTION::EXPLICITTHIS;
+    }
+
+    // Add GENERIC flag if this is a generic method
+    if signature.param_count_generic > 0 {
+        calling_convention |= CALLING_CONVENTION::GENERIC;
     }
 
     buffer.push(calling_convention);
+
+    // For generic methods, encode the generic parameter count
+    if signature.param_count_generic > 0 {
+        write_compressed_uint(signature.param_count_generic, &mut buffer);
+    }
 
     let param_count =
         u32::try_from(signature.params.len()).map_err(|_| Error::ModificationInvalidOperation {
@@ -228,12 +255,12 @@ pub fn encode_method_signature(signature: &SignatureMethod) -> Result<Vec<u8>> {
 pub fn encode_field_signature(signature: &SignatureField) -> Result<Vec<u8>> {
     let mut buffer = Vec::new();
 
-    buffer.push(0x06); // FIELD signature marker
+    buffer.push(SIGNATURE_HEADER::FIELD);
 
     // Encode custom modifiers before the field type
     // Custom modifiers are applied in sequence and evaluated right-to-left
     for modifier in &signature.modifiers {
-        encode_custom_modifier(modifier, &mut buffer);
+        encode_custom_modifier(modifier, &mut buffer)?;
     }
 
     TypeSignatureEncoder::encode_type_signature(&signature.base, &mut buffer)?;
@@ -267,9 +294,9 @@ pub fn encode_field_signature(signature: &SignatureField) -> Result<Vec<u8>> {
 pub fn encode_property_signature(signature: &SignatureProperty) -> Result<Vec<u8>> {
     let mut buffer = Vec::new();
 
-    let mut prolog = 0x08; // PROPERTY signature marker
+    let mut prolog = SIGNATURE_HEADER::PROPERTY;
     if signature.has_this {
-        prolog |= 0x20; // HASTHIS flag
+        prolog |= CALLING_CONVENTION::HASTHIS;
     }
     buffer.push(prolog);
 
@@ -286,7 +313,7 @@ pub fn encode_property_signature(signature: &SignatureProperty) -> Result<Vec<u8
     // Property signatures can have custom modifiers on the property type itself
     // (similar to field signatures). The encoding follows the same ECMA-335 rules.
     for modifier in &signature.modifiers {
-        encode_custom_modifier(modifier, &mut buffer);
+        encode_custom_modifier(modifier, &mut buffer)?;
     }
 
     TypeSignatureEncoder::encode_type_signature(&signature.base, &mut buffer)?;
@@ -321,7 +348,7 @@ pub fn encode_property_signature(signature: &SignatureProperty) -> Result<Vec<u8
 pub fn encode_local_var_signature(signature: &SignatureLocalVariables) -> Result<Vec<u8>> {
     let mut buffer = Vec::new();
 
-    buffer.push(0x07); // LOCAL_SIG signature marker
+    buffer.push(SIGNATURE_HEADER::LOCAL_SIG);
 
     write_compressed_uint(
         u32::try_from(signature.locals.len()).map_err(|_| {
@@ -335,11 +362,11 @@ pub fn encode_local_var_signature(signature: &SignatureLocalVariables) -> Result
 
     for local in &signature.locals {
         if local.is_pinned {
-            buffer.push(0x45); // PINNED modifier
+            buffer.push(ELEMENT_TYPE::PINNED);
         }
 
         if local.is_byref {
-            buffer.push(0x10); // BYREF modifier
+            buffer.push(ELEMENT_TYPE::BYREF);
         }
 
         TypeSignatureEncoder::encode_type_signature(&local.base, &mut buffer)?;
@@ -400,6 +427,8 @@ mod tests {
 
     #[test]
     fn test_encode_field_signature() {
+        use crate::metadata::signatures::SIGNATURE_HEADER;
+
         let signature = FieldSignatureBuilder::new()
             .field_type(TypeSignature::String)
             .build()
@@ -411,12 +440,18 @@ mod tests {
         let encoded = result.unwrap();
         assert!(!encoded.is_empty(), "Encoded signature should not be empty");
 
-        // Should start with field signature marker (0x06)
-        assert_eq!(encoded[0], 0x06, "Field signature should start with 0x06");
+        // Should start with field signature marker
+        assert_eq!(
+            encoded[0],
+            SIGNATURE_HEADER::FIELD,
+            "Field signature should start with SIGNATURE_HEADER::FIELD"
+        );
     }
 
     #[test]
     fn test_encode_property_signature() {
+        use crate::metadata::signatures::SIGNATURE_HEADER;
+
         let signature = PropertySignatureBuilder::new()
             .property_type(TypeSignature::I4)
             .build()
@@ -428,15 +463,18 @@ mod tests {
         let encoded = result.unwrap();
         assert!(!encoded.is_empty(), "Encoded signature should not be empty");
 
-        // Should start with property signature marker (0x08)
+        // Should start with property signature marker
         assert_eq!(
-            encoded[0], 0x08,
-            "Property signature should start with 0x08"
+            encoded[0],
+            SIGNATURE_HEADER::PROPERTY,
+            "Property signature should start with SIGNATURE_HEADER::PROPERTY"
         );
     }
 
     #[test]
     fn test_encode_local_var_signature() {
+        use crate::metadata::signatures::SIGNATURE_HEADER;
+
         let signature = LocalVariableSignatureBuilder::new()
             .add_local(TypeSignature::I4)
             .add_pinned_local(TypeSignature::String)
@@ -452,10 +490,11 @@ mod tests {
         let encoded = result.unwrap();
         assert!(!encoded.is_empty(), "Encoded signature should not be empty");
 
-        // Should start with local signature marker (0x07)
+        // Should start with local signature marker
         assert_eq!(
-            encoded[0], 0x07,
-            "Local variable signature should start with 0x07"
+            encoded[0],
+            SIGNATURE_HEADER::LOCAL_SIG,
+            "Local variable signature should start with SIGNATURE_HEADER::LOCAL_SIG"
         );
     }
 
@@ -480,6 +519,7 @@ mod tests {
     fn test_encode_custom_modifier() {
         use crate::metadata::signatures::CustomModifier;
         use crate::metadata::token::Token;
+        use crate::metadata::typesystem::ELEMENT_TYPE;
 
         let mut buffer = Vec::new();
 
@@ -488,10 +528,14 @@ mod tests {
             is_required: false,
             modifier_type: Token::new(0x01000001), // TypeRef token (table 0x01, RID 1)
         };
-        encode_custom_modifier(&optional_modifier, &mut buffer);
+        encode_custom_modifier(&optional_modifier, &mut buffer).unwrap();
 
-        // Should encode as: 0x20 (ELEMENT_TYPE_CMOD_OPT) + TypeDefOrRef coded index
-        assert_eq!(buffer[0], 0x20, "Optional modifier should start with 0x20");
+        // Should encode as: ELEMENT_TYPE_CMOD_OPT + TypeDefOrRef coded index
+        assert_eq!(
+            buffer[0],
+            ELEMENT_TYPE::CMOD_OPT,
+            "Optional modifier should start with ELEMENT_TYPE_CMOD_OPT"
+        );
         assert!(buffer.len() > 1, "Modifier should include coded index");
 
         // Test required modifier encoding
@@ -500,11 +544,38 @@ mod tests {
             is_required: true,
             modifier_type: Token::new(0x01000001),
         };
-        encode_custom_modifier(&required_modifier, &mut buffer);
+        encode_custom_modifier(&required_modifier, &mut buffer).unwrap();
 
-        // Should encode as: 0x1F (ELEMENT_TYPE_CMOD_REQD) + TypeDefOrRef coded index
-        assert_eq!(buffer[0], 0x1F, "Required modifier should start with 0x1F");
+        // Should encode as: ELEMENT_TYPE_CMOD_REQD + TypeDefOrRef coded index
+        assert_eq!(
+            buffer[0],
+            ELEMENT_TYPE::CMOD_REQD,
+            "Required modifier should start with ELEMENT_TYPE_CMOD_REQD"
+        );
         assert!(buffer.len() > 1, "Modifier should include coded index");
+    }
+
+    #[test]
+    fn test_encode_type_def_or_ref_coded_index_error() {
+        use crate::metadata::token::Token;
+
+        // Test invalid token table (e.g., MethodDef table 0x06)
+        let invalid_token = Token::new(0x06000001);
+        let result = encode_type_def_or_ref_coded_index(invalid_token);
+        assert!(
+            result.is_err(),
+            "Should return error for invalid token table"
+        );
+
+        // Valid tokens should succeed
+        let typedef_token = Token::new(0x02000001);
+        assert!(encode_type_def_or_ref_coded_index(typedef_token).is_ok());
+
+        let typeref_token = Token::new(0x01000001);
+        assert!(encode_type_def_or_ref_coded_index(typeref_token).is_ok());
+
+        let typespec_token = Token::new(0x1B000001);
+        assert!(encode_type_def_or_ref_coded_index(typespec_token).is_ok());
     }
 
     #[test]
@@ -513,12 +584,12 @@ mod tests {
 
         // Test TypeDef token (table 0x02)
         let typedef_token = Token::new(0x02000001); // TypeDef table, RID 1
-        let coded_index = encode_type_def_or_ref_coded_index(typedef_token);
+        let coded_index = encode_type_def_or_ref_coded_index(typedef_token).unwrap();
         assert_eq!(coded_index, 1 << 2, "TypeDef should encode as (rid << 2)");
 
         // Test TypeRef token (table 0x01)
         let typeref_token = Token::new(0x01000005); // TypeRef table, RID 5
-        let coded_index = encode_type_def_or_ref_coded_index(typeref_token);
+        let coded_index = encode_type_def_or_ref_coded_index(typeref_token).unwrap();
         assert_eq!(
             coded_index,
             (5 << 2) | 1,
@@ -527,7 +598,7 @@ mod tests {
 
         // Test TypeSpec token (table 0x1B)
         let typespec_token = Token::new(0x1B000003); // TypeSpec table, RID 3
-        let coded_index = encode_type_def_or_ref_coded_index(typespec_token);
+        let coded_index = encode_type_def_or_ref_coded_index(typespec_token).unwrap();
         assert_eq!(
             coded_index,
             (3 << 2) | 2,

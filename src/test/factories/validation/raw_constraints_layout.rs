@@ -4,12 +4,15 @@
 //! for creating test assemblies with various layout constraint validation scenarios.
 
 use crate::{
+    cilassembly::{BuilderContext, CilAssembly},
     metadata::{
-        tables::{ClassLayoutRaw, FieldLayoutRaw, TableDataOwned, TableId},
+        cilassemblyview::CilAssemblyView,
+        tables::{
+            ClassLayoutRaw, FieldBuilder, FieldLayoutRaw, TableDataOwned, TableId, TypeDefBuilder,
+        },
         token::Token,
         validation::ValidationConfig,
     },
-    prelude::*,
     test::{get_testfile_wb, TestAssembly},
     Error, Result,
 };

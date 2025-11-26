@@ -325,12 +325,23 @@ fn test_string_heap_replacement() -> Result<()> {
 
 #[test]
 fn test_blob_heap_replacement() -> Result<()> {
-    // Create a custom blob heap with null byte at index 0 followed by length-prefixed blobs
-    // Index 0: null byte (required)
-    // First blob: length=3, data=[0x01, 0x02, 0x03]
-    // Second blob: length=2, data=[0xFF, 0xFE]
-    let mut custom_heap = vec![0]; // Index 0 must always be null
-    custom_heap.extend_from_slice(&[0x03, 0x01, 0x02, 0x03, 0x02, 0xFF, 0xFE]);
+    // When replacing a blob heap, we must preserve the original blob data to maintain
+    // existing references (method signatures, custom attributes, etc.) that point into
+    // the blob heap. This test replaces the heap while preserving original content.
+
+    // Load the assembly first to get the original blob heap
+    let view = CilAssemblyView::from_path(Path::new(TEST_ASSEMBLY_PATH))?;
+    let original_blob_data = view
+        .blobs()
+        .map(|blobs| blobs.data().to_vec())
+        .unwrap_or_else(|| vec![0]); // Ensure at least null byte at index 0
+    let original_blob_count = view.blobs().map(|b| b.iter().count()).unwrap_or(0);
+    drop(view);
+
+    // Create replacement heap: original data + our custom blobs appended
+    // Custom blobs: length=3, data=[0x01, 0x02, 0x03] and length=2, data=[0xAA, 0xBB]
+    let mut custom_heap = original_blob_data.clone();
+    custom_heap.extend_from_slice(&[0x03, 0x01, 0x02, 0x03, 0x02, 0xAA, 0xBB]);
 
     perform_round_trip_test(
         |context| {
@@ -342,9 +353,9 @@ fn test_blob_heap_replacement() -> Result<()> {
                 .blobs()
                 .ok_or_else(|| Error::Error("No blobs heap found".to_string()))?;
 
-            // Verify the custom blobs are present
+            // Verify our custom blobs are present
             let found_blob1 = blobs.iter().any(|(_, blob)| blob == [0x01, 0x02, 0x03]);
-            let found_blob2 = blobs.iter().any(|(_, blob)| blob == [0xFF, 0xFE]);
+            let found_blob2 = blobs.iter().any(|(_, blob)| blob == [0xAA, 0xBB]);
 
             assert!(
                 found_blob1,
@@ -352,14 +363,16 @@ fn test_blob_heap_replacement() -> Result<()> {
             );
             assert!(
                 found_blob2,
-                "Custom blob [0xFF, 0xFE] should be present in replaced heap"
+                "Custom blob [0xAA, 0xBB] should be present in replaced heap"
             );
 
-            // Since we replaced the entire heap, original blobs should not be present
+            // Verify we have at least the original blobs plus our 2 custom ones
             let blob_count = blobs.iter().count();
             assert!(
-                blob_count <= 3, // Empty blob at index 0 + our 2 blobs
-                "Replaced heap should only contain our custom blobs (found {blob_count} blobs)",
+                blob_count >= original_blob_count + 2,
+                "Replaced heap should contain at least original ({}) + 2 custom blobs (found {})",
+                original_blob_count,
+                blob_count
             );
 
             Ok(())

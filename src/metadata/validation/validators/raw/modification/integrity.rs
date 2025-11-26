@@ -84,7 +84,8 @@ use crate::{
     },
     Result,
 };
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::HashMap;
 
 /// Foundation validator for post-change assembly integrity and consistency validation.
 ///
@@ -155,8 +156,9 @@ impl RawChangeIntegrityValidator {
                     next_rid,
                     original_row_count,
                     deleted_rows,
+                    ..
                 } => {
-                    let mut final_rids = HashSet::new();
+                    let mut final_rids = FxHashSet::default();
 
                     for rid in 1..=*original_row_count {
                         if !deleted_rows.contains(&rid) {
@@ -311,10 +313,10 @@ impl RawChangeIntegrityValidator {
     fn validate_reference_integrity(
         table_changes: &HashMap<TableId, TableModifications>,
     ) -> Result<()> {
-        let mut final_table_rids: HashMap<TableId, HashSet<u32>> = HashMap::new();
+        let mut final_table_rids: FxHashMap<TableId, FxHashSet<u32>> = FxHashMap::default();
 
         for (table_id, modifications) in table_changes {
-            let mut final_rids = HashSet::new();
+            let mut final_rids = FxHashSet::default();
 
             match modifications {
                 TableModifications::Sparse {
@@ -459,8 +461,8 @@ impl RawChangeIntegrityValidator {
     /// - Field ownership ranges overlap or are inconsistent
     /// - Orphaned fields exist (fields not owned by any TypeDef)
     fn validate_field_ownership_ranges(
-        typedef_rids: &HashSet<u32>,
-        field_rids: &HashSet<u32>,
+        typedef_rids: &FxHashSet<u32>,
+        field_rids: &FxHashSet<u32>,
         table_changes: &HashMap<TableId, TableModifications>,
     ) -> Result<()> {
         // Get TypeDef modifications to access field_list values
@@ -548,7 +550,7 @@ impl RawChangeIntegrityValidator {
         }
 
         // Check for orphaned fields (fields that don't belong to any type)
-        let mut owned_fields: HashSet<u32> = HashSet::new();
+        let mut owned_fields: FxHashSet<u32> = FxHashSet::default();
         for (_, field_list_start) in &typedef_field_lists {
             if *field_list_start > 0 {
                 owned_fields.insert(*field_list_start);
@@ -699,6 +701,7 @@ mod tests {
                 next_rid: 2,
                 original_row_count: 1,
                 deleted_rows: HashSet::new(),
+                inserted_rows: HashSet::new(),
             };
 
             corrupted_changes
@@ -724,6 +727,7 @@ mod tests {
                 next_rid: 101,
                 original_row_count: 1,
                 deleted_rows: HashSet::new(),
+                inserted_rows: HashSet::new(),
             };
 
             corrupted_changes
@@ -749,6 +753,7 @@ mod tests {
                 next_rid: 5,
                 original_row_count: 1,
                 deleted_rows: HashSet::new(),
+                inserted_rows: HashSet::new(),
             };
 
             corrupted_changes
@@ -769,6 +774,7 @@ mod tests {
                 next_rid: 2,
                 original_row_count: 1,
                 deleted_rows,
+                inserted_rows: HashSet::new(),
             };
 
             corrupted_changes
@@ -831,6 +837,7 @@ mod tests {
                 next_rid: 2,
                 original_row_count: 0,
                 deleted_rows: HashSet::new(),
+                inserted_rows: HashSet::new(),
             };
 
             corrupted_changes
@@ -859,6 +866,7 @@ mod tests {
                 next_rid: 2,
                 original_row_count: 0,
                 deleted_rows: HashSet::new(),
+                inserted_rows: HashSet::new(),
             };
 
             corrupted_changes
@@ -886,6 +894,7 @@ mod tests {
                 next_rid: 4,
                 original_row_count: 1,
                 deleted_rows: HashSet::new(),
+                inserted_rows: HashSet::new(),
             };
 
             corrupted_changes
@@ -912,6 +921,7 @@ mod tests {
                 next_rid: 10_003,
                 original_row_count: 1,
                 deleted_rows: HashSet::new(),
+                inserted_rows: HashSet::new(),
             };
 
             corrupted_changes
@@ -946,6 +956,7 @@ mod tests {
                 next_rid: 2,
                 original_row_count: 0,
                 deleted_rows: HashSet::new(),
+                inserted_rows: HashSet::new(),
             };
 
             corrupted_changes
@@ -958,6 +969,7 @@ mod tests {
                 next_rid: 1,
                 original_row_count: 0,
                 deleted_rows: HashSet::new(),
+                inserted_rows: HashSet::new(),
             };
 
             corrupted_changes

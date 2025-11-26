@@ -138,7 +138,7 @@ use crate::{
 };
 use goblin::pe::PE;
 use memory::Memory;
-use pe::{DataDirectory, DataDirectoryType, Pe};
+use pe::{constants::COR20_HEADER_SIZE, DataDirectory, DataDirectoryType, Pe};
 use physical::Physical;
 
 /// Backend trait for file data sources.
@@ -1006,7 +1006,7 @@ impl File {
 
             let offset_u32 = u32::try_from(offset)
                 .map_err(|_| malformed_error!("Offset too large to fit in u32: {}", offset))?;
-            if section.pointer_to_raw_data < offset_u32 && section_max > offset_u32 {
+            if section.pointer_to_raw_data <= offset_u32 && section_max > offset_u32 {
                 return Ok((offset - section.pointer_to_raw_data as usize)
                     + section.virtual_address as usize);
             }
@@ -1045,9 +1045,13 @@ impl File {
     /// ```
     #[must_use]
     pub fn section_contains_metadata(&self, section_name: &str) -> bool {
-        let (clr_rva, _clr_size) = match self.clr() {
-            #[allow(clippy::cast_possible_truncation)]
-            Some((rva, size)) if rva > 0 && size >= 72 => (rva as u32, size),
+        let clr_rva = match self.clr() {
+            Some((rva, size)) if rva > 0 && size >= COR20_HEADER_SIZE as usize => {
+                let Ok(rva_u32) = u32::try_from(rva) else {
+                    return false; // RVA too large for valid PE
+                };
+                rva_u32
+            }
             _ => return false, // No CLR header means no .NET metadata
         };
 
@@ -1055,7 +1059,7 @@ impl File {
             return false;
         };
 
-        let Ok(clr_data) = self.data_slice(clr_offset, 72) else {
+        let Ok(clr_data) = self.data_slice(clr_offset, COR20_HEADER_SIZE as usize) else {
             return false;
         };
 
@@ -1147,6 +1151,25 @@ impl File {
         Ok(optional_header.standard_fields.magic != 0x10b)
     }
 
+    /// Finds the .text section in the PE file.
+    ///
+    /// Locates the .text section (or .text-prefixed section) which typically
+    /// contains .NET metadata and executable code.
+    ///
+    /// # Returns
+    /// Returns a reference to the .text section table entry.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::WriteLayoutFailed`] if no .text section is found.
+    fn find_text_section(&self) -> Result<&pe::SectionTable> {
+        self.sections()
+            .iter()
+            .find(|s| s.name.as_str() == ".text" || s.name.starts_with(".text"))
+            .ok_or_else(|| WriteLayoutFailed {
+                message: "Could not find .text section".to_string(),
+            })
+    }
+
     /// Gets the RVA of the .text section.
     ///
     /// Locates the .text section (or .text-prefixed section) which typically
@@ -1158,16 +1181,7 @@ impl File {
     /// # Errors
     /// Returns [`crate::Error::WriteLayoutFailed`] if no .text section is found.
     pub fn text_section_rva(&self) -> Result<u32> {
-        for section in self.sections() {
-            let section_name = section.name.as_str();
-            if section_name == ".text" || section_name.starts_with(".text") {
-                return Ok(section.virtual_address);
-            }
-        }
-
-        Err(WriteLayoutFailed {
-            message: "Could not find .text section".to_string(),
-        })
+        Ok(self.find_text_section()?.virtual_address)
     }
 
     /// Gets the file offset of the .text section.
@@ -1181,16 +1195,7 @@ impl File {
     /// # Errors
     /// Returns [`crate::Error::WriteLayoutFailed`] if no .text section is found.
     pub fn text_section_file_offset(&self) -> Result<u64> {
-        for section in self.sections() {
-            let section_name = section.name.as_str();
-            if section_name == ".text" || section_name.starts_with(".text") {
-                return Ok(u64::from(section.pointer_to_raw_data));
-            }
-        }
-
-        Err(WriteLayoutFailed {
-            message: "Could not find .text section for file offset".to_string(),
-        })
+        Ok(u64::from(self.find_text_section()?.pointer_to_raw_data))
     }
 
     /// Gets the raw size of the .text section.
@@ -1204,16 +1209,7 @@ impl File {
     /// # Errors
     /// Returns [`crate::Error::WriteLayoutFailed`] if no .text section is found.
     pub fn text_section_raw_size(&self) -> Result<u32> {
-        for section in self.sections() {
-            let section_name = section.name.as_str();
-            if section_name == ".text" || section_name.starts_with(".text") {
-                return Ok(section.size_of_raw_data);
-            }
-        }
-
-        Err(WriteLayoutFailed {
-            message: "Could not find .text section for size calculation".to_string(),
-        })
+        Ok(self.find_text_section()?.size_of_raw_data)
     }
 
     /// Gets the total size of the file.

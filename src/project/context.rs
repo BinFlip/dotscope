@@ -53,14 +53,17 @@ impl ProjectContext {
     ///
     /// # Returns
     /// A new `ProjectContext` ready for coordinating multi-assembly loading.
-    pub fn new(total_count: usize) -> Self {
-        Self {
+    ///
+    /// # Errors
+    /// Returns an error if `total_count` is 0.
+    pub fn new(total_count: usize) -> Result<Self> {
+        Ok(Self {
             total_count,
-            stage1_barrier: Arc::new(FailFastBarrier::new(total_count)),
-            stage2_barrier: Arc::new(FailFastBarrier::new(total_count)),
-            stage3_barrier: Arc::new(FailFastBarrier::new(total_count)),
+            stage1_barrier: Arc::new(FailFastBarrier::new(total_count)?),
+            stage2_barrier: Arc::new(FailFastBarrier::new(total_count)?),
+            stage3_barrier: Arc::new(FailFastBarrier::new(total_count)?),
             registries: BoxcarVec::new(),
-        }
+        })
     }
 
     /// Wait for all assemblies to complete stage 1 (TypeRegistry creation).
@@ -150,11 +153,6 @@ impl ProjectContext {
         self.stage1_barrier.break_barrier(error_message);
         self.stage2_barrier.break_barrier(error_message);
         self.stage3_barrier.break_barrier(error_message);
-    }
-
-    /// Check if all assemblies have been registered.
-    pub fn all_registered(&self) -> bool {
-        self.registries.count() == self.total_count
     }
 
     /// Register a TypeRegistry and wait for stage 1 completion.

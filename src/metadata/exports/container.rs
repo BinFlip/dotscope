@@ -67,7 +67,24 @@ use crate::{
 /// All operations are thread-safe using interior mutability:
 /// - CIL exports use existing concurrent data structures
 /// - Native exports are thread-safe by design
-/// - Unified caches use atomic coordination
+/// - Unified caches use atomic coordination with compare-and-swap
+///
+/// # Cache Invalidation
+///
+/// The container maintains unified caches for cross-type queries like [`find_by_name`](Self::find_by_name)
+/// and [`get_all_exported_functions`](Self::get_all_exported_functions). These caches are:
+///
+/// - **Invalidated automatically** when:
+///   - Adding native functions via [`add_native_function`](Self::add_native_function)
+///   - Adding ordinal-only functions via [`add_native_function_by_ordinal`](Self::add_native_function_by_ordinal)
+///   - Adding forwarders via [`add_native_forwarder`](Self::add_native_forwarder)
+///   - Accessing mutable native exports via [`native_mut`](Self::native_mut)
+///
+/// - **Rebuilt lazily** on the next unified query (not on invalidation)
+///
+/// - **Thread-safe**: Uses atomic compare-and-swap to ensure only one thread
+///   rebuilds the cache, avoiding redundant work when multiple threads detect
+///   a dirty cache simultaneously
 ///
 /// # Performance
 ///
@@ -75,6 +92,7 @@ use crate::{
 /// - Native operations use efficient hash-based lookups
 /// - Unified views are cached and invalidated only when needed
 /// - Lock-free access patterns throughout
+/// - Cache rebuilds are O(n) where n is total export count
 pub struct UnifiedExportContainer {
     /// CIL managed exports (existing sophisticated implementation)
     cil: CilExports,
@@ -99,6 +117,23 @@ pub enum ExportEntry {
     Cil(ExportedTypeRc),
     /// Native export from PE export table
     Native(NativeExportRef),
+}
+
+impl std::fmt::Debug for ExportEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExportEntry::Cil(cil_export) => f
+                .debug_struct("Cil")
+                .field("name", &cil_export.name)
+                .field("namespace", &cil_export.namespace)
+                .finish(),
+            ExportEntry::Native(native_ref) => f
+                .debug_struct("Native")
+                .field("ordinal", &native_ref.ordinal)
+                .field("name", &native_ref.name)
+                .finish(),
+        }
+    }
 }
 
 /// Reference to a native export function.
@@ -500,23 +535,37 @@ impl UnifiedExportContainer {
     /// # Arguments
     /// * `dll_name` - New DLL name to use
     ///
+    /// # Errors
+    ///
+    /// Returns an error if the DLL name is empty or contains invalid characters.
+    ///
     /// # Examples
     ///
     /// ```rust,ignore
     /// let mut container = UnifiedExportContainer::new();
-    /// container.set_dll_name("MyLibrary.dll");
+    /// container.set_dll_name("MyLibrary.dll")?;
+    /// assert_eq!(container.native().dll_name(), "MyLibrary.dll");
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn set_dll_name(&self, _dll_name: &str) {
-        // This would require adding a method to NativeExports to update DLL name
-        // For now, this is a placeholder for the interface
-        todo!("Implement DLL name update in NativeExports")
+    pub fn set_dll_name(&mut self, dll_name: &str) -> Result<()> {
+        self.native.set_dll_name(dll_name)
     }
 
     /// Ensure unified caches are up to date.
+    ///
+    /// Uses compare-and-swap to ensure only one thread rebuilds the cache,
+    /// preventing wasteful duplicate work when multiple threads detect a dirty cache.
     fn ensure_cache_fresh(&self) {
-        if self.cache_dirty.load(Ordering::Relaxed) {
+        // Try to atomically claim the rebuild by changing dirty from true to false
+        // If we succeed, we're responsible for rebuilding the cache
+        // If we fail, either cache is already clean or another thread is rebuilding it
+        if self
+            .cache_dirty
+            .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            // We won the race, rebuild the cache
             self.rebuild_unified_caches();
-            self.cache_dirty.store(false, Ordering::Relaxed);
         }
     }
 
@@ -735,12 +784,11 @@ mod tests {
         let results = container.find_by_name("MyExport");
         assert_eq!(results.len(), 1);
 
-        if let ExportEntry::Native(native_ref) = &results[0] {
-            assert_eq!(native_ref.ordinal, 1);
-            assert_eq!(native_ref.name, Some("MyExport".to_string()));
-        } else {
-            panic!("Expected Native export entry");
-        }
+        let ExportEntry::Native(native_ref) = &results[0] else {
+            panic!("Expected Native export entry, got {:?}", &results[0]);
+        };
+        assert_eq!(native_ref.ordinal, 1);
+        assert_eq!(native_ref.name, Some("MyExport".to_string()));
     }
 
     #[test]
@@ -775,11 +823,13 @@ mod tests {
         assert_eq!(functions.len(), 1);
         assert_eq!(functions[0].name, "NativeFunc");
 
-        if let ExportSource::Native(ordinal) = functions[0].source {
-            assert_eq!(ordinal, 1);
-        } else {
-            panic!("Expected Native export source");
-        }
+        let ExportSource::Native(ordinal) = functions[0].source else {
+            panic!(
+                "Expected Native export source, got {:?}",
+                functions[0].source
+            );
+        };
+        assert_eq!(ordinal, 1);
     }
 
     #[test]
@@ -856,21 +906,19 @@ mod tests {
     #[test]
     fn test_export_target_address() {
         let target = ExportTarget::Address(0x1234);
-        if let ExportTarget::Address(addr) = target {
-            assert_eq!(addr, 0x1234);
-        } else {
-            panic!("Expected Address variant");
-        }
+        let ExportTarget::Address(addr) = target else {
+            panic!("Expected Address variant, got {:?}", target);
+        };
+        assert_eq!(addr, 0x1234);
     }
 
     #[test]
     fn test_export_target_forwarder() {
         let target = ExportTarget::Forwarder("kernel32.dll.Func".to_string());
-        if let ExportTarget::Forwarder(ref fwd) = target {
-            assert_eq!(fwd, "kernel32.dll.Func");
-        } else {
-            panic!("Expected Forwarder variant");
-        }
+        let ExportTarget::Forwarder(ref fwd) = target else {
+            panic!("Expected Forwarder variant, got {:?}", target);
+        };
+        assert_eq!(fwd, "kernel32.dll.Func");
     }
 
     #[test]
@@ -935,5 +983,206 @@ mod tests {
             func.forwarder_target,
             Some("target.dll.RealFunc".to_string())
         );
+    }
+
+    #[test]
+    fn test_set_dll_name() {
+        let mut container = UnifiedExportContainer::new();
+        assert_eq!(container.native().dll_name(), "");
+
+        container.set_dll_name("MyLibrary.dll").unwrap();
+        assert_eq!(container.native().dll_name(), "MyLibrary.dll");
+
+        // Can be changed again
+        container.set_dll_name("AnotherName.dll").unwrap();
+        assert_eq!(container.native().dll_name(), "AnotherName.dll");
+    }
+
+    #[test]
+    fn test_set_dll_name_validation() {
+        let mut container = UnifiedExportContainer::new();
+
+        // Empty name should fail
+        let result = container.set_dll_name("");
+        assert!(result.is_err());
+
+        // Null bytes should fail
+        let result = container.set_dll_name("test\0.dll");
+        assert!(result.is_err());
+
+        // Valid name should succeed
+        let result = container.set_dll_name("Valid.dll");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_cache_freshness_compare_and_swap() {
+        let mut container = UnifiedExportContainer::new();
+        container
+            .add_native_function("TestFunc", 1, 0x1000)
+            .unwrap();
+
+        // Cache should be dirty initially
+        assert!(container.cache_dirty.load(Ordering::Relaxed));
+
+        // First call to ensure_cache_fresh should rebuild
+        container.ensure_cache_fresh();
+
+        // Cache should now be clean
+        assert!(!container.cache_dirty.load(Ordering::Relaxed));
+
+        // Second call should not rebuild (cache is already fresh)
+        container.ensure_cache_fresh();
+
+        // Cache should still be clean
+        assert!(!container.cache_dirty.load(Ordering::Relaxed));
+
+        // After invalidation, cache should be dirty again
+        container.invalidate_cache();
+        assert!(container.cache_dirty.load(Ordering::Relaxed));
+
+        // Ensure fresh should rebuild and mark clean
+        container.ensure_cache_fresh();
+        assert!(!container.cache_dirty.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_cache_invalidation_on_mutation() {
+        let mut container = UnifiedExportContainer::new();
+
+        // Add a function and build cache
+        container.add_native_function("Func1", 1, 0x1000).unwrap();
+        let _ = container.find_by_name("Func1");
+        assert!(!container.cache_dirty.load(Ordering::Relaxed));
+
+        // Mutating should invalidate cache
+        container.add_native_function("Func2", 2, 0x2000).unwrap();
+        assert!(container.cache_dirty.load(Ordering::Relaxed));
+
+        // Cache should rebuild on next access
+        let results = container.find_by_name("Func2");
+        assert_eq!(results.len(), 1);
+        assert!(!container.cache_dirty.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_mixed_native_function_types() {
+        let mut container = UnifiedExportContainer::new();
+
+        // Add named function
+        container
+            .add_native_function("NamedFunc", 1, 0x1000)
+            .unwrap();
+
+        // Add ordinal-only function
+        container.add_native_function_by_ordinal(2, 0x2000).unwrap();
+
+        // Add forwarder
+        container
+            .add_native_forwarder("ForwardedFunc", 3, "kernel32.dll.GetCurrentProcessId")
+            .unwrap();
+
+        // Verify counts
+        assert_eq!(container.native().function_count(), 3);
+        assert_eq!(container.native().forwarder_count(), 1);
+
+        // Verify named function is findable
+        let named_results = container.find_by_name("NamedFunc");
+        assert_eq!(named_results.len(), 1);
+
+        // Verify forwarder is findable
+        let forwarder_results = container.find_by_name("ForwardedFunc");
+        assert_eq!(forwarder_results.len(), 1);
+
+        // Verify all exported functions
+        let all_functions = container.get_all_exported_functions();
+        assert_eq!(all_functions.len(), 2); // Only named exports appear here
+
+        // Check forwarder details
+        let forwarder_func = all_functions
+            .iter()
+            .find(|f| f.name == "ForwardedFunc")
+            .unwrap();
+        assert!(forwarder_func.is_forwarder);
+        assert_eq!(
+            forwarder_func.forwarder_target,
+            Some("kernel32.dll.GetCurrentProcessId".to_string())
+        );
+    }
+
+    #[test]
+    fn test_export_table_generation() {
+        let mut container = UnifiedExportContainer::with_dll_name("TestLib.dll");
+
+        container
+            .add_native_function("Function1", 1, 0x1000)
+            .unwrap();
+        container
+            .add_native_function("Function2", 2, 0x2000)
+            .unwrap();
+
+        // Set base RVA before generating table data
+        container.native_mut().set_export_table_base_rva(0x3000);
+
+        // Generate export table data
+        let data = container.get_export_table_data().unwrap();
+        assert!(data.is_some());
+
+        let table_data = data.unwrap();
+        // Export directory is 40 bytes minimum
+        assert!(table_data.len() >= 40);
+    }
+
+    #[test]
+    fn test_empty_container_export_table() {
+        let container = UnifiedExportContainer::new();
+
+        // Empty container should return None for export table data
+        let data = container.get_export_table_data().unwrap();
+        assert!(data.is_none());
+    }
+
+    #[test]
+    fn test_unified_find_by_name_multiple_sources() {
+        let mut container = UnifiedExportContainer::new();
+
+        // Add multiple functions with same base name pattern
+        container
+            .add_native_function("ProcessData", 1, 0x1000)
+            .unwrap();
+        container
+            .add_native_function("ProcessFile", 2, 0x2000)
+            .unwrap();
+        container
+            .add_native_forwarder("ProcessMessage", 3, "other.dll.HandleMessage")
+            .unwrap();
+
+        // Each should be findable individually
+        assert_eq!(container.find_by_name("ProcessData").len(), 1);
+        assert_eq!(container.find_by_name("ProcessFile").len(), 1);
+        assert_eq!(container.find_by_name("ProcessMessage").len(), 1);
+
+        // Non-existent should return empty
+        assert!(container.find_by_name("NonExistent").is_empty());
+    }
+
+    #[test]
+    fn test_native_function_names_list() {
+        let mut container = UnifiedExportContainer::new();
+
+        container.add_native_function("Alpha", 1, 0x1000).unwrap();
+        container.add_native_function("Beta", 2, 0x2000).unwrap();
+        container.add_native_function_by_ordinal(3, 0x3000).unwrap(); // No name
+        container
+            .add_native_forwarder("Gamma", 4, "lib.dll.Func")
+            .unwrap();
+
+        let names = container.get_native_function_names();
+
+        // Should include Alpha, Beta, and Gamma (named exports only)
+        assert_eq!(names.len(), 3);
+        assert!(names.contains(&"Alpha".to_string()));
+        assert!(names.contains(&"Beta".to_string()));
+        assert!(names.contains(&"Gamma".to_string()));
     }
 }

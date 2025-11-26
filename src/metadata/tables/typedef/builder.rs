@@ -250,11 +250,9 @@ impl TypeDefBuilder {
             flags: self.flags.unwrap_or(0x0010_0001), // Default to public class
             type_name: name_index,
             type_namespace: namespace_index,
-            extends: self.extends.unwrap_or(CodedIndex::new(
-                TableId::TypeRef,
-                0,
-                CodedIndexType::TypeDefOrRef,
-            )), // No base type
+            extends: self
+                .extends
+                .unwrap_or_else(|| CodedIndex::null(CodedIndexType::TypeDefOrRef)), // No base type
             field_list: self.field_list.unwrap_or(1), // Default field list start
             method_list: self.method_list.unwrap_or(1), // Default method list start
         };

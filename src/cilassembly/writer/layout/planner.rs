@@ -165,7 +165,10 @@
 //! - [PE Format Specification](https://docs.microsoft.com/en-us/windows/win32/debug/pe-format)
 //! - [.NET Metadata Physical Layout](https://github.com/dotnet/runtime/blob/main/docs/design/specs/Ecma-335-Augments.md)
 
-use std::{collections::HashMap, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Instant,
+};
 
 use crate::{
     cilassembly::{
@@ -539,8 +542,8 @@ impl<'a> LayoutPlanner<'a> {
         // Step 3: Plan detailed metadata layout within .meta section
         let metadata_layout = Self::plan_metadata_layout(&file_structure, &component_sizes)?;
 
-        // Step 3.5: Allocate RVAs for native tables
-        Self::allocate_native_table_rvas(&file_structure, &mut native_table_requirements)?;
+        // Step 3.5: Allocate RVAs for native tables (placed after last metadata stream)
+        Self::allocate_native_table_rvas(&metadata_layout, &mut native_table_requirements)?;
 
         // Step 4: Generate all copy/zero/write operations
         let operations = self.generate_operations(&file_structure, &metadata_layout)?;
@@ -740,8 +743,8 @@ impl<'a> LayoutPlanner<'a> {
     /// # RVA Allocation Strategy
     ///
     /// 1. **Locate .meta section**: Find the section containing .NET metadata
-    /// 2. **Calculate metadata end**: Determine where .NET metadata streams end
-    /// 3. **Reserve space**: Use last 1KB of .meta section for native tables
+    /// 2. **Calculate metadata end**: Determine where .NET metadata streams end using MetadataLayout
+    /// 3. **Place native tables**: Immediately after the last metadata stream with proper alignment
     /// 4. **Align boundaries**: Ensure 4-byte alignment for PE structure compliance
     /// 5. **Sequential allocation**: Assign import table first, then export table
     ///
@@ -755,7 +758,7 @@ impl<'a> LayoutPlanner<'a> {
     /// │ Metadata Root   │
     /// ├─────────────────┤
     /// │  .NET Streams   │ (.NET metadata)
-    /// ├─────────────────┤ ← metadata_end - 1024
+    /// ├─────────────────┤ ← last_stream_end (calculated from MetadataLayout)
     /// │ Import Tables   │ (native PE tables)
     /// ├─────────────────┤
     /// │ Export Tables   │ (native PE tables)
@@ -770,33 +773,38 @@ impl<'a> LayoutPlanner<'a> {
     ///
     /// This enables managed assemblies to interoperate with native code.
     fn allocate_native_table_rvas(
-        file_structure: &FileStructureLayout,
+        metadata_layout: &MetadataLayout,
         requirements: &mut NativeTableRequirements,
     ) -> Result<()> {
-        // Find the .meta section where we can allocate space for native tables
-        let meta_section = file_structure
-            .sections
-            .iter()
-            .find(|s| s.name == ".meta")
-            .ok_or_else(|| Error::WriteLayoutFailed {
-                message: "Cannot find .meta section for native table allocation".to_string(),
-            })?;
+        let meta_section = &metadata_layout.meta_section;
 
-        let mut current_rva = meta_section.virtual_address;
+        // Find where metadata actually ends by looking at the last stream
+        // The streams are laid out sequentially, so find the end of the last one
+        let metadata_end_file_offset = if let Some(last_stream) = metadata_layout.streams.last() {
+            // End of last stream = offset + size, then align to 4 bytes
+            align_to_4_bytes(last_stream.file_region.offset + last_stream.file_region.size)
+        } else {
+            // No streams - place after metadata root
+            align_to_4_bytes(
+                metadata_layout.metadata_root.offset + metadata_layout.metadata_root.size,
+            )
+        };
 
-        // Calculate the end of all metadata streams to avoid conflicts
-        // .meta section contains: COR20 header + metadata root + all streams
-        // We need to place native tables AFTER all the metadata
-        let metadata_end_offset = current_rva + meta_section.virtual_size;
-
-        // Start native table allocation from a safe location after metadata
-        // Use the last 1KB of the .meta section for native tables
-        current_rva = metadata_end_offset - 1024;
-        current_rva = u32::try_from(align_to_4_bytes(u64::from(current_rva))).map_err(|_| {
-            Error::WriteLayoutFailed {
-                message: "RVA alignment result exceeds u32 range".to_string(),
-            }
+        // Convert file offset to RVA
+        // RVA = file_offset - section_file_offset + section_virtual_address
+        let metadata_end_rva = u32::try_from(
+            metadata_end_file_offset - meta_section.file_region.offset
+                + u64::from(meta_section.virtual_address),
+        )
+        .map_err(|_| Error::WriteLayoutFailed {
+            message: "Metadata end RVA exceeds u32 range".to_string(),
         })?;
+
+        // Place native tables immediately after metadata, with 4-byte alignment
+        let mut current_rva = u32::try_from(align_to_4_bytes(u64::from(metadata_end_rva)))
+            .map_err(|_| Error::WriteLayoutFailed {
+                message: "RVA alignment result exceeds u32 range".to_string(),
+            })?;
 
         // Allocate import table RVA if needed
         if requirements.needs_import_tables {
@@ -2641,9 +2649,13 @@ impl<'a> LayoutPlanner<'a> {
         // Create empty heap mappings since we're preserving all indices
         let empty_heap_mappings = IndexRemapper {
             string_map: HashMap::new(),
+            string_removed: HashSet::new(),
             blob_map: HashMap::new(),
+            blob_removed: HashSet::new(),
             guid_map: HashMap::new(),
+            guid_removed: HashSet::new(),
             userstring_map: HashMap::new(),
+            userstring_removed: HashSet::new(),
             table_maps: HashMap::new(),
         };
 
@@ -2684,11 +2696,11 @@ impl<'a> LayoutPlanner<'a> {
     ///
     /// # Why Index Mappings Matter
     ///
-    /// During heap reconstruction, indices may change due to:
-    /// - **Modifications**: Changed strings/blobs may need relocation
-    /// - **Removals**: Deleted entries create gaps that compress indices
-    /// - **Additions**: New entries are appended and may be renumbered
-    /// - **Size Changes**: Modified entries that don't fit in place
+    /// During heap reconstruction, the remapper tracks:
+    /// - **Modifications**: Changed strings/blobs are updated in place
+    /// - **Removals**: Deleted entries are zeroed in place (identity mapping preserved)
+    /// - **Additions**: New entries are appended at their assigned byte offsets
+    /// - **Size Changes**: Modified entries that change size
     ///
     /// # Mapping Examples
     ///
@@ -2697,10 +2709,10 @@ impl<'a> LayoutPlanner<'a> {
     /// Index 0: ""               Index 0: ""           (preserved)
     /// Index 5: "Hello"          Index 5: "Hello"      (unchanged)
     /// Index 12: "World"         Index 12: "Universe"  (modified in place)
-    /// Index 18: "Test"          [removed]             (deleted)
-    /// Index 25: "New"           Index 18: "New"       (compacted)
+    /// Index 18: "Test"          Index 18: [zeroed]    (removed, zeroed in place)
+    /// Index 25: "New"           Index 25: "New"       (identity mapping)
     ///
-    /// Mapping: {25 → 18}  (only changed indices recorded)
+    /// Identity mapping: indices stay the same, removed items are zeroed in place
     /// ```
     ///
     /// # Critical for Table Consistency
@@ -4083,5 +4095,416 @@ impl<'a> LayoutPlanner<'a> {
         }
 
         Ok(updated_bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::metadata::cilassemblyview::CilAssemblyView;
+    use std::path::PathBuf;
+
+    /// Helper to load a test assembly
+    fn load_test_assembly(name: &str) -> Result<CilAssembly> {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/samples")
+            .join(name);
+        let view = CilAssemblyView::from_path(&path)?;
+        Ok(CilAssembly::new(view))
+    }
+
+    /// Helper to create a mock FileStructureLayout for testing
+    fn create_mock_file_structure(sections: Vec<SectionLayout>) -> FileStructureLayout {
+        FileStructureLayout {
+            dos_header: FileRegion {
+                offset: 0,
+                size: 64,
+            },
+            pe_headers: FileRegion {
+                offset: 64,
+                size: 264,
+            },
+            section_table: FileRegion {
+                offset: 328,
+                size: 80,
+            },
+            sections,
+        }
+    }
+
+    /// Helper to create a mock SectionLayout
+    fn create_mock_section(
+        name: &str,
+        virtual_address: u32,
+        virtual_size: u32,
+        file_offset: u64,
+        file_size: u64,
+        contains_metadata: bool,
+    ) -> SectionLayout {
+        SectionLayout {
+            name: name.to_string(),
+            virtual_address,
+            virtual_size,
+            file_region: FileRegion {
+                offset: file_offset,
+                size: file_size,
+            },
+            characteristics: 0x60000020,
+            contains_metadata,
+        }
+    }
+
+    // ==========================================================================
+    // Static Calculation Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_calculate_metadata_root_header_size() {
+        let header_size = LayoutPlanner::calculate_metadata_root_header_size();
+
+        // Header should be properly sized and aligned
+        assert!(
+            header_size >= 32,
+            "Header size {} should be at least 32",
+            header_size
+        );
+        assert!(
+            header_size % 4 == 0,
+            "Header size {} should be 4-byte aligned",
+            header_size
+        );
+    }
+
+    #[test]
+    fn test_calculate_stream_directory_size() {
+        let stream_dir_size = LayoutPlanner::calculate_stream_directory_size();
+
+        // 5 streams with minimum reasonable sizes
+        assert!(
+            stream_dir_size >= 60,
+            "Stream directory size {} should be at least 60",
+            stream_dir_size
+        );
+        assert!(
+            stream_dir_size % 4 == 0,
+            "Stream directory size {} should be 4-byte aligned",
+            stream_dir_size
+        );
+    }
+
+    #[test]
+    fn test_calculate_metadata_root_size() {
+        let root_size = LayoutPlanner::calculate_metadata_root_size();
+        let header_size = LayoutPlanner::calculate_metadata_root_header_size();
+        let stream_dir_size = LayoutPlanner::calculate_stream_directory_size();
+
+        // Root size = header + stream directory
+        assert_eq!(root_size, header_size + stream_dir_size);
+        assert!(root_size > 0, "Metadata root size should be positive");
+    }
+
+    #[test]
+    fn test_calculate_total_file_size_with_sections() {
+        let sections = vec![
+            create_mock_section(".text", 0x2000, 0x1000, 0x200, 0x400, false),
+            create_mock_section(".meta", 0x4000, 0x2000, 0x600, 0x800, true),
+        ];
+        let file_structure = create_mock_file_structure(sections);
+
+        let total_size = LayoutPlanner::calculate_total_file_size(&file_structure);
+
+        // Should be last section's (offset + size) = 0x600 + 0x800 = 0xE00
+        assert_eq!(total_size, 0x600 + 0x800);
+    }
+
+    #[test]
+    fn test_calculate_total_file_size_empty_sections() {
+        let file_structure = create_mock_file_structure(vec![]);
+
+        let total_size = LayoutPlanner::calculate_total_file_size(&file_structure);
+
+        // Fallback: section_table.offset + section_table.size = 328 + 80 = 408
+        assert_eq!(total_size, 328 + 80);
+    }
+
+    #[test]
+    fn test_file_offset_to_rva_success() {
+        let sections = vec![create_mock_section(
+            ".text", 0x2000, 0x1000, 0x200, 0x400, false,
+        )];
+        let file_structure = create_mock_file_structure(sections);
+
+        // File offset 0x300 is within .text section (0x200-0x600)
+        // Offset within section = 0x300 - 0x200 = 0x100
+        // RVA = 0x2000 + 0x100 = 0x2100
+        let rva = LayoutPlanner::file_offset_to_rva(0x300, &file_structure).unwrap();
+        assert_eq!(rva, 0x2100);
+    }
+
+    #[test]
+    fn test_file_offset_to_rva_not_found() {
+        let sections = vec![create_mock_section(
+            ".text", 0x2000, 0x1000, 0x200, 0x400, false,
+        )];
+        let file_structure = create_mock_file_structure(sections);
+
+        // File offset 0x1000 is outside any section
+        let result = LayoutPlanner::file_offset_to_rva(0x1000, &file_structure);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_calculate_tables_header_size_full() {
+        // Row counts for all 64 possible tables (most are 0)
+        let mut row_counts = vec![0u32; 64];
+        row_counts[0] = 1; // Module table
+        row_counts[1] = 10; // TypeRef table
+        row_counts[2] = 5; // TypeDef table
+        row_counts[6] = 20; // MethodDef table
+
+        let header_size = LayoutPlanner::calculate_tables_header_size_full(&row_counts);
+
+        // Header: 24 bytes fixed + 4 bytes per table with rows (4 tables)
+        assert_eq!(header_size, 24 + 16);
+    }
+
+    #[test]
+    fn test_calculate_tables_header_size_full_empty() {
+        // No tables have rows
+        let row_counts = vec![0u32; 64];
+        let header_size = LayoutPlanner::calculate_tables_header_size_full(&row_counts);
+
+        // Just the fixed header, no row counts
+        assert_eq!(header_size, 24);
+    }
+
+    #[test]
+    fn test_calculate_tables_header_size_all_tables() {
+        // All 64 tables have rows
+        let row_counts = vec![1u32; 64];
+        let header_size = LayoutPlanner::calculate_tables_header_size_full(&row_counts);
+
+        // 24 bytes fixed + 64 tables × 4 bytes = 280
+        assert_eq!(header_size, 24 + 256);
+    }
+
+    // ==========================================================================
+    // Integration Tests with Real Assemblies
+    // ==========================================================================
+
+    #[test]
+    fn test_planner_creation() -> Result<()> {
+        let assembly = load_test_assembly("crafted_2.exe")?;
+        let planner = LayoutPlanner::new(&assembly);
+
+        // Planner should be initialized with correct original size
+        assert!(planner.original_size > 0);
+        assert!(planner.warnings.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_plan_complete_layout_basic() -> Result<()> {
+        let assembly = load_test_assembly("crafted_2.exe")?;
+        let mut planner = LayoutPlanner::new(&assembly);
+
+        let layout = planner.plan_complete_layout()?;
+
+        // Basic sanity checks on the layout
+        assert!(layout.total_file_size > 0);
+        assert!(!layout.operations.copy.is_empty() || !layout.operations.write.is_empty());
+        assert!(!layout.file_structure.sections.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_plan_complete_layout_has_metadata_section() -> Result<()> {
+        let assembly = load_test_assembly("crafted_2.exe")?;
+        let mut planner = LayoutPlanner::new(&assembly);
+
+        let layout = planner.plan_complete_layout()?;
+
+        // Should have at least one section containing metadata
+        let has_meta_section =
+            layout.file_structure.sections.iter().any(|s| {
+                s.contains_metadata || s.name.contains("meta") || s.name.contains(".text")
+            });
+        assert!(has_meta_section, "Layout should contain a metadata section");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_plan_complete_layout_planning_info() -> Result<()> {
+        let assembly = load_test_assembly("crafted_2.exe")?;
+        let mut planner = LayoutPlanner::new(&assembly);
+
+        let layout = planner.plan_complete_layout()?;
+        let info = &layout.planning_info;
+
+        // Planning info should be populated
+        assert!(info.original_size > 0);
+        assert!(info.planning_duration.as_nanos() > 0);
+        assert!(info.size_breakdown.headers > 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_plan_complete_layout_metadata_layout() -> Result<()> {
+        let assembly = load_test_assembly("crafted_2.exe")?;
+        let mut planner = LayoutPlanner::new(&assembly);
+
+        let layout = planner.plan_complete_layout()?;
+        let meta = &layout.metadata_layout;
+
+        // Metadata layout should have reasonable values
+        assert!(meta.cor20_header.offset > 0);
+        assert!(meta.cor20_header.size > 0);
+        assert!(meta.metadata_root.offset > 0);
+        assert!(meta.metadata_root.size > 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_plan_complete_layout_operations_valid() -> Result<()> {
+        let assembly = load_test_assembly("crafted_2.exe")?;
+        let mut planner = LayoutPlanner::new(&assembly);
+
+        let layout = planner.plan_complete_layout()?;
+
+        // Check that operations have valid (non-zero) offsets/sizes
+        for copy_op in &layout.operations.copy {
+            assert!(copy_op.size > 0, "Copy operation has zero size");
+        }
+
+        for write_op in &layout.operations.write {
+            assert!(!write_op.data.is_empty(), "Write operation has empty data");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_plan_complete_layout_windowsbase() -> Result<()> {
+        let assembly = load_test_assembly("WindowsBase.dll")?;
+        let mut planner = LayoutPlanner::new(&assembly);
+
+        let layout = planner.plan_complete_layout()?;
+
+        // WindowsBase is larger, should have operations
+        assert!(layout.total_file_size > 0);
+        let total_ops = layout.operations.copy.len()
+            + layout.operations.zero.len()
+            + layout.operations.write.len();
+        assert!(total_ops > 0, "Should have generated operations");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_planner_metadata_component_sizes() -> Result<()> {
+        let assembly = load_test_assembly("crafted_2.exe")?;
+        let planner = LayoutPlanner::new(&assembly);
+
+        let sizes = planner.calculate_metadata_component_sizes()?;
+
+        // All sizes should be reasonable
+        assert!(sizes.strings_heap > 0);
+        assert!(sizes.tables_stream > 0);
+        assert!(sizes.metadata_root > 0);
+        assert!(sizes.cor20_header == COR20_HEADER_SIZE as u64);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_planner_native_table_requirements() -> Result<()> {
+        let assembly = load_test_assembly("crafted_2.exe")?;
+        let planner = LayoutPlanner::new(&assembly);
+
+        let requirements = planner.calculate_native_table_requirements()?;
+
+        // Requirements should have valid size values (sizes are u32, always >= 0)
+        // Just verify the calculation completed successfully
+        // The import/export table sizes are calculated based on assembly needs
+        let _ = requirements.import_table_size;
+        let _ = requirements.export_table_size;
+
+        Ok(())
+    }
+
+    // ==========================================================================
+    // Edge Case Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_file_offset_to_rva_section_boundary() {
+        let sections = vec![create_mock_section(
+            ".text", 0x2000, 0x1000, 0x200, 0x400, false,
+        )];
+        let file_structure = create_mock_file_structure(sections);
+
+        // Test at exact section start
+        let rva_start = LayoutPlanner::file_offset_to_rva(0x200, &file_structure).unwrap();
+        assert_eq!(rva_start, 0x2000);
+
+        // Test just before section end (last valid byte)
+        let rva_end = LayoutPlanner::file_offset_to_rva(0x5FF, &file_structure).unwrap();
+        assert_eq!(rva_end, 0x23FF);
+
+        // Test at exact section end (should fail - exclusive boundary)
+        let result = LayoutPlanner::file_offset_to_rva(0x600, &file_structure);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_file_offset_to_rva_multiple_sections() {
+        let sections = vec![
+            create_mock_section(".text", 0x2000, 0x1000, 0x200, 0x400, false),
+            create_mock_section(".data", 0x4000, 0x800, 0x600, 0x200, false),
+        ];
+        let file_structure = create_mock_file_structure(sections);
+
+        // Should find in second section
+        let rva = LayoutPlanner::file_offset_to_rva(0x700, &file_structure).unwrap();
+        // Offset within .data = 0x700 - 0x600 = 0x100
+        // RVA = 0x4000 + 0x100 = 0x4100
+        assert_eq!(rva, 0x4100);
+    }
+
+    #[test]
+    fn test_file_offset_to_rva_first_section() {
+        let sections = vec![
+            create_mock_section(".text", 0x2000, 0x1000, 0x200, 0x400, true),
+            create_mock_section(".data", 0x4000, 0x800, 0x600, 0x200, false),
+        ];
+        let file_structure = create_mock_file_structure(sections);
+
+        // Should find in first section
+        let rva = LayoutPlanner::file_offset_to_rva(0x250, &file_structure).unwrap();
+        assert_eq!(rva, 0x2050);
+    }
+
+    #[test]
+    fn test_metadata_root_size_consistency() {
+        // Test that metadata root size is consistent across calls
+        let size1 = LayoutPlanner::calculate_metadata_root_size();
+        let size2 = LayoutPlanner::calculate_metadata_root_size();
+        assert_eq!(size1, size2, "Metadata root size should be consistent");
+    }
+
+    #[test]
+    fn test_stream_directory_includes_all_streams() {
+        let stream_dir_size = LayoutPlanner::calculate_stream_directory_size();
+
+        // Minimum size: 5 streams × (8 bytes header + 4 bytes minimum padded name) = 60 bytes
+        assert!(stream_dir_size >= 60);
+
+        // Maximum reasonable size: 5 streams × (8 + 16 padded name) = 120 bytes
+        assert!(stream_dir_size <= 120);
     }
 }

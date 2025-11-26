@@ -4,7 +4,7 @@
 //! with a fluent API. The builder follows the established dotscope pattern of not holding
 //! references to BuilderContext and instead taking it as a parameter to the build() method.
 
-use crate::{cilassembly::BuilderContext, Result};
+use crate::{cilassembly::BuilderContext, Error, Result};
 
 /// Builder for creating native PE import tables.
 ///
@@ -59,6 +59,48 @@ impl NativeImportsBuilder {
         }
     }
 
+    /// Validates a DLL name for invalid characters or format issues.
+    ///
+    /// # Arguments
+    /// * `name` - The DLL name to validate
+    ///
+    /// # Returns
+    /// `Ok(())` if the name is valid, `Err` with a description if invalid.
+    fn validate_dll_name(name: &str) -> Result<()> {
+        if name.is_empty() {
+            return Err(Error::Error("DLL name cannot be empty".to_string()));
+        }
+        if name.contains('\0') {
+            return Err(Error::Error("DLL name contains null character".to_string()));
+        }
+
+        if name.contains('/') || name.contains('\\') {
+            return Err(Error::Error(
+                "DLL name contains path separators - use filename only".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Validates a function name for invalid characters.
+    ///
+    /// # Arguments
+    /// * `name` - The function name to validate
+    ///
+    /// # Returns
+    /// `Ok(())` if the name is valid, `Err` with a description if invalid.
+    fn validate_function_name(name: &str) -> Result<()> {
+        if name.is_empty() {
+            return Err(Error::Error("Function name cannot be empty".to_string()));
+        }
+        if name.contains('\0') {
+            return Err(Error::Error(
+                "Function name contains null character".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Adds a DLL to the import table.
     ///
     /// Creates a new import descriptor for the specified DLL if it doesn't already exist.
@@ -70,22 +112,28 @@ impl NativeImportsBuilder {
     ///
     /// # Returns
     ///
-    /// Self for method chaining.
+    /// `Ok(Self)` for method chaining on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the DLL name is empty, contains null characters,
+    /// or contains path separators.
     ///
     /// # Examples
     ///
     /// ```rust,ignore
     /// let builder = NativeImportsBuilder::new()
-    ///     .add_dll("kernel32.dll")
-    ///     .add_dll("user32.dll");
+    ///     .add_dll("kernel32.dll")?
+    ///     .add_dll("user32.dll")?;
     /// ```
-    #[must_use]
-    pub fn add_dll(mut self, dll_name: impl Into<String>) -> Self {
+    pub fn add_dll(mut self, dll_name: impl Into<String>) -> Result<Self> {
         let dll_name = dll_name.into();
+        Self::validate_dll_name(&dll_name)?;
+
         if !self.dlls.contains(&dll_name) {
             self.dlls.push(dll_name);
         }
-        self
+        Ok(self)
     }
 
     /// Adds a named function import from a specific DLL.
@@ -100,23 +148,30 @@ impl NativeImportsBuilder {
     ///
     /// # Returns
     ///
-    /// Self for method chaining.
+    /// `Ok(Self)` for method chaining on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the DLL name or function name is empty or contains
+    /// invalid characters.
     ///
     /// # Examples
     ///
     /// ```rust,ignore
     /// let builder = NativeImportsBuilder::new()
-    ///     .add_function("kernel32.dll", "GetCurrentProcessId")
-    ///     .add_function("kernel32.dll", "ExitProcess");
+    ///     .add_function("kernel32.dll", "GetCurrentProcessId")?
+    ///     .add_function("kernel32.dll", "ExitProcess")?;
     /// ```
-    #[must_use]
     pub fn add_function(
         mut self,
         dll_name: impl Into<String>,
         function_name: impl Into<String>,
-    ) -> Self {
+    ) -> Result<Self> {
         let dll_name = dll_name.into();
         let function_name = function_name.into();
+
+        Self::validate_dll_name(&dll_name)?;
+        Self::validate_function_name(&function_name)?;
 
         // Ensure DLL is added
         if !self.dlls.contains(&dll_name) {
@@ -124,7 +179,7 @@ impl NativeImportsBuilder {
         }
 
         self.functions.push((dll_name, function_name));
-        self
+        Ok(self)
     }
 
     /// Adds an ordinal-based function import.
@@ -136,21 +191,36 @@ impl NativeImportsBuilder {
     /// # Arguments
     ///
     /// * `dll_name` - Name of the DLL containing the function
-    /// * `ordinal` - Ordinal number of the function in the DLL's export table
+    /// * `ordinal` - Ordinal number of the function in the DLL's export table (must be non-zero)
     ///
     /// # Returns
     ///
-    /// Self for method chaining.
+    /// `Ok(Self)` for method chaining on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The DLL name is empty or contains invalid characters
+    /// - The ordinal is 0 (invalid)
     ///
     /// # Examples
     ///
     /// ```rust,ignore
     /// let builder = NativeImportsBuilder::new()
-    ///     .add_function_by_ordinal("user32.dll", 120); // MessageBoxW
+    ///     .add_function_by_ordinal("user32.dll", 120)?; // MessageBoxW
     /// ```
-    #[must_use]
-    pub fn add_function_by_ordinal(mut self, dll_name: impl Into<String>, ordinal: u16) -> Self {
+    pub fn add_function_by_ordinal(
+        mut self,
+        dll_name: impl Into<String>,
+        ordinal: u16,
+    ) -> Result<Self> {
         let dll_name = dll_name.into();
+
+        Self::validate_dll_name(&dll_name)?;
+
+        if ordinal == 0 {
+            return Err(Error::Error("Ordinal cannot be 0".to_string()));
+        }
 
         // Ensure DLL is added
         if !self.dlls.contains(&dll_name) {
@@ -158,7 +228,7 @@ impl NativeImportsBuilder {
         }
 
         self.ordinal_functions.push((dll_name, ordinal));
-        self
+        Ok(self)
     }
 
     /// Builds the native imports and integrates them into the assembly.
@@ -201,17 +271,14 @@ impl NativeImportsBuilder {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<()> {
-        // Add all DLLs first
         for dll_name in &self.dlls {
             context.add_native_import_dll(dll_name)?;
         }
 
-        // Add all named functions
         for (dll_name, function_name) in &self.functions {
             context.add_native_import_function(dll_name, function_name)?;
         }
 
-        // Add all ordinal functions
         for (dll_name, ordinal) in &self.ordinal_functions {
             context.add_native_import_function_by_ordinal(dll_name, *ordinal)?;
         }
@@ -244,11 +311,10 @@ mod tests {
 
             let result = NativeImportsBuilder::new()
                 .add_dll("kernel32.dll")
-                .add_function("kernel32.dll", "GetCurrentProcessId")
-                .add_function("kernel32.dll", "ExitProcess")
-                .build(&mut context);
+                .and_then(|b| b.add_function("kernel32.dll", "GetCurrentProcessId"))
+                .and_then(|b| b.add_function("kernel32.dll", "ExitProcess"))
+                .and_then(|b| b.build(&mut context));
 
-            // Should succeed with current placeholder implementation
             assert!(result.is_ok());
         }
     }
@@ -262,11 +328,10 @@ mod tests {
 
             let result = NativeImportsBuilder::new()
                 .add_dll("user32.dll")
-                .add_function_by_ordinal("user32.dll", 120) // MessageBoxW
-                .add_function("user32.dll", "GetWindowTextW")
-                .build(&mut context);
+                .and_then(|b| b.add_function_by_ordinal("user32.dll", 120))
+                .and_then(|b| b.add_function("user32.dll", "GetWindowTextW"))
+                .and_then(|b| b.build(&mut context));
 
-            // Should succeed with current placeholder implementation
             assert!(result.is_ok());
         }
     }
@@ -279,12 +344,10 @@ mod tests {
             let mut context = BuilderContext::new(assembly);
 
             let result = NativeImportsBuilder::new()
-                // Don't explicitly add DLL - should be added automatically
                 .add_function("kernel32.dll", "GetCurrentProcessId")
-                .add_function_by_ordinal("user32.dll", 120)
-                .build(&mut context);
+                .and_then(|b| b.add_function_by_ordinal("user32.dll", 120))
+                .and_then(|b| b.build(&mut context));
 
-            // Should succeed - DLLs should be added automatically
             assert!(result.is_ok());
         }
     }
@@ -298,7 +361,6 @@ mod tests {
 
             let result = NativeImportsBuilder::new().build(&mut context);
 
-            // Should succeed even with no imports
             assert!(result.is_ok());
         }
     }
@@ -307,10 +369,10 @@ mod tests {
     fn test_native_imports_builder_duplicate_dlls() {
         let builder = NativeImportsBuilder::new()
             .add_dll("kernel32.dll")
-            .add_dll("kernel32.dll") // Duplicate should be ignored
-            .add_dll("user32.dll");
+            .and_then(|b| b.add_dll("kernel32.dll"))
+            .and_then(|b| b.add_dll("user32.dll"))
+            .expect("Should not fail for valid DLL names");
 
-        // Should contain only 2 unique DLLs
         assert_eq!(builder.dlls.len(), 2);
         assert!(builder.dlls.contains(&"kernel32.dll".to_string()));
         assert!(builder.dlls.contains(&"user32.dll".to_string()));
@@ -320,12 +382,12 @@ mod tests {
     fn test_native_imports_builder_fluent_api() {
         let builder = NativeImportsBuilder::new()
             .add_dll("kernel32.dll")
-            .add_function("kernel32.dll", "GetCurrentProcessId")
-            .add_function("kernel32.dll", "ExitProcess")
-            .add_dll("user32.dll")
-            .add_function_by_ordinal("user32.dll", 120);
+            .and_then(|b| b.add_function("kernel32.dll", "GetCurrentProcessId"))
+            .and_then(|b| b.add_function("kernel32.dll", "ExitProcess"))
+            .and_then(|b| b.add_dll("user32.dll"))
+            .and_then(|b| b.add_function_by_ordinal("user32.dll", 120))
+            .expect("Should not fail for valid inputs");
 
-        // Verify builder state
         assert_eq!(builder.dlls.len(), 2);
         assert_eq!(builder.functions.len(), 2);
         assert_eq!(builder.ordinal_functions.len(), 1);
@@ -344,5 +406,33 @@ mod tests {
         assert!(builder
             .ordinal_functions
             .contains(&("user32.dll".to_string(), 120)));
+    }
+
+    #[test]
+    fn test_native_imports_builder_validation_empty_dll() {
+        let result = NativeImportsBuilder::new().add_dll("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_native_imports_builder_validation_empty_function() {
+        let result = NativeImportsBuilder::new()
+            .add_dll("kernel32.dll")
+            .and_then(|b| b.add_function("kernel32.dll", ""));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_native_imports_builder_validation_ordinal_zero() {
+        let result = NativeImportsBuilder::new()
+            .add_dll("user32.dll")
+            .and_then(|b| b.add_function_by_ordinal("user32.dll", 0));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_native_imports_builder_validation_dll_with_path() {
+        let result = NativeImportsBuilder::new().add_dll("C:\\Windows\\kernel32.dll");
+        assert!(result.is_err());
     }
 }

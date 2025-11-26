@@ -18,6 +18,10 @@
 //! - Supports conflict detection and resolution
 //! - Operations are stored chronologically for proper ordering
 //!
+//! **RID Assumption:** Per ECMA-335, RIDs (Row IDs) in metadata tables are 1-based and
+//! contiguous. A table with `n` rows contains RIDs 1 through n inclusive. This module
+//! relies on this property when checking row existence via [`TableModifications::has_row`].
+//!
 //! ## Complete Replacement
 //! - Replace entire table content with new data
 //! - More efficient for heavily modified tables
@@ -121,6 +125,12 @@ pub enum TableModifications {
         /// scanning through all operations.
         deleted_rows: HashSet<u32>,
 
+        /// Quick lookup for inserted RIDs
+        ///
+        /// This set is maintained for efficient insertion checks without
+        /// scanning through all operations.
+        inserted_rows: HashSet<u32>,
+
         /// Next available RID for new rows
         ///
         /// This tracks the next RID that would be assigned to a newly
@@ -162,6 +172,7 @@ impl TableModifications {
         Self::Sparse {
             operations: Vec::new(),
             deleted_rows: HashSet::new(),
+            inserted_rows: HashSet::new(),
             next_rid,
             original_row_count,
         }
@@ -219,25 +230,41 @@ impl TableModifications {
             Self::Sparse {
                 operations,
                 deleted_rows,
+                inserted_rows,
                 next_rid,
                 ..
             } => {
-                // Insert in chronological order
-                let insert_pos = operations
+                // Insert in chronological order, maintaining FIFO for equal timestamps.
+                // binary_search_by_key returns Ok(index) if found, which would insert BEFORE
+                // existing entries with the same timestamp. We need to insert AFTER all
+                // entries with the same timestamp to maintain insertion order.
+                let insert_pos = match operations
                     .binary_search_by_key(&op.timestamp, |o| o.timestamp)
-                    .unwrap_or_else(|e| e);
+                {
+                    Ok(mut pos) => {
+                        // Found an entry with the same timestamp - scan forward to find the
+                        // end of all entries with this timestamp (FIFO ordering)
+                        while pos < operations.len() && operations[pos].timestamp == op.timestamp {
+                            pos += 1;
+                        }
+                        pos
+                    }
+                    Err(pos) => pos, // Not found - insert at the natural position
+                };
                 operations.insert(insert_pos, op);
 
                 // Update auxiliary data structures
                 let inserted_op = &operations[insert_pos];
                 match &inserted_op.operation {
                     super::Operation::Insert(rid, _) => {
+                        inserted_rows.insert(*rid);
                         if *rid >= *next_rid {
                             *next_rid = *rid + 1;
                         }
                     }
                     super::Operation::Delete(rid) => {
                         deleted_rows.insert(*rid);
+                        inserted_rows.remove(rid);
                     }
                     super::Operation::Update(rid, _) => {
                         deleted_rows.remove(rid);
@@ -260,6 +287,7 @@ impl TableModifications {
             Self::Sparse {
                 operations,
                 deleted_rows,
+                inserted_rows,
                 ..
             } => {
                 if operations.is_empty() {
@@ -291,11 +319,18 @@ impl TableModifications {
                     operations.remove(index);
                 }
 
-                // Update deleted_rows to only include RIDs that have final Delete operations
+                // Rebuild auxiliary sets based on final operation state
                 deleted_rows.clear();
+                inserted_rows.clear();
                 for op in operations {
-                    if let super::Operation::Delete(rid) = &op.operation {
-                        deleted_rows.insert(*rid);
+                    match &op.operation {
+                        super::Operation::Delete(rid) => {
+                            deleted_rows.insert(*rid);
+                        }
+                        super::Operation::Insert(rid, _) => {
+                            inserted_rows.insert(*rid);
+                        }
+                        super::Operation::Update(_, _) => {}
                     }
                 }
             }
@@ -320,10 +355,10 @@ impl TableModifications {
 
                 // Check if we already have a row at this RID
                 if self.has_row(*rid) {
-                    // We need the table ID, but it's not available in this context
-                    // For now, we'll use a generic error
                     return Err(Error::ModificationInvalidOperation {
-                        details: format!("RID {rid} already exists"),
+                        details: format!(
+                            "Cannot insert row: RID {rid} already exists in table (duplicate insert or existing row)"
+                        ),
                     });
                 }
 
@@ -368,11 +403,18 @@ impl TableModifications {
     ///
     /// This method checks if a row with the given RID exists, taking into account
     /// the original table row count and all applied operations.
+    ///
+    /// # RID Contiguity Assumption
+    ///
+    /// Per ECMA-335 §II.22, metadata table RIDs are 1-based and contiguous. A table
+    /// with `n` rows contains RIDs 1 through n. This method relies on this property
+    /// when checking if a RID exists in the original table: any RID in range `[1, original_row_count]`
+    /// is considered to exist unless explicitly deleted.
     pub fn has_row(&self, rid: u32) -> bool {
         match self {
             Self::Sparse {
-                operations,
                 deleted_rows,
+                inserted_rows,
                 ..
             } => {
                 // Check if it's been explicitly deleted
@@ -381,13 +423,8 @@ impl TableModifications {
                 }
 
                 // Check if there's an insert operation for this RID
-                for op in operations {
-                    match &op.operation {
-                        super::Operation::Insert(op_rid, _) if *op_rid == rid => {
-                            return true;
-                        }
-                        _ => {}
-                    }
+                if inserted_rows.contains(&rid) {
+                    return true;
                 }
 
                 // Check if it exists in the original table
@@ -419,6 +456,28 @@ impl TableModifications {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cilassembly::{Operation, TableOperation};
+    use crate::metadata::tables::{ModuleRaw, TableDataOwned};
+    use crate::metadata::token::Token;
+
+    /// Helper to create a simple ModuleRaw for testing
+    fn make_test_row(name_idx: u32) -> TableDataOwned {
+        TableDataOwned::Module(ModuleRaw {
+            rid: 1,
+            token: Token::new(0x00000001),
+            offset: 0,
+            generation: 0,
+            name: name_idx,
+            mvid: 1,
+            encid: 0,
+            encbaseid: 0,
+        })
+    }
+
+    /// Helper to create a TableOperation with a specific timestamp
+    fn make_op_with_timestamp(op: Operation, timestamp: u64) -> TableOperation {
+        TableOperation::new_with_timestamp(op, timestamp)
+    }
 
     #[test]
     fn test_table_modifications_creation() {
@@ -429,5 +488,320 @@ mod tests {
         let replaced = TableModifications::new_replaced(vec![]);
         assert!(!replaced.has_modifications());
         assert_eq!(replaced.operation_count(), 0);
+    }
+
+    #[test]
+    fn test_sparse_with_existing_rows() {
+        // Create sparse with 5 existing rows (next_rid = 6)
+        let sparse = TableModifications::new_sparse(6);
+        assert!(!sparse.has_modifications());
+
+        // Original rows 1-5 should exist
+        assert!(sparse.has_row(1));
+        assert!(sparse.has_row(5));
+        assert!(!sparse.has_row(6)); // Not yet inserted
+        assert!(!sparse.has_row(0)); // RID 0 never exists
+    }
+
+    #[test]
+    fn test_apply_insert_operation() {
+        let mut mods = TableModifications::new_sparse(1);
+        let row = make_test_row(100);
+        let op = TableOperation::new(Operation::Insert(1, row));
+
+        assert!(mods.apply_operation(op).is_ok());
+        assert!(mods.has_modifications());
+        assert_eq!(mods.operation_count(), 1);
+        assert!(mods.has_row(1));
+    }
+
+    #[test]
+    fn test_apply_update_operation() {
+        // Create with 5 existing rows
+        let mut mods = TableModifications::new_sparse(6);
+        let row = make_test_row(200);
+        let op = TableOperation::new(Operation::Update(3, row));
+
+        assert!(mods.apply_operation(op).is_ok());
+        assert!(mods.has_modifications());
+        assert_eq!(mods.operation_count(), 1);
+        assert!(mods.has_row(3)); // Row still exists after update
+    }
+
+    #[test]
+    fn test_apply_delete_operation() {
+        // Create with 5 existing rows
+        let mut mods = TableModifications::new_sparse(6);
+        let op = TableOperation::new(Operation::Delete(3));
+
+        assert!(mods.apply_operation(op).is_ok());
+        assert!(mods.has_modifications());
+        assert_eq!(mods.operation_count(), 1);
+        assert!(!mods.has_row(3)); // Row no longer exists
+        assert!(mods.has_row(2)); // Other rows still exist
+        assert!(mods.has_row(4));
+    }
+
+    #[test]
+    fn test_validate_operation_rid_zero() {
+        let mods = TableModifications::new_sparse(6);
+
+        // Insert with RID 0 should fail
+        let insert_op = TableOperation::new(Operation::Insert(0, make_test_row(1)));
+        assert!(mods.validate_operation(&insert_op).is_err());
+
+        // Update with RID 0 should fail
+        let update_op = TableOperation::new(Operation::Update(0, make_test_row(1)));
+        assert!(mods.validate_operation(&update_op).is_err());
+
+        // Delete with RID 0 should fail
+        let delete_op = TableOperation::new(Operation::Delete(0));
+        assert!(mods.validate_operation(&delete_op).is_err());
+    }
+
+    #[test]
+    fn test_validate_insert_duplicate_rid() {
+        let mods = TableModifications::new_sparse(6); // Rows 1-5 exist
+
+        // Try to insert at existing RID
+        let op = TableOperation::new(Operation::Insert(3, make_test_row(1)));
+        let result = mods.validate_operation(&op);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_update_nonexistent_rid() {
+        let mods = TableModifications::new_sparse(6); // Rows 1-5 exist
+
+        // Try to update non-existent RID
+        let op = TableOperation::new(Operation::Update(10, make_test_row(1)));
+        let result = mods.validate_operation(&op);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_delete_nonexistent_rid() {
+        let mods = TableModifications::new_sparse(6); // Rows 1-5 exist
+
+        // Try to delete non-existent RID
+        let op = TableOperation::new(Operation::Delete(10));
+        let result = mods.validate_operation(&op);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_consolidate_operations_keeps_latest() {
+        let mut mods = TableModifications::new_sparse(1);
+
+        // Apply multiple operations on the same RID with increasing timestamps
+        let op1 = make_op_with_timestamp(Operation::Insert(1, make_test_row(100)), 1000);
+        let op2 = make_op_with_timestamp(Operation::Update(1, make_test_row(200)), 2000);
+        let op3 = make_op_with_timestamp(Operation::Update(1, make_test_row(300)), 3000);
+
+        mods.apply_operation(op1).unwrap();
+        mods.apply_operation(op2).unwrap();
+        mods.apply_operation(op3).unwrap();
+
+        assert_eq!(mods.operation_count(), 3);
+
+        // Consolidate should keep only the latest operation
+        mods.consolidate_operations();
+        assert_eq!(mods.operation_count(), 1);
+
+        // Verify it's the latest update
+        if let TableModifications::Sparse { operations, .. } = &mods {
+            assert_eq!(operations[0].timestamp, 3000);
+            if let Operation::Update(rid, data) = &operations[0].operation {
+                assert_eq!(*rid, 1);
+                if let TableDataOwned::Module(row) = data {
+                    assert_eq!(row.name, 300);
+                }
+            } else {
+                panic!("Expected Update operation");
+            }
+        }
+    }
+
+    #[test]
+    fn test_consolidate_operations_multiple_rids() {
+        let mut mods = TableModifications::new_sparse(1);
+
+        // Operations on different RIDs
+        let op1 = make_op_with_timestamp(Operation::Insert(1, make_test_row(100)), 1000);
+        let op2 = make_op_with_timestamp(Operation::Insert(2, make_test_row(200)), 2000);
+        let op3 = make_op_with_timestamp(Operation::Update(1, make_test_row(150)), 3000);
+
+        mods.apply_operation(op1).unwrap();
+        mods.apply_operation(op2).unwrap();
+        mods.apply_operation(op3).unwrap();
+
+        assert_eq!(mods.operation_count(), 3);
+
+        mods.consolidate_operations();
+
+        // Should have 2 operations (latest for RID 1 and RID 2)
+        assert_eq!(mods.operation_count(), 2);
+    }
+
+    #[test]
+    fn test_consolidate_updates_deleted_rows() {
+        let mut mods = TableModifications::new_sparse(6); // Rows 1-5 exist
+
+        // Delete row 3
+        let op1 = make_op_with_timestamp(Operation::Delete(3), 1000);
+        mods.apply_operation(op1).unwrap();
+        assert!(!mods.has_row(3));
+
+        // Later "un-delete" by updating (should remove from deleted_rows)
+        let op2 = make_op_with_timestamp(Operation::Update(3, make_test_row(300)), 2000);
+        mods.apply_operation(op2).unwrap();
+
+        // After consolidation, deleted_rows should be updated correctly
+        mods.consolidate_operations();
+
+        // The latest operation is Update, so row should exist
+        // Note: deleted_rows is rebuilt during consolidation based on final operations
+        if let TableModifications::Sparse { deleted_rows, .. } = &mods {
+            assert!(!deleted_rows.contains(&3));
+        }
+    }
+
+    #[test]
+    fn test_replaced_table_operations() {
+        let rows = vec![make_test_row(1), make_test_row(2), make_test_row(3)];
+        let mut replaced = TableModifications::new_replaced(rows);
+
+        assert!(replaced.has_modifications());
+        assert_eq!(replaced.operation_count(), 3);
+
+        // Rows 1-3 should exist
+        assert!(replaced.has_row(1));
+        assert!(replaced.has_row(2));
+        assert!(replaced.has_row(3));
+        assert!(!replaced.has_row(4));
+        assert!(!replaced.has_row(0));
+
+        // Cannot apply operations to replaced table
+        let op = TableOperation::new(Operation::Insert(4, make_test_row(4)));
+        assert!(replaced.apply_operation(op).is_err());
+    }
+
+    #[test]
+    fn test_has_row_after_insert() {
+        let mut mods = TableModifications::new_sparse(1); // No existing rows
+
+        assert!(!mods.has_row(1));
+
+        let op = TableOperation::new(Operation::Insert(1, make_test_row(100)));
+        mods.apply_operation(op).unwrap();
+
+        assert!(mods.has_row(1));
+    }
+
+    #[test]
+    fn test_next_rid_updates_on_insert() {
+        let mut mods = TableModifications::new_sparse(1);
+
+        // Insert at RID 5 (skipping 1-4)
+        let op = TableOperation::new(Operation::Insert(5, make_test_row(100)));
+        mods.apply_operation(op).unwrap();
+
+        // Next RID should be updated to 6
+        if let TableModifications::Sparse { next_rid, .. } = &mods {
+            assert_eq!(*next_rid, 6);
+        }
+    }
+
+    #[test]
+    fn test_empty_consolidate() {
+        let mut mods = TableModifications::new_sparse(1);
+
+        // Consolidating empty modifications should not panic
+        mods.consolidate_operations();
+        assert!(!mods.has_modifications());
+    }
+
+    #[test]
+    fn test_same_timestamp_fifo_ordering() {
+        // Test that operations with the same timestamp maintain FIFO insertion order.
+        // This is critical for scenarios where Insert is followed by Update on the
+        // same RID within the same microsecond - the Update must come AFTER Insert.
+        let mut mods = TableModifications::new_sparse(1);
+
+        let fixed_timestamp = 1000u64;
+
+        // Create Insert operation with fixed timestamp
+        let insert_op = TableOperation::new_with_timestamp(
+            Operation::Insert(10, make_test_row(100)),
+            fixed_timestamp,
+        );
+
+        // Create Update operation with same timestamp (simulates same-microsecond operations)
+        let update_op = TableOperation::new_with_timestamp(
+            Operation::Update(10, make_test_row(200)),
+            fixed_timestamp,
+        );
+
+        // Apply in order: Insert first, then Update
+        mods.apply_operation(insert_op).unwrap();
+        mods.apply_operation(update_op).unwrap();
+
+        // Verify FIFO ordering: Insert should be at index 0, Update at index 1
+        if let TableModifications::Sparse { operations, .. } = &mods {
+            assert_eq!(operations.len(), 2);
+            assert!(operations[0].is_insert(), "Insert should be first");
+            assert!(operations[1].is_update(), "Update should be second");
+        } else {
+            panic!("Expected Sparse modifications");
+        }
+    }
+
+    #[test]
+    fn test_same_timestamp_multiple_operations() {
+        // Test with more operations at the same timestamp
+        let mut mods = TableModifications::new_sparse(1);
+
+        let fixed_timestamp = 1000u64;
+
+        // Create three operations on different RIDs with the same timestamp
+        let op1 = TableOperation::new_with_timestamp(
+            Operation::Insert(10, make_test_row(100)),
+            fixed_timestamp,
+        );
+        let op2 = TableOperation::new_with_timestamp(
+            Operation::Insert(11, make_test_row(200)),
+            fixed_timestamp,
+        );
+        let op3 = TableOperation::new_with_timestamp(
+            Operation::Insert(12, make_test_row(300)),
+            fixed_timestamp,
+        );
+
+        // Apply in order
+        mods.apply_operation(op1).unwrap();
+        mods.apply_operation(op2).unwrap();
+        mods.apply_operation(op3).unwrap();
+
+        // Verify FIFO ordering: operations should be in insertion order
+        if let TableModifications::Sparse { operations, .. } = &mods {
+            assert_eq!(operations.len(), 3);
+            assert_eq!(
+                operations[0].get_rid(),
+                10,
+                "First operation should be RID 10"
+            );
+            assert_eq!(
+                operations[1].get_rid(),
+                11,
+                "Second operation should be RID 11"
+            );
+            assert_eq!(
+                operations[2].get_rid(),
+                12,
+                "Third operation should be RID 12"
+            );
+        } else {
+            panic!("Expected Sparse modifications");
+        }
     }
 }

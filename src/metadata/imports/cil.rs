@@ -233,17 +233,77 @@ pub enum ImportType {
 /// Instances can be safely shared across threads and accessed concurrently.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Debug)]
 pub enum ImportSourceId {
-    /// Import from a module within the same assembly (by metadata token).
+    /// Import from a module within the same assembly.
+    ///
+    /// Used for types and members defined in the current assembly's modules.
+    /// The token refers to a `Module` table entry. This variant is relatively
+    /// rare since most imports come from external assemblies.
+    ///
+    /// # Example Use Cases
+    /// - Multi-module assemblies where types are defined across modules
+    /// - Internal cross-module references within a single assembly
     Module(Token),
-    /// Import from a module reference to external module (by metadata token).
+
+    /// Import from an external module reference (P/Invoke target).
+    ///
+    /// Used for P/Invoke method imports that call into native DLLs.
+    /// The token refers to a `ModuleRef` table entry which contains the
+    /// DLL name (e.g., "kernel32.dll", "user32.dll").
+    ///
+    /// # Example Use Cases
+    /// - `[DllImport("kernel32.dll")] extern GetCurrentProcessId()`
+    /// - Native interop calls to Windows API functions
+    /// - Calls to custom native libraries
+    ///
+    /// # Retrieving the DLL Name
+    /// Use [`Imports::get_module_ref`] with the contained token to retrieve
+    /// the `ModuleRef` entry and access its `name` field for the DLL name.
     ModuleRef(Token),
-    /// Import from an assembly reference to external assembly (by metadata token).
+
+    /// Import from an external assembly reference.
+    ///
+    /// The most common import source. Used for types imported from other
+    /// .NET assemblies. The token refers to an `AssemblyRef` table entry.
+    ///
+    /// # Example Use Cases
+    /// - Types from `mscorlib` / `System.Runtime` (e.g., `System.String`)
+    /// - Types from `System.Collections.Generic` (e.g., `List<T>`)
+    /// - Types from third-party NuGet packages
     AssemblyRef(Token),
-    /// Import from a file reference to external file (by metadata token).
+
+    /// Import from an external file reference.
+    ///
+    /// Used for resources and types embedded in external files associated
+    /// with the assembly. The token refers to a `File` table entry.
+    /// This is uncommon in modern .NET assemblies.
+    ///
+    /// # Example Use Cases
+    /// - Satellite assemblies for localization
+    /// - Resource files bundled with the assembly
     File(Token),
-    /// Import from a type reference for nested types (by metadata token).
+
+    /// Import reference through a parent type (nested types).
+    ///
+    /// Used when the import's resolution scope is another `TypeRef`, indicating
+    /// a nested type. The token refers to a `TypeRef` table entry representing
+    /// the enclosing type.
+    ///
+    /// # Example Use Cases
+    /// - Nested classes: `OuterClass.InnerClass`
+    /// - Nested interfaces: `IContainer.IEnumerator`
+    /// - Private implementation types: `Dictionary<K,V>.Enumerator`
     TypeRef(Token),
-    /// No specific source identified (internal use).
+
+    /// No specific source identified.
+    ///
+    /// Used internally when the import's source cannot be determined or is
+    /// not applicable. This typically indicates:
+    /// - An error during metadata parsing
+    /// - A malformed or incomplete import entry
+    /// - Synthetic imports created programmatically
+    ///
+    /// Code handling imports should treat this variant as an edge case that
+    /// may require special handling or error reporting.
     None,
 }
 
@@ -881,17 +941,28 @@ impl Imports {
         self.data.iter()
     }
 
-    /// Find the first import with the specified name.
+    /// Find an import with the specified name.
     ///
     /// Performs efficient lookup for imports by their simple name (without namespace).
-    /// If multiple imports have the same name, returns the first one found. Use
-    /// [`Self::all_by_name`] to get all imports with the same name.
+    /// If multiple imports have the same name (e.g., from different assemblies or
+    /// namespaces), returns one of them arbitrarily.
+    ///
+    /// # Ordering Behavior
+    ///
+    /// **Important**: When multiple imports share the same name, this method returns
+    /// the one with the lowest metadata token value. The ordering is determined by
+    /// the internal token-indexed storage, not by insertion order. This ordering
+    /// is consistent within a single session but should not be relied upon for
+    /// deterministic selection across different runs.
+    ///
+    /// Use [`Self::all_by_name`] when you need all imports with a given name, or
+    /// when deterministic selection among duplicates is required.
     ///
     /// # Arguments
     /// * `name` - The simple name to search for (case-sensitive)
     ///
     /// # Returns
-    /// The first [`crate::metadata::imports::ImportRc`] with matching name, or `None` if not found.
+    /// An [`ImportRc`] with matching name, or `None` if not found.
     ///
     /// # Examples
     ///
@@ -905,12 +976,19 @@ impl Imports {
     ///     println!("Found String import: {}", string_import.fullname());
     /// }
     ///
-    /// // Handle case where name doesn't exist
-    /// match imports.by_name("NonExistent") {
-    ///     Some(import) => println!("Found: {}", import.fullname()),
-    ///     None => println!("No import found with that name"),
+    /// // When duplicates exist, use all_by_name for full control
+    /// let all_strings = imports.all_by_name("String");
+    /// if all_strings.len() > 1 {
+    ///     println!("Found {} imports named String", all_strings.len());
+    ///     for import in all_strings {
+    ///         println!("  - {} from {:?}", import.fullname(), import.source_id);
+    ///     }
     /// }
     /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn by_name(&self, name: &str) -> Option<ImportRc> {
         if let Some(tokens) = self.by_name.get(name) {
             if !tokens.is_empty() {
@@ -1137,6 +1215,42 @@ impl Imports {
     /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn get(&self, token: Token) -> Option<ImportRc> {
         self.data.get(&token).map(|entry| entry.value().clone())
+    }
+
+    /// Get a module reference by its token.
+    ///
+    /// Retrieves the [`ModuleRef`] associated with the given token, if it has been
+    /// registered as a source for P/Invoke method imports. This is useful for
+    /// looking up the DLL name associated with a P/Invoke import.
+    ///
+    /// # Arguments
+    /// * `token` - The metadata token identifying the module reference
+    ///
+    /// # Returns
+    /// - `Some(ModuleRefRc)` if a module reference with the token exists
+    /// - `None` if no module reference with the token is found
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::imports::{Imports, ImportSourceId};
+    /// use dotscope::metadata::token::Token;
+    ///
+    /// let imports = Imports::new();
+    ///
+    /// // After adding a P/Invoke import, the module ref is registered
+    /// if let ImportSourceId::ModuleRef(token) = some_import.source_id {
+    ///     if let Some(module_ref) = imports.get_module_ref(token) {
+    ///         println!("DLL name: {}", module_ref.name);
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
+    pub fn get_module_ref(&self, token: Token) -> Option<ModuleRefRc> {
+        self.module_refs.get(&token).map(|entry| entry.clone())
     }
 }
 

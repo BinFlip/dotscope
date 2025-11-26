@@ -293,7 +293,7 @@ pub enum TypeSource {
     Module(Token),
     /// Type is defined in an external module reference
     ModuleRef(Token),
-    /// Type is defined in an external assembly reference  
+    /// Type is defined in an external assembly reference
     AssemblyRef(Token),
     /// Type is defined in an external file reference
     File(Token),
@@ -301,6 +301,47 @@ pub enum TypeSource {
     Primitive,
     /// Type source is not determined or not available
     Unknown,
+}
+
+impl TypeSource {
+    /// Returns `true` if this type source refers to an external reference.
+    ///
+    /// External sources include module references, assembly references, and file references.
+    /// Local sources (current assembly) and special sources (primitive, unknown) return `false`.
+    #[must_use]
+    pub fn is_external(&self) -> bool {
+        matches!(
+            self,
+            TypeSource::ModuleRef(_) | TypeSource::AssemblyRef(_) | TypeSource::File(_)
+        )
+    }
+
+    /// Returns `true` if this is a primitive type source.
+    #[must_use]
+    pub fn is_primitive(&self) -> bool {
+        matches!(self, TypeSource::Primitive)
+    }
+
+    /// Returns `true` if this source is unknown/undetermined.
+    #[must_use]
+    pub fn is_unknown(&self) -> bool {
+        matches!(self, TypeSource::Unknown)
+    }
+
+    /// Returns the associated token if this source has one.
+    ///
+    /// Returns `Some(Token)` for Module, ModuleRef, AssemblyRef, and File variants.
+    /// Returns `None` for Assembly, Primitive, and Unknown variants.
+    #[must_use]
+    pub fn token(&self) -> Option<Token> {
+        match self {
+            TypeSource::Module(t)
+            | TypeSource::ModuleRef(t)
+            | TypeSource::AssemblyRef(t)
+            | TypeSource::File(t) => Some(*t),
+            TypeSource::Assembly(_) | TypeSource::Primitive | TypeSource::Unknown => None,
+        }
+    }
 }
 
 /// Internal registry for tracking external type reference sources.

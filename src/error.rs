@@ -368,6 +368,16 @@ pub enum Error {
     #[error("Reach the maximum recursion level allowed - {0}")]
     RecursionLimit(usize),
 
+    /// Marshalling encoding error.
+    ///
+    /// This error occurs when encoding marshalling information fails due
+    /// to invalid or inconsistent marshalling descriptor data, such as
+    /// sequential parameter constraints being violated.
+    ///
+    /// The associated string contains details about what failed during encoding.
+    #[error("Marshalling encoding error: {0}")]
+    MarshallingEncodingError(String),
+
     /// Nesting depth limit reached.
     ///
     /// To prevent resource exhaustion and stack overflow during iterative parsing

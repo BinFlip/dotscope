@@ -85,7 +85,8 @@ use crate::{
     },
     Result,
 };
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::HashMap;
 
 /// Foundation validator for assembly modification operation integrity and consistency.
 ///
@@ -157,7 +158,7 @@ impl RawOperationValidator {
                 ..
             } = modifications
             {
-                let mut insert_rids = HashSet::new();
+                let mut insert_rids = FxHashSet::default();
 
                 for operation in operations {
                     if let Operation::Insert(rid, table_data) = &operation.operation {
@@ -255,7 +256,7 @@ impl RawOperationValidator {
                 ..
             } = modifications
             {
-                let mut update_rids = HashMap::new();
+                let mut update_rids = FxHashMap::default();
 
                 for operation in operations {
                     if let Operation::Update(rid, table_data) = &operation.operation {
@@ -350,7 +351,7 @@ impl RawOperationValidator {
                 ..
             } = modifications
             {
-                let mut delete_rids = HashSet::new();
+                let mut delete_rids = FxHashSet::default();
 
                 for operation in operations {
                     if let Operation::Delete(rid) = &operation.operation {
@@ -440,7 +441,7 @@ impl RawOperationValidator {
                 }
 
                 // Validate operation sequences for each RID
-                let mut rid_operations: HashMap<u32, Vec<&Operation>> = HashMap::new();
+                let mut rid_operations: FxHashMap<u32, Vec<&Operation>> = FxHashMap::default();
                 for operation in operations {
                     let rid = operation.operation.get_rid();
                     rid_operations

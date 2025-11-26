@@ -78,7 +78,7 @@ pub enum PropertyImplementation {
 /// # let view = CilAssemblyView::from_path("test.dll")?;
 /// # let assembly = CilAssembly::new(view);
 /// # let mut context = BuilderContext::new(assembly);
-/// let property_token = CilPropertyBuilder::new("Name", TypeSignature::String)
+/// let property_token = PropertyBuilder::new("Name", TypeSignature::String)
 ///     .auto_property()
 ///     .public_accessors()
 ///     .build(&mut context)?;
@@ -95,7 +95,7 @@ pub enum PropertyImplementation {
 /// # let view = CilAssemblyView::from_path("test.dll")?;
 /// # let assembly = CilAssembly::new(view);
 /// # let mut context = BuilderContext::new(assembly);
-/// let property_token = CilPropertyBuilder::new("FullName", TypeSignature::String)
+/// let property_token = PropertyBuilder::new("FullName", TypeSignature::String)
 ///     .computed()
 ///     .getter(|method| method
 ///         .implementation(|body| {
@@ -121,7 +121,7 @@ pub enum PropertyImplementation {
 /// # let view = CilAssemblyView::from_path("test.dll")?;
 /// # let assembly = CilAssembly::new(view);
 /// # let mut context = BuilderContext::new(assembly);
-/// let property_token = CilPropertyBuilder::new("Value", TypeSignature::I4)
+/// let property_token = PropertyBuilder::new("Value", TypeSignature::I4)
 ///     .auto_property()
 ///     .backing_field("_customValue")
 ///     .private_backing_field()
@@ -170,7 +170,7 @@ impl PropertyBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilPropertyBuilder::new("Name", TypeSignature::String);
+    /// let builder = PropertyBuilder::new("Name", TypeSignature::String);
     /// ```
     #[must_use]
     pub fn new(name: &str, property_type: TypeSignature) -> Self {
@@ -199,7 +199,7 @@ impl PropertyBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilPropertyBuilder::new("Name", TypeSignature::String)
+    /// let builder = PropertyBuilder::new("Name", TypeSignature::String)
     ///     .auto_property();
     /// ```
     #[must_use]
@@ -220,7 +220,7 @@ impl PropertyBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilPropertyBuilder::new("Area", TypeSignature::R8)
+    /// let builder = PropertyBuilder::new("Area", TypeSignature::R8)
     ///     .computed();
     /// ```
     #[must_use]
@@ -241,7 +241,7 @@ impl PropertyBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilPropertyBuilder::new("Complex", TypeSignature::Object)
+    /// let builder = PropertyBuilder::new("Complex", TypeSignature::Object)
     ///     .manual();
     /// ```
     #[must_use]
@@ -261,7 +261,7 @@ impl PropertyBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilPropertyBuilder::new("Value", TypeSignature::I4)
+    /// let builder = PropertyBuilder::new("Value", TypeSignature::I4)
     ///     .backing_field("_value");
     /// ```
     #[must_use]
@@ -282,7 +282,7 @@ impl PropertyBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilPropertyBuilder::new("Value", TypeSignature::I4)
+    /// let builder = PropertyBuilder::new("Value", TypeSignature::I4)
     ///     .private_backing_field();
     /// ```
     #[must_use]
@@ -304,7 +304,7 @@ impl PropertyBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilPropertyBuilder::new("Value", TypeSignature::I4)
+    /// let builder = PropertyBuilder::new("Value", TypeSignature::I4)
     ///     .public_backing_field();
     /// ```
     #[must_use]
@@ -326,7 +326,7 @@ impl PropertyBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilPropertyBuilder::new("ReadOnlyValue", TypeSignature::I4)
+    /// let builder = PropertyBuilder::new("ReadOnlyValue", TypeSignature::I4)
     ///     .readonly();
     /// ```
     #[must_use]
@@ -342,7 +342,7 @@ impl PropertyBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilPropertyBuilder::new("WriteOnlyValue", TypeSignature::I4)
+    /// let builder = PropertyBuilder::new("WriteOnlyValue", TypeSignature::I4)
     ///     .writeonly();
     /// ```
     #[must_use]
@@ -358,7 +358,7 @@ impl PropertyBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilPropertyBuilder::new("Value", TypeSignature::I4)
+    /// let builder = PropertyBuilder::new("Value", TypeSignature::I4)
     ///     .getter_and_setter();
     /// ```
     #[must_use]
@@ -374,7 +374,7 @@ impl PropertyBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilPropertyBuilder::new("Value", TypeSignature::I4)
+    /// let builder = PropertyBuilder::new("Value", TypeSignature::I4)
     ///     .public_accessors();
     /// ```
     #[must_use]
@@ -391,7 +391,7 @@ impl PropertyBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilPropertyBuilder::new("Value", TypeSignature::I4)
+    /// let builder = PropertyBuilder::new("Value", TypeSignature::I4)
     ///     .private_accessors();
     /// ```
     #[must_use]
@@ -412,7 +412,7 @@ impl PropertyBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilPropertyBuilder::new("Value", TypeSignature::I4)
+    /// let builder = PropertyBuilder::new("Value", TypeSignature::I4)
     ///     .getter_visibility(0x0006); // PUBLIC
     /// ```
     #[must_use]
@@ -432,7 +432,7 @@ impl PropertyBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilPropertyBuilder::new("Value", TypeSignature::I4)
+    /// let builder = PropertyBuilder::new("Value", TypeSignature::I4)
     ///     .setter_visibility(0x0001); // PRIVATE
     /// ```
     #[must_use]
@@ -456,7 +456,7 @@ impl PropertyBuilder {
     /// # let view = CilAssemblyView::from_path("test.dll")?;
     /// # let assembly = CilAssembly::new(view);
     /// # let mut context = BuilderContext::new(assembly);
-    /// let builder = CilPropertyBuilder::new("ComputedValue", TypeSignature::I4)
+    /// let builder = PropertyBuilder::new("ComputedValue", TypeSignature::I4)
     ///     .computed()
     ///     .getter(|method| method
     ///         .implementation(|body| {
@@ -494,7 +494,7 @@ impl PropertyBuilder {
     /// # let view = CilAssemblyView::from_path("test.dll")?;
     /// # let assembly = CilAssembly::new(view);
     /// # let mut context = BuilderContext::new(assembly);
-    /// let builder = CilPropertyBuilder::new("ComputedValue", TypeSignature::I4)
+    /// let builder = PropertyBuilder::new("ComputedValue", TypeSignature::I4)
     ///     .computed()
     ///     .setter(|method| method
     ///         .implementation(|body| {
@@ -532,7 +532,7 @@ impl PropertyBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilPropertyBuilder::new("Item", TypeSignature::String)
+    /// let builder = PropertyBuilder::new("Item", TypeSignature::String)
     ///     .indexed("index", TypeSignature::I4);
     /// ```
     #[must_use]
@@ -554,7 +554,7 @@ impl PropertyBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilPropertyBuilder::new("Item", TypeSignature::String)
+    /// let builder = PropertyBuilder::new("Item", TypeSignature::String)
     ///     .indexed("row", TypeSignature::I4)
     ///     .parameter("column", TypeSignature::I4);
     /// ```
@@ -575,7 +575,7 @@ impl PropertyBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilPropertyBuilder::new("Value", TypeSignature::I4)
+    /// let builder = PropertyBuilder::new("Value", TypeSignature::I4)
     ///     .attributes(0x0200); // SPECIAL_NAME
     /// ```
     #[must_use]

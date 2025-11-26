@@ -374,20 +374,171 @@ impl TableOperation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test::factories::table::cilassembly::create_test_row;
 
     #[test]
-    fn test_operation_rid_extraction() {
+    fn test_operation_get_rid_for_all_variants() {
+        let row_data = create_test_row();
+
+        // Test Insert variant
+        let insert_op = Operation::Insert(42, row_data.clone());
+        assert_eq!(insert_op.get_rid(), 42);
+
+        // Test Update variant
+        let update_op = Operation::Update(100, row_data);
+        assert_eq!(update_op.get_rid(), 100);
+
+        // Test Delete variant
         let delete_op = Operation::Delete(10);
         assert_eq!(delete_op.get_rid(), 10);
+    }
+
+    #[test]
+    fn test_operation_get_row_data_for_all_variants() {
+        let row_data = create_test_row();
+
+        // Insert should return Some
+        let insert_op = Operation::Insert(1, row_data.clone());
+        assert!(insert_op.get_row_data().is_some());
+
+        // Update should return Some
+        let update_op = Operation::Update(1, row_data);
+        assert!(update_op.get_row_data().is_some());
+
+        // Delete should return None
+        let delete_op = Operation::Delete(1);
+        assert!(delete_op.get_row_data().is_none());
+    }
+
+    #[test]
+    fn test_operation_get_row_data_mut_for_all_variants() {
+        let row_data = create_test_row();
+
+        // Insert should return Some (mutable)
+        let mut insert_op = Operation::Insert(1, row_data.clone());
+        assert!(insert_op.get_row_data_mut().is_some());
+
+        // Update should return Some (mutable)
+        let mut update_op = Operation::Update(1, row_data);
+        assert!(update_op.get_row_data_mut().is_some());
+
+        // Delete should return None
+        let mut delete_op = Operation::Delete(1);
+        assert!(delete_op.get_row_data_mut().is_none());
+    }
+
+    #[test]
+    fn test_operation_type_for_all_variants() {
+        let row_data = create_test_row();
+
+        let insert_op = Operation::Insert(1, row_data.clone());
+        assert_eq!(insert_op.operation_type(), "Insert");
+
+        let update_op = Operation::Update(1, row_data);
+        assert_eq!(update_op.operation_type(), "Update");
+
+        let delete_op = Operation::Delete(1);
         assert_eq!(delete_op.operation_type(), "Delete");
     }
 
     #[test]
-    fn test_operation_timestamp_ordering() {
+    fn test_operation_edge_case_rid_zero() {
+        // RID 0 is reserved but the Operation struct doesn't validate - that's up to callers
+        let delete_op = Operation::Delete(0);
+        assert_eq!(delete_op.get_rid(), 0);
+    }
+
+    #[test]
+    fn test_operation_edge_case_max_rid() {
+        let delete_op = Operation::Delete(u32::MAX);
+        assert_eq!(delete_op.get_rid(), u32::MAX);
+    }
+
+    #[test]
+    fn test_table_operation_new_captures_timestamp() {
+        let op = TableOperation::new(Operation::Delete(1));
+        // Timestamp should be non-zero (current time)
+        assert!(op.timestamp > 0);
+    }
+
+    #[test]
+    fn test_table_operation_new_with_timestamp() {
+        let op = TableOperation::new_with_timestamp(Operation::Delete(1), 12345);
+        assert_eq!(op.timestamp, 12345);
+    }
+
+    #[test]
+    fn test_table_operation_timestamp_ordering() {
         let op1 = TableOperation::new(Operation::Delete(1));
-        std::thread::sleep(std::time::Duration::from_micros(1));
+        std::thread::sleep(std::time::Duration::from_micros(10));
         let op2 = TableOperation::new(Operation::Delete(2));
 
         assert!(op2.timestamp > op1.timestamp);
+    }
+
+    #[test]
+    fn test_table_operation_get_rid() {
+        let row_data = create_test_row();
+        let op = TableOperation::new(Operation::Insert(999, row_data));
+        assert_eq!(op.get_rid(), 999);
+    }
+
+    #[test]
+    fn test_table_operation_is_insert() {
+        let row_data = create_test_row();
+
+        let insert_op = TableOperation::new(Operation::Insert(1, row_data.clone()));
+        assert!(insert_op.is_insert());
+        assert!(!insert_op.is_update());
+        assert!(!insert_op.is_delete());
+
+        let update_op = TableOperation::new(Operation::Update(1, row_data));
+        assert!(!update_op.is_insert());
+
+        let delete_op = TableOperation::new(Operation::Delete(1));
+        assert!(!delete_op.is_insert());
+    }
+
+    #[test]
+    fn test_table_operation_is_update() {
+        let row_data = create_test_row();
+
+        let update_op = TableOperation::new(Operation::Update(1, row_data.clone()));
+        assert!(update_op.is_update());
+        assert!(!update_op.is_insert());
+        assert!(!update_op.is_delete());
+
+        let insert_op = TableOperation::new(Operation::Insert(1, row_data));
+        assert!(!insert_op.is_update());
+
+        let delete_op = TableOperation::new(Operation::Delete(1));
+        assert!(!delete_op.is_update());
+    }
+
+    #[test]
+    fn test_table_operation_is_delete() {
+        let row_data = create_test_row();
+
+        let delete_op = TableOperation::new(Operation::Delete(1));
+        assert!(delete_op.is_delete());
+        assert!(!delete_op.is_insert());
+        assert!(!delete_op.is_update());
+
+        let insert_op = TableOperation::new(Operation::Insert(1, row_data.clone()));
+        assert!(!insert_op.is_delete());
+
+        let update_op = TableOperation::new(Operation::Update(1, row_data));
+        assert!(!update_op.is_delete());
+    }
+
+    #[test]
+    fn test_table_operation_clone() {
+        let row_data = create_test_row();
+        let op = TableOperation::new_with_timestamp(Operation::Insert(42, row_data), 5000);
+        let cloned = op.clone();
+
+        assert_eq!(cloned.timestamp, 5000);
+        assert_eq!(cloned.get_rid(), 42);
+        assert!(cloned.is_insert());
     }
 }

@@ -9,7 +9,8 @@ use crate::{
     metadata::{
         signatures::{encode_field_signature, SignatureField, TypeSignature},
         tables::{
-            CodedIndex, CodedIndexType, FieldBuilder, InterfaceImplBuilder, TableId, TypeDefBuilder,
+            CodedIndex, CodedIndexType, FieldBuilder, InterfaceImplBuilder, TypeAttributes,
+            TypeDefBuilder,
         },
         token::Token,
     },
@@ -248,7 +249,7 @@ impl ClassBuilder {
     /// ```
     #[must_use]
     pub fn sealed(mut self) -> Self {
-        self.flags |= 0x0000_0100; // SEALED
+        self.flags |= TypeAttributes::SEALED;
         self
     }
 
@@ -263,7 +264,7 @@ impl ClassBuilder {
     /// ```
     #[must_use]
     pub fn abstract_class(mut self) -> Self {
-        self.flags |= 0x0000_0080; // ABSTRACT
+        self.flags |= TypeAttributes::ABSTRACT;
         self
     }
 
@@ -549,24 +550,28 @@ impl ClassBuilder {
     ///
     /// # Errors
     ///
-    /// Returns an error if class creation fails at any step.
+    /// Returns an error if:
+    /// - Class creation fails at any step
+    /// - Both sealed and abstract flags are set (mutually exclusive per ECMA-335)
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        // Build the full type name
-        let _full_name = match &self.namespace {
-            Some(ns) => format!("{}.{}", ns, self.name),
-            None => self.name.clone(),
-        };
+        // Validate that sealed and abstract are not both set (mutually exclusive)
+        if (self.flags & TypeAttributes::SEALED) != 0
+            && (self.flags & TypeAttributes::ABSTRACT) != 0
+        {
+            return Err(Error::ModificationInvalidOperation {
+                details: "Class cannot be both sealed and abstract (mutually exclusive flags per ECMA-335)".to_string(),
+            });
+        }
 
         // Create the TypeDef entry
         let typedef_token = TypeDefBuilder::new()
             .name(&self.name)
             .namespace(self.namespace.as_deref().unwrap_or(""))
             .flags(self.flags)
-            .extends(self.extends.unwrap_or(CodedIndex::new(
-                TableId::TypeRef,
-                0,
-                CodedIndexType::TypeDefOrRef,
-            ))) // 0 = no base class (will default to Object)
+            .extends(
+                self.extends
+                    .unwrap_or_else(|| CodedIndex::null(CodedIndexType::TypeDefOrRef)),
+            ) // null = no base class (will default to Object)
             .build(context)?;
 
         // Create field definitions and store their tokens
@@ -676,7 +681,7 @@ mod tests {
     use super::*;
     use crate::{
         cilassembly::{BuilderContext, CilAssembly},
-        metadata::{cilassemblyview::CilAssemblyView, signatures::TypeSignature},
+        metadata::{cilassemblyview::CilAssemblyView, signatures::TypeSignature, tables::TableId},
     };
     use std::path::PathBuf;
 
@@ -853,5 +858,25 @@ mod tests {
         assert_eq!(class_token.value() & 0xFF000000, 0x02000000);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_sealed_and_abstract_mutually_exclusive() {
+        let mut context = get_test_context().unwrap();
+
+        // Attempting to create a class that is both sealed and abstract should fail
+        let result = ClassBuilder::new("InvalidClass")
+            .public()
+            .sealed()
+            .abstract_class()
+            .build(&mut context);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("sealed and abstract"),
+            "Error should mention sealed and abstract conflict: {}",
+            err
+        );
     }
 }

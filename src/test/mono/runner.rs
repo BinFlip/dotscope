@@ -1,8 +1,8 @@
-//! Test orchestration and temporary folder management for mono testing
+//! Test orchestration and temporary folder management
 //!
-//! This module provides the core test runner infrastructure for mono-based
-//! verification tests, handling temporary directory management and dual
-//! architecture testing coordination.
+//! This module provides the core test runner infrastructure for .NET assembly
+//! verification tests, handling temporary directory management and multi-architecture
+//! testing coordination.
 
 use crate::prelude::*;
 use std::path::{Path, PathBuf};
@@ -169,18 +169,6 @@ pub struct ArchTestResult<R> {
     pub success: bool,
     pub result: Option<R>,
     pub error: Option<Error>,
-}
-
-impl<R> ArchTestResult<R> {
-    /// Check if all results in a collection succeeded
-    pub fn all_succeeded(results: &[Self]) -> bool {
-        results.iter().all(|r| r.success)
-    }
-
-    /// Get first error from a collection of results
-    pub fn first_error(results: &[Self]) -> Option<&Error> {
-        results.iter().find_map(|r| r.error.as_ref())
-    }
 }
 
 #[cfg(test)]

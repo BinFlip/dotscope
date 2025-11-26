@@ -81,6 +81,11 @@
 //! }
 //! # Ok::<(), dotscope::Error>(())
 //! ```
+//!
+//! # ECMA-335 References
+//!
+//! - §III.1 - CIL instruction set overview
+//! - §III.3 - Base instructions (used during iteration analysis)
 
 use crate::assembly::BasicBlock;
 
@@ -252,7 +257,7 @@ impl<'a> Iterator for InstructionIterator<'a> {
     ///
     /// This method traverses basic blocks in order, yielding instructions from each
     /// block sequentially. When a block is exhausted, it automatically advances to
-    /// the next non-empty block using recursive calls to handle empty blocks gracefully.
+    /// the next non-empty block using an iterative loop to handle empty blocks gracefully.
     ///
     /// # Returns
     ///
@@ -261,26 +266,27 @@ impl<'a> Iterator for InstructionIterator<'a> {
     ///
     /// # Implementation Notes
     ///
-    /// The method uses recursive calls to skip empty blocks, which is safe because:
-    /// - The recursion depth is bounded by the number of consecutive empty blocks
-    /// - Empty blocks are relatively rare in typical IL code
-    /// - Each recursive call advances the block index, preventing infinite recursion
+    /// The method uses an iterative loop to skip empty blocks, which is safe for
+    /// any number of consecutive empty blocks without risk of stack overflow.
+    /// This is important for handling potentially malformed assemblies that might
+    /// contain many empty blocks due to pathological exception handler structures.
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current_block >= self.blocks.len() {
-            return None;
-        }
+        loop {
+            if self.current_block >= self.blocks.len() {
+                return None;
+            }
 
-        let block = self.blocks.get(self.current_block)?;
+            let block = self.blocks.get(self.current_block)?;
 
-        if self.current_instruction >= block.instructions.len() {
+            if self.current_instruction < block.instructions.len() {
+                let instruction = &block.instructions[self.current_instruction];
+                self.current_instruction += 1;
+                return Some(instruction);
+            }
+
             self.current_block += 1;
             self.current_instruction = 0;
-            return self.next(); // Recursive call to handle empty blocks
         }
-
-        let instruction = &block.instructions[self.current_instruction];
-        self.current_instruction += 1;
-        Some(instruction)
     }
 
     /// Provides a size hint for the remaining instructions in the iterator.

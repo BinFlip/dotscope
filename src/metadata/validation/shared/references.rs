@@ -69,7 +69,8 @@ use crate::{
     metadata::{tables::TableId, token::Token, validation::scanner::ReferenceScanner},
     Error, Result,
 };
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::HashSet;
 
 /// Shared reference validation utilities.
 ///
@@ -161,26 +162,29 @@ impl<'a> ReferenceValidator<'a> {
             });
         }
 
-        let outgoing_refs = self.scanner.get_references_from(token);
-        for referenced_token in outgoing_refs {
-            if !self.scanner.token_exists(referenced_token) {
-                return Err(Error::ValidationInvalidRid {
-                    table: TableId::from_token_type(referenced_token.table())
-                        .unwrap_or(TableId::Module),
-                    rid: referenced_token.row(),
-                });
+        // Validate all outgoing references
+        if let Some(outgoing_refs) = self.scanner.references_from(token) {
+            for &referenced_token in outgoing_refs {
+                if !self.scanner.token_exists(referenced_token) {
+                    return Err(Error::ValidationInvalidRid {
+                        table: TableId::from_token_type(referenced_token.table())
+                            .unwrap_or(TableId::Module),
+                        rid: referenced_token.row(),
+                    });
+                }
             }
         }
 
         // Validate all incoming references
-        let incoming_refs = self.scanner.get_references_to(token);
-        for referencing_token in incoming_refs {
-            if !self.scanner.token_exists(referencing_token) {
-                return Err(Error::ValidationInvalidRid {
-                    table: TableId::from_token_type(referencing_token.table())
-                        .unwrap_or(TableId::Module),
-                    rid: referencing_token.row(),
-                });
+        if let Some(incoming_refs) = self.scanner.references_to(token) {
+            for &referencing_token in incoming_refs {
+                if !self.scanner.token_exists(referencing_token) {
+                    return Err(Error::ValidationInvalidRid {
+                        table: TableId::from_token_type(referencing_token.table())
+                            .unwrap_or(TableId::Module),
+                        rid: referencing_token.row(),
+                    });
+                }
             }
         }
 
@@ -201,8 +205,8 @@ impl<'a> ReferenceValidator<'a> {
     /// Returns `true` if a circular reference is detected, `false` otherwise.
     #[must_use]
     pub fn has_circular_references(&self, start_token: Token) -> bool {
-        let mut visited = HashSet::new();
-        let mut recursion_stack = HashSet::new();
+        let mut visited = FxHashSet::default();
+        let mut recursion_stack = FxHashSet::default();
 
         self.detect_cycle_dfs(start_token, &mut visited, &mut recursion_stack)
     }
@@ -211,8 +215,8 @@ impl<'a> ReferenceValidator<'a> {
     fn detect_cycle_dfs(
         &self,
         token: Token,
-        visited: &mut HashSet<Token>,
-        recursion_stack: &mut HashSet<Token>,
+        visited: &mut FxHashSet<Token>,
+        recursion_stack: &mut FxHashSet<Token>,
     ) -> bool {
         if recursion_stack.contains(&token) {
             return true; // Cycle detected
@@ -225,10 +229,11 @@ impl<'a> ReferenceValidator<'a> {
         visited.insert(token);
         recursion_stack.insert(token);
 
-        let references = self.scanner.get_references_from(token);
-        for referenced_token in references {
-            if self.detect_cycle_dfs(referenced_token, visited, recursion_stack) {
-                return true;
+        if let Some(references) = self.scanner.references_from(token) {
+            for &referenced_token in references {
+                if self.detect_cycle_dfs(referenced_token, visited, recursion_stack) {
+                    return true;
+                }
             }
         }
 
@@ -254,14 +259,16 @@ impl<'a> ReferenceValidator<'a> {
         let target_token_value = (u32::from(table_id.token_type()) << 24) | (rid & 0x00FF_FFFF);
         let target_token = Token::new(target_token_value);
 
-        let referencing_tokens = self.scanner.get_references_to(target_token);
-
-        referencing_tokens
-            .into_iter()
-            .filter_map(|token| {
-                TableId::from_token_type(token.table()).map(|table| (table, token.row()))
+        self.scanner
+            .references_to(target_token)
+            .map(|refs| {
+                refs.iter()
+                    .filter_map(|token| {
+                        TableId::from_token_type(token.table()).map(|table| (table, token.row()))
+                    })
+                    .collect()
             })
-            .collect()
+            .unwrap_or_default()
     }
 
     /// Validates deletion safety for a token.
@@ -283,9 +290,11 @@ impl<'a> ReferenceValidator<'a> {
     /// - `ValidationReferenceError`: If deleting the token would break references
     pub fn validate_deletion_safety(&self, token: Token) -> Result<()> {
         if !self.scanner.can_delete_token(token) {
-            let referencing_tokens = self.scanner.get_references_to(token);
+            let ref_count = self
+                .scanner
+                .references_to(token)
+                .map_or(0, |refs| refs.len());
             let token_value = token.value();
-            let ref_count = referencing_tokens.len();
             return Err(Error::ValidationCrossReferenceError {
                 message: format!(
                     "Cannot delete token {token_value:#x}: {ref_count} references would be broken"
@@ -319,20 +328,26 @@ impl<'a> ReferenceValidator<'a> {
 
     /// Analyzes references for a specific token.
     fn analyze_token_references(&self, token: Token, analysis: &mut ReferenceAnalysis) {
-        let incoming_refs = self.scanner.get_references_to(token);
-        let outgoing_refs = self.scanner.get_references_from(token);
+        let incoming_count = self
+            .scanner
+            .references_to(token)
+            .map_or(0, |refs| refs.len());
+        let outgoing_count = self
+            .scanner
+            .references_from(token)
+            .map_or(0, |refs| refs.len());
 
         analysis.total_tokens += 1;
-        analysis.total_references += incoming_refs.len() + outgoing_refs.len();
+        analysis.total_references += incoming_count + outgoing_count;
 
-        if incoming_refs.is_empty() {
+        if incoming_count == 0 {
             analysis.orphaned_tokens.insert(token);
         }
 
-        if incoming_refs.len() > 10 {
+        if incoming_count > 10 {
             analysis
                 .highly_referenced_tokens
-                .insert(token, incoming_refs.len());
+                .insert(token, incoming_count);
         }
 
         if self.has_circular_references(token) {
@@ -363,17 +378,17 @@ impl<'a> ReferenceValidator<'a> {
     ///
     /// Returns an error if any forward reference points to a non-existent token.
     pub fn validate_forward_references(&self, token: Token) -> Result<()> {
-        let references = self.scanner.get_references_from(token);
-
-        for referenced_token in references {
-            if !self.scanner.token_exists(referenced_token) {
-                let from_token = token.value();
-                let to_token = referenced_token.value();
-                return Err(Error::ValidationCrossReferenceError {
-                    message: format!(
-                        "Forward reference from {from_token:#x} to non-existent token {to_token:#x}"
-                    ),
-                });
+        if let Some(references) = self.scanner.references_from(token) {
+            for &referenced_token in references {
+                if !self.scanner.token_exists(referenced_token) {
+                    let from_token = token.value();
+                    let to_token = referenced_token.value();
+                    return Err(Error::ValidationCrossReferenceError {
+                        message: format!(
+                            "Forward reference from {from_token:#x} to non-existent token {to_token:#x}"
+                        ),
+                    });
+                }
             }
         }
 
@@ -425,15 +440,16 @@ impl<'a> ReferenceValidator<'a> {
             });
         }
 
-        let parent_references = self.scanner.get_references_from(child_token);
-        if parent_references.contains(&parent_token) {
-            let parent_value = parent_token.value();
-            let child_value = child_token.value();
-            return Err(Error::ValidationCrossReferenceError {
-                message: format!(
-                    "Circular parent-child relationship detected between {parent_value:#x} and {child_value:#x}"
-                ),
-            });
+        if let Some(parent_references) = self.scanner.references_from(child_token) {
+            if parent_references.contains(&parent_token) {
+                let parent_value = parent_token.value();
+                let child_value = child_token.value();
+                return Err(Error::ValidationCrossReferenceError {
+                    message: format!(
+                        "Circular parent-child relationship detected between {parent_value:#x} and {child_value:#x}"
+                    ),
+                });
+            }
         }
 
         Ok(())
@@ -532,9 +548,9 @@ pub struct ReferenceAnalysis {
     /// Total number of references found
     pub total_references: usize,
     /// Tokens with no incoming references (potential orphans)
-    pub orphaned_tokens: HashSet<Token>,
+    pub orphaned_tokens: FxHashSet<Token>,
     /// Tokens with many incoming references and their reference counts
-    pub highly_referenced_tokens: HashMap<Token, usize>,
+    pub highly_referenced_tokens: FxHashMap<Token, usize>,
     /// Tokens that are part of circular reference chains
     pub circular_reference_chains: Vec<Token>,
 }

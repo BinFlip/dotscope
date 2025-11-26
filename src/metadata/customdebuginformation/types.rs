@@ -73,7 +73,7 @@
 //!     CustomDebugInfo::SourceLink { document } => {
 //!         println!("Source Link JSON: {}", document);
 //!     }
-//!     CustomDebugInfo::EmbeddedSource { filename, content } => {
+//!     CustomDebugInfo::EmbeddedSource { filename, content, .. } => {
 //!         println!("Embedded source '{}': {} chars", filename, content.len());
 //!     }
 //!     CustomDebugInfo::CompilationMetadata { metadata } => {
@@ -108,6 +108,50 @@
 //! - **Microsoft Standards**: Support for all standard Microsoft debug information GUIDs
 //! - **Extensibility**: Forward compatibility with unknown debug information types
 //! - **Type Safety**: Strong typing prevents GUID/data format mismatches
+//!
+//! # Serialization
+//!
+//! The types in this module implement [`std::fmt::Display`] for human-readable output.
+//! Serde serialization is not currently supported but could be added as an optional
+//! feature in the future if needed for JSON/YAML export functionality.
+
+/// Well-known GUID constants for custom debug information types.
+///
+/// These GUIDs are defined by Microsoft for the Portable PDB specification.
+/// See: <https://github.com/dotnet/runtime/blob/main/docs/design/specs/PortablePdb-Metadata.md>
+pub mod debug_guids {
+    /// Source Link GUID: CC110556-A091-4D38-9FEC-25AB9A351A6A
+    ///
+    /// Contains JSON mapping source files to repository URLs for debugging.
+    pub const SOURCE_LINK: [u8; 16] = [
+        0x56, 0x05, 0x11, 0xCC, 0x91, 0xA0, 0x38, 0x4D, 0x9F, 0xEC, 0x25, 0xAB, 0x9A, 0x35, 0x1A,
+        0x6A,
+    ];
+
+    /// Embedded Source GUID: 0E8A571B-6926-466E-B4AD-8AB04611F5FE
+    ///
+    /// Contains complete source file content embedded in the PDB.
+    pub const EMBEDDED_SOURCE: [u8; 16] = [
+        0x1B, 0x57, 0x8A, 0x0E, 0x26, 0x69, 0x6E, 0x46, 0xB4, 0xAD, 0x8A, 0xB0, 0x46, 0x11, 0xF5,
+        0xFE,
+    ];
+
+    /// Compilation Metadata GUID: B5FEEC05-8CD0-4A83-96DA-466284BB4BD8
+    ///
+    /// Stores compiler and build-time metadata information.
+    pub const COMPILATION_METADATA: [u8; 16] = [
+        0x05, 0xEC, 0xFE, 0xB5, 0xD0, 0x8C, 0x83, 0x4A, 0x96, 0xDA, 0x46, 0x62, 0x84, 0xBB, 0x4B,
+        0xD8,
+    ];
+
+    /// Compilation Options GUID: B1C2ABE1-8BF0-497A-A9B1-02FA8571E544
+    ///
+    /// Contains the compiler options used during compilation.
+    pub const COMPILATION_OPTIONS: [u8; 16] = [
+        0xE1, 0xAB, 0xC2, 0xB1, 0xF0, 0x8B, 0x7A, 0x49, 0xA9, 0xB1, 0x02, 0xFA, 0x85, 0x71, 0xE5,
+        0x44,
+    ];
+}
 
 /// Well-known custom debug information kinds identified by GUID.
 ///
@@ -203,25 +247,17 @@ impl CustomDebugKind {
     /// This method is thread-safe and can be called concurrently from multiple threads.
     #[must_use]
     pub fn from_guid(guid_bytes: [u8; 16]) -> Self {
-        match guid_bytes {
-            // Source Link: CC110556-A091-4D38-9FEC-25AB9A351A6A
-            [0x56, 0x05, 0x11, 0xCC, 0x91, 0xA0, 0x38, 0x4D, 0x9F, 0xEC, 0x25, 0xAB, 0x9A, 0x35, 0x1A, 0x6A] => {
-                CustomDebugKind::SourceLink
-            }
-            // Embedded Source: 0E8A571B-6926-466E-B4AD-8AB04611F5FE
-            [0x1B, 0x57, 0x8A, 0x0E, 0x26, 0x69, 0x6E, 0x46, 0xB4, 0xAD, 0x8A, 0xB0, 0x46, 0x11, 0xF5, 0xFE] => {
-                CustomDebugKind::EmbeddedSource
-            }
-            // Compilation Metadata: B5FEEC05-8CD0-4A83-96DA-466284BB4BD8
-            [0x05, 0xEC, 0xFE, 0xB5, 0xD0, 0x8C, 0x83, 0x4A, 0x96, 0xDA, 0x46, 0x62, 0x84, 0xBB, 0x4B, 0xD8] => {
-                CustomDebugKind::CompilationMetadata
-            }
-            // Compilation Options: B1C2ABE1-8BF0-497A-A9B1-02FA8571E544
-            [0xE1, 0xAB, 0xC2, 0xB1, 0xF0, 0x8B, 0x7A, 0x49, 0xA9, 0xB1, 0x02, 0xFA, 0x85, 0x71, 0xE5, 0x44] => {
-                CustomDebugKind::CompilationOptions
-            }
-            // Unknown GUID
-            bytes => CustomDebugKind::Unknown(bytes),
+        // Use named constants from debug_guids module for maintainability
+        if guid_bytes == debug_guids::SOURCE_LINK {
+            CustomDebugKind::SourceLink
+        } else if guid_bytes == debug_guids::EMBEDDED_SOURCE {
+            CustomDebugKind::EmbeddedSource
+        } else if guid_bytes == debug_guids::COMPILATION_METADATA {
+            CustomDebugKind::CompilationMetadata
+        } else if guid_bytes == debug_guids::COMPILATION_OPTIONS {
+            CustomDebugKind::CompilationOptions
+        } else {
+            CustomDebugKind::Unknown(guid_bytes)
         }
     }
 
@@ -252,22 +288,10 @@ impl CustomDebugKind {
     #[must_use]
     pub fn to_guid_bytes(&self) -> [u8; 16] {
         match self {
-            CustomDebugKind::SourceLink => [
-                0x56, 0x05, 0x11, 0xCC, 0x91, 0xA0, 0x38, 0x4D, 0x9F, 0xEC, 0x25, 0xAB, 0x9A, 0x35,
-                0x1A, 0x6A,
-            ],
-            CustomDebugKind::EmbeddedSource => [
-                0x1B, 0x57, 0x8A, 0x0E, 0x26, 0x69, 0x6E, 0x46, 0xB4, 0xAD, 0x8A, 0xB0, 0x46, 0x11,
-                0xF5, 0xFE,
-            ],
-            CustomDebugKind::CompilationMetadata => [
-                0x05, 0xEC, 0xFE, 0xB5, 0xD0, 0x8C, 0x83, 0x4A, 0x96, 0xDA, 0x46, 0x62, 0x84, 0xBB,
-                0x4B, 0xD8,
-            ],
-            CustomDebugKind::CompilationOptions => [
-                0xE1, 0xAB, 0xC2, 0xB1, 0xF0, 0x8B, 0x7A, 0x49, 0xA9, 0xB1, 0x02, 0xFA, 0x85, 0x71,
-                0xE5, 0x44,
-            ],
+            CustomDebugKind::SourceLink => debug_guids::SOURCE_LINK,
+            CustomDebugKind::EmbeddedSource => debug_guids::EMBEDDED_SOURCE,
+            CustomDebugKind::CompilationMetadata => debug_guids::COMPILATION_METADATA,
+            CustomDebugKind::CompilationOptions => debug_guids::COMPILATION_OPTIONS,
             CustomDebugKind::Unknown(bytes) => *bytes,
         }
     }
@@ -327,12 +351,33 @@ pub enum CustomDebugInfo {
         document: String,
     },
 
-    /// Embedded source file content
+    /// Embedded source file content.
+    ///
+    /// # Blob Format (Portable PDB Specification)
+    ///
+    /// The blob format is:
+    /// - **int32 format**: Compression indicator
+    ///   - `0`: Raw uncompressed UTF-8 text follows
+    ///   - `> 0`: Deflate-compressed data, value is decompressed byte size
+    /// - **bytes content**: Source file content (raw or compressed)
+    ///
+    /// # Note on Filename
+    ///
+    /// The filename is NOT stored in the EmbeddedSource blob itself. It is obtained
+    /// from the parent Document row in the CustomDebugInformation table. The `filename`
+    /// field here is provided for convenience but must be populated separately by the
+    /// caller using the Document table lookup.
     EmbeddedSource {
-        /// Original filename of the embedded source
+        /// Original filename of the embedded source.
+        ///
+        /// **Note**: This is NOT parsed from the blob. The filename comes from the
+        /// parent Document row and should be set by the caller after parsing.
+        /// Defaults to empty string when parsed directly from blob data.
         filename: String,
-        /// UTF-8 source file content
+        /// UTF-8 source file content (decompressed if originally compressed)
         content: String,
+        /// Whether the original blob data was compressed with deflate
+        was_compressed: bool,
     },
 
     /// Compilation metadata information
@@ -415,6 +460,89 @@ impl CustomDebugInfo {
             CustomDebugInfo::Unknown { data, .. } => data.len(),
         }
     }
+
+    /// Check if this embedded source was compressed in the original blob.
+    ///
+    /// # Returns
+    /// - `Some(true)` if this is `EmbeddedSource` and was compressed
+    /// - `Some(false)` if this is `EmbeddedSource` and was not compressed
+    /// - `None` if this is not an `EmbeddedSource` variant
+    #[must_use]
+    pub fn was_compressed(&self) -> Option<bool> {
+        match self {
+            CustomDebugInfo::EmbeddedSource { was_compressed, .. } => Some(*was_compressed),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for CustomDebugKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CustomDebugKind::SourceLink => write!(f, "SourceLink"),
+            CustomDebugKind::EmbeddedSource => write!(f, "EmbeddedSource"),
+            CustomDebugKind::CompilationMetadata => write!(f, "CompilationMetadata"),
+            CustomDebugKind::CompilationOptions => write!(f, "CompilationOptions"),
+            CustomDebugKind::Unknown(guid) => {
+                // Format GUID as standard hex representation
+                write!(
+                    f,
+                    "Unknown({:02X}{:02X}{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X})",
+                    guid[3], guid[2], guid[1], guid[0],
+                    guid[5], guid[4],
+                    guid[7], guid[6],
+                    guid[8], guid[9],
+                    guid[10], guid[11], guid[12], guid[13], guid[14], guid[15]
+                )
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for CustomDebugInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CustomDebugInfo::SourceLink { document } => {
+                write!(f, "SourceLink({} bytes)", document.len())
+            }
+            CustomDebugInfo::EmbeddedSource {
+                filename,
+                content,
+                was_compressed,
+            } => {
+                let compression = if *was_compressed {
+                    "compressed"
+                } else {
+                    "uncompressed"
+                };
+                if filename.is_empty() {
+                    write!(
+                        f,
+                        "EmbeddedSource({} bytes, {})",
+                        content.len(),
+                        compression
+                    )
+                } else {
+                    write!(
+                        f,
+                        "EmbeddedSource('{}', {} bytes, {})",
+                        filename,
+                        content.len(),
+                        compression
+                    )
+                }
+            }
+            CustomDebugInfo::CompilationMetadata { metadata } => {
+                write!(f, "CompilationMetadata({} bytes)", metadata.len())
+            }
+            CustomDebugInfo::CompilationOptions { options } => {
+                write!(f, "CompilationOptions({} bytes)", options.len())
+            }
+            CustomDebugInfo::Unknown { kind, data } => {
+                write!(f, "Unknown({}, {} bytes)", kind, data.len())
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -486,5 +614,74 @@ mod tests {
         };
         assert!(!unknown.is_known());
         assert_eq!(unknown.data_size(), 4);
+    }
+
+    #[test]
+    fn test_custom_debug_kind_display() {
+        assert_eq!(format!("{}", CustomDebugKind::SourceLink), "SourceLink");
+        assert_eq!(
+            format!("{}", CustomDebugKind::EmbeddedSource),
+            "EmbeddedSource"
+        );
+        assert_eq!(
+            format!("{}", CustomDebugKind::CompilationMetadata),
+            "CompilationMetadata"
+        );
+        assert_eq!(
+            format!("{}", CustomDebugKind::CompilationOptions),
+            "CompilationOptions"
+        );
+
+        // Test unknown GUID display
+        let unknown_guid = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D,
+            0x0E, 0x0F,
+        ];
+        let display = format!("{}", CustomDebugKind::Unknown(unknown_guid));
+        assert!(display.starts_with("Unknown("));
+        assert!(display.contains("-"));
+    }
+
+    #[test]
+    fn test_custom_debug_info_display() {
+        // Test SourceLink display
+        let source_link = CustomDebugInfo::SourceLink {
+            document: "{}".to_string(),
+        };
+        assert_eq!(format!("{}", source_link), "SourceLink(2 bytes)");
+
+        // Test EmbeddedSource display (uncompressed, no filename)
+        let embedded = CustomDebugInfo::EmbeddedSource {
+            filename: String::new(),
+            content: "test content".to_string(),
+            was_compressed: false,
+        };
+        assert_eq!(
+            format!("{}", embedded),
+            "EmbeddedSource(12 bytes, uncompressed)"
+        );
+
+        // Test EmbeddedSource display (compressed, with filename)
+        let embedded_with_name = CustomDebugInfo::EmbeddedSource {
+            filename: "test.cs".to_string(),
+            content: "test".to_string(),
+            was_compressed: true,
+        };
+        assert_eq!(
+            format!("{}", embedded_with_name),
+            "EmbeddedSource('test.cs', 4 bytes, compressed)"
+        );
+
+        // Test CompilationMetadata display
+        let metadata = CustomDebugInfo::CompilationMetadata {
+            metadata: "metadata".to_string(),
+        };
+        assert_eq!(format!("{}", metadata), "CompilationMetadata(8 bytes)");
+
+        // Test CompilationOptions display
+        let options = CustomDebugInfo::CompilationOptions {
+            options: "options".to_string(),
+        };
+        assert_eq!(format!("{}", options), "CompilationOptions(7 bytes)");
     }
 }

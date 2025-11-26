@@ -85,6 +85,13 @@
 //! - Basic block initialization uses `OnceLock` for thread-safe lazy loading
 //! - Multiple threads can safely iterate over the same method simultaneously
 //! - Iterator creation and consumption can happen concurrently
+//!
+//! # ECMA-335 References
+//!
+//! - §II.22.26 - MethodDef table (method metadata)
+//! - §II.23.1.10 - MethodAttributes and MethodImplAttributes flags
+//! - §II.25.4 - Method body format (tiny and fat headers)
+//! - §II.25.4.6 - Exception handling clauses
 
 mod body;
 mod encode;
@@ -414,6 +421,32 @@ impl From<MethodRc> for MethodRef {
 ///
 /// The `Method` struct contains all metadata, code, and analysis results for a single .NET method.
 /// It includes method attributes, parameters, generic arguments, IL code, exception handlers, and analysis results.
+///
+/// # Invariants
+///
+/// The following invariants should be maintained for a valid `Method`:
+///
+/// - **Token/RID consistency**: `token.value() == (0x06000000 | rid)` - The token must match the row ID
+/// - **RVA validity**: If `rva.is_some()` and the method is not runtime-provided, `body` should be set
+/// - **Parameter correlation**: After [`Method::parse()`] is called, `params` entries have correlated signatures
+/// - **Block dependency**: `blocks` depends on `body` being set (decoding requires body data)
+///
+/// # Initialization Sequence
+///
+/// Methods go through several initialization phases:
+///
+/// 1. **Basic construction** - Created from `MethodDef` table row with metadata fields populated
+/// 2. **[`Method::parse()`]** - Loads method body, local variables, and applies parameter signatures
+/// 3. **[`decode_method()`][crate::assembly::decode_method]** - Disassembles IL bytecode and builds basic blocks
+///
+/// After phase 1, the method has metadata but no IL code. After phase 2, the body and local variables
+/// are available. After phase 3, instructions can be iterated via [`Method::instructions()`].
+///
+/// # Thread Safety
+///
+/// The struct uses [`OnceLock`] for lazy-initialized fields (`body`, `blocks`, `overrides`, `security`)
+/// which provides thread-safe one-time initialization. The `flags_pinvoke` field uses [`AtomicU32`]
+/// because it's populated from a separate table after the method may already be shared.
 pub struct Method {
     /// The row this method has in the `MetadataTable`
     pub rid: u32,
@@ -435,7 +468,7 @@ pub struct Method {
     pub flags_vtable: MethodVtableFlags,
     /// `MethodAttributes`, §II.23.1.10
     pub flags_modifiers: MethodModifiers,
-    /// `PInvokeAttributes`, §II.23.1.8
+    /// P/Invoke mapping flags from the `ImplMap` table, §II.23.1.8.
     pub flags_pinvoke: AtomicU32,
     /// The parameters (from `Param` table, enhanced with information from the `SignatureMethod`)
     /// sequence 0, is the return value (if there is a count 0).
@@ -466,10 +499,6 @@ pub struct Method {
     pub blocks: OnceLock<Vec<BasicBlock>>,
     /// Custom attributes attached to this method
     pub custom_attributes: CustomAttributeValueList,
-    // /// The control flow graph of this method
-    // pub cfg: RwLock<Option<ControlFlowGraph>>,
-    // /// The SSA representation of this method
-    // pub ssa: RwLock<Option<SSAForm>>,
 }
 
 impl Method {
@@ -898,13 +927,14 @@ impl Method {
     /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// for entry in assembly.methods().iter() {
     ///     let method = entry.value();
-    ///     if method.is_forarded_pinvoke() {
+    ///     if method.is_forwarded_pinvoke() {
     ///         println!("Forwarded P/Invoke method: {}", method.name);
     ///     }
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn is_forarded_pinvoke(&self) -> bool {
+    #[must_use]
+    pub fn is_forwarded_pinvoke(&self) -> bool {
         self.impl_options
             .contains(MethodImplOptions::MAX_METHOD_IMPL_VAL)
     }
@@ -935,83 +965,170 @@ impl Method {
         shared_visited: Arc<VisitedMap>,
     ) -> Result<()> {
         if let Some(rva) = self.rva {
-            let method_offset = file.rva_to_offset(rva as usize)?;
-            if method_offset == 0 || method_offset >= file.data().len() {
+            let body = self.parse_method_body(file, blobs, sigs, types, rva)?;
+            self.body.set(body).ok();
+        }
+
+        self.resolve_parameter_signatures(types)?;
+        self.parse_varargs(types)?;
+
+        assembly::decode_method(self, file, shared_visited)?;
+        Ok(())
+    }
+
+    /// Parses the method body including local variables and exception handlers.
+    ///
+    /// # Arguments
+    /// * `file` - The input file
+    /// * `blobs` - The blob heap
+    /// * `sigs` - The standalone signatures table
+    /// * `types` - The type registry
+    /// * `rva` - The relative virtual address of the method
+    ///
+    /// # Errors
+    /// Returns an error if the method body cannot be parsed or local variables cannot be resolved.
+    fn parse_method_body(
+        &self,
+        file: &File,
+        blobs: &Blob,
+        sigs: Option<&MetadataTable<StandAloneSigRaw>>,
+        types: &Arc<TypeRegistry>,
+        rva: u32,
+    ) -> Result<MethodBody> {
+        let method_offset = file.rva_to_offset(rva as usize)?;
+        if method_offset == 0 || method_offset >= file.data().len() {
+            return Err(malformed_error!(
+                "Method offset is invalid - {}",
+                method_offset
+            ));
+        }
+
+        let mut body = MethodBody::from(&file.data()[method_offset..])?;
+        if body.local_var_sig_token != 0 {
+            self.parse_local_variables(&body, blobs, sigs, types)?;
+        }
+
+        self.resolve_exception_handlers(&mut body, types)?;
+        Ok(body)
+    }
+
+    /// Parses local variable signatures and populates the local_vars collection.
+    ///
+    /// # Arguments
+    /// * `body` - The method body containing the local var signature token
+    /// * `blobs` - The blob heap
+    /// * `sigs` - The standalone signatures table
+    /// * `types` - The type registry
+    ///
+    /// # Errors
+    /// Returns an error if the signature cannot be resolved or types cannot be found.
+    fn parse_local_variables(
+        &self,
+        body: &MethodBody,
+        blobs: &Blob,
+        sigs: Option<&MetadataTable<StandAloneSigRaw>>,
+        types: &Arc<TypeRegistry>,
+    ) -> Result<()> {
+        let Some(sigs_table) = sigs else {
+            return Ok(());
+        };
+
+        let local_var_sig_data = match sigs_table.get(body.local_var_sig_token & 0x00FF_FFFF) {
+            Some(var_sig_row) => blobs.get(var_sig_row.signature as usize)?,
+            None => {
                 return Err(malformed_error!(
-                    "Method offset is invalid - {}",
-                    method_offset
-                ));
+                    "Failed to resolve local variable signature - token 0x{:08X}",
+                    body.local_var_sig_token
+                ))
             }
+        };
 
-            let mut body = MethodBody::from(&file.data()[method_offset..])?;
-            if body.local_var_sig_token != 0 {
-                if let Some(sigs_table) = sigs {
-                    let local_var_sig_data =
-                        match sigs_table.get(body.local_var_sig_token & 0x00FF_FFFF) {
-                            Some(var_sig_row) => blobs.get(var_sig_row.signature as usize)?,
-                            None => {
-                                return Err(malformed_error!(
-                                    "Failed to resolve signature - {}",
-                                    body.local_var_sig_token & 0x00FF_FFFF
-                                ))
-                            }
-                        };
+        let mut resolver = TypeResolver::new(types.clone());
+        let local_var_sig = parse_local_var_signature(local_var_sig_data)?;
 
-                    let mut resolver = TypeResolver::new(types.clone());
-                    let local_var_sig = parse_local_var_signature(local_var_sig_data)?;
-                    for local_var in &local_var_sig.locals {
-                        let modifiers =
-                            Arc::new(boxcar::Vec::with_capacity(local_var.modifiers.len()));
-                        for var_mod in &local_var.modifiers {
-                            match types.get(&var_mod.modifier_type) {
-                                Some(var_mod_type) => _ = modifiers.push(var_mod_type.into()),
-                                None => {
-                                    return Err(malformed_error!(
-                                        "Failed to resolve type - {}",
-                                        var_mod.modifier_type.value()
-                                    ))
-                                }
-                            }
-                        }
-
-                        self.local_vars.push(LocalVariable {
-                            modifiers,
-                            is_byref: local_var.is_byref,
-                            is_pinned: local_var.is_pinned,
-                            base: resolver.resolve(&local_var.base)?.into(),
-                        });
+        for local_var in &local_var_sig.locals {
+            let modifiers = Arc::new(boxcar::Vec::with_capacity(local_var.modifiers.len()));
+            for var_mod in &local_var.modifiers {
+                match types.get(&var_mod.modifier_type) {
+                    Some(var_mod_type) => _ = modifiers.push(var_mod_type.into()),
+                    None => {
+                        return Err(malformed_error!(
+                            "Failed to resolve local variable modifier type - token 0x{:08X}",
+                            var_mod.modifier_type.value()
+                        ))
                     }
                 }
             }
 
-            for exception_handler in &mut body.exception_handlers {
-                if exception_handler.flags == ExceptionHandlerFlags::EXCEPTION {
-                    let Some(handler) = types.get(&Token::new(exception_handler.filter_offset))
-                    else {
-                        return Err(malformed_error!(
-                            "Failed to resolve exception handler type - {}",
-                            exception_handler.filter_offset
-                        ));
-                    };
-
-                    exception_handler.handler = Some(handler);
-                    exception_handler.filter_offset = 0;
-                }
-            }
-
-            self.body.set(body).ok();
+            self.local_vars.push(LocalVariable {
+                modifiers,
+                is_byref: local_var.is_byref,
+                is_pinned: local_var.is_pinned,
+                base: resolver.resolve(&local_var.base)?.into(),
+            });
         }
 
-        // Resolve the parameters
+        Ok(())
+    }
+
+    /// Resolves exception handler types for catch blocks.
+    ///
+    /// For EXCEPTION handlers, this resolves the type token stored in `filter_offset`
+    /// to the actual type reference and clears the offset field.
+    ///
+    /// # Arguments
+    /// * `body` - The method body with exception handlers to resolve
+    /// * `types` - The type registry
+    ///
+    /// # Errors
+    /// Returns an error if an exception type cannot be resolved.
+    fn resolve_exception_handlers(
+        &self,
+        body: &mut MethodBody,
+        types: &Arc<TypeRegistry>,
+    ) -> Result<()> {
+        for (index, exception_handler) in body.exception_handlers.iter_mut().enumerate() {
+            if exception_handler.flags == ExceptionHandlerFlags::EXCEPTION {
+                let type_token = Token::new(exception_handler.filter_offset);
+                let Some(handler_type) = types.get(&type_token) else {
+                    return Err(malformed_error!(
+                        "Failed to resolve exception handler {} type - token 0x{:08X}",
+                        index,
+                        exception_handler.filter_offset
+                    ));
+                };
+
+                exception_handler.handler = Some(handler_type);
+                exception_handler.filter_offset = 0;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Resolves parameter signatures from the method signature.
+    ///
+    /// Maps each parameter from the Param table to its corresponding type
+    /// information from the method signature.
+    ///
+    /// # Arguments
+    /// * `types` - The type registry
+    ///
+    /// # Errors
+    /// Returns an error if a parameter signature cannot be applied.
+    fn resolve_parameter_signatures(&self, types: &Arc<TypeRegistry>) -> Result<()> {
         let method_param_count = Some(self.signature.params.len());
+
         for (_, parameter) in self.params.iter() {
             if parameter.sequence == 0 {
+                // Sequence 0 is the return value
                 parameter.apply_signature(
                     &self.signature.return_type,
                     types.clone(),
                     method_param_count,
                 )?;
             } else {
+                // Regular parameters (1-indexed in metadata)
                 let index = (parameter.sequence - 1) as usize;
                 if let Some(param_signature) = self.signature.params.get(index) {
                     parameter.apply_signature(
@@ -1023,7 +1140,17 @@ impl Method {
             }
         }
 
-        // Parse varargs
+        Ok(())
+    }
+
+    /// Parses vararg (variable argument) parameters from the method signature.
+    ///
+    /// # Arguments
+    /// * `types` - The type registry
+    ///
+    /// # Errors
+    /// Returns an error if a vararg modifier type cannot be resolved.
+    fn parse_varargs(&self, types: &Arc<TypeRegistry>) -> Result<()> {
         for vararg in &self.signature.varargs {
             let modifiers = Arc::new(boxcar::Vec::with_capacity(vararg.modifiers.len()));
             for modifier in &vararg.modifiers {
@@ -1031,7 +1158,7 @@ impl Method {
                     Some(new_mod) => _ = modifiers.push(new_mod.into()),
                     None => {
                         return Err(malformed_error!(
-                            "Failed to resolve modifier type - {}",
+                            "Failed to resolve vararg modifier type - token 0x{:08X}",
                             modifier.modifier_type.value()
                         ))
                     }
@@ -1045,9 +1172,6 @@ impl Method {
                 base: resolver.resolve(&vararg.base)?.into(),
             });
         }
-
-        // Last step, disassemble the whole method and generate analysis
-        assembly::decode_method(self, file, shared_visited)?;
 
         Ok(())
     }
@@ -1215,5 +1339,139 @@ mod tests {
             },
             branch_targets: vec![],
         }
+    }
+
+    // Helper function to create an empty basic block
+    fn create_empty_block(id: usize) -> BasicBlock {
+        BasicBlock {
+            id,
+            rva: 0x1000 + (id as u64 * 0x10),
+            offset: id * 10,
+            size: 0,
+            instructions: vec![],
+            predecessors: vec![],
+            successors: vec![],
+            exceptions: vec![],
+        }
+    }
+
+    #[test]
+    fn test_instructions_iterator_with_empty_blocks() {
+        // Test that the iterator handles empty blocks correctly (MTH-H001 fix verification)
+        let block1 = create_empty_block(0);
+        let block2 = BasicBlock {
+            id: 1,
+            rva: 0x1010,
+            offset: 10,
+            size: 3,
+            instructions: vec![
+                create_test_instruction(0x00, "nop"),
+                create_test_instruction(0x2A, "ret"),
+            ],
+            predecessors: vec![],
+            successors: vec![],
+            exceptions: vec![],
+        };
+        let block3 = create_empty_block(2);
+
+        let blocks = vec![block1, block2, block3];
+        let method = create_test_method(blocks);
+
+        let instructions: Vec<_> = method.instructions().collect();
+        assert_eq!(instructions.len(), 2);
+        assert_eq!(instructions[0].mnemonic, "nop");
+        assert_eq!(instructions[1].mnemonic, "ret");
+    }
+
+    #[test]
+    fn test_instructions_iterator_many_empty_blocks() {
+        // Stress test: many consecutive empty blocks should not cause stack overflow
+        // This verifies the MTH-H001 fix (recursive -> iterative)
+        let mut blocks: Vec<BasicBlock> = (0..100).map(create_empty_block).collect();
+
+        // Add one block with instructions at the end
+        blocks.push(BasicBlock {
+            id: 100,
+            rva: 0x2000,
+            offset: 1000,
+            size: 1,
+            instructions: vec![create_test_instruction(0x2A, "ret")],
+            predecessors: vec![],
+            successors: vec![],
+            exceptions: vec![],
+        });
+
+        let method = create_test_method(blocks);
+
+        let instructions: Vec<_> = method.instructions().collect();
+        assert_eq!(instructions.len(), 1);
+        assert_eq!(instructions[0].mnemonic, "ret");
+    }
+
+    #[test]
+    fn test_instructions_iterator_all_empty_blocks() {
+        // Edge case: all blocks are empty
+        let blocks: Vec<BasicBlock> = (0..10).map(create_empty_block).collect();
+        let method = create_test_method(blocks);
+
+        let instructions: Vec<_> = method.instructions().collect();
+        assert_eq!(instructions.len(), 0);
+        assert_eq!(method.instruction_count(), 0);
+    }
+
+    #[test]
+    fn test_method_ref_basic_operations() {
+        let method = MethodBuilder::new().with_name("TestMethod").build();
+
+        let method_ref = MethodRef::new(&method);
+
+        // Test is_valid
+        assert!(method_ref.is_valid());
+
+        // Test upgrade
+        let upgraded = method_ref.upgrade();
+        assert!(upgraded.is_some());
+        assert_eq!(upgraded.unwrap().name, "TestMethod");
+
+        // Test token - uses the default token from MethodBuilder (rid=1 => 0x06000001)
+        assert_eq!(method_ref.token(), Some(Token::new(0x06000001)));
+
+        // Test name
+        assert_eq!(method_ref.name(), Some("TestMethod".to_string()));
+    }
+
+    #[test]
+    fn test_method_ref_after_drop() {
+        let method_ref = {
+            let method = MethodBuilder::new().with_name("TemporaryMethod").build();
+            MethodRef::new(&method)
+            // method is dropped here
+        };
+
+        // After the method is dropped, MethodRef should return None/false
+        assert!(!method_ref.is_valid());
+        assert!(method_ref.upgrade().is_none());
+        assert!(method_ref.token().is_none());
+        assert!(method_ref.name().is_none());
+    }
+
+    #[test]
+    fn test_method_is_constructor() {
+        let ctor = MethodBuilder::new().with_name(".ctor").build();
+        let cctor = MethodBuilder::new().with_name(".cctor").build();
+        let regular = MethodBuilder::new().with_name("DoSomething").build();
+
+        assert!(ctor.is_constructor());
+        assert!(cctor.is_constructor());
+        assert!(!regular.is_constructor());
+    }
+
+    #[test]
+    fn test_is_forwarded_pinvoke() {
+        // Test that the renamed method works correctly
+        let method = MethodBuilder::new().with_name("TestMethod").build();
+
+        // Default method should not have forwarded pinvoke flag
+        assert!(!method.is_forwarded_pinvoke());
     }
 }

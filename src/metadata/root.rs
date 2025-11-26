@@ -12,7 +12,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::root::Root;
 //! let root = Root::read(&[
 //!            0x42, 0x53, 0x4A, 0x42,
@@ -44,8 +44,47 @@ use crate::{
     Result,
 };
 
-/// The MAGIC value indicating the CIL header
+/// The MAGIC value indicating the CIL header ("BSJB" in ASCII).
 pub const CIL_HEADER_MAGIC: u32 = 0x424A_5342;
+
+/// Minimum size in bytes required for a valid metadata root header.
+/// This includes: signature(4) + major_version(2) + minor_version(2) + reserved(4) +
+/// length(4) + version_string(min 4) + flags(2) + stream_number(2) + stream_header(min 12).
+const MIN_ROOT_HEADER_SIZE: usize = 36;
+
+/// Offset in the root header where the version string length field is located.
+const VERSION_LENGTH_OFFSET: usize = 12;
+
+/// Offset in the root header where the version string begins.
+const VERSION_STRING_OFFSET: usize = 16;
+
+/// Size of the flags field following the version string.
+const FLAGS_FIELD_SIZE: usize = 2;
+
+/// Size of the stream count field.
+const STREAM_COUNT_FIELD_SIZE: usize = 2;
+
+/// Maximum allowed length for the version string.
+const MAX_VERSION_STRING_LENGTH: usize = 255;
+
+/// Maximum number of metadata streams allowed per ECMA-335.
+/// Valid streams are: #Strings, #US, #Blob, #GUID, #~, #-
+const MAX_STREAM_COUNT: u16 = 6;
+
+/// Minimum size in bytes for a valid stream header.
+/// This includes: offset(4) + size(4) + name(min 1 char + null terminator = 2, aligned to 4).
+const MIN_STREAM_HEADER_SIZE: usize = 12;
+
+/// Size of the fixed fields in a stream header (offset + size).
+const STREAM_HEADER_FIXED_SIZE: usize = 8;
+
+/// Maximum length for a stream name.
+const MAX_STREAM_NAME_LENGTH: usize = 32;
+
+/// Field offsets within the root header for fixed-position fields.
+const FIELD_OFFSET_MAJOR_VERSION: usize = 4;
+const FIELD_OFFSET_MINOR_VERSION: usize = 6;
+const FIELD_OFFSET_RESERVED: usize = 8;
 
 /// Represents the metadata root header and stream directory of a .NET assembly.
 ///
@@ -89,7 +128,7 @@ pub const CIL_HEADER_MAGIC: u32 = 0x424A_5342;
 ///
 /// ## Basic Root Parsing
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::root::Root;
 ///
 /// let root = Root::read(&[
@@ -119,7 +158,7 @@ pub const CIL_HEADER_MAGIC: u32 = 0x424A_5342;
 ///
 /// ## Stream Directory Analysis
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::root::Root;
 ///
 /// # let metadata_bytes = &[0u8; 100]; // placeholder
@@ -155,6 +194,7 @@ pub const CIL_HEADER_MAGIC: u32 = 0x424A_5342;
 ///
 /// - [ECMA-335 II.24.2.1: Metadata root](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf)
 /// - [ECMA-335 II.24.2.2: Stream header](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf)
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Root {
     /// Magic signature identifying valid metadata: `0x424A5342` ("BSJB" in ASCII).
     ///
@@ -265,7 +305,7 @@ impl Root {
     ///
     /// ## Basic Parsing
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::root::Root;
     ///
     /// // Parse metadata root from assembly bytes
@@ -282,7 +322,7 @@ impl Root {
     ///
     /// ## Stream Directory Access
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::root::Root;
     ///
     /// # let metadata_bytes = &[0u8; 100]; // placeholder
@@ -310,32 +350,33 @@ impl Root {
     /// This method is thread-safe and can be called concurrently from multiple threads
     /// as it performs no mutations and uses only stack-allocated temporary variables.
     pub fn read(data: &[u8]) -> Result<Root> {
-        if data.len() < 36 {
+        if data.len() < MIN_ROOT_HEADER_SIZE {
             return Err(out_of_bounds_error!());
         }
 
         let signature = read_le::<u32>(data)?;
         if signature != CIL_HEADER_MAGIC {
             return Err(malformed_error!(
-                "CIL_HEADER_MAGIC does not match - {}",
-                signature
+                "Root: invalid signature 0x{:08X}, expected 0x{:08X} [ECMA-335 §II.24.2.1]",
+                signature,
+                CIL_HEADER_MAGIC
             ));
         }
 
-        let version_string_length = read_le_at::<u32>(data, &mut (12))?;
-        match u32::checked_add(version_string_length, 16_u32) {
+        let version_string_length = read_le_at::<u32>(data, &mut { VERSION_LENGTH_OFFSET })?;
+        match u32::checked_add(version_string_length, VERSION_STRING_OFFSET as u32) {
             Some(str_end) => {
-                let data_len = u32::try_from(data.len())
-                    .map_err(|_| malformed_error!("Data length too large"))?;
+                let data_len = u32::try_from(data.len()).map_err(|_| {
+                    malformed_error!("Root: data length too large [ECMA-335 §II.24.2.1]")
+                })?;
                 if str_end > data_len {
                     return Err(out_of_bounds_error!());
                 }
             }
             None => {
                 return Err(malformed_error!(
-                    "Version string length causing integer overflow - {} + {}",
-                    version_string_length,
-                    16
+                    "Root: version string length {} causes integer overflow [ECMA-335 §II.24.2.1]",
+                    version_string_length
                 ))
             }
         }
@@ -344,41 +385,58 @@ impl Root {
         for counter in 0..version_string_length {
             version_string.push(char::from(read_le_at::<u8>(
                 data,
-                &mut (16 + counter as usize),
+                &mut (VERSION_STRING_OFFSET + counter as usize),
             )?));
         }
 
         // Validate version string format and content
         if version_string.is_empty() {
-            return Err(malformed_error!("Version string cannot be empty"));
+            return Err(malformed_error!(
+                "Root: version string cannot be empty [ECMA-335 §II.24.2.1]"
+            ));
         }
 
         // Check for common malformed version strings
         if !version_string.starts_with('v') {
             return Err(malformed_error!(
-                "Version string '{}' must start with 'v' (ECMA-335 II.24.2.1)",
+                "Root: version string '{}' must start with 'v' [ECMA-335 §II.24.2.1]",
                 version_string
             ));
         }
 
         // Validate version string contains reasonable content
-        if version_string.len() > 255 {
+        if version_string.len() > MAX_VERSION_STRING_LENGTH {
             return Err(malformed_error!(
-                "Version string length {} exceeds reasonable limit (255)",
-                version_string.len()
+                "Root: version string length {} exceeds reasonable limit ({}) [ECMA-335 §II.24.2.1]",
+                version_string.len(),
+                MAX_VERSION_STRING_LENGTH
             ));
         }
 
-        let stream_count = read_le_at::<u16>(data, &mut (version_string.len() + 18))?;
+        // Stream count is located after: version_string + FLAGS_FIELD_SIZE
+        let mut stream_count_offset =
+            version_string.len() + VERSION_STRING_OFFSET + FLAGS_FIELD_SIZE;
+        let stream_count = read_le_at::<u16>(data, &mut stream_count_offset)?;
 
-        if stream_count == 0 || stream_count > 6 || (stream_count * 9) as usize > data.len() {
-            // 9 - min size that a valid StreamHeader can be; Must have streams, no duplicates, no more than 6 possible
-            return Err(malformed_error!("Invalid stream count"));
+        // Validate stream count: must have at least one stream, no more than MAX_STREAM_COUNT
+        if stream_count == 0
+            || stream_count > MAX_STREAM_COUNT
+            || (stream_count as usize * MIN_STREAM_HEADER_SIZE) > data.len()
+        {
+            return Err(malformed_error!(
+                "Root: invalid stream count {} (must be 1-{}) [ECMA-335 §II.24.2.1]",
+                stream_count,
+                MAX_STREAM_COUNT
+            ));
         }
 
         let mut streams = Vec::with_capacity(stream_count as usize);
-        let mut stream_offset = version_string.len() + 20;
-        let mut streams_seen = [false; 6];
+        // Stream directory starts after: version_string + FLAGS_FIELD_SIZE + STREAM_COUNT_FIELD_SIZE
+        let mut stream_offset = version_string.len()
+            + VERSION_STRING_OFFSET
+            + FLAGS_FIELD_SIZE
+            + STREAM_COUNT_FIELD_SIZE;
+        let mut streams_seen = [false; MAX_STREAM_COUNT as usize];
 
         for _i in 0..stream_count {
             if stream_offset > data.len() {
@@ -388,7 +446,7 @@ impl Root {
             let new_stream = StreamHeader::from(&data[stream_offset..])?;
             if new_stream.offset as usize > data.len()
                 || new_stream.size as usize > data.len()
-                || new_stream.name.len() > 32
+                || new_stream.name.len() > MAX_STREAM_NAME_LENGTH
             {
                 return Err(out_of_bounds_error!());
             }
@@ -401,7 +459,8 @@ impl Root {
                 }
                 None => {
                     return Err(malformed_error!(
-                        "Stream offset and size cause integer overflow - {} + {}",
+                        "Root: stream '{}' offset {} + size {} causes integer overflow [ECMA-335 §II.24.2.2]",
+                        new_stream.name,
                         new_stream.offset,
                         new_stream.size
                     ))
@@ -420,32 +479,35 @@ impl Root {
 
             if streams_seen[stream_index] {
                 return Err(malformed_error!(
-                    "Duplicate stream name found: '{}'",
+                    "Root: duplicate stream '{}' found [ECMA-335 §II.24.2.2]",
                     new_stream.name
                 ));
             }
             streams_seen[stream_index] = true;
 
             let name_aligned = ((new_stream.name.len() + 1) + 3) & !3;
-            stream_offset += 8 + name_aligned;
+            stream_offset += STREAM_HEADER_FIXED_SIZE + name_aligned;
 
             streams.push(new_stream);
         }
 
         if streams.is_empty() {
-            return Err(malformed_error!("No valid streams have been found"));
+            return Err(malformed_error!(
+                "Root: no valid streams found [ECMA-335 §II.24.2.1]"
+            ));
         }
 
         Ok(Root {
             signature,
-            major_version: read_le::<u16>(&data[4..])?,
-            minor_version: read_le::<u16>(&data[6..])?,
-            reserved: read_le::<u32>(&data[8..])?,
-            length: u32::try_from(version_string.len())
-                .map_err(|_| malformed_error!("Version string length too large"))?,
-            flags: read_le::<u16>(&data[16 + version_string.len()..])?,
+            major_version: read_le::<u16>(&data[FIELD_OFFSET_MAJOR_VERSION..])?,
+            minor_version: read_le::<u16>(&data[FIELD_OFFSET_MINOR_VERSION..])?,
+            reserved: read_le::<u32>(&data[FIELD_OFFSET_RESERVED..])?,
+            length: u32::try_from(version_string.len()).map_err(|_| {
+                malformed_error!("Root: version string length too large [ECMA-335 §II.24.2.1]")
+            })?,
+            flags: read_le::<u16>(&data[VERSION_STRING_OFFSET + version_string.len()..])?,
             stream_number: u16::try_from(streams.len())
-                .map_err(|_| malformed_error!("Too many streams"))?,
+                .map_err(|_| malformed_error!("Root: too many streams [ECMA-335 §II.24.2.1]"))?,
             stream_headers: streams,
             version: version_string,
         })
@@ -619,12 +681,12 @@ mod tests {
         header_bytes.resize(98, 0x00);
 
         let result = Root::read(&header_bytes);
-        assert!(result.is_err());
-
-        if let Err(error) = result {
-            let error_string = error.to_string();
-            assert!(error_string.contains("Duplicate stream name found"));
-            assert!(error_string.contains("#~"));
-        }
+        let err = result.expect_err("Expected error for duplicate stream names");
+        let error_string = err.to_string();
+        assert!(
+            error_string.contains("duplicate stream") && error_string.contains("#~"),
+            "Expected error about duplicate stream '#~', got: {}",
+            error_string
+        );
     }
 }

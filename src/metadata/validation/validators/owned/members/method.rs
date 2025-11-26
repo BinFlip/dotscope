@@ -578,6 +578,9 @@ impl OwnedMethodValidator {
                             && !method
                                 .impl_code_type
                                 .intersects(MethodImplCodeType::RUNTIME)
+                            && !method
+                                .impl_options
+                                .contains(MethodImplOptions::INTERNAL_CALL)
                             && method.rva.is_none()
                         {
                             return Err(Error::ValidationOwnedValidatorFailed {

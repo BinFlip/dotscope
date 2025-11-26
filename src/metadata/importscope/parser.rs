@@ -1,196 +1,37 @@
-//! Import declarations binary parser for Portable PDB debugging metadata.
+//! Binary parser for import declarations in Portable PDB debugging metadata.
 //!
-//! This module provides comprehensive parsing capabilities for the imports blob format used in
-//! Portable PDB files. The imports blob contains encoded import declarations that define the set
-//! of namespaces, types, and assemblies accessible within a lexical scope for debugging purposes.
-//! The parser implements the full Portable PDB imports specification with robust error handling
-//! and efficient binary data processing.
+//! This module provides the parsing implementation for the imports blob format.
+//! See the parent module [`crate::metadata::importscope`] for the complete binary
+//! format specification and usage examples.
 //!
-//! # Architecture
+//! # Overview
 //!
-//! The parser implements a streaming binary format reader that processes import declarations
-//! sequentially from a blob. The architecture separates low-level binary parsing from
-//! high-level semantic interpretation, enabling efficient processing of large import scopes
-//! while maintaining type safety and error recovery.
-//!
-//! ## Core Components
-//!
-//! - **Binary Parser**: Low-level compressed integer and token parsing
-//! - **Kind Dispatch**: Type-safe import kind identification and parameter extraction
-//! - **Heap Resolution**: String and blob reference resolution from metadata heaps
-//! - **Error Recovery**: Graceful handling of malformed or truncated import data
-//!
-//! # Key Components
-//!
-//! - [`crate::metadata::importscope::parser::ImportsParser`] - Main binary parser implementation
-//! - [`crate::metadata::importscope::parser::parse_imports_blob`] - Convenience parsing function
-//! - Format-specific parsing methods for each import declaration kind
-//! - Integrated blob heap resolution for string and reference data
-//!
-//! # Imports Blob Binary Format
-//!
-//! The imports blob follows the Portable PDB specification with this binary structure:
-//!
-//! ```text
-//! ImportsBlob ::= ImportDeclaration*
-//! ImportDeclaration ::= ImportKind ImportParameters
-//! ImportKind ::= CompressedUInt32  // Values 1-9
-//! ImportParameters ::= [Alias] [AssemblyRef] [Namespace] [TypeRef]
-//! ```
-//!
-//! ## Format Details
-//!
-//! Each import declaration consists of:
-//! - **Kind**: Compressed unsigned integer (1-9) defining the import type and parameter layout
-//! - **Alias**: Optional blob heap index for UTF-8 alias name (for alias declarations)
-//! - **Assembly**: Optional [`crate::metadata::tables::AssemblyRef`] row ID for assembly references
-//! - **Namespace**: Optional blob heap index for UTF-8 namespace name
-//! - **Type**: Optional compressed [`crate::metadata::token::Token`] for type references
-//!
-//! ## Import Declaration Types
-//!
-//! The format supports 9 distinct import declaration types:
-//!
-//! 1. **ImportNamespace** (1): Using statement for entire namespace
-//! 2. **ImportAssemblyNamespace** (2): Namespace import from specific assembly
-//! 3. **ImportType** (3): Direct type import with full qualification
-//! 4. **ImportXmlNamespace** (4): XML namespace import with alias
-//! 5. **ImportAssemblyReferenceAlias** (5): Assembly reference alias declaration
-//! 6. **DefineAssemblyAlias** (6): Assembly alias definition
-//! 7. **DefineNamespaceAlias** (7): Namespace alias definition
-//! 8. **DefineAssemblyNamespaceAlias** (8): Assembly namespace alias definition
-//! 9. **DefineTypeAlias** (9): Type alias definition
-//!
-//! # Usage Examples
-//!
-//! ## Basic Import Blob Parsing
-//!
-//! ```rust,ignore
-//! use dotscope::metadata::importscope::{parse_imports_blob, ImportDeclaration};
-//! use dotscope::metadata::streams::Blob;
-//!
-//! # fn get_blob_data() -> (&'static [u8], &'static Blob<'static>) {
-//! #     (b"", &Blob::new())
-//! # }
-//! let (blob_data, blobs_heap) = get_blob_data();
-//!
-//! // Parse complete imports blob
-//! let imports = parse_imports_blob(blob_data, blobs_heap)?;
-//!
-//! println!("Parsed {} import declarations", imports.declarations.len());
-//!
-//! // Process import declarations by type
-//! for declaration in &imports.declarations {
-//!     match declaration {
-//!         ImportDeclaration::ImportNamespace { namespace } => {
-//!             println!("Using namespace: {}", namespace);
-//!         }
-//!         ImportDeclaration::ImportAssemblyNamespace { assembly_ref, namespace } => {
-//!             println!("Using {} from assembly {:?}", namespace, assembly_ref);
-//!         }
-//!         ImportDeclaration::ImportType { type_ref } => {
-//!             println!("Importing type: {:?}", type_ref);
-//!         }
-//!         _ => println!("Other import declaration type"),
-//!     }
-//! }
-//! # Ok::<(), dotscope::Error>(())
-//! ```
-//!
-//! ## Advanced Parser Usage
-//!
-//! ```rust,ignore
-//! use dotscope::metadata::importscope::parser::ImportsParser;
-//! use dotscope::metadata::streams::Blob;
-//!
-//! # fn get_import_data() -> (&'static [u8], &'static Blob<'static>) {
-//! #     (b"", &Blob::new())
-//! # }
-//! let (blob_data, blobs_heap) = get_import_data();
-//!
-//! // Create parser with specific blob data
-//! let mut parser = ImportsParser::new(blob_data, blobs_heap);
-//!
-//! // Parse imports with custom processing
-//! let imports_info = parser.parse_imports()?;
-//!
-//! // Analyze import patterns
-//! let namespace_imports = imports_info.declarations.iter()
-//!     .filter(|d| matches!(d, ImportDeclaration::ImportNamespace { .. }))
-//!     .count();
-//!
-//! println!("Found {} namespace import declarations", namespace_imports);
-//! # Ok::<(), dotscope::Error>(())
-//! ```
-//!
-//! ## Example Binary Format
-//!
-//! ```rust,ignore
-//! use dotscope::metadata::importscope::parse_imports_blob;
-//!
-//! // Example imports blob with two declarations
-//! # fn example_parsing() -> dotscope::Result<()> {
-//! let blob_data = &[
-//!     0x01,                           // ImportNamespace (kind 1)
-//!     0x05, 0x54, 0x65, 0x73, 0x74, 0x73,  // "Tests" namespace (length 5 + UTF-8)
-//!     
-//!     0x02,                           // ImportAssemblyNamespace (kind 2)  
-//!     0x01,                           // AssemblyRef row ID 1
-//!     0x06, 0x53, 0x79, 0x73, 0x74, 0x65, 0x6D,  // "System" namespace
-//! ];
-//!
-//! # let blobs_heap = &dotscope::metadata::streams::Blob::new();
-//! let imports = parse_imports_blob(blob_data, blobs_heap)?;
-//! assert_eq!(imports.declarations.len(), 2);
-//! # Ok(())
-//! # }
-//! ```
+//! The parser reads import declarations sequentially from a binary blob, resolving
+//! string references from the blob heap and constructing typed [`ImportDeclaration`]
+//! values for each entry.
 //!
 //! # Error Handling
 //!
-//! The parser provides comprehensive error handling for various failure scenarios:
-//! - **Invalid Kind Values**: Unrecognized import kind values outside 1-9 range
+//! The parser returns errors for:
+//! - **Invalid Kind Values**: Import kind values outside the valid 1-9 range
 //! - **Truncated Data**: Insufficient data for expected import parameters
-//! - **Blob Resolution Failures**: Invalid blob heap indices for strings
+//! - **Blob Resolution Failures**: Invalid blob heap indices
 //! - **Token Encoding Errors**: Malformed compressed token encoding
-//! - **UTF-8 Decoding**: Invalid UTF-8 sequences in namespace or alias strings
 //!
-//! # Performance Considerations
-//!
-//! - **Streaming Parser**: Processes data sequentially without buffering entire blob
-//! - **Zero-Copy Strings**: Minimizes string allocations during blob processing
-//! - **Efficient Heap Access**: Optimized blob heap lookups for string resolution
-//! - **Error Short-Circuiting**: Fast failure on malformed data without full parsing
+//! Note: Invalid UTF-8 sequences in strings are handled using lossy conversion
+//! (replacement with U+FFFD) rather than returning errors, matching the behavior
+//! of other parsers in the codebase.
 //!
 //! # Thread Safety
 //!
-//! All parsing functions and types in this module are thread-safe. The parser and
-//! [`crate::metadata::importscope::parser::parse_imports_blob`] function implement
-//! [`std::marker::Send`] and [`std::marker::Sync`], enabling safe concurrent parsing
-//! of import declarations across multiple threads. String resolution from blob heaps
-//! is also thread-safe with appropriate synchronization.
-//!
-//! # Integration
-//!
-//! This module integrates with:
-//! - [`crate::metadata::importscope::types`] - Type definitions for import declarations
-//! - [`crate::file::parser`] - Low-level binary data parsing utilities
-//! - [`crate::metadata::streams::Blob`] - Blob heap access for string resolution
-//! - [`crate::metadata::token`] - Token parsing and validation systems
-//! - [`crate::Error`] - Comprehensive error handling and reporting
-//!
-//! # Standards Compliance
-//!
-//! - **Portable PDB**: Full compliance with Portable PDB imports blob specification
-//! - **Binary Format**: Correct handling of compressed integers and token encoding
-//! - **UTF-8 Encoding**: Proper decoding of namespace and alias strings
-//! - **Error Recovery**: Robust handling of malformed or incomplete import data
+//! All types in this module are [`Send`] and [`Sync`].
 
 use crate::{
     file::parser::Parser,
     metadata::{
         importscope::types::{ImportDeclaration, ImportKind, ImportsInfo},
         streams::Blob,
+        tables::TableId,
         token::Token,
     },
     Result,
@@ -261,7 +102,7 @@ impl<'a> ImportsParser<'a> {
         while self.parser.has_more_data() {
             let kind_value = self.parser.read_compressed_uint()?;
             let kind = ImportKind::from_u32(kind_value)
-                .ok_or_else(|| malformed_error!(format!("Invalid import kind: {}", kind_value)))?;
+                .ok_or_else(|| malformed_error!("Invalid import kind: {}", kind_value))?;
 
             let declaration = match kind {
                 ImportKind::ImportNamespace => {
@@ -325,17 +166,45 @@ impl<'a> ImportsParser<'a> {
         Ok(ImportsInfo::with_declarations(declarations))
     }
 
-    /// Read a string from the blob heap using a compressed blob index.
+    /// Read a UTF-8 string from the blob heap using a compressed blob index.
+    ///
+    /// # UTF-8 Handling
+    ///
+    /// Invalid UTF-8 sequences are replaced with the Unicode replacement character (U+FFFD)
+    /// using lossy conversion. No error is returned for invalid encoding - this matches
+    /// the behavior of other parsers in the codebase (e.g., `security/permissionset.rs`).
+    ///
+    /// # Empty Strings
+    ///
+    /// Empty strings are permitted and returned as-is. The Portable PDB specification
+    /// does not explicitly prohibit empty namespace or alias strings, and some edge
+    /// cases (like default/global namespaces) may legitimately use empty strings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blob index is invalid or the blob heap lookup fails.
     fn read_blob_string(&mut self) -> Result<String> {
         let blob_index = self.parser.read_compressed_uint()?;
         let blob_data = self.blobs.get(blob_index as usize)?;
         Ok(String::from_utf8_lossy(blob_data).into_owned())
     }
 
-    /// Read an `AssemblyRef` token as a compressed unsigned integer.
+    /// Read an AssemblyRef table token from a compressed unsigned integer row ID.
+    ///
+    /// The row ID is read as a compressed unsigned integer and combined with
+    /// the AssemblyRef table identifier (0x23) to form a complete metadata token.
+    ///
+    /// # Token Format
+    ///
+    /// The returned token has format `(TableId::AssemblyRef << 24) | row_id`, where
+    /// `row_id` is a 1-based index into the AssemblyRef table.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading the compressed integer fails due to truncated data.
     fn read_assembly_ref_token(&mut self) -> Result<Token> {
         let row_id = self.parser.read_compressed_uint()?;
-        Ok(Token::new(0x2300_0000 + row_id)) // AssemblyRef table
+        Ok(Token::new((TableId::AssemblyRef as u32) << 24 | row_id))
     }
 }
 
@@ -391,23 +260,351 @@ mod tests {
     use super::*;
     use crate::metadata::streams::Blob;
 
-    fn create_mock_blob_stream() -> Blob<'static> {
+    /// Creates a minimal blob heap with just the required null blob at index 0.
+    fn create_empty_blob_stream() -> Blob<'static> {
         Blob::from(&[0x00]).expect("Failed to create blob stream")
+    }
+
+    /// Creates a blob heap with test strings.
+    /// Layout:
+    /// - Index 0: empty blob (required)
+    /// - Index 1: "System" (6 bytes)
+    /// - Index 8: "TestAlias" (9 bytes)
+    /// - Index 18: "http://example.com" (18 bytes)
+    fn create_test_blob_stream() -> Vec<u8> {
+        let mut data = vec![0x00]; // Index 0: null blob
+
+        // Index 1: "System" (length 6)
+        data.push(0x06); // length = 6
+        data.extend_from_slice(b"System");
+
+        // Index 8: "TestAlias" (length 9)
+        data.push(0x09); // length = 9
+        data.extend_from_slice(b"TestAlias");
+
+        // Index 18: "http://example.com" (length 18)
+        data.push(0x12); // length = 18
+        data.extend_from_slice(b"http://example.com");
+
+        data
     }
 
     #[test]
     fn test_parse_empty_blob() {
-        let blobs = create_mock_blob_stream();
+        let blobs = create_empty_blob_stream();
         let result = parse_imports_blob(&[], &blobs).unwrap();
         assert!(result.is_empty());
     }
 
     #[test]
     fn test_imports_parser_new() {
-        let blobs = create_mock_blob_stream();
+        let blobs = create_empty_blob_stream();
         let data = &[0x01, 0x00];
         let parser = ImportsParser::new(data, &blobs);
 
         assert_eq!(parser.parser.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_import_namespace() {
+        // ImportKind::ImportNamespace = 1, followed by blob index for namespace
+        let blob_data = create_test_blob_stream();
+        let blobs = Blob::from(&blob_data).expect("Failed to create blob stream");
+
+        // Kind 1 (ImportNamespace), blob index 1 ("System")
+        let import_data = &[0x01, 0x01];
+        let result = parse_imports_blob(import_data, &blobs).unwrap();
+
+        assert_eq!(result.len(), 1);
+        match &result.declarations[0] {
+            ImportDeclaration::ImportNamespace { namespace } => {
+                assert_eq!(namespace, "System");
+            }
+            _ => panic!("Expected ImportNamespace declaration"),
+        }
+    }
+
+    #[test]
+    fn test_parse_import_assembly_namespace() {
+        // ImportKind::ImportAssemblyNamespace = 2, followed by assembly ref row ID and namespace
+        let blob_data = create_test_blob_stream();
+        let blobs = Blob::from(&blob_data).expect("Failed to create blob stream");
+
+        // Kind 2 (ImportAssemblyNamespace), assembly ref row 3, blob index 1 ("System")
+        let import_data = &[0x02, 0x03, 0x01];
+        let result = parse_imports_blob(import_data, &blobs).unwrap();
+
+        assert_eq!(result.len(), 1);
+        match &result.declarations[0] {
+            ImportDeclaration::ImportAssemblyNamespace {
+                assembly_ref,
+                namespace,
+            } => {
+                assert_eq!(assembly_ref.value(), 0x23000003); // AssemblyRef table (0x23) + row 3
+                assert_eq!(namespace, "System");
+            }
+            _ => panic!("Expected ImportAssemblyNamespace declaration"),
+        }
+    }
+
+    #[test]
+    fn test_parse_import_type() {
+        // ImportKind::ImportType = 3, followed by compressed token
+        let blobs = create_empty_blob_stream();
+
+        // Kind 3 (ImportType), compressed token for TypeRef row 5 (0x01000005)
+        // Compressed token encoding: (row << 2) | table_index
+        // TypeRef table index in TypeDefOrRefOrSpecEncoded = 1
+        // So encoded = (5 << 2) | 1 = 21 = 0x15
+        let import_data = &[0x03, 0x15];
+        let result = parse_imports_blob(import_data, &blobs).unwrap();
+
+        assert_eq!(result.len(), 1);
+        match &result.declarations[0] {
+            ImportDeclaration::ImportType { type_ref } => {
+                assert_eq!(type_ref.value(), 0x01000005); // TypeRef table (0x01) + row 5
+            }
+            _ => panic!("Expected ImportType declaration"),
+        }
+    }
+
+    #[test]
+    fn test_parse_import_xml_namespace() {
+        // ImportKind::ImportXmlNamespace = 4, followed by alias and namespace
+        let blob_data = create_test_blob_stream();
+        let blobs = Blob::from(&blob_data).expect("Failed to create blob stream");
+
+        // Kind 4 (ImportXmlNamespace), alias blob index 8 ("TestAlias"), namespace blob index 18
+        let import_data = &[0x04, 0x08, 0x12];
+        let result = parse_imports_blob(import_data, &blobs).unwrap();
+
+        assert_eq!(result.len(), 1);
+        match &result.declarations[0] {
+            ImportDeclaration::ImportXmlNamespace { alias, namespace } => {
+                assert_eq!(alias, "TestAlias");
+                assert_eq!(namespace, "http://example.com");
+            }
+            _ => panic!("Expected ImportXmlNamespace declaration"),
+        }
+    }
+
+    #[test]
+    fn test_parse_import_assembly_reference_alias() {
+        // ImportKind::ImportAssemblyReferenceAlias = 5, followed by alias
+        let blob_data = create_test_blob_stream();
+        let blobs = Blob::from(&blob_data).expect("Failed to create blob stream");
+
+        // Kind 5 (ImportAssemblyReferenceAlias), alias blob index 8 ("TestAlias")
+        let import_data = &[0x05, 0x08];
+        let result = parse_imports_blob(import_data, &blobs).unwrap();
+
+        assert_eq!(result.len(), 1);
+        match &result.declarations[0] {
+            ImportDeclaration::ImportAssemblyReferenceAlias { alias } => {
+                assert_eq!(alias, "TestAlias");
+            }
+            _ => panic!("Expected ImportAssemblyReferenceAlias declaration"),
+        }
+    }
+
+    #[test]
+    fn test_parse_define_assembly_alias() {
+        // ImportKind::DefineAssemblyAlias = 6, followed by alias and assembly ref
+        let blob_data = create_test_blob_stream();
+        let blobs = Blob::from(&blob_data).expect("Failed to create blob stream");
+
+        // Kind 6 (DefineAssemblyAlias), alias blob index 8 ("TestAlias"), assembly ref row 2
+        let import_data = &[0x06, 0x08, 0x02];
+        let result = parse_imports_blob(import_data, &blobs).unwrap();
+
+        assert_eq!(result.len(), 1);
+        match &result.declarations[0] {
+            ImportDeclaration::DefineAssemblyAlias {
+                alias,
+                assembly_ref,
+            } => {
+                assert_eq!(alias, "TestAlias");
+                assert_eq!(assembly_ref.value(), 0x23000002);
+            }
+            _ => panic!("Expected DefineAssemblyAlias declaration"),
+        }
+    }
+
+    #[test]
+    fn test_parse_define_namespace_alias() {
+        // ImportKind::DefineNamespaceAlias = 7, followed by alias and namespace
+        let blob_data = create_test_blob_stream();
+        let blobs = Blob::from(&blob_data).expect("Failed to create blob stream");
+
+        // Kind 7 (DefineNamespaceAlias), alias blob index 8 ("TestAlias"), namespace blob index 1 ("System")
+        let import_data = &[0x07, 0x08, 0x01];
+        let result = parse_imports_blob(import_data, &blobs).unwrap();
+
+        assert_eq!(result.len(), 1);
+        match &result.declarations[0] {
+            ImportDeclaration::DefineNamespaceAlias { alias, namespace } => {
+                assert_eq!(alias, "TestAlias");
+                assert_eq!(namespace, "System");
+            }
+            _ => panic!("Expected DefineNamespaceAlias declaration"),
+        }
+    }
+
+    #[test]
+    fn test_parse_define_assembly_namespace_alias() {
+        // ImportKind::DefineAssemblyNamespaceAlias = 8, followed by alias, assembly ref, and namespace
+        let blob_data = create_test_blob_stream();
+        let blobs = Blob::from(&blob_data).expect("Failed to create blob stream");
+
+        // Kind 8, alias blob index 8 ("TestAlias"), assembly ref row 1, namespace blob index 1 ("System")
+        let import_data = &[0x08, 0x08, 0x01, 0x01];
+        let result = parse_imports_blob(import_data, &blobs).unwrap();
+
+        assert_eq!(result.len(), 1);
+        match &result.declarations[0] {
+            ImportDeclaration::DefineAssemblyNamespaceAlias {
+                alias,
+                assembly_ref,
+                namespace,
+            } => {
+                assert_eq!(alias, "TestAlias");
+                assert_eq!(assembly_ref.value(), 0x23000001);
+                assert_eq!(namespace, "System");
+            }
+            _ => panic!("Expected DefineAssemblyNamespaceAlias declaration"),
+        }
+    }
+
+    #[test]
+    fn test_parse_define_type_alias() {
+        // ImportKind::DefineTypeAlias = 9, followed by alias and type ref token
+        let blob_data = create_test_blob_stream();
+        let blobs = Blob::from(&blob_data).expect("Failed to create blob stream");
+
+        // Kind 9 (DefineTypeAlias), alias blob index 8 ("TestAlias"), compressed token for TypeDef row 10
+        // TypeDef table index in TypeDefOrRefOrSpecEncoded = 0
+        // Encoded = (10 << 2) | 0 = 40 = 0x28
+        let import_data = &[0x09, 0x08, 0x28];
+        let result = parse_imports_blob(import_data, &blobs).unwrap();
+
+        assert_eq!(result.len(), 1);
+        match &result.declarations[0] {
+            ImportDeclaration::DefineTypeAlias { alias, type_ref } => {
+                assert_eq!(alias, "TestAlias");
+                assert_eq!(type_ref.value(), 0x0200000A); // TypeDef table (0x02) + row 10
+            }
+            _ => panic!("Expected DefineTypeAlias declaration"),
+        }
+    }
+
+    #[test]
+    fn test_parse_multiple_declarations() {
+        // Test parsing multiple declarations in sequence
+        let blob_data = create_test_blob_stream();
+        let blobs = Blob::from(&blob_data).expect("Failed to create blob stream");
+
+        // Multiple declarations:
+        // 1. ImportNamespace "System" (kind 1, blob index 1)
+        // 2. ImportAssemblyReferenceAlias "TestAlias" (kind 5, blob index 8)
+        let import_data = &[0x01, 0x01, 0x05, 0x08];
+        let result = parse_imports_blob(import_data, &blobs).unwrap();
+
+        assert_eq!(result.len(), 2);
+
+        match &result.declarations[0] {
+            ImportDeclaration::ImportNamespace { namespace } => {
+                assert_eq!(namespace, "System");
+            }
+            _ => panic!("Expected ImportNamespace as first declaration"),
+        }
+
+        match &result.declarations[1] {
+            ImportDeclaration::ImportAssemblyReferenceAlias { alias } => {
+                assert_eq!(alias, "TestAlias");
+            }
+            _ => panic!("Expected ImportAssemblyReferenceAlias as second declaration"),
+        }
+    }
+
+    #[test]
+    fn test_parse_invalid_kind() {
+        // Test that invalid kind values (0, 10+) return errors
+        let blobs = create_empty_blob_stream();
+
+        // Kind 0 is invalid
+        let import_data = &[0x00];
+        let result = parse_imports_blob(import_data, &blobs);
+        assert!(result.is_err());
+
+        // Kind 10 is invalid
+        let import_data = &[0x0A];
+        let result = parse_imports_blob(import_data, &blobs);
+        assert!(result.is_err());
+
+        // Kind 255 is invalid
+        let import_data = &[0xFF];
+        let result = parse_imports_blob(import_data, &blobs);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_truncated_data() {
+        // Test that truncated data returns errors
+        let blob_data = create_test_blob_stream();
+        let blobs = Blob::from(&blob_data).expect("Failed to create blob stream");
+
+        // ImportAssemblyNamespace (kind 2) requires assembly ref and namespace, but only kind is provided
+        let import_data = &[0x02];
+        let result = parse_imports_blob(import_data, &blobs);
+        assert!(result.is_err());
+
+        // ImportAssemblyNamespace with assembly ref but missing namespace
+        let import_data = &[0x02, 0x01];
+        let result = parse_imports_blob(import_data, &blobs);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_imports_info_iteration() {
+        let blob_data = create_test_blob_stream();
+        let blobs = Blob::from(&blob_data).expect("Failed to create blob stream");
+
+        let import_data = &[0x01, 0x01, 0x05, 0x08];
+        let result = parse_imports_blob(import_data, &blobs).unwrap();
+
+        // Test iter()
+        let mut count = 0;
+        for _decl in result.iter() {
+            count += 1;
+        }
+        assert_eq!(count, 2);
+
+        // Test into_iter() for &ImportsInfo
+        count = 0;
+        for _decl in &result {
+            count += 1;
+        }
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_assembly_ref_token_format() {
+        // Verify that assembly ref tokens are correctly formatted
+        let blob_data = create_test_blob_stream();
+        let blobs = Blob::from(&blob_data).expect("Failed to create blob stream");
+
+        // Test various row IDs (single byte compressed uint values: 0x00-0x7F)
+        for row_id in [1u32, 10, 50, 127] {
+            let import_data = vec![0x06, 0x08, row_id as u8]; // DefineAssemblyAlias
+            let result = parse_imports_blob(&import_data, &blobs).unwrap();
+
+            match &result.declarations[0] {
+                ImportDeclaration::DefineAssemblyAlias { assembly_ref, .. } => {
+                    let expected = (TableId::AssemblyRef as u32) << 24 | row_id;
+                    assert_eq!(assembly_ref.value(), expected);
+                }
+                _ => panic!("Expected DefineAssemblyAlias"),
+            }
+        }
     }
 }

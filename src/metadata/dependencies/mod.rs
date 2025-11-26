@@ -25,46 +25,49 @@
 //!
 //! # Usage Examples
 //!
-//! ## Basic Dependency Graph Construction
+//! ## Basic Dependency Graph Usage
 //!
-//! ```rust,ignore
-//! use dotscope::metadata::dependencies::{AssemblyDependencyGraph, DependencyAnalyzer};
-//! use dotscope::metadata::loader::LoaderContext;
+//! ```rust
+//! use std::sync::Arc;
+//! use dotscope::metadata::dependencies::{
+//!     AssemblyDependencyGraph, AssemblyDependency, DependencySource,
+//!     DependencyType, VersionRequirement, DependencyResolutionState,
+//! };
+//! use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
 //!
-//! // Create dependency analyzer during metadata loading
-//! let mut dependency_graph = AssemblyDependencyGraph::new();
-//! let analyzer = DependencyAnalyzer::new(&mut dependency_graph);
+//! // Create a dependency graph
+//! let graph = Arc::new(AssemblyDependencyGraph::new());
+//! assert!(graph.is_empty());
 //!
-//! // Extract dependencies from metadata (called by loaders)
-//! analyzer.analyze_assembly_references(&context)?;
-//! analyzer.analyze_module_references(&context)?;
+//! // Create assembly identities
+//! let app = AssemblyIdentity::new(
+//!     "MyApp".to_string(),
+//!     AssemblyVersion::new(1, 0, 0, 0),
+//!     None, None, None,
+//! );
+//! let lib = AssemblyIdentity::new(
+//!     "MyLib".to_string(),
+//!     AssemblyVersion::new(2, 0, 0, 0),
+//!     None, None, None,
+//! );
 //!
-//! // Get topological loading order
-//! let load_order = dependency_graph.topological_order()?;
-//! println!("Assembly loading order: {:?}", load_order);
+//! // Get topological loading order (empty graph returns empty order)
+//! let load_order = graph.topological_order()?;
+//! assert!(load_order.is_empty());
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
-//! ## Dependency Analysis
+//! ## Cycle Detection
 //!
-//! ```rust,ignore
+//! ```rust
+//! use std::sync::Arc;
 //! use dotscope::metadata::dependencies::AssemblyDependencyGraph;
-//! use dotscope::metadata::identity::AssemblyIdentity;
 //!
-//! let graph = AssemblyDependencyGraph::new();
-//! // ... populate graph ...
+//! let graph = Arc::new(AssemblyDependencyGraph::new());
 //!
-//! // Check for circular dependencies
-//! if let Some(cycle) = graph.find_cycles() {
-//!     println!("Circular dependency detected: {:?}", cycle);
-//! }
-//!
-//! // Get all dependencies for an assembly
-//! let identity = AssemblyIdentity::parse("MyApp, Version=1.0.0.0")?;
-//! let deps = graph.get_dependencies(&identity);
-//! for dependency in deps {
-//!     println!("Depends on: {}", dependency.target_identity.name);
-//! }
+//! // Check for circular dependencies (empty graph has no cycles)
+//! let cycles = graph.find_cycles()?;
+//! assert!(cycles.is_none());
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!

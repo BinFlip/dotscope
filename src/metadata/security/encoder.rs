@@ -408,10 +408,22 @@ impl PermissionSetEncoder {
 
                 write_compressed_uint(name_index, &mut self.buffer);
 
-                let type_byte = match arg.arg_type {
+                let type_byte = match &arg.arg_type {
                     ArgumentType::Boolean => 0x02,
-                    ArgumentType::Int32 => 0x04,
+                    ArgumentType::Char => 0x03,
+                    ArgumentType::SByte => 0x04,
+                    ArgumentType::Byte => 0x05,
+                    ArgumentType::Int16 => 0x06,
+                    ArgumentType::UInt16 => 0x07,
+                    ArgumentType::Int32 => 0x08,
+                    ArgumentType::UInt32 => 0x09,
+                    ArgumentType::Int64 => 0x0A,
+                    ArgumentType::UInt64 => 0x0B,
+                    ArgumentType::Single => 0x0C,
+                    ArgumentType::Double => 0x0D,
                     ArgumentType::String => 0x0E,
+                    ArgumentType::Type => 0x50,
+                    ArgumentType::Object => 0x51,
                     _ => {
                         return Err(malformed_error!(
                             "Unsupported argument type for compressed encoding: {:?}",
@@ -425,10 +437,45 @@ impl PermissionSetEncoder {
                     ArgumentValue::Boolean(value) => {
                         self.buffer.push(u8::from(*value));
                     }
+                    ArgumentValue::Char(value) => {
+                        self.buffer
+                            .extend_from_slice(&(*value as u16).to_le_bytes());
+                    }
+                    ArgumentValue::SByte(value) => {
+                        self.buffer.push(*value as u8);
+                    }
+                    ArgumentValue::Byte(value) => {
+                        self.buffer.push(*value);
+                    }
+                    ArgumentValue::Int16(value) => {
+                        self.buffer.extend_from_slice(&value.to_le_bytes());
+                    }
+                    ArgumentValue::UInt16(value) => {
+                        self.buffer.extend_from_slice(&value.to_le_bytes());
+                    }
                     ArgumentValue::Int32(value) => {
                         write_compressed_int(*value, &mut self.buffer);
                     }
+                    ArgumentValue::UInt32(value) => {
+                        self.buffer.extend_from_slice(&value.to_le_bytes());
+                    }
+                    ArgumentValue::Int64(value) => {
+                        self.buffer.extend_from_slice(&value.to_le_bytes());
+                    }
+                    ArgumentValue::UInt64(value) => {
+                        self.buffer.extend_from_slice(&value.to_le_bytes());
+                    }
+                    ArgumentValue::Single(value) => {
+                        self.buffer.extend_from_slice(&value.to_le_bytes());
+                    }
+                    ArgumentValue::Double(value) => {
+                        self.buffer.extend_from_slice(&value.to_le_bytes());
+                    }
                     ArgumentValue::String(value) => {
+                        let value_index = string_table[value];
+                        write_compressed_uint(value_index, &mut self.buffer);
+                    }
+                    ArgumentValue::Type(value) => {
                         let value_index = string_table[value];
                         write_compressed_uint(value_index, &mut self.buffer);
                     }
@@ -445,7 +492,17 @@ impl PermissionSetEncoder {
         Ok(())
     }
 
-    /// Encodes a single permission in binary format.
+    /// Encodes a single permission in binary legacy format.
+    ///
+    /// Writes a single permission entry with the following structure:
+    /// 1. Class name length (compressed uint)
+    /// 2. Class name bytes (UTF-8)
+    /// 3. Blob length (compressed uint)
+    /// 4. Permission blob data (via [`Self::encode_permission_blob`])
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if encoding the permission blob fails due to unsupported types.
     fn encode_permission_binary(&mut self, permission: &Permission) -> Result<()> {
         let class_name_bytes = permission.class_name.as_bytes();
         #[allow(clippy::cast_possible_truncation)]
@@ -464,7 +521,19 @@ impl PermissionSetEncoder {
         Ok(())
     }
 
-    /// Encodes permission blob data (properties and arguments).
+    /// Encodes permission blob data containing named arguments.
+    ///
+    /// Creates the blob portion of a permission entry with:
+    /// 1. Argument count (compressed uint)
+    /// 2. For each argument: encoded via [`Self::encode_named_argument`]
+    ///
+    /// # Returns
+    ///
+    /// A byte vector containing the encoded permission blob.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any named argument cannot be encoded.
     fn encode_permission_blob(permission: &Permission) -> Result<Vec<u8>> {
         let mut blob = Vec::new();
 
@@ -481,37 +550,124 @@ impl PermissionSetEncoder {
     }
 
     /// Encodes a named argument (property/field).
+    ///
+    /// # Type Code Reference (ECMA-335)
+    ///
+    /// | Code | Type     |
+    /// |------|----------|
+    /// | 0x02 | Boolean  |
+    /// | 0x03 | Char     |
+    /// | 0x04 | SByte    |
+    /// | 0x05 | Byte     |
+    /// | 0x06 | Int16    |
+    /// | 0x07 | UInt16   |
+    /// | 0x08 | Int32    |
+    /// | 0x09 | UInt32   |
+    /// | 0x0A | Int64    |
+    /// | 0x0B | UInt64   |
+    /// | 0x0C | Single   |
+    /// | 0x0D | Double   |
+    /// | 0x0E | String   |
+    /// | 0x50 | Type     |
+    /// | 0x51 | Object   |
     fn encode_named_argument(arg: &NamedArgument, blob: &mut Vec<u8>) -> Result<()> {
+        // 0x54 = FIELD marker (property would be 0x53)
         blob.push(0x54);
 
-        let type_byte = match arg.arg_type {
+        let type_byte = match &arg.arg_type {
             ArgumentType::Boolean => 0x02,
-            ArgumentType::Int32 => 0x04,
+            ArgumentType::Char => 0x03,
+            ArgumentType::SByte => 0x04,
+            ArgumentType::Byte => 0x05,
+            ArgumentType::Int16 => 0x06,
+            ArgumentType::UInt16 => 0x07,
+            ArgumentType::Int32 => 0x08,
+            ArgumentType::UInt32 => 0x09,
+            ArgumentType::Int64 => 0x0A,
+            ArgumentType::UInt64 => 0x0B,
+            ArgumentType::Single => 0x0C,
+            ArgumentType::Double => 0x0D,
             ArgumentType::String => 0x0E,
-            _ => {
+            ArgumentType::Type => 0x50,
+            ArgumentType::Object => 0x51,
+            ArgumentType::Enum(ref type_name) => {
+                // Enum encoding: 0x55 followed by type name
+                blob.push(0x55);
+                let type_name_bytes = type_name.as_bytes();
+                let type_name_len = u32::try_from(type_name_bytes.len()).map_err(|_| {
+                    malformed_error!("Enum type name too long: {} bytes", type_name_bytes.len())
+                })?;
+                write_compressed_uint(type_name_len, blob);
+                blob.extend_from_slice(type_name_bytes);
+                // Return early since we've already written the type info
+                return Self::encode_argument_value(&arg.value, blob);
+            }
+            ArgumentType::Array(ref _elem_type) => {
                 return Err(malformed_error!(
-                    "Unsupported argument type for encoding: {:?}",
-                    arg.arg_type
+                    "Array argument types are not yet supported for encoding"
+                ));
+            }
+            ArgumentType::Unknown(code) => {
+                return Err(malformed_error!(
+                    "Cannot encode unknown argument type: 0x{:02X}",
+                    code
                 ));
             }
         };
         blob.push(type_byte);
 
+        // Write argument name
         let name_bytes = arg.name.as_bytes();
         let name_len = u32::try_from(name_bytes.len())
             .map_err(|_| malformed_error!("Argument name too long: {} bytes", name_bytes.len()))?;
         write_compressed_uint(name_len, blob);
         blob.extend_from_slice(name_bytes);
 
-        match &arg.value {
-            ArgumentValue::Boolean(value) => {
-                blob.push(u8::from(*value));
+        // Write argument value
+        Self::encode_argument_value(&arg.value, blob)
+    }
+
+    /// Encodes an argument value to the blob.
+    fn encode_argument_value(value: &ArgumentValue, blob: &mut Vec<u8>) -> Result<()> {
+        match value {
+            ArgumentValue::Boolean(v) => {
+                blob.push(u8::from(*v));
             }
-            ArgumentValue::Int32(value) => {
-                write_compressed_int(*value, blob);
+            ArgumentValue::Char(v) => {
+                blob.extend_from_slice(&(*v as u16).to_le_bytes());
             }
-            ArgumentValue::String(value) => {
-                let string_bytes = value.as_bytes();
+            ArgumentValue::SByte(v) => {
+                blob.push(*v as u8);
+            }
+            ArgumentValue::Byte(v) => {
+                blob.push(*v);
+            }
+            ArgumentValue::Int16(v) => {
+                blob.extend_from_slice(&v.to_le_bytes());
+            }
+            ArgumentValue::UInt16(v) => {
+                blob.extend_from_slice(&v.to_le_bytes());
+            }
+            ArgumentValue::Int32(v) => {
+                blob.extend_from_slice(&v.to_le_bytes());
+            }
+            ArgumentValue::UInt32(v) => {
+                blob.extend_from_slice(&v.to_le_bytes());
+            }
+            ArgumentValue::Int64(v) => {
+                blob.extend_from_slice(&v.to_le_bytes());
+            }
+            ArgumentValue::UInt64(v) => {
+                blob.extend_from_slice(&v.to_le_bytes());
+            }
+            ArgumentValue::Single(v) => {
+                blob.extend_from_slice(&v.to_le_bytes());
+            }
+            ArgumentValue::Double(v) => {
+                blob.extend_from_slice(&v.to_le_bytes());
+            }
+            ArgumentValue::String(v) => {
+                let string_bytes = v.as_bytes();
                 let string_len = u32::try_from(string_bytes.len()).map_err(|_| {
                     malformed_error!(
                         "Argument string value too long: {} bytes",
@@ -521,11 +677,58 @@ impl PermissionSetEncoder {
                 write_compressed_uint(string_len, blob);
                 blob.extend_from_slice(string_bytes);
             }
-            _ => {
-                return Err(malformed_error!(
-                    "Unsupported argument value for encoding: {:?}",
-                    arg.value
-                ));
+            ArgumentValue::Type(v) => {
+                let type_bytes = v.as_bytes();
+                let type_len = u32::try_from(type_bytes.len()).map_err(|_| {
+                    malformed_error!("Type name too long: {} bytes", type_bytes.len())
+                })?;
+                write_compressed_uint(type_len, blob);
+                blob.extend_from_slice(type_bytes);
+            }
+            ArgumentValue::Object(inner) => {
+                // Boxed object: write inner type tag then value
+                let inner_type_byte = match inner.as_ref() {
+                    ArgumentValue::Boolean(_) => 0x02,
+                    ArgumentValue::Char(_) => 0x03,
+                    ArgumentValue::SByte(_) => 0x04,
+                    ArgumentValue::Byte(_) => 0x05,
+                    ArgumentValue::Int16(_) => 0x06,
+                    ArgumentValue::UInt16(_) => 0x07,
+                    ArgumentValue::Int32(_) => 0x08,
+                    ArgumentValue::UInt32(_) => 0x09,
+                    ArgumentValue::Int64(_) => 0x0A,
+                    ArgumentValue::UInt64(_) => 0x0B,
+                    ArgumentValue::Single(_) => 0x0C,
+                    ArgumentValue::Double(_) => 0x0D,
+                    ArgumentValue::String(_) => 0x0E,
+                    ArgumentValue::Type(_) => 0x50,
+                    _ => {
+                        return Err(malformed_error!(
+                            "Cannot encode nested object value: {:?}",
+                            inner
+                        ));
+                    }
+                };
+                blob.push(inner_type_byte);
+                Self::encode_argument_value(inner, blob)?;
+            }
+            ArgumentValue::Enum(ref _type_name, v) => {
+                // Enum value is just the underlying integer
+                blob.extend_from_slice(&v.to_le_bytes());
+            }
+            ArgumentValue::Array(elements) => {
+                // Array: write element count followed by elements
+                let count = u32::try_from(elements.len()).map_err(|_| {
+                    malformed_error!("Array too large: {} elements", elements.len())
+                })?;
+                blob.extend_from_slice(&count.to_le_bytes());
+                for elem in elements {
+                    Self::encode_argument_value(elem, blob)?;
+                }
+            }
+            ArgumentValue::Null => {
+                // Null string is encoded as 0xFF
+                blob.push(0xFF);
             }
         }
 
@@ -553,7 +756,16 @@ impl PermissionSetEncoder {
         Ok(())
     }
 
-    /// Encodes a single permission in XML format.
+    /// Encodes a single permission as an XML `IPermission` element.
+    ///
+    /// Writes an `<IPermission>` element with:
+    /// - `class` attribute containing the permission class name
+    /// - `version` attribute set to "1"
+    /// - Named arguments as additional attributes with XML-escaped values
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the buffer fails.
     fn encode_permission_xml(&mut self, permission: &Permission) -> Result<()> {
         write!(
             &mut self.buffer,
@@ -565,14 +777,30 @@ impl PermissionSetEncoder {
         for arg in &permission.named_arguments {
             let value_str = match &arg.value {
                 ArgumentValue::Boolean(v) => v.to_string(),
+                ArgumentValue::Char(v) => v.to_string(),
+                ArgumentValue::SByte(v) => v.to_string(),
+                ArgumentValue::Byte(v) => v.to_string(),
+                ArgumentValue::Int16(v) => v.to_string(),
+                ArgumentValue::UInt16(v) => v.to_string(),
                 ArgumentValue::Int32(v) => v.to_string(),
+                ArgumentValue::UInt32(v) => v.to_string(),
+                ArgumentValue::Int64(v) => v.to_string(),
+                ArgumentValue::UInt64(v) => v.to_string(),
+                ArgumentValue::Single(v) => v.to_string(),
+                ArgumentValue::Double(v) => v.to_string(),
                 ArgumentValue::String(v) => v.clone(),
-                _ => {
-                    return Err(malformed_error!(
-                        "Unsupported argument value for XML encoding: {:?}",
-                        arg.value
-                    ));
+                ArgumentValue::Type(v) => v.clone(),
+                ArgumentValue::Enum(type_name, v) => format!("{}.{}", type_name, v),
+                ArgumentValue::Object(inner) => format!("{}", inner),
+                ArgumentValue::Array(elements) => {
+                    // Format array as comma-separated values
+                    elements
+                        .iter()
+                        .map(|e| format!("{}", e))
+                        .collect::<Vec<_>>()
+                        .join(",")
                 }
+                ArgumentValue::Null => "null".to_string(),
             };
 
             let escaped_value = Self::xml_escape(&value_str);
@@ -587,6 +815,30 @@ impl PermissionSetEncoder {
     }
 
     /// Escapes XML special characters in attribute values.
+    ///
+    /// This function manually escapes the 5 XML predefined entities required by the XML 1.0 spec.
+    /// A manual implementation is used instead of an external XML library for several reasons:
+    ///
+    /// 1. **Minimal Dependencies**: Avoids adding a dependency just for simple string escaping
+    /// 2. **Performance**: Simple string replacements are faster than full XML library processing
+    /// 3. **Completeness**: The 5 entities escaped here (`&`, `<`, `>`, `"`, `'`) are the complete
+    ///    set of predefined XML entities per the XML 1.0 specification
+    /// 4. **Predictability**: Direct control over escaping behavior without library version concerns
+    ///
+    /// # XML 1.0 Predefined Entities
+    ///
+    /// | Character | Entity |
+    /// |-----------|--------|
+    /// | `&` | `&amp;` |
+    /// | `<` | `&lt;` |
+    /// | `>` | `&gt;` |
+    /// | `"` | `&quot;` |
+    /// | `'` | `&apos;` |
+    ///
+    /// # Note
+    ///
+    /// This implementation handles attribute values only. For element content,
+    /// `&apos;` escaping is optional, but we include it for consistency.
     fn xml_escape(value: &str) -> String {
         value
             .replace('&', "&amp;")
@@ -725,13 +977,48 @@ mod tests {
             assembly_name: "TestAssembly".to_string(),
             named_arguments: vec![NamedArgument {
                 name: "UnsupportedArg".to_string(),
-                arg_type: ArgumentType::Int64, // Unsupported type for encoding
-                value: ArgumentValue::Int64(123),
+                arg_type: ArgumentType::Unknown(0xFF), // Unknown type cannot be encoded
+                value: ArgumentValue::Null,
             }],
         }];
 
         let result = encode_permission_set(&permissions, PermissionSetFormat::BinaryLegacy);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_encode_int64_argument() {
+        let permissions = vec![Permission {
+            class_name: "TestPermission".to_string(),
+            assembly_name: "TestAssembly".to_string(),
+            named_arguments: vec![NamedArgument {
+                name: "LongValue".to_string(),
+                arg_type: ArgumentType::Int64,
+                value: ArgumentValue::Int64(0x0102_0304_0506_0708),
+            }],
+        }];
+
+        let result = encode_permission_set(&permissions, PermissionSetFormat::BinaryLegacy);
+        assert!(result.is_ok());
+        let encoded = result.unwrap();
+        // Verify the Int64 value is present in the encoded data
+        assert!(encoded.len() > 10); // Should have data
+    }
+
+    #[test]
+    fn test_encode_double_argument() {
+        let permissions = vec![Permission {
+            class_name: "TestPermission".to_string(),
+            assembly_name: "TestAssembly".to_string(),
+            named_arguments: vec![NamedArgument {
+                name: "DoubleValue".to_string(),
+                arg_type: ArgumentType::Double,
+                value: ArgumentValue::Double(3.14159),
+            }],
+        }];
+
+        let result = encode_permission_set(&permissions, PermissionSetFormat::BinaryLegacy);
+        assert!(result.is_ok());
     }
 
     #[test]

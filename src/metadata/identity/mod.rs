@@ -5,6 +5,16 @@
 //! It serves as the foundation for cross-assembly resolution, dependency tracking,
 //! and multi-assembly project management.
 //!
+//! # ECMA-335 References
+//!
+//! This module implements identity concepts defined in the ECMA-335 specification:
+//! - **Section II.6.3**: Referencing assemblies - defines assembly reference format
+//! - **Section II.22.2**: Assembly table - defines assembly metadata structure
+//! - **Section II.22.5**: AssemblyRef table - defines assembly reference structure
+//! - **Section II.6.2.1.3**: PublicKeyToken - defines public key token computation
+//!
+//! See: <https://ecma-international.org/publications-and-standards/standards/ecma-335/>
+//!
 //! # Module Structure
 //!
 //! - [`assembly`] - Complete assembly identity with name, version, culture, and strong name

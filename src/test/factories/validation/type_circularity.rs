@@ -4,10 +4,13 @@
 //! for creating test assemblies with various type circularity validation scenarios.
 
 use crate::{
-    cilassembly::CilAssembly,
+    cilassembly::{BuilderContext, CilAssembly},
     metadata::{
         cilassemblyview::CilAssemblyView,
-        tables::{CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeAttributes, TypeDefRaw},
+        tables::{
+            CodedIndex, CodedIndexType, InterfaceImplBuilder, NestedClassBuilder, TableDataOwned,
+            TableId, TypeAttributes, TypeDefBuilder, TypeDefRaw,
+        },
         token::Token,
         validation::ValidationConfig,
     },
@@ -15,10 +18,6 @@ use crate::{
     Error, Result,
 };
 use tempfile::NamedTempFile;
-
-// Note: Some builder types are imported through prelude in the original file
-// We'll include what we need explicitly or use the prelude
-use crate::prelude::*;
 
 /// File factory function for OwnedTypeCircularityValidator testing.
 ///

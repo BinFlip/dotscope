@@ -217,10 +217,10 @@ impl<'a> TokenValidator<'a> {
         self.scanner.can_delete_token(token)
     }
 
-    /// Gets all tokens that reference the specified token.
+    /// Returns a reference to the set of tokens that reference the given token.
     ///
-    /// This method returns the set of tokens that have references pointing to
-    /// the specified token, useful for analyzing dependency chains.
+    /// This method returns a reference to the internal set without cloning.
+    /// Returns `None` if no tokens reference the given token.
     ///
     /// # Arguments
     ///
@@ -228,16 +228,16 @@ impl<'a> TokenValidator<'a> {
     ///
     /// # Returns
     ///
-    /// A set of tokens that reference the specified token.
+    /// Returns an optional reference to the internal set of referencing tokens.
     #[must_use]
-    pub fn get_references_to(&self, token: Token) -> std::collections::HashSet<Token> {
-        self.scanner.get_references_to(token)
+    pub fn references_to(&self, token: Token) -> Option<&rustc_hash::FxHashSet<Token>> {
+        self.scanner.references_to(token)
     }
 
-    /// Gets all tokens that the specified token references.
+    /// Returns a reference to the set of tokens that the given token references.
     ///
-    /// This method returns the set of tokens that are referenced by the
-    /// specified token, useful for analyzing dependency chains.
+    /// This method returns a reference to the internal set without cloning.
+    /// Returns `None` if the token doesn't reference any other tokens.
     ///
     /// # Arguments
     ///
@@ -245,10 +245,42 @@ impl<'a> TokenValidator<'a> {
     ///
     /// # Returns
     ///
-    /// A set of tokens referenced by the specified token.
+    /// Returns an optional reference to the internal set of referenced tokens.
     #[must_use]
-    pub fn get_references_from(&self, token: Token) -> std::collections::HashSet<Token> {
-        self.scanner.get_references_from(token)
+    pub fn references_from(&self, token: Token) -> Option<&rustc_hash::FxHashSet<Token>> {
+        self.scanner.references_from(token)
+    }
+
+    /// Checks if any tokens reference the given token.
+    ///
+    /// More efficient than checking if `references_to()` is empty.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The token to check
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if at least one token references the given token.
+    #[must_use]
+    pub fn has_references_to(&self, token: Token) -> bool {
+        self.scanner.has_references_to(token)
+    }
+
+    /// Checks if the given token references any other tokens.
+    ///
+    /// More efficient than checking if `references_from()` is empty.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The token to check
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the token references at least one other token.
+    #[must_use]
+    pub fn has_references_from(&self, token: Token) -> bool {
+        self.scanner.has_references_from(token)
     }
 
     /// Validates a null token reference.

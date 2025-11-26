@@ -7,10 +7,12 @@
 use crate::{
     cilassembly::BuilderContext,
     metadata::{
+        method::{MethodAccessFlags, MethodModifiers},
         signatures::{encode_method_signature, SignatureMethod, SignatureParameter, TypeSignature},
         tables::{
-            CodedIndex, CodedIndexType, InterfaceImplBuilder, MethodDefBuilder, TableId,
-            TypeAttributes, TypeDefBuilder,
+            CodedIndex, CodedIndexType, InterfaceImplBuilder, MethodDefBuilder,
+            MethodSemanticsAttributes, MethodSemanticsBuilder, TableId, TypeAttributes,
+            TypeDefBuilder,
         },
         token::Token,
     },
@@ -297,7 +299,9 @@ impl InterfaceBuilder {
             name: name.to_string(),
             return_type,
             parameters,
-            attributes: 0x0400 | 0x0006 | 0x0080, // PUBLIC | VIRTUAL | ABSTRACT
+            attributes: MethodModifiers::ABSTRACT.bits()
+                | MethodAccessFlags::PUBLIC.bits()
+                | MethodModifiers::HIDE_BY_SIG.bits(),
         });
         self
     }
@@ -482,6 +486,9 @@ impl InterfaceBuilder {
 
         // Create properties with abstract accessors
         for prop_def in self.properties {
+            let mut getter_token: Option<Token> = None;
+            let mut setter_token: Option<Token> = None;
+
             if prop_def.has_getter {
                 // Create abstract getter
                 let getter_name = format!("get_{}", prop_def.name);
@@ -508,12 +515,19 @@ impl InterfaceBuilder {
                 };
                 let getter_signature_bytes = encode_method_signature(&getter_signature)?;
 
-                MethodDefBuilder::new()
-                    .name(&getter_name)
-                    .flags(0x0400 | 0x0006 | 0x0080 | 0x0800) // PUBLIC | VIRTUAL | ABSTRACT | SPECIAL_NAME
-                    .impl_flags(0x0000) // MANAGED | IL
-                    .signature(&getter_signature_bytes)
-                    .build(context)?;
+                getter_token = Some(
+                    MethodDefBuilder::new()
+                        .name(&getter_name)
+                        .flags(
+                            MethodModifiers::ABSTRACT.bits()
+                                | MethodAccessFlags::PUBLIC.bits()
+                                | MethodModifiers::HIDE_BY_SIG.bits()
+                                | MethodModifiers::SPECIAL_NAME.bits(),
+                        )
+                        .impl_flags(0x0000) // MANAGED | IL
+                        .signature(&getter_signature_bytes)
+                        .build(context)?,
+                );
             }
 
             if prop_def.has_setter {
@@ -546,16 +560,40 @@ impl InterfaceBuilder {
                 };
                 let setter_signature_bytes = encode_method_signature(&setter_signature)?;
 
-                MethodDefBuilder::new()
-                    .name(&setter_name)
-                    .flags(0x0400 | 0x0006 | 0x0080 | 0x0800) // PUBLIC | VIRTUAL | ABSTRACT | SPECIAL_NAME
-                    .impl_flags(0x0000) // MANAGED | IL
-                    .signature(&setter_signature_bytes)
-                    .build(context)?;
+                setter_token = Some(
+                    MethodDefBuilder::new()
+                        .name(&setter_name)
+                        .flags(
+                            MethodModifiers::ABSTRACT.bits()
+                                | MethodAccessFlags::PUBLIC.bits()
+                                | MethodModifiers::HIDE_BY_SIG.bits()
+                                | MethodModifiers::SPECIAL_NAME.bits(),
+                        )
+                        .impl_flags(0x0000) // MANAGED | IL
+                        .signature(&setter_signature_bytes)
+                        .build(context)?,
+                );
             }
 
             // Create property entry using PropertyBuilder
-            PropertyBuilder::new(&prop_def.name, prop_def.property_type).build(context)?;
+            let property_token =
+                PropertyBuilder::new(&prop_def.name, prop_def.property_type).build(context)?;
+
+            if let Some(getter) = getter_token {
+                MethodSemanticsBuilder::new()
+                    .semantics(MethodSemanticsAttributes::GETTER)
+                    .method(getter)
+                    .association_from_property(property_token)
+                    .build(context)?;
+            }
+
+            if let Some(setter) = setter_token {
+                MethodSemanticsBuilder::new()
+                    .semantics(MethodSemanticsAttributes::SETTER)
+                    .method(setter)
+                    .association_from_property(property_token)
+                    .build(context)?;
+            }
         }
 
         // Create InterfaceImpl entries for inheritance

@@ -85,7 +85,7 @@ use crate::{
     },
     Error, Result,
 };
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 /// Foundation validator for security constraints, permissions, and security attributes.
 ///
@@ -363,11 +363,10 @@ impl OwnedSecurityValidator {
         &self,
         context: &OwnedValidationContext,
     ) -> Result<()> {
-        let types = context.object().types();
         let methods = context.object().methods();
 
         // Validate security attributes on types
-        for type_entry in types.all_types() {
+        for type_entry in context.all_types() {
             for (_, custom_attr) in type_entry.custom_attributes.iter() {
                 if Self::is_security_attribute(custom_attr) {
                     self.validate_security_attribute_usage(custom_attr, "Type", &type_entry.name)?;
@@ -481,14 +480,15 @@ impl OwnedSecurityValidator {
     /// - Types are marked both SecurityCritical and SecurityTransparent
     /// - Transparent types inherit from critical base types
     fn validate_security_transparency(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
-        let mut critical_types = HashSet::new();
-        let mut transparent_types = HashSet::new();
+        let mut critical_types = FxHashSet::default();
+        let mut transparent_types = FxHashSet::default();
+
+        let all_types = context.all_types();
 
         // Identify critical and transparent types
-        for type_entry in types.all_types() {
-            let is_critical = Self::has_security_critical_attribute(&type_entry);
-            let is_transparent = Self::has_security_transparent_attribute(&type_entry);
+        for type_entry in all_types {
+            let is_critical = Self::has_security_critical_attribute(type_entry);
+            let is_transparent = Self::has_security_transparent_attribute(type_entry);
 
             if is_critical && is_transparent {
                 return Err(Error::ValidationOwnedValidatorFailed {
@@ -510,7 +510,7 @@ impl OwnedSecurityValidator {
         }
 
         // Validate transparency inheritance
-        for type_entry in types.all_types() {
+        for type_entry in all_types {
             if let Some(base_type) = type_entry.base() {
                 let type_token = type_entry.token.value();
                 let base_token = base_type.token.value();

@@ -242,7 +242,7 @@ impl OwnedDependencyValidator {
         let methods = context.object().methods();
 
         // Build complete dependency graph
-        let mut dependency_graph = std::collections::HashMap::new();
+        let mut dependency_graph = rustc_hash::FxHashMap::default();
         for type_entry in context.target_assembly_types() {
             let token = type_entry.token;
             let mut dependencies = Vec::new();

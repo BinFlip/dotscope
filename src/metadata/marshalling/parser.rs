@@ -122,6 +122,11 @@ pub fn parse_marshalling_descriptor(data: &[u8]) -> Result<MarshallingInfo> {
 /// - **Format Validation**: Rejects malformed descriptors
 /// - **Type Validation**: Ensures only valid native type constants
 ///
+/// # Note on Default Trait
+///
+/// `MarshallingParser` does not implement `Default` because it requires input data
+/// (a byte slice) to function. Use [`MarshallingParser::new`] to create instances.
+/// For encoding-focused workflows, use [`MarshallingEncoder`] which does implement `Default`.
 ///
 pub struct MarshallingParser<'a> {
     /// Underlying byte parser for low-level operations
@@ -161,6 +166,44 @@ impl<'a> MarshallingParser<'a> {
         }
     }
 
+    /// Parses an optional compressed uint if more data is available and the next byte is not END.
+    ///
+    /// This is a helper method to avoid code duplication for parsing optional parameters
+    /// that are common across many native types (size parameters, indices, etc.).
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Some(value))` - If more data was available and not END marker
+    /// * `Ok(None)` - If no more data or next byte is END marker
+    /// * `Err(...)` - If reading fails
+    fn parse_optional_compressed_uint(&mut self) -> Result<Option<u32>> {
+        if self.parser.has_more_data() && self.parser.peek_byte()? != NATIVE_TYPE::END {
+            Ok(Some(self.parser.read_compressed_uint()?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Parses an optional raw byte if more data is available and the next byte is not END.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Some(value))` - If more data was available and not END marker
+    /// * `Ok(None)` - If no more data or next byte is END marker
+    /// * `Err(...)` - If reading fails
+    fn parse_optional_byte(&mut self) -> Result<Option<u8>> {
+        if self.parser.has_more_data() && self.parser.peek_byte()? != NATIVE_TYPE::END {
+            Ok(Some(self.parser.read_le::<u8>()?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Checks if more optional data is available (not at END and has more bytes).
+    fn has_optional_data(&mut self) -> Result<bool> {
+        Ok(self.parser.has_more_data() && self.parser.peek_byte()? != NATIVE_TYPE::END)
+    }
+
     /// Parses a single native type from the current position
     ///
     /// # Errors
@@ -168,9 +211,17 @@ impl<'a> MarshallingParser<'a> {
     pub fn parse_native_type(&mut self) -> Result<NativeType> {
         self.depth += 1;
         if self.depth >= MAX_RECURSION_DEPTH {
+            self.depth -= 1;
             return Err(RecursionLimit(MAX_RECURSION_DEPTH));
         }
 
+        let result = self.parse_native_type_inner();
+        self.depth -= 1;
+        result
+    }
+
+    /// Inner implementation of parse_native_type (depth tracking handled by caller)
+    fn parse_native_type_inner(&mut self) -> Result<NativeType> {
         let head_byte = self.parser.read_le::<u8>()?;
         match head_byte {
             NATIVE_TYPE::END | NATIVE_TYPE::MAX => Ok(NativeType::End),
@@ -196,43 +247,19 @@ impl<'a> MarshallingParser<'a> {
             NATIVE_TYPE::ERROR => Ok(NativeType::Error),
             NATIVE_TYPE::BSTR => Ok(NativeType::BStr),
             NATIVE_TYPE::LPSTR => {
-                let size_param_index = if self.parser.has_more_data()
-                    && self.parser.peek_byte()? != NATIVE_TYPE::END
-                {
-                    Some(self.parser.read_compressed_uint()?)
-                } else {
-                    None
-                };
+                let size_param_index = self.parse_optional_compressed_uint()?;
                 Ok(NativeType::LPStr { size_param_index })
             }
             NATIVE_TYPE::LPWSTR => {
-                let size_param_index = if self.parser.has_more_data()
-                    && self.parser.peek_byte()? != NATIVE_TYPE::END
-                {
-                    Some(self.parser.read_compressed_uint()?)
-                } else {
-                    None
-                };
+                let size_param_index = self.parse_optional_compressed_uint()?;
                 Ok(NativeType::LPWStr { size_param_index })
             }
             NATIVE_TYPE::LPTSTR => {
-                let size_param_index = if self.parser.has_more_data()
-                    && self.parser.peek_byte()? != NATIVE_TYPE::END
-                {
-                    Some(self.parser.read_compressed_uint()?)
-                } else {
-                    None
-                };
+                let size_param_index = self.parse_optional_compressed_uint()?;
                 Ok(NativeType::LPTStr { size_param_index })
             }
             NATIVE_TYPE::LPUTF8STR => {
-                let size_param_index = if self.parser.has_more_data()
-                    && self.parser.peek_byte()? != NATIVE_TYPE::END
-                {
-                    Some(self.parser.read_compressed_uint()?)
-                } else {
-                    None
-                };
+                let size_param_index = self.parse_optional_compressed_uint()?;
                 Ok(NativeType::LPUtf8Str { size_param_index })
             }
             NATIVE_TYPE::FIXEDSYSSTRING => {
@@ -244,35 +271,15 @@ impl<'a> MarshallingParser<'a> {
             NATIVE_TYPE::IDISPATCH => Ok(NativeType::IDispatch),
             NATIVE_TYPE::IINSPECTABLE => Ok(NativeType::IInspectable),
             NATIVE_TYPE::STRUCT => {
-                // Optional packing size
-                let packing_size = if self.parser.has_more_data()
-                    && self.parser.peek_byte()? != NATIVE_TYPE::END
-                {
-                    Some(self.parser.read_le::<u8>()?)
-                } else {
-                    None
-                };
-                // Optional class size
-                let class_size = if self.parser.has_more_data()
-                    && self.parser.peek_byte()? != NATIVE_TYPE::END
-                {
-                    Some(self.parser.read_compressed_uint()?)
-                } else {
-                    None
-                };
+                let packing_size = self.parse_optional_byte()?;
+                let class_size = self.parse_optional_compressed_uint()?;
                 Ok(NativeType::Struct {
                     packing_size,
                     class_size,
                 })
             }
             NATIVE_TYPE::INTERFACE => {
-                let iid_param_index = if self.parser.has_more_data()
-                    && self.parser.peek_byte()? != NATIVE_TYPE::END
-                {
-                    Some(self.parser.read_compressed_uint()?)
-                } else {
-                    None
-                };
+                let iid_param_index = self.parse_optional_compressed_uint()?;
                 Ok(NativeType::Interface { iid_param_index })
             }
             NATIVE_TYPE::SAFEARRAY => {
@@ -302,9 +309,7 @@ impl<'a> MarshallingParser<'a> {
             NATIVE_TYPE::FIXEDARRAY => {
                 let size = self.parser.read_compressed_uint()?;
                 // Optional element type
-                let element_type = if self.parser.has_more_data()
-                    && self.parser.peek_byte()? != NATIVE_TYPE::END
-                {
+                let element_type = if self.has_optional_data()? {
                     Some(Box::new(self.parse_native_type()?))
                 } else {
                     None
@@ -314,24 +319,8 @@ impl<'a> MarshallingParser<'a> {
             NATIVE_TYPE::ARRAY => {
                 // ARRAY Type Opt<ParamNumber> Opt<NumElement>
                 let array_type = self.parse_native_type()?;
-
-                // Optional ParamNum
-                let num_param = if self.parser.has_more_data()
-                    && self.parser.peek_byte()? != NATIVE_TYPE::END
-                {
-                    Some(self.parser.read_compressed_uint()?)
-                } else {
-                    None
-                };
-
-                // Optional NumElement
-                let num_element = if self.parser.has_more_data()
-                    && self.parser.peek_byte()? != NATIVE_TYPE::END
-                {
-                    Some(self.parser.read_compressed_uint()?)
-                } else {
-                    None
-                };
+                let num_param = self.parse_optional_compressed_uint()?;
+                let num_element = self.parse_optional_compressed_uint()?;
 
                 Ok(NativeType::Array {
                     element_type: Box::new(array_type),
@@ -366,9 +355,7 @@ impl<'a> MarshallingParser<'a> {
             NATIVE_TYPE::HSTRING => Ok(NativeType::HString),
             NATIVE_TYPE::PTR => {
                 // Optional referenced type
-                let ref_type = if self.parser.has_more_data()
-                    && self.parser.peek_byte()? != NATIVE_TYPE::END
-                {
+                let ref_type = if self.has_optional_data()? {
                     Some(Box::new(self.parse_native_type()?))
                 } else {
                     None

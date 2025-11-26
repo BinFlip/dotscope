@@ -627,13 +627,7 @@ impl WriteExecutor {
             if let Some(export_rva) = requirements.export_table_rva {
                 let unified_exports = assembly.native_exports();
                 if !unified_exports.is_empty() {
-                    Self::write_export_tables(
-                        output,
-                        layout,
-                        assembly,
-                        export_rva,
-                        unified_exports,
-                    )?;
+                    Self::write_export_tables(output, layout, export_rva, unified_exports)?;
                 }
             }
         }
@@ -703,7 +697,6 @@ impl WriteExecutor {
     ///
     /// * `output` - Target [`crate::cilassembly::writer::output::Output`] for writing export table data
     /// * `layout` - Layout information for RVA-to-offset conversion
-    /// * `_assembly` - Assembly reference (currently unused, reserved for future enhancements)
     /// * `export_rva` - RVA where export table should be positioned
     /// * `exports` - [`crate::metadata::exports::UnifiedExportContainer`] with native export data
     ///
@@ -723,7 +716,6 @@ impl WriteExecutor {
     fn write_export_tables(
         output: &mut Output,
         layout: &WriteLayout,
-        _assembly: &crate::cilassembly::CilAssembly,
         export_rva: u32,
         exports: &UnifiedExportContainer,
     ) -> Result<()> {

@@ -255,6 +255,25 @@
 //! - **Encoding Validation**: Verifies string encoding and compressed integers
 //! - **Cross-Reference Validation**: Validates indices between streams and tables
 //!
+//! ## Iterator Error Behavior
+//!
+//! Stream iterators have two error handling strategies, chosen based on data characteristics:
+//!
+//! | Iterator | Strategy | Rationale |
+//! |----------|----------|-----------|
+//! | `StringsIterator` | Fail-fast | Null-terminated strings have clear boundaries |
+//! | `BlobIterator` | Fail-fast | Length prefixes define exact extents |
+//! | `GuidIterator` | Fail-fast | Fixed 16-byte entries have rigid structure |
+//! | `UserStringsIterator` | Best-effort recovery | Complex format may have recoverable corruption |
+//!
+//! **Fail-fast iterators** return `None` immediately on encountering malformed data,
+//! terminating iteration. This is appropriate when data corruption affects parsing
+//! of subsequent entries.
+//!
+//! **Best-effort iterators** attempt to skip over corrupted entries (with bounded
+//! retry limits) to continue yielding valid data. This is useful for forensic
+//! analysis of partially corrupted assemblies.
+//!
 //! ## Common Error Scenarios
 //! - Corrupted or truncated stream data
 //! - Invalid offset or index values

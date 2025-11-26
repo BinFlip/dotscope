@@ -147,8 +147,7 @@ impl OwnedAttributeValidator {
     /// - Attribute arguments are malformed or invalid
     fn validate_attribute_usage_rules(&self, context: &OwnedValidationContext) -> Result<()> {
         // Validate attributes on types
-        for entry in context.object().types().iter() {
-            let type_entry = entry.value();
+        for type_entry in context.all_types() {
             for (_, custom_attr) in type_entry.custom_attributes.iter() {
                 if let Err(e) = self.validate_attribute_usage(custom_attr, "Type") {
                     let type_name = &type_entry.name;
@@ -318,10 +317,7 @@ impl OwnedAttributeValidator {
     /// - Named arguments exceed reasonable limits (>50)
     /// - Named arguments have duplicate names
     fn validate_attribute_constructor_calls(&self, context: &OwnedValidationContext) -> Result<()> {
-        let types = context.object().types();
-
-        for entry in types.iter() {
-            let type_entry = entry.value();
+        for type_entry in context.all_types() {
             for (_, custom_attr) in type_entry.custom_attributes.iter() {
                 if custom_attr.fixed_args.len() > 20 {
                     return Err(Error::ValidationOwnedValidatorFailed {
@@ -390,12 +386,10 @@ impl OwnedAttributeValidator {
         &self,
         context: &OwnedValidationContext,
     ) -> Result<()> {
-        let types = context.object().types();
         let methods = context.object().methods();
 
         // Check type-level attributes
-        for entry in types.iter() {
-            let type_entry = entry.value();
+        for type_entry in context.all_types() {
             for (_, custom_attr) in type_entry.custom_attributes.iter() {
                 if self.has_suspicious_attribute_pattern(custom_attr) {
                     return Err(Error::ValidationOwnedValidatorFailed {

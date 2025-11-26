@@ -8,8 +8,8 @@
 //! # Architecture
 //!
 //! The container uses a compositional approach:
-//! - **CIL Imports**: Existing [`super::Imports`] container handles managed imports
-//! - **Native Imports**: New [`super::NativeImports`] handles PE import tables
+//! - **CIL Imports**: Existing [`crate::metadata::imports::Imports`] container handles managed imports
+//! - **Native Imports**: New [`crate::metadata::imports::NativeImports`] handles PE import tables
 //! - **Unified Views**: Lightweight caching for cross-cutting queries
 //!
 //! # Design Goals
@@ -51,7 +51,10 @@ use std::{
 
 use crate::{
     metadata::{
-        imports::{native::NativeImports, Imports as CilImports},
+        imports::{
+            native::NativeImports, Import, ImportRc, ImportSourceId, ImportType,
+            Imports as CilImports,
+        },
         token::Token,
     },
     Result,
@@ -98,7 +101,7 @@ pub struct UnifiedImportContainer {
 #[derive(Clone)]
 pub enum ImportEntry {
     /// Managed import from CIL metadata
-    Cil(super::ImportRc),
+    Cil(ImportRc),
     /// Native import from PE import table
     Native(NativeImportRef),
 }
@@ -433,8 +436,7 @@ impl UnifiedImportContainer {
     /// Update Import Address Table RVAs after section moves.
     ///
     /// Adjusts all IAT RVAs by the specified delta when sections are moved
-    /// during PE layout changes. This affects both native imports and any
-    /// CIL P/Invoke IAT entries.
+    /// during PE layout changes.
     ///
     /// # Arguments
     /// * `rva_delta` - Signed delta to apply to all RVAs
@@ -451,11 +453,12 @@ impl UnifiedImportContainer {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn update_iat_rvas(&mut self, rva_delta: i64) -> Result<()> {
-        // Update native IAT entries
         self.native.update_iat_rvas(rva_delta)?;
 
-        // TODO: Update CIL P/Invoke IAT entries if they exist
-        // This depends on how the existing CIL implementation handles P/Invoke IAT
+        // Note: CIL P/Invoke methods don't have IAT entries in the traditional PE sense.
+        // P/Invoke resolution is handled at runtime through the ImplMap metadata table,
+        // not through the Import Address Table. Therefore, no IAT update is needed
+        // for CIL P/Invoke imports.
 
         Ok(())
     }
@@ -474,24 +477,57 @@ impl UnifiedImportContainer {
     }
 
     /// Rebuild all unified cache structures.
+    ///
+    /// This method handles deduplication of imports when the same function
+    /// is imported via both CIL P/Invoke and native PE imports. In such cases,
+    /// we prefer the native import entry since it has concrete IAT information.
     fn rebuild_unified_caches(&self) {
         self.unified_name_cache.clear();
         self.unified_dll_cache.clear();
 
-        // Populate from CIL imports
+        // First pass: Build a set of native imports for deduplication
+        // Key: (dll_name_lowercase, function_name_lowercase)
+        let mut native_import_set: HashSet<(String, String)> = HashSet::new();
+        for descriptor in self.native.descriptors() {
+            let dll_lower = descriptor.dll_name.to_ascii_lowercase();
+            for function in &descriptor.functions {
+                if let Some(ref func_name) = function.name {
+                    native_import_set.insert((dll_lower.clone(), func_name.to_ascii_lowercase()));
+                }
+            }
+        }
+
+        // Populate from CIL imports, skipping those that exist as native imports
         for import_entry in &self.cil {
             let import = import_entry.value();
             let token = *import_entry.key();
 
-            // Add to name cache
-            self.unified_name_cache
-                .entry(import.name.clone())
-                .or_default()
-                .push(ImportEntry::Cil(import.clone()));
+            // Check if this is a P/Invoke method that duplicates a native import
+            let is_duplicate = if matches!(import.import, ImportType::Method(_)) {
+                if let Some(dll_name) = Self::extract_dll_from_pinvoke_import(import, &self.cil) {
+                    let key = (
+                        dll_name.to_ascii_lowercase(),
+                        import.name.to_ascii_lowercase(),
+                    );
+                    native_import_set.contains(&key)
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            // Add to name cache only if not a duplicate
+            if !is_duplicate {
+                self.unified_name_cache
+                    .entry(import.name.clone())
+                    .or_default()
+                    .push(ImportEntry::Cil(import.clone()));
+            }
 
             // Add to DLL cache if it's a P/Invoke method import
-            if matches!(import.import, super::ImportType::Method(_)) {
-                if let Some(dll_name) = Self::extract_dll_from_pinvoke_import(import) {
+            if matches!(import.import, ImportType::Method(_)) {
+                if let Some(dll_name) = Self::extract_dll_from_pinvoke_import(import, &self.cil) {
                     match self.unified_dll_cache.entry(dll_name) {
                         Entry::Occupied(mut entry) => match entry.get_mut() {
                             DllSource::Cil(tokens) | DllSource::Both(tokens) => tokens.push(token),
@@ -513,7 +549,6 @@ impl UnifiedImportContainer {
             let dll_name = &descriptor.dll_name;
 
             for function in &descriptor.functions {
-                // Add to name cache if imported by name
                 if let Some(ref func_name) = function.name {
                     self.unified_name_cache
                         .entry(func_name.clone())
@@ -526,7 +561,6 @@ impl UnifiedImportContainer {
                         }));
                 }
 
-                // Add to DLL cache
                 match self.unified_dll_cache.entry(dll_name.clone()) {
                     Entry::Occupied(mut entry) => {
                         match entry.get() {
@@ -550,21 +584,40 @@ impl UnifiedImportContainer {
     /// Extract DLL name from a CIL P/Invoke import.
     ///
     /// This examines the import's source information to determine if it's
-    /// a P/Invoke method import and extracts the target DLL name.
-    fn extract_dll_from_pinvoke_import(_import: &super::Import) -> Option<String> {
-        // TODO: Implement based on existing CIL P/Invoke representation
-        // This depends on how the current CIL implementation stores P/Invoke information
-        // Likely involves looking at the import source and module reference data
+    /// a P/Invoke method import and extracts the target DLL name from the
+    /// associated [`ModuleRef`].
+    ///
+    /// # Arguments
+    /// * `import` - The CIL import to examine
+    /// * `cil_imports` - The CIL imports container for looking up module references
+    ///
+    /// # Returns
+    /// - `Some(String)` containing the DLL name if this is a P/Invoke method import
+    /// - `None` if this is not a P/Invoke import or the module reference cannot be found
+    fn extract_dll_from_pinvoke_import(
+        import: &Import,
+        cil_imports: &CilImports,
+    ) -> Option<String> {
+        if !matches!(import.import, ImportType::Method(_)) {
+            return None;
+        }
 
-        // For now, return None - this will be implemented based on existing patterns
+        if let ImportSourceId::ModuleRef(token) = import.source_id {
+            if let Some(module_ref) = cil_imports.get_module_ref(token) {
+                return Some(module_ref.name.clone());
+            }
+        }
+
         None
     }
 
     /// Get all function names imported from a specific DLL.
+    ///
+    /// Collects function names from both native PE imports and CIL P/Invoke
+    /// method imports that target the specified DLL.
     fn get_functions_for_dll(&self, dll_name: &str) -> Vec<String> {
         let mut functions = HashSet::new();
 
-        // Add functions from native imports
         if let Some(descriptor) = self.native.get_descriptor(dll_name) {
             for function in &descriptor.functions {
                 if let Some(ref name) = function.name {
@@ -575,8 +628,14 @@ impl UnifiedImportContainer {
             }
         }
 
-        // TODO: Add functions from CIL P/Invoke imports
-        // This requires examining CIL imports that target this DLL
+        for import_entry in &self.cil {
+            let import = import_entry.value();
+            if let Some(import_dll) = Self::extract_dll_from_pinvoke_import(import, &self.cil) {
+                if import_dll.eq_ignore_ascii_case(dll_name) {
+                    functions.insert(import.name.clone());
+                }
+            }
+        }
 
         functions.into_iter().collect()
     }
@@ -952,5 +1011,353 @@ mod tests {
         let result = container.get_import_table_data(true);
         assert!(result.is_ok());
         assert!(result.unwrap().is_some());
+    }
+
+    #[test]
+    fn test_cil_pinvoke_dll_extraction() {
+        use crate::test::{create_method, create_module_ref};
+
+        let container = UnifiedImportContainer::new();
+        let module_ref = create_module_ref(1, "kernel32.dll");
+        let method = create_method("GetProcessId");
+        let token = Token::new(0x0A000001);
+
+        // Add a P/Invoke method import to the CIL imports
+        container
+            .cil
+            .add_method("GetProcessId".to_string(), &token, method, &module_ref)
+            .expect("Failed to add method import");
+
+        // Verify the DLL appears in the unified DLL list
+        let dll_names = container.get_all_dll_names();
+        assert!(
+            dll_names.iter().any(|n| n == "kernel32.dll"),
+            "kernel32.dll should appear in DLL dependencies. Found: {:?}",
+            dll_names
+        );
+    }
+
+    #[test]
+    fn test_cil_pinvoke_functions_for_dll() {
+        use crate::test::{create_method, create_module_ref};
+
+        let container = UnifiedImportContainer::new();
+        let module_ref = create_module_ref(1, "kernel32.dll");
+
+        // Add multiple P/Invoke methods from kernel32.dll
+        let method1 = create_method("GetProcessId");
+        let method2 = create_method("GetCurrentProcess");
+        let method3 = create_method("ExitProcess");
+
+        container
+            .cil
+            .add_method(
+                "GetProcessId".to_string(),
+                &Token::new(0x0A000001),
+                method1,
+                &module_ref,
+            )
+            .expect("Failed to add method import");
+
+        container
+            .cil
+            .add_method(
+                "GetCurrentProcess".to_string(),
+                &Token::new(0x0A000002),
+                method2,
+                &module_ref,
+            )
+            .expect("Failed to add method import");
+
+        container
+            .cil
+            .add_method(
+                "ExitProcess".to_string(),
+                &Token::new(0x0A000003),
+                method3,
+                &module_ref,
+            )
+            .expect("Failed to add method import");
+
+        // Get DLL dependencies and check the functions
+        let dependencies = container.get_all_dll_dependencies();
+        let kernel32_dep = dependencies
+            .iter()
+            .find(|d| d.name == "kernel32.dll")
+            .expect("kernel32.dll should be in dependencies");
+
+        assert!(
+            kernel32_dep.functions.contains(&"GetProcessId".to_string()),
+            "GetProcessId should be in functions. Found: {:?}",
+            kernel32_dep.functions
+        );
+        assert!(
+            kernel32_dep
+                .functions
+                .contains(&"GetCurrentProcess".to_string()),
+            "GetCurrentProcess should be in functions"
+        );
+        assert!(
+            kernel32_dep.functions.contains(&"ExitProcess".to_string()),
+            "ExitProcess should be in functions"
+        );
+    }
+
+    #[test]
+    fn test_cil_pinvoke_find_by_name() {
+        use crate::test::{create_method, create_module_ref};
+
+        let container = UnifiedImportContainer::new();
+        let module_ref = create_module_ref(1, "kernel32.dll");
+        let method = create_method("TestPInvokeMethod");
+        let token = Token::new(0x0A000001);
+
+        container
+            .cil
+            .add_method("TestPInvokeMethod".to_string(), &token, method, &module_ref)
+            .expect("Failed to add method import");
+
+        // Find the import by name in the unified container
+        let results = container.find_by_name("TestPInvokeMethod");
+        assert_eq!(results.len(), 1, "Should find exactly one import");
+
+        if let ImportEntry::Cil(cil_import) = &results[0] {
+            assert_eq!(cil_import.name, "TestPInvokeMethod");
+            assert_eq!(cil_import.token, token);
+        } else {
+            panic!("Expected CIL import entry, got Native");
+        }
+    }
+
+    #[test]
+    fn test_mixed_cil_and_native_same_dll() {
+        use crate::test::{create_method, create_module_ref};
+
+        let mut container = UnifiedImportContainer::new();
+
+        // Add native import from kernel32.dll
+        container
+            .add_native_function("kernel32.dll", "GetLastError")
+            .expect("Failed to add native function");
+
+        // Add CIL P/Invoke import from kernel32.dll
+        let module_ref = create_module_ref(1, "kernel32.dll");
+        let method = create_method("GetProcessId");
+        container
+            .cil
+            .add_method(
+                "GetProcessId".to_string(),
+                &Token::new(0x0A000001),
+                method,
+                &module_ref,
+            )
+            .expect("Failed to add method import");
+
+        // Verify both functions appear in the DLL dependencies
+        let dependencies = container.get_all_dll_dependencies();
+        let kernel32_dep = dependencies
+            .iter()
+            .find(|d| d.name == "kernel32.dll")
+            .expect("kernel32.dll should be in dependencies");
+
+        assert!(
+            kernel32_dep.functions.contains(&"GetLastError".to_string()),
+            "GetLastError should be in functions (native)"
+        );
+        assert!(
+            kernel32_dep.functions.contains(&"GetProcessId".to_string()),
+            "GetProcessId should be in functions (CIL P/Invoke)"
+        );
+
+        // Verify the DLL source is Both (since it's used by both CIL and native)
+        assert!(
+            matches!(kernel32_dep.source, DllSource::Both(_)),
+            "Source should be Both since both CIL and native use kernel32.dll. Got: {:?}",
+            kernel32_dep.source
+        );
+    }
+
+    #[test]
+    fn test_cil_pinvoke_case_insensitive_dll_lookup() {
+        use crate::test::{create_method, create_module_ref};
+
+        let container = UnifiedImportContainer::new();
+
+        // Add with lowercase
+        let module_ref = create_module_ref(1, "KERNEL32.DLL");
+        let method = create_method("TestFunc");
+        container
+            .cil
+            .add_method(
+                "TestFunc".to_string(),
+                &Token::new(0x0A000001),
+                method,
+                &module_ref,
+            )
+            .expect("Failed to add method import");
+
+        // get_functions_for_dll uses case-insensitive comparison
+        let functions = container.get_functions_for_dll("kernel32.dll");
+        assert!(
+            functions.contains(&"TestFunc".to_string()),
+            "Should find function with case-insensitive DLL name lookup"
+        );
+    }
+
+    #[test]
+    fn test_deduplication_cil_and_native_same_function() {
+        use crate::test::{create_method, create_module_ref};
+
+        let mut container = UnifiedImportContainer::new();
+
+        // Add native import for GetLastError from kernel32.dll
+        container
+            .add_native_function("kernel32.dll", "GetLastError")
+            .expect("Failed to add native function");
+
+        // Add CIL P/Invoke import for the same function
+        let module_ref = create_module_ref(1, "kernel32.dll");
+        let method = create_method("GetLastError");
+        container
+            .cil
+            .add_method(
+                "GetLastError".to_string(),
+                &Token::new(0x0A000001),
+                method,
+                &module_ref,
+            )
+            .expect("Failed to add method import");
+
+        // Find by name should return only ONE entry (the native one, since it has IAT info)
+        let results = container.find_by_name("GetLastError");
+        assert_eq!(
+            results.len(),
+            1,
+            "Should deduplicate and return only one entry. Found: {}",
+            results.len()
+        );
+
+        // The entry should be the native one
+        assert!(
+            matches!(&results[0], ImportEntry::Native(_)),
+            "The deduplicated entry should be the Native import (has IAT info)"
+        );
+    }
+
+    #[test]
+    fn test_deduplication_case_insensitive() {
+        use crate::test::{create_method, create_module_ref};
+
+        let mut container = UnifiedImportContainer::new();
+
+        // Add native import with different casing
+        container
+            .add_native_function("KERNEL32.DLL", "GetLastError")
+            .expect("Failed to add native function");
+
+        // Add CIL P/Invoke import with lowercase DLL and different function case
+        let module_ref = create_module_ref(1, "kernel32.dll");
+        let method = create_method("GETLASTERROR");
+        container
+            .cil
+            .add_method(
+                "GETLASTERROR".to_string(),
+                &Token::new(0x0A000001),
+                method,
+                &module_ref,
+            )
+            .expect("Failed to add method import");
+
+        // Find by the CIL name - should not find it because it was deduplicated
+        let results_cil = container.find_by_name("GETLASTERROR");
+        assert_eq!(
+            results_cil.len(),
+            0,
+            "CIL import with same function (case-insensitive) should be deduplicated"
+        );
+
+        // Find by the native name - should find exactly one
+        let results_native = container.find_by_name("GetLastError");
+        assert_eq!(results_native.len(), 1, "Native import should be present");
+    }
+
+    #[test]
+    fn test_deduplication_preserves_non_duplicate_cil() {
+        use crate::test::{create_method, create_module_ref};
+
+        let mut container = UnifiedImportContainer::new();
+
+        // Add native import
+        container
+            .add_native_function("kernel32.dll", "GetLastError")
+            .expect("Failed to add native function");
+
+        // Add CIL P/Invoke import for a DIFFERENT function
+        let module_ref = create_module_ref(1, "kernel32.dll");
+        let method = create_method("GetProcessId");
+        container
+            .cil
+            .add_method(
+                "GetProcessId".to_string(),
+                &Token::new(0x0A000001),
+                method,
+                &module_ref,
+            )
+            .expect("Failed to add method import");
+
+        // GetProcessId should still be found (not deduplicated)
+        let results = container.find_by_name("GetProcessId");
+        assert_eq!(
+            results.len(),
+            1,
+            "Non-duplicate CIL import should still be present"
+        );
+        assert!(
+            matches!(&results[0], ImportEntry::Cil(_)),
+            "Should be a CIL import entry"
+        );
+
+        // GetLastError should also be found
+        let results_native = container.find_by_name("GetLastError");
+        assert_eq!(results_native.len(), 1);
+    }
+
+    #[test]
+    fn test_deduplication_dll_source_still_both() {
+        use crate::test::{create_method, create_module_ref};
+
+        let mut container = UnifiedImportContainer::new();
+
+        // Add native import
+        container
+            .add_native_function("kernel32.dll", "GetLastError")
+            .expect("Failed to add native function");
+
+        // Add CIL P/Invoke import for the same function (will be deduplicated in name cache)
+        let module_ref = create_module_ref(1, "kernel32.dll");
+        let method = create_method("GetLastError");
+        container
+            .cil
+            .add_method(
+                "GetLastError".to_string(),
+                &Token::new(0x0A000001),
+                method,
+                &module_ref,
+            )
+            .expect("Failed to add method import");
+
+        // The DLL source should still be Both, even though the name entry is deduplicated
+        // This is important for accurate dependency tracking
+        let dependencies = container.get_all_dll_dependencies();
+        let kernel32_dep = dependencies
+            .iter()
+            .find(|d| d.name == "kernel32.dll")
+            .expect("kernel32.dll should be in dependencies");
+
+        assert!(
+            matches!(kernel32_dep.source, DllSource::Both(_)),
+            "DLL source should be Both even when name cache is deduplicated. Got: {:?}",
+            kernel32_dep.source
+        );
     }
 }

@@ -62,7 +62,7 @@ pub enum EventImplementation {
 /// # let view = CilAssemblyView::from_path("test.dll")?;
 /// # let assembly = CilAssembly::new(view);
 /// # let mut context = BuilderContext::new(assembly);
-/// let event_token = CilEventBuilder::new("OnClick", TypeSignature::Object)
+/// let event_token = EventBuilder::new("OnClick", TypeSignature::Object)
 ///     .auto_event()
 ///     .public_accessors()
 ///     .build(&mut context)?;
@@ -79,7 +79,7 @@ pub enum EventImplementation {
 /// # let view = CilAssemblyView::from_path("test.dll")?;
 /// # let assembly = CilAssembly::new(view);
 /// # let mut context = BuilderContext::new(assembly);
-/// let event_token = CilEventBuilder::new("OnDataChanged", TypeSignature::Object)
+/// let event_token = EventBuilder::new("OnDataChanged", TypeSignature::Object)
 ///     .custom()
 ///     .add_method(|method| method
 ///         .implementation(|body| {
@@ -111,8 +111,12 @@ pub struct EventBuilder {
     /// Event name
     name: String,
 
-    /// Event delegate type
+    /// Event delegate type (used for field/method signatures)
     event_type: TypeSignature,
+
+    /// Event type as CodedIndex (for Event table metadata)
+    /// If None, falls back to System.Object placeholder
+    event_type_index: Option<CodedIndex>,
 
     /// Event attributes
     attributes: u32,
@@ -138,13 +142,14 @@ impl EventBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilEventBuilder::new("OnClick", TypeSignature::Object);
+    /// let builder = EventBuilder::new("OnClick", TypeSignature::Object);
     /// ```
     #[must_use]
     pub fn new(name: &str, event_type: TypeSignature) -> Self {
         Self {
             name: name.to_string(),
             event_type,
+            event_type_index: None,
             attributes: 0x0000,        // Default event attributes
             add_attributes: 0x0006,    // PUBLIC
             remove_attributes: 0x0006, // PUBLIC
@@ -164,7 +169,7 @@ impl EventBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilEventBuilder::new("OnClick", TypeSignature::Object)
+    /// let builder = EventBuilder::new("OnClick", TypeSignature::Object)
     ///     .auto_event();
     /// ```
     #[must_use]
@@ -186,7 +191,7 @@ impl EventBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilEventBuilder::new("OnDataChanged", TypeSignature::Object)
+    /// let builder = EventBuilder::new("OnDataChanged", TypeSignature::Object)
     ///     .custom();
     /// ```
     #[must_use]
@@ -207,7 +212,7 @@ impl EventBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilEventBuilder::new("ComplexEvent", TypeSignature::Object)
+    /// let builder = EventBuilder::new("ComplexEvent", TypeSignature::Object)
     ///     .manual();
     /// ```
     #[must_use]
@@ -227,7 +232,7 @@ impl EventBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilEventBuilder::new("OnClick", TypeSignature::Object)
+    /// let builder = EventBuilder::new("OnClick", TypeSignature::Object)
     ///     .backing_field("_onClick");
     /// ```
     #[must_use]
@@ -248,7 +253,7 @@ impl EventBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilEventBuilder::new("OnClick", TypeSignature::Object)
+    /// let builder = EventBuilder::new("OnClick", TypeSignature::Object)
     ///     .private_backing_field();
     /// ```
     #[must_use]
@@ -270,7 +275,7 @@ impl EventBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilEventBuilder::new("OnClick", TypeSignature::Object)
+    /// let builder = EventBuilder::new("OnClick", TypeSignature::Object)
     ///     .protected_backing_field();
     /// ```
     #[must_use]
@@ -292,7 +297,7 @@ impl EventBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilEventBuilder::new("OnClick", TypeSignature::Object)
+    /// let builder = EventBuilder::new("OnClick", TypeSignature::Object)
     ///     .public_accessors();
     /// ```
     #[must_use]
@@ -309,7 +314,7 @@ impl EventBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilEventBuilder::new("OnClick", TypeSignature::Object)
+    /// let builder = EventBuilder::new("OnClick", TypeSignature::Object)
     ///     .private_accessors();
     /// ```
     #[must_use]
@@ -330,7 +335,7 @@ impl EventBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilEventBuilder::new("OnClick", TypeSignature::Object)
+    /// let builder = EventBuilder::new("OnClick", TypeSignature::Object)
     ///     .add_visibility(0x0006); // PUBLIC
     /// ```
     #[must_use]
@@ -350,7 +355,7 @@ impl EventBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilEventBuilder::new("OnClick", TypeSignature::Object)
+    /// let builder = EventBuilder::new("OnClick", TypeSignature::Object)
     ///     .remove_visibility(0x0001); // PRIVATE
     /// ```
     #[must_use]
@@ -374,7 +379,7 @@ impl EventBuilder {
     /// # let view = CilAssemblyView::from_path("test.dll")?;
     /// # let assembly = CilAssembly::new(view);
     /// # let mut context = BuilderContext::new(assembly);
-    /// let builder = CilEventBuilder::new("OnDataChanged", TypeSignature::Object)
+    /// let builder = EventBuilder::new("OnDataChanged", TypeSignature::Object)
     ///     .custom()
     ///     .add_method(|method| method
     ///         .implementation(|body| {
@@ -412,7 +417,7 @@ impl EventBuilder {
     /// # let view = CilAssemblyView::from_path("test.dll")?;
     /// # let assembly = CilAssembly::new(view);
     /// # let mut context = BuilderContext::new(assembly);
-    /// let builder = CilEventBuilder::new("OnDataChanged", TypeSignature::Object)
+    /// let builder = EventBuilder::new("OnDataChanged", TypeSignature::Object)
     ///     .custom()
     ///     .remove_method(|method| method
     ///         .implementation(|body| {
@@ -446,12 +451,40 @@ impl EventBuilder {
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let builder = CilEventBuilder::new("OnClick", TypeSignature::Object)
+    /// let builder = EventBuilder::new("OnClick", TypeSignature::Object)
     ///     .attributes(0x0200); // SPECIAL_NAME
     /// ```
     #[must_use]
     pub fn attributes(mut self, attributes: u32) -> Self {
         self.attributes = attributes;
+        self
+    }
+
+    /// Set the event type as a `CodedIndex` for accurate Event table metadata.
+    ///
+    /// This method allows specifying the exact delegate type reference (TypeDef, TypeRef,
+    /// or TypeSpec) that should be stored in the Event table. If not set, a placeholder
+    /// `System.Object` reference is used.
+    ///
+    /// # Arguments
+    ///
+    /// * `coded_index` - The CodedIndex pointing to the delegate type
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::prelude::*;
+    /// use dotscope::metadata::tables::{CodedIndex, CodedIndexType, TableId};
+    ///
+    /// // Reference EventHandler from System.TypeRef index 42
+    /// let event_handler_ref = CodedIndex::new(TableId::TypeRef, 42, CodedIndexType::TypeDefOrRef);
+    ///
+    /// let builder = EventBuilder::new("OnClick", TypeSignature::Object)
+    ///     .event_type_index(event_handler_ref);
+    /// ```
+    #[must_use]
+    pub fn event_type_index(mut self, coded_index: CodedIndex) -> Self {
+        self.event_type_index = Some(coded_index);
         self
     }
 
@@ -476,15 +509,16 @@ impl EventBuilder {
     ///
     /// Returns an error if event creation fails at any step.
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+        // Use the provided event type index, or fall back to System.Object placeholder
+        let event_type_coded_index = self
+            .event_type_index
+            .unwrap_or_else(|| CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef));
+
         // Create the event table entry
         let event_token = EventTableBuilder::new()
             .name(&self.name)
             .flags(self.attributes)
-            .event_type(CodedIndex::new(
-                TableId::TypeRef,
-                1,
-                CodedIndexType::TypeDefOrRef,
-            )) // System.Object placeholder
+            .event_type(event_type_coded_index)
             .build(context)?;
 
         // Handle different implementation strategies
@@ -767,5 +801,23 @@ mod tests {
             .build(&mut context);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_event_with_explicit_type_index() -> Result<()> {
+        let mut context = get_test_context()?;
+
+        // Create event with explicit delegate type reference (e.g., EventHandler at TypeRef index 5)
+        let event_handler_ref = CodedIndex::new(TableId::TypeRef, 5, CodedIndexType::TypeDefOrRef);
+
+        let event_token = EventBuilder::new("OnExplicitType", TypeSignature::Object)
+            .manual()
+            .event_type_index(event_handler_ref)
+            .build(&mut context)?;
+
+        // Should create a valid Event token
+        assert_eq!(event_token.value() & 0xFF000000, 0x14000000);
+
+        Ok(())
     }
 }

@@ -1,7 +1,8 @@
-//! .NET runtime testing utilities
+//! .NET runtime execution utilities
 //!
-//! This module provides utilities for testing .NET assemblies against various runtimes
-//! (Mono or modern .NET), including version detection, execution testing, and output validation.
+//! This module provides utilities for executing .NET assemblies using available runtimes
+//! (dotnet CLI or Mono). It automatically detects which runtime is available and uses
+//! the appropriate one for testing assembly execution and compatibility.
 
 use crate::prelude::*;
 use crate::test::mono::compilation::CompilerType;
@@ -28,6 +29,7 @@ impl RuntimeType {
 }
 
 /// Mono runtime environment and execution utilities
+#[derive(Default)]
 pub struct MonoRuntime {
     version_info: Option<MonoVersionInfo>,
     /// Override runtime type (if None, will auto-detect based on availability)
@@ -37,10 +39,7 @@ pub struct MonoRuntime {
 impl MonoRuntime {
     /// Create new Mono runtime instance
     pub fn new() -> Self {
-        Self {
-            version_info: None,
-            runtime_override: None,
-        }
+        Self::default()
     }
 
     /// Create a runtime instance configured for a specific runtime type
@@ -186,37 +185,27 @@ impl MonoRuntime {
         })
     }
 
-    /// Test original executable execution with detailed logging
-    pub fn test_original_executable(&mut self, exe_path: &Path) -> Result<ExecutionResult> {
-        let result = self.execute_assembly(exe_path)?;
-        Ok(result)
-    }
-
     /// Comprehensive runtime compatibility test
-    pub fn test_compatibility(
-        &mut self,
-        file_path: &Path,
-        _arch_name: &str,
-    ) -> Result<CompatibilityResult> {
+    pub fn test_compatibility(&mut self, file_path: &Path) -> Result<CompatibilityResult> {
         let mut result = CompatibilityResult::new();
 
         // Check runtime availability and get version info
         let runtime = self.active_runtime();
-        result.mono_available = runtime.is_some();
+        result.runtime_available = runtime.is_some();
 
         if let Some(ref rt) = runtime {
             // Get version info based on runtime type
             match rt {
                 RuntimeType::Mono => {
                     if let Ok(version) = self.version_info() {
-                        result.mono_version = Some(version.version_string.clone());
+                        result.runtime_version = Some(version.version_string.clone());
                     }
                 }
                 RuntimeType::DotNet => {
                     // Get dotnet version
                     if let Ok(output) = Command::new("dotnet").arg("--version").output() {
                         if output.status.success() {
-                            result.mono_version = Some(format!(
+                            result.runtime_version = Some(format!(
                                 "dotnet {}",
                                 String::from_utf8_lossy(&output.stdout).trim()
                             ));
@@ -291,52 +280,6 @@ impl MonoRuntime {
             error: None,
         })
     }
-
-    /// Execute with timeout (requires external timeout utility)
-    pub fn execute_with_timeout(
-        &mut self,
-        assembly_path: &Path,
-        timeout_seconds: u32,
-    ) -> Result<ExecutionResult> {
-        let runtime = match self.active_runtime() {
-            Some(rt) => rt,
-            None => {
-                return Ok(ExecutionResult {
-                    success: false,
-                    exit_code: None,
-                    stdout: String::new(),
-                    stderr: String::new(),
-                    error: Some("No .NET runtime available".to_string()),
-                });
-            }
-        };
-
-        let cmd_name = match runtime {
-            RuntimeType::Mono => "mono",
-            RuntimeType::DotNet => "dotnet",
-        };
-
-        // Use timeout command if available (Unix systems)
-        let output = Command::new("timeout")
-            .arg(format!("{}s", timeout_seconds))
-            .arg(cmd_name)
-            .arg(assembly_path)
-            .output();
-
-        match output {
-            Ok(output) => Ok(ExecutionResult {
-                success: output.status.success(),
-                exit_code: output.status.code(),
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-                error: None,
-            }),
-            Err(_) => {
-                // Fallback to regular execution if timeout command not available
-                self.execute_assembly(assembly_path)
-            }
-        }
-    }
 }
 
 /// Information about Mono runtime version
@@ -380,10 +323,10 @@ impl ExecutionResult {
 }
 
 /// Comprehensive compatibility test result
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CompatibilityResult {
-    pub mono_available: bool,
-    pub mono_version: Option<String>,
+    pub runtime_available: bool,
+    pub runtime_version: Option<String>,
     pub execution_success: bool,
     pub execution_result: Option<ExecutionResult>,
     pub execution_error: Option<String>,
@@ -391,24 +334,18 @@ pub struct CompatibilityResult {
 
 impl CompatibilityResult {
     pub fn new() -> Self {
-        Self {
-            mono_available: true,
-            mono_version: None,
-            execution_success: false,
-            execution_result: None,
-            execution_error: None,
-        }
+        Self::default()
     }
 
     /// Check if all compatibility tests passed
     pub fn is_fully_compatible(&self) -> bool {
-        self.mono_available && self.execution_success
+        self.runtime_available && self.execution_success
     }
 
     /// Get human-readable status summary
     pub fn status_summary(&self) -> String {
-        if !self.mono_available {
-            "Mono not available".to_string()
+        if !self.runtime_available {
+            "Runtime not available".to_string()
         } else if self.execution_success {
             "Fully compatible".to_string()
         } else {
@@ -417,56 +354,6 @@ impl CompatibilityResult {
                 self.execution_error.as_deref().unwrap_or("Unknown error")
             )
         }
-    }
-}
-
-/// Utility functions for common execution patterns
-pub mod utils {
-    use crate::prelude::*;
-    use crate::test::mono::execution::MonoRuntime;
-    use std::path::Path;
-
-    /// Execute and expect specific output
-    pub fn execute_expecting_output(
-        runtime: &mut MonoRuntime,
-        assembly_path: &Path,
-        expected_output: &str,
-    ) -> Result<bool> {
-        let result = runtime.execute_assembly(assembly_path)?;
-        Ok(result.success && result.stdout.trim() == expected_output)
-    }
-
-    /// Execute and expect successful exit
-    pub fn execute_expecting_success(
-        runtime: &mut MonoRuntime,
-        assembly_path: &Path,
-    ) -> Result<bool> {
-        let result = runtime.execute_assembly(assembly_path)?;
-        Ok(result.success)
-    }
-
-    /// Execute and capture any output
-    pub fn execute_and_capture(
-        runtime: &mut MonoRuntime,
-        assembly_path: &Path,
-    ) -> Result<(bool, String)> {
-        let result = runtime.execute_assembly(assembly_path)?;
-        let output = if !result.stdout.is_empty() {
-            result.stdout
-        } else {
-            result.stderr
-        };
-        Ok((result.success, output))
-    }
-
-    /// Check if assembly runs without crashing (ignores output)
-    pub fn check_assembly_stability(
-        runtime: &mut MonoRuntime,
-        assembly_path: &Path,
-    ) -> Result<bool> {
-        let result = runtime.execute_assembly(assembly_path)?;
-        // Consider it stable if it doesn't crash (exit code 0 or specific error codes are ok)
-        Ok(result.exit_code != Some(-1) && result.error.is_none())
     }
 }
 
@@ -501,7 +388,7 @@ mod tests {
     #[test]
     fn test_compatibility_result() {
         let result = CompatibilityResult::new();
-        assert!(result.mono_available);
+        assert!(!result.runtime_available);
         assert!(!result.execution_success);
         assert!(!result.is_fully_compatible());
     }

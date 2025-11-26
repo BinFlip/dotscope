@@ -94,10 +94,10 @@
 use crate::{
     metadata::customattributes::{
         CustomAttributeArgument, CustomAttributeNamedArgument, CustomAttributeValue,
-        SERIALIZATION_TYPE,
+        NAMED_ARG_TYPE, SERIALIZATION_TYPE,
     },
     utils::write_compressed_uint,
-    Result,
+    Error, Result,
 };
 
 /// Encodes a complete custom attribute value into binary blob format according to ECMA-335.
@@ -124,8 +124,12 @@ use crate::{
 ///
 /// # Errors
 ///
-/// Returns [`crate::Error::Error`] if the custom attribute contains
-/// unsupported data types or malformed structures.
+/// Returns [`Error::Error`] in the following cases:
+/// - Too many named arguments (exceeds u16 maximum of 65535)
+/// - Array length exceeds u32 maximum
+/// - String length exceeds compressed uint maximum (0x1FFFFFFF bytes)
+/// - Character outside the Basic Multilingual Plane (code point > 0xFFFF)
+/// - Void argument in a context where a value is required
 ///
 /// # Examples
 ///
@@ -148,8 +152,14 @@ pub fn encode_custom_attribute_value(value: &CustomAttributeValue) -> Result<Vec
 
     encode_fixed_arguments(&value.fixed_args, &mut buffer)?;
 
-    #[allow(clippy::cast_possible_truncation)]
-    buffer.extend_from_slice(&(value.named_args.len() as u16).to_le_bytes());
+    // ECMA-335 §II.23.3: NumNamed is encoded as unsigned int16
+    let named_count = u16::try_from(value.named_args.len()).map_err(|_| {
+        Error::Error(format!(
+            "Too many named arguments: {} exceeds u16 maximum (65535)",
+            value.named_args.len()
+        ))
+    })?;
+    buffer.extend_from_slice(&named_count.to_le_bytes());
 
     encode_named_arguments(&value.named_args, &mut buffer)?;
 
@@ -195,8 +205,8 @@ fn encode_fixed_arguments(args: &[CustomAttributeArgument], buffer: &mut Vec<u8>
 /// According to ECMA-335 II.23.3, named arguments are encoded as:
 /// ```text
 /// NamedArg ::= FIELD | PROPERTY FieldOrPropType FieldOrPropName FixedArg
-/// FIELD    ::= 0x53
-/// PROPERTY ::= 0x54
+/// FIELD    ::= NAMED_ARG_TYPE::FIELD (0x53)
+/// PROPERTY ::= NAMED_ARG_TYPE::PROPERTY (0x54)
 /// ```
 fn encode_named_arguments(
     args: &[CustomAttributeNamedArgument],
@@ -218,15 +228,15 @@ fn encode_named_arguments(
         }
 
         if arg.is_field {
-            buffer.push(0x53); // FIELD
+            buffer.push(NAMED_ARG_TYPE::FIELD);
         } else {
-            buffer.push(0x54); // PROPERTY
+            buffer.push(NAMED_ARG_TYPE::PROPERTY);
         }
 
         let type_tag = get_serialization_type_tag(&arg.value)?;
         buffer.push(type_tag);
 
-        write_string(buffer, &arg.name);
+        write_string(buffer, &arg.name)?;
 
         encode_custom_attribute_argument(&arg.value, buffer)?;
     }
@@ -253,9 +263,11 @@ fn encode_named_arguments(
 ///
 /// # Errors
 ///
-/// Returns [`crate::Error::Error`] if the argument contains unsupported
-/// data types or if encoding operations fail.
-#[allow(clippy::cast_possible_truncation)]
+/// Returns [`Error::Error`] in the following cases:
+/// - `Char`: Character code point exceeds 0xFFFF (outside Basic Multilingual Plane)
+/// - `String`: String length exceeds compressed uint maximum (0x1FFFFFFF bytes)
+/// - `Array`: Array length exceeds u32 maximum (4,294,967,295 elements)
+/// - Recursive errors from nested array element encoding
 pub fn encode_custom_attribute_argument(
     arg: &CustomAttributeArgument,
     buffer: &mut Vec<u8>,
@@ -268,16 +280,25 @@ pub fn encode_custom_attribute_argument(
             buffer.push(u8::from(*value));
         }
         CustomAttributeArgument::Char(value) => {
-            // Encode as UTF-16 - if the character fits in 16 bits, use it directly
-            // Otherwise, use replacement character (U+FFFD) as .NET does
-            let utf16_val = if (*value as u32) <= 0xFFFF {
-                *value as u16
-            } else {
-                0xFFFD // Replacement character for characters outside BMP
-            };
+            // .NET's System.Char is a 16-bit UTF-16 code unit per ECMA-335 §II.23.3.
+            // Characters outside the Basic Multilingual Plane (U+10000 and above) cannot
+            // be represented in a single .NET char - they require surrogate pairs.
+            // Since this is a fundamental .NET limitation, we reject such characters
+            // rather than silently corrupting data.
+            let code_point = *value as u32;
+            if code_point > 0xFFFF {
+                return Err(Error::Error(format!(
+                    "Character U+{:04X} is outside the Basic Multilingual Plane and cannot be \
+                     encoded as a .NET char (which is limited to U+0000..U+FFFF)",
+                    code_point
+                )));
+            }
+            #[allow(clippy::cast_possible_truncation)] // Safe: validated above
+            let utf16_val = *value as u16;
             buffer.extend_from_slice(&utf16_val.to_le_bytes());
         }
         CustomAttributeArgument::I1(value) => {
+            // Safe: i8 to u8 preserves the bit pattern which is correct for serialization
             #[allow(clippy::cast_sign_loss)]
             buffer.push(*value as u8);
         }
@@ -309,8 +330,14 @@ pub fn encode_custom_attribute_argument(
             buffer.extend_from_slice(&value.to_le_bytes());
         }
         CustomAttributeArgument::I(value) => {
-            // Native integers are encoded as 4 bytes on 32-bit, 8 bytes on 64-bit
-            // ToDo: Make this dependend on the input file - not the current platform?
+            // Native integers (IntPtr/nint) are platform-dependent per ECMA-335:
+            // - 32-bit platforms: encoded as 4 bytes (i32)
+            // - 64-bit platforms: encoded as 8 bytes (i64)
+            //
+            // LIMITATION: This uses the HOST platform size, not the TARGET assembly's
+            // platform. Cross-platform encoding (e.g., encoding a 32-bit assembly on
+            // a 64-bit host) is not currently supported. The assembly would need to
+            // specify its target platform, which is not available in this context.
             if cfg!(target_pointer_width = "32") {
                 buffer.extend_from_slice(&(*value as i32).to_le_bytes());
             } else {
@@ -318,8 +345,11 @@ pub fn encode_custom_attribute_argument(
             }
         }
         CustomAttributeArgument::U(value) => {
-            // Native integers are encoded as 4 bytes on 32-bit, 8 bytes on 64-bit
-            // ToDo: Make this dependend on the input file - not the current platform?
+            // Native integers (UIntPtr/nuint) are platform-dependent per ECMA-335:
+            // - 32-bit platforms: encoded as 4 bytes (u32)
+            // - 64-bit platforms: encoded as 8 bytes (u64)
+            //
+            // LIMITATION: Same cross-platform limitation as I (signed native int).
             if cfg!(target_pointer_width = "32") {
                 buffer.extend_from_slice(&(*value as u32).to_le_bytes());
             } else {
@@ -327,10 +357,17 @@ pub fn encode_custom_attribute_argument(
             }
         }
         CustomAttributeArgument::String(value) | CustomAttributeArgument::Type(value) => {
-            write_string(buffer, value);
+            write_string(buffer, value)?;
         }
         CustomAttributeArgument::Array(elements) => {
-            write_compressed_uint(elements.len() as u32, buffer);
+            // Array length is encoded as compressed uint (max ~2^29 per ECMA-335 §II.23.2)
+            let len = u32::try_from(elements.len()).map_err(|_| {
+                Error::Error(format!(
+                    "Array too large: {} exceeds u32 maximum",
+                    elements.len()
+                ))
+            })?;
+            write_compressed_uint(len, buffer);
             for element in elements {
                 encode_custom_attribute_argument(element, buffer)?;
             }
@@ -374,8 +411,9 @@ fn get_serialization_type_tag(arg: &CustomAttributeArgument) -> Result<u8> {
         CustomAttributeArgument::R4(_) => SERIALIZATION_TYPE::R4,
         CustomAttributeArgument::R8(_) => SERIALIZATION_TYPE::R8,
         CustomAttributeArgument::I(_) => {
-            // Native integers use I4 on 32-bit, I8 on 64-bit
-            // ToDo: Make this dependend on the input file - not the current platform?
+            // Native integers use I4 on 32-bit, I8 on 64-bit.
+            // LIMITATION: This uses the host platform's pointer width, not the target assembly's.
+            // Cross-platform encoding is not supported - see MED-001 in refactoring doc.
             if cfg!(target_pointer_width = "32") {
                 SERIALIZATION_TYPE::I4
             } else {
@@ -383,8 +421,9 @@ fn get_serialization_type_tag(arg: &CustomAttributeArgument) -> Result<u8> {
             }
         }
         CustomAttributeArgument::U(_) => {
-            // Native integers use U4 on 32-bit, U8 on 64-bit
-            // ToDo: Make this dependend on the input file - not the current platform?
+            // Native unsigned integers use U4 on 32-bit, U8 on 64-bit.
+            // LIMITATION: This uses the host platform's pointer width, not the target assembly's.
+            // Cross-platform encoding is not supported - see MED-001 in refactoring doc.
             if cfg!(target_pointer_width = "32") {
                 SERIALIZATION_TYPE::U4
             } else {
@@ -401,23 +440,46 @@ fn get_serialization_type_tag(arg: &CustomAttributeArgument) -> Result<u8> {
 
 /// Writes a string to the buffer using the .NET custom attribute string format.
 ///
-/// Strings are encoded as:
-/// - Null strings: Single byte 0xFF
-/// - Non-null strings: Compressed length + UTF-8 data
+/// # ECMA-335 String Encoding
+///
+/// Per ECMA-335, strings can be encoded as:
+/// - **Null strings**: Single byte 0xFF
+/// - **Empty strings**: Compressed uint 0 (single byte 0x00)
+/// - **Non-empty strings**: Compressed length + UTF-8 data
+///
+/// # Design Decision
+///
+/// Since Rust's `String` cannot represent null (unlike .NET's `string?`), this function
+/// encodes empty strings as length 0, not as the null marker 0xFF. This means:
+/// - Parsing a null string (0xFF) returns an empty `String`
+/// - Re-encoding that empty `String` produces length 0, not 0xFF
+///
+/// This round-trip asymmetry is acceptable because both representations have equivalent
+/// semantics in the Rust API context.
 ///
 /// # Arguments
 ///
 /// * `buffer` - The output buffer to write to
 /// * `value` - The string value to encode
-#[allow(clippy::cast_possible_truncation)]
-fn write_string(buffer: &mut Vec<u8>, value: &str) {
+///
+/// # Errors
+///
+/// Returns an error if the string length exceeds the compressed uint maximum (0x1FFFFFFF bytes).
+fn write_string(buffer: &mut Vec<u8>, value: &str) -> Result<()> {
     if value.is_empty() {
         write_compressed_uint(0, buffer);
     } else {
         let utf8_bytes = value.as_bytes();
-        write_compressed_uint(utf8_bytes.len() as u32, buffer);
+        let len = u32::try_from(utf8_bytes.len()).map_err(|_| {
+            Error::Error(format!(
+                "String too long: {} bytes exceeds u32 maximum",
+                utf8_bytes.len()
+            ))
+        })?;
+        write_compressed_uint(len, buffer);
         buffer.extend_from_slice(utf8_bytes);
     }
+    Ok(())
 }
 
 #[cfg(test)]

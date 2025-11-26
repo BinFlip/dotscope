@@ -9,8 +9,8 @@ use crate::{
     metadata::{
         signatures::{encode_field_signature, SignatureField, TypeSignature},
         tables::{
-            CodedIndex, CodedIndexType, ConstantBuilder, FieldBuilder, TableId, TypeAttributes,
-            TypeDefBuilder,
+            CodedIndex, CodedIndexType, ConstantBuilder, FieldAttributes, FieldBuilder, TableId,
+            TypeAttributes, TypeDefBuilder, TypeRefBuilder,
         },
         token::Token,
         typesystem::ELEMENT_TYPE,
@@ -279,9 +279,24 @@ impl EnumBuilder {
             typedef_builder = typedef_builder.namespace(namespace);
         }
 
-        // Set extends to System.Enum (we'll use a coded index to TypeRef)
-        // For now, we'll create a basic enum without the extends reference
-        // TODO: Add proper System.Enum reference when TypeRef support is available
+        // Set extends to System.Enum as required by ECMA-335
+        // Find or create the core library reference and System.Enum TypeRef
+        if let Some(core_lib_ref) = context.find_core_library_ref() {
+            // Create TypeRef for System.Enum in the core library
+            let system_enum_typeref = TypeRefBuilder::new()
+                .name("Enum")
+                .namespace("System")
+                .resolution_scope(core_lib_ref)
+                .build(context)?;
+
+            // Create coded index for TypeDefOrRef pointing to the System.Enum TypeRef
+            let extends_index = CodedIndex::new(
+                TableId::TypeRef,
+                system_enum_typeref.row(),
+                CodedIndexType::TypeDefOrRef,
+            );
+            typedef_builder = typedef_builder.extends(extends_index);
+        }
 
         let enum_token = typedef_builder.build(context)?;
 
@@ -294,7 +309,11 @@ impl EnumBuilder {
 
         FieldBuilder::new()
             .name("value__")
-            .flags(0x0001 | 0x0800) // PRIVATE | SPECIAL_NAME (runtime special field)
+            .flags(
+                FieldAttributes::PRIVATE
+                    | FieldAttributes::SPECIAL_NAME
+                    | FieldAttributes::RTSPECIAL_NAME,
+            )
             .signature(&value_field_sig_bytes)
             .build(context)?;
 
@@ -310,7 +329,7 @@ impl EnumBuilder {
             // Create the field
             let field_token = FieldBuilder::new()
                 .name(&enum_value.name)
-                .flags(0x0006 | 0x0001 | 0x0040) // PUBLIC | STATIC | LITERAL
+                .flags(FieldAttributes::PUBLIC | FieldAttributes::STATIC | FieldAttributes::LITERAL)
                 .signature(&enum_field_sig_bytes)
                 .build(context)?;
 

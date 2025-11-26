@@ -259,7 +259,12 @@ impl ProjectLoader {
             }
             processed_files.insert(current_path.clone());
 
-            match CilAssemblyView::from_path(&current_path) {
+            // Use the configured validation or default to production validation
+            let validation_config = self
+                .validation_config
+                .clone()
+                .unwrap_or_else(ValidationConfig::production);
+            match CilAssemblyView::from_path_with_validation(&current_path, validation_config) {
                 Ok(view) => {
                     if let Ok(assembly_identity) = view.identity() {
                         // Track if this is the primary assembly
@@ -317,7 +322,7 @@ impl ProjectLoader {
             )));
         }
 
-        let project_context = Arc::new(ProjectContext::new(discovered_views.len()));
+        let project_context = Arc::new(ProjectContext::new(discovered_views.len())?);
         let handles: Vec<_> = discovered_views
             .into_iter()
             .map(|(identity, view)| {

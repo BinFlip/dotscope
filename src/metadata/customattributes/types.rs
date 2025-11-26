@@ -309,7 +309,14 @@ pub struct CustomAttributeNamedArgument {
     pub is_field: bool,
     /// Name of the field or property
     pub name: String,
-    /// Type of the argument
+    /// Type of the argument as a human-readable string.
+    ///
+    /// Common values include: "Boolean", "Char", "I1", "U1", "I2", "U2", "I4", "U4",
+    /// "I8", "U8", "R4", "R8", "String", "Type", or an enum type name.
+    ///
+    /// Note: This is stored as a String rather than an enum for flexibility with
+    /// enum types (which include the full type name) and for human readability
+    /// in debugging and display scenarios.
     pub arg_type: String,
     /// Value of the argument
     pub value: CustomAttributeArgument,
@@ -383,4 +390,29 @@ pub mod SERIALIZATION_TYPE {
     pub const ENUM: u8 = 0x55;
     /// Single-dimensional array - element type tag + length + elements
     pub const SZARRAY: u8 = 0x1D;
+}
+
+/// Constants for named argument field/property indicators per ECMA-335 §II.23.3.
+///
+/// These bytes appear at the start of each named argument to indicate whether
+/// the target is a field or a property.
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// use dotscope::metadata::customattributes::NAMED_ARG_TYPE;
+///
+/// let indicator = 0x53;
+/// match indicator {
+///     NAMED_ARG_TYPE::FIELD => println!("This is a field"),
+///     NAMED_ARG_TYPE::PROPERTY => println!("This is a property"),
+///     _ => println!("Unknown indicator"),
+/// }
+/// ```
+#[allow(non_snake_case)]
+pub mod NAMED_ARG_TYPE {
+    /// Field indicator - named argument targets a public field
+    pub const FIELD: u8 = 0x53;
+    /// Property indicator - named argument targets a public property
+    pub const PROPERTY: u8 = 0x54;
 }
