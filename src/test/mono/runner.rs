@@ -1,124 +1,93 @@
-//! Test orchestration and temporary folder management
+//! Test orchestration and temporary directory management
 //!
-//! This module provides the core test runner infrastructure for .NET assembly
-//! verification tests, handling temporary directory management and multi-architecture
-//! testing coordination.
+//! This module provides the test runner infrastructure that coordinates compilation,
+//! execution, and verification of .NET assemblies across supported architectures.
 
 use crate::prelude::*;
+use crate::test::mono::capabilities::{Architecture, TestCapabilities};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
-/// Architecture configuration for compilation and testing
-#[derive(Clone, Debug)]
-pub struct ArchConfig {
-    pub name: String,
-    pub platform_flags: Vec<String>,
-}
-
-impl ArchConfig {
-    /// Create x86 (32-bit) architecture configuration
-    pub fn x86() -> Self {
-        Self {
-            name: "x86".to_string(),
-            platform_flags: vec!["/platform:x86".to_string()],
-        }
-    }
-
-    /// Create x64 (64-bit) architecture configuration
-    pub fn x64() -> Self {
-        Self {
-            name: "x64".to_string(),
-            platform_flags: vec!["/platform:x64".to_string()],
-        }
-    }
-
-    /// Create both standard architectures
-    pub fn standard_architectures() -> Vec<Self> {
-        vec![Self::x86(), Self::x64()]
-    }
-
-    /// Create architectures available on the current platform
-    ///
-    /// On Windows, both x86 and x64 are available.
-    /// On Linux/macOS, we use AnyCPU plus the native architecture.
-    /// x64 assemblies cannot run on ARM64 hardware without emulation.
-    pub fn platform_available_architectures() -> Vec<Self> {
-        #[cfg(target_os = "windows")]
-        {
-            vec![Self::x86(), Self::x64()]
-        }
-        #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
-        {
-            // On x86_64 Unix platforms, we can run AnyCPU and x64
-            vec![Self::anycpu(), Self::x64()]
-        }
-        #[cfg(all(not(target_os = "windows"), not(target_arch = "x86_64")))]
-        {
-            // On ARM64 and other architectures, only use AnyCPU
-            // x64-specific assemblies won't run without emulation
-            vec![Self::anycpu()]
-        }
-    }
-
-    /// Create AnyCPU (platform-agnostic) configuration
-    pub fn anycpu() -> Self {
-        Self {
-            name: "anycpu".to_string(),
-            platform_flags: vec![],
-        }
-    }
-
-    /// Get safe filename component for this architecture
-    pub fn filename_component(&self) -> String {
-        self.name.replace("-", "").to_lowercase()
-    }
-}
-
-/// Main test runner for mono-based verification
-pub struct MonoTestRunner {
+/// Test runner that manages the test environment and coordinates test execution
+pub struct TestRunner {
+    /// Temporary directory for test artifacts
     temp_dir: TempDir,
-    architectures: Vec<ArchConfig>,
+    /// Detected system capabilities
+    capabilities: TestCapabilities,
 }
 
-impl MonoTestRunner {
-    /// Create new test runner with platform-available architectures
-    ///
-    /// Uses `platform_available_architectures()` to select architectures
-    /// that work on the current platform (x86+x64 on Windows, anycpu+x64 elsewhere).
+impl TestRunner {
+    /// Create a new test runner with auto-detected capabilities
     pub fn new() -> Result<Self> {
+        let capabilities = TestCapabilities::detect();
+
+        if !capabilities.can_test() {
+            return Err(Error::Other(format!(
+                "Cannot run tests: no compiler/runtime available. {}",
+                capabilities.summary()
+            )));
+        }
+
         Ok(Self {
             temp_dir: TempDir::new()?,
-            architectures: ArchConfig::platform_available_architectures(),
+            capabilities,
         })
     }
 
-    /// Create test runner with custom architectures
-    pub fn with_architectures(architectures: Vec<ArchConfig>) -> Result<Self> {
-        Ok(Self {
-            temp_dir: TempDir::new()?,
-            architectures,
-        })
+    /// Get the detected capabilities
+    pub fn capabilities(&self) -> &TestCapabilities {
+        &self.capabilities
     }
 
-    /// Get path to temporary directory
+    /// Get the temporary directory path
     pub fn temp_path(&self) -> &Path {
         self.temp_dir.path()
     }
 
-    /// Get configured architectures
-    pub fn architectures(&self) -> &[ArchConfig] {
-        &self.architectures
+    /// Get the supported architectures
+    pub fn architectures(&self) -> &[Architecture] {
+        &self.capabilities.supported_architectures
     }
 
-    /// Run test for all configured architectures
-    pub fn run_for_all_architectures<F, R>(&self, mut test_fn: F) -> Result<Vec<ArchTestResult<R>>>
+    /// Create a file path for an architecture-specific artifact
+    pub fn artifact_path(&self, base_name: &str, arch: &Architecture, extension: &str) -> PathBuf {
+        self.temp_dir.path().join(format!(
+            "{}_{}{}",
+            base_name,
+            arch.filename_suffix(),
+            extension
+        ))
+    }
+
+    /// Create a subdirectory for an architecture
+    pub fn arch_dir(&self, arch: &Architecture) -> Result<PathBuf> {
+        let dir = self.temp_dir.path().join(arch.filename_suffix());
+        std::fs::create_dir_all(&dir)?;
+        Ok(dir)
+    }
+
+    /// Run a test function for all supported architectures
+    pub fn for_each_architecture<F, T>(&self, mut test_fn: F) -> Vec<ArchTestResult<T>>
     where
-        F: FnMut(&ArchConfig, &Path) -> Result<R>,
+        F: FnMut(&Architecture, &Path, &TestCapabilities) -> Result<T>,
     {
         let mut results = Vec::new();
 
-        for arch in &self.architectures {
-            match test_fn(arch, self.temp_path()) {
+        for arch in &self.capabilities.supported_architectures {
+            let arch_dir = match self.arch_dir(arch) {
+                Ok(dir) => dir,
+                Err(e) => {
+                    results.push(ArchTestResult {
+                        architecture: arch.clone(),
+                        success: false,
+                        result: None,
+                        error: Some(format!("Failed to create arch directory: {}", e)),
+                    });
+                    continue;
+                }
+            };
+
+            match test_fn(arch, &arch_dir, &self.capabilities) {
                 Ok(result) => {
                     results.push(ArchTestResult {
                         architecture: arch.clone(),
@@ -132,122 +101,111 @@ impl MonoTestRunner {
                         architecture: arch.clone(),
                         success: false,
                         result: None,
-                        error: Some(e),
+                        error: Some(e.to_string()),
                     });
                 }
             }
         }
 
-        Ok(results)
+        results
     }
 
-    /// Create unique file path for architecture-specific files
-    pub fn create_arch_file_path(
-        &self,
-        base_name: &str,
-        arch: &ArchConfig,
-        extension: &str,
-    ) -> PathBuf {
-        self.temp_path().join(format!(
-            "{}_{}{}",
-            base_name,
-            arch.filename_component(),
-            extension
-        ))
-    }
-
-    /// Check if all tests passed
-    pub fn all_tests_passed<R>(results: &[ArchTestResult<R>]) -> bool {
+    /// Check if all architecture tests passed
+    pub fn all_passed<T>(results: &[ArchTestResult<T>]) -> bool {
         results.iter().all(|r| r.success)
+    }
+
+    /// Get failed results with their error messages
+    pub fn failed_results<T>(results: &[ArchTestResult<T>]) -> Vec<(&Architecture, &str)> {
+        results
+            .iter()
+            .filter(|r| !r.success)
+            .map(|r| {
+                (
+                    &r.architecture,
+                    r.error.as_deref().unwrap_or("Unknown error"),
+                )
+            })
+            .collect()
     }
 }
 
 /// Result of running a test for a specific architecture
 #[derive(Debug)]
-pub struct ArchTestResult<R> {
-    pub architecture: ArchConfig,
+pub struct ArchTestResult<T> {
+    pub architecture: Architecture,
     pub success: bool,
-    pub result: Option<R>,
-    pub error: Option<Error>,
+    pub result: Option<T>,
+    pub error: Option<String>,
+}
+
+impl<T> ArchTestResult<T> {
+    /// Check if this result was successful
+    pub fn is_success(&self) -> bool {
+        self.success
+    }
+
+    /// Get the result value if successful
+    pub fn value(&self) -> Option<&T> {
+        self.result.as_ref()
+    }
+
+    /// Get the error message if failed
+    pub fn error_message(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::prelude::*;
-    use crate::test::mono::runner::{ArchConfig, MonoTestRunner};
-
-    #[test]
-    fn test_arch_config_creation() {
-        let x86 = ArchConfig::x86();
-        assert_eq!(x86.name, "x86");
-        assert_eq!(x86.platform_flags, vec!["/platform:x86"]);
-        assert_eq!(x86.filename_component(), "x86");
-
-        let x64 = ArchConfig::x64();
-        assert_eq!(x64.name, "x64");
-        assert_eq!(x64.platform_flags, vec!["/platform:x64"]);
-        assert_eq!(x64.filename_component(), "x64");
-
-        let anycpu = ArchConfig::anycpu();
-        assert_eq!(anycpu.name, "anycpu");
-        assert!(anycpu.platform_flags.is_empty());
-        assert_eq!(anycpu.filename_component(), "anycpu");
-    }
-
-    #[test]
-    fn test_standard_architectures() {
-        let archs = ArchConfig::standard_architectures();
-        assert_eq!(archs.len(), 2);
-        assert_eq!(archs[0].name, "x86");
-        assert_eq!(archs[1].name, "x64");
-    }
-
-    #[test]
-    fn test_platform_available_architectures() {
-        let archs = ArchConfig::platform_available_architectures();
-        // On Windows: x86 + x64 (2 archs)
-        // On x86_64 Unix: anycpu + x64 (2 archs)
-        // On ARM64 Unix: anycpu only (1 arch)
-        #[cfg(target_os = "windows")]
-        {
-            assert_eq!(archs.len(), 2);
-            assert_eq!(archs[0].name, "x86");
-            assert_eq!(archs[1].name, "x64");
-        }
-        #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
-        {
-            assert_eq!(archs.len(), 2);
-            assert_eq!(archs[0].name, "anycpu");
-            assert_eq!(archs[1].name, "x64");
-        }
-        #[cfg(all(not(target_os = "windows"), not(target_arch = "x86_64")))]
-        {
-            assert_eq!(archs.len(), 1);
-            assert_eq!(archs[0].name, "anycpu");
-        }
-    }
+    use super::*;
 
     #[test]
     fn test_runner_creation() -> Result<()> {
-        let runner = MonoTestRunner::new()?;
-        // Number of architectures depends on platform
-        #[cfg(target_os = "windows")]
-        assert_eq!(runner.architectures().len(), 2);
-        #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
-        assert_eq!(runner.architectures().len(), 2);
-        #[cfg(all(not(target_os = "windows"), not(target_arch = "x86_64")))]
-        assert_eq!(runner.architectures().len(), 1);
+        let runner = TestRunner::new()?;
+        println!("Capabilities: {}", runner.capabilities().summary());
+        assert!(!runner.architectures().is_empty());
         assert!(runner.temp_path().exists());
         Ok(())
     }
 
     #[test]
-    fn test_arch_file_path_creation() -> Result<()> {
-        let runner = MonoTestRunner::new()?;
-        let arch = ArchConfig::x86();
-        let path = runner.create_arch_file_path("test", &arch, ".exe");
+    fn test_artifact_path() -> Result<()> {
+        let runner = TestRunner::new()?;
+        if let Some(arch) = runner.architectures().first() {
+            let path = runner.artifact_path("test", arch, ".exe");
+            assert!(path.to_string_lossy().contains(arch.filename_suffix()));
+            assert!(path.to_string_lossy().ends_with(".exe"));
+        }
+        Ok(())
+    }
 
-        assert!(path.to_string_lossy().contains("test_x86.exe"));
+    #[test]
+    fn test_arch_dir_creation() -> Result<()> {
+        let runner = TestRunner::new()?;
+        if let Some(arch) = runner.architectures().first() {
+            let dir = runner.arch_dir(arch)?;
+            assert!(dir.exists());
+            assert!(dir.is_dir());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_for_each_architecture() -> Result<()> {
+        let runner = TestRunner::new()?;
+
+        let results =
+            runner.for_each_architecture(|arch, _dir, _caps| Ok(format!("Tested {}", arch.name)));
+
+        assert!(!results.is_empty());
+        assert!(TestRunner::all_passed(&results));
+
+        for result in &results {
+            assert!(result.is_success());
+            assert!(result.value().is_some());
+        }
+
         Ok(())
     }
 }
