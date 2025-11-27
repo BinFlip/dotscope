@@ -5,93 +5,218 @@
 //! added or modified by dotscope are correctly callable at runtime.
 
 use crate::prelude::*;
-use crate::test::mono::compilation::CSharpCompiler;
-use crate::test::mono::execution::MonoRuntime;
-use crate::test::mono::runner::ArchConfig;
+use crate::test::mono::capabilities::{Architecture, TestCapabilities};
+use crate::test::mono::compilation::{compile, CompilationResult};
+use crate::test::mono::execution::{execute, ExecutionResult};
 use std::path::Path;
 
-/// Dynamic test program builder using reflection
-pub struct ReflectionTestBuilder {
-    assembly_path: Option<String>,
-    test_cases: Vec<TestCase>,
-    custom_using_statements: Vec<String>,
-    custom_setup_code: Vec<String>,
-    expected_exit_code: i32,
+/// Result of a reflection test
+#[derive(Debug)]
+pub struct ReflectionTestResult {
+    /// Whether the test passed
+    pub success: bool,
+    /// Compilation result for the test harness
+    pub compilation: Option<CompilationResult>,
+    /// Execution result
+    pub execution: Option<ExecutionResult>,
+    /// Error message if failed
+    pub error: Option<String>,
 }
 
-impl Default for ReflectionTestBuilder {
-    fn default() -> Self {
+impl ReflectionTestResult {
+    /// Create a successful result
+    pub fn success(compilation: CompilationResult, execution: ExecutionResult) -> Self {
         Self {
-            assembly_path: None,
-            test_cases: Vec::new(),
-            custom_using_statements: vec!["System".to_string(), "System.Reflection".to_string()],
-            custom_setup_code: Vec::new(),
-            expected_exit_code: 0,
+            success: true,
+            compilation: Some(compilation),
+            execution: Some(execution),
+            error: None,
+        }
+    }
+
+    /// Create a failed result
+    pub fn failure(error: String) -> Self {
+        Self {
+            success: false,
+            compilation: None,
+            execution: None,
+            error: Some(error),
+        }
+    }
+
+    /// Check if test was successful
+    pub fn is_success(&self) -> bool {
+        self.success
+    }
+
+    /// Get error summary
+    pub fn error_summary(&self) -> String {
+        if let Some(ref err) = self.error {
+            err.clone()
+        } else if let Some(ref exec) = self.execution {
+            if !exec.is_success() {
+                exec.error_summary()
+            } else {
+                "Success".to_string()
+            }
+        } else {
+            "Unknown error".to_string()
         }
     }
 }
 
-impl ReflectionTestBuilder {
-    /// Create new reflection test builder
-    pub fn new() -> Self {
-        Self::default()
+/// A single test case for method invocation
+#[derive(Debug, Clone)]
+pub struct MethodTest {
+    /// Method name to invoke
+    pub method_name: String,
+    /// Type name containing the method
+    pub type_name: Option<String>,
+    /// Arguments to pass (as C# literal strings)
+    pub arguments: Vec<String>,
+    /// Expected return value (as C# literal)
+    pub expected_result: Option<String>,
+    /// Description of this test
+    pub description: Option<String>,
+}
+
+impl MethodTest {
+    /// Create a new method test
+    pub fn new(method_name: &str) -> Self {
+        Self {
+            method_name: method_name.to_string(),
+            type_name: None,
+            arguments: Vec::new(),
+            expected_result: None,
+            description: None,
+        }
     }
 
-    /// Set the assembly path to test
-    pub fn assembly_path<P: AsRef<Path>>(mut self, path: P) -> Self {
-        self.assembly_path = Some(path.as_ref().to_string_lossy().to_string());
+    /// Set the type containing the method
+    pub fn in_type(mut self, type_name: &str) -> Self {
+        self.type_name = Some(type_name.to_string());
         self
     }
 
-    /// Add a test case for method invocation
-    pub fn test_method(self, method_name: &str) -> MethodTestBuilder {
-        MethodTestBuilder::new(self, method_name.to_string())
-    }
-
-    /// Add custom using statement
-    pub fn with_using(mut self, using_statement: &str) -> Self {
-        self.custom_using_statements
-            .push(using_statement.to_string());
+    /// Add an integer argument
+    pub fn arg_int(mut self, value: i32) -> Self {
+        self.arguments.push(value.to_string());
         self
     }
 
-    /// Add custom setup code to run before tests
-    pub fn with_setup_code(mut self, code: &str) -> Self {
-        self.custom_setup_code.push(code.to_string());
+    /// Add a string argument
+    pub fn arg_string(mut self, value: &str) -> Self {
+        self.arguments.push(format!("\"{}\"", value));
         self
     }
 
-    /// Set expected exit code (default: 0 for success)
-    pub fn expect_exit_code(mut self, code: i32) -> Self {
-        self.expected_exit_code = code;
+    /// Add a boolean argument
+    pub fn arg_bool(mut self, value: bool) -> Self {
+        self.arguments
+            .push(if value { "true" } else { "false" }.to_string());
         self
     }
 
-    /// Generate the complete test program source code
-    pub fn generate_test_program(&self) -> String {
-        let assembly_path = self
-            .assembly_path
-            .as_deref()
-            .unwrap_or("ASSEMBLY_PATH_NOT_SET");
+    /// Expect an integer result
+    pub fn expect_int(mut self, value: i32) -> Self {
+        self.expected_result = Some(value.to_string());
+        self
+    }
 
-        let using_statements = self
-            .custom_using_statements
-            .iter()
-            .map(|u| format!("using {};", u))
-            .collect::<Vec<_>>()
-            .join("\n");
+    /// Expect a string result
+    pub fn expect_string(mut self, value: &str) -> Self {
+        self.expected_result = Some(format!("\"{}\"", value));
+        self
+    }
 
-        let setup_code = if self.custom_setup_code.is_empty() {
-            String::new()
+    /// Expect a boolean result
+    pub fn expect_bool(mut self, value: bool) -> Self {
+        self.expected_result = Some(if value { "true" } else { "false" }.to_string());
+        self
+    }
+
+    /// Set a description
+    pub fn describe(mut self, description: &str) -> Self {
+        self.description = Some(description.to_string());
+        self
+    }
+}
+
+/// Generate a reflection test program
+pub fn generate_test_program(assembly_path: &Path, tests: &[MethodTest]) -> String {
+    let assembly_path_str = assembly_path.to_string_lossy().replace('\\', "\\\\");
+
+    let mut test_code = String::new();
+
+    for (i, test) in tests.iter().enumerate() {
+        let type_search = if let Some(ref type_name) = test.type_name {
+            format!(
+                r#"
+            Type type{i} = null;
+            foreach (Type t in assembly.GetTypes())
+            {{
+                if (t.Name == "{type_name}" || t.FullName == "{type_name}")
+                {{
+                    type{i} = t;
+                    break;
+                }}
+            }}
+            if (type{i} == null)
+            {{
+                Console.WriteLine("ERROR: Type '{type_name}' not found");
+                Environment.Exit(1);
+            }}"#
+            )
         } else {
-            self.custom_setup_code.join("\n            ")
+            format!(
+                r#"
+            Type type{i} = assembly.GetTypes()[0];"#
+            )
         };
 
-        let test_code = self.generate_test_cases_code();
+        let method_name = &test.method_name;
+        let args_array = if test.arguments.is_empty() {
+            "new object[0]".to_string()
+        } else {
+            format!("new object[] {{ {} }}", test.arguments.join(", "))
+        };
 
-        format!(
-            r#"
-{using_statements}
+        let result_check = if let Some(ref expected) = test.expected_result {
+            format!(
+                r#"
+            if (!result{i}.Equals({expected}))
+            {{
+                Console.WriteLine("ERROR: Expected {expected}, got " + result{i});
+                Environment.Exit(1);
+            }}
+            Console.WriteLine("PASS: {method_name} returned " + result{i});"#
+            )
+        } else {
+            format!(
+                r#"
+            Console.WriteLine("PASS: {method_name} executed successfully");"#
+            )
+        };
+
+        let description = test.description.as_deref().unwrap_or(method_name);
+
+        test_code.push_str(&format!(r#"
+            // Test {i}: {description}
+            {type_search}
+            MethodInfo method{i} = type{i}.GetMethod("{method_name}", BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance);
+            if (method{i} == null)
+            {{
+                Console.WriteLine("ERROR: Method '{method_name}' not found");
+                Environment.Exit(1);
+            }}
+            object result{i} = method{i}.Invoke(null, {args_array});
+            {result_check}
+"#));
+    }
+
+    format!(
+        r#"using System;
+using System.Reflection;
 
 class Program
 {{
@@ -99,578 +224,223 @@ class Program
     {{
         try
         {{
-            // Use LoadFile instead of LoadFrom for better isolation.
-            // LoadFile doesn't use the assembly resolution context which
-            // causes issues when loading .NET Framework/modified assemblies
-            // from a .NET 8 host application.
-            Assembly assembly = Assembly.LoadFile(@"{assembly_path}");
-            
-            {setup_code}
-            
+            Assembly assembly = Assembly.LoadFile(@"{assembly_path_str}");
             {test_code}
-            
-            Console.WriteLine("✅ All reflection tests PASSED!");
-            Environment.Exit({expected_exit_code});
-        }} 
-        catch (Exception ex) 
+            Console.WriteLine("All tests passed!");
+        }}
+        catch (Exception ex)
         {{
-            Console.WriteLine($"ERROR: {{ex.Message}}");
+            Console.WriteLine("ERROR: " + ex.Message);
+            if (ex.InnerException != null)
+            {{
+                Console.WriteLine("Inner: " + ex.InnerException.Message);
+            }}
             Environment.Exit(1);
         }}
     }}
-    
-    {helper_methods}
 }}
-"#,
-            using_statements = using_statements,
-            assembly_path = assembly_path,
-            setup_code = setup_code,
-            test_code = test_code,
-            expected_exit_code = self.expected_exit_code,
-            helper_methods = self.generate_helper_methods()
-        )
-    }
-
-    /// Generate test cases code
-    fn generate_test_cases_code(&self) -> String {
-        if self.test_cases.is_empty() {
-            return "Console.WriteLine(\"No test cases defined\");".to_string();
-        }
-
-        let mut code = Vec::new();
-
-        for (i, test_case) in self.test_cases.iter().enumerate() {
-            code.push(format!(
-                "            // Test case {}: {}",
-                i + 1,
-                test_case.description
-            ));
-            code.push(test_case.generate_code(i));
-            code.push(String::new()); // Empty line between test cases
-        }
-
-        code.join("\n")
-    }
-
-    /// Generate helper methods
-    fn generate_helper_methods(&self) -> String {
-        r#"
-    static MethodInfo FindMethod(Assembly assembly, string methodName)
-    {
-        Type[] types = assembly.GetTypes();
-        foreach (Type type in types) 
-        {
-            foreach (MethodInfo method in type.GetMethods()) 
-            {
-                if (method.Name == methodName) 
-                {
-                    return method;
-                }
-            }
-        }
-        return null;
-    }
-
-    static void AssertEqual<T>(T expected, T actual, string testName)
-    {
-        if (!object.Equals(expected, actual))
-        {
-            throw new Exception($"{testName} FAILED: Expected {expected}, got {actual}");
-        }
-        Console.WriteLine($"  ✅ {testName} PASSED: {actual}");
-    }
-
-    static void AssertNotNull(object obj, string testName)
-    {
-        if (obj == null)
-        {
-            throw new Exception($"{testName} FAILED: Value was null");
-        }
-        Console.WriteLine($"  ✅ {testName} PASSED: Not null");
-    }
 "#
-        .to_string()
-    }
-
-    /// Add a test case (internal method)
-    fn add_test_case(&mut self, test_case: TestCase) {
-        self.test_cases.push(test_case);
-    }
+    )
 }
 
-/// Builder for individual method test cases
-pub struct MethodTestBuilder {
-    parent: ReflectionTestBuilder,
-    method_name: String,
-    parameters: Vec<ParameterValue>,
-    expected_result: Option<ExpectedValue>,
-    description: String,
-    custom_validation: Option<String>,
-}
+/// Run a reflection test
+pub fn run_reflection_test(
+    capabilities: &TestCapabilities,
+    assembly_path: &Path,
+    tests: &[MethodTest],
+    output_dir: &Path,
+    arch: &Architecture,
+) -> Result<ReflectionTestResult> {
+    // Generate test program
+    let test_source = generate_test_program(assembly_path, tests);
 
-impl MethodTestBuilder {
-    fn new(parent: ReflectionTestBuilder, method_name: String) -> Self {
-        Self {
-            description: format!("Test method {}", method_name),
-            parent,
-            method_name,
-            parameters: Vec::new(),
-            expected_result: None,
-            custom_validation: None,
-        }
+    // Compile test harness
+    let compile_result = compile(
+        capabilities,
+        &test_source,
+        output_dir,
+        "reflection_test",
+        arch,
+    )?;
+
+    if !compile_result.is_success() {
+        return Ok(ReflectionTestResult {
+            success: false,
+            compilation: Some(compile_result),
+            execution: None,
+            error: Some("Failed to compile reflection test harness".to_string()),
+        });
     }
 
-    /// Set test description
-    pub fn description(mut self, desc: &str) -> Self {
-        self.description = desc.to_string();
-        self
-    }
+    // Execute test harness
+    let exec_result = execute(capabilities, compile_result.assembly_path())?;
 
-    /// Add parameter to method call
-    pub fn parameter<T: Into<ParameterValue>>(mut self, value: T) -> Self {
-        self.parameters.push(value.into());
-        self
-    }
-
-    /// Add multiple parameters
-    pub fn parameters<T: Into<ParameterValue>>(mut self, values: Vec<T>) -> Self {
-        for value in values {
-            self.parameters.push(value.into());
-        }
-        self
-    }
-
-    /// Set expected return value
-    pub fn expect<T: Into<ExpectedValue>>(mut self, expected: T) -> Self {
-        self.expected_result = Some(expected.into());
-        self
-    }
-
-    /// Expect method to execute without throwing
-    pub fn expect_no_throw(mut self) -> Self {
-        self.custom_validation = Some("// Method executed without throwing".to_string());
-        self
-    }
-
-    /// Add custom validation code
-    pub fn with_custom_validation(mut self, code: &str) -> Self {
-        self.custom_validation = Some(code.to_string());
-        self
-    }
-
-    /// Finish building this test case and return to parent builder
-    pub fn and(mut self) -> ReflectionTestBuilder {
-        let test_case = TestCase {
-            method_name: self.method_name,
-            parameters: self.parameters,
-            expected_result: self.expected_result,
-            description: self.description,
-            custom_validation: self.custom_validation,
-        };
-
-        self.parent.add_test_case(test_case);
-        self.parent
-    }
-
-    /// Finish building and generate the test program
-    pub fn build(self) -> String {
-        self.and().generate_test_program()
-    }
-}
-
-/// Test case for method invocation
-#[derive(Debug, Clone)]
-struct TestCase {
-    method_name: String,
-    parameters: Vec<ParameterValue>,
-    expected_result: Option<ExpectedValue>,
-    description: String,
-    custom_validation: Option<String>,
-}
-
-impl TestCase {
-    fn generate_code(&self, index: usize) -> String {
-        let mut code = Vec::new();
-
-        // Find method (with unique variable name)
-        let var_suffix = format!("{}_{}", self.method_name.to_lowercase(), index);
-        code.push(format!(
-            "            MethodInfo method_{} = FindMethod(assembly, \"{}\");",
-            var_suffix, self.method_name
-        ));
-
-        code.push(format!(
-            "            AssertNotNull(method_{}, \"Method {} exists\");",
-            var_suffix, self.method_name
-        ));
-
-        // Prepare parameters
-        if !self.parameters.is_empty() {
-            let params_code = self
-                .parameters
-                .iter()
-                .map(|p| p.to_csharp_code())
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            code.push(format!(
-                "            object[] params_{} = {{ {} }};",
-                var_suffix, params_code
-            ));
-        } else {
-            code.push(format!(
-                "            object[] params_{} = null;",
-                var_suffix
-            ));
-        }
-
-        // Invoke method
-        code.push(format!(
-            "            object result_{} = method_{}.Invoke(null, params_{});",
-            var_suffix, var_suffix, var_suffix
-        ));
-
-        // Validate result
-        if let Some(expected) = &self.expected_result {
-            code.push(
-                expected
-                    .generate_validation_code(&format!("result_{}", var_suffix), &self.description),
-            );
-        } else if let Some(custom) = &self.custom_validation {
-            code.push(format!("            {}", custom));
-        } else {
-            code.push(format!(
-                "            Console.WriteLine(\"  ✅ {} executed successfully\");",
-                self.description
-            ));
-        }
-
-        code.join("\n")
-    }
-}
-
-/// Parameter value for method invocation
-#[derive(Debug, Clone)]
-pub enum ParameterValue {
-    Int32(i32),
-    String(String),
-    Boolean(bool),
-    Null,
-    Custom(String), // Custom C# expression
-}
-
-impl ParameterValue {
-    fn to_csharp_code(&self) -> String {
-        match self {
-            ParameterValue::Int32(i) => i.to_string(),
-            ParameterValue::String(s) => format!("\"{}\"", s.replace('"', "\\\"")),
-            ParameterValue::Boolean(b) => if *b { "true" } else { "false" }.to_string(),
-            ParameterValue::Null => "null".to_string(),
-            ParameterValue::Custom(expr) => expr.clone(),
-        }
-    }
-}
-
-impl From<i32> for ParameterValue {
-    fn from(value: i32) -> Self {
-        ParameterValue::Int32(value)
-    }
-}
-
-impl From<&str> for ParameterValue {
-    fn from(value: &str) -> Self {
-        ParameterValue::String(value.to_string())
-    }
-}
-
-impl From<String> for ParameterValue {
-    fn from(value: String) -> Self {
-        ParameterValue::String(value)
-    }
-}
-
-impl From<bool> for ParameterValue {
-    fn from(value: bool) -> Self {
-        ParameterValue::Boolean(value)
-    }
-}
-
-/// Expected result for validation
-#[derive(Debug, Clone)]
-pub enum ExpectedValue {
-    Int32(i32),
-    String(String),
-    Boolean(bool),
-    Null,
-    NotNull,
-    Custom(String), // Custom validation expression
-}
-
-impl ExpectedValue {
-    fn generate_validation_code(&self, result_var: &str, test_name: &str) -> String {
-        match self {
-            ExpectedValue::Int32(expected) => {
-                format!(
-                    "            AssertEqual({}, (int){}, \"{}\");",
-                    expected, result_var, test_name
-                )
-            }
-            ExpectedValue::String(expected) => {
-                format!(
-                    "            AssertEqual(\"{}\", (string){}, \"{}\");",
-                    expected.replace('"', "\\\""),
-                    result_var,
-                    test_name
-                )
-            }
-            ExpectedValue::Boolean(expected) => {
-                format!(
-                    "            AssertEqual({}, (bool){}, \"{}\");",
-                    if *expected { "true" } else { "false" },
-                    result_var,
-                    test_name
-                )
-            }
-            ExpectedValue::Null => {
-                format!(
-                    "            if ({} != null) throw new Exception(\"{} FAILED: Expected null, got \" + {});",
-                    result_var, test_name, result_var
-                )
-            }
-            ExpectedValue::NotNull => {
-                format!(
-                    "            AssertNotNull({}, \"{}\");",
-                    result_var, test_name
-                )
-            }
-            ExpectedValue::Custom(expr) => {
-                format!("            {}", expr)
-            }
-        }
-    }
-}
-
-impl From<i32> for ExpectedValue {
-    fn from(value: i32) -> Self {
-        ExpectedValue::Int32(value)
-    }
-}
-
-impl From<&str> for ExpectedValue {
-    fn from(value: &str) -> Self {
-        ExpectedValue::String(value.to_string())
-    }
-}
-
-impl From<String> for ExpectedValue {
-    fn from(value: String) -> Self {
-        ExpectedValue::String(value)
-    }
-}
-
-impl From<bool> for ExpectedValue {
-    fn from(value: bool) -> Self {
-        ExpectedValue::Boolean(value)
-    }
-}
-
-/// Reflection test executor
-#[derive(Default)]
-pub struct ReflectionTestExecutor {
-    compiler: CSharpCompiler,
-    runtime: MonoRuntime,
-}
-
-impl ReflectionTestExecutor {
-    /// Create new test executor
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Execute reflection test program
-    ///
-    /// This uses AnyCPU architecture for the test harness. For architecture-specific
-    /// testing (e.g., loading x86 assemblies), use `execute_test_with_arch` instead.
-    pub fn execute_test(
-        &mut self,
-        test_program: &str,
-        temp_dir: &Path,
-    ) -> Result<ReflectionTestResult> {
-        self.execute_test_with_arch(test_program, temp_dir, &ArchConfig::anycpu())
-    }
-
-    /// Execute reflection test program with a specific architecture
-    ///
-    /// The reflection test harness must be compiled with the same architecture as
-    /// the assembly being tested. For example, a 64-bit .NET process cannot load
-    /// a 32-bit assembly via reflection, and vice versa.
-    pub fn execute_test_with_arch(
-        &mut self,
-        test_program: &str,
-        temp_dir: &Path,
-        arch: &ArchConfig,
-    ) -> Result<ReflectionTestResult> {
-        // Compile test program with the specified architecture
-        // The architecture MUST match the assembly being tested - a 64-bit process
-        // cannot load 32-bit assemblies and vice versa.
-        let test_exe_path = temp_dir.join("reflection_test.exe");
-        let compilation_result =
-            self.compiler
-                .compile_executable(test_program, &test_exe_path, arch)?;
-
-        if !compilation_result.success {
-            return Ok(ReflectionTestResult {
-                compilation_success: false,
-                execution_success: false,
-                compilation_error: compilation_result.error,
-                execution_output: String::new(),
-                execution_error: None,
-            });
-        }
-
-        // Set the appropriate runtime based on which compiler was used
-        if let Some(ref compiler_type) = compilation_result.compiler_used {
-            self.runtime
-                .set_runtime(super::execution::RuntimeType::for_compiler(compiler_type));
-        }
-
-        // Execute test program using the actual output path (may be .dll for dotnet SDK)
-        let actual_output_path = compilation_result.executable_path();
-        let execution_result = self.runtime.execute_assembly(actual_output_path)?;
-
+    if exec_result.is_success() {
+        Ok(ReflectionTestResult::success(compile_result, exec_result))
+    } else {
         Ok(ReflectionTestResult {
-            compilation_success: true,
-            execution_success: execution_result.success,
-            compilation_error: None,
-            execution_output: execution_result.stdout,
-            execution_error: if execution_result.success {
-                None
-            } else {
-                Some(execution_result.stderr)
-            },
+            success: false,
+            compilation: Some(compile_result),
+            execution: Some(exec_result.clone()),
+            error: Some(exec_result.error_summary()),
         })
     }
-
-    /// Create and execute a complete reflection test
-    pub fn create_and_execute_test<F>(
-        &mut self,
-        assembly_path: &Path,
-        temp_dir: &Path,
-        builder_fn: F,
-    ) -> Result<ReflectionTestResult>
-    where
-        F: FnOnce(ReflectionTestBuilder) -> String,
-    {
-        let test_program = builder_fn(ReflectionTestBuilder::new().assembly_path(assembly_path));
-
-        self.execute_test(&test_program, temp_dir)
-    }
 }
 
-/// Result of executing a reflection test
-#[derive(Debug)]
-pub struct ReflectionTestResult {
-    pub compilation_success: bool,
-    pub execution_success: bool,
-    pub compilation_error: Option<String>,
-    pub execution_output: String,
-    pub execution_error: Option<String>,
-}
+/// Simple reflection test that just tries to load an assembly and list its types
+pub fn verify_assembly_loadable(
+    capabilities: &TestCapabilities,
+    assembly_path: &Path,
+    output_dir: &Path,
+    arch: &Architecture,
+) -> Result<ReflectionTestResult> {
+    let assembly_path_str = assembly_path.to_string_lossy().replace('\\', "\\\\");
 
-impl ReflectionTestResult {
-    /// Check if test was completely successful
-    pub fn is_successful(&self) -> bool {
-        self.compilation_success && self.execution_success
+    let test_source = format!(
+        r#"using System;
+using System.Reflection;
+
+class Program
+{{
+    static void Main()
+    {{
+        try
+        {{
+            Assembly assembly = Assembly.LoadFile(@"{assembly_path_str}");
+            Console.WriteLine("Assembly loaded: " + assembly.FullName);
+            foreach (Type t in assembly.GetTypes())
+            {{
+                Console.WriteLine("  Type: " + t.FullName);
+                foreach (MethodInfo m in t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                {{
+                    Console.WriteLine("    Method: " + m.Name);
+                }}
+            }}
+            Console.WriteLine("SUCCESS: Assembly is valid and loadable");
+        }}
+        catch (Exception ex)
+        {{
+            Console.WriteLine("ERROR: " + ex.Message);
+            if (ex.InnerException != null)
+            {{
+                Console.WriteLine("Inner: " + ex.InnerException.Message);
+            }}
+            Environment.Exit(1);
+        }}
+    }}
+}}
+"#
+    );
+
+    // Compile test harness
+    let compile_result = compile(capabilities, &test_source, output_dir, "verify_test", arch)?;
+
+    if !compile_result.is_success() {
+        return Ok(ReflectionTestResult {
+            success: false,
+            compilation: Some(compile_result),
+            execution: None,
+            error: Some("Failed to compile verification test".to_string()),
+        });
     }
 
-    /// Get error summary
-    pub fn error_summary(&self) -> String {
-        if let Some(comp_error) = &self.compilation_error {
-            format!("Compilation failed: {}", comp_error)
-        } else if let Some(exec_error) = &self.execution_error {
-            format!("Execution failed: {}", exec_error)
-        } else if !self.execution_success {
-            "Execution failed with unknown error".to_string()
-        } else {
-            "No errors".to_string()
-        }
-    }
+    // Execute test harness
+    let exec_result = execute(capabilities, compile_result.assembly_path())?;
 
-    /// Print formatted test results
-    pub fn print_results(&self, test_name: &str) {
-        if self.is_successful() {
-            println!("      ✅ {} PASSED:", test_name);
-            for line in self.execution_output.lines() {
-                println!("         {}", line);
-            }
-        } else {
-            println!("      ❌ {} FAILED:", test_name);
-            if let Some(error) = &self.compilation_error {
-                println!("         Compilation error: {}", error);
-            } else if let Some(error) = &self.execution_error {
-                println!("         Execution error: {}", error);
-            }
-
-            if !self.execution_output.is_empty() {
-                println!("         Output: {}", self.execution_output);
-            }
-        }
+    if exec_result.is_success() {
+        Ok(ReflectionTestResult::success(compile_result, exec_result))
+    } else {
+        Ok(ReflectionTestResult {
+            success: false,
+            compilation: Some(compile_result),
+            execution: Some(exec_result.clone()),
+            error: Some(exec_result.error_summary()),
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::test::mono::reflection::{
-        ExpectedValue, ParameterValue, ReflectionTestBuilder, ReflectionTestResult,
-    };
+    use super::*;
+    use crate::test::mono::compilation::templates;
+    use tempfile::TempDir;
 
     #[test]
-    fn test_reflection_test_builder() {
-        let program = ReflectionTestBuilder::new()
-            .assembly_path("/test/path.exe")
-            .test_method("TestMethod")
-            .parameter(5)
-            .parameter("hello")
-            .expect(42)
-            .build();
+    fn test_method_test_builder() {
+        let test = MethodTest::new("Add")
+            .in_type("TestClass")
+            .arg_int(5)
+            .arg_int(7)
+            .expect_int(12)
+            .describe("Test addition");
 
-        assert!(program.contains("Assembly.LoadFile"));
-        assert!(program.contains("TestMethod"));
-        assert!(program.contains("AssertEqual"));
+        assert_eq!(test.method_name, "Add");
+        assert_eq!(test.type_name, Some("TestClass".to_string()));
+        assert_eq!(test.arguments, vec!["5", "7"]);
+        assert_eq!(test.expected_result, Some("12".to_string()));
     }
 
     #[test]
-    fn test_parameter_values() {
-        let int_param = ParameterValue::Int32(42);
-        let string_param = ParameterValue::String("test".to_string());
-        let bool_param = ParameterValue::Boolean(true);
+    fn test_generate_test_program() {
+        let tests = vec![MethodTest::new("Add")
+            .in_type("TestClass")
+            .arg_int(1)
+            .arg_int(2)
+            .expect_int(3)];
 
-        assert_eq!(int_param.to_csharp_code(), "42");
-        assert_eq!(string_param.to_csharp_code(), "\"test\"");
-        assert_eq!(bool_param.to_csharp_code(), "true");
+        let source = generate_test_program(Path::new("/test/assembly.dll"), &tests);
+        assert!(source.contains("Assembly.LoadFile"));
+        assert!(source.contains("GetMethod"));
+        assert!(source.contains("Add"));
     }
 
     #[test]
-    fn test_expected_values() {
-        let result_var = "result";
-        let test_name = "Test";
+    fn test_reflection_on_simple_class() -> Result<()> {
+        let caps = TestCapabilities::detect();
+        if !caps.can_test() {
+            println!("Skipping: no compiler/runtime available");
+            return Ok(());
+        }
 
-        let int_expected = ExpectedValue::Int32(42);
-        let validation = int_expected.generate_validation_code(result_var, test_name);
-        assert!(validation.contains("AssertEqual(42"));
-    }
+        let temp_dir = TempDir::new()?;
+        let arch = caps.supported_architectures.first().unwrap();
 
-    #[test]
-    fn test_reflection_test_result() {
-        let result = ReflectionTestResult {
-            compilation_success: true,
-            execution_success: true,
-            compilation_error: None,
-            execution_output: "Test passed".to_string(),
-            execution_error: None,
-        };
+        // Compile the test assembly
+        let assembly_result = compile(
+            &caps,
+            templates::SIMPLE_CLASS,
+            temp_dir.path(),
+            "testasm",
+            arch,
+        )?;
+        assert!(
+            assembly_result.is_success(),
+            "Failed to compile test assembly"
+        );
 
-        assert!(result.is_successful());
-        assert_eq!(result.error_summary(), "No errors");
+        // Create reflection tests
+        let tests = vec![MethodTest::new("Add")
+            .in_type("TestClass")
+            .arg_int(5)
+            .arg_int(7)
+            .expect_int(12)
+            .describe("5 + 7 = 12")];
+
+        // Run reflection test
+        let result = run_reflection_test(
+            &caps,
+            assembly_result.assembly_path(),
+            &tests,
+            temp_dir.path(),
+            arch,
+        )?;
+
+        assert!(
+            result.is_success(),
+            "Reflection test failed: {}",
+            result.error_summary()
+        );
+
+        Ok(())
     }
 }

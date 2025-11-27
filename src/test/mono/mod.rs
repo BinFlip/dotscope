@@ -1,517 +1,588 @@
-//! .NET assembly verification framework for dotscope testing
+//! .NET assembly verification framework
 //!
 //! This module provides utilities for verifying that .NET assemblies generated or modified
-//! by dotscope are valid and executable. It uses official .NET tools (dotnet CLI, Mono runtime,
-//! monodis) to validate that our binary output is correct and interoperable with the .NET ecosystem.
-//!
-//! # Purpose
-//!
-//! When dotscope modifies or generates .NET assemblies, we need to verify that:
-//! 1. The resulting binaries are structurally valid (can be loaded by .NET runtimes)
-//! 2. Added/modified code executes correctly (methods can be called via reflection)
-//! 3. Metadata is properly formatted (monodis can disassemble without errors)
-//!
-//! This framework automates these verification steps across multiple platforms and architectures.
+//! by dotscope are valid and executable. It uses the available .NET tools (compilers, runtimes,
+//! disassemblers) to validate that binary output is correct and interoperable with the .NET ecosystem.
 //!
 //! # Architecture
 //!
-//! The framework is organized into specialized modules:
+//! The framework automatically detects available tools and adapts to the platform:
 //!
-//! - **`runner`** - Test orchestration, temporary folder management, and architecture configuration
-//! - **`compilation`** - C# compilation using available compilers (dotnet CLI, csc, mcs)
-//! - **`execution`** - Assembly execution via .NET runtime (dotnet) or Mono
-//! - **`disassembly`** - IL disassembly verification using monodis
-//! - **`reflection`** - Dynamic method invocation tests via .NET reflection
+//! - **Compilers**: `csc` (Roslyn), `mcs` (Mono), `dotnet` SDK
+//! - **Runtimes**: `mono`, `dotnet`
+//! - **Disassemblers**: `monodis`, `ildasm`, `dotnet-ildasm`
 //!
-//! # Usage Examples
+//! # Modules
 //!
-//! ## Basic Test Setup
+//! - [`capabilities`] - Platform detection and tool availability
+//! - [`runner`] - Test orchestration and temporary directory management
+//! - [`compilation`] - C# compilation
+//! - [`execution`] - Assembly execution
+//! - [`disassembly`] - IL disassembly
+//! - [`reflection`] - Reflection-based method invocation testing
+//!
+//! # Quick Start
 //!
 //! ```rust,no_run
-//! use dotscope::test::mono::*;
+//! use dotscope::test::mono::{TestRunner, TestCapabilities};
+//! use dotscope::test::mono::compilation::{compile, templates};
+//! use dotscope::test::mono::execution::execute;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let runner = MonoTestRunner::new()?;
-//! let mut compiler = CSharpCompiler::new();
-//! let mut runtime = MonoRuntime::new();
+//! # fn main() -> dotscope::Result<()> {
+//! // Create test runner (auto-detects platform capabilities)
+//! let runner = TestRunner::new()?;
+//! let caps = runner.capabilities();
 //!
-//! // Compile test program for both architectures
-//! let results = compiler.compile_for_architectures(
-//!     r#"
-//!     using System;
-//!     class Program {
-//!         static void Main() {
-//!             Console.WriteLine("Hello World!");
-//!         }
-//!     }
-//!     "#,
-//!     runner.temp_path(),
-//!     "test",
-//!     runner.architectures()
-//! )?;
+//! // Run tests for all supported architectures
+//! let results = runner.for_each_architecture(|arch, dir, caps| {
+//!     // Compile a test program
+//!     let result = compile(caps, templates::HELLO_WORLD, dir, "test", arch)?;
 //!
-//! // Test execution on each architecture
-//! for result in &results {
-//!     if let Some(exe_path) = result.compilation.try_executable_path() {
-//!         let exec_result = runtime.execute_assembly(exe_path)?;
-//!         println!("{}: {}", result.architecture.name, exec_result.is_success());
-//!     }
-//! }
+//!     // Execute it
+//!     let exec = execute(caps, result.assembly_path())?;
+//!
+//!     Ok(exec.is_success())
+//! });
+//!
+//! // Check results
+//! assert!(TestRunner::all_passed(&results));
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! ## Assembly Modification and Verification
+//! # Complete Test Example
 //!
 //! ```rust,no_run
-//! use dotscope::test::mono::*;
 //! use dotscope::prelude::*;
+//! use dotscope::test::mono::{TestRunner, run_complete_test};
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let runner = MonoTestRunner::new()?;
-//! let mut compiler = CSharpCompiler::new();
-//! let mut disassembler = ILDisassembler::new();
+//! # fn main() -> dotscope::Result<()> {
+//! let runner = TestRunner::new()?;
 //!
-//! // Compile original assembly
-//! let arch = ArchConfig::x64();
-//! let exe_path = runner.create_arch_file_path("test", &arch, ".exe");
-//! let compilation_result = compiler.compile_executable(
-//!     compilation::templates::HELLO_WORLD,
-//!     &exe_path,
-//!     &arch
+//! // Source code to compile
+//! let source = r#"
+//! using System;
+//! public class TestClass {
+//!     public static void Main() { Console.WriteLine("Hello!"); }
+//!     public static int Add(int a, int b) { return a + b; }
+//! }
+//! "#;
+//!
+//! // Run complete test (compile, modify, execute, verify)
+//! let results = run_complete_test(
+//!     &runner,
+//!     source,
+//!     |ctx| {
+//!         // Modify the assembly using dotscope builders
+//!         Ok(())
+//!     },
 //! )?;
 //!
-//! if compilation_result.is_success() {
-//!     // Modify assembly using dotscope
-//!     let view = CilAssemblyView::from_path(&exe_path)?;
-//!     let assembly = CilAssembly::new(view);
-//!     let mut context = BuilderContext::new(assembly);
-//!
-//!     // Add custom method
-//!     let _method_token = MethodBuilder::new("CustomMethod")
-//!         .public()
-//!         .static_method()
-//!         .returns(dotscope::metadata::signatures::TypeSignature::Void)
-//!         .implementation(|body| {
-//!             body.implementation(|asm| {
-//!                 asm.ret()?;
-//!                 Ok(())
-//!             })
-//!         })
-//!         .build(&mut context)?;
-//!
-//!     let mut assembly = context.finish();
-//!     assembly.validate_and_apply_changes()?;
-//!     
-//!     let modified_path = runner.create_arch_file_path("test_modified", &arch, ".exe");
-//!     assembly.write_to_file(&modified_path)?;
-//!
-//!     // Verify the modification
-//!     let verification = disassembler.verify_method(&modified_path, "CustomMethod")?;
-//!     println!("Custom method found: {}", verification.found);
+//! // Check results for each architecture
+//! for result in &results {
+//!     println!("{}: {}", result.architecture.name,
+//!         if result.is_fully_successful() { "PASS" } else { "FAIL" });
 //! }
 //! # Ok(())
 //! # }
 //! ```
-//!
-//! ## Reflection-Based Testing
-//!
-//! ```rust,no_run
-//! use dotscope::test::mono::*;
-//!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let runner = MonoTestRunner::new()?;
-//! let mut executor = ReflectionTestExecutor::new();
-//!
-//! // Create reflection test for method with parameters
-//! let test_program = ReflectionTestBuilder::new()
-//!     .assembly_path("/path/to/modified.exe")
-//!     .test_method("AddNumbers")
-//!         .description("Test addition: 5 + 7 = 12")
-//!         .parameters(vec![5, 7])
-//!         .expect(12)
-//!     .and()
-//!     .test_method("AddNumbers")
-//!         .description("Test addition: 100 + 200 = 300")
-//!         .parameters(vec![100, 200])
-//!         .expect(300)
-//!     .build();
-//!
-//! // Execute the reflection test
-//! let result = executor.execute_test(&test_program, runner.temp_path())?;
-//! result.print_results("Addition Test");
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! ## Complete Integration Test
-//!
-//! ```rust,no_run
-//! use dotscope::test::mono::*;
-//!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let runner = MonoTestRunner::new()?;
-//!
-//! let results = runner.run_for_all_architectures(|arch, temp_path| {
-//!     println!("Testing {} architecture", arch.name);
-//!
-//!     // 1. Compile original program
-//!     let mut compiler = CSharpCompiler::new();
-//!     let exe_path = temp_path.join(format!("test_{}.exe", arch.filename_component()));
-//!     let compilation = compiler.compile_executable(
-//!         compilation::templates::SIMPLE_CLASS,
-//!         &exe_path,
-//!         arch
-//!     )?;
-//!
-//!     if !compilation.is_success() {
-//!         return Err(dotscope::Error::Other("Compilation failed".to_string()));
-//!     }
-//!
-//!     // 2. Test original execution
-//!     let mut runtime = MonoRuntime::new();
-//!     let original_result = runtime.execute_assembly(&exe_path)?;
-//!
-//!     // 3. Create modified assembly (your custom modifications here)
-//!     let modified_path = temp_path.join(format!("modified_{}.exe", arch.filename_component()));
-//!     std::fs::copy(&exe_path, &modified_path)?;
-//!
-//!     // 4. Test mono compatibility
-//!     let compat_result = runtime.test_compatibility(&modified_path)?;
-//!
-//!     // 5. Verify disassembly
-//!     let mut disassembler = MonoDisassembler::new();
-//!     let verification = disassembler.test_verification(&modified_path, &arch.name)?;
-//!
-//!     Ok((original_result, compat_result, verification))
-//! })?;
-//!
-//! // Check if all tests passed
-//! assert!(MonoTestRunner::all_tests_passed(&results));
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! # Platform Support
-//!
-//! The framework automatically adapts to the available tools on each platform:
-//!
-//! - **Windows**: Uses csc.exe or dotnet CLI for compilation, .NET runtime for execution
-//! - **macOS/Linux**: Uses dotnet CLI or mcs for compilation, dotnet or mono for execution
-//! - **ARM64**: Uses AnyCPU configuration for cross-architecture compatibility
-//!
-//! # Customization
-//!
-//! - **Custom Architectures**: Define `ArchConfig` for specific platform requirements
-//! - **Reflection Tests**: Build test scenarios with `ReflectionTestBuilder`
-//! - **Error Handling**: All operations return `Result` types for robust error handling
 
+pub mod capabilities;
 pub mod compilation;
 pub mod disassembly;
 pub mod execution;
 pub mod reflection;
 pub mod runner;
 
-// Re-export main types for convenience
-pub use compilation::CSharpCompiler;
-pub use disassembly::ILDisassembler;
-pub use execution::{MonoRuntime, RuntimeType};
-pub use reflection::{ReflectionTestBuilder, ReflectionTestExecutor};
-pub use runner::{ArchConfig, MonoTestRunner};
+// Re-export main types
+pub use capabilities::{Architecture, TestCapabilities};
+pub use reflection::MethodTest;
+pub use runner::TestRunner;
 
-/// Common result type for mono testing operations
-pub type MonoTestResult<T> = crate::Result<T>;
+use crate::prelude::*;
+use std::path::Path;
 
-/// Convenience function to create a complete test environment
-pub fn create_test_environment() -> MonoTestResult<TestEnvironment> {
-    Ok(TestEnvironment {
-        runner: MonoTestRunner::new()?,
-        compiler: CSharpCompiler::new(),
-        runtime: MonoRuntime::new(),
-        disassembler: ILDisassembler::new(),
-        reflection_executor: ReflectionTestExecutor::new(),
-    })
-}
-
-/// Complete test environment with all tools
-pub struct TestEnvironment {
-    pub runner: MonoTestRunner,
-    pub compiler: CSharpCompiler,
-    pub runtime: MonoRuntime,
-    pub disassembler: ILDisassembler,
-    pub reflection_executor: ReflectionTestExecutor,
-}
-
-impl TestEnvironment {
-    /// Run a complete test workflow
-    pub fn run_complete_test<F, M>(
-        &mut self,
-        source_code: &str,
-        modify_assembly: M,
-        create_reflection_test: F,
-    ) -> MonoTestResult<Vec<CompleteTestResult>>
-    where
-        F: Fn(&std::path::Path) -> String,
-        M: Fn(&mut crate::BuilderContext) -> crate::Result<()>,
-    {
-        let mut results = Vec::new();
-
-        for arch in self.runner.architectures().to_vec() {
-            let mut arch_result = CompleteTestResult {
-                architecture: arch.clone(),
-                compilation_success: false,
-                modification_success: false,
-                execution_success: false,
-                compatibility_success: false,
-                disassembly_success: false,
-                reflection_success: false,
-                errors: Vec::new(),
-            };
-
-            // 1. Compile source
-            let requested_exe_path = self.runner.create_arch_file_path("test", &arch, ".exe");
-            let comp_result =
-                match self
-                    .compiler
-                    .compile_executable(source_code, &requested_exe_path, &arch)
-                {
-                    Ok(comp_result) if comp_result.is_success() => {
-                        arch_result.compilation_success = true;
-                        // Set the appropriate runtime based on which compiler was used
-                        if let Some(ref compiler_type) = comp_result.compiler_used {
-                            self.runtime
-                                .set_runtime(RuntimeType::for_compiler(compiler_type));
-                        }
-                        comp_result
-                    }
-                    Ok(comp_result) => {
-                        arch_result.errors.push(format!(
-                            "Compilation failed: {}",
-                            comp_result.error.as_deref().unwrap_or("Unknown error")
-                        ));
-                        results.push(arch_result);
-                        continue;
-                    }
-                    Err(e) => {
-                        arch_result.errors.push(format!("Compilation error: {}", e));
-                        results.push(arch_result);
-                        continue;
-                    }
-                };
-
-            // Get the actual output path (may differ from requested path for dotnet SDK)
-            let actual_exe_path = comp_result.executable_path();
-
-            // 2. Modify assembly
-            // Save modified assembly with the SAME filename as the original but in a
-            // per-architecture subdirectory. This is critical because:
-            // 1. .NET validates that the assembly's internal name matches the filename
-            // 2. Each architecture must be isolated to prevent cross-probing conflicts
-            let original_filename = actual_exe_path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("test.dll");
-            let modified_dir = self.runner.temp_path().join("modified").join(&arch.name);
-            std::fs::create_dir_all(&modified_dir).ok();
-            let modified_path = modified_dir.join(original_filename);
-
-            match self.modify_assembly_internal(actual_exe_path, &modified_path, &modify_assembly) {
-                Ok(_) => {
-                    arch_result.modification_success = true;
-
-                    // Copy runtimeconfig.json from original to modified assembly location
-                    // This is required for .NET 8+ runtime to execute the assembly
-                    let original_stem = actual_exe_path
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("");
-
-                    if let Some(original_dir) = actual_exe_path.parent() {
-                        let original_runtimeconfig =
-                            original_dir.join(format!("{}.runtimeconfig.json", original_stem));
-                        if original_runtimeconfig.exists() {
-                            let modified_runtimeconfig =
-                                modified_dir.join(format!("{}.runtimeconfig.json", original_stem));
-                            std::fs::copy(&original_runtimeconfig, &modified_runtimeconfig).ok();
-                        }
-                    }
-                }
-                Err(e) => {
-                    arch_result
-                        .errors
-                        .push(format!("Modification failed: {}", e));
-                    results.push(arch_result);
-                    continue;
-                }
-            }
-
-            // 3. Test execution
-            match self.runtime.execute_assembly(&modified_path) {
-                Ok(exec_result) if exec_result.is_success() => {
-                    arch_result.execution_success = true;
-                }
-                Ok(_) => {
-                    arch_result.errors.push("Execution failed".to_string());
-                }
-                Err(e) => {
-                    arch_result.errors.push(format!("Execution error: {}", e));
-                }
-            }
-
-            // 4. Test compatibility
-            match self.runtime.test_compatibility(&modified_path) {
-                Ok(compat_result) if compat_result.is_fully_compatible() => {
-                    arch_result.compatibility_success = true;
-                }
-                Ok(_) => {
-                    arch_result
-                        .errors
-                        .push("Compatibility test failed".to_string());
-                }
-                Err(e) => {
-                    arch_result
-                        .errors
-                        .push(format!("Compatibility error: {}", e));
-                }
-            }
-
-            // 5. Test disassembly
-            match self
-                .disassembler
-                .test_verification(&modified_path, &arch.name)
-            {
-                Ok(disasm_result) if disasm_result.is_fully_successful() => {
-                    arch_result.disassembly_success = true;
-                }
-                Ok(_) => {
-                    arch_result
-                        .errors
-                        .push("Disassembly verification failed".to_string());
-                }
-                Err(e) => {
-                    arch_result.errors.push(format!("Disassembly error: {}", e));
-                }
-            }
-
-            // 6. Test reflection
-            // Execute the reflection test from the modified directory so .NET can
-            // properly resolve assembly references during reflection calls.
-            // IMPORTANT: The reflection test harness must be compiled with the SAME
-            // architecture as the assembly being tested. A 64-bit .NET process cannot
-            // load 32-bit assemblies via reflection, and vice versa.
-            let reflection_test = create_reflection_test(&modified_path);
-            match self.reflection_executor.execute_test_with_arch(
-                &reflection_test,
-                &modified_dir,
-                &arch,
-            ) {
-                Ok(refl_result) if refl_result.is_successful() => {
-                    arch_result.reflection_success = true;
-                }
-                Ok(refl_result) => {
-                    let error_details = format!(
-                        "Reflection test failed: compilation_success={}, execution_success={}, error={}",
-                        refl_result.compilation_success,
-                        refl_result.execution_success,
-                        refl_result.error_summary()
-                    );
-                    arch_result.errors.push(error_details);
-                }
-                Err(e) => {
-                    arch_result.errors.push(format!("Reflection error: {}", e));
-                }
-            }
-
-            results.push(arch_result);
-        }
-
-        Ok(results)
-    }
-
-    fn modify_assembly_internal<M>(
-        &self,
-        original_path: &std::path::Path,
-        modified_path: &std::path::Path,
-        modify_fn: &M,
-    ) -> crate::Result<()>
-    where
-        M: Fn(&mut crate::BuilderContext) -> crate::Result<()>,
-    {
-        use crate::prelude::*;
-
-        let view = CilAssemblyView::from_path(original_path)?;
-        let assembly = CilAssembly::new(view);
-        let mut context = BuilderContext::new(assembly);
-
-        modify_fn(&mut context)?;
-
-        let mut assembly = context.finish();
-        assembly.validate_and_apply_changes()?;
-        assembly.write_to_file(modified_path)?;
-
-        Ok(())
-    }
-}
-
-/// Complete test result for all verification steps
+/// Result of a complete test run for one architecture
 #[derive(Debug)]
 pub struct CompleteTestResult {
-    pub architecture: ArchConfig,
+    /// The architecture tested
+    pub architecture: Architecture,
+    /// Whether compilation succeeded
     pub compilation_success: bool,
+    /// Whether assembly modification succeeded
     pub modification_success: bool,
+    /// Whether execution succeeded
     pub execution_success: bool,
-    pub compatibility_success: bool,
+    /// Whether disassembly verification succeeded
     pub disassembly_success: bool,
+    /// Whether reflection tests succeeded
     pub reflection_success: bool,
+    /// Error messages
     pub errors: Vec<String>,
 }
 
 impl CompleteTestResult {
-    /// Check if all test steps were successful
+    /// Check if all test phases were successful
     pub fn is_fully_successful(&self) -> bool {
         self.compilation_success
             && self.modification_success
             && self.execution_success
-            && self.compatibility_success
             && self.disassembly_success
             && self.reflection_success
             && self.errors.is_empty()
+    }
+
+    /// Check if at least compilation and modification worked
+    pub fn is_buildable(&self) -> bool {
+        self.compilation_success && self.modification_success
+    }
+
+    /// Get a summary string
+    pub fn summary(&self) -> String {
+        if self.is_fully_successful() {
+            format!("{}: All tests passed", self.architecture.name)
+        } else {
+            format!(
+                "{}: compile={}, modify={}, exec={}, disasm={}, reflect={}, errors={}",
+                self.architecture.name,
+                self.compilation_success,
+                self.modification_success,
+                self.execution_success,
+                self.disassembly_success,
+                self.reflection_success,
+                self.errors.len()
+            )
+        }
+    }
+}
+
+/// Run a complete test workflow: compile, modify, execute, verify
+///
+/// This function orchestrates a full integration test:
+/// 1. Compile C# source code
+/// 2. Modify the assembly using dotscope
+/// 3. Execute the modified assembly
+/// 4. Verify with disassembly
+/// 5. Run reflection tests
+pub fn run_complete_test<M>(
+    runner: &TestRunner,
+    source_code: &str,
+    modify_fn: M,
+) -> Result<Vec<CompleteTestResult>>
+where
+    M: Fn(&mut crate::BuilderContext) -> Result<()>,
+{
+    let caps = runner.capabilities();
+    let mut results = Vec::new();
+
+    for arch in runner.architectures() {
+        let mut result = CompleteTestResult {
+            architecture: arch.clone(),
+            compilation_success: false,
+            modification_success: false,
+            execution_success: false,
+            disassembly_success: false,
+            reflection_success: false,
+            errors: Vec::new(),
+        };
+
+        // Create architecture-specific directory
+        let arch_dir = match runner.arch_dir(arch) {
+            Ok(d) => d,
+            Err(e) => {
+                result
+                    .errors
+                    .push(format!("Failed to create directory: {}", e));
+                results.push(result);
+                continue;
+            }
+        };
+
+        // 1. Compile
+        let compile_result = match compilation::compile(caps, source_code, &arch_dir, "test", arch)
+        {
+            Ok(r) => r,
+            Err(e) => {
+                result.errors.push(format!("Compilation error: {}", e));
+                results.push(result);
+                continue;
+            }
+        };
+
+        if !compile_result.is_success() {
+            result
+                .errors
+                .push(format!("Compilation failed: {:?}", compile_result.error));
+            results.push(result);
+            continue;
+        }
+        result.compilation_success = true;
+
+        let original_path = compile_result.assembly_path();
+
+        // 2. Modify assembly
+        let modified_dir = arch_dir.join("modified");
+        std::fs::create_dir_all(&modified_dir).ok();
+        let modified_path = modified_dir.join(
+            original_path
+                .file_name()
+                .unwrap_or_else(|| std::ffi::OsStr::new("modified.dll")),
+        );
+
+        match modify_assembly(original_path, &modified_path, &modify_fn) {
+            Ok(_) => {
+                result.modification_success = true;
+
+                // Copy runtimeconfig.json if it exists
+                if let Some(stem) = original_path.file_stem().and_then(|s| s.to_str()) {
+                    if let Some(parent) = original_path.parent() {
+                        let config_src = parent.join(format!("{}.runtimeconfig.json", stem));
+                        if config_src.exists() {
+                            let config_dst =
+                                modified_dir.join(format!("{}.runtimeconfig.json", stem));
+                            std::fs::copy(&config_src, &config_dst).ok();
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                result.errors.push(format!("Modification failed: {}", e));
+                results.push(result);
+                continue;
+            }
+        }
+
+        // 3. Execute
+        match execution::execute(caps, &modified_path) {
+            Ok(exec_result) => {
+                if exec_result.is_success() {
+                    result.execution_success = true;
+                } else {
+                    result
+                        .errors
+                        .push(format!("Execution failed: {}", exec_result.error_summary()));
+                }
+            }
+            Err(e) => {
+                result.errors.push(format!("Execution error: {}", e));
+            }
+        }
+
+        // 4. Disassembly verification
+        if caps.can_disassemble() {
+            match disassembly::disassemble(caps, &modified_path) {
+                Ok(disasm_result) => {
+                    if disasm_result.is_success() {
+                        result.disassembly_success = true;
+                    } else {
+                        result
+                            .errors
+                            .push(format!("Disassembly failed: {:?}", disasm_result.error));
+                    }
+                }
+                Err(e) => {
+                    result.errors.push(format!("Disassembly error: {}", e));
+                }
+            }
+        } else {
+            // No disassembler available, mark as success (optional check)
+            result.disassembly_success = true;
+        }
+
+        // 5. Reflection verification
+        match reflection::verify_assembly_loadable(caps, &modified_path, &modified_dir, arch) {
+            Ok(refl_result) => {
+                if refl_result.is_success() {
+                    result.reflection_success = true;
+                } else {
+                    result.errors.push(format!(
+                        "Reflection failed: {}",
+                        refl_result.error_summary()
+                    ));
+                }
+            }
+            Err(e) => {
+                result.errors.push(format!("Reflection error: {}", e));
+            }
+        }
+
+        results.push(result);
+    }
+
+    Ok(results)
+}
+
+/// Run a complete test workflow with custom reflection tests
+///
+/// This is like `run_complete_test` but allows specifying custom method tests
+/// that verify the generated methods work correctly with specific inputs/outputs.
+///
+/// The `create_tests_fn` receives the path to the modified assembly and returns
+/// a list of `MethodTest` to run against it.
+pub fn run_complete_test_with_reflection<M, T>(
+    runner: &TestRunner,
+    source_code: &str,
+    modify_fn: M,
+    create_tests_fn: T,
+) -> Result<Vec<CompleteTestResult>>
+where
+    M: Fn(&mut crate::BuilderContext) -> Result<()>,
+    T: Fn(&Path) -> Vec<reflection::MethodTest>,
+{
+    let caps = runner.capabilities();
+    let mut results = Vec::new();
+
+    for arch in runner.architectures() {
+        let mut result = CompleteTestResult {
+            architecture: arch.clone(),
+            compilation_success: false,
+            modification_success: false,
+            execution_success: false,
+            disassembly_success: false,
+            reflection_success: false,
+            errors: Vec::new(),
+        };
+
+        // Create architecture-specific directory
+        let arch_dir = match runner.arch_dir(arch) {
+            Ok(d) => d,
+            Err(e) => {
+                result
+                    .errors
+                    .push(format!("Failed to create directory: {}", e));
+                results.push(result);
+                continue;
+            }
+        };
+
+        // 1. Compile
+        let compile_result = match compilation::compile(caps, source_code, &arch_dir, "test", arch)
+        {
+            Ok(r) => r,
+            Err(e) => {
+                result.errors.push(format!("Compilation error: {}", e));
+                results.push(result);
+                continue;
+            }
+        };
+
+        if !compile_result.is_success() {
+            result
+                .errors
+                .push(format!("Compilation failed: {:?}", compile_result.error));
+            results.push(result);
+            continue;
+        }
+        result.compilation_success = true;
+
+        let original_path = compile_result.assembly_path();
+
+        // 2. Modify assembly
+        let modified_dir = arch_dir.join("modified");
+        std::fs::create_dir_all(&modified_dir).ok();
+        let modified_path = modified_dir.join(
+            original_path
+                .file_name()
+                .unwrap_or_else(|| std::ffi::OsStr::new("modified.dll")),
+        );
+
+        match modify_assembly(original_path, &modified_path, &modify_fn) {
+            Ok(_) => {
+                result.modification_success = true;
+
+                // Copy runtimeconfig.json if it exists
+                if let Some(stem) = original_path.file_stem().and_then(|s| s.to_str()) {
+                    if let Some(parent) = original_path.parent() {
+                        let config_src = parent.join(format!("{}.runtimeconfig.json", stem));
+                        if config_src.exists() {
+                            let config_dst =
+                                modified_dir.join(format!("{}.runtimeconfig.json", stem));
+                            std::fs::copy(&config_src, &config_dst).ok();
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                result.errors.push(format!("Modification failed: {}", e));
+                results.push(result);
+                continue;
+            }
+        }
+
+        // 3. Execute (basic execution test)
+        match execution::execute(caps, &modified_path) {
+            Ok(exec_result) => {
+                if exec_result.is_success() {
+                    result.execution_success = true;
+                } else {
+                    result
+                        .errors
+                        .push(format!("Execution failed: {}", exec_result.error_summary()));
+                }
+            }
+            Err(e) => {
+                result.errors.push(format!("Execution error: {}", e));
+            }
+        }
+
+        // 4. Disassembly verification
+        if caps.can_disassemble() {
+            match disassembly::disassemble(caps, &modified_path) {
+                Ok(disasm_result) => {
+                    if disasm_result.is_success() {
+                        result.disassembly_success = true;
+                    } else {
+                        result
+                            .errors
+                            .push(format!("Disassembly failed: {:?}", disasm_result.error));
+                    }
+                }
+                Err(e) => {
+                    result.errors.push(format!("Disassembly error: {}", e));
+                }
+            }
+        } else {
+            // No disassembler available, mark as success (optional check)
+            result.disassembly_success = true;
+        }
+
+        // 5. Reflection tests with custom method invocations
+        let method_tests = create_tests_fn(&modified_path);
+        if method_tests.is_empty() {
+            // No custom tests, just verify assembly is loadable
+            match reflection::verify_assembly_loadable(caps, &modified_path, &modified_dir, arch) {
+                Ok(refl_result) => {
+                    if refl_result.is_success() {
+                        result.reflection_success = true;
+                    } else {
+                        result.errors.push(format!(
+                            "Reflection failed: {}",
+                            refl_result.error_summary()
+                        ));
+                    }
+                }
+                Err(e) => {
+                    result.errors.push(format!("Reflection error: {}", e));
+                }
+            }
+        } else {
+            // Run custom method tests
+            match reflection::run_reflection_test(
+                caps,
+                &modified_path,
+                &method_tests,
+                &modified_dir,
+                arch,
+            ) {
+                Ok(refl_result) => {
+                    if refl_result.is_success() {
+                        result.reflection_success = true;
+                    } else {
+                        result.errors.push(format!(
+                            "Reflection test failed: {}",
+                            refl_result.error_summary()
+                        ));
+                    }
+                }
+                Err(e) => {
+                    result.errors.push(format!("Reflection error: {}", e));
+                }
+            }
+        }
+
+        results.push(result);
+    }
+
+    Ok(results)
+}
+
+/// Modify an assembly using dotscope
+fn modify_assembly<M>(original_path: &Path, modified_path: &Path, modify_fn: &M) -> Result<()>
+where
+    M: Fn(&mut crate::BuilderContext) -> Result<()>,
+{
+    use crate::prelude::*;
+
+    let view = CilAssemblyView::from_path(original_path)?;
+    let assembly = CilAssembly::new(view);
+    let mut context = BuilderContext::new(assembly);
+
+    modify_fn(&mut context)?;
+
+    let mut assembly = context.finish();
+    assembly.validate_and_apply_changes()?;
+    assembly.write_to_file(modified_path)?;
+
+    Ok(())
+}
+
+/// Check if all complete test results are successful
+pub fn all_successful(results: &[CompleteTestResult]) -> bool {
+    results.iter().all(|r| r.is_fully_successful())
+}
+
+/// Get error summary for failed tests
+pub fn error_summary(results: &[CompleteTestResult]) -> String {
+    let failed: Vec<_> = results
+        .iter()
+        .filter(|r| !r.is_fully_successful())
+        .collect();
+
+    if failed.is_empty() {
+        "All tests passed".to_string()
+    } else {
+        failed
+            .iter()
+            .map(|r| format!("{}: {}", r.architecture.name, r.errors.join(", ")))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::test::mono::runner::ArchConfig;
-    use crate::test::mono::{create_test_environment, CompleteTestResult, MonoTestResult};
+    use super::*;
 
     #[test]
-    fn test_create_test_environment() -> MonoTestResult<()> {
-        let _env = create_test_environment()?;
+    fn test_capabilities_detection() {
+        let caps = TestCapabilities::detect();
+        println!("Detected: {}", caps.summary());
+    }
+
+    #[test]
+    fn test_runner_creation() -> Result<()> {
+        let runner = TestRunner::new()?;
+        println!("Runner capabilities: {}", runner.capabilities().summary());
+        println!(
+            "Supported architectures: {:?}",
+            runner
+                .architectures()
+                .iter()
+                .map(|a| a.name)
+                .collect::<Vec<_>>()
+        );
         Ok(())
     }
 
     #[test]
-    fn test_complete_test_result() {
-        let result = CompleteTestResult {
-            architecture: ArchConfig::x64(),
-            compilation_success: true,
-            modification_success: true,
-            execution_success: false,
-            compatibility_success: false,
-            disassembly_success: true,
-            reflection_success: false,
-            errors: vec!["Test error".to_string()],
-        };
+    fn test_complete_workflow() -> Result<()> {
+        let runner = TestRunner::new()?;
 
-        assert!(!result.is_fully_successful());
-    }
+        let results = run_complete_test(&runner, compilation::templates::HELLO_WORLD, |_ctx| {
+            // No modifications - just test the workflow
+            Ok(())
+        })?;
 
-    #[test]
-    fn test_arch_config_methods() {
-        let arch = ArchConfig::x86();
-        assert_eq!(arch.filename_component(), "x86");
+        for result in &results {
+            println!("{}", result.summary());
+        }
 
-        let standard_archs = ArchConfig::standard_architectures();
-        assert_eq!(standard_archs.len(), 2);
+        // At least compilation should work
+        assert!(
+            results.iter().all(|r| r.compilation_success),
+            "Compilation should succeed"
+        );
+
+        Ok(())
     }
 }

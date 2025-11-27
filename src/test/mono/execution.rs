@@ -1,402 +1,350 @@
-//! .NET runtime execution utilities
+//! .NET assembly execution utilities
 //!
-//! This module provides utilities for executing .NET assemblies using available runtimes
-//! (dotnet CLI or Mono). It automatically detects which runtime is available and uses
-//! the appropriate one for testing assembly execution and compatibility.
+//! This module handles execution of .NET assemblies using the detected runtime
+//! from TestCapabilities.
 
 use crate::prelude::*;
-use crate::test::mono::compilation::CompilerType;
+use crate::test::mono::capabilities::{Runtime, TestCapabilities};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output};
+use std::time::Duration;
 
-/// Runtime type for executing .NET assemblies
-#[derive(Debug, Clone, PartialEq)]
-pub enum RuntimeType {
-    /// Mono runtime (for .NET Framework assemblies)
-    Mono,
-    /// Modern .NET runtime (for .NET 8.0+ assemblies)
-    DotNet,
-}
-
-impl RuntimeType {
-    /// Determine the appropriate runtime based on compiler type
-    pub fn for_compiler(compiler: &CompilerType) -> Self {
-        match compiler {
-            CompilerType::DotNet => RuntimeType::DotNet,
-            CompilerType::Csc | CompilerType::Mcs => RuntimeType::Mono,
-        }
-    }
-}
-
-/// Mono runtime environment and execution utilities
-#[derive(Default)]
-pub struct MonoRuntime {
-    version_info: Option<MonoVersionInfo>,
-    /// Override runtime type (if None, will auto-detect based on availability)
-    runtime_override: Option<RuntimeType>,
-}
-
-impl MonoRuntime {
-    /// Create new Mono runtime instance
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Create a runtime instance configured for a specific runtime type
-    pub fn with_runtime(runtime_type: RuntimeType) -> Self {
-        Self {
-            version_info: None,
-            runtime_override: Some(runtime_type),
-        }
-    }
-
-    /// Set the runtime type to use for execution
-    pub fn set_runtime(&mut self, runtime_type: RuntimeType) {
-        self.runtime_override = Some(runtime_type);
-    }
-
-    /// Check if Mono is available on the system
-    pub fn is_available(&self) -> bool {
-        self.is_mono_available() || self.is_dotnet_available()
-    }
-
-    /// Check if Mono runtime is available
-    pub fn is_mono_available(&self) -> bool {
-        Command::new("mono").arg("--version").output().is_ok()
-    }
-
-    /// Check if modern .NET runtime is available
-    pub fn is_dotnet_available(&self) -> bool {
-        Command::new("dotnet").arg("--version").output().is_ok()
-    }
-
-    /// Get the runtime type that will be used for execution
-    pub fn active_runtime(&self) -> Option<RuntimeType> {
-        if let Some(ref override_type) = self.runtime_override {
-            return Some(override_type.clone());
-        }
-        // Default preference: mono first, then dotnet
-        if self.is_mono_available() {
-            Some(RuntimeType::Mono)
-        } else if self.is_dotnet_available() {
-            Some(RuntimeType::DotNet)
-        } else {
-            None
-        }
-    }
-
-    /// Get Mono version information (cached after first call)
-    pub fn version_info(&mut self) -> Result<&MonoVersionInfo> {
-        if self.version_info.is_none() {
-            self.version_info = Some(self.detect_version()?);
-        }
-        Ok(self.version_info.as_ref().unwrap())
-    }
-
-    /// Detect Mono version from system
-    fn detect_version(&self) -> Result<MonoVersionInfo> {
-        let output = Command::new("mono")
-            .arg("--version")
-            .output()
-            .map_err(|_| Error::Other("mono not available".to_string()))?;
-
-        if !output.status.success() {
-            return Err(Error::Other("mono --version failed".to_string()));
-        }
-
-        let version_output = String::from_utf8_lossy(&output.stdout);
-        let version_line = version_output
-            .lines()
-            .next()
-            .unwrap_or("unknown")
-            .to_string();
-
-        Ok(MonoVersionInfo {
-            available: true,
-            version_string: version_line,
-            full_output: version_output.to_string(),
-        })
-    }
-
-    /// Execute a .NET assembly using the appropriate runtime (Mono or .NET)
-    pub fn execute_assembly(&mut self, assembly_path: &Path) -> Result<ExecutionResult> {
-        let runtime = match self.active_runtime() {
-            Some(rt) => rt,
-            None => {
-                return Ok(ExecutionResult {
-                    success: false,
-                    exit_code: None,
-                    stdout: String::new(),
-                    stderr: String::new(),
-                    error: Some("No .NET runtime available (neither mono nor dotnet)".to_string()),
-                });
-            }
-        };
-
-        match runtime {
-            RuntimeType::Mono => self.execute_with_mono(assembly_path),
-            RuntimeType::DotNet => self.execute_with_dotnet(assembly_path),
-        }
-    }
-
-    /// Execute assembly using Mono runtime
-    fn execute_with_mono(&self, assembly_path: &Path) -> Result<ExecutionResult> {
-        let output = Command::new("mono")
-            .arg(assembly_path)
-            .output()
-            .map_err(|e| Error::Other(format!("Failed to execute mono: {}", e)))?;
-
-        Ok(ExecutionResult {
-            success: output.status.success(),
-            exit_code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            error: None,
-        })
-    }
-
-    /// Execute assembly using modern .NET runtime
-    fn execute_with_dotnet(&self, assembly_path: &Path) -> Result<ExecutionResult> {
-        let mut cmd = Command::new("dotnet");
-
-        // Set working directory to the assembly's directory so .NET can find
-        // the runtimeconfig.json and deps.json files for dependency resolution
-        if let Some(parent) = assembly_path.parent() {
-            cmd.current_dir(parent);
-            if let Some(filename) = assembly_path.file_name() {
-                cmd.arg(filename);
-            } else {
-                cmd.arg(assembly_path);
-            }
-        } else {
-            cmd.arg(assembly_path);
-        }
-
-        let output = cmd
-            .output()
-            .map_err(|e| Error::Other(format!("Failed to execute dotnet: {}", e)))?;
-
-        Ok(ExecutionResult {
-            success: output.status.success(),
-            exit_code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            error: None,
-        })
-    }
-
-    /// Comprehensive runtime compatibility test
-    pub fn test_compatibility(&mut self, file_path: &Path) -> Result<CompatibilityResult> {
-        let mut result = CompatibilityResult::new();
-
-        // Check runtime availability and get version info
-        let runtime = self.active_runtime();
-        result.runtime_available = runtime.is_some();
-
-        if let Some(ref rt) = runtime {
-            // Get version info based on runtime type
-            match rt {
-                RuntimeType::Mono => {
-                    if let Ok(version) = self.version_info() {
-                        result.runtime_version = Some(version.version_string.clone());
-                    }
-                }
-                RuntimeType::DotNet => {
-                    // Get dotnet version
-                    if let Ok(output) = Command::new("dotnet").arg("--version").output() {
-                        if output.status.success() {
-                            result.runtime_version = Some(format!(
-                                "dotnet {}",
-                                String::from_utf8_lossy(&output.stdout).trim()
-                            ));
-                        }
-                    }
-                }
-            }
-        } else {
-            return Ok(result);
-        }
-
-        // Test execution
-        match self.execute_assembly(file_path) {
-            Ok(exec_result) => {
-                result.execution_result = Some(exec_result.clone());
-                if exec_result.success {
-                    result.execution_success = true;
-                } else {
-                    result.execution_success = false;
-                    result.execution_error =
-                        exec_result.stderr.lines().next().map(|s| s.to_string());
-                }
-            }
-            Err(e) => {
-                result.execution_success = false;
-                result.execution_error = Some(e.to_string());
-            }
-        }
-
-        Ok(result)
-    }
-
-    /// Execute assembly with custom arguments
-    pub fn execute_with_args(
-        &self,
-        assembly_path: &Path,
-        args: &[&str],
-    ) -> Result<ExecutionResult> {
-        let runtime = match self.active_runtime() {
-            Some(rt) => rt,
-            None => {
-                return Ok(ExecutionResult {
-                    success: false,
-                    exit_code: None,
-                    stdout: String::new(),
-                    stderr: String::new(),
-                    error: Some("No .NET runtime available".to_string()),
-                });
-            }
-        };
-
-        let (cmd_name, cmd_error) = match runtime {
-            RuntimeType::Mono => ("mono", "Failed to execute mono"),
-            RuntimeType::DotNet => ("dotnet", "Failed to execute dotnet"),
-        };
-
-        let mut cmd = Command::new(cmd_name);
-        cmd.arg(assembly_path);
-        for arg in args {
-            cmd.arg(arg);
-        }
-
-        let output = cmd
-            .output()
-            .map_err(|e| Error::Other(format!("{}: {}", cmd_error, e)))?;
-
-        Ok(ExecutionResult {
-            success: output.status.success(),
-            exit_code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            error: None,
-        })
-    }
-}
-
-/// Information about Mono runtime version
-#[derive(Debug, Clone)]
-pub struct MonoVersionInfo {
-    pub available: bool,
-    pub version_string: String,
-    pub full_output: String,
-}
-
-/// Result of executing a .NET assembly
+/// Result of executing an assembly
 #[derive(Debug, Clone)]
 pub struct ExecutionResult {
+    /// Whether execution succeeded (exit code 0)
     pub success: bool,
+    /// Exit code from the process
     pub exit_code: Option<i32>,
+    /// Standard output
     pub stdout: String,
+    /// Standard error
     pub stderr: String,
-    pub error: Option<String>,
+    /// Which runtime was used
+    pub runtime: Option<Runtime>,
 }
 
 impl ExecutionResult {
+    /// Create a successful execution result
+    pub fn success(stdout: String, runtime: Runtime) -> Self {
+        Self {
+            success: true,
+            exit_code: Some(0),
+            stdout,
+            stderr: String::new(),
+            runtime: Some(runtime),
+        }
+    }
+
+    /// Create a failed execution result
+    pub fn failure(exit_code: Option<i32>, stdout: String, stderr: String) -> Self {
+        Self {
+            success: false,
+            exit_code,
+            stdout,
+            stderr,
+            runtime: None,
+        }
+    }
+
     /// Check if execution was successful
     pub fn is_success(&self) -> bool {
         self.success
     }
 
-    /// Get trimmed stdout output
-    pub fn output(&self) -> &str {
-        self.stdout.trim()
-    }
-
-    /// Get first line of stderr if any
-    pub fn first_error_line(&self) -> Option<&str> {
-        self.stderr.lines().next()
-    }
-
-    /// Check if output contains specific text
-    pub fn output_contains(&self, text: &str) -> bool {
-        self.stdout.contains(text) || self.stderr.contains(text)
-    }
-}
-
-/// Comprehensive compatibility test result
-#[derive(Debug, Clone, Default)]
-pub struct CompatibilityResult {
-    pub runtime_available: bool,
-    pub runtime_version: Option<String>,
-    pub execution_success: bool,
-    pub execution_result: Option<ExecutionResult>,
-    pub execution_error: Option<String>,
-}
-
-impl CompatibilityResult {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Check if all compatibility tests passed
-    pub fn is_fully_compatible(&self) -> bool {
-        self.runtime_available && self.execution_success
-    }
-
-    /// Get human-readable status summary
-    pub fn status_summary(&self) -> String {
-        if !self.runtime_available {
-            "Runtime not available".to_string()
-        } else if self.execution_success {
-            "Fully compatible".to_string()
+    /// Get combined output (stdout + stderr)
+    pub fn combined_output(&self) -> String {
+        if self.stderr.is_empty() {
+            self.stdout.clone()
+        } else if self.stdout.is_empty() {
+            self.stderr.clone()
         } else {
-            format!(
-                "Execution failed: {}",
-                self.execution_error.as_deref().unwrap_or("Unknown error")
-            )
+            format!("{}\n{}", self.stdout, self.stderr)
+        }
+    }
+
+    /// Get error summary for display
+    pub fn error_summary(&self) -> String {
+        if self.success {
+            "Success".to_string()
+        } else if !self.stderr.is_empty() {
+            self.stderr
+                .lines()
+                .next()
+                .unwrap_or(&self.stderr)
+                .to_string()
+        } else if !self.stdout.is_empty() {
+            self.stdout
+                .lines()
+                .next()
+                .unwrap_or(&self.stdout)
+                .to_string()
+        } else {
+            format!("Failed with exit code {:?}", self.exit_code)
+        }
+    }
+}
+
+/// Execute an assembly using the detected runtime
+pub fn execute(capabilities: &TestCapabilities, assembly_path: &Path) -> Result<ExecutionResult> {
+    let runtime = match capabilities.runtime {
+        Some(r) => r,
+        None => {
+            return Ok(ExecutionResult::failure(
+                None,
+                String::new(),
+                "No .NET runtime available".to_string(),
+            ))
+        }
+    };
+
+    execute_with_runtime(runtime, assembly_path)
+}
+
+/// Execute an assembly with a specific runtime
+pub fn execute_with_runtime(runtime: Runtime, assembly_path: &Path) -> Result<ExecutionResult> {
+    let output = match runtime {
+        Runtime::Mono => execute_with_mono(assembly_path)?,
+        Runtime::DotNet => execute_with_dotnet(assembly_path)?,
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let exit_code = output.status.code();
+
+    if output.status.success() {
+        let mut result = ExecutionResult::success(stdout, runtime);
+        result.stderr = stderr;
+        result.exit_code = exit_code;
+        Ok(result)
+    } else {
+        Ok(ExecutionResult::failure(exit_code, stdout, stderr))
+    }
+}
+
+/// Execute using Mono runtime
+fn execute_with_mono(assembly_path: &Path) -> Result<Output> {
+    Command::new("mono")
+        .arg(assembly_path)
+        .output()
+        .map_err(|e| Error::Other(format!("Failed to execute mono: {}", e)))
+}
+
+/// Execute using dotnet runtime
+fn execute_with_dotnet(assembly_path: &Path) -> Result<Output> {
+    // For dotnet, we need to run from the assembly's directory
+    // so it can find the runtimeconfig.json
+    let mut cmd = Command::new("dotnet");
+
+    if let Some(parent) = assembly_path.parent() {
+        cmd.current_dir(parent);
+        if let Some(filename) = assembly_path.file_name() {
+            cmd.arg(filename);
+        } else {
+            cmd.arg(assembly_path);
+        }
+    } else {
+        cmd.arg(assembly_path);
+    }
+
+    cmd.output()
+        .map_err(|e| Error::Other(format!("Failed to execute dotnet: {}", e)))
+}
+
+/// Execute an assembly and verify it produces expected output
+pub fn execute_and_verify(
+    capabilities: &TestCapabilities,
+    assembly_path: &Path,
+    expected_output: &str,
+) -> Result<ExecutionResult> {
+    let result = execute(capabilities, assembly_path)?;
+
+    if result.is_success() {
+        if result.stdout.contains(expected_output) {
+            Ok(result)
+        } else {
+            let output = result.stdout.trim().to_string();
+            Ok(ExecutionResult::failure(
+                result.exit_code,
+                result.stdout,
+                format!(
+                    "Output mismatch: expected '{}', got '{}'",
+                    expected_output, output
+                ),
+            ))
+        }
+    } else {
+        Ok(result)
+    }
+}
+
+/// Execute an assembly with a timeout
+pub fn execute_with_timeout(
+    capabilities: &TestCapabilities,
+    assembly_path: &Path,
+    timeout: Duration,
+) -> Result<ExecutionResult> {
+    let runtime = match capabilities.runtime {
+        Some(r) => r,
+        None => {
+            return Ok(ExecutionResult::failure(
+                None,
+                String::new(),
+                "No .NET runtime available".to_string(),
+            ))
+        }
+    };
+
+    let mut cmd = match runtime {
+        Runtime::Mono => {
+            let mut c = Command::new("mono");
+            c.arg(assembly_path);
+            c
+        }
+        Runtime::DotNet => {
+            let mut c = Command::new("dotnet");
+            if let Some(parent) = assembly_path.parent() {
+                c.current_dir(parent);
+                if let Some(filename) = assembly_path.file_name() {
+                    c.arg(filename);
+                } else {
+                    c.arg(assembly_path);
+                }
+            } else {
+                c.arg(assembly_path);
+            }
+            c
+        }
+    };
+
+    // Spawn and wait with timeout
+    let mut child = cmd
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| Error::Other(format!("Failed to spawn process: {}", e)))?;
+
+    match child.wait_timeout(timeout) {
+        Ok(Some(status)) => {
+            let stdout = child
+                .stdout
+                .take()
+                .map(|mut s| {
+                    let mut buf = String::new();
+                    std::io::Read::read_to_string(&mut s, &mut buf).ok();
+                    buf
+                })
+                .unwrap_or_default();
+
+            let stderr = child
+                .stderr
+                .take()
+                .map(|mut s| {
+                    let mut buf = String::new();
+                    std::io::Read::read_to_string(&mut s, &mut buf).ok();
+                    buf
+                })
+                .unwrap_or_default();
+
+            if status.success() {
+                let mut result = ExecutionResult::success(stdout, runtime);
+                result.stderr = stderr;
+                result.exit_code = status.code();
+                Ok(result)
+            } else {
+                Ok(ExecutionResult::failure(status.code(), stdout, stderr))
+            }
+        }
+        Ok(None) => {
+            // Timeout - kill the process
+            child.kill().ok();
+            Ok(ExecutionResult::failure(
+                None,
+                String::new(),
+                format!("Execution timed out after {:?}", timeout),
+            ))
+        }
+        Err(e) => Err(Error::Other(format!("Failed to wait for process: {}", e))),
+    }
+}
+
+/// Extension trait for Child to add wait_timeout
+trait ChildExt {
+    fn wait_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> std::io::Result<Option<std::process::ExitStatus>>;
+}
+
+impl ChildExt for std::process::Child {
+    fn wait_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> std::io::Result<Option<std::process::ExitStatus>> {
+        let start = std::time::Instant::now();
+        let poll_interval = Duration::from_millis(10);
+
+        loop {
+            match self.try_wait()? {
+                Some(status) => return Ok(Some(status)),
+                None => {
+                    if start.elapsed() >= timeout {
+                        return Ok(None);
+                    }
+                    std::thread::sleep(poll_interval);
+                }
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::test::mono::execution::{CompatibilityResult, ExecutionResult, MonoRuntime};
-
-    #[test]
-    fn test_mono_runtime_creation() {
-        let runtime = MonoRuntime::new();
-        // New runtime should have no cached version info and no runtime override
-        assert!(runtime.version_info.is_none());
-        assert!(runtime.runtime_override.is_none());
-    }
+    use super::*;
+    use crate::test::mono::compilation::{compile, templates};
+    use tempfile::TempDir;
 
     #[test]
     fn test_execution_result() {
-        let result = ExecutionResult {
-            success: true,
-            exit_code: Some(0),
-            stdout: "Hello World\n".to_string(),
-            stderr: String::new(),
-            error: None,
-        };
+        let success = ExecutionResult::success("Hello".to_string(), Runtime::Mono);
+        assert!(success.is_success());
+        assert_eq!(success.stdout, "Hello");
 
-        assert!(result.is_success());
-        assert_eq!(result.output(), "Hello World");
-        assert!(result.first_error_line().is_none());
-        assert!(result.output_contains("Hello"));
+        let failure = ExecutionResult::failure(Some(1), String::new(), "Error".to_string());
+        assert!(!failure.is_success());
+        assert_eq!(failure.exit_code, Some(1));
     }
 
     #[test]
-    fn test_compatibility_result() {
-        let result = CompatibilityResult::new();
-        assert!(!result.runtime_available);
-        assert!(!result.execution_success);
-        assert!(!result.is_fully_compatible());
-    }
+    fn test_execute_hello_world() -> Result<()> {
+        let caps = TestCapabilities::detect();
+        if !caps.can_test() {
+            println!("Skipping: no compiler/runtime available");
+            return Ok(());
+        }
 
-    #[test]
-    fn test_mono_availability() {
-        let runtime = MonoRuntime::new();
-        // This test will vary by system, but should not panic
-        let _ = runtime.is_available();
+        let temp_dir = TempDir::new()?;
+        let arch = caps.supported_architectures.first().unwrap();
+
+        // Compile
+        let compile_result = compile(
+            &caps,
+            templates::HELLO_WORLD,
+            temp_dir.path(),
+            "hello",
+            arch,
+        )?;
+        assert!(compile_result.is_success(), "Compilation failed");
+
+        // Execute
+        let exec_result = execute(&caps, compile_result.assembly_path())?;
+        assert!(
+            exec_result.is_success(),
+            "Execution failed: {}",
+            exec_result.error_summary()
+        );
+        assert!(exec_result.stdout.contains("Hello from dotscope test!"));
+
+        Ok(())
     }
 }
