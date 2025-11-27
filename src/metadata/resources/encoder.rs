@@ -102,6 +102,7 @@
 use crate::{
     metadata::resources::{ResourceType, RESOURCE_MAGIC},
     utils::compressed_uint_size,
+    utils::write_7bit_encoded_int,
     utils::write_compressed_uint,
     Error, Result,
 };
@@ -1074,11 +1075,11 @@ impl DotNetResourceEncoder {
                     // No data for null
                 }
                 ResourceType::String(s) => {
-                    // Microsoft uses BinaryWriter.Write(string) which writes UTF-8 with 7-bit length prefix
+                    // Microsoft uses BinaryWriter.Write(string) which writes UTF-8 with 7-bit encoded length prefix
                     let utf8_bytes = s.as_bytes();
                     #[allow(clippy::cast_possible_truncation)]
                     {
-                        write_compressed_uint(utf8_bytes.len() as u32, buffer);
+                        write_7bit_encoded_int(utf8_bytes.len() as u32, buffer);
                     }
                     buffer.extend_from_slice(utf8_bytes);
                 }
@@ -1350,7 +1351,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Large string parsing has edge case - TODO: investigate string truncation"]
     fn test_large_resource_data() {
         use crate::metadata::resources::parser::parse_dotnet_resource;
 
