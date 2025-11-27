@@ -521,9 +521,9 @@ pub(crate) fn execute_loaders_in_parallel(
     for (level_index, level) in levels.iter().enumerate() {
         if level_index == 4 {
             if let Some(proj_ctx) = project_context {
-                proj_ctx.wait_stage2()?;
-
                 context.types.build_fullnames();
+
+                proj_ctx.wait_stage2()?;
 
                 // Redirect TypeRefs to their canonical TypeDefs from external assemblies
                 for entry in context.types.iter() {
