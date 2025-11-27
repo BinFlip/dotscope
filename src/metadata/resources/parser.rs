@@ -641,7 +641,7 @@ impl Resource {
 
         // Check for debug string in V2 debug builds ("***DEBUG***")
         if res.rr_version == 2 && (data.len() - parser.pos()) >= 11 {
-            res.is_debug = Self::try_parse_debug_marker(parser)?;
+            res.is_debug = Self::try_parse_debug_marker(parser);
         }
 
         res.resource_count = parser.read_le::<u32>()?;
@@ -668,18 +668,19 @@ impl Resource {
     ///
     /// # Returns
     ///
-    /// * `Ok(true)` - Debug marker was found and consumed
-    /// * `Ok(false)` - No debug marker present (parser position restored)
-    fn try_parse_debug_marker(parser: &mut Parser) -> Result<bool> {
-        let peek_pos = parser.pos();
-
-        match parser.read_prefixed_string_utf8() {
-            Ok(s) if s == "***DEBUG***" => Ok(true),
-            Ok(_) | Err(_) => {
-                parser.seek(peek_pos)?;
-                Ok(false)
+    /// * `true` - Debug marker was found and consumed
+    /// * `false` - No debug marker present (parser position restored)
+    fn try_parse_debug_marker(parser: &mut Parser) -> bool {
+        let result = parser.transactional(|p| {
+            let s = p.read_prefixed_string_utf8()?;
+            if s == "***DEBUG***" {
+                Ok(true)
+            } else {
+                Err(malformed_error!("not a debug marker"))
             }
-        }
+        });
+
+        result.unwrap_or(false)
     }
 
     /// Parse the type name table.
