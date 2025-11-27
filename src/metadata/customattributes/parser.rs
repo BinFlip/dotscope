@@ -1215,71 +1215,71 @@ impl<'a> CustomAttributeParser<'a> {
             .ok_or_else(|| malformed_error!("Internal error: result stack unexpectedly empty"))
     }
 
-    /// Helper method to check if the current position contains string data.
+    /// Attempt to parse a string speculatively, with validation and heuristics.
     ///
-    /// This method performs non-destructive lookahead to determine if the current
-    /// parser position contains valid string data. It's used for graceful fallback
-    /// during ambiguous type parsing situations.
+    /// This method tries to parse a string from the current position. If parsing
+    /// succeeds and the data looks like a valid string, it returns `Some(string)`
+    /// and the parser position is advanced. If parsing fails or the data doesn't
+    /// look like a valid string, it returns `None` and the parser position is restored.
+    ///
+    /// This is useful for graceful fallback during ambiguous type parsing situations
+    /// where we need to speculatively try parsing as a string.
     ///
     /// # Validation Strategy
     /// 1. Checks for null string marker (0xFF)
     /// 2. Attempts to read compressed length
     /// 3. Validates available data matches declared length
     /// 4. Performs UTF-8 validation on string bytes
-    /// 5. Applies heuristics for reasonable string lengths
+    /// 5. Applies heuristics for reasonable string lengths (max 1000 chars)
     ///
     /// # Parser State
-    /// This method preserves parser position - it resets to the original position
-    /// after validation regardless of success or failure.
+    /// On success (`Some`), the parser position is advanced past the string.
+    /// On failure (`None`), the parser position is restored to its original value.
     ///
     /// # Returns
-    /// `true` if the current position appears to contain valid string data
-    ///
-    /// # Errors
-    /// Returns [`crate::Error::Malformed`] if parser position cannot be restored
-    fn can_parse_as_string(&mut self) -> Result<bool> {
-        let saved_pos = self.parser.pos();
-
+    /// `Some(String)` if a valid string was parsed, `None` otherwise
+    fn try_parse_string(&mut self) -> Option<String> {
         // Check for null string marker first
-        if self.parser.has_more_data() && self.parser.peek_byte()? == 0xFF {
-            return Ok(true); // null string is valid
+        if self.parser.has_more_data() && self.parser.peek_byte().ok()? == 0xFF {
+            self.parser.read_le::<u8>().ok()?;
+            return Some(String::new());
         }
 
-        // Try to read a compressed uint as string length
-        let result = match self.parser.read_compressed_uint() {
-            Ok(length) => {
+        self.parser
+            .transactional(|p| {
+                let length = p.read_compressed_uint()?;
+
                 // Check if we have enough data for the string
-                let remaining_data = self.parser.len() - self.parser.pos();
-                if length as usize <= remaining_data {
-                    // Heuristic: reject unreasonably large "lengths" that are likely
-                    // misinterpreted enum values. Custom attribute strings are typically
-                    // short (type names, messages, etc.). The 1000 char limit is
-                    // conservative but catches most false positives where an i32 enum
-                    // value is misread as a compressed length.
-                    //
-                    // LIMITATION: Legitimate strings > 1000 chars will be rejected by
-                    // this heuristic. This is acceptable as this method is only used
-                    // for ambiguous fallback parsing, not primary string parsing.
-                    if length == 0 || length > 1000 {
-                        Ok(length == 0) // Accept empty strings; reject large "lengths"
-                    } else {
-                        // Check if the next bytes could be valid UTF-8
-                        let string_bytes = &self.parser.data()
-                            [self.parser.pos()..self.parser.pos() + length as usize];
-                        Ok(std::str::from_utf8(string_bytes).is_ok())
-                    }
-                } else {
-                    Ok(false) // not enough data
+                let remaining_data = p.len() - p.pos();
+                if length as usize > remaining_data {
+                    return Err(malformed_error!("not enough data"));
                 }
-            }
-            Err(_) => Ok(false), // couldn't read compressed uint
-        };
 
-        // Restore parser position
-        if self.parser.seek(saved_pos).is_err() {
-            return Err(malformed_error!("Failed to restore parser position"));
-        }
-        result
+                // Heuristic: reject unreasonably large "lengths" that are likely
+                // misinterpreted enum values. Custom attribute strings are typically
+                // short (type names, messages, etc.). The 1000 char limit is
+                // conservative but catches most false positives where an i32 enum
+                // value is misread as a compressed length.
+                if length > 1000 {
+                    return Err(malformed_error!("length too large for speculative string"));
+                }
+
+                if length == 0 {
+                    return Ok(String::new());
+                }
+
+                // Check if the bytes are valid UTF-8
+                let string_bytes = &p.data()[p.pos()..p.pos() + length as usize];
+                let s = std::str::from_utf8(string_bytes)
+                    .map_err(|_| malformed_error!("invalid UTF-8"))?;
+                let result = s.to_string();
+
+                // Advance past the string bytes
+                p.advance_by(length as usize)?;
+
+                Ok(result)
+            })
+            .ok()
     }
 
     /// Parse a compressed string from the blob.

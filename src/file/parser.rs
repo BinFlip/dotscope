@@ -366,6 +366,88 @@ impl<'a> Parser<'a> {
         Ok(self.data[self.position])
     }
 
+    /// Peek at a value of type `T` in little-endian format without advancing the position.
+    ///
+    /// This method reads a value from the current position but does not modify the
+    /// parser state, allowing inspection of upcoming data before deciding how to proceed.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::OutOfBounds`] if reading `T` would exceed the data length.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    /// let data = [0x01, 0x02, 0x03, 0x04];
+    /// let mut parser = Parser::new(&data);
+    ///
+    /// // Peek at a u16 without advancing
+    /// let peeked: u16 = parser.peek_le()?;
+    /// assert_eq!(peeked, 0x0201);
+    /// assert_eq!(parser.pos(), 0); // Position unchanged
+    ///
+    /// // Now read it for real
+    /// let value: u16 = parser.read_le()?;
+    /// assert_eq!(value, 0x0201);
+    /// assert_eq!(parser.pos(), 2); // Position advanced
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn peek_le<T: CilIO>(&self) -> Result<T> {
+        let mut temp_position = self.position;
+        read_le_at::<T>(self.data, &mut temp_position)
+    }
+
+    /// Execute a closure transactionally, rolling back on failure.
+    ///
+    /// This method saves the current parser position, executes the provided closure,
+    /// and only commits the position change if the closure succeeds. If the closure
+    /// returns `Err`, the parser position is restored to its original value.
+    ///
+    /// This is useful for speculative parsing where you want to try parsing something
+    /// and only consume the input if parsing succeeds.
+    ///
+    /// # Arguments
+    /// * `f` - A closure that takes a mutable reference to the parser and returns a `Result<T>`
+    ///
+    /// # Returns
+    /// Returns the result of the closure. On success, the parser position reflects any
+    /// advances made during parsing. On failure, the parser position is restored.
+    ///
+    /// # Errors
+    /// Returns any error produced by the closure `f`. When an error is returned,
+    /// the parser position is automatically restored to its state before the call.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::Parser;
+    /// let data = [0x01, 0x02, 0x03, 0x04];
+    /// let mut parser = Parser::new(&data);
+    ///
+    /// // Try to parse - on success, position advances
+    /// let result: Result<u16, _> = parser.transactional(|p| p.read_le());
+    /// assert!(result.is_ok());
+    /// assert_eq!(parser.pos(), 2); // Position advanced on success
+    ///
+    /// // Try to parse something that fails - position restored
+    /// let mut parser2 = Parser::new(&[0x01]);
+    /// let result: Result<u32, _> = parser2.transactional(|p| p.read_le());
+    /// assert!(result.is_err());
+    /// assert_eq!(parser2.pos(), 0); // Position restored on failure
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn transactional<T, F>(&mut self, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut Self) -> Result<T>,
+    {
+        let saved_position = self.position;
+        let result = f(self);
+        if result.is_err() {
+            self.position = saved_position;
+        }
+        result
+    }
+
     /// Align the position to a specific boundary.
     ///
     /// This advances the position to the next multiple of the specified alignment,
@@ -1224,5 +1306,98 @@ mod tests {
             parser.read_prefixed_string_utf8_ref(),
             Err(Error::OutOfBounds { .. })
         ));
+    }
+
+    #[test]
+    fn test_peek_le() {
+        // Test peek_le with u8
+        let data = [0x01, 0x02, 0x03, 0x04];
+        let parser = Parser::new(&data);
+        let peeked: u8 = parser.peek_le().unwrap();
+        assert_eq!(peeked, 0x01);
+        assert_eq!(parser.pos(), 0); // Position unchanged
+
+        // Test peek_le with u16
+        let peeked: u16 = parser.peek_le().unwrap();
+        assert_eq!(peeked, 0x0201);
+        assert_eq!(parser.pos(), 0); // Position unchanged
+
+        // Test peek_le with u32
+        let peeked: u32 = parser.peek_le().unwrap();
+        assert_eq!(peeked, 0x04030201);
+        assert_eq!(parser.pos(), 0); // Position unchanged
+
+        // Test peek_le after advancing position
+        let mut parser = Parser::new(&data);
+        parser.advance_by(2).unwrap();
+        let peeked: u16 = parser.peek_le().unwrap();
+        assert_eq!(peeked, 0x0403);
+        assert_eq!(parser.pos(), 2); // Position still at 2
+
+        // Test peek_le out of bounds
+        let data = [0x01];
+        let parser = Parser::new(&data);
+        let result: Result<u16> = parser.peek_le();
+        assert!(matches!(result, Err(Error::OutOfBounds { .. })));
+
+        // Test peek_le at end of data
+        let mut parser = Parser::new(&data);
+        parser.advance().unwrap();
+        let result: Result<u8> = parser.peek_le();
+        assert!(matches!(result, Err(Error::OutOfBounds { .. })));
+    }
+
+    #[test]
+    fn test_transactional() {
+        // Test transactional commits on success
+        let data = [0x01, 0x02, 0x03, 0x04];
+        let mut parser = Parser::new(&data);
+
+        let result: u16 = parser.transactional(|p| p.read_le()).unwrap();
+        assert_eq!(result, 0x0201);
+        assert_eq!(parser.pos(), 2); // Position advanced on success
+
+        // Test transactional with multiple reads - commits all changes
+        let mut parser = Parser::new(&data);
+        let sum: u16 = parser
+            .transactional(|p| {
+                let a: u8 = p.read_le()?;
+                let b: u8 = p.read_le()?;
+                Ok(u16::from(a) + u16::from(b))
+            })
+            .unwrap();
+        assert_eq!(sum, 3); // 0x01 + 0x02
+        assert_eq!(parser.pos(), 2); // Position advanced to 2
+
+        // Test transactional restores position on error
+        let mut parser = Parser::new(&data);
+        let result: Result<u32> = parser.transactional(|p| {
+            p.read_le::<u16>()?; // This succeeds
+            p.read_le::<u32>() // This fails - not enough data
+        });
+        assert!(result.is_err());
+        assert_eq!(parser.pos(), 0); // Position restored on error
+
+        // Test transactional from non-zero position
+        let mut parser = Parser::new(&data);
+        parser.advance_by(2).unwrap();
+        let result: u16 = parser.transactional(|p| p.read_le()).unwrap();
+        assert_eq!(result, 0x0403);
+        assert_eq!(parser.pos(), 4); // Position advanced from 2 to 4
+
+        // Test nested transactional - inner failure rolls back inner only
+        let mut parser = Parser::new(&data);
+        let result = parser
+            .transactional(|p| {
+                let outer: u8 = p.read_le()?;
+                // Inner transactional that fails - should restore to pos 1
+                let inner_result: Result<u32> = p.transactional(|p2| p2.read_le());
+                assert!(inner_result.is_err());
+                assert_eq!(p.pos(), 1); // Inner transactional restored to 1
+                Ok(outer)
+            })
+            .unwrap();
+        assert_eq!(result, 0x01);
+        assert_eq!(parser.pos(), 1); // Outer transactional committed
     }
 }
