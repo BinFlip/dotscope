@@ -3,7 +3,11 @@
 //! This module provides the owned variant of `StandAloneSig` table entries with resolved
 //! references and complete metadata context for application use.
 
-use crate::metadata::{customattributes::CustomAttributeValueList, token::Token};
+use crate::metadata::{
+    customattributes::CustomAttributeValueList,
+    signatures::{SignatureField, SignatureLocalVariables, SignatureMethod},
+    token::Token,
+};
 
 /// Owned representation of a `StandAloneSig` table entry with complete metadata context.
 ///
@@ -75,4 +79,48 @@ pub struct StandAloneSig {
     /// compiler-generated information, security attributes, and other metadata
     /// relevant to signature usage and interpretation.
     pub custom_attributes: CustomAttributeValueList,
+
+    /// The parsed signature data.
+    ///
+    /// Contains the fully parsed signature from the blob heap. The signature type
+    /// is determined by the first byte of the blob data and can be one of:
+    /// - Local variable signature (0x07)
+    /// - Method signature (calling conventions 0x00-0x05, with optional flags)
+    /// - Field signature (0x06)
+    pub parsed_signature: StandAloneSignature,
+}
+
+/// Represents the different types of signatures that can appear in a `StandAloneSig` entry.
+///
+/// According to ECMA-335, standalone signatures can contain:
+/// - **Local Variable Signatures**: Used by method bodies to declare local variables
+/// - **Method Signatures**: Used for `calli` instructions and function pointers
+/// - **Field Signatures**: Standalone field type specifications (rare)
+///
+/// The signature type is determined by examining the first byte of the signature blob.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StandAloneSignature {
+    /// A local variable signature (header byte 0x07).
+    ///
+    /// Contains the types and modifiers for all local variables in a method body.
+    /// This is the most common use of `StandAloneSig` entries.
+    LocalVariables(SignatureLocalVariables),
+
+    /// A standalone method signature.
+    ///
+    /// Used for `calli` instructions and function pointer types. Contains calling
+    /// convention, return type, and parameter types.
+    Method(SignatureMethod),
+
+    /// A standalone field signature (header byte 0x06).
+    ///
+    /// Contains a single field type with optional custom modifiers. This is rare
+    /// in practice but supported by the ECMA-335 specification.
+    Field(SignatureField),
+}
+
+impl Default for StandAloneSignature {
+    fn default() -> Self {
+        Self::LocalVariables(SignatureLocalVariables::default())
+    }
 }
