@@ -3,10 +3,17 @@
 //! This module provides the raw variant of `StandAloneSig` table entries with unresolved
 //! indexes for initial parsing and memory-efficient storage.
 
+use std::sync::Arc;
+
 use crate::{
     metadata::{
+        customattributes::CustomAttributeValueList,
+        signatures::{
+            parse_field_signature, parse_local_var_signature, parse_method_signature,
+            CALLING_CONVENTION, SIGNATURE_HEADER,
+        },
         streams::Blob,
-        tables::StandAloneSigRc,
+        tables::{StandAloneSignature, StandAloneSig, StandAloneSigRc},
         tables::{TableInfoRef, TableRow},
         token::Token,
     },
@@ -68,6 +75,11 @@ impl StandAloneSigRaw {
     /// parsing the signature blob and resolving all type references within
     /// the signature data.
     ///
+    /// The signature type is determined by examining the first byte of the blob:
+    /// - `0x07` (`LOCAL_SIG`): Local variable signature
+    /// - `0x06` (`FIELD`): Field signature
+    /// - `0x00`-`0x05` (with optional `HASTHIS`/`GENERIC` flags): Method signature
+    ///
     /// ## Arguments
     ///
     /// * `blob` - The blob heap containing the signature data
@@ -79,9 +91,55 @@ impl StandAloneSigRaw {
     ///
     /// ## Errors
     ///
-    /// Returns an error if the signature blob is invalid or type resolution fails.
-    pub fn to_owned(&self, _blob: &Blob) -> Result<StandAloneSigRc> {
-        todo!("Implement StandAloneSig::from - solve storage / resolution of signature types")
+    /// Returns an error if:
+    /// - The signature blob index is invalid
+    /// - The signature data is malformed or truncated
+    /// - An unknown signature type is encountered
+    pub fn to_owned(&self, blob: &Blob) -> Result<StandAloneSigRc> {
+        let sig_data = blob.get(self.signature as usize)?;
+
+        if sig_data.is_empty() {
+            return Err(malformed_error!(
+                "StandAloneSig blob is empty at index {}",
+                self.signature
+            ));
+        }
+
+        let first_byte = sig_data[0];
+        let parsed_signature = match first_byte {
+            SIGNATURE_HEADER::LOCAL_SIG => {
+                let locals = parse_local_var_signature(sig_data)?;
+                StandAloneSignature::LocalVariables(locals)
+            }
+            SIGNATURE_HEADER::FIELD => {
+                let field = parse_field_signature(sig_data)?;
+                StandAloneSignature::Field(field)
+            }
+            _ => {
+                // Check if this is a method signature by examining calling convention
+                // Method signatures have calling convention in low 4 bits (0x00-0x05)
+                // with optional HASTHIS (0x20), EXPLICITTHIS (0x40), or GENERIC (0x10) flags
+                let calling_conv = first_byte & CALLING_CONVENTION::KIND_MASK;
+                if calling_conv <= CALLING_CONVENTION::VARARG {
+                    let method = parse_method_signature(sig_data)?;
+                    StandAloneSignature::Method(method)
+                } else {
+                    return Err(malformed_error!(
+                        "Unknown StandAloneSig signature type: 0x{:02X}",
+                        first_byte
+                    ));
+                }
+            }
+        };
+
+        Ok(Arc::new(StandAloneSig {
+            rid: self.rid,
+            token: self.token,
+            offset: self.offset,
+            signature: self.signature,
+            custom_attributes: CustomAttributeValueList::default(),
+            parsed_signature,
+        }))
     }
 
     /// Applies this `StandAloneSig` entry to update related metadata structures.
