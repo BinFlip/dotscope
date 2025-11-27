@@ -63,6 +63,26 @@ harness = false
 name = "resources"
 harness = false
 
+[[bench]]
+name = "method_body"
+harness = false
+
+[[bench]]
+name = "signatures"
+harness = false
+
+[[bench]]
+name = "streams"
+harness = false
+
+[[bench]]
+name = "cor20"
+harness = false
+
+[[bench]]
+name = "security"
+harness = false
+
 [profile.bench]
 debug = true
 lto="fat"
